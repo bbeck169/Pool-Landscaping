@@ -36,16 +36,16 @@ describe("ChecklistModal · MI1.1 industry dispatcher", () => {
     );
   });
 
-  it("routes the 5 new industries through IndustryChecklistForm", () => {
-    // The dispatcher scopes ``deriveIndustryForJob`` ONLY on the
-    // generic branch so pool + landscape stay on their existing
-    // components. HVAC / Pest / Cleaning / Solar / Handyman must
-    // route through IndustryChecklistForm.
+  it("routes the 5+ new industries through IndustryChecklistForm", () => {
+    // Phase D2 · the ``NEW_INDUSTRIES`` set is now derived from
+    // ``CANONICAL_INDUSTRIES`` (single source of truth). Pool +
+    // Landscaping are filtered out because they have their own
+    // dispatch branches upstream.
     expect(MODAL).toMatch(
       /clientType === "generic"[\s\S]{0,600}deriveIndustryForJob\(job\)/,
     );
     expect(MODAL).toMatch(
-      /new Set\(\[\s*"hvac",\s*"pest_control",\s*"cleaning",\s*"solar",\s*"handyman"/,
+      /new Set\(\s*CANONICAL_INDUSTRIES\.filter\(\s*\(s\)\s*=>\s*s !== "pool" && s !== "landscaping"/,
     );
     expect(MODAL).toMatch(
       /industry=\{derived\}[\s\S]{0,200}<\/IndustryChecklistForm>|industry=\{derived\}[\s\S]{0,80}checklistItems=/,

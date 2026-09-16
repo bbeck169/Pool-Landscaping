@@ -67,7 +67,13 @@ import { getChecklistType } from "@/lib/checklistType";
 // Phase MI1.1 · Feb 2026 — non-pool / non-landscape jobs are routed
 // through the industry-aware form so HVAC / Pest / Cleaning / Solar
 // / Handyman techs stop seeing the Pool template.
-import { deriveIndustryForJob } from "@/lib/deriveIndustry";
+// Phase D2 · Feb 2026 — the ``NEW_INDUSTRIES`` set below is derived
+// from ``CANONICAL_INDUSTRIES`` so future additions to the canonical
+// list flow into the dispatcher without a second edit here.
+import {
+  deriveIndustryForJob,
+  CANONICAL_INDUSTRIES,
+} from "@/lib/deriveIndustry";
 import IndustryChecklistForm from "@/components/checklist/IndustryChecklistForm";
 import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
 import WaterBodyManager from "@/components/checklist/WaterBodyManager";
@@ -745,9 +751,16 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
           // through to a Handyman template with a console warn so
           // ops can see the mis-classification.
           const derived = deriveIndustryForJob(job);
-          const NEW_INDUSTRIES = new Set([
-            "hvac", "pest_control", "cleaning", "solar", "handyman",
-          ]);
+          // Phase D2 · Feb 2026 — derive the routable-industry set
+          // from the canonical list so a future addition doesn't
+          // require editing two files. Pool + Landscaping keep
+          // their own dispatch branches upstream, so they're
+          // filtered out here.
+          const NEW_INDUSTRIES = new Set(
+            CANONICAL_INDUSTRIES.filter(
+              (s) => s !== "pool" && s !== "landscaping",
+            ),
+          );
           if (NEW_INDUSTRIES.has(derived)) {
             return (
               <IndustryChecklistForm
