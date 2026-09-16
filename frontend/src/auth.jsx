@@ -43,6 +43,20 @@ export function AuthProvider({ children }) {
         if (fresh && fresh.id) {
           localStorage.setItem(USER_KEY, JSON.stringify(fresh));
           setUser(fresh);
+          // Phase D3 · Feb 2026 — hydrate the i18n locale from the
+          // authoritative user record so the user's choice follows
+          // them across browsers / devices. Wrapped in a lazy import
+          // so a broken i18n bundle never bounces the auth boot.
+          if (fresh.locale && ["en", "es", "fr"].includes(fresh.locale)) {
+            try {
+              const stored = localStorage.getItem("lang");
+              if (stored !== fresh.locale) {
+                localStorage.setItem("lang", fresh.locale);
+                const mod = await import("@/i18n");
+                await mod.default.changeLanguage(fresh.locale);
+              }
+            } catch { /* i18n hydration is best-effort */ }
+          }
         }
       } catch (e) {
         // Feb-2026 · Zombie-session hotfix — if /auth/me itself returned

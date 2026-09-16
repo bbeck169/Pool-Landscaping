@@ -37,6 +37,9 @@
 import React, { useMemo } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, MenuIcon, LogOut, Plus as PlusIcon } from "lucide-react";
+// Phase D3 · Feb 2026 — language selector lives in the topbar's
+// right cluster next to the Sign-out button on every layout width.
+import LanguageSelector from "@/components/i18n/LanguageSelector";
 import { ADMIN_NAV_V2, filterNavByIndustries } from "@/nav/adminNav";
 import { topNavForRole } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -382,6 +385,7 @@ export default function AdminTopBar() {
           data-testid="admin-topbar-tech-wrap"
         >
           <SettingsSprocket />
+          <LanguageSelector compact />
           <SignOutButton />
           <UniversalMenu variant="inline" />
         </div>
@@ -427,6 +431,7 @@ export default function AdminTopBar() {
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
               <SettingsSprocket />
+              <LanguageSelector compact />
               <SignOutButton />
               <UniversalMenu variant="inline" />
             </div>
@@ -446,6 +451,7 @@ export default function AdminTopBar() {
               <AddCustomerButton />
               <CreditsBudgetChip />
               <SettingsSprocket />
+              <LanguageSelector />
               <SignOutButton />
               <UniversalMenu variant="inline" />
             </div>

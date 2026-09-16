@@ -1,6 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
+// Phase D3 · Feb 2026 — i18n bootstrap runs BEFORE `<App />` mounts
+// so the first render already sees the resolved locale.
+import "@/i18n";
 import App from "@/App";
 // K37 · Top-level portal error boundary. Wraps `<App />` inside
 // `<StrictMode>` so it catches the pre-mount K13 impersonation

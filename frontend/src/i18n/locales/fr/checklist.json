@@ -1,0 +1,9 @@
+{
+  "industry_form_title": "Liste de contrôle par secteur",
+  "no_template_found": "Aucun élément de liste configuré pour ce secteur pour l'instant.",
+  "required_asterisk_tooltip": "Élément obligatoire",
+  "notes_placeholder": "Toute information utile pour le client ou le dispatcher…",
+  "save_and_close": "Enregistrer et fermer",
+  "discard_changes": "Ignorer les modifications",
+  "unsaved_warning": "Vous avez des modifications non enregistrées. Les ignorer ?"
+}

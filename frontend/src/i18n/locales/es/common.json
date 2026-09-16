@@ -1,0 +1,19 @@
+{
+  "save": "Guardar",
+  "cancel": "Cancelar",
+  "close": "Cerrar",
+  "confirm": "Confirmar",
+  "delete": "Eliminar",
+  "edit": "Editar",
+  "loading": "Cargando…",
+  "error_generic": "Algo salió mal. Inténtalo de nuevo.",
+  "success_saved": "Guardado",
+  "required_field": "Obligatorio",
+  "optional": "Opcional",
+  "industry": "Industria",
+  "notes": "Notas",
+  "checklist": "Lista de verificación",
+  "photos": "Fotos",
+  "chemistry_readings": "Lecturas químicas",
+  "sign_off": "Firmar"
+}

@@ -1,0 +1,19 @@
+{
+  "save": "Enregistrer",
+  "cancel": "Annuler",
+  "close": "Fermer",
+  "confirm": "Confirmer",
+  "delete": "Supprimer",
+  "edit": "Modifier",
+  "loading": "Chargement…",
+  "error_generic": "Une erreur s'est produite. Veuillez réessayer.",
+  "success_saved": "Enregistré",
+  "required_field": "Obligatoire",
+  "optional": "Facultatif",
+  "industry": "Secteur",
+  "notes": "Notes",
+  "checklist": "Liste de contrôle",
+  "photos": "Photos",
+  "chemistry_readings": "Analyses chimiques",
+  "sign_off": "Signature"
+}

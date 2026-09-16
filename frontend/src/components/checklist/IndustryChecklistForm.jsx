@@ -26,6 +26,7 @@
 // "one component, industry prop" contract without the risky
 // rename.
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
@@ -70,6 +71,10 @@ function mergeTemplateAndReport(templateItems, reportItems) {
 function GenericIndustryChecklistBody({
   industry, template, checklistItems, notes, locked, onChange,
 }) {
+  // Phase D3 · Feb 2026 — pull namespaces for the shell strings +
+  // industry display name. Row labels remain from the template
+  // (Phase D4 will translate those).
+  const { t } = useTranslation(["checklist", "industries", "common"]);
   const items = template?.items || [];
   const merged = useMemo(
     () => mergeTemplateAndReport(items, checklistItems),
@@ -97,17 +102,22 @@ function GenericIndustryChecklistBody({
       <div className="text-sm p-4 rounded-lg"
            style={{ color: colors.muted, background: colors.surfaceSecondary }}
            data-testid="industry-checklist-empty">
-        No checklist items configured for this industry yet.
+        {t("checklist:no_template_found")}
       </div>
     );
   }
+
+  const industryLabel = t(`industries:${industry}`, {
+    defaultValue: INDUSTRY_LABELS[industry] || t("common:checklist"),
+  });
 
   return (
     <div data-testid={`industry-checklist-${industry}`} className="space-y-4">
       <div>
         <div className="text-sm font-bold mb-2"
-              style={{ color: colors.onSurface }}>
-          {INDUSTRY_LABELS[industry] || "Checklist"}
+              style={{ color: colors.onSurface }}
+              data-testid={`industry-checklist-title-${industry}`}>
+          {industryLabel}
         </div>
         <div className="space-y-2">
           {merged.map((row, idx) => (
@@ -132,14 +142,15 @@ function GenericIndustryChecklistBody({
                   {row.label}
                   {row.required ? (
                     <span className="ml-1" style={{ color: "#DC2626" }}
-                          aria-label="required">*</span>
+                          aria-label={t("checklist:required_asterisk_tooltip")}
+                          title={t("checklist:required_asterisk_tooltip")}>*</span>
                   ) : null}
                 </span>
               </label>
               {row.checked && !locked ? (
                 <input
                   value={row.notes || ""}
-                  placeholder="Optional note"
+                  placeholder={t("common:optional")}
                   onChange={(e) => setNote(idx, e.target.value)}
                   className="w-full mt-2 px-2 py-1 rounded text-xs"
                   style={{ border: `1px solid ${colors.border}` }}
@@ -154,14 +165,14 @@ function GenericIndustryChecklistBody({
       <div>
         <div className="text-sm font-bold mb-2"
               style={{ color: colors.onSurface }}>
-          Notes
+          {t("common:notes")}
         </div>
         <textarea
           rows={3}
           disabled={!!locked}
           value={notes || ""}
           onChange={(e) => onChange && onChange({ notes: e.target.value })}
-          placeholder="Anything the customer or dispatcher should know…"
+          placeholder={t("checklist:notes_placeholder")}
           className="w-full px-2 py-1.5 rounded-md text-sm"
           style={{
             border: `1px solid ${colors.border}`,

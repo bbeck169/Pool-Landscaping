@@ -394,15 +394,28 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
 
     Priority chain (loosest → strictest wins on tie):
 
-    1. Explicit ``job.industry`` when present + valid.
-    2. Keyword match on ``service_type`` / ``job_type`` / ``title``.
-    3. Tenant primary industry (``tenant.industries[0]`` or
+    1. Explicit ``job.checklist_industry`` (Phase D3 · Feb 2026 —
+       front-end back-compat alias) when present + valid.
+    2. Explicit ``job.industry`` when present + valid.
+    3. Keyword match on ``service_type`` / ``job_type`` / ``title``.
+    4. Tenant primary industry (``tenant.industries[0]`` or
        ``tenant.industry``) when it maps to a known slug.
-    4. Fallback to ``"pool"`` — matches the historical checklist
+    5. Fallback to ``"pool"`` — matches the historical checklist
        default so existing Pool tenants keep working when nobody
        has classified their jobs yet.
+
+    An INVALID ``checklist_industry`` (non-canonical) does NOT error
+    — the function falls through to ``industry`` (and onwards) so
+    stale clients emitting a bad override key still land on a
+    sensible slug.
     """
     if isinstance(job, dict):
+        # Phase D3 · Feb 2026 — ``checklist_industry`` wins over
+        # ``industry`` when both are present + valid, matching the
+        # web deriver in ``frontend/src/lib/deriveIndustry.js``.
+        override = str(job.get("checklist_industry") or "").strip().lower()
+        if override in INDUSTRY_SLUGS:
+            return override
         explicit = str(job.get("industry") or "").strip().lower()
         if explicit in INDUSTRY_SLUGS:
             return explicit

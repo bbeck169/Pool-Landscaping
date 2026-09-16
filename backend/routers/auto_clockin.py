@@ -42,6 +42,11 @@ class SelfPatchBody(BaseModel):
     profile_photo_url: Optional[str] = None
     name: Optional[str] = None
     phone: Optional[str] = None
+    # Phase D3 · Feb 2026 — user's preferred UI locale. Accepted
+    # values are the three shipped locales (``en`` / ``es`` / ``fr``).
+    # Anything else is silently dropped so a stale mobile client
+    # can't poison the record.
+    locale: Optional[str] = None
 
 
 @router.patch("/users/me", operation_id="users.selfPatch")
@@ -80,6 +85,11 @@ async def patch_self(body: SelfPatchBody,
         updates["name"] = str(payload["name"])[:100]
     if "phone" in payload and payload["phone"] is not None:
         updates["phone"] = str(payload["phone"])[:32]
+    # Phase D3 · Feb 2026 — accept a whitelisted locale slug only.
+    if "locale" in payload and payload["locale"] is not None:
+        _loc = str(payload["locale"]).strip().lower()
+        if _loc in {"en", "es", "fr"}:
+            updates["locale"] = _loc
     if not updates:
         return {"ok": True, "no_op": True, "user": user}
 

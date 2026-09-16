@@ -1,0 +1,19 @@
+{
+  "save": "Save",
+  "cancel": "Cancel",
+  "close": "Close",
+  "confirm": "Confirm",
+  "delete": "Delete",
+  "edit": "Edit",
+  "loading": "Loading…",
+  "error_generic": "Something went wrong. Please try again.",
+  "success_saved": "Saved",
+  "required_field": "Required",
+  "optional": "Optional",
+  "industry": "Industry",
+  "notes": "Notes",
+  "checklist": "Checklist",
+  "photos": "Photos",
+  "chemistry_readings": "Chemistry Readings",
+  "sign_off": "Sign off"
+}

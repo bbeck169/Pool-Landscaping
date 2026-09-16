@@ -1,0 +1,9 @@
+{
+  "industry_form_title": "Lista de verificación por industria",
+  "no_template_found": "Aún no hay elementos configurados para esta industria.",
+  "required_asterisk_tooltip": "Elemento obligatorio",
+  "notes_placeholder": "Cualquier cosa que el cliente o el despachador deba saber…",
+  "save_and_close": "Guardar y cerrar",
+  "discard_changes": "Descartar cambios",
+  "unsaved_warning": "Tienes cambios sin guardar. ¿Descartarlos?"
+}

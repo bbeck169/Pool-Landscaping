@@ -1,0 +1,9 @@
+{
+  "industry_form_title": "Industry checklist",
+  "no_template_found": "No checklist items configured for this industry yet.",
+  "required_asterisk_tooltip": "Required item",
+  "notes_placeholder": "Anything the customer or dispatcher should know…",
+  "save_and_close": "Save and close",
+  "discard_changes": "Discard changes",
+  "unsaved_warning": "You have unsaved changes. Discard them?"
+}
