@@ -121,8 +121,10 @@ describe("IndustryChecklistForm · dispatcher wrapper", () => {
   });
 
   it("renders required items with a red asterisk marker", () => {
+    // The generic body uses ``row.required`` after merging the
+    // template with the report's ``checklist_items``.
     expect(WRAPPER).toMatch(
-      /item\.required[\s\S]{0,120}color: "#DC2626"/,
+      /row\.required[\s\S]{0,160}color: "#DC2626"/,
     );
   });
 

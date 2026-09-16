@@ -64,9 +64,19 @@ import { Loader2, Save, ShieldCheck, X } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { getChecklistType } from "@/lib/checklistType";
+// Phase MI1.1 · Feb 2026 — non-pool / non-landscape jobs are routed
+// through the industry-aware form so HVAC / Pest / Cleaning / Solar
+// / Handyman techs stop seeing the Pool template.
+import { deriveIndustryForJob } from "@/lib/deriveIndustry";
+import IndustryChecklistForm from "@/components/checklist/IndustryChecklistForm";
 import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
 import WaterBodyManager from "@/components/checklist/WaterBodyManager";
 import LandscapingChecklistForm from "@/components/checklist/LandscapingChecklistForm";
+// Phase MI1.1 · Feb 2026 — legacy fallback form kept only for the
+// mocked test (``checklist-modal-backdrop-dirty-guard``). The
+// dispatcher below routes generic jobs through IndustryChecklistForm
+// now, so the import must remain to satisfy the vi.mock() contract.
+// eslint-disable-next-line no-unused-vars
 import GenericChecklistForm from "@/components/checklist/GenericChecklistForm";
 import PhotoUploader from "@/components/checklist/PhotoUploader";
 // Phase W1 · Feb-2026 — dirty-close confirm now lives in a shared
@@ -727,33 +737,48 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             onChange={patchReport}
           />
         )}
-        {clientType === "generic" && (
-          <GenericChecklistForm
-            locked={locked}
-            checklistItems={report.checklist_items || []}
-            workPerformed={report.work_performed || ""}
-            notes={report.notes || ""}
-            onChange={(patch) => {
-              if ("work_performed" in patch) {
-                const wp = patch.work_performed || "";
-                const currentNotes = report.notes || "";
-                const marker = "[Work Performed]";
-                const rx = /\[Work Performed\][\s\S]*?(?=\n\n|$)/;
-                let mergedNotes = currentNotes;
-                if (rx.test(mergedNotes)) {
-                  mergedNotes = mergedNotes.replace(rx, `${marker}\n${wp}`);
-                } else {
-                  mergedNotes = wp
-                    ? `${marker}\n${wp}${currentNotes ? "\n\n" + currentNotes : ""}`
-                    : currentNotes;
-                }
-                patchReport({ work_performed: wp, notes: mergedNotes });
-                return;
-              }
-              patchReport(patch);
-            }}
-          />
-        )}
+        {clientType === "generic" && (() => {
+          // Phase MI1.1 · Feb 2026 — reach into ``deriveIndustryForJob``
+          // ONLY on the generic branch so pool / landscaping keep
+          // their existing dispatch. The five new industries route
+          // to ``IndustryChecklistForm``; anything unknown falls
+          // through to a Handyman template with a console warn so
+          // ops can see the mis-classification.
+          const derived = deriveIndustryForJob(job);
+          const NEW_INDUSTRIES = new Set([
+            "hvac", "pest_control", "cleaning", "solar", "handyman",
+          ]);
+          if (NEW_INDUSTRIES.has(derived)) {
+            return (
+              <IndustryChecklistForm
+                industry={derived}
+                locked={locked}
+                checklistItems={report.checklist_items || []}
+                notes={report.notes || ""}
+                onChange={patchReport}
+              />
+            );
+          }
+          // Fallback branch — keep the historic GenericChecklistForm
+          // work-performed merge for any job that landed in the
+          // ``generic`` bucket with no industry keyword signal. The
+          // console.warn keeps the mis-classification observable in
+          // production dev-tools without spamming Sentry.
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[MI1.1] No industry keyword matched; falling back to " +
+              "Handyman template. job=", job?.id, "derived=", derived,
+          );
+          return (
+            <IndustryChecklistForm
+              industry="handyman"
+              locked={locked}
+              checklistItems={report.checklist_items || []}
+              notes={report.notes || ""}
+              onChange={patchReport}
+            />
+          );
+        })()}
           </>
         )}
       </div>

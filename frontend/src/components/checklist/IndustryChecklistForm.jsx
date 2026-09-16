@@ -1,10 +1,18 @@
 // Phase MI1 · Feb 2026 — Multi-industry checklist renderer.
+// Phase MI1.1 · Feb 2026 — prop signature aligned with the
+// ``ChecklistModal`` call site so this drops in as a direct
+// replacement for the historic ``<GenericChecklistForm>`` for the
+// five new industries (hvac / pest_control / cleaning / solar /
+// handyman).
 //
-// Dispatches to the industry-specific form based on ``industry``:
+// Dispatches by ``industry``:
 //   * ``pool``  → the historical ``PoolChecklistForm`` (untouched).
 //   * anything else → a lightweight generic renderer that lists the
 //     resolved template items with a checkbox each, required items
-//     flagged with a red asterisk.
+//     flagged with a red asterisk. A free-form Notes textarea sits
+//     below the list — matches the ``GenericChecklistForm`` UX so
+//     techs don't lose the ability to leave a comment on a
+//     non-Pool visit.
 //
 // Design intent: Pool tenants get byte-identical UX vs pre-MI1.
 // Non-pool industries get a fit-for-purpose checkbox list right now;
@@ -33,27 +41,55 @@ export const INDUSTRY_LABELS = {
 };
 
 
-// Generic checklist renderer — used for every non-pool industry.
-function GenericChecklistForm({ industry, template, value, onChange }) {
-  const items = template?.items || [];
-  const checkedKeys = useMemo(() => {
-    const set = new Set();
-    (value || []).forEach((row) => {
-      if (row && row.done) set.add(String(row.key || row.label || ""));
-    });
-    return set;
-  }, [value]);
+// Fold the tenant-agnostic template items with the report's
+// persisted ``checklist_items`` so:
+//   * order + labels come from the template (admin-controlled)
+//   * ``checked`` + ``id`` + ``notes`` come from the report when
+//     already present (preserves in-flight state on re-render)
+function mergeTemplateAndReport(templateItems, reportItems) {
+  const byKey = new Map();
+  (reportItems || []).forEach((r) => {
+    const k = String(r.key || r.label || "").toLowerCase();
+    if (k) byKey.set(k, r);
+  });
+  return (templateItems || []).map((t, idx) => {
+    const k = String(t.key || t.label || "").toLowerCase();
+    const prev = byKey.get(k) || byKey.get(String(t.label || "").toLowerCase());
+    return {
+      id: prev?.id || t.key || `item-${idx}`,
+      key: t.key,
+      label: t.label,
+      required: !!t.required,
+      checked: !!prev?.checked,
+      notes: prev?.notes || "",
+    };
+  });
+}
 
-  const toggle = (item) => {
-    const key = item.key;
-    const already = checkedKeys.has(key);
-    const next = (value || []).filter(
-      (r) => (r?.key || r?.label) !== key && (r?.key || r?.label) !== item.label,
+
+function GenericIndustryChecklistBody({
+  industry, template, checklistItems, notes, locked, onChange,
+}) {
+  const items = template?.items || [];
+  const merged = useMemo(
+    () => mergeTemplateAndReport(items, checklistItems),
+    [items, checklistItems],
+  );
+
+  const toggle = (idx) => {
+    if (locked) return;
+    const next = merged.map(
+      (row, i) => (i === idx ? { ...row, checked: !row.checked } : row),
     );
-    if (!already) {
-      next.push({ key, label: item.label, done: true });
-    }
-    onChange && onChange(next);
+    onChange && onChange({ checklist_items: next });
+  };
+
+  const setNote = (idx, note) => {
+    if (locked) return;
+    const next = merged.map(
+      (row, i) => (i === idx ? { ...row, notes: note } : row),
+    );
+    onChange && onChange({ checklist_items: next });
   };
 
   if (!items.length) {
@@ -67,41 +103,92 @@ function GenericChecklistForm({ industry, template, value, onChange }) {
   }
 
   return (
-    <div data-testid={`industry-checklist-${industry}`} className="space-y-2">
-      {items.map((item) => {
-        const key = item.key;
-        const checked = checkedKeys.has(key);
-        return (
-          <label
-            key={key}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-slate-50"
-            style={{ border: `1px solid ${colors.border}` }}
-            data-testid={`industry-checklist-item-${key}`}
-          >
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => toggle(item)}
-              className="cursor-pointer"
-              data-testid={`industry-checklist-checkbox-${key}`}
-            />
-            <span className="text-sm" style={{ color: colors.onSurface }}>
-              {item.label}
-              {item.required ? (
-                <span className="ml-1" style={{ color: "#DC2626" }}
-                       aria-label="required">*</span>
+    <div data-testid={`industry-checklist-${industry}`} className="space-y-4">
+      <div>
+        <div className="text-sm font-bold mb-2"
+              style={{ color: colors.onSurface }}>
+          {INDUSTRY_LABELS[industry] || "Checklist"}
+        </div>
+        <div className="space-y-2">
+          {merged.map((row, idx) => (
+            <div
+              key={row.id}
+              className="p-2 rounded-md"
+              style={{
+                border: `1px solid ${row.checked ? "#059669" : colors.border}`,
+                background: row.checked ? "#D1FAE5" : colors.surface,
+              }}
+              data-testid={`industry-check-${row.key}`}
+            >
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={!!locked}
+                  checked={!!row.checked}
+                  onChange={() => toggle(idx)}
+                  data-testid={`industry-check-toggle-${row.key}`}
+                />
+                <span className="text-sm" style={{ color: colors.onSurface }}>
+                  {row.label}
+                  {row.required ? (
+                    <span className="ml-1" style={{ color: "#DC2626" }}
+                          aria-label="required">*</span>
+                  ) : null}
+                </span>
+              </label>
+              {row.checked && !locked ? (
+                <input
+                  value={row.notes || ""}
+                  placeholder="Optional note"
+                  onChange={(e) => setNote(idx, e.target.value)}
+                  className="w-full mt-2 px-2 py-1 rounded text-xs"
+                  style={{ border: `1px solid ${colors.border}` }}
+                  data-testid={`industry-check-note-${row.key}`}
+                />
               ) : null}
-            </span>
-          </label>
-        );
-      })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-sm font-bold mb-2"
+              style={{ color: colors.onSurface }}>
+          Notes
+        </div>
+        <textarea
+          rows={3}
+          disabled={!!locked}
+          value={notes || ""}
+          onChange={(e) => onChange && onChange({ notes: e.target.value })}
+          placeholder="Anything the customer or dispatcher should know…"
+          className="w-full px-2 py-1.5 rounded-md text-sm"
+          style={{
+            border: `1px solid ${colors.border}`,
+            background: locked ? colors.surfaceSecondary : colors.surface,
+            color: colors.onSurface,
+            resize: "vertical",
+          }}
+          data-testid={`industry-checklist-notes-${industry}`}
+        />
+      </div>
     </div>
   );
 }
 
 
 export default function IndustryChecklistForm({
-  industry = "pool", tenantId, value, onChange, poolProps,
+  industry = "pool",
+  tenantId,
+  // ChecklistModal-style props ---------------------------------
+  locked,
+  checklistItems,
+  notes,
+  onChange,
+  // Legacy MI1 props (kept for callers that render outside the
+  // report flow) ---------------------------------------------------
+  value,
+  poolProps,
 }) {
   // Hooks must run unconditionally per React rules. We fetch the
   // template even on the pool branch (the request short-circuits
@@ -140,12 +227,29 @@ export default function IndustryChecklistForm({
            data-testid="industry-checklist-loading">Loading…</div>
     );
   }
+
+  // Legacy caller shape → array of items via ``value``, patch-based
+  // ``onChange`` returning the array. Wrap so the generic renderer
+  // still works.
+  const effectiveItems =
+    checklistItems !== undefined ? checklistItems : (value || []);
+  const effectiveOnChange = (patch) => {
+    if (!onChange) return;
+    // Modal-style callers get the patch object verbatim; legacy
+    // callers get the checklist_items array unwrapped so their
+    // existing ``value`` state slot stays a bare array.
+    if (checklistItems !== undefined) onChange(patch);
+    else onChange(patch?.checklist_items ?? []);
+  };
+
   return (
-    <GenericChecklistForm
+    <GenericIndustryChecklistBody
       industry={industry}
       template={template}
-      value={value}
-      onChange={onChange}
+      checklistItems={effectiveItems}
+      notes={notes}
+      locked={locked}
+      onChange={effectiveOnChange}
     />
   );
 }
