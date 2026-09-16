@@ -48,6 +48,8 @@ import PhotoUploader from "@/src/components/checklist/PhotoUploader";
 import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
+import IndustryChecklistForm from "@/src/components/checklist/IndustryChecklistForm";
+import { deriveIndustryForJob } from "@/src/lib/deriveIndustry";
 // Phase M5 — VisitRecapModal removed from this screen; recap prompt skipped.
 import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
@@ -1003,36 +1005,32 @@ export default function JobChecklistScreen() {
               onChange={patchReport}
             />
           )}
-          {clientType === "generic" && (
-            <GenericChecklistForm
-              locked={locked}
-              checklistItems={report.checklist_items || []}
-              workPerformed={report.work_performed || ""}
-              notes={report.notes || ""}
-              onChange={(patch) => {
-                // The service-report PATCH shape only accepts notes / readings /
-                // chemicals / checklist_items — fold `work_performed` into a
-                // marker inside `notes` so we don't invent a new field.
-                if ("work_performed" in patch) {
-                  const wp = patch.work_performed || "";
-                  const currentNotes = report.notes || "";
-                  const marker = "[Work Performed]";
-                  let mergedNotes = currentNotes;
-                  const rx = new RegExp(`${marker.replace(/[\[\]]/g, "\\$&")}[\\s\\S]*?(?=\\n\\n|$)`, "");
-                  if (rx.test(mergedNotes)) {
-                    mergedNotes = mergedNotes.replace(rx, `${marker}\n${wp}`);
-                  } else {
-                    mergedNotes = wp
-                      ? `${marker}\n${wp}${currentNotes ? "\n\n" + currentNotes : ""}`
-                      : currentNotes;
-                  }
-                  patchReport({ work_performed: wp, notes: mergedNotes });
-                  return;
-                }
-                patchReport(patch);
-              }}
-            />
-          )}
+          {/* Phase MI1.1-mobile — Multi-industry dispatcher for the generic branch. */}
+          {clientType === "generic" && (() => {
+            const derived = deriveIndustryForJob(job);
+            const NEW_INDUSTRIES = new Set(["hvac", "pest_control", "cleaning", "solar", "handyman"]);
+            if (NEW_INDUSTRIES.has(derived)) {
+              return (
+                <IndustryChecklistForm
+                  industry={derived}
+                  locked={locked}
+                  checklistItems={report.checklist_items || []}
+                  notes={report.notes || ""}
+                  onChange={patchReport}
+                />
+              );
+            }
+            console.warn("[MI1.1-mobile] No industry keyword matched; falling back to Handyman template. job=", job?.id, "derived=", derived);
+            return (
+              <IndustryChecklistForm
+                industry="handyman"
+                locked={locked}
+                checklistItems={report.checklist_items || []}
+                notes={report.notes || ""}
+                onChange={patchReport}
+              />
+            );
+          })()}
         </View>
 
         {/* Phase M4 — Internal Photos (very bottom of scrollable content).
