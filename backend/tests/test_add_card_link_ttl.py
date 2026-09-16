@@ -1,6 +1,6 @@
 """Feb-2026 · Add-card magic-link TTL regression guard.
 
-Locks in the 24-hour default TTL for the ``add_card`` magic-link
+Locks in the 7-day default TTL for the ``add_card`` magic-link
 purpose. Independent from other magic-link purposes (login,
 invoice-pay, quote-approve) which have their own TTLs and are not
 touched.
@@ -21,27 +21,28 @@ from services.add_card_links import (
 _TOL_SECONDS = 5
 
 
-def test_add_card_ttl_constant_is_24_hours():
+def test_add_card_ttl_constant_is_7_days():
     """The single source of truth for the add-card link duration is
     the module-level ``ADD_CARD_LINK_TTL_SECONDS`` constant, which
-    resolves to 86400 (24 hours) unless
+    resolves to 604800 (7 days) unless
     ``PORTAL_ADD_CARD_LINK_TTL_HOURS`` overrides it."""
     override = os.environ.get("PORTAL_ADD_CARD_LINK_TTL_HOURS")
-    expected_hours = int(override) if (override or "").isdigit() else 24
+    expected_hours = int(override) if (override or "").isdigit() else 24 * 7
     assert ADD_CARD_LINK_TTL_SECONDS == expected_hours * 3600
 
 
-def test_encoded_token_exp_minus_iat_equals_24h():
+def test_encoded_token_exp_minus_iat_equals_7d():
     """Concrete claim-level assertion — mint a token and confirm
-    ``exp - iat`` is 86400 ± tolerance. This is the invariant the
-    portal add-card page relies on to keep links usable overnight."""
+    ``exp - iat`` is 604800 ± tolerance. This is the invariant the
+    portal add-card page relies on to keep links usable across a
+    typical customer's inbox check cadence."""
     tok = encode_add_card_token("cust_ttl_test", "tnt_ttl_test")
     payload = jwt.decode(tok, JWT_SECRET, algorithms=[JWT_ALGO])
     assert "iat" in payload, f"token missing iat claim: {payload}"
     assert "exp" in payload
     delta = int(payload["exp"]) - int(payload["iat"])
-    assert abs(delta - 86400) <= _TOL_SECONDS, (
-        f"expected 24h TTL (86400s), got {delta}s"
+    assert abs(delta - 604800) <= _TOL_SECONDS, (
+        f"expected 7d TTL (604800s), got {delta}s"
     )
 
 
@@ -55,13 +56,13 @@ def test_freshly_minted_token_verifies_immediately():
     assert payload["sub"]        == "add_card"
 
 
-def test_token_still_valid_23h59m_before_expiry():
-    """Simulate ``now = iat + 23h59m`` by minting a token whose
-    ``exp - iat = 24h`` and confirming decode succeeds at any point
-    before that window closes. Since the natural TTL is 24h, a
-    fresh token trivially satisfies the "23h59m" case — we assert
-    the decode path with a token whose expiry is close to but
-    inside the window (via an explicit ``ttl_seconds`` override
+def test_token_still_valid_before_expiry():
+    """Simulate ``now`` well inside the token's validity window by
+    minting a token whose ``exp - iat = 7d`` and confirming decode
+    succeeds at any point before that window closes. Since the
+    natural TTL is 7d, a fresh token trivially satisfies the case —
+    we assert the decode path with a token whose expiry is close to
+    but inside the window (via an explicit ``ttl_seconds`` override
     that puts exp 30s in the future)."""
     tok = encode_add_card_token(
         "cust_soon", "tnt_soon", ttl_seconds=30,

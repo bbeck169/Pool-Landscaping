@@ -2237,3 +2237,20 @@
 - **Files NOT modified**:
   - `/app/mobile/src/components/checklist/VisitRecapModal.tsx` (shared file preserved)
 
+
+## Iteration 101 — Phase MI1.1-mobile: Multi-industry checklist dispatcher parity
+- **Commit**: e4e2ca140
+- **Date**: 2026-09-16
+- **Changes**:
+  - Created `mobile/src/lib/deriveIndustry.ts` — client-side industry deriver with keyword-ordered resolution (solar>clean) matching backend + web
+  - Created `mobile/src/components/checklist/IndustryChecklistForm.tsx` — RN renderer (fetches template, checkbox rows, required asterisks, notes)
+  - Updated `mobile/app/job/[id]/checklist.tsx` — generic branch now routes through deriveIndustryForJob → IndustryChecklistForm for 5 new industries, handyman fallback with [MI1.1-mobile] console.warn
+  - Pool and Landscaping branches: BYTE-IDENTICAL (not in diff)
+  - 19 Jest tests pass (mi1-industry-dispatcher.test.ts)
+- **Files created**:
+  - `/app/mobile/src/lib/deriveIndustry.ts` (66 lines)
+  - `/app/mobile/src/components/checklist/IndustryChecklistForm.tsx` (188 lines)
+  - `/app/mobile/__tests__/mi1-industry-dispatcher.test.ts` (136 lines)
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx` (generic branch replaced, +2 imports, net -4 lines)
+
