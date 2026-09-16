@@ -405,6 +405,12 @@ export default function AdminTopBar() {
               <MobileMenu visible={visible} fixedItems={fixedItems} />
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Phase U1 · Feb-2026 — "+ Add Job" quick-action.
+                  Sits DIRECTLY to the LEFT of "+ Add Customer" per
+                  spec; visually identical (same class list, same
+                  gradient) and gated on the same admin/super_admin
+                  role set as its neighbour. */}
+              <AddJobButton />
               <AddCustomerButton />
               <CreditsBudgetChip />
               {/* Feb-2026 · Mobile Nav Duplicate Fix — the legacy
@@ -434,6 +440,9 @@ export default function AdminTopBar() {
               ? visible.map((g) => <CategoryDropdown key={g.key} group={g} />)
               : fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
             <div className="ml-auto shrink-0 flex items-center gap-2">
+              {/* Phase U1 · Feb-2026 — mirror mount on the wide
+                  branch. Order + styling match the narrow branch. */}
+              <AddJobButton />
               <AddCustomerButton />
               <CreditsBudgetChip />
               <SettingsSprocket />
@@ -464,6 +473,31 @@ function AddCustomerButton() {
       aria-label="Add customer"
     >
       <PlusIcon size={14} /> Add Customer
+    </button>
+  );
+}
+
+
+// Phase U1 · Feb-2026 — "+ Add Job" quick-action, admin+ only.
+// Mirrors AddCustomerButton verbatim (same class list, same
+// gradient, same role gate) except for label + destination.
+// The two buttons must remain visually indistinguishable — if
+// you edit the class list on one, mirror the edit on the other.
+function AddJobButton() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const role = auth?.user?.role;
+  if (role !== "admin" && role !== "super_admin") return null;
+  return (
+    <button
+      type="button"
+      onClick={() => navigate("/jobs/new")}
+      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold text-white shadow-sm hover:brightness-95"
+      style={{ background: gradients.navyToGreen.css }}
+      data-testid="admin-topbar-add-job"
+      aria-label="Add job"
+    >
+      <PlusIcon size={14} /> Add Job
     </button>
   );
 }
