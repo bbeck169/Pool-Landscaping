@@ -39,9 +39,7 @@ import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import { Header } from "@/src/components/widgets";
 // Feb-2026 · Phase 1 offline foundation — cache customer on the
 // close-out lookup + surface the offline pill in the header.
-import {
-  writeThroughCustomer, readCachedCustomer,
-} from "@/src/lib/offline/apiCache";
+// Phase M5 — offline apiCache imports removed (recap customer-fetch eliminated).
 import OfflineBadge from "@/src/components/OfflineBadge";
 import { getChecklistType, ChecklistType } from "@/src/utils/checklistType";
 import ServiceReportMediaUploader from "@/src/components/checklist/ServiceReportMediaUploader";
@@ -50,7 +48,7 @@ import PhotoUploader from "@/src/components/checklist/PhotoUploader";
 import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
-import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
+// Phase M5 — VisitRecapModal removed from this screen; recap prompt skipped.
 import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
@@ -135,9 +133,6 @@ export default function JobChecklistScreen() {
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showOutlierWarning, setShowOutlierWarning] = useState(false);
   const [outlierNames, setOutlierNames] = useState<string[]>([]);
-  // Phase 39 · Step 2 — Visit Recap modal state, mirrors web.
-  const [recapOpen, setRecapOpen] = useState(false);
-  const [recapCustomer, setRecapCustomer] = useState<any>(null);
 
   // Phase C1 · Dirty-close guard state.
   const [dirtyCloseOpen, setDirtyCloseOpen] = useState(false);
@@ -648,7 +643,7 @@ export default function JobChecklistScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  usePreventRemove(isDirtyForGuard && !recapOpen, (e) => {
+  usePreventRemove(isDirtyForGuard, (e) => {
     // Store the prevented action so we can replay it after save/discard
     preventedNavRef.current = e;
     setDirtyCloseOpen(true);
@@ -778,30 +773,15 @@ export default function JobChecklistScreen() {
         Alert.alert("Job closed", `Workstream event failed: ${e?.message || "unknown"}`);
       }
 
-      // 4) Navigate back — prompt visit recap first.
-      try {
-        if (job?.customer_id) {
-          const cust: any = await api.get(`/customers/${job.customer_id}`);
-          writeThroughCustomer(cust).catch(() => {});
-          setRecapCustomer({
-            id: cust?.id, name: cust?.name,
-            email: cust?.email, phone: cust?.phone,
-            alert_phone: cust?.alert_phone,
-          });
-        } else {
-          setRecapCustomer({ name: formatCustomerName(job) });
-        }
-      } catch {
-        const cached = job?.customer_id
-          ? await readCachedCustomer(job.customer_id).catch(() => null)
-          : null;
-        setRecapCustomer(cached ? {
-          id: cached.id, name: cached.name,
-          email: cached.email, phone: cached.phone,
-          alert_phone: cached.alert_phone,
-        } : { name: formatCustomerName(job) });
-      }
-      setRecapOpen(true);
+      // 4) Navigate to schedule — recap dialog removed (Phase M5).
+      //    Clear dirty state so the navigation guard doesn't block.
+      dirtyRef.current = false;
+      setIsDirtyForGuard(false);
+      const invId = submitted?.invoice_id
+        ? ` · Invoice #${String(submitted.invoice_id).slice(0, 8)}` : "";
+      Alert.alert("Job closed", `Report submitted${invId}.`, [
+        { text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") },
+      ]);
     } catch (e: any) {
       const isApiErr = e instanceof ApiError;
       const rawDetail: any = isApiErr ? e.detail : null;
@@ -1196,20 +1176,6 @@ export default function JobChecklistScreen() {
           </View>
         </View>
       </Modal>
-
-      <VisitRecapModal
-        visible={recapOpen && !!report?.id}
-        serviceReportId={report?.id || null}
-        customer={recapCustomer}
-        onClose={() => {
-          setRecapOpen(false);
-          const invId = report?.invoice_id
-            ? ` · Invoice #${String(report.invoice_id).slice(0, 8)}` : "";
-          Alert.alert("Job closed", `Report submitted${invId}.`, [
-            { text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") },
-          ]);
-        }}
-      />
 
       {/* Phase C1 · Dirty-close guard confirm dialog */}
       <Modal visible={dirtyCloseOpen} transparent animationType="fade" testID="checklist-dirty-close-dialog">
