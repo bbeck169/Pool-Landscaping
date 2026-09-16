@@ -150,13 +150,49 @@ _LABEL_SYNONYMS: Dict[str, List[str]] = {
 # Anti-match tokens.  If the label contains ANY of these tokens for a
 # given canonical field, we refuse the fuzzy branch.  Prevents things
 # like ``"Phone Address Book"`` from hijacking ``address``.
+#
+# Phase L2.5 · Feb-2026 — additive guards.  Real tenant forms author
+# BOTH a "Service Address" field AND a "Description of Services
+# Needed" field.  Before this rule the "service" token in the
+# ``service_interest`` synonym list (see ``_LABEL_SYNONYMS`` above)
+# fuzzy-contained the label ``"service address"``, silently stomping
+# the address value into ``service_interest``.  The reverse case is
+# less common but symmetric — guard both directions so a mis-typed
+# description label can't stomp on ``address``.  The table is
+# intentionally extensible — new canonical → anti-labels rows may be
+# added without touching the resolver logic.
 _LABEL_ANTI_MATCH: Dict[str, List[str]] = {
-    "address": ["book", "phone", "email"],
+    "address": [
+        "book", "phone", "email",
+        # Phase L2.5 · reverse guard — descriptions of the requested
+        # service must never hijack the physical service address.
+        "service interest", "service type",
+        "description of services needed", "description of service",
+        "services needed", "describe your project",
+        "what service do you need",
+    ],
     "phone": ["address", "email"],
     "email": ["address", "phone"],
     "name":  ["company", "business", "first", "last", "product",
                 "service", "user"],
-    "notes": [],
+    "notes": [
+        # Phase L2.5 · protects ``notes`` / ``message`` from being
+        # populated with the physical service address when a form
+        # ships BOTH "Service Address" and a description field.
+        "service address", "property address", "street address",
+        "site address", "job address", "install address",
+        "home address", "mailing address",
+    ],
+    # Phase L2.5 · Feb-2026 — the classic L2.5 bug: a label of
+    # "Service Address" fuzzy-matched ``service_interest`` because
+    # the synonym list contains the bare token ``"service"``.  Anti-
+    # match any *address* label so the address field wins the label
+    # race unambiguously.
+    "service_interest": [
+        "service address", "property address", "street address",
+        "site address", "job address", "install address",
+        "home address", "mailing address",
+    ],
 }
 
 
@@ -384,6 +420,17 @@ def compose_name(vals: Dict[str, Any]) -> Optional[str]:
 def extract_contact_fields(vals: Optional[Dict[str, Any]]) -> Dict[str, Optional[str]]:
     """Return the full extracted contact record for a form submission.
 
+    .. deprecated:: Phase L2.5 · Feb-2026
+       Live intake handlers should call
+       :func:`extract_contact_fields_with_schema` instead so
+       auto-generated field ids (``field_9`` / ``field_Service
+       Address_5``) still resolve via label matching.  This bare
+       helper remains as the pre-L2 fallback used internally by the
+       schema-aware variant and is still called by historical
+       one-shot backfill migrations (``task_p19_backfill_*``,
+       ``leads_backfill_from_form_submissions_v1``).  New call-sites
+       must not add it back.
+
     Keys are stable and safe to spread into either a ``leads``
     insert or an ``_upsert_lead_from_submission`` call — every
     downstream consumer picks the subset it needs.
@@ -422,6 +469,13 @@ def extract_contact_fields(vals: Optional[Dict[str, Any]]) -> Dict[str, Optional
 def lead_row_from_form_values(*, tid: str, vals: Dict[str, Any],
                                  source_label: str) -> Dict[str, Any]:
     """Build a ``db.leads`` insert doc from ``vals``.
+
+    .. deprecated:: Phase L2.5 · Feb-2026
+       Live handlers should call
+       :func:`lead_row_from_form_values_with_schema` so label-
+       resolution actually fires against the form's ``fields``
+       array.  Retained for the historical backfill migrations
+       under ``backend/migrations/``.
 
     This is the public-form path's helper (``marketing.py``).
     ``routers/marketing_forms.py`` uses ``extract_contact_fields``

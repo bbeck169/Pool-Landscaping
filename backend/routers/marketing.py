@@ -157,8 +157,18 @@ async def submit_public_form(slug: str, body: dict, request: Request,
         # the modern widget path (``routers/marketing_forms.py:501``).
         # Raw submissions are still written to ``db.form_submissions``
         # above so nothing is truly lost.
-        from services.lead_extraction import extract_contact_fields
-        _extracted = extract_contact_fields(vals)
+        # Phase L2.5 · Feb-2026 — use the schema-aware extractor so
+        # forms whose contact fields carry auto-generated ids
+        # (``field_9`` / ``field_Service Address_5``) still resolve
+        # to the canonical keys via label matching.  Falls back to
+        # the pre-L2 behaviour when the form doc has no ``fields``
+        # array (legacy).
+        from services.lead_extraction import (
+            extract_contact_fields_with_schema,
+            lead_row_from_form_values_with_schema,
+        )
+        _schema_fields = form.get("fields") or []
+        _extracted = extract_contact_fields_with_schema(vals, _schema_fields)
         if not (_extracted.get("email") or _extracted.get("phone")):
             logger.info(
                 f"[k53.1] Path A guard-skip · tenant={tid} form={form.get('id')}"
@@ -167,9 +177,10 @@ async def submit_public_form(slug: str, body: dict, request: Request,
             )
             return {"ok": True, "redirect_url": form.get("redirect_url"),
                     "lead_created": False, "reason": "no_contact_captured"}
-        lead = _lead_row_from_form_values(
+        lead = lead_row_from_form_values_with_schema(
             tid=tid, vals=vals,
             source_label=form.get("name") or "Web Form",
+            schema_fields=_schema_fields,
         )
         lead["submission_id"] = sub["id"]
         await db.leads.insert_one(lead)
@@ -224,8 +235,16 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request,
     # ``"Website Visitor"`` placeholders cannot originate from
     # either Path A endpoint.  Raw submission remains persisted
     # above so nothing is truly lost.
-    from services.lead_extraction import extract_contact_fields
-    _extracted = extract_contact_fields(vals)
+    # Phase L2.5 · Feb-2026 — same wire-in for the legacy submit
+    # endpoint (``/api/marketing/forms/{fid}/submit``).  Uses the
+    # schema-aware extractor + lead-row builder so auto-generated
+    # field ids resolve to canonical contact keys via label match.
+    from services.lead_extraction import (
+        extract_contact_fields_with_schema,
+        lead_row_from_form_values_with_schema,
+    )
+    _schema_fields = form.get("fields") or []
+    _extracted = extract_contact_fields_with_schema(vals, _schema_fields)
     if not (_extracted.get("email") or _extracted.get("phone")):
         logger.info(
             f"[k53.1] Path A guard-skip · tenant={tid} form={fid}"
@@ -233,9 +252,10 @@ async def submit_form(fid: str, body: FormSubmitIn, request: Request,
         )
         return {"ok": True, "lead_created": False,
                 "reason": "no_contact_captured"}
-    lead = _lead_row_from_form_values(
+    lead = lead_row_from_form_values_with_schema(
         tid=tid, vals=vals,
         source_label=form.get("name", "Web Form"),
+        schema_fields=_schema_fields,
     )
     lead["submission_id"] = sub["id"]
     await db.leads.insert_one(lead)

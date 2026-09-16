@@ -1,8 +1,12 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Save, Check } from "lucide-react";
+import { toast } from "sonner";
 
 import PoolChecklistForm from "./PoolChecklistForm";
 import PhotoUploader from "./PhotoUploader";
+// Phase W1 · Feb-2026 — shared three-button confirm dialog. Mirrors
+// the C1 / C1.1 exit-flow guard already used by `<ChecklistModal>`.
+import DirtyCloseConfirm from "./DirtyCloseConfirm";
 
 /**
  * Phase 56.6 — Pool Job Wizard shell.
@@ -60,6 +64,21 @@ export default function PoolChecklistWizard({
   template = null,
   canEditServiceType = false,
   onReclassify = null,
+  // Phase W1 · Feb-2026 — dirty-close guard mirror. ``isDirty`` is a
+  // getter (`() => dirtyRef.current`) so the wizard reads the LATEST
+  // parent-owned dirty signal without re-rendering on every edit.
+  // ``flushSave`` is the parent's existing autosave-flush; the shared
+  // confirm's "Save & close" primary path awaits it before dismissing.
+  // Both are optional so pre-W1 embedders (older tests, legacy call
+  // sites) keep working — Back on step 1 falls back to disabled and
+  // Close-Job falls back to firing ``onCloseJob`` directly.
+  isDirty = null,
+  flushSave = null,
+  // Phase W1 · Feb-2026 — Discard-changes reset. When wired, the
+  // wizard's Discard handler flips the parent-owned dirty flag
+  // BEFORE firing the exit intent so the parent's own C1 backdrop
+  // guard doesn't pop a duplicate confirm on the same click.
+  clearDirty = null,
 }) {
   // `report.wizard_step` is the persistent cursor. Falls back to step 1
   // when unset. Clamp between 1 and 6 for safety.
@@ -77,6 +96,119 @@ export default function PoolChecklistWizard({
 
   const goNext = useCallback(() => goTo(step + 1), [step, goTo]);
   const goBack = useCallback(() => goTo(step - 1), [step, goTo]);
+
+  // ─── Phase W1 · Feb-2026 · dirty-close guard mirror ─────────────
+  // Local UI state for the shared confirm dialog. The wizard is a
+  // pure child — the actual ``dirtyRef`` / ``flushSave`` live in the
+  // parent (`<ChecklistModal>`) and are threaded in as props. The
+  // wizard only owns the confirm-open + in-flight-save flags because
+  // those are UI-only.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmIntent, setConfirmIntent] = useState(null); // "back" | "close-job"
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Snapshot whether the parent's dirty getter is truthy. Guarded so
+  // callers that forget to pass the prop (older tests) fall back to
+  // "not dirty" — matches pre-W1 behaviour exactly.
+  const _dirty = useCallback(() => {
+    if (typeof isDirty !== "function") return false;
+    try { return !!isDirty(); } catch { return false; }
+  }, [isDirty]);
+
+  // Resolve what a given intent should ultimately do once the tech
+  // has confirmed / discarded / a clean form was detected.
+  const _fireIntent = useCallback((intent) => {
+    if (intent === "back") {
+      // Exit-from-step-1 lands on the parent's onClose handler
+      // (mounted as ``onSaveExit``).
+      onSaveExit?.();
+    } else if (intent === "close-job") {
+      onCloseJob?.();
+    }
+  }, [onSaveExit, onCloseJob]);
+
+  const attemptClose = useCallback((intent) => {
+    if (intent === "next") {
+      // Forward action — no data-loss risk. Never gate on dirty.
+      goNext();
+      return;
+    }
+    if (intent === "back") {
+      // Intra-wizard Back walks the step index down and NEVER
+      // triggers the confirm — techs expect step-to-step Back to be
+      // immediate. Only Back on step 1 (which would EXIT the wizard)
+      // gates on dirty.
+      if (step > 1) {
+        goBack();
+        return;
+      }
+      // step === 1 — leaving the wizard entirely.
+      if (_dirty()) {
+        setConfirmIntent("back");
+        setConfirmOpen(true);
+      } else {
+        _fireIntent("back");
+      }
+      return;
+    }
+    if (intent === "close-job") {
+      // Same C1 semantics: clean form closes silently (delegates to
+      // the parent's submit path); dirty form pops the confirm.
+      if (_dirty()) {
+        setConfirmIntent("close-job");
+        setConfirmOpen(true);
+      } else {
+        _fireIntent("close-job");
+      }
+      return;
+    }
+  }, [step, goNext, goBack, _dirty, _fireIntent]);
+
+  // Save & close primary handler for the shared confirm. Mirrors
+  // ChecklistModal's own ``saveAndClose``:
+  //   * flushSave succeeded (isDirty flipped false) → close via intent
+  //   * flushSave failed → truthful toast, keep wizard open, dirty preserved
+  const handleSaveAndClose = useCallback(async () => {
+    if (typeof flushSave !== "function") {
+      // No flusher supplied → treat as instant-save (no-op) and close.
+      setConfirmOpen(false);
+      _fireIntent(confirmIntent);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await flushSave();
+    } finally {
+      setIsSaving(false);
+    }
+    if (!_dirty()) {
+      setConfirmOpen(false);
+      _fireIntent(confirmIntent);
+    } else {
+      toast.error(
+        "Couldn't save your changes — please check your connection and try again.",
+      );
+    }
+  }, [flushSave, confirmIntent, _dirty, _fireIntent]);
+
+  const handleDiscard = useCallback(() => {
+    // Discard clears the parent-owned dirty flag BEFORE firing the
+    // exit intent so a stray autosave-in-flight can't reopen the
+    // state, and (critically) the parent's C1 backdrop-tap guard
+    // doesn't pop a duplicate confirm on the same click. When the
+    // parent didn't supply ``clearDirty`` we fall back to firing
+    // the intent directly — matches pre-W1 behaviour and keeps
+    // legacy tests / call-sites working.
+    setConfirmOpen(false);
+    if (typeof clearDirty === "function") {
+      try { clearDirty(); } catch { /* non-blocking */ }
+    }
+    _fireIntent(confirmIntent);
+  }, [confirmIntent, clearDirty, _fireIntent]);
+
+  const handleKeepEditing = useCallback(() => {
+    setConfirmOpen(false);
+  }, []);
 
   // Phase 56.6 bugfix — step gating rules (RELAXED from the initial
   // ship). Autosave means data isn't lost even when incomplete, so the
@@ -117,7 +249,14 @@ export default function PoolChecklistWizard({
   const isLast = step === 6;
 
   return (
-    <div className="flex flex-col" data-testid="pool-checklist-wizard">
+    <div
+      className="flex flex-col"
+      data-testid="pool-checklist-wizard"
+      // Phase W1 · Feb-2026 — anchor the confirm dialog overlay so
+      // its own backdrop can't dismiss the surrounding checklist
+      // modal.
+      style={{ position: "relative" }}
+    >
       {/* Progress bar */}
       <div
         className="flex items-center gap-2 px-1 py-3 sticky top-0 z-10"
@@ -242,14 +381,13 @@ export default function PoolChecklistWizard({
         <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={goBack}
-          disabled={step === 1}
+          onClick={() => attemptClose("back")}
           className="inline-flex items-center gap-1 text-sm font-semibold px-3 py-1.5 rounded-md"
           style={{
             background: "transparent",
-            border: `1px solid ${step === 1 ? c.disabledBg : c.border}`,
-            color: step === 1 ? c.disabledFg : c.onSurface,
-            cursor: step === 1 ? "not-allowed" : "pointer",
+            border: `1px solid ${c.border}`,
+            color: c.onSurface,
+            cursor: "pointer",
           }}
           data-testid="wizard-back"
         >
@@ -259,7 +397,7 @@ export default function PoolChecklistWizard({
         {!isLast ? (
           <button
             type="button"
-            onClick={goNext}
+            onClick={() => attemptClose("next")}
             disabled={!stepValid}
             className="inline-flex items-center gap-1 text-sm font-bold px-4 py-1.5 rounded-md"
             style={{
@@ -284,7 +422,7 @@ export default function PoolChecklistWizard({
                 goTo(1);
                 return;
               }
-              onCloseJob?.();
+              attemptClose("close-job");
             }}
             disabled={locked || submitting}
             className="inline-flex items-center gap-1 text-sm font-bold px-4 py-1.5 rounded-md"
@@ -305,6 +443,25 @@ export default function PoolChecklistWizard({
         )}
         </div>
       </div>
+
+      {/* Phase W1 · Feb-2026 — shared dirty-close confirm. Rendered
+          absolutely inside the wizard root so its backdrop tap only
+          dismisses the confirm (never the surrounding checklist
+          modal). Testids are wizard-scoped and NEVER collide with
+          the C1 / C1.1 checklist-scoped ones. */}
+      <DirtyCloseConfirm
+        open={confirmOpen}
+        isSaving={isSaving}
+        onKeepEditing={handleKeepEditing}
+        onDiscard={handleDiscard}
+        onSaveAndClose={handleSaveAndClose}
+        backdropTestId="wizard-discard-confirm-backdrop"
+        bodyTestId="wizard-discard-confirm"
+        keepEditingTestId="wizard-discard-keep-editing"
+        discardTestId="wizard-discard-confirm-btn"
+        saveTestId="wizard-save-and-close"
+        hintId="wizard-discard-hint"
+      />
     </div>
   );
 }

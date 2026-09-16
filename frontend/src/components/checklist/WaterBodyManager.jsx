@@ -80,6 +80,12 @@ export default function WaterBodyManager({
   template,
   canEditServiceType,
   onReclassify,
+  // Phase W1 · Feb-2026 — forwarded to <PoolChecklistWizard> so
+  // its Back-from-step-1 + Close-Job exit paths can gate on the
+  // modal-owned ``dirtyRef`` via the shared confirm dialog.
+  isDirty,
+  flushSave,
+  clearDirty,
 }) {
   const bodies = useMemo(() => _materialize(report), [report]);
   const primary = bodies[0];
@@ -165,6 +171,9 @@ export default function WaterBodyManager({
         template={template}
         canEditServiceType={canEditServiceType}
         onReclassify={onReclassify}
+        isDirty={isDirty}
+        flushSave={flushSave}
+        clearDirty={clearDirty}
       />
 
       {/* Extras — accordion cards */}

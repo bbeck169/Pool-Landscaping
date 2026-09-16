@@ -483,8 +483,20 @@ async def submit_widget_form(fid: str, body: FormSubmit,
 
     # Contact extraction from submitted answers — shared with the
     # legacy public-form path via ``services/lead_extraction``.
-    from services.lead_extraction import extract_contact_fields
-    _extracted = extract_contact_fields(payload)
+    #
+    # Phase L2.5 · Feb-2026 — schema-aware wire-in.  Modern widget
+    # forms author fields with auto-generated ids (``field_9`` /
+    # ``field_Service Address_5``); the pre-L2 helper only matches on
+    # ``id`` / ``name`` and silently drops those values.  The
+    # ``_with_schema`` variant runs the pre-L2 key path first (so
+    # exact key hits still win) then falls back to label matching
+    # against the form's ``fields`` array.  Anti-match rules in
+    # ``lead_extraction._LABEL_ANTI_MATCH`` prevent a "Service
+    # Address" label from stomping ``service_interest`` and vice
+    # versa.
+    from services.lead_extraction import extract_contact_fields_with_schema
+    _schema_fields = form.get("fields") or []
+    _extracted = extract_contact_fields_with_schema(payload, _schema_fields)
     name = _extracted["name"]
     email = _extracted["email"]
     phone = _extracted["phone"]

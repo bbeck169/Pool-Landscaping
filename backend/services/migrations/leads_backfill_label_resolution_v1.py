@@ -76,7 +76,17 @@ async def _load_form_schema(db, form_id: Optional[str],
     the schema on the submission doc — we fetch the CURRENT form
     schema by id / slug.  A note in the ship memo acknowledges the
     (small) risk of author-side drift between submit time and
-    backfill time."""
+    backfill time.
+
+    Phase L2.5 · Feb-2026 — resilient collection lookup.  The
+    codebase writes new marketing forms under two collections
+    depending on the historical era of the router (``db.forms``
+    for the legacy public-form path in ``routers/marketing.py``,
+    ``db.marketing_forms`` for the modern widget path in
+    ``routers/marketing_forms.py``).  Try the modern name first
+    (matches the L2 test fixture) then fall back — this keeps
+    both cohorts of leads backfillable without a data migration.
+    """
     q = None
     if form_id:
         q = {"id": form_id}
@@ -84,10 +94,26 @@ async def _load_form_schema(db, form_id: Optional[str],
         q = {"slug": form_slug}
     if not q:
         return []
-    form = await db.marketing_forms.find_one(q, {"_id": 0, "fields": 1})
-    if not form:
-        return []
-    return form.get("fields") or []
+    for collection_name in ("marketing_forms", "forms"):
+        # ``db.<name>`` (attribute access) is the AsyncIOMotorDatabase
+        # style used everywhere else in the codebase.  Wrap in an
+        # AttributeError guard because the L2 unit test's
+        # ``_AsyncShim`` fixture only exposes the collections it
+        # actually seeded — a missing name should be a soft-fall to
+        # the next candidate, not a hard failure.
+        try:
+            collection = getattr(db, collection_name)
+        except AttributeError:
+            continue
+        if collection is None:
+            continue
+        try:
+            form = await collection.find_one(q, {"_id": 0, "fields": 1})
+        except AttributeError:
+            continue
+        if form and form.get("fields"):
+            return form.get("fields") or []
+    return []
 
 
 async def backfill_leads_label_resolution(
@@ -126,7 +152,19 @@ async def backfill_leads_label_resolution(
             counters["leads_skipped_no_submission"] += 1
             continue
 
-        raw_vals = submission.get("data") or submission.get("answers") or {}
+        # Phase L2.5 · Feb-2026 — resilient payload key lookup.
+        # The two live submit paths write submissions with
+        # different key names for the value dict:
+        #   * ``routers/marketing.py``       → ``"values"``
+        #   * ``routers/marketing_forms.py`` → ``"data"`` + ``"answers"``
+        # Try all three so both historical cohorts of leads get
+        # backfilled without needing a data migration first.
+        raw_vals = (
+            submission.get("data")
+            or submission.get("answers")
+            or submission.get("values")
+            or {}
+        )
         schema = await _load_form_schema(
             db,
             submission.get("form_id"),

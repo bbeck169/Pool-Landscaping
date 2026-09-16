@@ -69,6 +69,10 @@ import WaterBodyManager from "@/components/checklist/WaterBodyManager";
 import LandscapingChecklistForm from "@/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/components/checklist/GenericChecklistForm";
 import PhotoUploader from "@/components/checklist/PhotoUploader";
+// Phase W1 · Feb-2026 — dirty-close confirm now lives in a shared
+// component so the wizard can mount an identical dialog. C1 / C1.1
+// testids are preserved via default props on the shared component.
+import DirtyCloseConfirm from "@/components/checklist/DirtyCloseConfirm";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -475,111 +479,26 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         {renderHeader()}
         {renderBody()}
         {renderFooter()}
-        {discardConfirmOpen && renderDiscardConfirm()}
+        <DirtyCloseConfirm
+          open={discardConfirmOpen}
+          isSaving={isSaving}
+          onKeepEditing={() => { if (!isSaving) setDiscardConfirmOpen(false); }}
+          onDiscard={() => {
+            dirtyRef.current = false;
+            setDiscardConfirmOpen(false);
+            onClose?.();
+          }}
+          onSaveAndClose={saveAndClose}
+        />
       </div>
     </div>
   );
 
-  // Phase C1 · Feb-2026 — Discard-changes confirm dialog.  Rendered
-  // as an overlay ON TOP of the checklist shell so its own backdrop
-  // tap dismisses the confirm (not the checklist).  The primary red
-  // ``Discard`` button flips ``dirtyRef.current`` to false BEFORE
-  // calling ``onClose`` so a stray autosave-in-flight doesn't try
-  // to reopen the discarded state on completion.
-  function renderDiscardConfirm() {
-    // Keep-editing is always enabled — the tech's escape hatch even
-    // when a save is in flight.  Save & close and Discard both go
-    // through ``isSaving`` so the tech can't double-click either
-    // while a network round-trip is pending.
-    return (
-      <div
-        onClick={() => { if (!isSaving) setDiscardConfirmOpen(false); }}
-        style={{
-          position: "absolute", inset: 0, zIndex: 60,
-          background: "rgba(15,23,42,0.55)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          borderRadius: 12,
-        }}
-        data-testid="checklist-discard-confirm-backdrop"
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            background: c.surface, borderRadius: 10, padding: 20,
-            width: "min(440px, 92vw)",
-            boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
-          }}
-          data-testid="checklist-discard-confirm"
-        >
-          <div style={{
-            fontSize: 16, fontWeight: 700, color: c.onSurface,
-            marginBottom: 8,
-          }}>
-            Save before closing?
-          </div>
-          <div
-            id="checklist-discard-hint"
-            style={{ fontSize: 13, color: c.muted, marginBottom: 16 }}
-          >
-            You have unsaved changes on this checklist. Save now, or discard them?
-          </div>
-          <div style={{
-            display: "flex", justifyContent: "flex-end",
-            flexWrap: "wrap", gap: 8,
-          }}>
-            <button
-              type="button"
-              onClick={() => setDiscardConfirmOpen(false)}
-              className="px-3 py-1.5 rounded-md text-sm font-semibold"
-              style={{
-                background: c.surfaceAlt, color: c.onSurface,
-                border: `1px solid ${c.border}`,
-              }}
-              data-testid="checklist-discard-keep-editing"
-            >
-              Keep editing
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                dirtyRef.current = false;
-                setDiscardConfirmOpen(false);
-                onClose?.();
-              }}
-              aria-describedby="checklist-discard-hint"
-              disabled={isSaving}
-              className="px-3 py-1.5 rounded-md text-sm font-semibold text-white"
-              style={{ background: "#DC2626", opacity: isSaving ? 0.5 : 1 }}
-              data-testid="checklist-discard-confirm-btn"
-              title="Chemistry values entered since your last save will be lost."
-            >
-              Discard changes
-            </button>
-            <button
-              type="button"
-              onClick={saveAndClose}
-              disabled={isSaving}
-              className="px-3 py-1.5 rounded-md text-sm font-semibold text-white inline-flex items-center gap-1"
-              style={{
-                background: c.brand,
-                opacity: isSaving ? 0.7 : 1,
-              }}
-              data-testid="checklist-save-and-close"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 size={12} className="animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                <>Save &amp; close</>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Phase W1 · Feb-2026 — legacy renderer removed; the confirm dialog
+  // now lives in the shared ``DirtyCloseConfirm`` component (mounted
+  // above). All C1 / C1.1 testids are preserved by the shared
+  // component's default prop values, so no downstream test needs to
+  // change.
 
   function renderHeader() {
     const clientType = job ? getChecklistType(job) : "";
@@ -747,6 +666,19 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             template={report?.template || null}
             canEditServiceType={canEditServiceType}
             onReclassify={handleReclassify}
+            // Phase W1 · Feb-2026 — thread the modal-owned dirty
+            // signal + flushSave + clearDirty setter into the
+            // wizard so the wizard's Back-from-step-1 and Close-Job
+            // exit paths can reuse the same three-button confirm
+            // dialog without cloning the state machine. Passed as
+            // a getter to avoid a re-render on every dirty toggle.
+            // ``clearDirty`` lets the wizard's Discard path wipe
+            // pending edits BEFORE firing the exit intent — this
+            // prevents the parent's own C1 backdrop-tap guard from
+            // popping a duplicate confirm on the same click.
+            isDirty={() => dirtyRef.current}
+            flushSave={flushSave}
+            clearDirty={() => { dirtyRef.current = false; }}
           />
         ) : (
           <>
