@@ -940,6 +940,134 @@ async def bulk_delete_leads(body: _LeadBulkDeleteIn,
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Phase LD1 · Feb 2026 — Leads bulk HARD delete.
+#
+# The Task-BB ``bulk-delete`` endpoint above is a SOFT delete
+# (``deleted_at`` timestamp; recoverable). Admins asked for a
+# permanent purge path for scrubbing junk / duplicate leads that
+# will never be restored. This endpoint is deliberately kept
+# separate so the soft-delete tests / mobile clients / archive
+# tab semantics are untouched.
+#
+# Guardrails identical to the soft-delete helper: converted leads
+# (``converted_customer_id`` / ``converted_job_id`` / ``converted_quote_id``
+# / status ``closed_won``) and leads with open follow-up tasks are
+# refused — the UI surfaces those in ``results[]`` with ``ok=false``
+# and a human-readable ``reason`` so admins see exactly why a row
+# was skipped.
+#
+# Role gate: ``require_admin`` (admin / super_admin / owner).
+# Managers are intentionally NOT allowed — hard delete is
+# irrecoverable.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class _LeadBulkHardDeleteIn(_LeadBulkBase):
+    """Phase LD1 · new distinct payload shape (``lead_ids``) so the
+    endpoint contract can't be confused with the soft-delete's
+    ``ids`` selector shape."""
+    lead_ids: List[str]
+
+
+async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, Any]:
+    """Phase LD1 · single-row hard delete with converted-lead guard.
+
+    Returns a per-row result dict (``{id, ok, reason?, status_code?}``)
+    so the bulk caller can build a partial-failure response without
+    juggling exception types.
+    """
+    doc = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "status": 1,
+         "converted_customer_id": 1, "converted_job_id": 1,
+         "converted_quote_id": 1, "open_task_ids": 1},
+    )
+    if not doc:
+        return {"id": lid, "ok": False,
+                 "reason": "Lead not found", "status_code": 404}
+    if (doc.get("converted_customer_id")
+        or doc.get("converted_job_id")
+        or doc.get("converted_quote_id")
+        or (doc.get("status") or "").lower() == "closed_won"):
+        return {"id": lid, "ok": False,
+                 "reason": "Closed–Won leads with linked jobs/customers cannot be hard-deleted",
+                 "status_code": 409}
+    open_tasks = doc.get("open_task_ids") or []
+    if isinstance(open_tasks, list) and open_tasks:
+        return {"id": lid, "ok": False,
+                 "reason": f"Lead has {len(open_tasks)} open follow-up task(s)",
+                 "status_code": 409}
+    deleted_at = now_iso()
+    res = await db.leads.delete_one(
+        {"id": lid, "tenant_id": tenant_id},
+    )
+    if res.deleted_count == 0:
+        # Rare: doc disappeared between the read and the delete.
+        return {"id": lid, "ok": False,
+                 "reason": "Lead not found", "status_code": 404}
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "actor_user_id": (actor or {}).get("id"),
+            "actor_email": (actor or {}).get("email"),
+            "action": "lead.hard_delete",
+            "target_id": lid,
+            "at": deleted_at,
+        })
+    except Exception as e:
+        logger.warning(f"lead.hard_delete audit failed: {e}")
+    return {"id": lid, "ok": True, "deleted_at": deleted_at}
+
+
+@router.post("/leads/bulk-hard-delete",
+              operation_id="leads.bulkHardDelete")
+async def bulk_hard_delete_leads(body: _LeadBulkHardDeleteIn,
+                                    user: dict = Depends(require_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
+    """Phase LD1 · irreversibly remove many leads in one call.
+
+    Response shape:
+        {
+            "results": [{id, ok, reason?, status_code?, deleted_at?}, ...],
+            "summary": {"succeeded": N, "failed": M, "total": N + M},
+        }
+
+    HTTP 200 is returned even when some rows fail — the caller
+    inspects ``results[]`` to render per-row error toasts. HTTP 400
+    is reserved for empty / oversized payloads. Cap identical to
+    the soft-delete endpoint (``_LEAD_BULK_DELETE_CAP``).
+    """
+    ids = list(body.lead_ids or [])
+    if not ids:
+        raise HTTPException(400, "lead_ids is empty")
+    if len(ids) > _LEAD_BULK_DELETE_CAP:
+        raise HTTPException(
+            400,
+            f"bulk-hard-delete capped at {_LEAD_BULK_DELETE_CAP} rows per call",
+        )
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    failed = 0
+    for lid in ids:
+        try:
+            r = await _hard_delete_lead(lid, user, tenant["id"])
+        except Exception as e:                                # noqa: BLE001
+            r = {"id": lid, "ok": False,
+                  "reason": str(e), "status_code": 500}
+        results.append(r)
+        if r.get("ok"):
+            succeeded += 1
+        else:
+            failed += 1
+    return {
+        "results": results,
+        "summary": {"succeeded": succeeded, "failed": failed,
+                     "total": succeeded + failed},
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Phase 34 · Task HH · Feb 2026 — Leads bulk status change.
 # Change many leads to a canonical status in one call. Same role gate /
 # tenant scope / cap / audit-log as the bulk-delete endpoints. Uses the

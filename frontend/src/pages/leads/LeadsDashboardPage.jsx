@@ -81,6 +81,21 @@ export default function LeadsDashboardPage() {
   // Phase 34 · Task HH · Feb 2026 — bulk-status-change state.
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusConfirmTarget, setStatusConfirmTarget] = useState(null);
+  // Phase LD1 · Feb 2026 — hard-delete confirmation acknowledge gate.
+  const [hardConfirmOpen, setHardConfirmOpen] = useState(false);
+  const [hardAcknowledged, setHardAcknowledged] = useState(false);
+  // Phase LD1 · density toggle persisted to localStorage.
+  const [density, setDensity] = useState(() => {
+    try {
+      const raw = localStorage.getItem("leads-density");
+      return raw === "compact" ? "compact" : "comfortable";
+    } catch { return "comfortable"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("leads-density", density); } catch { /* noop */ }
+  }, [density]);
+  const rowPad = density === "compact" ? "py-1.5" : "py-3";
+  const headerPad = density === "compact" ? "py-1.5" : "py-2";
 
   const refresh = () => {
     setLoading(true);
@@ -154,6 +169,38 @@ export default function LeadsDashboardPage() {
       });
     } catch (e) {
       toast.error(e?.message || "Bulk delete failed");
+    } finally { setBusy(false); }
+  };
+
+  // Phase LD1 · Feb 2026 — bulk HARD delete (irreversible).
+  // Uses the dedicated `/leads/bulk-hard-delete` endpoint so the
+  // soft-delete path stays untouched. Response shape is
+  // ``{ results:[{id, ok, reason?, status_code?}], summary }``.
+  const doBulkHardDelete = async () => {
+    if (!hardAcknowledged) return;
+    setBusy(true);
+    try {
+      const res = await api.post("/leads/bulk-hard-delete", {
+        lead_ids: Array.from(selectedIds),
+      });
+      const results = res.results || [];
+      const ok = res.summary?.succeeded ?? 0;
+      const failCount = res.summary?.failed ?? 0;
+      const okIds = results.filter((r) => r.ok).map((r) => r.id);
+      setRows((prev) => prev.filter((r) => !okIds.includes(r.id)));
+      clearSelection();
+      setHardConfirmOpen(false);
+      setHardAcknowledged(false);
+      if (failCount === 0) toast.success(`${ok} lead${ok === 1 ? "" : "s"} permanently deleted`);
+      else toast(`${ok} deleted · ${failCount} locked`, {
+        description: results
+          .filter((r) => !r.ok)
+          .slice(0, 3)
+          .map((f) => f.reason)
+          .join(" · "),
+      });
+    } catch (e) {
+      toast.error(e?.message || "Bulk hard delete failed");
     } finally { setBusy(false); }
   };
 
@@ -243,8 +290,35 @@ export default function LeadsDashboardPage() {
             </option>
           ))}
         </select>
-        <div className="ml-auto text-xs" style={{ color: colors.nav.fgMuted }}>
-          {visible.length} of {rows.length}
+        <div className="ml-auto flex items-center gap-3">
+          <div
+            className="inline-flex items-center rounded-lg p-0.5"
+            style={{ border: `1px solid ${colors.nav.border}`, background: "rgba(255,255,255,0.10)" }}
+            data-testid="leads-density-toggle"
+          >
+            {[
+              { v: "comfortable", label: "Comfortable" },
+              { v: "compact", label: "Compact" },
+            ].map((o) => (
+              <button
+                key={o.v}
+                type="button"
+                onClick={() => setDensity(o.v)}
+                aria-pressed={density === o.v}
+                className="px-2 py-0.5 text-[11px] font-semibold rounded-md transition-colors"
+                style={{
+                  color: density === o.v ? colors.onSurface : colors.nav.fg,
+                  backgroundColor: density === o.v ? "#FFFFFF" : "transparent",
+                }}
+                data-testid={`leads-density-${o.v}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <div className="text-xs" style={{ color: colors.nav.fgMuted }}>
+            {visible.length} of {rows.length}
+          </div>
         </div>
       </div>
 
@@ -252,9 +326,10 @@ export default function LeadsDashboardPage() {
                      style={{ color: "#991B1B", background: "#FEE2E2" }}>{error}</div>}
 
       <Card className="p-0 overflow-hidden">
-        <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[11px] uppercase font-semibold items-center"
+        <div className={`grid grid-cols-12 gap-2 px-4 ${headerPad} text-[11px] uppercase font-semibold items-center sticky top-0 z-10`}
              style={{ color: colors.muted, background: colors.surfaceSecondary,
-                      borderBottom: `1px solid ${colors.border}` }}>
+                      borderBottom: `1px solid ${colors.border}` }}
+             data-testid="leads-table-header">
           <div className="col-span-1 flex items-center">
             <input
               type="checkbox"
@@ -276,15 +351,41 @@ export default function LeadsDashboardPage() {
         </div>
         {loading && <div className="p-6 text-sm" style={{ color: colors.muted }}>Loading…</div>}
         {!loading && visible.length === 0 && (
-          <div className="p-8 text-sm text-center" style={{ color: colors.muted }}
+          <div className="p-10 text-sm text-center" style={{ color: colors.muted }}
                data-testid="admin-leads-empty">
-            No leads matching filters.
+            {rows.length === 0 ? (
+              <div className="flex flex-col items-center gap-1">
+                <div className="font-semibold" style={{ color: colors.onSurface }}>
+                  No leads yet
+                </div>
+                <div style={{ color: colors.muted }}>
+                  New leads land here from the website form, chat widget,
+                  and manual entries.
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1"
+                   data-testid="admin-leads-empty-search">
+                <div className="font-semibold" style={{ color: colors.onSurface }}>
+                  No leads match your filters
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFilters({ source: "", status: "", search: "" })}
+                  className="text-xs font-semibold underline"
+                  style={{ color: colors.brand }}
+                  data-testid="admin-leads-clear-filters"
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
           </div>
         )}
         {visible.map((l) => (
           <div key={l.id}
                data-testid={`lead-row-${l.id}`}
-               className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 cursor-pointer"
+               className={`grid grid-cols-12 gap-2 px-4 ${rowPad} items-center text-sm hover:bg-slate-50 cursor-pointer transition-colors`}
                style={{
                  borderBottom: `1px solid ${colors.border}`,
                  backgroundColor: selectedIds.has(l.id) ? "#EFF6FF" : "transparent",
@@ -519,9 +620,15 @@ export default function LeadsDashboardPage() {
 
           <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    style={{ backgroundColor: "#B45309", color: "#FFFFFF" }}
                     data-testid="bulk-delete-button">
-            <Trash2 size={12} /> Delete selected
+            <Trash2 size={12} /> Archive selected
+          </button>
+          <button type="button" onClick={() => { setHardConfirmOpen(true); setHardAcknowledged(false); }} disabled={busy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    data-testid="bulk-hard-delete-button">
+            <Trash2 size={12} /> Delete permanently ({selectedCount})
           </button>
           <button type="button" onClick={clearSelection}
                     className="text-xs font-semibold underline"
@@ -585,12 +692,12 @@ export default function LeadsDashboardPage() {
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
-                  Delete {selectedCount} lead{selectedCount === 1 ? "" : "s"}?
+                  Archive {selectedCount} lead{selectedCount === 1 ? "" : "s"}?
                 </h2>
                 <p className="text-sm mt-1" style={{ color: colors.muted }}>
                   {selectedCount > 100
-                    ? "This is a large batch — please confirm. Closed–Won leads with linked customers/jobs are protected and will show up as \"locked\" in the result."
-                    : "This can be restored from the archive. Closed–Won leads with linked customers/jobs are protected."}
+                    ? "This is a large batch — please confirm. Archived leads can be restored. Closed–Won leads with linked customers/jobs are protected and will show up as \"locked\" in the result."
+                    : "Archived leads can be restored. Closed–Won leads with linked customers/jobs are protected."}
                 </p>
               </div>
               <button type="button" onClick={() => setConfirmOpen(false)} className="p-1"
@@ -607,9 +714,77 @@ export default function LeadsDashboardPage() {
               </button>
               <button type="button" onClick={doBulkDelete} disabled={busy}
                         className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                        style={{ backgroundColor: "#DC2626" }}
+                        style={{ backgroundColor: "#B45309" }}
                         data-testid="bulk-delete-confirm-btn">
-                {busy ? "Deleting…" : `Delete ${selectedCount}`}
+                {busy ? "Archiving…" : `Archive ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase LD1 · Feb 2026 — bulk HARD delete confirmation. Requires
+          the admin to tick the acknowledge checkbox before the destructive
+          button becomes enabled, mirroring the pattern used by other
+          irreversible flows in the app. */}
+      {hardConfirmOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.65)" }}
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  setHardConfirmOpen(false); setHardAcknowledged(false);
+                }
+              }}
+              data-testid="bulk-hard-delete-confirm">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: "#991B1B" }}>
+                  Permanently delete {selectedCount} lead{selectedCount === 1 ? "" : "s"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  This action cannot be undone. The lead row, its timeline,
+                  and any linked notes will be removed from the database.
+                  Closed–Won leads with linked customers/jobs are protected
+                  and will surface as "locked" in the result.
+                </p>
+              </div>
+              <button type="button"
+                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); }}
+                        className="p-1" style={{ color: colors.muted }} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <label className="flex items-start gap-2 mt-4 text-sm cursor-pointer select-none"
+                      style={{ color: colors.onSurface }}
+                      data-testid="bulk-hard-delete-ack-label">
+              <input
+                type="checkbox"
+                checked={hardAcknowledged}
+                onChange={(e) => setHardAcknowledged(e.target.checked)}
+                className="mt-0.5 cursor-pointer"
+                data-testid="bulk-hard-delete-ack"
+              />
+              <span>
+                I understand this is permanent and cannot be recovered.
+              </span>
+            </label>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button"
+                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); }}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-hard-delete-cancel">
+                Cancel
+              </button>
+              <button type="button" onClick={doBulkHardDelete}
+                        disabled={busy || !hardAcknowledged}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ backgroundColor: "#DC2626" }}
+                        data-testid="bulk-hard-delete-confirm-btn">
+                {busy ? "Deleting…" : `Delete ${selectedCount} permanently`}
               </button>
             </div>
           </div>

@@ -135,6 +135,10 @@ class TestAdminRecipientResolution:
 
 class TestEmailComposition:
     def test_html_contains_all_lead_fields(self):
+        # Phase LD2 · Feb 2026 — invoice-style renderer. Every key
+        # data field must still appear in the HTML; the CTA URL now
+        # points at ``/admin/leads/{id}`` (was ``/leads/{id}``) and
+        # the button label is "Open lead in CRM".
         from services.lead_admin_notifications import _compose_email_html
         html = _compose_email_html(
             lead={
@@ -157,23 +161,38 @@ class TestEmailComposition:
             "1234 W Palm Ln", "Peoria", "AZ", "85383",
             "Pool cleaning and maintenance",
             "Weekly service pls",
-            "View lead in admin",
-            "https://example.com/leads/TEST_ln-l1",
+            "Open lead in CRM",
+            "https://example.com/admin/leads/TEST_ln-l1",
             "Requested Service",
             "Address",
         ]:
             assert token in html, f"missing: {token!r}"
 
     def test_subject_line_matches_spec(self):
+        # Phase LD2 · Feb 2026 — subject line upgraded.
+        # ``New lead — {name} · {source_label}`` improves inbox scanability.
         from services.lead_admin_notifications import _compose_subject
         assert _compose_subject(
             {"name": "Marilyn Guhr",
-             "service_interest": "Pool cleaning"}
-        ) == "New Lead: Marilyn Guhr — Pool cleaning"
-        # Fallback interest.
+             "service_interest": "Pool cleaning",
+             "source": "website_form"}
+        ) == "New lead — Marilyn Guhr · Website form"
+        # Referral source renders the friendly label.
         assert _compose_subject(
-            {"name": "Marilyn Guhr", "service_interest": ""}
-        ) == "New Lead: Marilyn Guhr — Get a Free Quote"
+            {"name": "Marilyn Guhr", "service_interest": "",
+             "source": "referral_from_customer:abc123"}
+        ) == "New lead — Marilyn Guhr · Referral"
+        # Legacy fallback env flag preserves the old format for
+        # admin inbox rules that depended on it.
+        import os as _os
+        _os.environ["LEAD_ADMIN_LEGACY_SUBJECT"] = "1"
+        try:
+            assert _compose_subject(
+                {"name": "Marilyn Guhr",
+                 "service_interest": "Pool cleaning"}
+            ) == "New Lead: Marilyn Guhr — Pool cleaning"
+        finally:
+            _os.environ.pop("LEAD_ADMIN_LEGACY_SUBJECT", None)
 
 
 # ─────────────────────────── e2e via HTTP ───────────────────────────
