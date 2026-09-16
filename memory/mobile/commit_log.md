@@ -2218,3 +2218,22 @@
   - `/app/mobile/__tests__/m3-internal-media-relabel.test.tsx` — updated to M4 assertions
 - **VideoMediaUploader.tsx**: Confirmed untouched (empty git diff)
 
+
+## Iteration 100 — Phase M5: Remove VisitRecapModal after job close
+- **Commit**: 7930b0133
+- **Date**: 2026-09-16
+- **Changes**:
+  - Removed `<VisitRecapModal>` render + import from checklist.tsx
+  - Removed `recapOpen` and `recapCustomer` state hooks
+  - Updated `doCloseJob` success branch: clears dirty guard → shows Alert("Job closed") → navigates to schedule
+  - Removed `readCachedCustomer` + `writeThroughCustomer` orphaned imports (from recap customer-fetch)
+  - Updated `usePreventRemove` guard: removed `!recapOpen` bypass, using dirty-state reset instead
+  - Shared VisitRecapModal.tsx file untouched (confirmed empty git diff)
+  - 8 Jest tests pass (m5-remove-recap-modal.test.tsx)
+  - Pre-existing k61 test failure confirmed (K61.a.2 comment missing before M5 changes)
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx`
+  - `/app/mobile/__tests__/m5-remove-recap-modal.test.tsx` (NEW)
+- **Files NOT modified**:
+  - `/app/mobile/src/components/checklist/VisitRecapModal.tsx` (shared file preserved)
+

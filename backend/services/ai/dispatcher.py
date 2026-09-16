@@ -43,6 +43,9 @@ log = logging.getLogger("ai.dispatch")
 async def _emergent_platform_fallback(
     *, tenant_id: str, system_prompt: str, user_text: str,
     parse_json: bool = True,
+    image_b64s: Optional[list] = None,
+    llm_provider: str = "anthropic",
+    llm_model: str = "claude-sonnet-4-5",
 ) -> AICompletionResult:
     """Last-resort platform fallback using the Emergent Universal
     LLM Key. Reuses the existing ``services.llm_provider`` wrapper
@@ -63,6 +66,15 @@ async def _emergent_platform_fallback(
     Also retries ONCE on an empty / malformed body before giving up,
     and rewrites the leaked internal error into a user-facing
     message so the UI never sees ``emergent_empty_json`` verbatim.
+
+    Phase AIM0 · Feb-2026 — ``image_b64s`` + ``llm_provider`` /
+    ``llm_model`` are new. The AI Measure Tool POC pipes a base64
+    JPEG (Google Static Maps tile) through this fallback and needs
+    to choose between an OpenAI-vision (``gpt-4o``) and Anthropic-
+    vision (``claude-sonnet-4-5``) round-trip. Both models are
+    reached via the Emergent Universal Key's ``LlmChat`` — no forked
+    call path. When ``image_b64s`` is None the behaviour is
+    bit-identical to the pre-AIM0 signature.
     """
     from ._helpers import ai_testmode_mock
     if ai_testmode_mock():
@@ -79,7 +91,8 @@ async def _emergent_platform_fallback(
         return await call_llm_with_fallback(
             system_prompt=system_prompt, user_text=user_text,
             photo_urls=None,
-            provider="anthropic", model="claude-sonnet-4-5",
+            image_b64s=image_b64s,
+            provider=llm_provider, model=llm_model,
             parse_json=parse_json,
         )
 
@@ -122,7 +135,7 @@ async def _emergent_platform_fallback(
         content=content,
         provider_key="emergent",
         provider_used="platform:emergent",
-        model="claude-sonnet-4-5",
+        model=llm_model,
         tokens_prompt=0, tokens_completion=0, tokens_total=0,
         tenant_id=tenant_id,
         raw=(result if isinstance(result, dict) else {}),
@@ -135,6 +148,8 @@ async def dispatch_ai_completion(
     metadata: Optional[Dict[str, Any]] = None,
     parse_json: bool = True,
     db=None,
+    image_b64s: Optional[list] = None,
+    route: Optional[str] = None,
 ) -> AICompletionResult:
     """Dispatch an AI completion request.
 
@@ -148,7 +163,45 @@ async def dispatch_ai_completion(
     the platform fallback so chat surfaces (Copilot, AI-Employees)
     that expect plain text don't get an ``emergent_empty_json``
     false-negative when Claude replies with prose.
+
+    Phase AIM0 · Feb-2026 — vision routing. ``route`` selects the
+    platform vision path used by the AI Measure Tool POC:
+
+    * ``route="openai_vision"``    → Emergent Universal Key +
+      ``gpt-4o`` (image analysis / polygon extraction).
+    * ``route="anthropic_vision"`` → Emergent Universal Key +
+      ``claude-sonnet-4-5`` (image analysis / polygon extraction).
+    * ``route=None`` (default)     → pre-AIM0 behaviour: BYO first
+      then Anthropic on the Emergent key.
+
+    When ``image_b64s`` is passed the request bypasses BYO entirely
+    and goes straight to the platform fallback — BYO provider
+    adapters don't yet accept image payloads and forcing one through
+    a JSON-body POST would drop the image. Both kwargs default to
+    ``None`` so all pre-AIM0 call-sites are byte-identical.
     """
+    # Phase AIM0 · Feb-2026 — vision + route resolution.
+    if route == "openai_vision":
+        _llm_provider, _llm_model = "openai", (model or "gpt-4o")
+    elif route == "anthropic_vision":
+        _llm_provider, _llm_model = "anthropic", (model or "claude-sonnet-4-5")
+    else:
+        _llm_provider, _llm_model = "anthropic", (model or "claude-sonnet-4-5")
+
+    # Phase AIM0 · Feb-2026 — vision requests skip BYO. See docstring.
+    if image_b64s:
+        log.info(
+            "[ai.dispatch] vision route=%s tenant=%s images=%d — platform fallback",
+            route or "default", tenant_id, len(image_b64s),
+        )
+        return await _emergent_platform_fallback(
+            tenant_id=tenant_id,
+            system_prompt=system_prompt, user_text=user_text,
+            parse_json=parse_json,
+            image_b64s=image_b64s,
+            llm_provider=_llm_provider, llm_model=_llm_model,
+        )
+
     provider = await get_tenant_ai_provider(tenant_id, db=db)
     if provider is None:
         # Rule 1: no BYO → platform fallback.

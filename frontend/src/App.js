@@ -140,6 +140,7 @@ import NfcReviewCardPage from "@/pages/public/NfcReviewCardPage";
 // Feb-2026 · Item 4 — AI Brain + Copilot admin pages.
 import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
+import AiMeasurePage from "@/pages/admin/AiMeasurePage";
 import LuminoBackfillPage from "@/pages/admin/LuminoBackfillPage";
 import ProfitReportPage from "@/pages/admin/ProfitReportPage";
 import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
@@ -1055,6 +1056,11 @@ export default function App() {
             <Route path="admin/tools/analysis" element={<AdminOnly><BusinessAnalysisTools /></AdminOnly>} />
             <Route path="admin/tools/documents" element={<AdminOnly><DocumentGenerators /></AdminOnly>} />
             <Route path="admin/tools/price-check" element={<AdminOnly><ServicePriceChecker /></AdminOnly>} />
+            {/* Phase AIM0 · Feb-2026 — AI Measure POC. The page component
+                has its OWN role guard (``AiMeasurePageRoleGuard``) so
+                owners get access; we intentionally do NOT wrap it in
+                ``AdminOnly`` (which excludes owners on other routes). */}
+            <Route path="admin/tools/ai-measure" element={<AiMeasurePage />} />
             <Route path="admin/settings/pricing-defaults" element={<AdminOnly><PricingDefaultsEditor /></AdminOnly>} />
             {/* NFC business card — role-agnostic personal view (uses /api/card).
                 The /card route below is the admin-only team card manager. */}

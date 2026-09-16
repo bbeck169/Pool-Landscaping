@@ -542,6 +542,12 @@ from routers import ai_visibility as _aiv_router  # noqa: E402
 api_router.include_router(_aiv_router.router)
 from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
+
+# Phase AIM0 · Feb-2026 — AI Measurement Tool POC.
+# ``POST /api/tools/ai-measure/preview`` — admin-only satellite +
+# vision pipeline. See ``routers/ai_measure.py`` for guardrails.
+from routers import ai_measure as _aim0_ai_measure_router  # noqa: E402
+api_router.include_router(_aim0_ai_measure_router.router)
 # Feb-2026 · K55.b — SuperCool + HomeWorks integration router
 # registrations removed as part of the sunset.  Historical DB
 # collections (``mcp_oauth_tokens`` where ``provider="supercool"``,
