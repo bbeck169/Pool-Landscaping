@@ -2202,3 +2202,19 @@
   - `/app/mobile/app/(app)/schedule/calendar.tsx`
   - `/app/mobile/__tests__/s1-schedule-tech-filter.test.tsx` (NEW)
 - **Web files referenced**: None (parallel web work by e1_dev)
+
+## Iteration 99 — Phase M4: Relocate Internal media to bottom + restyle PhotoUploader
+- **Commit**: 49381ede6
+- **Date**: 2026-09-15
+- **Changes**:
+  - Relocated Internal Photos + Internal Videos to very bottom of ScrollView content (after template form, before footer)
+  - Restyled PhotoUploader buttons: Camera→"Photo", kept "Library"; horizontal pill row matching Visit Media's `uploadBtn` pattern (dashed border, brand-colored icons, semibold text, 1.5px border)
+  - Added internal-only binding comments: `// Internal-only — bound to job.photos / job.videos, never surfaced to customer portal.`
+  - Updated M3 test file → M4 assertions: 9 tests covering new bottom position, label restyle, style matching
+  - Safe-area padding verified: `paddingBottom: 160 + insets.bottom` covers the new bottom blocks
+- **Files modified**:
+  - `/app/mobile/app/job/[id]/checklist.tsx` — block relocation + binding comments
+  - `/app/mobile/src/components/checklist/PhotoUploader.tsx` — button restyle
+  - `/app/mobile/__tests__/m3-internal-media-relabel.test.tsx` — updated to M4 assertions
+- **VideoMediaUploader.tsx**: Confirmed untouched (empty git diff)
+

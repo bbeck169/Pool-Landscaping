@@ -15,7 +15,7 @@ inserts DEFAULTS when a tenant has no doc for the given service line.
 
 Canonical defaults (as of Phase 5A · Feb 2026)
 ==============================================
-Pool (7 items)
+Pool (7 core + 3 optional emptied items — Phase CHK1 · Feb-2026)
     1. Skimmed Pool
     2. Brush Pool
     3. Checked Skimmer Basket
@@ -23,6 +23,9 @@ Pool (7 items)
     5. Tested Chemicals
     6. Checked Equipment
     7. Secured all Gates
+    8. Emptied skimmer basket        (optional)
+    9. Emptied leaf canister         (optional)
+    10. Emptied Betta Skimmer         (optional)
 
 Landscape (10 items)
     1. Sprayed or Pulled Weeds
@@ -62,6 +65,13 @@ DEFAULT_POOL_ITEMS: List[dict] = [
     {"key": "tested_chemicals",       "label": "Tested Chemicals"},
     {"key": "checked_equipment",      "label": "Checked Equipment"},
     {"key": "secured_all_gates",      "label": "Secured all Gates"},
+    # Phase CHK1 · Feb-2026 — three optional "emptied" items appended.
+    # These are OPTIONAL by design and must NEVER be added to the
+    # chemistry gate / required-fields list — techs must be able to
+    # close a job with these unchecked. Casing/spacing verbatim.
+    {"key": "emptied_skimmer_basket", "label": "Emptied skimmer basket"},
+    {"key": "emptied_leaf_canister",  "label": "Emptied leaf canister"},
+    {"key": "emptied_betta_skimmer",  "label": "Emptied Betta Skimmer"},
 ]
 
 DEFAULT_LANDSCAPE_ITEMS: List[dict] = [

@@ -49,6 +49,12 @@ CANONICAL_POOL_CHECKLIST = [
     "Empty pump basket", "Verify equipment operation",
     "Test chemistry & balance", "Add chemicals as needed",
     "Backwash if needed", "Log readings & notes",
+    # Phase CHK1 · Feb-2026 — three optional "emptied" items appended.
+    # These are OPTIONAL by design and must never gate completion.
+    # Casing/spacing preserved verbatim from the product brief.
+    "Emptied skimmer basket",
+    "Emptied leaf canister",
+    "Emptied Betta Skimmer",
 ]
 CANONICAL_LANDSCAPE_CHECKLIST = [
     "Mow lawn to spec height", "Edge walkways & beds",

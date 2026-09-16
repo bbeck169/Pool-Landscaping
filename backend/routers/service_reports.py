@@ -47,6 +47,12 @@ POOL_CHECKLIST_DEFAULT = [
     "Inspect equipment (pump, heater, timer)",
     "Check water level; top off if needed",
     "Confirm no visible algae or debris",
+    # Phase CHK1 · Feb-2026 — three optional "emptied" items added.
+    # NEVER add to the chemistry gate / required-fields list — techs
+    # must be able to close a job with these unchecked.
+    "Emptied skimmer basket",
+    "Emptied leaf canister",
+    "Emptied Betta Skimmer",
 ]
 POOL_READING_FIELDS_DEFAULT = [
     # key=machine, name=user label, ideal=text hint, min/max=picker range, step=picker step

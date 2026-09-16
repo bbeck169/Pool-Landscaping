@@ -126,8 +126,8 @@ def _timer_seconds(start_iso: str, stop_iso: str) -> int:
 
 # ----------------------- Jobs -----------------------
 POOL_CHECKLIST = [
-    # Phase 5A · Feb 2026 — canonical pool checklist (7 items). Kept in
-    # sync with routers/checklists.py DEFAULT_POOL_ITEMS. Whitespace and
+    # Phase 5A · Feb 2026 — canonical pool checklist. Kept in sync with
+    # routers/checklists.py DEFAULT_POOL_ITEMS. Whitespace and
     # capitalisation are preserved verbatim from the product brief.
     "Skimmed Pool",
     "Brush Pool",
@@ -136,6 +136,12 @@ POOL_CHECKLIST = [
     "Tested Chemicals",
     "Checked Equipment",
     "Secured all Gates",
+    # Phase CHK1 · Feb-2026 — three optional "emptied" items added.
+    # These are OPTIONAL by design; the chemistry / required-fields
+    # gate must NOT block completion when they are unchecked.
+    "Emptied skimmer basket",
+    "Emptied leaf canister",
+    "Emptied Betta Skimmer",
 ]
 LANDSCAPING_CHECKLIST = [
     # Phase 5A · Feb 2026 — canonical landscape checklist (10 items).
