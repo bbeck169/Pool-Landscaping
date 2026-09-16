@@ -124,6 +124,7 @@ from routers import (
     estimate_viewer,
     referral_rewards,
     checklists,
+    industry_checklists,
     workstream_service_log,
     ringcentral_jwt,
     equipment_trackers,
@@ -1092,6 +1093,7 @@ for module in [notifications_router,
                estimate_viewer,
                referral_rewards,
                checklists,
+               industry_checklists,
                workstream_service_log,
                portal_auto_login,
                ringcentral_jwt,
@@ -2767,6 +2769,20 @@ async def startup():
         except Exception as e:
             logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
     asyncio.create_task(_bg_phase5a_service_checklists())
+
+    # Phase MI1 · Feb 2026 — seed the tenant-agnostic industry
+    # checklist templates. Idempotent — the second boot inserts 0
+    # rows. Runs as a fire-and-forget task so the seed cost never
+    # bounds the startup path.
+    async def _bg_mi1_industry_checklists():
+        try:
+            from routers.industry_checklists import (
+                seed_industry_checklist_templates,
+            )
+            await seed_industry_checklist_templates()
+        except Exception as e:
+            logger.warning(f"[mi1] industry_checklist seed crashed: {e}")
+    asyncio.create_task(_bg_mi1_industry_checklists())
 
     # Phase 17 · Feb 2026 — 2dsphere index on customer service_location
     # + kick off a fire-and-forget geocode backfill so /dispatch has

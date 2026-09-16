@@ -696,6 +696,32 @@ async def submit_service_report(
         # ``pool``) and raises 422 with per-body detail when any
         # Required Four value is missing on any such body.
         assert_bodies_required_readings_present(rep.get("water_bodies"))
+    # Phase MI1 · Feb 2026 — required-checklist-item gate for the
+    # six non-pool industries (Landscaping / HVAC / Pest Control /
+    # Cleaning / Solar / Handyman). Pool jobs continue to use the
+    # chemistry gate above and skip this branch. Repair jobs skip
+    # entirely — same posture as the chemistry gate. A missing
+    # required item raises 400 naming the first unchecked label.
+    if not is_pool_job(job) and not _is_repair:
+        try:
+            from routers.industry_checklists import (
+                assert_required_items_present,
+                derive_industry_for_job,
+                get_industry_checklist,
+            )
+            _ind = derive_industry_for_job(job, tenant)
+            if _ind != "pool":
+                _resolved = await get_industry_checklist(tenant["id"], _ind)
+                _completed = rep.get("checklist_completed") or rep.get("checklist_items") or []
+                _checked_keys: List[str] = []
+                for _c in _completed:
+                    if isinstance(_c, dict) and _c.get("done"):
+                        _checked_keys.append(str(_c.get("key") or _c.get("label") or ""))
+                assert_required_items_present(_ind, _checked_keys, _resolved)
+        except HTTPException:
+            raise
+        except Exception as _mi1_e:                              # noqa: BLE001
+            logger.warning(f"[mi1] required-items gate errored: {_mi1_e}")
     now = now_iso()
     # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for
     # reports that were bootstrapped before the field existed. Safe

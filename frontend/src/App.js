@@ -146,6 +146,8 @@ import ProfitReportPage from "@/pages/admin/ProfitReportPage";
 import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+// Phase MI1 · Feb 2026 — multi-industry checklist template editor.
+import ChecklistTemplatesSettings from "@/pages/admin/ChecklistTemplatesSettings";
 // Feb-2026 · TD-08 promoted — admin logo upload UI.
 import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
 // Phase I1.5.b · Feb-2026 — Tenant theme editor UI + live preview.
@@ -1092,6 +1094,8 @@ export default function App() {
             <Route path="onboarding-checklist" element={<EmployeeOnboardingChecklistPage />} />
             <Route path="admin/onboarding" element={<AdminOnly><AdminOnboardingDashboardPage /></AdminOnly>} />
             <Route path="admin/settings/auto-visit-email" element={<AdminOnly><AutoVisitEmailSettings /></AdminOnly>} />
+            {/* Phase MI1 · Feb 2026 — multi-industry checklist template editor. */}
+            <Route path="admin/settings/checklists" element={<AdminOnly><ChecklistTemplatesSettings /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>
