@@ -27,6 +27,7 @@ import asyncio
 import base64
 import math
 import os
+import re
 import time
 import json
 from collections import defaultdict, deque
@@ -237,15 +238,170 @@ async def fetch_static_map(
 ALLOWED_FEATURES = ("pool", "deck", "yard")
 
 
+# Phase AIM0.1 · Feb-2026 — MIME sniffer.  Google Static Maps returns
+# PNG by default (magic ``\x89PNG``), not JPEG.  Emit the correct
+# ``image/png`` (or ``image/jpeg`` for the ``\xFF\xD8`` case) header
+# on the inlined data URL so the browser doesn't waste a first
+# render pass on a mislabelled decoder.  Table-driven so a future
+# addition (WebP / AVIF returned by ``format=webp``) doesn't require
+# a code edit.
+_IMAGE_MAGIC_TO_MIME: List[Tuple[bytes, str]] = [
+    (b"\x89PNG\r\n\x1a\n",         "image/png"),
+    (b"\xff\xd8\xff",              "image/jpeg"),
+    (b"GIF87a",                    "image/gif"),
+    (b"GIF89a",                    "image/gif"),
+    (b"RIFF",                      "image/webp"),  # first 4 bytes; WEBP has "WEBP" at offset 8
+]
+
+
+def sniff_image_mime(image_bytes: bytes, default: str = "image/png") -> str:
+    """Return the appropriate MIME string for ``image_bytes`` based
+    on the first few magic bytes.  Falls back to ``default`` when no
+    known signature matches.  The image bytes are inspected — the
+    HTTP ``Content-Type`` header is intentionally ignored because
+    Google's proxy occasionally sends ``application/octet-stream``
+    on a re-serve, whereas the on-wire bytes never lie."""
+    if not image_bytes:
+        return default
+    head = image_bytes[:12]
+    for magic, mime in _IMAGE_MAGIC_TO_MIME:
+        if head.startswith(magic):
+            return mime
+    return default
+
+# Phase AIM0.1 · Feb-2026 — tolerant JSON extraction.
+#
+# Both vision providers ship the JSON reply wrapped in a Markdown
+# fenced code block (```json\n{"features":[...]}\n```), and Claude
+# often trails prose commentary after the fence.  The upstream
+# ``services.llm_provider._extract_json`` uses a first-brace-to-
+# last-brace slice which:
+#   * silently drops **bare-array** replies (``[{...}]``) — the
+#     ``find("{")`` returns -1 and it returns ``{}``.
+#   * loses the fence structure when a model dumps prose BEFORE the
+#     JSON and includes the JSON's braces inside its own ``[...]``.
+#
+# We keep AIM0's endpoint contract 200-safe by (a) requesting
+# ``parse_json=False`` so the raw model text lands on
+# ``result.content`` verbatim, and (b) running this local parser
+# which tolerates every shape the models actually emit.
+_FENCE_RE = re.compile(
+    r"```(?:json|JSON|Json)?\s*(.*?)\s*```",
+    re.DOTALL,
+)
+
+
+def _strip_code_fences(text: str) -> str:
+    """Return the content of the FIRST fenced code block in ``text``
+    if any, otherwise return ``text`` unchanged.  Preserves the raw
+    string when the fence is malformed."""
+    if not isinstance(text, str):
+        return ""
+    m = _FENCE_RE.search(text)
+    return m.group(1).strip() if m else text.strip()
+
+
+def _first_balanced_json(text: str) -> Optional[Any]:
+    """Extract the first balanced JSON expression (object OR array)
+    from ``text``.  Returns the parsed value or ``None``.  This is
+    the workhorse behind :func:`_extract_features` when the model
+    dumps prose alongside the JSON."""
+    if not text:
+        return None
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = text.find(opener)
+        if start < 0:
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except Exception:
+                        break
+    return None
+
+
+def _unwrap_dispatcher_envelope(raw: Any) -> Any:
+    """Peel the dispatcher / llm_provider envelope so callers see
+    the actual model reply, whatever level of nesting it landed at.
+
+    Envelopes we handle:
+
+      * ``{"raw": <inner>, "provider": "..."}`` — the
+        ``call_llm_with_fallback`` return shape.
+      * ``{"raw": {"text": "..."}}`` — the ``parse_json=False`` path
+        in ``_call_emergent_text``.
+      * ``{"raw": {"features": [...]}}`` — the ``parse_json=True``
+        path when the upstream ``_extract_json`` did the work.
+      * ``{"text": "..."}`` — bare text envelope (some legacy adapters).
+    """
+    visited = 0
+    while isinstance(raw, dict) and visited < 4:
+        visited += 1
+        if "features" in raw:
+            return raw
+        # Prefer the ``"raw"`` field over ``"text"``: some responses
+        # carry both (raw = parsed JSON, text = raw string).
+        if "raw" in raw and raw["raw"] is not None:
+            raw = raw["raw"]
+            continue
+        if "text" in raw and isinstance(raw["text"], str):
+            return raw["text"]
+        break
+    return raw
+
+
 def _extract_features(raw: Any) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    """Parse the vision reply. Returns (features, error). On any
-    JSON-shape drift we return (``[]``, error_msg) so the endpoint
-    still 200s per the spec."""
+    """Parse the vision reply into a normalized ``features`` list.
+
+    Tolerant of every shape the two vision providers actually emit:
+
+      1. ``{"features": [...]}``     — the spec shape.
+      2. ``[{...}, {...}]``          — bare-array response (wrap it).
+      3. ``"```json\\n{...}\\n```"``  — fenced JSON string.
+      4. Prose + JSON in the same response (extract via balanced-
+         brace / -bracket walk).
+      5. Dispatcher envelope wrapper (unwrapped upfront).
+
+    On any residual shape drift we return (``[]``, error_msg) so
+    the endpoint still 200s per the AIM0 spec (the empty-features
+    + ``error`` branch).
+    """
+    raw = _unwrap_dispatcher_envelope(raw)
+    # String path — most common: strip fences, then try full-JSON
+    # parse, then balanced-brace / -bracket walk as a last resort.
     if isinstance(raw, str):
+        stripped = _strip_code_fences(raw)
+        parsed: Any = None
         try:
-            raw = json.loads(raw)
-        except Exception as e:
-            return [], f"json_parse_failed: {e}"
+            parsed = json.loads(stripped)
+        except Exception:
+            parsed = _first_balanced_json(stripped) or _first_balanced_json(raw)
+        if parsed is None:
+            return [], "json_parse_failed"
+        raw = parsed
+    # Bare-array shape → wrap.
+    if isinstance(raw, list):
+        raw = {"features": raw}
     if not isinstance(raw, dict):
         return [], "response_not_object"
     feats = raw.get("features")
@@ -289,7 +445,18 @@ async def _run_vision(
     *, tenant_id: str, prompt: str, image_b64: str, route: str,
 ) -> Dict[str, Any]:
     """One vision round-trip. Never raises — errors surface on the
-    returned dict so the sibling provider still gets a chance."""
+    returned dict so the sibling provider still gets a chance.
+
+    Phase AIM0.1 · Feb-2026 — the dispatcher's built-in JSON extractor
+    (``_extract_json`` in ``services.llm_provider``) uses a first-``{``
+    to last-``}`` slice which silently drops bare-array replies and
+    strips context around fenced JSON.  Both vision providers actually
+    emit fenced Markdown code blocks (``\\`\\`\\`json\\n{...}\\n\\`\\`\\```) with Claude
+    frequently trailing prose commentary AFTER the fence.  We request
+    ``parse_json=False`` here so the untouched raw text lands on
+    ``result.content`` and we run our own tolerant parser
+    (:func:`_extract_features`) locally.
+    """
     started = time.perf_counter()
     label = "openai_gpt-4o" if route == "openai_vision" else "anthropic_claude"
     try:
@@ -297,7 +464,7 @@ async def _run_vision(
             tenant_id=tenant_id,
             system_prompt="You are a precise satellite-image analyst.",
             user_text=prompt,
-            parse_json=True,
+            parse_json=False,   # Phase AIM0.1 — see docstring above.
             image_b64s=[image_b64],
             route=route,
         )
@@ -314,18 +481,48 @@ async def _run_vision(
             "error": f"{type(e).__name__}: {e}",
         }
     elapsed = int((time.perf_counter() - started) * 1000)
-    raw_payload: Any = getattr(result, "raw", None) or {}
-    if isinstance(raw_payload, dict) and "text" in raw_payload and not any(
-        k in raw_payload for k in ("features",)
-    ):
-        # Emergent adapter shape: {"raw": {"text": "..."}}. Try to parse the text.
-        raw_payload = raw_payload.get("text", "")
-    features, err = _extract_features(raw_payload)
+
+    # Phase AIM0.1 · Feb-2026 — try ``result.content`` first (the
+    # raw text extracted by the dispatcher when ``parse_json=False``)
+    # then fall back to the envelope ``result.raw``.  We try both
+    # sources because BYO providers historically populate ``raw``
+    # while the Emergent platform fallback populates ``content``;
+    # picking the one with an actual features array beats guessing
+    # from provider identity.
+    content_text: str = getattr(result, "content", "") or ""
+    raw_env: Any = getattr(result, "raw", None) or {}
+
+    features, err = _extract_features(content_text)
+    if err or not features:
+        # ``content`` was empty or unparseable — try the raw envelope.
+        env_features, env_err = _extract_features(raw_env)
+        if env_features or (env_err is None and not err):
+            features, err = env_features, env_err
     tokens = getattr(result, "tokens_total", 0)
+
+    # Phase AIM0.1 debug log — captures the actual response shape
+    # so future extractor drift is caught at deploy time.  Truncated
+    # to 400 chars to avoid log-line explosion on prose-heavy
+    # replies.  Emitted at INFO for the first week post-ship, then
+    # can be demoted to DEBUG in a follow-up.
+    _log_source = content_text if isinstance(content_text, str) and content_text else raw_env
+    _text_for_log = _log_source if isinstance(_log_source, str) else json.dumps(_log_source)[:800]
+    _top_keys: Any = "-"
+    try:
+        _peek = json.loads(_strip_code_fences(_log_source) if isinstance(_log_source, str) else "")
+        if isinstance(_peek, dict):
+            _top_keys = list(_peek.keys())
+        elif isinstance(_peek, list):
+            _top_keys = f"bare-array(len={len(_peek)})"
+    except Exception:
+        _top_keys = "not-valid-json-at-root"
     logger.info(
-        "[ai-measure] provider=%s latency_ms=%d tokens=%d features=%d err=%s",
+        "[ai-measure] provider=%s latency_ms=%d tokens=%d features=%d err=%s "
+        "top_keys=%s raw_first_400=%r",
         label, elapsed, tokens, len(features), err or "-",
+        _top_keys, (_text_for_log or "")[:400],
     )
+
     out = {
         "provider": label,
         "latency_ms": elapsed,
@@ -401,7 +598,12 @@ async def ai_measure_preview(
     # 2. Fetch satellite tile.
     tile_bytes = await fetch_static_map(lat=lat, lng=lng, zoom=body.zoom)
     tile_b64 = base64.b64encode(tile_bytes).decode("ascii")
-    data_url = f"data:image/jpeg;base64,{tile_b64}"
+    # Phase AIM0.1 · Feb-2026 — sniff the actual bytes for the MIME
+    # rather than hard-coding image/jpeg. Static Maps returns PNG by
+    # default (magic ``\x89PNG``) — a mislabelled data URL forces
+    # the browser to fall back to a slow content-sniff path.
+    tile_mime = sniff_image_mime(tile_bytes)
+    data_url = f"data:{tile_mime};base64,{tile_b64}"
 
     # 3. Compute meters-per-pixel (scale=2 halves).
     mpp = meters_per_pixel(lat=lat, zoom=body.zoom, scale=2)

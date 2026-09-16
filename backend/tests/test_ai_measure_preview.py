@@ -215,7 +215,11 @@ def test_admin_lat_lng_body_skips_geocoder(monkeypatch):
     assert j["lat"] == 33.4484
     assert j["lng"] == -112.074
     assert j["zoom"] == 20
-    assert j["satellite_image_data_url"].startswith("data:image/jpeg;base64,")
+    assert j["satellite_image_data_url"].startswith("data:image/jpeg;base64,"), (
+        j["satellite_image_data_url"][:60]
+    )
+    # Phase AIM0.1 — MIME sniffer picks JPEG here because the stub
+    # returns bytes prefixed with the JPEG magic ``\xff\xd8``.
     assert len(j["providers"]) == 2
     # Areas should be annotated on returned features.
     openai_p = next(p for p in j["providers"]
@@ -361,8 +365,8 @@ def test_zoom_out_of_range_returns_400(monkeypatch):
 
 def test_dispatcher_receives_expected_kwargs(monkeypatch):
     """Wire-check: the endpoint MUST call ``dispatch_ai_completion``
-    once per provider, with ``image_b64s`` non-empty, ``parse_json=True``,
-    and a ``route`` in {openai_vision, anthropic_vision}."""
+    once per provider, with ``image_b64s`` non-empty, ``parse_json=False``
+    (Phase AIM0.1), and a ``route`` in {openai_vision, anthropic_vision}."""
     c, am = _make_client(monkeypatch)
     captured: List[Dict[str, Any]] = []
 
@@ -383,8 +387,209 @@ def test_dispatcher_receives_expected_kwargs(monkeypatch):
         r = c.post("/api/tools/ai-measure/preview",
                     json={"lat": 33.4, "lng": -112.0, "zoom": 20})
     assert r.status_code == 200, r.text
-    routes = sorted(c["route"] for c in captured)
+    routes = sorted(c_["route"] for c_ in captured)
     assert routes == ["anthropic_vision", "openai_vision"]
     for c_ in captured:
-        assert c_["parse_json"] is True
+        # Phase AIM0.1 · Feb-2026 — the endpoint now requests
+        # ``parse_json=False`` so the raw model text lands on
+        # ``result.content`` and the endpoint runs its own tolerant
+        # parser (see ``_extract_features``).  This lets us accept
+        # bare-array and fenced-JSON shapes both providers emit.
+        assert c_["parse_json"] is False
         assert c_["image_count"] == 1
+
+
+# ──────────────────────────────────────────────────────────────────
+# Phase AIM0.1 · tolerant parser + MIME sniffer
+# ──────────────────────────────────────────────────────────────────
+def _pool_polygon():
+    return [[100, 100], [200, 100], [200, 200], [100, 200]]
+
+
+def test_extract_features_accepts_bare_array_response():
+    """Both models occasionally return ``[{...}]`` at the top level
+    instead of ``{"features": [...]}``. The tolerant parser must
+    accept it."""
+    from routers.ai_measure import _extract_features
+    payload = [
+        {"type": "pool", "polygon": _pool_polygon(), "confidence": 0.9,
+          "notes": "bare array"},
+    ]
+    features, err = _extract_features(payload)
+    assert err is None, err
+    assert len(features) == 1
+    assert features[0]["type"] == "pool"
+    assert features[0]["polygon"] == _pool_polygon()
+
+
+def test_extract_features_accepts_fenced_json_string():
+    """Claude wraps its JSON in a Markdown ```json code fence.
+    The tolerant parser must strip the fence before json.loads."""
+    from routers.ai_measure import _extract_features
+    payload = (
+        '```json\n'
+        '{"features": [{"type": "pool", "polygon": [[0,0],[10,0],[10,10],[0,10]], '
+        '"confidence": 0.82, "notes": "fenced"}]}\n'
+        '```'
+    )
+    features, err = _extract_features(payload)
+    assert err is None, err
+    assert len(features) == 1
+    assert features[0]["type"] == "pool"
+
+
+def test_extract_features_accepts_bare_array_inside_fence():
+    from routers.ai_measure import _extract_features
+    payload = '```json\n[{"type": "yard", "polygon": [[0,0],[5,0],[5,5]]}]\n```'
+    features, err = _extract_features(payload)
+    assert err is None, err
+    assert features[0]["type"] == "yard"
+
+
+def test_extract_features_accepts_fenced_json_with_trailing_prose():
+    """Claude often trails prose after the fence — the parser must
+    still find the JSON block inside the response."""
+    from routers.ai_measure import _extract_features
+    payload = (
+        '```json\n{"features": [{"type": "deck", "polygon": '
+        '[[0,0],[3,0],[3,3],[0,3]]}]}\n```\n\n'
+        "The image shows a barren lot; the deck polygon is speculative."
+    )
+    features, err = _extract_features(payload)
+    assert err is None, err
+    assert features[0]["type"] == "deck"
+
+
+def test_extract_features_accepts_dispatcher_envelope():
+    """The dispatcher wraps the raw LLM reply in a
+    ``{"raw": {"text": "..."}, "provider": "..."}`` envelope. The
+    tolerant parser must peel that layer before JSON-parsing."""
+    from routers.ai_measure import _extract_features
+    payload = {
+        "raw": {"text":
+            '```json\n{"features": [{"type": "pool", "polygon": '
+            '[[1,1],[9,1],[9,9],[1,9]]}]}\n```'},
+        "provider": "platform:emergent",
+    }
+    features, err = _extract_features(payload)
+    assert err is None, err
+    assert features[0]["type"] == "pool"
+
+
+def test_extract_features_non_json_prose_returns_empty_features_with_error():
+    """Regression guard: the endpoint's 200-safe path (empty features
+    + ``error`` field) must still fire on prose that has no JSON."""
+    from routers.ai_measure import _extract_features
+    payload = (
+        "I don't see any pool or deck features in the image. "
+        "The lot appears empty."
+    )
+    features, err = _extract_features(payload)
+    assert features == []
+    assert err is not None
+    assert "json_parse_failed" in err or "features_field_missing" in err
+
+
+def test_sniff_image_mime_recognises_png():
+    from routers.ai_measure import sniff_image_mime
+    png = b"\x89PNG\r\n\x1a\n" + b"...rest of png..."
+    assert sniff_image_mime(png) == "image/png"
+
+
+def test_sniff_image_mime_recognises_jpeg():
+    from routers.ai_measure import sniff_image_mime
+    jpeg = b"\xff\xd8\xff\xe0" + b"...jpeg body..."
+    assert sniff_image_mime(jpeg) == "image/jpeg"
+
+
+def test_sniff_image_mime_falls_back_to_default_on_unknown_magic():
+    from routers.ai_measure import sniff_image_mime
+    assert sniff_image_mime(b"garbage") == "image/png"
+    assert sniff_image_mime(b"", default="image/webp") == "image/webp"
+
+
+def test_data_url_uses_sniffed_mime_when_stub_returns_png(monkeypatch):
+    """End-to-end: when the Static Maps stub returns PNG bytes the
+    inlined data URL MUST advertise ``image/png``, not the legacy
+    hard-coded ``image/jpeg``."""
+    from routers import ai_measure as am
+
+    async def _png_stub(*, lat, lng, zoom, http_client=None):
+        return b"\x89PNG\r\n\x1a\n" + b"fake-body"
+
+    monkeypatch.setattr(am, "fetch_static_map", _png_stub)
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from utils import require_admin
+    from routers.tenants import get_current_tenant
+
+    async def _fake_admin():
+        return {"id": "u1", "role": "admin", "tenant_id": "t-aim01",
+                "email": "a@x.y"}
+
+    async def _fake_tenant():
+        return {"id": "t-aim01"}
+
+    app = FastAPI()
+    app.include_router(am.router, prefix="/api")
+    app.dependency_overrides[require_admin] = _fake_admin
+    app.dependency_overrides[get_current_tenant] = _fake_tenant
+    am._reset_rate_limit_for_tests()
+    client = TestClient(app)
+
+    with patch.object(am, "dispatch_ai_completion",
+                        side_effect=_make_vision_stub({
+                            "openai_vision": {"features": []},
+                            "anthropic_vision": {"features": []},
+                        })):
+        r = client.post("/api/tools/ai-measure/preview",
+                          json={"lat": 33.4, "lng": -112.0, "zoom": 20})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["satellite_image_data_url"].startswith("data:image/png;base64,"), (
+        j["satellite_image_data_url"][:60]
+    )
+
+
+def test_content_and_raw_envelope_both_probed_for_features(monkeypatch):
+    """When one provider populates ``content`` (Emergent platform)
+    and the other populates only ``raw`` (BYO provider), the
+    endpoint MUST fall back to the raw envelope and still surface
+    the features."""
+    c, am = _make_client(monkeypatch)
+
+    async def _stub(**kwargs):
+        from services.ai.models import AICompletionResult
+        route = kwargs.get("route")
+        if route == "openai_vision":
+            # BYO-style shape: no `content`, features under `raw`.
+            return AICompletionResult(
+                content="", provider_key="byo",
+                provider_used="byo:openai", model="gpt-4o",
+                tokens_prompt=1, tokens_completion=1, tokens_total=2,
+                tenant_id=kwargs.get("tenant_id", ""),
+                raw={"features": [
+                    {"type": "pool", "polygon": _pool_polygon(),
+                      "confidence": 0.7, "notes": "byo"},
+                ]},
+            )
+        # Emergent-style shape: content carries the fenced JSON.
+        return AICompletionResult(
+            content='```json\n{"features": [{"type": "yard", "polygon": '
+                       '[[0,0],[1,0],[1,1],[0,1]]}]}\n```',
+            provider_key="emergent", provider_used="platform:emergent",
+            model="claude-sonnet-4-5",
+            tokens_prompt=1, tokens_completion=1, tokens_total=2,
+            tenant_id=kwargs.get("tenant_id", ""),
+            raw={"raw": {"text": "irrelevant"}, "provider": "..."},
+        )
+
+    with patch.object(am, "dispatch_ai_completion", side_effect=_stub):
+        r = c.post("/api/tools/ai-measure/preview",
+                    json={"lat": 33.4, "lng": -112.0, "zoom": 20})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    by_provider = {p["provider"]: p for p in j["providers"]}
+    assert by_provider["openai_gpt-4o"]["features"][0]["type"] == "pool"
+    assert by_provider["anthropic_claude"]["features"][0]["type"] == "yard"
