@@ -1,0 +1,39 @@
+{
+  "summary": "Feb-2026 · P1 Recurring Jobs Auto-Activate + Bulk Activate + Instant Generation — full re-verification against the live preview URL. Backend: 8/8 pytest cases in backend/tests/test_p1_recurring_auto_activate_and_bulk_activate.py PASS (matches E1's local run). Frontend: end-to-end browser automation on /admin/recurring-jobs verifies the recurring-bulk-activate button, dynamic count label, POST /api/recurring-jobs/bulk-activate integration, and toast summary. Bulk-delete (data-testid=recurring-bulk-hard-delete, 'Delete permanently') still present — no regression. P0 TodaySchedule.jsx at /schedule/legacy-timeline mounts cleanly, renders 'Today · Thu, Sep 17, 2026' pill, tenantTz surface visible. No blocking issues.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/admin/dashboard (RoutingCostTile)", "issues": ["Non-blocking hydration warning: <span> child inside <option> element in components/admin/RoutingCostTile.jsx:60. Pre-existing, unrelated to P1 ticket."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p1_recurring_auto_activate_and_bulk_activate.py",
+    "/app/test_reports/pytest/p1_recurring.xml"
+  ],
+  "verified_review_items": [
+    "P1 backend · POST /api/recurring-jobs default is_active=True + inline gen (weekly Monday, past start) → generated_count>=1. PASS.",
+    "P1 backend · POST with is_active=false → generated_count=0, no jobs created. PASS.",
+    "P1 backend · PATCH is_active False→True fires 14-day generation; PATCH without is_active generates zero. PASS.",
+    "P1 backend · Bulk-activate mixed batch {draft, active, bogus} → {activated:1, already_active:1, failed:1} + per-id status/generated_count/skipped_no_start_date/error. PASS.",
+    "P1 backend · Bulk-activate 101 ids → 400 batch_too_large max=100 received=101. PASS.",
+    "P1 backend · Missing start_date reports status=activated + skipped_no_start_date=true + generated_count=0. PASS.",
+    "P1 frontend · recurring-bulk-activate button present, disabled at 0 selection (aria-disabled=true), label updates to 'Bulk Activate (103)' after selecting rows. PASS.",
+    "P1 frontend · Clicking Bulk Activate → POST /api/recurring-jobs/bulk-activate → 200, toast 'N activated, M already active · X visits generated' ('47 activated, 56 already active · 1038 visits generated'). PASS.",
+    "P1 frontend · Bulk-delete button (data-testid=recurring-bulk-hard-delete, 'Delete permanently') still rendered next to Bulk Activate — no regression. PASS.",
+    "P0 regression · TodaySchedule.jsx at /schedule/legacy-timeline renders 'Today · Thu, Sep 17, 2026' pill, stats bar mounts, empty-state renders. PASS."
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Duplicate POST /api/recurring-jobs/bulk-activate observed on a single click (2 identical requests fired). Non-blocking (server is idempotent-ish given the per-id status) but worth confirming bulkActivate() isn't accidentally double-bound (React strict-mode double-invoke would only affect dev; production trace shows two real network calls). Consider guarding on bulkActivateBusy earlier or wrapping onClick with useCallback+stopPropagation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (Bulk Activate + TodaySchedule flows)"},
+  "test_credentials": "admin@aquaterra.com / password123 (works).",
+  "seed_data_creation": "Test suite creates ephemeral recurring_job_templates + jobs and tears them down via MongoClient in the finally blocks (see /app/backend/tests/test_p1_recurring_auto_activate_and_bulk_activate.py).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "P1 ticket is fully green: 8/8 backend pytests + end-to-end frontend Bulk Activate flow confirmed on preview URL. If the duplicate POST on Bulk Activate click needs investigation, the source is /app/frontend/src/pages/admin/RecurringJobs.jsx::bulkActivate — inspect for double-firing (bulkActivateBusy gate is set inside try but there may be a client-side batch loop firing back-to-back for slice(0,100) pagination — worth confirming with a network HAR capture).",
+  "rca of the issue": "N/A — no bugs found for this P1 ticket."
+}

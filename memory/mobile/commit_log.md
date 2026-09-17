@@ -2292,3 +2292,24 @@
   - `/app/mobile/__tests__/s1-schedule-tech-filter.test.tsx` (updated assertion)
   - `/app/mobile/__tests__/phase-schedule-tech-filter-technician-id.test.tsx` (NEW)
 
+
+
+## Iteration 104 — P37c: GPS Job Timer wire-up (3 sub-tasks)
+- **Commit**: 7b3f7248b
+- **Date**: 2026-09-17
+- **Changes**:
+  - Sub-task 1: Mounted `<GpsConsentModal />` in `calendar.tsx` for technician-role users (gated by `isTech`). Component self-checks consent via `GET /tech-gps-consent/me` and auto-shows if not active.
+  - Sub-task 2: Added `syncJobGeofencesP37c()` call in `_layout.tsx` boot useEffect — fire-and-forget inside try/catch, never blocks boot.
+  - Sub-task 3: Added `POST /api/jobs/{id}/arrive` with `{ lat, lng, source: "manual" }` inside `OnMyWayButton.tsx` `send()` — fires alongside SMS, silently handles `already_arrived`/`already_running`, failure is swallowed.
+  - 28 new Jest tests across 3 test files (6 + 15 + 7), all passing.
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (+1 import, +2 JSX lines: GpsConsentModal mount)
+  - `/app/mobile/app/_layout.tsx` (+1 import, +2 lines: syncJobGeofencesP37c call in boot)
+  - `/app/mobile/src/components/schedule/OnMyWayButton.tsx` (+10 lines: arrive POST block)
+- **Files created**:
+  - `/app/mobile/__tests__/phase-gps-consent-modal-mount.test.tsx` (136 lines)
+  - `/app/mobile/__tests__/phase-syncjobgeofences-startup.test.tsx` (243 lines)
+  - `/app/mobile/__tests__/phase-mobile-arrival-endpoint.test.tsx` (183 lines)
+- **Web files referenced**:
+  - `/app/frontend/src/pages/jobs/JobDetail.jsx` (line 107: `onArrive` pattern)
+
