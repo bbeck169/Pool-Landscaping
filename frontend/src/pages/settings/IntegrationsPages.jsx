@@ -7,6 +7,7 @@ import { colors } from "@/theme";
 // Historical audit fields on data documents are preserved intact.
 // Phase I1.7.a · Feb-2026 — Tenant BYO integrations (Stripe Connect etc).
 import TenantIntegrationsCard from "@/components/settings/TenantIntegrationsCard";
+import DataForSEOIntegrationCard from "@/components/settings/DataForSEOIntegrationCard";
 
 function Card({ children, testid, className = "" }) {
   return (
@@ -79,6 +80,9 @@ export function IntegrationsHub() {
           BYO is the go-forward story; the legacy grid stays visible
           during the migration window. */}
       <TenantIntegrationsCard />
+      <div className="mt-6">
+        <DataForSEOIntegrationCard />
+      </div>
 
       <Card testid="integrations-grid">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

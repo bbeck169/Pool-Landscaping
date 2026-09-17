@@ -94,5 +94,32 @@
       "primary_hint": "Votre secteur principal est verrouillé — vous pouvez en ajouter d'autres.",
       "primary_badge": "PRINCIPAL"
     }
+  },
+  "integrations": {
+    "dataforseo": {
+      "title": "DataForSEO",
+      "description": "Utilisez votre propre compte DataForSEO pour que les exécutions de Rank Heatmap et Rank Tracker soient facturées sur vos crédits au lieu de la valeur par défaut de la plateforme.",
+      "status": {
+        "configured": "Configuré",
+        "default": "Valeur par défaut de la plateforme"
+      },
+      "login_label": "Identifiant",
+      "password_label": "Mot de passe",
+      "save": "Enregistrer",
+      "saved": "Identifiants DataForSEO enregistrés.",
+      "test": "Tester la connexion",
+      "test_ok": "Connexion réussie — {{ms}}ms",
+      "test_fail": "Test échoué",
+      "test_success_detail": "Connecté en {{ms}}ms",
+      "test_fail_detail": "Échec",
+      "change": "Modifier",
+      "cancel": "Annuler",
+      "remove": "Supprimer",
+      "removed": "Identifiants DataForSEO supprimés. Retour à la valeur par défaut de la plateforme.",
+      "remove_confirm": "Ceci fera revenir Rank Heatmap et Rank Tracker aux valeurs par défaut de la plateforme. Continuer ?",
+      "remove_confirm_yes": "Oui, supprimer",
+      "remove_confirm_no": "Annuler",
+      "last_verified": "Dernière vérification : {{when}}"
+    }
   }
 }

@@ -852,25 +852,40 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
                 )
                 return
 
-        # ── DFS credential gate ────────────────────────────────────
-        if _dfs.get_credentials_or_none() is None:
+        # ── DFS credential gate (tenant → global → None) ──────────
+        # Sep-2026 · Per-tenant BYO. Pull the tenant doc once, use
+        # :func:`get_effective_credentials` to pick the source, and
+        # forward the tuple to every DFS call so billing lands on
+        # the right account.
+        tenant_doc = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+        effective = _dfs.get_effective_credentials(tenant_doc)
+        if effective is None:
             logger.info(
-                "[heatmap] DataForSEO not configured — degrading to "
-                "mocked payload for tenant=%s keyword=%r",
-                tenant_id, keyword,
+                "[heatmap] DataForSEO not configured (tenant + global "
+                "both empty) — degrading to mocked payload for "
+                "tenant=%s keyword=%r", tenant_id, keyword,
             )
             await _write_mocked_heatmap(
                 heatmap_id, tenant_id, keyword, pts,
                 reason="dataforseo_not_configured",
             )
             return
+        creds_tuple = (effective[0], effective[1])
+        creds_source = effective[2]  # "tenant" | "global"
+        logger.info(
+            "[heatmap] tenant=%s keyword=%r credential_source=%s",
+            tenant_id, keyword, creds_source,
+        )
 
         # ── Pull target domain (tenant business card) ─────────────
         target_domain = await _tenant_target_domain(tenant_id)
 
         # ── Fire one SERP call per grid point in parallel ─────────
         tasks = [
-            _dfs.serp_google_organic_live(keyword, p["lat"], p["lng"])
+            _dfs.serp_google_organic_live(
+                keyword, p["lat"], p["lng"],
+                creds_override=creds_tuple,
+            )
             for p in pts
         ]
         responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -892,17 +907,28 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
                      and not r.get("mocked"))
         top_level_mocked = real_call_count == 0
 
-        # ── Cost telemetry (only count real API calls) ────────────
+        # ── Cost telemetry (split by credential source) ───────────
         if real_call_count:
+            # Aggregate counter (kept for backward compat) + split
+            # counters so admins can see BYO vs platform-credit burn.
+            counter_field = (
+                "metrics.dataforseo_tenant_credit_calls"
+                if creds_source == "tenant"
+                else "metrics.dataforseo_platform_credit_calls"
+            )
             await db.tenants.update_one(
                 {"id": tenant_id},
-                {"$inc": {"metrics.dataforseo_heatmap_calls": real_call_count}},
+                {"$inc": {
+                    "metrics.dataforseo_heatmap_calls": real_call_count,
+                    counter_field: real_call_count,
+                }},
             )
         logger.info(
-            "[heatmap] tenant=%s keyword=%r real_calls=%d/%d truncated=%s "
-            "target_domain=%r avg_rank=%s top10=%d",
-            tenant_id, keyword, real_call_count, len(pts), truncated,
-            target_domain, avg, top10,
+            "[heatmap] tenant=%s keyword=%r real_calls=%d/%d "
+            "credit_source=%s truncated=%s target_domain=%r "
+            "avg_rank=%s top10=%d",
+            tenant_id, keyword, real_call_count, len(pts), creds_source,
+            truncated, target_domain, avg, top10,
         )
 
         finished = now_iso()
@@ -1107,7 +1133,10 @@ async def start_heatmap(body: RankHeatmapIn, bg: BackgroundTasks,
                                              "Admin route already gates access."),
                          user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant)):
-    dfs_configured = _dfs.get_credentials_or_none() is not None
+    # Sep-2026 · Per-tenant BYO — check tenant creds too so the
+    # optimistic ``mocked`` flag is accurate on the initial insert.
+    effective = _dfs.get_effective_credentials(tenant)
+    dfs_configured = effective is not None
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],

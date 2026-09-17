@@ -41,6 +41,58 @@ def get_credentials_or_none() -> Optional[Tuple[str, str]]:
     return _creds()
 
 
+def get_credentials_for_tenant(
+    tenant_doc: Optional[Dict[str, Any]],
+) -> Optional[Tuple[str, str]]:
+    """Sep-2026 · Per-tenant BYO DFS credentials.
+
+    Reads ``tenant.settings.integrations.dataforseo.{login_encrypted,
+    password_encrypted}`` and decrypts with the module-level Fernet
+    helper. Returns ``None`` on:
+      • Missing tenant doc / settings path
+      • Encryption key not configured (feature disabled)
+      • Tampered ciphertext
+      • Empty/invalid decrypted plaintext
+
+    Callers MUST fall through to :func:`get_credentials_or_none`
+    (global env) on ``None`` — see :func:`get_effective_credentials`.
+    """
+    if not tenant_doc:
+        return None
+    integ = ((tenant_doc.get("settings") or {}).get("integrations") or {}) \
+        .get("dataforseo") or {}
+    login_ct = integ.get("login_encrypted")
+    pw_ct = integ.get("password_encrypted")
+    if not (login_ct and pw_ct):
+        return None
+    from services.tenant_secrets_crypto import decrypt_tenant_secret
+    login = decrypt_tenant_secret(login_ct)
+    pw = decrypt_tenant_secret(pw_ct)
+    if not (login and pw):
+        return None
+    return login, pw
+
+
+def get_effective_credentials(
+    tenant_doc: Optional[Dict[str, Any]],
+) -> Optional[Tuple[str, str, str]]:
+    """Sep-2026 · Priority resolver: **tenant → global → None**.
+
+    Returns a 3-tuple ``(login, password, source)`` where ``source``
+    is ``"tenant"`` (BYO creds) or ``"global"`` (platform default).
+    Callers use ``source`` for cost telemetry — tenant credit calls
+    are billed to the tenant's DFS account; global credit calls
+    burn the platform's shared account.
+    """
+    t = get_credentials_for_tenant(tenant_doc)
+    if t:
+        return (t[0], t[1], "tenant")
+    g = get_credentials_or_none()
+    if g:
+        return (g[0], g[1], "global")
+    return None
+
+
 def log_auth_config() -> None:
     """Called from server boot so a truthy line appears in the logs."""
     c = _creds()
@@ -50,8 +102,13 @@ def log_auth_config() -> None:
         logger.warning("[dataforseo] no credentials in env (skipping rank tracker)")
 
 
-async def _post(path: str, tasks: list[Dict[str, Any]]) -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:
-    c = _creds()
+async def _post(path: str, tasks: list[Dict[str, Any]],
+                 *, creds_override: Optional[Tuple[str, str]] = None,
+                 ) -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:
+    # Sep-2026 · Per-tenant BYO creds. When ``creds_override`` is
+    # provided, use it (billed to the tenant's DFS account); else
+    # fall back to the platform global env creds.
+    c = creds_override or _creds()
     if not c:
         return 0, None, "no_credentials"
     login, pw = c
@@ -98,8 +155,15 @@ async def serp_google_organic_live(
     *,
     language_code: str = "en",
     depth: int = 100,
+    creds_override: Optional[Tuple[str, str]] = None,
 ) -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:
-    """Fetch the live top-``depth`` Google organic SERP for a coord."""
+    """Fetch the live top-``depth`` Google organic SERP for a coord.
+
+    ``creds_override`` (Sep-2026) — pass tenant BYO creds tuple to
+    bill THIS call to the tenant's DFS account instead of the
+    platform global. Callers get the tuple from
+    :func:`get_effective_credentials` and forward it here.
+    """
     task = [{
         "keyword": keyword,
         "language_code": language_code,
@@ -107,7 +171,8 @@ async def serp_google_organic_live(
         "device": "desktop",
         "depth": depth,
     }]
-    return await _post("serp/google/organic/live/regular", task)
+    return await _post("serp/google/organic/live/regular", task,
+                          creds_override=creds_override)
 
 
 async def user_credits() -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:

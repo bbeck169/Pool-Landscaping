@@ -122,6 +122,18 @@ frontend/node_modules/.cache/default-development/21.pack
 !.env.example
 backend/.env
 frontend/.env
+# Sep-2026 SEC — explicit backup patterns. The generic ``.env.*``
+# rule above would catch these, but past incidents have shown the
+# rule was added after backups got committed; be belt-and-suspenders.
+*.env.bak
+*.env.backup
+.env.*.bak
+.env.*.backup
+.env.local
+.env.production.local
+backend/.env.bak
+backend/.env.backup
+backend/.env.local
 frontend/node_modules/.cache/default-development/22.pack
 frontend/node_modules/.cache/default-development/31.pack
 frontend/node_modules/.cache/default-development/38.pack

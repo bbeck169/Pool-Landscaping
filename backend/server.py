@@ -478,6 +478,10 @@ api_router.include_router(_signup_router.router)
 # ``routers/onboarding.py`` (Phase 15B per-admin wizard).
 from routers import signup_onboarding_wizard as _sowiz  # noqa: E402
 api_router.include_router(_sowiz.router)
+
+# Sep-2026 · Per-tenant BYO DataForSEO credentials.
+from routers import tenant_dataforseo_integration as _dfs_integ  # noqa: E402
+api_router.include_router(_dfs_integ.router)
 # Feb-2026 · P0 · Lead form address autofill — public Google Places
 # proxy consumed by the embedded lead widget + admin marketing-form
 # builder preview. See ``routers/public_places.py`` for the two
@@ -1652,6 +1656,13 @@ async def _background_seed():
         _dfs.log_auth_config()
     except Exception as e:
         logger.warning(f"[dataforseo] boot log skipped: {e}")
+
+    # Sep-2026 · Per-tenant BYO secret storage boot state.
+    try:
+        from services.tenant_secrets_crypto import log_startup_state as _tsc_log
+        _tsc_log()
+    except Exception as e:
+        logger.warning(f"[tenant_secrets_crypto] boot log skipped: {e}")
 
     # Feb-2026 · Rank Heatmap DFS wire-up — ensure the 6h TTL index
     # on ``heatmap_run_cache`` exists so cache entries auto-expire.

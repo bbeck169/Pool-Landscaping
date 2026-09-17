@@ -94,5 +94,32 @@
       "primary_hint": "Your primary industry is locked in — you can add more.",
       "primary_badge": "PRIMARY"
     }
+  },
+  "integrations": {
+    "dataforseo": {
+      "title": "DataForSEO",
+      "description": "Bring your own DataForSEO account so Rank Heatmap and Rank Tracker runs bill to your credits instead of the platform default.",
+      "status": {
+        "configured": "Configured",
+        "default": "Using platform default"
+      },
+      "login_label": "Login",
+      "password_label": "Password",
+      "save": "Save",
+      "saved": "DataForSEO credentials saved.",
+      "test": "Test connection",
+      "test_ok": "Connection successful — {{ms}}ms",
+      "test_fail": "Test failed",
+      "test_success_detail": "Connected in {{ms}}ms",
+      "test_fail_detail": "Failed",
+      "change": "Change",
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "removed": "DataForSEO credentials removed. Reverted to platform default.",
+      "remove_confirm": "This will revert Rank Heatmap and Rank Tracker to platform defaults. Continue?",
+      "remove_confirm_yes": "Yes, remove",
+      "remove_confirm_no": "Cancel",
+      "last_verified": "Last verified: {{when}}"
+    }
   }
 }

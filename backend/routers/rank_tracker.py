@@ -23,7 +23,7 @@ import os
 import math
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -246,7 +246,11 @@ async def heatmap(kid: str,
 # Refresh-now (rate-limited)
 # ─────────────────────────────────────────────────────────────────────
 async def _snapshot_keyword(kw: Dict[str, Any], tenant_id: str,
-                              target_domain: str) -> Dict[str, Any]:
+                              target_domain: str,
+                              *,
+                              creds_override: Optional[Tuple[str, str]] = None,
+                              creds_source: str = "global",
+                              ) -> Dict[str, Any]:
     """Fetch a fresh 9-point grid for one keyword. Writes 9 rows to
     ``rank_snapshots`` and updates ``tracked_keywords.last_refreshed_at``.
 
@@ -255,6 +259,11 @@ async def _snapshot_keyword(kw: Dict[str, Any], tenant_id: str,
     early-abort on fatal auth/credit errors — but the abort here is
     "don't persist" rather than "don't request" since all 9 fire in
     parallel. The DataForSEO cost is the same; only latency changes.
+
+    Sep-2026: ``creds_override`` forwards tenant BYO credentials so
+    per-tenant billing works. ``creds_source`` drives split cost
+    telemetry (``metrics.dataforseo_tenant_credit_calls`` vs
+    ``metrics.dataforseo_platform_credit_calls``).
     """
     import asyncio as _aio
     geo = kw.get("market_geo") or {}
@@ -265,7 +274,8 @@ async def _snapshot_keyword(kw: Dict[str, Any], tenant_id: str,
 
     # Fire all 9 in parallel.
     tasks = [
-        dfs.serp_google_organic_live(kw["keyword"], pt["lat"], pt["lng"])
+        dfs.serp_google_organic_live(kw["keyword"], pt["lat"], pt["lng"],
+                                          creds_override=creds_override)
         for pt in grid
     ]
     responses = await _aio.gather(*tasks, return_exceptions=True)
@@ -356,7 +366,41 @@ async def refresh_now(kid: str,
             "No website_url on the tenant's business card — set that first, "
             "otherwise we have no domain to rank-check for.",
         )
-    return await _snapshot_keyword(kw, tid, domain)
+    # Sep-2026 · Per-tenant BYO DFS creds. Pull the tenant doc + let
+    # :func:`get_effective_credentials` pick source (tenant → global).
+    tenant_doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
+    effective = dfs.get_effective_credentials(tenant_doc)
+    creds_override = None
+    creds_source = "global"
+    if effective is not None:
+        creds_override = (effective[0], effective[1])
+        creds_source = effective[2]
+    logger.info("[rank-tracker] refresh-now tenant=%s kid=%s "
+                  "credential_source=%s", tid, kid, creds_source)
+    result = await _snapshot_keyword(
+        kw, tid, domain,
+        creds_override=creds_override, creds_source=creds_source,
+    )
+    # Split cost telemetry: only count successful real calls (rows
+    # that got a rank OR came back with an err other than the fatal
+    # "no_credentials" bucket — see ``fatal_errors`` in the helper).
+    real_calls = sum(
+        1 for r in (result.get("results") or [])
+        if r.get("api_error") not in
+        ("no_credentials", "auth_failed", "out_of_credits",
+         "account_unverified")
+    )
+    if real_calls:
+        counter_field = (
+            "metrics.dataforseo_tenant_credit_calls"
+            if creds_source == "tenant"
+            else "metrics.dataforseo_platform_credit_calls"
+        )
+        await db.tenants.update_one(
+            {"id": tid},
+            {"$inc": {counter_field: real_calls}},
+        )
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────
