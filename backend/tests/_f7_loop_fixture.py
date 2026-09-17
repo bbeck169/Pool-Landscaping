@@ -52,6 +52,7 @@ _REBOUND_MODULES = (
     "routers.soshie_moderation",
     "routers.stripe_router",
     "routers.team",
+    "routers.technicians",
     "routers.tenant_org_settings",
     "routers.user_recent_colors",
     "routers.reports_business_snapshot",

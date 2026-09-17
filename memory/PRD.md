@@ -1,3 +1,51 @@
+## Phase Technician → User Linkage Fix — SHIPPED (Feb 2026)
+
+**Scope**
+- Idempotent migration + list/detail endpoint symmetry so the mobile ColorPicker Apply flow (`PATCH /api/users/{t.user_id}` with `display_color_hex`) no longer short-circuits on `"No linked user account for this technician."` for seeded real techs, AND fixture G5b/G5d techs stop 404'ing on `GET /api/technicians/{id}`.
+- **Decision on the asymmetry**: fixed the DETAIL endpoint (not the list) — the list already returns synth-user rows; making detail match keeps the mobile detail page loadable for every listed tech.
+
+**Files touched**
+- **New (2)**: `backend/services/migrations/technicians_user_id_backfill.py`, `backend/tests/test_technicians_user_id_backfill.py`
+- **Modified (2)**: `backend/routers/technicians.py` (`GET /technicians/{tid}` falls back to `db.users` synth when the tech row is missing; matches the list endpoint's union semantics), `backend/tests/_f7_loop_fixture.py` (added `routers.technicians` to `_REBOUND_MODULES`)
+
+**Matching strategy (per tenant)**
+1. Case-insensitive email match against `db.users.email` (primary)
+2. Case-insensitive name match (fallback)
+3. **No match → SKIP** with audit line `technician_unlinked_no_user_match`. Migration does NOT auto-create users (they'd have no password / no invited-at flag / no login credentials). Ops surfaces via the audit and creates the login manually.
+
+**Preview dry-run + real-run output**
+
+Dry-run:
+```
+scanned=4 already_linked=3 linked=0 skipped=1 dry_run=True
+  SKIP  tech=3b6ebe3c.. name='Sara Nguyen' reason=no_user_match
+```
+
+Real-run:
+```
+scanned=4 already_linked=3 linked=0 skipped=1 dry_run=False
+```
+
+**Note on the preview counts**: the `linked=0` on the run above is because 3 of the 4 unlinked seed techs (Mike/Carlos/Luis) had already been linked by an earlier test invocation that ran without the tenant-scope flag (test isolation gap — since fixed by adding `--tenant-id` support). Post-fix the migration is fully tenant-scoped, so future ops runs won't touch other tenants unless invoked with `--tenant-id`.
+
+**Sara Nguyen** remains unlinked (no matching `db.users` row on preview). Ops decision on whether to create a login for Sara is out of scope for the migration.
+
+**Live verification**
+- `GET /api/technicians/{mike_id}` → 200 with `user_id="0b8784ff-…"` (was `null` pre-migration)
+- `GET /api/technicians/{g5b_fixture_id}` → **HTTP=200** with `synthesized_from_users: true` (was 404)
+
+**Tests + pass counts**
+- `backend/tests/test_technicians_user_id_backfill.py` — **7/7 ✅**
+  - Dry-run reports without mutation
+  - Real-run links + audits + idempotent
+  - Ignores already-linked rows
+  - Name-only fallback match
+  - Detail endpoint returns 200 for synth user tech (regression guard)
+  - Detail endpoint still 404s for unknown ids
+  - End-to-end: post-migration, `PATCH /api/users/{t.user_id}` with `display_color_hex` lands on the user row
+- Full backend regression: **75/75 ✅** across all this-session test files
+
+
 ## Phase Preset Palette Contrast Reconciliation — SHIPPED (Feb 2026)
 
 **Scope**

@@ -264,13 +264,54 @@ async def create_technician(body: TechnicianIn, user: dict = Depends(require_adm
 
 
 @router.get("/technicians/{tid}")
-async def get_technician(tid: str, user: dict = Depends(get_current_user)):
+async def get_technician(tid: str, user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
     # Techs can only view their own profile — enforce here.
     if user.get("role") == "technician" and user.get("id") != tid and user.get("technician_id") != tid:
         raise HTTPException(403, "You can only view your own profile")
     doc = await db.technicians.find_one({"id": tid}, {"_id": 0})
     if not doc:
-        raise HTTPException(404, "Technician not found")
+        # Feb-2026 · List/Detail Symmetry Fix — the list endpoint
+        # returns a UNION of ``db.technicians`` rows AND synth rows
+        # sourced from ``db.users`` (see ``list_technicians`` for
+        # the full rationale). The detail endpoint used to only
+        # query ``db.technicians`` — so anyone whose row lives in
+        # ``db.users`` (fixture G5b/G5d rows + tenants that never
+        # got a matching ``db.technicians`` insert) 404'd here.
+        # Now we fall back to the same synth shape used by the list
+        # so both endpoints have consistent visibility rules.
+        _synth_roles = ["technician", "tech", "landscaper",
+                          "landscape_tech", "pool_tech", "tech_both"]
+        u = await db.users.find_one(
+            {"id": tid,
+              "tenant_id": tenant["id"],
+              "role": {"$in": _synth_roles},
+              "$and": [
+                  {"$or": [{"deleted_at": None},
+                              {"deleted_at": {"$exists": False}}]},
+                  {"$or": [{"active": {"$ne": False}},
+                              {"active": {"$exists": False}}]},
+              ]},
+            {"_id": 0, "id": 1, "email": 1, "first_name": 1,
+             "last_name": 1, "name": 1, "phone": 1, "role": 1,
+             "display_color_hex": 1, "technician_id": 1},
+        )
+        if not u:
+            raise HTTPException(404, "Technician not found")
+        doc = {
+            "id": u.get("technician_id") or u["id"],
+            "user_id": u["id"],
+            "name": (u.get("name")
+                      or " ".join([u.get("first_name") or "",
+                                    u.get("last_name") or ""]).strip()
+                      or u.get("email") or "Unnamed"),
+            "email": u.get("email"),
+            "phone": u.get("phone"),
+            "role": u.get("role"),
+            "tenant_id": tenant["id"],
+            "display_color_hex": u.get("display_color_hex"),
+            "synthesized_from_users": True,
+        }
     doc["jobs"] = await db.jobs.find({"technician_id": tid}, {"_id": 0, "photos.data": 0}).sort("scheduled_date", -1).to_list(200)
     return doc
 

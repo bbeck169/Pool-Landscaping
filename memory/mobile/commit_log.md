@@ -2313,3 +2313,28 @@
 - **Web files referenced**:
   - `/app/frontend/src/pages/jobs/JobDetail.jsx` (line 107: `onArrive` pattern)
 
+
+## Iteration 105 — Phase M1 finish: TeardropPin consumers + ColorPicker integration + tests
+- **Commit**: 396b7b7be
+- **Date**: 2026-09-17
+- **Changes**:
+  - LiveTechPinsMap.tsx: migrated from `<Text>` children to `label={initials}` prop. Removed unused `pinText` style.
+  - Technician detail page (`app/technician/[id].tsx`): Full rewrite. Admin-only crew-color editor section using `<ColorPicker />`. PATCH `/api/users/{user_id}` with `{display_color_hex}`. Handles server 400 `color_contrast_too_low`. Fire-and-forget `POST /api/users/me/recent-colors`.
+  - DailyRouteMap.native.tsx: cleaned up unused `pinNumber` style.
+  - 3 test suites, 27 tests total (8 + 12 + 7), all passing.
+- **Files created**:
+  - `/app/mobile/__tests__/colorContrast.test.ts` (8 tests)
+  - `/app/mobile/__tests__/TeardropPin.test.tsx` (12 tests)
+  - `/app/mobile/__tests__/ColorPicker.test.tsx` (7 tests)
+- **Files modified**:
+  - `/app/mobile/src/components/dispatch/LiveTechPinsMap.tsx` (children→label, removed pinText style)
+  - `/app/mobile/app/technician/[id].tsx` (full rewrite with ColorPicker section)
+  - `/app/mobile/src/components/schedule/DailyRouteMap.native.tsx` (removed unused pinNumber style)
+- **Dependencies added**:
+  - `@react-native-community/slider` (pure-JS, no native module — used for HSL hue picker in ColorPicker)
+- **Web files referenced**:
+  - `frontend/src/components/ui/ColorPicker.jsx`
+  - `frontend/src/components/maps/TeardropPin.jsx`
+  - `frontend/src/lib/colorContrast.js`
+  - `frontend/src/pages/ops/OpsHub.jsx` (crew color editor pattern)
+
