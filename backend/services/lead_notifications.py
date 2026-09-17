@@ -281,6 +281,18 @@ async def send_lead_alert_notifications(
     """
     from typing import cast  # noqa: F401 — retained for type-clarity in tests
 
+    # Feb-2026 · Ticket #3 · Notifications org-toggle. Admin can
+    # switch OFF ``lead_confirmation`` in Org Settings → Notifications;
+    # honour it as a hard short-circuit BEFORE the mute check so
+    # the audit chain matches the toggle's semantic intent.
+    from services.org_settings import (
+        is_org_notification_enabled, log_notification_skipped,
+    )
+    if not is_org_notification_enabled(tenant, "lead_confirmation"):
+        log_notification_skipped(tenant.get("id") or "", "lead_confirmation")
+        return {"sms_queued": 0, "email_queued": 0,
+                "org_toggle_disabled": True}
+
     muted_cid = await _is_contact_muted_in_tenant(
         tenant_id=tenant.get("id") or "",
         phone=lead.get("phone"),

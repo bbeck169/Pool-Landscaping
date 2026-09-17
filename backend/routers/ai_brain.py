@@ -408,6 +408,17 @@ async def ingest_knowledge_file(
 
     _require_admin(user)
 
+    # Feb-2026 · Ticket #4 · AI Configuration org toggle. Admin
+    # can hard-disable KB uploads from Org Settings → AI
+    # Configuration. Reject with a clean 403 + typed error code
+    # so the client can surface a targeted message.
+    _ai_settings = (tenant.get("settings") or {}).get("ai") or {}
+    if _ai_settings.get("kb_uploads_enabled") is False:
+        raise HTTPException(403, {
+            "code": "kb_uploads_disabled_by_org",
+            "message": "Knowledge Base uploads are disabled for this organization.",
+        })
+
     if file is None:
         raise HTTPException(400, "file is required")
 

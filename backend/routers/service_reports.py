@@ -1146,6 +1146,16 @@ async def submit_service_report(
     auto_send_completion = tenant_notify.get("auto_send_completion")
     if auto_send_completion is None:
         auto_send_completion = True
+    # Feb-2026 · Ticket #3 · Org toggle. Independent of the legacy
+    # ``auto_send_completion`` — either being OFF suppresses the
+    # summary. Admin flips this from Org Settings → Notifications.
+    from services.org_settings import (
+        is_org_notification_enabled, log_notification_skipped,
+    )
+    if not is_org_notification_enabled(tenant, "job_completion_summary"):
+        log_notification_skipped(tenant.get("id") or "",
+                                    "job_completion_summary")
+        auto_send_completion = False
     already_notified = (out or rep or {}).get("customer_notified") or {}
 
     # Belt-and-braces: legacy clients may still send

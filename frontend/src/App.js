@@ -164,6 +164,9 @@ import BusinessSettings from "@/pages/settings/BusinessSettings";
 import IndustriesSettings from "@/pages/settings/IndustriesSettings";
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
+// Feb-2026 · Ticket #3 + #4 — Org Notifications + AI Configuration tabs.
+import OrgNotificationsSettings from "@/pages/settings/OrgNotificationsSettings";
+import AIConfigurationSettings from "@/pages/settings/AIConfigurationSettings";
 import SettingsSocial from "@/pages/settings/SettingsSocial";
 import MyProfilePage from "@/pages/account/MyProfilePage";
 import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
@@ -1354,6 +1357,10 @@ export default function App() {
               <Route path="theme" element={<ThemeSettings />} />
               <Route path="integrations" element={<IntegrationsHub />} />
               <Route path="social" element={<SettingsSocial />} />
+              {/* Feb-2026 · Ticket #3 — Org Notifications toggles. */}
+              <Route path="org-notifications" element={<OrgNotificationsSettings />} />
+              {/* Feb-2026 · Ticket #4 — AI Configuration. */}
+              <Route path="ai-configuration" element={<AIConfigurationSettings />} />
             </Route>
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

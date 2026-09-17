@@ -272,6 +272,27 @@ async def dispatch_ai_completion(
             )
         raise
     # Fire-and-forget usage record (still awaited so tests see it).
+    # Feb-2026 · Ticket #4 · AI Configuration ``analytics_enabled``
+    # toggle. When the admin has switched telemetry OFF, skip the
+    # ``record_usage`` call entirely. Core AI functionality (the
+    # completion above) is intentionally NOT gated — only the
+    # usage-analytics emission is suppressed per the ticket brief.
+    _analytics_enabled = True
+    try:
+        _tenant_doc = await db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0, "settings.ai.analytics_enabled": 1},
+        ) or {}
+        _ai_cfg = (_tenant_doc.get("settings") or {}).get("ai") or {}
+        if _ai_cfg.get("analytics_enabled") is False:
+            _analytics_enabled = False
+    except Exception as e:  # pragma: no cover — best-effort read
+        log.warning("[ai.dispatch] analytics gate lookup failed: %s", e)
+    if not _analytics_enabled:
+        log.info(
+            "[org_settings.ai_analytics_skipped] tenant=%s provider=%s",
+            tenant_id, short,
+        )
+        return result
     try:
         await record_usage(
             tenant_id=tenant_id, provider=short,

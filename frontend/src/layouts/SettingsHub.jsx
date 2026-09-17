@@ -24,6 +24,8 @@ import {
   Share2,
   ChevronRight,
   Building2,
+  Bell,
+  Bot,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -80,6 +82,20 @@ const SECTIONS = [
     label: "Social",
     Icon: Share2,
     hint: "8-platform connect grid (Facebook, Instagram, LinkedIn…)",
+  },
+  {
+    key: "org-notifications",
+    to: "/settings/org-notifications",
+    label: "Notifications",
+    Icon: Bell,
+    hint: "Org-wide send-path toggles — lead alerts, on-my-way SMS, completion summary, warranty reminders",
+  },
+  {
+    key: "ai-configuration",
+    to: "/settings/ai-configuration",
+    label: "AI Configuration",
+    Icon: Bot,
+    hint: "AI persona name, Knowledge Base uploads, AI analytics telemetry",
   },
 ];
 

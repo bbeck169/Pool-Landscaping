@@ -1,3 +1,51 @@
+## Phase Ticket #3 + #4 · Org Notifications + AI Configuration tabs — SHIPPED (Feb 2026)
+
+**Scope**
+- Two new admin-only tabs in `SettingsHub` sidebar: **Notifications** + **AI Configuration**.
+- Backend: new router `backend/routers/tenant_org_settings.py` exposing:
+  - `GET /api/tenants/mine/settings/notifications` → `{lead_confirmation, tech_on_my_way, job_completion_summary, warranty_expiration}` (defaults all True)
+  - `PATCH /api/tenants/mine/settings/notifications` (partial, admin-only, rejects unknown keys via `extra="forbid"`)
+  - `GET /api/tenants/mine/settings/ai` → `{persona_name, kb_uploads_enabled, analytics_enabled}` (persona falls back to tenant `business_name` → `name` → "AI Assistant")
+  - `PATCH /api/tenants/mine/settings/ai` (partial, admin-only, persona ≤ 60 chars)
+- Send-path gates wired via new `backend/services/org_settings/notifications_gate.py::is_org_notification_enabled`:
+  - `lead_confirmation` → `services/lead_notifications.py::send_lead_alert_notifications` (early return, `org_toggle_disabled: True`)
+  - `tech_on_my_way` → `routers/on_my_way.py::on_my_way` (200 with `reason: "org_toggle_disabled"`)
+  - `job_completion_summary` → `routers/service_reports.py` completion send site (forces `auto_send_completion=False`)
+  - `warranty_expiration` → `routers/warranties.py` cron send loop (skip + no `warranty_reminders_sent` stamp)
+- AI enforcement:
+  - `kb_uploads_enabled=False` → `POST /api/ai/knowledge/file` returns 403 `{code: "kb_uploads_disabled_by_org"}`
+  - `analytics_enabled=False` → `services/ai/dispatcher.py::dispatch_ai_completion` skips `record_usage` (core AI still works, only telemetry suppressed)
+- Frontend: new pages `pages/settings/OrgNotificationsSettings.jsx` + `pages/settings/AIConfigurationSettings.jsx`, wired at `/settings/org-notifications` and `/settings/ai-configuration` under the existing `<SettingsHub>` layout. Sidebar entries added to `SECTIONS` in `layouts/SettingsHub.jsx`.
+- Migration: `backend/services/migrations/ticket3_ticket4_org_settings_defaults.py` — idempotent per-key `$exists: false` backfill. First run seeded 568 notification keys + 283 AI keys on the local dev DB; second run backfilled 0.
+
+**Tests**
+- Backend: `tests/test_ticket3_ticket4_org_settings.py` — 10/10 ✅ (defaults, partial PATCH, non-admin 403, persona fallback, empty-string clear, 60-char validation, KB 403 gate, lead-notification send-path short-circuit with mocked emailer/SMS, AI analytics `record_usage` skip). All using the `run_test + httpx.ASGITransport` pattern.
+- Frontend: `test/ticket3-ticket4-org-settings.test.jsx` — 9/9 ✅ (admin-gate, GET-hydrate, toggle PATCH, save-flow toast, PATCH failure revert, persona save + toggles).
+- Full regression sweep: 49/49 backend across all this-session test files + 33/33 Vitest across all this-session frontend suites — no regressions.
+
+**Files touched (new)**
+- `backend/routers/tenant_org_settings.py`
+- `backend/services/org_settings/__init__.py`
+- `backend/services/org_settings/notifications_gate.py`
+- `backend/services/migrations/ticket3_ticket4_org_settings_defaults.py`
+- `backend/tests/test_ticket3_ticket4_org_settings.py`
+- `frontend/src/pages/settings/OrgNotificationsSettings.jsx`
+- `frontend/src/pages/settings/AIConfigurationSettings.jsx`
+- `frontend/src/test/ticket3-ticket4-org-settings.test.jsx`
+
+**Files touched (modified)**
+- `backend/server.py` — register `tenant_org_settings` router
+- `backend/services/lead_notifications.py` — gate `send_lead_alert_notifications`
+- `backend/routers/on_my_way.py` — gate `POST /jobs/{id}/on-my-way`
+- `backend/routers/service_reports.py` — gate completion summary
+- `backend/routers/warranties.py` — gate warranty expiration cron
+- `backend/routers/ai_brain.py` — gate `POST /ai/knowledge/file`
+- `backend/services/ai/dispatcher.py` — gate `record_usage` telemetry
+- `backend/tests/_f7_loop_fixture.py` — add `routers.tenant_org_settings` to `_REBOUND_MODULES`
+- `frontend/src/App.js` — register the two new tab routes
+- `frontend/src/layouts/SettingsHub.jsx` — add Notifications + AI Configuration sidebar entries
+
+
 ## Phase Test-Infra · Motor event-loop-closed migration for 4 test files — SHIPPED (Feb 2026)
 
 **Scope**

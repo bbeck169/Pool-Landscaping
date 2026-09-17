@@ -1013,6 +1013,10 @@ api_router.include_router(_i17a_tenant_integrations.router)
 from routers import payment_providers_settings as _fb_pp_settings  # noqa: E402
 api_router.include_router(_fb_pp_settings.router)
 
+# Feb-2026 · Ticket #3 + #4 · Organization Notifications + AI Config.
+from routers import tenant_org_settings as _fb_org_settings  # noqa: E402
+api_router.include_router(_fb_org_settings.router)
+
 
 for module in [notifications_router,
                # Feb 2026 · Customer Merge Phase 1 — MUST be registered

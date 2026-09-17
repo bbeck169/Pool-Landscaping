@@ -824,6 +824,22 @@ async def scheduled_warranty_expiration_scan_all():
                     })
                     if already:
                         continue
+                    # Feb-2026 · Ticket #3 · Org toggle. When the
+                    # admin flips ``warranty_expiration`` OFF in
+                    # Org Settings, the cron logs the skip and
+                    # moves on without sending or stamping a
+                    # ``warranty_reminders_sent`` row.
+                    from services.org_settings import (
+                        is_org_notification_enabled,
+                        log_notification_skipped,
+                    )
+                    if not is_org_notification_enabled(
+                        t, "warranty_expiration",
+                    ):
+                        log_notification_skipped(
+                            t.get("id") or "", "warranty_expiration",
+                        )
+                        continue
                     # Best-effort email via existing Resend pipeline.
                     channel = "email"
                     status = "sent"

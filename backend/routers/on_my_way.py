@@ -212,6 +212,16 @@ async def on_my_way(
     if role not in _ALLOWED_ROLES:
         raise HTTPException(403, "role not permitted")
 
+    # Feb-2026 · Ticket #3 · Notifications org-toggle. Admin can
+    # switch OFF ``tech_on_my_way`` in Org Settings → Notifications.
+    # Honour it as a 200 skip so mobile queue replay stays graceful.
+    from services.org_settings import (
+        is_org_notification_enabled, log_notification_skipped,
+    )
+    if not is_org_notification_enabled(tenant, "tech_on_my_way"):
+        log_notification_skipped(tenant.get("id") or "", "tech_on_my_way")
+        return await _sar({"sent": False, "reason": "org_toggle_disabled"})
+
     tid = tenant["id"]
     job = await db.jobs.find_one({"id": job_id, "tenant_id": tid}, {"_id": 0, "photos.data": 0})
     if not job:
