@@ -30,6 +30,7 @@ load_dotenv("/app/backend/.env")
 
 _REBOUND_MODULES = (
     "config",
+    "emailer",
     "routers.admin_health_check",
     "routers.analytics_monthly",
     "routers.charge_templates",
@@ -39,8 +40,10 @@ _REBOUND_MODULES = (
     "routers.dashboard_revenue",
     "routers.data_repair",
     "routers.drift_alerts",
+    "routers.gps_auto_start",
     "routers.job_media_line_items",
     "routers.income_categories",
+    "routers.job_timers",
     "routers.jobs",
     "routers.portal_admin",
     "routers.recurring_jobs",
@@ -73,6 +76,7 @@ _REBOUND_MODULES = (
     "services.soshie.llm_moderation",
     "services.soshie.moderation",
     "utils",
+    "utils_idempotency",
 )
 
 

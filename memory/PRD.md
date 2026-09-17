@@ -1,3 +1,20 @@
+## Phase Test-Infra · Motor event-loop-closed migration for 4 test files — SHIPPED (Feb 2026)
+
+**Scope**
+- Migrated 4 test files OFF `fastapi.testclient.TestClient` (which shared the FastAPI app's default Motor loop across tests, producing `RuntimeError: Event loop is closed` on the 2nd test onward) ONTO the `run_test(coro_factory)` + `httpx.ASGITransport` + `httpx.AsyncClient` pattern already proven in `tests/test_k4_schedule_recurring_appears_on_page.py`. No product-code changes.
+- Files: `test_recurring_job_end_date.py` (7/7 ✅), `test_recurring_jobs_category_patch.py` (6/6 ✅), `test_job_arrive_endpoint.py` (11/11 ✅), `test_job_timer_duration_computation.py` (2/2 ✅).
+- Extended `_f7_loop_fixture._REBOUND_MODULES` with `emailer`, `routers.gps_auto_start`, `routers.job_timers`, `utils_idempotency` so downstream modules imported inside the `/arrive` + `PUT /jobs/{id}` completion paths get their Motor DB handles rebound to the per-test loop.
+- Fixed 2 pre-existing test bugs surfaced by the migration:
+  1. `test_job_arrive_endpoint.py` seeded the tech consent row on the wrong collection (`gps_consent_grants` → the endpoint reads `tech_gps_consents`); fixed to seed the correct collection with `granted:True, revoked_at:None`.
+  2. `test_idempotent_second_call_returns_both_alias_flags` + `test_idempotent_call_does_not_overwrite_start_stamp` didn't reset the module-level 60s rate-limit cache between replays; the second POST was hitting the throttle gate instead of the `already_running` branch. Now imports and clears `routers.gps_auto_start._RATE_LIMIT_CACHE` between calls.
+- Adjusted `test_materialization_inclusive_end_date` to assert the outcome (a job exists for today) rather than the `/generate` payload — with P1 auto-activate, the today occurrence is now materialized during the `POST /recurring-jobs` handler, so the subsequent `/generate` call correctly returns `inserted:0`.
+
+**Regression sanity**
+- K4 flow (`test_k4_schedule_recurring_appears_on_page.py`) still 5/5 ✅ after `_REBOUND_MODULES` extension.
+- Full run of the 7 relevant test files: **46/46 ✅**.
+- Adjacent file `test_recurrence_never_ends_and_partial_index.py` remains at pre-existing 9-failure state — same Motor-loop-closed pattern, out of scope for this delivery; can be migrated in a follow-up with the same recipe.
+
+
 ## Phase P1 · Recurring Jobs · Auto-Activate + Bulk Activate + Instant Generation — SHIPPED (Feb 2026)
 
 **Scope**
