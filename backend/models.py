@@ -282,6 +282,12 @@ class JobArriveIn(BaseModel):
     # geofence event; used only for the audit log breadcrumb, never
     # gates the timer start.
     accuracy: Optional[float] = None
+    # Feb-2026 · Job Arrival unify · mobile arrival ergonomics.
+    # When ``source`` is present it drives ``timer_start_method`` on
+    # the job doc. When absent, the legacy default
+    # (``"gps_arrival"``) is stamped so existing callers keep the
+    # exact same audit shape. Whitelist enforced in the router.
+    source: Optional[str] = None
 
 
 class FieldReportUpdate(BaseModel):

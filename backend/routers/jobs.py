@@ -3101,6 +3101,22 @@ async def job_arrive(jid: str, body: JobArriveIn,
     A successful start stamps ``timer_start_method="gps_arrival"``
     and writes an audit-log row ``job_timer_auto_start``.
     """
+    # Feb-2026 · Job Arrival unify · source whitelist. When the
+    # mobile client sends ``source``, only allow the 3 documented
+    # values; reject anything else with 400 so the enum stays
+    # tight. Absent = legacy behavior (``gps_arrival``).
+    _ALLOWED_SOURCES = {"geofence", "manual", "route_start"}
+    _resolved_source: str = "gps_arrival"
+    if body.source is not None:
+        _norm = str(body.source).strip().lower()
+        if _norm not in _ALLOWED_SOURCES:
+            raise HTTPException(400, {
+                "error": "invalid_source",
+                "allowed": sorted(_ALLOWED_SOURCES),
+                "provided": body.source,
+            })
+        _resolved_source = _norm
+
     # Phase O4 · Feb-2026 — Idempotency wiring.  A weekend tech whose
     # mobile queue replays a stale /arrive on reconnect must not
     # re-log the audit row, re-throttle, or re-flip the job status.
@@ -3231,13 +3247,16 @@ async def job_arrive(jid: str, body: JobArriveIn,
             await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": site})
         await _log("already_running", distance_m=distance_m,
                       radius_m=radius_m)
-        return await _sar({"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]})
+        # Feb-2026 · alias for mobile; both keys emit the same value.
+        return await _sar({"started": True, "already_running": True,
+                              "already_arrived": True,
+                              "timer_started_at": job["timer_started_at"]})
     if job.get("status") == "completed":
         await _log("job_completed", distance_m=distance_m,
                       radius_m=radius_m)
         return await _sar({"started": False, "reason": "job_completed"})
     started = now_iso()
-    upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
+    upd = {"timer_started_at": started, "timer_start_method": _resolved_source,
               "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
     # Feb-2026 · P37c bug-fix — snapshot the pre-arrival status when
     # /arrive auto-advances to ``in_progress`` so /timer/undo-start
@@ -3271,6 +3290,8 @@ async def job_arrive(jid: str, body: JobArriveIn,
                         _jt_exc)
 
     return await _sar({"started": True, "already_running": False,
+              # Feb-2026 · alias for mobile; both keys emit the same value.
+              "already_arrived": False,
               "timer_started_at": started,
               "distance_m": round(distance_m, 1) if distance_m is not None else None,
               "radius_m": radius_m})
