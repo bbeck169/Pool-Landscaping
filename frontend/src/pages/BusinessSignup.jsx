@@ -51,11 +51,9 @@ function _passwordStrength(pw) {
 
 
 // ── Inner form (renders inside <Elements> when Stripe key is set) ──
-function SignupFormInner({ stripeKeyLoaded }) {
+function SignupFormInner({ stripeKeyLoaded, cardFieldRef }) {
   const { t } = useTranslation("common");
   const nav = useNavigate();
-  const stripe = useStripe();
-  const elements = useElements();
   const [form, setForm] = React.useState({
     business_name: "",
     admin_name: "",
@@ -87,13 +85,20 @@ function SignupFormInner({ stripeKeyLoaded }) {
     setSubmitting(true);
     let payment_method_id = "pm_pending_frontend_ship";
     try {
-      // Stripe Elements path — only exercised when the publishable
-      // key is set at build time. When it's not, we fall through
-      // with the placeholder so local dev / sandbox smoke keeps
-      // working without a Stripe account.
-      if (stripeKeyLoaded && stripe && elements) {
-        const cardEl = elements.getElement(CardElement);
-        const { error, paymentMethod } = await stripe.createPaymentMethod({
+      // ═══════════════════════════════════════════════════════════
+      // SP3-hotfix · Feb-2026 — Stripe hooks are OWNED by the child
+      // ``SignupCardField`` component (rendered only inside the
+      // <Elements> provider). We pull the stripe/elements refs
+      // via ``cardFieldRef.current`` here so this parent form is
+      // hook-free and never crashes when the publishable key is
+      // absent (preview pod today). The child hands us its live
+      // refs after mount; if it never mounted (no key), refs are
+      // null and we submit the placeholder token.
+      // ═══════════════════════════════════════════════════════════
+      const cardHandle = cardFieldRef && cardFieldRef.current;
+      if (stripeKeyLoaded && cardHandle && cardHandle.stripe && cardHandle.elements) {
+        const cardEl = cardHandle.elements.getElement(CardElement);
+        const { error, paymentMethod } = await cardHandle.stripe.createPaymentMethod({
           type: "card",
           card: cardEl,
           billing_details: {
@@ -226,27 +231,14 @@ function SignupFormInner({ stripeKeyLoaded }) {
           </select>
         </label>
         {stripeKeyLoaded ? (
-          <div data-testid="signup-card-element-wrap">
-            <div style={{ marginBottom: 4, fontSize: 13, color: "#475569" }}>
-              {t("signup.card_label", "Payment card")}
-            </div>
-            <div style={{
-              padding: 12, border: "1px solid #CBD5E1",
-              borderRadius: 6, background: "#fff",
-            }}>
-              <CardElement options={{ hidePostalCode: false }} />
-            </div>
-            {cardErr ? (
-              <div data-testid="signup-card-error"
-                    style={{ color: "#B91C1C", fontSize: 13, marginTop: 6 }}>
-                {cardErr}
-              </div>
-            ) : null}
-          </div>
+          <SignupCardField cardFieldRef={cardFieldRef} cardErr={cardErr}
+                              t={t} />
         ) : (
           // Sandbox / local-dev fallback — see the console.warn in
           // submit(). Preserves the SP2 test flow (placeholder token
-          // still submits) without requiring a Stripe key.
+          // still submits) without requiring a Stripe key. NO hook
+          // calls in this branch — that's what makes the preview
+          // pod render safely.
           <div style={{ padding: 12, border: "1px dashed #94A3B8",
                           borderRadius: 6, color: "#475569", fontSize: 13 }}
                 data-testid="signup-card-placeholder">
@@ -272,19 +264,74 @@ function SignupFormInner({ stripeKeyLoaded }) {
 }
 
 
-// ── Outer component: conditionally wraps in <Elements> ────────────
+// ═════════════════════════════════════════════════════════════════
+// SP3-hotfix · Feb-2026 — Card field child.
+//
+// This is the ONLY component in this file that calls ``useStripe()``
+// / ``useElements()``. It is rendered strictly inside the
+// ``<Elements>`` provider (see ``BusinessSignup`` default export
+// below). Publishes its live stripe/elements handles up to the
+// parent form via ``cardFieldRef`` so the parent can call
+// ``createPaymentMethod`` on submit without ever touching a hook.
+//
+// Root cause of the preview-pod crash it fixes:
+//   The previous SP3 revision called ``useStripe()`` unconditionally
+//   at the top of ``SignupFormInner``. When
+//   ``REACT_APP_STRIPE_PUBLISHABLE_KEY`` was unset (preview pod
+//   today), the outer component returned ``<SignupFormInner />``
+//   WITHOUT the ``<Elements>`` provider, and the hook threw
+//   "Could not find Elements context" — which surfaced as the red
+//   React overlay + entirely blank form the tester saw.
+// ═════════════════════════════════════════════════════════════════
+function SignupCardField({ cardFieldRef, cardErr, t }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  React.useEffect(() => {
+    if (cardFieldRef) {
+      cardFieldRef.current = { stripe, elements };
+    }
+  }, [cardFieldRef, stripe, elements]);
+  return (
+    <div data-testid="signup-card-element-wrap">
+      <div style={{ marginBottom: 4, fontSize: 13, color: "#475569" }}>
+        {t("signup.card_label", "Payment card")}
+      </div>
+      <div style={{
+        padding: 12, border: "1px solid #CBD5E1",
+        borderRadius: 6, background: "#fff",
+      }}>
+        <CardElement options={{ hidePostalCode: false }} />
+      </div>
+      {cardErr ? (
+        <div data-testid="signup-card-error"
+              style={{ color: "#B91C1C", fontSize: 13, marginTop: 6 }}>
+          {cardErr}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+// ── Outer component: always wraps in <Elements> ─────────────────
+//
+// ``<Elements stripe={null}>`` is a supported "loading" state per
+// Stripe React docs — it provides the context so any child hook
+// call resolves to ``null`` instead of throwing. That gives us
+// belt-and-suspenders safety: even if ``SignupCardField`` is
+// somehow rendered with a null stripe promise, hooks won't crash.
 export default function BusinessSignup() {
   const publishableKey = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || "";
   const stripePromise = React.useMemo(
     () => (publishableKey ? loadStripe(publishableKey) : null),
     [publishableKey],
   );
-  if (stripePromise) {
-    return (
-      <Elements stripe={stripePromise}>
-        <SignupFormInner stripeKeyLoaded={true} />
-      </Elements>
-    );
-  }
-  return <SignupFormInner stripeKeyLoaded={false} />;
+  const cardFieldRef = React.useRef(null);
+  return (
+    <Elements stripe={stripePromise}>
+      <SignupFormInner
+        stripeKeyLoaded={!!stripePromise}
+        cardFieldRef={cardFieldRef} />
+    </Elements>
+  );
 }
