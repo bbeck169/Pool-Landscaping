@@ -44,49 +44,36 @@ def get_credentials_or_none() -> Optional[Tuple[str, str]]:
 def get_credentials_for_tenant(
     tenant_doc: Optional[Dict[str, Any]],
 ) -> Optional[Tuple[str, str]]:
-    """Sep-2026 · Per-tenant BYO DFS credentials.
+    """Sep-2026 · Per-tenant BYO DFS credentials — REVERTED.
 
-    Reads ``tenant.settings.integrations.dataforseo.{login_encrypted,
-    password_encrypted}`` and decrypts with the module-level Fernet
-    helper. Returns ``None`` on:
-      • Missing tenant doc / settings path
-      • Encryption key not configured (feature disabled)
-      • Tampered ciphertext
-      • Empty/invalid decrypted plaintext
+    Feb-2026 · Ticket #2-REVERSAL: the per-tenant DFS BYO feature was
+    withdrawn. This helper is preserved (importable) for the future
+    BYO framework and now always returns ``None`` so callers fall
+    through to the global env credentials via
+    :func:`get_effective_credentials`.
 
-    Callers MUST fall through to :func:`get_credentials_or_none`
-    (global env) on ``None`` — see :func:`get_effective_credentials`.
+    The Fernet decryption + tenant-doc parsing logic has been
+    removed because there are no more encrypted DFS credentials to
+    read (see the ``revert_tenant_dataforseo_credentials`` migration).
     """
-    if not tenant_doc:
-        return None
-    integ = ((tenant_doc.get("settings") or {}).get("integrations") or {}) \
-        .get("dataforseo") or {}
-    login_ct = integ.get("login_encrypted")
-    pw_ct = integ.get("password_encrypted")
-    if not (login_ct and pw_ct):
-        return None
-    from services.tenant_secrets_crypto import decrypt_tenant_secret
-    login = decrypt_tenant_secret(login_ct)
-    pw = decrypt_tenant_secret(pw_ct)
-    if not (login and pw):
-        return None
-    return login, pw
+    return None
 
 
 def get_effective_credentials(
     tenant_doc: Optional[Dict[str, Any]],
 ) -> Optional[Tuple[str, str, str]]:
-    """Sep-2026 · Priority resolver: **tenant → global → None**.
+    """Priority resolver: **tenant → global → None**.
 
     Returns a 3-tuple ``(login, password, source)`` where ``source``
     is ``"tenant"`` (BYO creds) or ``"global"`` (platform default).
-    Callers use ``source`` for cost telemetry — tenant credit calls
-    are billed to the tenant's DFS account; global credit calls
-    burn the platform's shared account.
+    Callers use ``source`` for cost telemetry.
+
+    Feb-2026 · Ticket #2-REVERSAL: currently equivalent to
+    :func:`get_credentials_or_none` plus a ``"global"`` source tag.
+    The 3-tuple return shape is preserved for API compatibility with
+    any future caller. Future BYO framework will restore tenant-first
+    priority — do NOT delete this helper.
     """
-    t = get_credentials_for_tenant(tenant_doc)
-    if t:
-        return (t[0], t[1], "tenant")
     g = get_credentials_or_none()
     if g:
         return (g[0], g[1], "global")

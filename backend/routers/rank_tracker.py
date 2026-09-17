@@ -366,15 +366,11 @@ async def refresh_now(kid: str,
             "No website_url on the tenant's business card — set that first, "
             "otherwise we have no domain to rank-check for.",
         )
-    # Sep-2026 · Per-tenant BYO DFS creds. Pull the tenant doc + let
-    # :func:`get_effective_credentials` pick source (tenant → global).
-    tenant_doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
-    effective = dfs.get_effective_credentials(tenant_doc)
+    # Feb-2026 · Ticket #2-REVERSAL — per-tenant BYO DFS creds
+    # withdrawn. Master DFS keys only. ``credential_source`` log line
+    # preserved and always emits ``"global"`` for audit continuity.
     creds_override = None
     creds_source = "global"
-    if effective is not None:
-        creds_override = (effective[0], effective[1])
-        creds_source = effective[2]
     logger.info("[rank-tracker] refresh-now tenant=%s kid=%s "
                   "credential_source=%s", tid, kid, creds_source)
     result = await _snapshot_keyword(

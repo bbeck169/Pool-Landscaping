@@ -479,9 +479,13 @@ api_router.include_router(_signup_router.router)
 from routers import signup_onboarding_wizard as _sowiz  # noqa: E402
 api_router.include_router(_sowiz.router)
 
-# Sep-2026 · Per-tenant BYO DataForSEO credentials.
-from routers import tenant_dataforseo_integration as _dfs_integ  # noqa: E402
-api_router.include_router(_dfs_integ.router)
+# Sep-2026 · Per-tenant BYO DataForSEO credentials — REVERTED
+# (Feb-2026 · Ticket #2-REVERSAL). Router file deleted; master DFS
+# keys only. The Fernet infrastructure in
+# ``services/tenant_secrets_crypto.py`` is preserved for the future
+# BYO framework, but no user-facing DFS BYO endpoints exist right
+# now. See ``services/migrations/revert_tenant_dataforseo_credentials.py``
+# for the idempotent data cleanup.
 # Feb-2026 · P0 · Lead form address autofill — public Google Places
 # proxy consumed by the embedded lead widget + admin marketing-form
 # builder preview. See ``routers/public_places.py`` for the two

@@ -1,5 +1,12 @@
 """Sep-2026 · Per-tenant DFS credentials · Fernet-based secret crypto.
 
+Feb-2026 · Ticket #2-REVERSAL: the per-tenant DataForSEO BYO feature
+that originally consumed this module was withdrawn. The module is
+intentionally preserved because the encryption utility is generic
+(Fernet symmetric crypto), not DFS-specific — the queued BYO
+framework (mobile / roadmap items #6–8) depends on it. Do NOT delete
+this file or its ``TENANT_SECRETS_ENC_KEY`` env var.
+
 Fernet symmetric encryption with a project-wide key at
 ``TENANT_SECRETS_ENC_KEY`` (base64 URL-safe, 32 bytes = 44 chars).
 

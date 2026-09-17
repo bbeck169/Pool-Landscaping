@@ -852,17 +852,16 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
                 )
                 return
 
-        # ── DFS credential gate (tenant → global → None) ──────────
-        # Sep-2026 · Per-tenant BYO. Pull the tenant doc once, use
-        # :func:`get_effective_credentials` to pick the source, and
-        # forward the tuple to every DFS call so billing lands on
-        # the right account.
-        tenant_doc = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
-        effective = _dfs.get_effective_credentials(tenant_doc)
-        if effective is None:
+        # ── DFS credential gate (global env only) ─────────────────
+        # Feb-2026 · Ticket #2-REVERSAL: per-tenant BYO DFS creds
+        # withdrawn. Master DFS keys only. The ``credential_source``
+        # log line is preserved and always emits ``"global"`` for
+        # audit continuity + future BYO framework compatibility.
+        creds = _dfs.get_credentials_or_none()
+        if creds is None:
             logger.info(
-                "[heatmap] DataForSEO not configured (tenant + global "
-                "both empty) — degrading to mocked payload for "
+                "[heatmap] DataForSEO not configured (global env "
+                "empty) — degrading to mocked payload for "
                 "tenant=%s keyword=%r", tenant_id, keyword,
             )
             await _write_mocked_heatmap(
@@ -870,8 +869,8 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
                 reason="dataforseo_not_configured",
             )
             return
-        creds_tuple = (effective[0], effective[1])
-        creds_source = effective[2]  # "tenant" | "global"
+        creds_tuple = creds
+        creds_source = "global"
         logger.info(
             "[heatmap] tenant=%s keyword=%r credential_source=%s",
             tenant_id, keyword, creds_source,
@@ -1133,10 +1132,10 @@ async def start_heatmap(body: RankHeatmapIn, bg: BackgroundTasks,
                                              "Admin route already gates access."),
                          user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant)):
-    # Sep-2026 · Per-tenant BYO — check tenant creds too so the
-    # optimistic ``mocked`` flag is accurate on the initial insert.
-    effective = _dfs.get_effective_credentials(tenant)
-    dfs_configured = effective is not None
+    # Feb-2026 · Ticket #2-REVERSAL — per-tenant BYO DFS creds
+    # withdrawn. Check master DFS keys so the optimistic ``mocked``
+    # flag is accurate on the initial insert.
+    dfs_configured = _dfs.get_credentials_or_none() is not None
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],
