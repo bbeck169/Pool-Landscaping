@@ -286,37 +286,69 @@ def assert_core_readings_present(source: Any) -> None:
     )
 
 
+def _pick_primary_body(bodies: List[Any]) -> Optional[Dict[str, Any]]:
+    """Return the primary body per the CHEM2 · Feb-2026 rule.
+
+    Priority:
+        1. A dict body with an explicit ``is_primary == True`` flag.
+        2. Otherwise, the FIRST body in the list.
+        3. If nothing dict-shaped is present, ``None``.
+
+    Non-dict entries are skipped for both priorities so a malformed
+    list (``[None, {"is_primary": True, ...}]``) still resolves the
+    marked body correctly.
+    """
+    marked: Optional[Dict[str, Any]] = None
+    first: Optional[Dict[str, Any]] = None
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        if first is None:
+            first = body
+        if body.get("is_primary") is True and marked is None:
+            marked = body
+    return marked if marked is not None else first
+
+
 def assert_bodies_required_readings_present(bodies: Any) -> None:
-    """Phase CHEM1 · Feb-2026 — multi-body enforcement of the
+    """Phase CHEM2 · Feb-2026 — primary-body-only enforcement of the
     Required Four.
 
-    Iterates every ``water_bodies[*]`` whose ``type`` requires
-    readings (see ``services.water_bodies.READING_REQUIRED``) and
-    raises the same 422 shape as :func:`assert_core_readings_present`
-    when any Required Four reading is missing on any such body.
+    LOOSENED from CHEM1's every-body enforcement. Only the PRIMARY
+    body (see :func:`_pick_primary_body`) is required to have all
+    four canonical readings. Secondary bodies — spas, fountains,
+    water features, secondary pools — may be entirely blank without
+    blocking close.
 
-    The 422 detail includes a ``bodies`` array so the FE can point
-    at the offending body:
+    Exception CONTRACT preserved (byte-identical to CHEM1):
 
-        {
-          "detail": "chemistry_core_readings_missing",
-          "message": "...",
-          "missing_fields": [...],       # union across bodies
-          "missing_labels": [...],       # union across bodies
-          "bodies": [
-            {"id": "wb-...", "label": "Kids Pool",
-             "type": "pool",
-             "missing_fields": ["free_cl"], "missing_labels": ["Free Cl"]},
-            ...
-          ]
-        }
+        * Class: :class:`fastapi.HTTPException`, ``status_code=422``.
+        * ``detail`` schema (dict):
+            ``{"detail":            "chemistry_core_readings_missing",
+               "missing_fields":    [...],   # short/machine labels
+               "missing_labels":    [...],   # human/display labels
+               "bodies":            [ ... ], # length 0 or 1 (was: N)
+               "message":           str}``
+        * ``missing_fields`` / ``missing_labels`` ordering follows
+          :data:`CORE_READINGS` (unchanged).
+        * The ``bodies`` array now contains AT MOST ONE entry — the
+          primary body — reflecting the narrowed enforcement. The
+          field is retained so FE consumers keying on
+          ``detail.bodies[0].id`` keep working; they simply always
+          get a single-element array now.
 
-    A single-body report (or a report whose only readable body
-    already satisfied :func:`assert_core_readings_present`) never
-    hits the raise path here — the helper is additive to the flat
-    gate. Skips silently when ``bodies`` is falsy or not a list.
+    Human message narrowed to "Primary pool readings missing: …".
     """
     if not bodies or not isinstance(bodies, list):
+        # Empty / malformed bodies list — the flat gate
+        # (``assert_core_readings_present``) upstream already
+        # handles the "no water bodies at all" case. Log at INFO so
+        # ops can spot a stray write that dropped the array.
+        logger.info(
+            "assert_bodies_required_readings_present: no bodies to "
+            "enforce (bodies=%r) — passing trivially",
+            type(bodies).__name__ if bodies is not None else None,
+        )
         return
     # Lazy import — avoid a top-level circular between chemistry_gate
     # and water_bodies (water_bodies imports from us at call sites).
@@ -325,37 +357,44 @@ def assert_bodies_required_readings_present(bodies: Any) -> None:
     except Exception:                                     # noqa: BLE001
         return
 
-    offenders: list = []
-    union_keys: set = set()
-    for body in bodies:
-        if not isinstance(body, dict):
-            continue
-        btype = (body.get("type") or "").strip().lower() or "pool"
-        required = READING_REQUIRED.get(btype) or ()
-        if not required:
-            continue
-        norm = normalize_readings(body.get("readings"))
-        missing_keys = [k for k in required
-                        if not _is_valid_reading(norm.get(k))]
-        if not missing_keys:
-            continue
-        for k in missing_keys:
-            union_keys.add(k)
-        offenders.append({
-            "id":    body.get("id"),
-            "label": (body.get("label")
-                       or body.get("name")
-                       or btype.title()),
-            "type":  btype,
-            "missing_fields": [_LABEL[k] for k in missing_keys
-                                 if k in _LABEL],
-            "missing_labels": [DISPLAY_LABELS[k] for k in missing_keys
-                                 if k in DISPLAY_LABELS],
-        })
-    if not offenders:
+    primary = _pick_primary_body(bodies)
+    if primary is None:
+        logger.info(
+            "assert_bodies_required_readings_present: bodies list "
+            "contains no dict entries — passing trivially",
+        )
         return
-    # Preserve CORE_READINGS ordering for the union arrays.
-    union_ordered = [k for k in CORE_READINGS if k in union_keys]
+
+    btype = (primary.get("type") or "").strip().lower() or "pool"
+    required = READING_REQUIRED.get(btype) or ()
+    if not required:
+        # Primary body's type is not gated (e.g. a feature-only
+        # body). Nothing to enforce.
+        return
+    norm = normalize_readings(primary.get("readings"))
+    missing_keys = [k for k in required
+                    if not _is_valid_reading(norm.get(k))]
+    if not missing_keys:
+        return
+
+    # Preserve CORE_READINGS ordering for the union arrays even
+    # though "union" is now a misnomer — we only have one body's
+    # missing set. Kept named ``union_ordered`` to minimise diff
+    # with the CHEM1 raise site.
+    union_ordered = [k for k in CORE_READINGS if k in set(missing_keys)]
+    offender = {
+        "id":    primary.get("id"),
+        "label": (primary.get("label")
+                   or primary.get("name")
+                   or btype.title()),
+        "type":  btype,
+        "missing_fields": [_LABEL[k] for k in missing_keys
+                             if k in _LABEL],
+        "missing_labels": [DISPLAY_LABELS[k] for k in missing_keys
+                             if k in DISPLAY_LABELS],
+    }
+    _primary_label = offender["label"] or "Primary pool"
+    _missing_display = ", ".join(offender["missing_labels"])
     raise HTTPException(
         status_code=422,
         detail={
@@ -364,10 +403,11 @@ def assert_bodies_required_readings_present(bodies: Any) -> None:
                                  if k in _LABEL],
             "missing_labels": [DISPLAY_LABELS[k] for k in union_ordered
                                  if k in DISPLAY_LABELS],
-            "bodies": offenders,
+            "bodies": [offender],
             "message": (
-                "Cannot close job — required chemistry readings "
-                "missing on one or more water bodies"
+                f"{_primary_label} readings missing: {_missing_display}."
+                if _missing_display
+                else f"{_primary_label} readings missing."
             ),
         },
     )

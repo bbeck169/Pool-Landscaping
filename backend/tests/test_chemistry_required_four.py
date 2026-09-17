@@ -130,8 +130,15 @@ def test_gate_missing_labels_never_include_total_cl():
 # Multi-body — Required Four per pool body.
 # ═════════════════════════════════════════════════════════════════════
 def test_multi_body_gate_raises_when_second_pool_body_missing_ph():
-    """Report with two pool bodies — the SECOND body is missing pH →
-    422 that names the offending body's pH."""
+    """Phase CHEM2 · Feb-2026 — REVERSED from CHEM1.
+
+    Under CHEM1 this test asserted that a report with two pool
+    bodies raised 422 when the SECOND body was missing pH. Under
+    CHEM2, only the PRIMARY body is gated — the second body may be
+    blank without blocking close. The test is retained (and inverted)
+    as the drift pin proving that behaviour change didn't regress
+    silently.
+    """
     from services.chemistry_gate import (
         assert_bodies_required_readings_present,
     )
@@ -153,7 +160,43 @@ def test_multi_body_gate_raises_when_second_pool_body_missing_ph():
             "label": "Kids Pool",
             "readings": [
                 {"key": "free_chlorine",  "value": 2.0},
-                # pH deliberately missing
+                # pH deliberately missing on the SECONDARY body —
+                # under CHEM2 this is OPTIONAL. Gate passes.
+                {"key": "alkalinity",     "value": 90},
+                {"key": "cyanuric_acid",  "value": 35},
+            ],
+        },
+    ]
+    # No raise — the primary (first) body is fully filled.
+    assert_bodies_required_readings_present(bodies)
+
+
+def test_multi_body_gate_raises_when_PRIMARY_body_missing_ph_regardless_of_secondary():
+    """Phase CHEM2 · Feb-2026 — replacement assertion. The PRIMARY
+    body being missing a Required Four reading still raises 422 —
+    even if the secondary body is fully filled."""
+    from services.chemistry_gate import (
+        assert_bodies_required_readings_present,
+    )
+    bodies = [
+        {
+            "id": "wb-main",
+            "type": "pool",
+            "label": "Main Pool",
+            "readings": [
+                {"key": "free_chlorine",  "value": 2.5},
+                # pH deliberately missing on the PRIMARY body.
+                {"key": "alkalinity",     "value": 100},
+                {"key": "cyanuric_acid",  "value": 40},
+            ],
+        },
+        {
+            "id": "wb-kids",
+            "type": "pool",
+            "label": "Kids Pool",
+            "readings": [
+                {"key": "free_chlorine",  "value": 2.0},
+                {"key": "ph",             "value": 7.3},
                 {"key": "alkalinity",     "value": 90},
                 {"key": "cyanuric_acid",  "value": 35},
             ],
@@ -163,14 +206,12 @@ def test_multi_body_gate_raises_when_second_pool_body_missing_ph():
         assert_bodies_required_readings_present(bodies)
     d = ei.value.detail
     assert d["detail"] == "chemistry_core_readings_missing"
-    kids = next(b for b in d["bodies"] if b["id"] == "wb-kids")
-    assert kids["label"] == "Kids Pool"
-    assert kids["missing_fields"] == ["ph"]
-    assert kids["missing_labels"] == ["pH"]
-    # Union arrays include pH (kids body's missing reading) but not
-    # anything from the completed Main Pool.
+    # The offender IS the primary Main Pool — CHEM2's bodies array
+    # contains AT MOST one entry.
+    assert len(d["bodies"]) == 1
+    assert d["bodies"][0]["label"] == "Main Pool"
+    assert d["bodies"][0]["missing_fields"] == ["ph"]
     assert "ph" in d["missing_fields"]
-    assert "Main Pool" not in [b["label"] for b in d["bodies"]]
 
 
 def test_multi_body_gate_passes_when_every_pool_body_complete():
