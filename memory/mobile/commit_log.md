@@ -2254,3 +2254,24 @@
 - **Files modified**:
   - `/app/mobile/app/job/[id]/checklist.tsx` (generic branch replaced, +2 imports, net -4 lines)
 
+
+## Iteration 102 — Phase SRL: Sequential routing navigation lock
+- **Commit**: 14be95e06
+- **Date**: 2026-09-17
+- **Changes**:
+  - Created `mobile/src/lib/sequentialRouteLock.ts` — `isJobLockedByRoute()` helper with terminal status set (completed, canceled, cancelled, skipped, could_not_service)
+  - GridView: `lockedIds` useMemo computes lock set per day's route order; passed to JobRow as `routeLocked` prop
+  - JobRow: routeLocked → lock icon badge (Ionicons lock-closed), 55% opacity, Alert.alert("Route lock", ...) on tap
+  - CalendarView: accepts `isAdmin` prop, sorts dayJ by route_index before lock computation, shows lock icon + opacity on locked event cards
+  - Admin bypass: `isAdmin` → empty lockedIds set; CalendarView gates on `!isAdmin`
+  - 22 Jest tests pass (12 helper, 10 schedule render)
+  - Prior schedule tests still green (s1 tech filter: 8/8)
+  - Inventory: route ordering = `route_index ?? route_order ?? 999` (server-provided); `skipped` status EXISTS; no emergency/urgent flag; entry point = `onOpenJob → router.push('/job/{id}/checklist')`
+  - Follow-up: server-side enforcement (403 from GET /api/jobs/{id}/checklist if prior stop not terminal)
+- **Files created**:
+  - `/app/mobile/src/lib/sequentialRouteLock.ts` (48 lines)
+  - `/app/mobile/__tests__/phase-sequential-route-lock-helper.test.ts` (93 lines)
+  - `/app/mobile/__tests__/phase-sequential-route-lock-schedule-render.test.tsx` (86 lines)
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (import, GridView lockedIds, JobRow lock UI, CalendarView lock UI, gStyles)
+
