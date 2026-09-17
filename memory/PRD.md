@@ -1,3 +1,37 @@
+## Phase Preset Palette Contrast Reconciliation — SHIPPED (Feb 2026)
+
+**Scope**
+- `GET /api/tech-colors/palette` now filters every raw palette entry through `services.color.contrast_ratio_vs_white`; hexes < 3.0 vs `#FFFFFF` are dropped BEFORE they reach the client. Raw `TECH_COLOR_PALETTE` constant is untouched so historical `palette[hash % len(PALETTE)]` slot assignments stay byte-identical.
+- Startup INFO log per boot: `[tech_colors.palette.startup] total=24 passing=18 dropped=6`.
+- New idempotent migration `backend/services/migrations/legacy_low_contrast_color_migration.py` — scans `users.display_color_hex`, remaps blocked hexes to darker Tailwind-700-tier shades, writes one `color_migration_audit` row per successful update. Supports `--dry-run` flag.
+
+**Mapping table (verified against the validator)**
+
+| Before (500) | Ratio | After (600/700) | Ratio | Tailwind name |
+|--|--|--|--|--|
+| `#10B981` | 2.537 | `#059669` | 3.768 | emerald 600 |
+| `#14B8A6` | 2.489 | `#0F766E` | 5.473 | teal 700 |
+| `#F59E0B` | 2.148 | `#B45309` | 5.022 | amber 700 |
+| `#84CC16` | 1.976 | `#4D7C0F` | 4.993 | lime 700 |
+| `#06B6D4` | 2.428 | `#0E7490` | 5.358 | cyan 700 |
+| `#F97316` | 2.803 | `#C2410C` | 5.178 | orange 700 |
+
+**Deviation note**: the ticket listed 5 blocked hexes; math surfaced a 6th (`#F97316` orange 500, ratio 2.803). Added it to both the mapping table and the migration so no legacy user is left stuck on an unpickable color.
+
+**Files touched**
+- **New (2)**: `backend/services/migrations/legacy_low_contrast_color_migration.py`, `backend/tests/test_palette_contrast_reconciliation.py`
+- **Modified (1)**: `backend/routers/tech_colors.py` — endpoint now runs the contrast filter; startup log added
+
+**Tests + pass counts**
+- `test_palette_contrast_reconciliation.py` — **6/6 ✅** (endpoint drop, endpoint no-op when all-dark, dry-run without writes, real-run flip+audit+idempotent, ignores already-passing, skips malformed)
+- Full backend regression: **68/68 ✅** across all this-session test files (color-contrast, palette-reconciliation, org-settings, recurring-jobs, job-arrival, K4 schedule, timer-duration)
+
+**Live verification**
+- `GET /api/tech-colors/palette` on dev returns **18 entries** (was 24 pre-filter), zero blocked leaks
+- Migration dry-run on dev DB: `scanned=12 affected=0 updated=0` — no legacy blocked users in this environment; the seed-based unit tests cover the flip flow end-to-end
+- Startup log confirmed via `supervisor backend.err.log`: `total=24 passing=18 dropped=6`
+
+
 ## Phase Redesigned TeardropPin + Global Custom Color Picker — SHIPPED (Feb 2026)
 
 **Scope**
