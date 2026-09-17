@@ -23,6 +23,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-community/netinfo": "11.4.1",
+    "@react-native-community/slider": "5.2.1",
     "@stripe/stripe-react-native": "0.50.3",
     "date-fns": "4.1.0",
     "dayjs": "1.11.13",
@@ -104,7 +105,9 @@
   "expo": {
     "doctor": {
       "reactNativeDirectoryCheck": {
-        "exclude": ["react-native-webrtc"]
+        "exclude": [
+          "react-native-webrtc"
+        ]
       }
     }
   },

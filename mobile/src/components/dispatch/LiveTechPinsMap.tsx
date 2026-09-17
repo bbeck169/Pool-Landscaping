@@ -130,10 +130,9 @@ export default function LiveTechPinsMap({
                 <TeardropPin
                   color={pinColor}
                   pulse={isFresh}
+                  label={_initials(p.user_name)}
                   testID={`dispatch-live-teardrop-${p.user_id}`}
-                >
-                  <Text style={styles.pinText}>{_initials(p.user_name)}</Text>
-                </TeardropPin>
+                />
               </View>
             </Marker>
           );
@@ -165,7 +164,6 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
   map: { flex: 1 },
   pinStale: { opacity: 0.55 },
-  pinText: { fontFamily: font.bold, fontSize: 10, color: "#fff", textAlign: "center" },
   styleBtn: {
     position: "absolute", top: spacing.sm, right: spacing.sm,
     flexDirection: "row", alignItems: "center", gap: 4,

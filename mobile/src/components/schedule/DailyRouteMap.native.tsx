@@ -664,12 +664,9 @@ function RoutePinView({
     >
       <TeardropPin
         color={bg}
+        label={num}
         testID={`schedule-daily-route-map-teardrop-${jobId}`}
-      >
-        <Text style={s.pinNumber} testID={`schedule-daily-route-map-pin-num-${jobId}`}>
-          {num}
-        </Text>
-      </TeardropPin>
+      />
       {pinKind === "completed" ? (
         <View style={[s.pinBadge, { backgroundColor: "#fff" }]} testID={`schedule-daily-route-map-pin-badge-completed-${jobId}`}>
           <Ionicons name="checkmark" size={9} color={PIN_BG.completed} />
@@ -745,7 +742,6 @@ const s = StyleSheet.create({
   pin: {
     // Teardrop wrapper — no circular background needed anymore
   },
-  pinNumber: { fontFamily: font.bold, fontSize: 11, color: "#fff", lineHeight: 14, textAlign: "center" },
   pinBadge: {
     position: "absolute", right: 2, top: 0,
     width: 14, height: 14, borderRadius: 7,

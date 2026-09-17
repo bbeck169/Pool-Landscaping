@@ -1,18 +1,25 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Linking, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Linking, Pressable, Alert } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
+import ColorPicker from "@/src/components/ui/ColorPicker";
 
 export default function TechnicianDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { user } = useAuth();
   const [t, setT] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [colorOpen, setColorOpen] = useState(false);
+
+  const isAdmin =
+    user?.role === "admin" || user?.role === "super_admin";
 
   const load = useCallback(async () => {
     try {
@@ -26,6 +33,35 @@ export default function TechnicianDetail() {
     useCallback(() => {
       load();
     }, [load])
+  );
+
+  /** PATCH the user's display_color_hex. Handle server 400 gracefully. */
+  const onColorChange = useCallback(
+    async (hex: string) => {
+      const userId = t?.user_id;
+      if (!userId) {
+        Alert.alert("Error", "No linked user account for this technician.");
+        return;
+      }
+      try {
+        await api.patch(`/users/${userId}`, { display_color_hex: hex });
+        // Refresh tech record to show updated color.
+        setT((prev: any) => prev ? { ...prev, display_color_hex: hex } : prev);
+        Alert.alert("Saved", `Color set to ${hex}`);
+      } catch (e: any) {
+        // Handle the server contrast guard 400.
+        const body = e?.body || e?.response?.data;
+        if (body?.code === "color_contrast_too_low") {
+          Alert.alert(
+            "Color too light",
+            "This color doesn't meet the minimum contrast for the map pin. Pick a darker shade.",
+          );
+        } else {
+          Alert.alert("Save failed", e?.message || "Could not update the color.");
+        }
+      }
+    },
+    [t],
   );
 
   if (loading) return <Loading testID="technician-detail-loading" />;
@@ -63,6 +99,40 @@ export default function TechnicianDetail() {
           </View>
         </View>
 
+        {/* Admin-only crew color editor */}
+        {isAdmin ? (
+          <View style={styles.colorSection} testID="tech-color-section">
+            <Pressable
+              style={styles.colorToggleRow}
+              onPress={() => setColorOpen((v) => !v)}
+              testID="tech-color-toggle"
+            >
+              <View style={styles.colorToggleLeft}>
+                <View
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: t.display_color_hex || colors.muted },
+                  ]}
+                  testID="tech-color-dot"
+                />
+                <Text style={styles.colorToggleLabel}>Map pin color</Text>
+              </View>
+              <Ionicons
+                name={colorOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.muted}
+              />
+            </Pressable>
+            {colorOpen ? (
+              <ColorPicker
+                value={t.display_color_hex || ""}
+                onChange={onColorChange}
+                testidPrefix="tech-color-picker"
+              />
+            ) : null}
+          </View>
+        ) : null}
+
         <Text style={styles.sectionTitle}>Active Jobs ({active.length})</Text>
         {active.length ? (
           active.map((j: any) => <JobCard key={j.id} job={j} testID={`tech-job-${j.id}`} />)
@@ -84,6 +154,37 @@ const styles = StyleSheet.create({
   contactRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.lg },
   contactBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.pill },
   contactText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.brand },
+  colorSection: {
+    marginTop: spacing.xl,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  colorToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  colorToggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  colorDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  colorToggleLabel: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
   sectionTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
   empty: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
 });

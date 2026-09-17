@@ -1,25 +1,30 @@
 /**
- * Canonical fallback palette: /app/memory/tech_color_palette.md v1
+ * Phase M1 · Redesigned TeardropPin — React Native (react-native-svg).
  *
- * Phase M1 · Apr-2026 — Sitewide custom teardrop map pin.
- *
- * Classic teardrop map-marker silhouette:
- *   • Round head + tapered tail pointing down
- *   • Anchor at bottom tip
- *   • Hollow center (transparent circular cutout)
- *   • Solid fill (`color` prop) with 1px darker stroke
- *   • Optional pulsing halo ring for "fresh GPS" state
- *
- * Fixed size: 36 × 48 px.
+ * Mirrors `frontend/src/components/maps/TeardropPin.jsx` v2:
+ *   • Glossy gradient body (linear gradient top-left → bottom-right)
+ *   • White inner disc for numbered/text label
+ *   • Soft drop-shadow ellipse under the tip
+ *   • Radial highlight (top-left specular sheen)
+ *   • `selected` prop → 1.1x scale + heavier shadow + brighter ring
+ *   • `label` prop → centered text inside white disc
+ *   • `size` prop → proportional scaling (default 36)
  *
  * Exports:
- *   - <TeardropPin />        — the SVG component
- *   - colorFromId(id)        — 12-color deterministic palette
- *   - deriveDarker(hex, pct) — darken a hex color
+ *   - <TeardropPin />
+ *   - colorFromId(id) — 12-color deterministic palette
+ *   - deriveDarker(hex, pct) — darken a hex
+ *   - mixWithWhite(hex, amt) — lighten/darken by amount
+ *   - formatPinLabel(label) — zero-pad single digits
+ *   - pickLabelTextColor(bgHex) — BT.601 luma → white/dark text
  */
-import React from "react";
+import React, { useMemo } from "react";
 import { View, StyleSheet } from "react-native";
-import Svg, { Path, Circle } from "react-native-svg";
+import Svg, {
+  Path, Circle, Ellipse, Defs,
+  LinearGradient, RadialGradient, Stop,
+  G, Text as SvgText,
+} from "react-native-svg";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -28,128 +33,273 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 
-/* ── Helpers ────────────────────────────────────────────────────────── */
+/* ── Constants ──────────────────────────────────────────────────────── */
 
-/**
- * 12-color deterministic palette — canonical v1.
- * Must stay byte-identical to web's _SAFE_PALETTE so the same
- * technician id produces the same fallback color on both surfaces.
- * See /app/memory/tech_color_palette.md v1.
- */
+export const CANONICAL_WIDTH = 36;
+export const CANONICAL_HEIGHT = 48;
+
+// ViewBox is 24×32; head centered at (12,10) r=9.
+const VB_W = 24;
+const VB_H = 32;
+
+// Solid teardrop silhouette (no inner cutout).
+const TEARDROP_PATH_SOLID =
+  "M 12 31 C 6.5 24 3 16 3 10 A 9 9 0 1 1 21 10 C 21 16 17.5 24 12 31 Z";
+
+/* ── Palette ────────────────────────────────────────────────────────── */
+
 const PALETTE = [
-  "#EF4444", //  0 red-500
-  "#F97316", //  1 orange-500
-  "#EAB308", //  2 yellow-500
-  "#22C55E", //  3 green-500
-  "#10B981", //  4 emerald-500
-  "#06B6D4", //  5 cyan-500
-  "#0EA5E9", //  6 sky-500
-  "#3B82F6", //  7 blue-500
-  "#6366F1", //  8 indigo-500
-  "#8B5CF6", //  9 violet-500
-  "#EC4899", // 10 pink-500
-  "#14B8A6", // 11 teal-500
+  "#EF4444", "#F97316", "#EAB308", "#22C55E", "#10B981", "#06B6D4",
+  "#0EA5E9", "#3B82F6", "#6366F1", "#8B5CF6", "#EC4899", "#14B8A6",
 ] as const;
 
 /**
- * Java-style String.hashCode → palette index.
- * Empty / null / undefined → palette[0] (#EF4444).
- * Raw input — no trim, no lowercase, no Unicode normalization.
+ * Deterministic hash → one of 12 safe palette colors.
+ * Same `id` always resolves the same color across platforms.
  */
 export function colorFromId(id: string | null | undefined): string {
   if (!id) return PALETTE[0];
   const s = String(id);
   let hash = 0;
   for (let i = 0; i < s.length; i += 1) {
-    hash = ((hash * 31) + s.charCodeAt(i)) | 0; // int32 wrap
+    hash = ((hash * 31) + s.charCodeAt(i)) | 0;
   }
-  const idx = Math.abs(hash) % 12;
-  return PALETTE[idx];
+  return PALETTE[Math.abs(hash) % 12];
+}
+
+/* ── Color helpers ──────────────────────────────────────────────────── */
+
+function _parseHex6(hex: string): [number, number, number] | null {
+  if (!hex || typeof hex !== "string") return null;
+  const s = hex.trim().replace(/^#/, "");
+  if (s.length === 3) {
+    return [
+      parseInt(s[0] + s[0], 16),
+      parseInt(s[1] + s[1], 16),
+      parseInt(s[2] + s[2], 16),
+    ];
+  }
+  if (s.length === 6) {
+    return [
+      parseInt(s.slice(0, 2), 16),
+      parseInt(s.slice(2, 4), 16),
+      parseInt(s.slice(4, 6), 16),
+    ];
+  }
+  return null;
+}
+
+const _hx = (v: number) =>
+  Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0");
+
+/** Darken a hex color by `pct` (0-1, default 0.28). */
+export function deriveDarker(hex: string, pct: number = 0.28): string {
+  const rgb = _parseHex6(hex);
+  if (!rgb) return "#334155";
+  const [r, g, b] = rgb;
+  const d = (v: number) => Math.max(0, Math.round(v * (1 - pct)));
+  return `#${_hx(d(r))}${_hx(d(g))}${_hx(d(b))}`;
+}
+
+/** Lighten (+amt) or darken (-amt) a hex by `amt` (0..1). */
+export function mixWithWhite(hex: string, amt: number): string {
+  const rgb = _parseHex6(hex);
+  if (!rgb) return "#FFFFFF";
+  const mix = (ch: number) => {
+    if (amt >= 0) return Math.round(ch + (255 - ch) * amt);
+    return Math.round(ch + ch * amt); // amt is negative
+  };
+  return `#${_hx(mix(rgb[0]))}${_hx(mix(rgb[1]))}${_hx(mix(rgb[2]))}`.toUpperCase();
 }
 
 /**
- * Darken a hex color by `pct` (0-1, default 0.25).
- * E.g. deriveDarker("#EF4444", 0.25) → a 25% darker red.
+ * BT.601 luma → white or dark-slate text for labels on colored bg.
+ * Threshold 140 matches the web pin.
  */
-export function deriveDarker(hex: string, pct: number = 0.25): string {
-  const c = hex.replace("#", "");
-  const r = Math.max(0, Math.round(parseInt(c.substring(0, 2), 16) * (1 - pct)));
-  const g = Math.max(0, Math.round(parseInt(c.substring(2, 4), 16) * (1 - pct)));
-  const b = Math.max(0, Math.round(parseInt(c.substring(4, 6), 16) * (1 - pct)));
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+export function pickLabelTextColor(bgHex: string): string {
+  const rgb = _parseHex6(bgHex);
+  if (!rgb) return "#FFFFFF";
+  const luma = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000;
+  return luma < 140 ? "#FFFFFF" : "#0F172A";
 }
 
-/* ── Teardrop SVG ──────────────────────────────────────────────────── */
+/**
+ * Zero-pad single-digit numbers: 1 → "01", 10 → "10", "A" → "A".
+ */
+export function formatPinLabel(
+  label: string | number | null | undefined,
+): string | null {
+  if (label === null || label === undefined || label === "") return null;
+  if (typeof label === "number") {
+    if (!Number.isFinite(label)) return String(label);
+    if (label < 10 && label >= 0) return `0${label}`;
+    return String(label);
+  }
+  const s = String(label);
+  if (/^\d+$/.test(s)) return s.length === 1 ? `0${s}` : s;
+  return s;
+}
 
-// The teardrop path in a 36×48 viewBox:
-// Round head centered at (18, 18) with radius 14,
-// tapered tail converging to the bottom tip at (18, 46).
-//
-// M 18 2                          — top of the head
-// C 8 2, 2 9, 2 18               — left side of round head
-// C 2 27, 18 46, 18 46           — left taper to bottom tip
-// C 18 46, 34 27, 34 18          — right taper from bottom tip
-// C 34 9, 28 2, 18 2 Z           — right side of round head, close
-const TEARDROP_PATH =
-  "M 18 2 C 8 2, 2 9, 2 18 C 2 27, 18 46, 18 46 C 18 46, 34 27, 34 18 C 34 9, 28 2, 18 2 Z";
-
-const PIN_W = 36;
-const PIN_H = 48;
-// Hollow-center hole: circle at center of head (18,18), radius ~7
-const HOLE_CX = 18;
-const HOLE_CY = 18;
-const HOLE_R = 7;
-
-/* ── Component ─────────────────────────────────────────────────────── */
+/* ── Component ──────────────────────────────────────────────────────── */
 
 export interface TeardropPinProps {
-  /** Fill color for the pin body */
+  /** Fill color (hex, required). */
   color: string;
-  /** Whether to show the pulsing halo ring (fresh GPS) */
+  /** Optional label rendered inside the white disc. */
+  label?: string | number;
+  /** Selected state: scale 1.1x, brighter ring, heavier shadow. */
+  selected?: boolean;
+  /** Override the canonical 36px width. */
+  size?: number;
+  /** Pulsing halo for fresh GPS state. */
   pulse?: boolean;
-  /** Optional children rendered inside the pin head (e.g. initials, number) */
+  /** Backward-compat: arbitrary overlay children. */
   children?: React.ReactNode;
-  /** testID for the outer wrapper */
+  /** testID for the outer wrapper. */
   testID?: string;
 }
 
+let _idCounter = 0;
+
 export default function TeardropPin({
   color,
+  label,
+  selected = false,
+  size = CANONICAL_WIDTH,
   pulse = false,
   children,
   testID,
 }: TeardropPinProps) {
-  const strokeColor = deriveDarker(color, 0.3);
+  const fill = color || PALETTE[0];
+  const outerStroke = deriveDarker(fill);
+  const height = Math.round((size * CANONICAL_HEIGHT) / CANONICAL_WIDTH);
+
+  // Unique IDs for SVG defs so multiple pins don't clash.
+  const uid = useMemo(() => `tp${++_idCounter}`, []);
+
+  const formattedLabel = formatPinLabel(label);
+  const isLabeled = formattedLabel !== null;
+
+  // Font size scales with pin: head ≈ 18/24 of viewBox → 55% of head diameter.
+  const labelFontSize = useMemo(() => {
+    const base = (18 / VB_W) * VB_W * 0.55;
+    const chars = (formattedLabel || "").length;
+    return chars >= 3 ? Math.round(base * 0.82) : Math.round(base);
+  }, [formattedLabel]);
+
+  // Gradient stops for the glossy head.
+  const ringFillTop = selected
+    ? mixWithWhite(fill, 0.35)
+    : mixWithWhite(fill, 0.20);
+  const ringFillBottom = selected
+    ? mixWithWhite(fill, -0.12)
+    : mixWithWhite(fill, -0.20);
+
+  const shadowOpacity = selected ? 0.36 : 0.20;
+  const shadowRy = selected ? 1.7 : 1.2;
+  const strokeW = selected ? 1.2 : 1;
+
+  // Scale transform for selected state, anchored at the tip (12, 31).
+  const groupTransform = selected
+    ? "translate(12, 31) scale(1.10) translate(-12, -31)"
+    : undefined;
+
+  const accessLabel = isLabeled
+    ? `Map pin ${formattedLabel} color ${fill}`
+    : `Map pin color ${fill}`;
 
   return (
-    <View style={styles.wrapper} testID={testID}>
-      {/* Pulsing halo ring (renders behind the pin) */}
-      {pulse ? <PulseHalo color={color} /> : null}
+    <View
+      style={[styles.wrapper, { width: size, height: height + 4 }]}
+      testID={testID}
+      accessibilityLabel={accessLabel}
+    >
+      {pulse ? <PulseHalo color={fill} size={size} /> : null}
 
-      {/* SVG teardrop shape */}
       <Svg
-        width={PIN_W}
-        height={PIN_H}
-        viewBox={`0 0 ${PIN_W} ${PIN_H}`}
-        style={styles.svg}
+        width={size}
+        height={height}
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        testID={testID ? `${testID}-svg` : undefined}
       >
-        <Path
-          d={TEARDROP_PATH}
-          fill={color}
-          stroke={strokeColor}
-          strokeWidth={1}
+        <Defs>
+          {/* Glossy head gradient */}
+          <LinearGradient id={`grad-${uid}`} x1="0.15" y1="0.15" x2="0.85" y2="0.85">
+            <Stop offset="0" stopColor={ringFillTop} />
+            <Stop offset="0.55" stopColor={fill} />
+            <Stop offset="1" stopColor={ringFillBottom} />
+          </LinearGradient>
+          {/* Specular highlight */}
+          <RadialGradient id={`hl-${uid}`} cx="0.32" cy="0.30" r="0.38">
+            <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.55} />
+            <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+
+        {/* Drop shadow ellipse */}
+        <Ellipse
+          cx={12}
+          cy={31.4}
+          rx={selected ? 5 : 4.2}
+          ry={shadowRy}
+          fill="#000000"
+          fillOpacity={shadowOpacity}
+          testID={testID ? `${testID}-shadow` : undefined}
         />
-        {/* Hollow center (transparent hole) */}
-        <Circle
-          cx={HOLE_CX}
-          cy={HOLE_CY}
-          r={HOLE_R}
-          fill="white"
-        />
+
+        <G transform={groupTransform} testID={testID ? `${testID}-group` : undefined}>
+          {/* Colored teardrop body with gradient */}
+          <Path
+            d={TEARDROP_PATH_SOLID}
+            fill={`url(#grad-${uid})`}
+            stroke={outerStroke}
+            strokeWidth={strokeW}
+            strokeLinejoin="round"
+            testID={testID ? `${testID}-body` : undefined}
+          />
+
+          {/* Glossy highlight circle */}
+          <Circle
+            cx={12}
+            cy={10}
+            r={8.2}
+            fill={`url(#hl-${uid})`}
+            testID={testID ? `${testID}-highlight` : undefined}
+          />
+
+          {isLabeled ? (
+            <>
+              {/* White inner disc */}
+              <Circle
+                cx={12}
+                cy={10}
+                r={5.6}
+                fill="#FFFFFF"
+                stroke={outerStroke}
+                strokeOpacity={0.35}
+                strokeWidth={0.4}
+                testID={testID ? `${testID}-disc` : undefined}
+              />
+              {/* Centered label text */}
+              <SvgText
+                x={12}
+                y={10}
+                textAnchor="middle"
+                alignmentBaseline="central"
+                fontSize={labelFontSize}
+                fontWeight="700"
+                fill="#0F172A"
+                testID={testID ? `${testID}-label` : undefined}
+              >
+                {formattedLabel}
+              </SvgText>
+            </>
+          ) : null}
+        </G>
       </Svg>
 
-      {/* Optional overlay content (initials, numbers) inside the head */}
-      {children ? (
+      {/* Legacy children overlay (backward compat) */}
+      {children && !isLabeled ? (
         <View style={styles.childOverlay} pointerEvents="none">
           {children}
         </View>
@@ -160,14 +310,14 @@ export default function TeardropPin({
 
 /* ── Pulse Halo ────────────────────────────────────────────────────── */
 
-function PulseHalo({ color }: { color: string }) {
+function PulseHalo({ color, size }: { color: string; size: number }) {
   const opacity = useSharedValue(0.6);
 
   React.useEffect(() => {
     opacity.value = withRepeat(
       withTiming(0, { duration: 1500, easing: Easing.out(Easing.ease) }),
-      -1, // infinite
-      true, // reverse
+      -1,
+      true,
     );
   }, [opacity]);
 
@@ -176,11 +326,21 @@ function PulseHalo({ color }: { color: string }) {
     transform: [{ scale: 1 + (1 - opacity.value) * 0.5 }],
   }));
 
+  const haloSize = size + 8;
   return (
     <Animated.View
       style={[
-        styles.halo,
-        { borderColor: color },
+        {
+          position: "absolute",
+          top: -2,
+          left: (size - haloSize) / 2,
+          width: haloSize,
+          height: haloSize,
+          borderRadius: haloSize / 2,
+          borderWidth: 3,
+          borderColor: color,
+          backgroundColor: "transparent",
+        },
         animatedStyle,
       ]}
       testID="teardrop-pin-pulse-halo"
@@ -188,17 +348,12 @@ function PulseHalo({ color }: { color: string }) {
   );
 }
 
-/* ── Styles ─────────────────────────────────────────────────────────── */
+/* ── Styles ──────────────────────────────────────────────────────────── */
 
 const styles = StyleSheet.create({
   wrapper: {
-    width: PIN_W,
-    height: PIN_H,
     alignItems: "center",
     justifyContent: "flex-start",
-  },
-  svg: {
-    // Pin SVG sits at the top of the wrapper
   },
   childOverlay: {
     position: "absolute",
@@ -208,15 +363,5 @@ const styles = StyleSheet.create({
     height: 24,
     alignItems: "center",
     justifyContent: "center",
-  },
-  halo: {
-    position: "absolute",
-    top: 2,
-    left: -2,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 3,
-    backgroundColor: "transparent",
   },
 });
