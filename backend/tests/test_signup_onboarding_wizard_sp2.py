@@ -32,7 +32,10 @@ def _valid_signup(email: str) -> dict:
         "admin_email":   email,
         "admin_password": "correcthorse42battery",
         "admin_phone":   "+15551234567",
-        "primary_industry": "pools",
+        # SP3 · Feb-2026 — canonical singular slug. Alias-normalize
+        # still accepts ``"pools"`` (covered by
+        # test_signup_industry_slug_alignment.py).
+        "primary_industry": "pool",
         "timezone":      "America/Phoenix",
         "country":       "US",
         "stripe_payment_method_id": "pm_test",
@@ -126,7 +129,7 @@ def test_onboarding_state_returns_prefilled_signup_data():
         assert d["business_name"] == "Onboard Test Pools"
         assert d["timezone"] == "America/Phoenix"
         assert d["country"] == "US"
-        assert d["primary_industry"] == "pools"
+        assert d["primary_industry"] == "pool"
     finally:
         _drop(payload["_email"])
 
@@ -161,7 +164,7 @@ def test_onboarding_all_four_steps_advance_and_complete():
 
         s4 = requests.patch(f"{API}/signup-onboarding/step/4",
                               json={"industries":
-                                      ["pools", "landscaping"]},
+                                      ["pool", "landscaping"]},
                               headers=hdr, timeout=15)
         assert s4.status_code == 200, s4.text
         j = s4.json()
@@ -171,7 +174,7 @@ def test_onboarding_all_four_steps_advance_and_complete():
         # DB reflects the completion.
         row = _sync.tenants.find_one({"id": tid}, {"_id": 0})
         assert row["onboarding_completed_at"]
-        assert row["industries"] == ["pools", "landscaping"]
+        assert row["industries"] == ["pool", "landscaping"]
     finally:
         _drop(payload["_email"])
 
@@ -188,7 +191,7 @@ def test_step_4_rejects_industries_missing_primary():
         assert r.status_code == 400
         d = r.json().get("detail")
         assert d["code"] == "primary_industry_required"
-        assert d["primary_industry"] == "pools"
+        assert d["primary_industry"] == "pool"
     finally:
         _drop(payload["_email"])
 
@@ -327,3 +330,65 @@ def test_billing_cancel_subscription_stamps_local_state():
         assert row["billing_status"] == "canceled"
     finally:
         _drop(payload["_email"])
+
+
+# ── SP3 · Step 3 team-invite email dispatch ───────────────────────
+
+def test_step_3_invites_users_and_returns_invite_email_count():
+    """SP3 · Feb-2026 — step 3 fires team-invite emails via
+    ``_send_team_invite_signup_email`` per invitee. The endpoint
+    swallows send failures (best-effort) so the wizard never blocks
+    on a mail-provider blip; ``invite_emails_sent`` in the response
+    tells the UI how many actually went out."""
+    payload, bearer = _verified_signup()
+    tid = payload["tenant_id"]
+    hdr = {"Authorization": f"Bearer {bearer}"}
+    invite_email = f"invited-{uuid.uuid4().hex[:8]}@sp3-invite.example"
+    try:
+        r = requests.patch(f"{API}/signup-onboarding/step/3",
+                              json={"invites": [
+                                  {"email": invite_email, "role": "tech"},
+                              ]},
+                              headers=hdr, timeout=15)
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert j["invites_created"] == 1
+        # invite_emails_sent is 0..1 depending on Resend adapter
+        # config in the test env — we assert only that the field
+        # exists (i.e. the send path was exercised).
+        assert "invite_emails_sent" in j
+        # User row was created.
+        u = _sync.users.find_one({"email": invite_email.lower(),
+                                       "tenant_id": tid}, {"_id": 0})
+        assert u is not None
+        assert u["role"] == "tech"
+        assert u["invited_by"] == payload["admin_user_id"]
+    finally:
+        # Clean up the invitee user we just created.
+        _sync.users.delete_many({"email": invite_email.lower()})
+        _drop(payload["_email"])
+
+
+def test_step_3_team_invite_signup_template_resolves_all_locales():
+    """The new SP3 ``team_invite_signup`` template ships en/es/fr
+    triplets. Direct-loader coverage — verifies the D5 resolver
+    finds each locale's files with the required merge vars."""
+    from services.i18n_notifications import resolve_notification_body
+
+    ctx = {
+        "admin_name":    "Diego",
+        "business_name": "Onboard Pools",
+        "invited_email": "tech@example.com",
+        "accept_url":    "https://app.example.com/login?invited=tech@example.com",
+        "role":          "tech",
+    }
+    for locale in ("en", "es", "fr"):
+        body = resolve_notification_body("team_invite_signup", locale, ctx)
+        assert body["subject"], (locale, body)
+        assert "Onboard Pools" in body["subject"], (locale, body)
+        assert "{" not in body["body_html"], (
+            f"unresolved merge var in {locale} html: {body['body_html'][:200]}"
+        )
+        assert "https://app.example.com/login" in body["body_html"], (
+            locale, body["body_html"][:200],
+        )

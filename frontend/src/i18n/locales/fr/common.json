@@ -21,5 +21,78 @@
     "helper_business": "Utilisé pour regrouper le planning, les tableaux de bord et les heures de répartition dans votre fuseau local.",
     "helper_billing": "Utilisé pour déclencher la synchronisation Stripe hebdomadaire et d'autres tâches cron par locataire.",
     "saved": "Fuseau horaire mis à jour"
+  },
+  "signup": {
+    "title": "Commencez votre essai de 14 jours",
+    "subtitle": "Card required upfront · No charge until day 15 · Cancel anytime.",
+    "submit": "Démarrer mon essai de 14 jours",
+    "submitting": "Création de votre compte…",
+    "submitted": "Consultez votre boîte mail pour vérifier votre compte.",
+    "card_placeholder": "Le formulaire de carte s'affichera ici lorsque Stripe sera configuré.",
+    "card_label": "Carte bancaire",
+    "card_error": "Erreur de carte. Veuillez réessayer.",
+    "fields": {
+      "business_name": "Nom de l'entreprise",
+      "admin_name": "Votre nom complet",
+      "admin_email": "E-mail",
+      "admin_password": "Mot de passe (minimum 12 caractères)",
+      "admin_phone": "Téléphone (format E.164 recommandé)",
+      "primary_industry": "Secteur principal",
+      "country": "Pays",
+      "country_other": "Autre — contactez-nous"
+    },
+    "errors": {
+      "weak_password": "Le mot de passe doit contenir au moins 12 caractères, une lettre et un chiffre.",
+      "invalid_industry": "Veuillez choisir un secteur pris en charge.",
+      "invalid_timezone": "Veuillez choisir un fuseau horaire valide.",
+      "invalid_country": "Veuillez choisir un pays pris en charge.",
+      "email_already_registered": "Cet e-mail est déjà enregistré. Essayez de vous connecter.",
+      "rate_limited": "Trop de tentatives. Réessayez dans quelques minutes."
+    },
+    "verify": {
+      "title": "Vérification de votre compte",
+      "loading": "Un instant — vérification de votre e-mail…",
+      "ok": "Vérifié. Redirection vers la configuration…",
+      "success": "E-mail vérifié. Redirection…",
+      "failed": "Le lien de vérification est invalide ou a expiré.",
+      "no_token": "Token de vérification manquant. Utilisez le lien de votre e-mail.",
+      "resend_hint": "Connectez-vous pour renvoyer le lien de vérification.",
+      "login_cta": "Se connecter"
+    },
+    "email_sent": {
+      "title": "Vérifiez votre boîte de réception",
+      "body": "Nous avons envoyé un lien de vérification à",
+      "expiry_note": "The link expires in 48 hours.",
+      "resend": "Renvoyer le lien"
+    },
+    "resend": {
+      "login_first": "Connectez-vous avec les identifiants que vous venez de créer pour renvoyer."
+    }
+  },
+  "onboarding": {
+    "title": "Configurons votre compte",
+    "loading": "Chargement…",
+    "next": "Continuer",
+    "skip_step": "Passer pour l'instant",
+    "skip_all": "Tout passer",
+    "finish": "Terminer la configuration",
+    "completed": "Configuration terminée. Bienvenue !",
+    "step_1": {
+      "title": "Confirmez le profil de votre entreprise",
+      "business_name": "Nom de l'entreprise",
+      "phone": "Téléphone",
+      "address": "Adresse"
+    },
+    "step_2": {
+      "title": "Confirmez votre fuseau horaire"
+    },
+    "step_3": {
+      "title": "Invitez votre équipe"
+    },
+    "step_4": {
+      "title": "Choisissez vos secteurs actifs",
+      "primary_hint": "Votre secteur principal est verrouillé — vous pouvez en ajouter d'autres.",
+      "primary_badge": "PRINCIPAL"
+    }
   }
 }

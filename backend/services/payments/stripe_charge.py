@@ -1656,6 +1656,59 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
     data = _asdict(data_env.get("object") or {})
     result = {"type": etype, "handled": False}
 
+    # ═══════════════════════════════════════════════════════════════
+    # SP3 · Feb-2026 — Tenant-billing webhook dispatch.
+    #
+    # Route tenant-billing events (marked with
+    # ``metadata.crm_billing_kind == "tenant_platform_fee"``) to
+    # ``services.tenant_billing_webhooks.handle_tenant_billing_event``.
+    # Events lacking that sigil fall through to the existing
+    # customer-billing handlers below (invoice.payment_succeeded,
+    # customer.subscription.deleted, etc.). This preserves the
+    # original semantics for CRM tenants that charge THEIR customers
+    # via Stripe while also handling the platform-fee events for
+    # tenant subscriptions to our own product.
+    # ═══════════════════════════════════════════════════════════════
+    _TENANT_BILLING_TYPES = {
+        "customer.subscription.trial_will_end",
+        "invoice.payment_succeeded",
+        "invoice.payment_failed",
+        "customer.subscription.deleted",
+    }
+    if etype in _TENANT_BILLING_TYPES:
+        obj_meta = (data.get("metadata") or {})
+        if (obj_meta.get("crm_billing_kind") or "").strip() == "tenant_platform_fee":
+            from services.tenant_billing_webhooks import (
+                handle_tenant_billing_event,
+            )
+            tb_result = await handle_tenant_billing_event(event, db)
+            if tb_result.get("handled"):
+                result.update({"handled": True,
+                                 "tenant_billing": tb_result})
+                return result
+            # Handler declined (missing tenant id, unknown type
+            # variant). Fall through to sibling customer-billing
+            # handlers so the event is never silently dropped.
+            logger.warning(
+                "[stripe.webhook] tenant-billing dispatch declined "
+                "etype=%s action=%s — falling through to customer-billing "
+                "handlers",
+                etype, tb_result.get("action"),
+            )
+        else:
+            # Tenant-billing event class but no sigil — non-negotiable
+            # from SP3: log a warning so misconfigured Stripe events
+            # get flagged. Existing customer-billing handlers below
+            # will still fire (fall-through is intentional).
+            if etype in ("customer.subscription.trial_will_end",):
+                logger.warning(
+                    "[stripe.webhook] etype=%s missing "
+                    "metadata.crm_billing_kind — no customer-billing "
+                    "handler exists for this type. Check Stripe "
+                    "Dashboard metadata configuration.",
+                    etype,
+                )
+
     if etype == "payment_method.attached":
         pm_id = data.get("id")
         cust_id = data.get("customer")

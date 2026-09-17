@@ -2536,6 +2536,33 @@ async def startup():
     global SEEDS_STARTED_AT
     import asyncio
     from datetime import datetime, timezone as _tz
+    # SP3 · Feb-2026 — loudly warn when ALLOW_TEST_HOOKS=1 is set on
+    # a prod-detected pod. The test-hook Stripe webhook endpoint
+    # (see routers/stripe_router.py) is gated behind this env var
+    # and must NEVER be enabled in production.
+    try:
+        if os.environ.get("ALLOW_TEST_HOOKS") == "1":
+            _env_hint = (
+                os.environ.get("REACT_APP_PUBLIC_ENV")
+                or os.environ.get("ENV")
+                or os.environ.get("APP_ENV")
+                or ""
+            ).lower()
+            if _env_hint in ("prod", "production", "live"):
+                logger.error(
+                    "🚨 ALLOW_TEST_HOOKS=1 is set on a PROD-detected pod "
+                    "(REACT_APP_PUBLIC_ENV=%r). This exposes the SP3 "
+                    "tenant-billing webhook smoke endpoint. REMOVE THIS "
+                    "ENV VAR BEFORE ANY PROD DEPLOY.", _env_hint,
+                )
+            else:
+                logger.warning(
+                    "[startup] ALLOW_TEST_HOOKS=1 — SP3 test-hook Stripe "
+                    "webhook endpoint enabled (env=%r). Fine for local / "
+                    "sandbox / CI; MUST NOT ship to prod.", _env_hint,
+                )
+    except Exception as _thk_exc:  # noqa: BLE001
+        logger.warning("[startup] ALLOW_TEST_HOOKS check failed: %s", _thk_exc)
     # Sync boot path — auth-critical only.
     try:
         await client.admin.command("ping")

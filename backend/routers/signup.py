@@ -44,19 +44,25 @@ from services.tenant_billing_stripe import (
 )
 from utils import hash_password, new_id, now_iso, require_admin
 
+# SP3 · Feb-2026 — single source of truth for the canonical 23-industry
+# set is ``routers/industry_checklists.INDUSTRY_SLUGS``. SP1 was
+# shipping a parallel set that drifted (used ``"pools"`` (plural)
+# where canonical uses ``"pool"`` (singular) and named 4 non-canonical
+# slugs like ``"carpentry"``/``"moving"`` while missing 5 canonical
+# ones like ``"garage_door"``/``"irrigation"``). Fixed by importing.
+from routers.industry_checklists import INDUSTRY_SLUGS  # noqa: E402
+
 logger = logging.getLogger("signup")
 router = APIRouter(tags=["signup"])
 
 
 # ── Constants ──────────────────────────────────────────────────────
-CANONICAL_INDUSTRY_SLUGS = frozenset({
-    "pools", "landscaping", "hvac", "pest_control", "cleaning",
-    "solar", "handyman", "roofing", "plumbing", "electrical",
-    "carpentry", "flooring", "painting", "window_cleaning",
-    "gutter_cleaning", "pressure_washing", "carpet_cleaning",
-    "chimney_sweep", "appliance_repair", "locksmith", "moving",
-    "junk_removal", "general_services",
-})
+CANONICAL_INDUSTRY_SLUGS = frozenset(INDUSTRY_SLUGS)
+# SP3 · Feb-2026 — legacy client alias. Frontends built before D1
+# emitted ``"pools"`` (plural) for the pool industry. Normalize to
+# the canonical singular ``"pool"`` and log an INFO warning so ops
+# can identify stale clients still emitting the alias.
+INDUSTRY_ALIASES = {"pools": "pool"}
 COUNTRY_ALPHA2 = frozenset({
     "US", "CA", "GB", "AU", "IE", "NZ", "DE", "FR", "ES", "MX",
     "IN", "BR", "ZA", "SG", "HK", "JP", "KR", "AE", "SA", "PH",
@@ -83,6 +89,17 @@ def _validate_password(pw: str) -> None:
 
 def _validate_industry(slug: str) -> str:
     s = (slug or "").strip().lower().replace("-", "_").replace(" ", "_")
+    # SP3 · Feb-2026 — alias-normalize legacy plural forms before the
+    # canonical membership check so stale clients that still emit
+    # ``"pools"`` keep working. Log the alias hit at INFO so ops can
+    # spot the callers and eventually retire the plural form.
+    if s in INDUSTRY_ALIASES:
+        canonical = INDUSTRY_ALIASES[s]
+        logger.info(
+            "[signup] industry alias normalized: received=%r → stored=%r",
+            s, canonical,
+        )
+        s = canonical
     if s not in CANONICAL_INDUSTRY_SLUGS:
         raise HTTPException(400, detail={
             "code": "invalid_industry",

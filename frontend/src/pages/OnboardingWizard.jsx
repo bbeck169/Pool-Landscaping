@@ -15,16 +15,12 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
+import { CANONICAL_INDUSTRIES } from "../lib/deriveIndustry";
 
 
-const INDUSTRIES = [
-  "pools", "landscaping", "hvac", "pest_control", "cleaning",
-  "solar", "handyman", "roofing", "plumbing", "electrical",
-  "carpentry", "flooring", "painting", "window_cleaning",
-  "gutter_cleaning", "pressure_washing", "carpet_cleaning",
-  "chimney_sweep", "appliance_repair", "locksmith", "moving",
-  "junk_removal", "general_services",
-];
+// SP3 · Feb-2026 — single source of truth for industry slugs; see
+// ``routers/industry_checklists.INDUSTRY_SLUGS`` backend-side.
+const INDUSTRIES = CANONICAL_INDUSTRIES;
 
 
 export default function OnboardingWizard() {

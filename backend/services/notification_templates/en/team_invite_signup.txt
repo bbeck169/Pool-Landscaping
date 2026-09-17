@@ -1,0 +1,8 @@
+Hi,
+
+{admin_name} at {business_name} invited you to join their team as {role}.
+
+Accept your invite and sign in:
+{accept_url}
+
+If you didn't expect this invite, ignore this email — no action is required.

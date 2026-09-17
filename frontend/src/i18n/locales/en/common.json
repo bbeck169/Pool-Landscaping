@@ -29,6 +29,8 @@
     "submitting": "Creating your account…",
     "submitted": "Check your email to verify your account.",
     "card_placeholder": "Card widget will render here (Stripe Elements wire-up in SP3).",
+    "card_label": "Payment card",
+    "card_error": "Card error. Please try again.",
     "fields": {
       "business_name": "Business name",
       "admin_name": "Your full name",

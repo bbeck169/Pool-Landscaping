@@ -30,18 +30,31 @@ from config import db
 from routers.tenants import get_current_tenant
 from utils import hash_password, new_id, now_iso, require_admin
 
+# SP3 · Feb-2026 — single source of truth for canonical 23-industry
+# set is ``routers/industry_checklists.INDUSTRY_SLUGS``.
+from routers.industry_checklists import INDUSTRY_SLUGS  # noqa: E402
+
 logger = logging.getLogger("signup_onboarding_wizard")
 router = APIRouter(tags=["signup-onboarding"])
 
 
-CANONICAL_INDUSTRY_SLUGS = frozenset({
-    "pools", "landscaping", "hvac", "pest_control", "cleaning",
-    "solar", "handyman", "roofing", "plumbing", "electrical",
-    "carpentry", "flooring", "painting", "window_cleaning",
-    "gutter_cleaning", "pressure_washing", "carpet_cleaning",
-    "chimney_sweep", "appliance_repair", "locksmith", "moving",
-    "junk_removal", "general_services",
-})
+CANONICAL_INDUSTRY_SLUGS = frozenset(INDUSTRY_SLUGS)
+# SP3 · Feb-2026 — legacy client alias (see routers/signup.py).
+INDUSTRY_ALIASES = {"pools": "pool"}
+
+
+def _normalize_industry_slug(raw: str) -> Optional[str]:
+    """Return the canonical slug or None if the input is not
+    canonical (even after alias normalization)."""
+    s = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if s in INDUSTRY_ALIASES:
+        canonical = INDUSTRY_ALIASES[s]
+        logger.info(
+            "[signup-onboarding] industry alias normalized: "
+            "received=%r → stored=%r", s, canonical,
+        )
+        s = canonical
+    return s if s in CANONICAL_INDUSTRY_SLUGS else None
 
 
 async def require_verified_tenant(
@@ -148,6 +161,7 @@ async def onboarding_step_3(
     tenant: dict = Depends(require_verified_tenant),
 ) -> Dict[str, Any]:
     sent = 0
+    emails_sent = 0
     for inv in body.invites:
         role = (inv.role or "tech").lower()
         if role not in {"tech", "manager", "admin"}:
@@ -155,8 +169,9 @@ async def onboarding_step_3(
         existing = await db.users.find_one({"email": inv.email.lower()})
         if existing:
             continue
+        invited_user_id = new_id()
         await db.users.insert_one({
-            "id":            new_id(),
+            "id":            invited_user_id,
             "tenant_id":     tenant["id"],
             "email":         inv.email.lower(),
             "name":          inv.email.split("@")[0],
@@ -167,12 +182,68 @@ async def onboarding_step_3(
             "created_at":    now_iso(),
         })
         sent += 1
+        # SP3 · Feb-2026 — team invite email. Fresh signup tenants
+        # have no tenant-scoped marketing templates, so we use the
+        # D5-shipped ``resolve_notification_body`` with the new
+        # ``team_invite_signup`` template_key (en/es/fr triplet).
+        # Best-effort — a mail-provider blip must not block the
+        # wizard's step-3 completion.
+        try:
+            await _send_team_invite_signup_email(
+                tenant=tenant, admin_user=user,
+                invited_email=inv.email.lower(), role=role,
+            )
+            emails_sent += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[signup-onboarding-step3] invite email send failed "
+                "for %s: %s", inv.email, exc,
+            )
     next_step = max(4, int(tenant.get("onboarding_step") or 1))
     await db.tenants.update_one(
         {"id": tenant["id"]},
         {"$set": {"onboarding_step": next_step}},
     )
-    return {"step": next_step, "advanced_to": 4, "invites_created": sent}
+    return {"step": next_step, "advanced_to": 4,
+             "invites_created": sent, "invite_emails_sent": emails_sent}
+
+
+async def _send_team_invite_signup_email(
+    *, tenant: dict, admin_user: dict, invited_email: str, role: str,
+) -> None:
+    """Render + dispatch the ``team_invite_signup`` email via the D5
+    template resolver. Raises on any failure — the caller wraps in
+    try/except so the wizard doesn't 500 on a mail provider blip."""
+    import os
+    from services.i18n_notifications import (
+        resolve_notification_body, resolve_recipient_locale,
+    )
+    from services.email.resend_adapter import send as _send_email
+
+    base = (os.environ.get("FRONTEND_BASE_URL")
+              or os.environ.get("APP_BASE_URL")
+              or "https://app.example.com").rstrip("/")
+    accept_url = f"{base}/login?invited={invited_email}"
+    locale = resolve_recipient_locale(
+        tenant=tenant, user=admin_user, audience="customer",
+    )
+    body = resolve_notification_body(
+        "team_invite_signup", locale,
+        context={
+            "admin_name":    admin_user.get("name") or "there",
+            "business_name": tenant.get("name") or "your team",
+            "invited_email": invited_email,
+            "accept_url":    accept_url,
+            "role":          role,
+        },
+    )
+    await _send_email(
+        to=invited_email,
+        subject=body["subject"],
+        html=body["body_html"],
+        text=body["body_text"],
+        tenant_id=tenant.get("id"),
+    )
 
 
 class Step4In(BaseModel):
@@ -186,8 +257,8 @@ async def onboarding_step_4(
 ) -> Dict[str, Any]:
     slugs = []
     for raw in body.industries or []:
-        s = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if s in CANONICAL_INDUSTRY_SLUGS and s not in slugs:
+        s = _normalize_industry_slug(raw)
+        if s and s not in slugs:
             slugs.append(s)
     if not slugs:
         raise HTTPException(400, detail={

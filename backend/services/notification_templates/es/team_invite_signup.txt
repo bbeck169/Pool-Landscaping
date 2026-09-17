@@ -1,0 +1,8 @@
+Hola:
+
+{admin_name} de {business_name} le invitó a unirse a su equipo como {role}.
+
+Acepte la invitación e inicie sesión:
+{accept_url}
+
+Si no esperaba esta invitación, ignore este correo — no se requiere ninguna acción.

@@ -623,3 +623,101 @@ async def post_webhook(request: Request):
 @webhook_alias_router.post("/webhook")
 async def post_webhook_alias(request: Request):
     return await post_webhook(request)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SP3 · Feb-2026 — Test-hook endpoint for tenant-billing webhook smoke.
+#
+# Gated behind ``ALLOW_TEST_HOOKS=1`` — same env-var gate SP1's
+# rate-limit bypass uses. Constructs a synthetic Stripe event
+# envelope, signs it with the ``STRIPE_WEBHOOK_SECRET`` currently
+# configured for THIS pod, and posts it to the real ``post_webhook``
+# handler so the full signature-verify → dedup-ledger → dispatch
+# path is exercised end-to-end.
+#
+# NEVER enable in production — a startup log line warns loudly when
+# ALLOW_TEST_HOOKS=1 is set and the pod appears prod-detected
+# (based on ``REACT_APP_PUBLIC_ENV`` / ``ENV`` env vars).
+# ═══════════════════════════════════════════════════════════════════
+import os as _os
+import json as _json
+import time as _time
+import hmac as _hmac
+import hashlib as _hashlib
+
+
+class TestHookEventBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_type: str
+    tenant_id: str
+    subscription_id: Optional[str] = None
+    amount_cents: Optional[int] = None
+
+
+@router.post("/test-hook/tenant-billing-event")
+async def post_test_hook_tenant_billing_event(body: TestHookEventBody):
+    """SP3 · Feb-2026 — E2E smoke helper. Signs + posts a synthetic
+    tenant-billing Stripe event through the real webhook route so
+    the signature-verify + dispatch pipeline is genuinely exercised.
+    Gated behind ``ALLOW_TEST_HOOKS=1``.
+    """
+    if _os.environ.get("ALLOW_TEST_HOOKS") != "1":
+        raise HTTPException(404, "not found")
+    # Match the secret the real verify_and_parse_webhook path uses
+    # (mode-aware — TEST vs LIVE). Ensures the signature we compute
+    # here validates in the real handler.
+    from services.payments.stripe_charge import _select_webhook_secret
+    secret = _select_webhook_secret()
+    if not secret:
+        raise HTTPException(400, {
+            "code": "webhook_secret_missing",
+            "hint": "Set STRIPE_WEBHOOK_SECRET_TEST (or _LIVE) before running the smoke hook.",
+        })
+    # Build a minimally-valid Stripe event envelope + sign it with
+    # the shared webhook secret using the same scheme Stripe uses.
+    ts = int(_time.time())
+    obj_metadata = {
+        "crm_billing_kind": "tenant_platform_fee",
+        "crm_tenant_id":     body.tenant_id,
+    }
+    obj: Dict[str, Any] = {
+        "id":       f"in_test_hook_{ts}",
+        "metadata": obj_metadata,
+    }
+    if body.subscription_id:
+        obj["subscription"] = body.subscription_id
+    if body.amount_cents is not None:
+        obj["amount_paid"] = int(body.amount_cents)
+    envelope = {
+        "id":       f"evt_test_hook_{ts}",
+        "type":     body.event_type,
+        "created":  ts,
+        "data":     {"object": obj},
+        "livemode": False,
+    }
+    payload = _json.dumps(envelope).encode("utf-8")
+    signed_payload = f"{ts}.{payload.decode('utf-8')}".encode("utf-8")
+    v1 = _hmac.new(secret.encode("utf-8"), signed_payload,
+                     _hashlib.sha256).hexdigest()
+    sig_header = f"t={ts},v1={v1}"
+
+    # Drive the REAL post_webhook handler using an ASGI-safe Request
+    # scope. We can't call ``post_webhook(request)`` directly with
+    # our fresh envelope — it reads ``await request.body()``, so
+    # we synthesize a minimal Request from the payload + headers.
+    from starlette.requests import Request as _StarletteRequest
+
+    async def _receive():
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    scope = {
+        "type": "http", "method": "POST",
+        "path": "/api/payments/stripe/webhook",
+        "headers": [
+            (b"stripe-signature", sig_header.encode("utf-8")),
+            (b"content-type", b"application/json"),
+        ],
+        "query_string": b"",
+    }
+    req = _StarletteRequest(scope, receive=_receive)
+    return await post_webhook(req)

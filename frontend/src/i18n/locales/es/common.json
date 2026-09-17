@@ -21,5 +21,78 @@
     "helper_business": "Se utiliza para agrupar el calendario, los paneles y los tiempos de despacho en su zona horaria local.",
     "helper_billing": "Se utiliza para despachar la sincronización semanal de Stripe y otros crones por tenant.",
     "saved": "Zona horaria actualizada"
+  },
+  "signup": {
+    "title": "Comience su prueba de 14 días",
+    "subtitle": "Card required upfront · No charge until day 15 · Cancel anytime.",
+    "submit": "Comenzar mi prueba de 14 días",
+    "submitting": "Creando su cuenta…",
+    "submitted": "Revise su correo para verificar su cuenta.",
+    "card_placeholder": "El formulario de tarjeta aparecerá aquí cuando Stripe esté configurado.",
+    "card_label": "Tarjeta de pago",
+    "card_error": "Error de tarjeta. Inténtelo de nuevo.",
+    "fields": {
+      "business_name": "Nombre del negocio",
+      "admin_name": "Su nombre completo",
+      "admin_email": "Correo electrónico",
+      "admin_password": "Contraseña (mínimo 12 caracteres)",
+      "admin_phone": "Teléfono (E.164 preferido)",
+      "primary_industry": "Industria principal",
+      "country": "País",
+      "country_other": "Otro — contáctenos"
+    },
+    "errors": {
+      "weak_password": "La contraseña debe tener al menos 12 caracteres, incluir una letra y un número.",
+      "invalid_industry": "Seleccione una industria compatible.",
+      "invalid_timezone": "Seleccione una zona horaria válida.",
+      "invalid_country": "Seleccione un país compatible.",
+      "email_already_registered": "Este correo ya está registrado. Intente iniciar sesión.",
+      "rate_limited": "Demasiados intentos. Inténtelo de nuevo en unos minutos."
+    },
+    "verify": {
+      "title": "Verificando su cuenta",
+      "loading": "Un momento — verificando su correo…",
+      "ok": "Verificado. Redirigiendo a la configuración inicial…",
+      "success": "Correo verificado. Redirigiendo…",
+      "failed": "El enlace de verificación no es válido o ha expirado.",
+      "no_token": "Falta el token de verificación. Use el enlace del correo.",
+      "resend_hint": "Inicie sesión para reenviar el enlace de verificación.",
+      "login_cta": "Iniciar sesión"
+    },
+    "email_sent": {
+      "title": "Revise su bandeja de entrada",
+      "body": "Enviamos un enlace de verificación a",
+      "expiry_note": "The link expires in 48 hours.",
+      "resend": "Reenviar enlace"
+    },
+    "resend": {
+      "login_first": "Inicie sesión con las credenciales que acaba de crear para reenviar."
+    }
+  },
+  "onboarding": {
+    "title": "Vamos a configurar su cuenta",
+    "loading": "Cargando…",
+    "next": "Continuar",
+    "skip_step": "Omitir por ahora",
+    "skip_all": "Omitir todo",
+    "finish": "Finalizar configuración",
+    "completed": "Configuración completa. ¡Bienvenido!",
+    "step_1": {
+      "title": "Confirme el perfil de su negocio",
+      "business_name": "Nombre del negocio",
+      "phone": "Teléfono",
+      "address": "Dirección"
+    },
+    "step_2": {
+      "title": "Confirme su zona horaria"
+    },
+    "step_3": {
+      "title": "Invite a su equipo"
+    },
+    "step_4": {
+      "title": "Elija sus industrias activas",
+      "primary_hint": "Su industria principal está fijada — puede agregar más.",
+      "primary_badge": "PRINCIPAL"
+    }
   }
 }

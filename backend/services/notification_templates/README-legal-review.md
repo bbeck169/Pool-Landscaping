@@ -52,6 +52,28 @@ None of the D5 templates contain refund or dispute language. If a future templat
 
 * v1 translates to Spanish + French. Legal to confirm the "will be paused" wording matches jurisdictional norms — some markets require a specific grace-period disclosure.
 
+## Feb-2026 · Business Signup SP3 templates
+
+### `team_invite_signup` — factual invite copy (no legal exposure)
+
+**Source string (en)**: `{admin_name} at {business_name} invited you to join their team as {role}. …If you didn't expect this invite, ignore this email — no action is required.`
+
+* v1 translates to `es`/`fr` in-place — the merge tokens (`{admin_name}`, `{business_name}`, `{accept_url}`, `{invited_email}`, `{role}`) are preserved verbatim across all locales.
+* Why it's noted here (not flagged): the "ignore this email" clause is the same safe-security-notice pattern as `signup_email_verify` above. Legal has already been asked to sign off on the pattern; no new legal exposure introduced by team-invite wording.
+
+**Action for legal**: no new sign-off required beyond the existing `signup_email_verify` review row.
+
+### `signup` + `onboarding` UI namespaces (frontend common.json)
+
+Legal boilerplate strings inside the `es/` and `fr/` locale files continue to render **verbatim in English** for v1:
+
+* `signup.subtitle` — `Card required upfront · No charge until day 15 · Cancel anytime.` — trial-terms disclosure.
+* `signup.email_sent.expiry_note` — `The link expires in 48 hours.` — token expiry disclosure.
+
+Both strings are consumer-facing contract statements. Kept in English so a legal-reviewed translation can be swapped in without re-shipping the frontend.
+
+**Action for legal**: provide es/fr wording for the two strings above OR sign off on keeping bilingual copy for v1.
+
 ## Sign-off tracker
 
 | Legal signed | Signer | Date | Notes |

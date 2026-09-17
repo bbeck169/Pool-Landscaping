@@ -48,7 +48,10 @@ def _valid_payload(**overrides: Any) -> Dict[str, Any]:
         "admin_email":              f"diego-{uuid.uuid4().hex[:6]}@vistancia-signup-test.example",
         "admin_password":           "correcthorse42battery",
         "admin_phone":              "+15551234567",
-        "primary_industry":         "pools",
+        # SP3 · Feb-2026 — canonical singular ``"pool"`` (D1 source
+        # of truth). ``"pools"`` still works via alias-normalize but
+        # the payload uses canonical to keep the happy path clean.
+        "primary_industry":         "pool",
         "timezone":                 "America/Phoenix",
         "country":                  "US",
         "stripe_payment_method_id": "pm_test_1",
@@ -79,8 +82,8 @@ def test_signup_happy_path_creates_tenant_and_admin():
     assert tenant["email_verified"] is False
     assert tenant["timezone"] == "America/Phoenix"
     assert tenant["country"] == "US"
-    assert tenant["primary_industry"] == "pools"
-    assert "pools" in tenant["industries"]
+    assert tenant["primary_industry"] == "pool"
+    assert "pool" in tenant["industries"]
     assert tenant["onboarding_step"] == 1
     assert tenant["onboarding_completed_at"] is None
     _drop_signup_email(email)

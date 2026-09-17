@@ -28,7 +28,7 @@ export function BusinessSignupVerify() {
     (async () => {
       try {
         const r = await fetch(
-          `${api_base}/api/signup/verify?token=${encodeURIComponent(token)}`,
+          `${api_base()}/signup/verify?token=${encodeURIComponent(token)}`,
           { method: "POST" },
         );
         if (r.ok) {

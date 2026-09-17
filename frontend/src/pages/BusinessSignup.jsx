@@ -1,33 +1,39 @@
 /**
- * Feb-2026 · Business Signup SP2 — public self-serve tenant signup.
+ * Feb-2026 · Business Signup — public self-serve tenant signup.
  *
  * Route: ``/business-signup`` (unauthenticated).
  *
- * NOTE ON STRIPE.JS — the SP1 backend accepts a ``stripe_payment_method_id``
- * on the signup payload but for the SP2 web ship we send a placeholder
- * token (``pm_pending_frontend_ship``). Real Stripe Elements wiring
- * follows the same pattern as ``AddCardPage.jsx`` (K42 Add-Card portal
- * flow) and is called out as an SP2 deviation to be closed by SP3.
- *
- * i18n: labels/errors route through the shared ``signup`` namespace
- * (added to ``locales/{en,es,fr}/common.json`` under key ``signup``).
+ * SP3 · Feb-2026 gaps closed:
+ *   1. Industry slug drift fix — INDUSTRIES imports from
+ *      ``@/lib/deriveIndustry`` (single source of truth, 23 slugs).
+ *   2. Stripe Elements card widget wired via
+ *      ``stripe.createPaymentMethod``. Falls back to placeholder
+ *      when ``REACT_APP_STRIPE_PUBLISHABLE_KEY`` is unset (local
+ *      dev / sandbox).
+ *   3. i18n labels via ``signup.*`` namespace; card errors
+ *      surface under the card element.
  */
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  useStripe,
+  useElements,
+  CardElement,
+} from "@stripe/react-stripe-js";
+
 import { api_base } from "@/api";
 import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
+import { CANONICAL_INDUSTRIES } from "../lib/deriveIndustry";
 
 
-const INDUSTRIES = [
-  "pools", "landscaping", "hvac", "pest_control", "cleaning",
-  "solar", "handyman", "roofing", "plumbing", "electrical",
-  "carpentry", "flooring", "painting", "window_cleaning",
-  "gutter_cleaning", "pressure_washing", "carpet_cleaning",
-  "chimney_sweep", "appliance_repair", "locksmith", "moving",
-  "junk_removal", "general_services",
-];
+// SP3 · Feb-2026 — INDUSTRIES mirrors the D1 canonical set exactly.
+// Storage layer normalizes the plural alias ``"pools"`` → ``"pool"``
+// but the picker only offers canonical slugs.
+const INDUSTRIES = CANONICAL_INDUSTRIES;
 const COUNTRIES = [
   "US", "CA", "GB", "AU", "IE", "NZ", "DE", "FR", "ES", "MX",
   "IN", "BR", "ZA", "SG", "HK", "JP", "KR", "AE", "SA", "PH",
@@ -44,21 +50,26 @@ function _passwordStrength(pw) {
 }
 
 
-export default function BusinessSignup() {
+// ── Inner form (renders inside <Elements> when Stripe key is set) ──
+function SignupFormInner({ stripeKeyLoaded }) {
   const { t } = useTranslation("common");
   const nav = useNavigate();
+  const stripe = useStripe();
+  const elements = useElements();
   const [form, setForm] = React.useState({
     business_name: "",
     admin_name: "",
     admin_email: "",
     admin_password: "",
     admin_phone: "",
-    primary_industry: "pools",
+    // SP3 · Feb-2026 — canonical singular.
+    primary_industry: "pool",
     timezone: "America/Phoenix",
     country: "US",
   });
   const [submitting, setSubmitting] = React.useState(false);
   const [err, setErr] = React.useState("");
+  const [cardErr, setCardErr] = React.useState("");
 
   const set = (k) => (e) =>
     setForm({ ...form, [k]: e && e.target ? e.target.value : e });
@@ -67,20 +78,59 @@ export default function BusinessSignup() {
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
+    setCardErr("");
     if (!pwStrength.ok) {
       setErr(t("signup.errors.weak_password",
                 "Password must be at least 12 characters with a letter and a digit."));
       return;
     }
     setSubmitting(true);
+    let payment_method_id = "pm_pending_frontend_ship";
     try {
-      const r = await fetch(`${api_base}/api/signup`, {
+      // Stripe Elements path — only exercised when the publishable
+      // key is set at build time. When it's not, we fall through
+      // with the placeholder so local dev / sandbox smoke keeps
+      // working without a Stripe account.
+      if (stripeKeyLoaded && stripe && elements) {
+        const cardEl = elements.getElement(CardElement);
+        const { error, paymentMethod } = await stripe.createPaymentMethod({
+          type: "card",
+          card: cardEl,
+          billing_details: {
+            name: form.admin_name || undefined,
+            email: (form.admin_email || "").trim().toLowerCase() || undefined,
+          },
+        });
+        if (error) {
+          // Prefer Stripe's specific decline message when present;
+          // fall back to the locale-scoped generic. Never show
+          // both because Stripe's message is already localized by
+          // stripe.js when a locale hint is provided.
+          setCardErr(
+            error.message ||
+            t("signup.card_error",
+                { defaultValue: "Card error. Please try again." }),
+          );
+          setSubmitting(false);
+          return;
+        }
+        payment_method_id = paymentMethod?.id || payment_method_id;
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[signup] Stripe publishable key not configured — " +
+          "submitting placeholder token. Set REACT_APP_STRIPE_PUBLISHABLE_KEY " +
+          "to enable real card capture.",
+        );
+      }
+
+      const r = await fetch(`${api_base()}/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
           admin_email: form.admin_email.trim().toLowerCase(),
-          stripe_payment_method_id: "pm_pending_frontend_ship",
+          stripe_payment_method_id: payment_method_id,
         }),
       });
       const j = await r.json();
@@ -175,15 +225,35 @@ export default function BusinessSignup() {
             </option>
           </select>
         </label>
-        {/* Stripe Elements card widget — SP3 wire-up. Uses a
-            placeholder token in SP2 so the backend accepts the
-            signup and the flow can be smoke-tested end-to-end. */}
-        <div style={{ padding: 12, border: "1px dashed #94A3B8",
-                        borderRadius: 6, color: "#475569", fontSize: 13 }}
-              data-testid="signup-card-placeholder">
-          {t("signup.card_placeholder",
-              "Card widget will render here (Stripe Elements wire-up in SP3).")}
-        </div>
+        {stripeKeyLoaded ? (
+          <div data-testid="signup-card-element-wrap">
+            <div style={{ marginBottom: 4, fontSize: 13, color: "#475569" }}>
+              {t("signup.card_label", "Payment card")}
+            </div>
+            <div style={{
+              padding: 12, border: "1px solid #CBD5E1",
+              borderRadius: 6, background: "#fff",
+            }}>
+              <CardElement options={{ hidePostalCode: false }} />
+            </div>
+            {cardErr ? (
+              <div data-testid="signup-card-error"
+                    style={{ color: "#B91C1C", fontSize: 13, marginTop: 6 }}>
+                {cardErr}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          // Sandbox / local-dev fallback — see the console.warn in
+          // submit(). Preserves the SP2 test flow (placeholder token
+          // still submits) without requiring a Stripe key.
+          <div style={{ padding: 12, border: "1px dashed #94A3B8",
+                          borderRadius: 6, color: "#475569", fontSize: 13 }}
+                data-testid="signup-card-placeholder">
+            {t("signup.card_placeholder",
+                "Card widget will render here when Stripe is configured.")}
+          </div>
+        )}
         <button type="submit" data-testid="signup-submit"
                   disabled={submitting || !pwStrength.ok}
                   style={{
@@ -199,4 +269,22 @@ export default function BusinessSignup() {
       </form>
     </div>
   );
+}
+
+
+// ── Outer component: conditionally wraps in <Elements> ────────────
+export default function BusinessSignup() {
+  const publishableKey = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || "";
+  const stripePromise = React.useMemo(
+    () => (publishableKey ? loadStripe(publishableKey) : null),
+    [publishableKey],
+  );
+  if (stripePromise) {
+    return (
+      <Elements stripe={stripePromise}>
+        <SignupFormInner stripeKeyLoaded={true} />
+      </Elements>
+    );
+  }
+  return <SignupFormInner stripeKeyLoaded={false} />;
 }
