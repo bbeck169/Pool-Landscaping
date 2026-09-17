@@ -356,6 +356,19 @@ export default function DispatchBoardPage() {
 
   const activeStops = board?.route_stops || [];
 
+  // Feb-2026 · Dispatch numbered pins — 1-indexed lookup keyed by
+  // ``customer_id`` so ``DispatchMapView`` can label each pin with
+  // its position in the current route. Pins that aren't in
+  // ``route_stops`` (e.g. home base marker, off-route customers)
+  // stay un-numbered and render byte-identical to pre-Feb-2026.
+  const stopLabelByCustomerId = React.useMemo(() => {
+    const out = {};
+    (activeStops || []).forEach((s, idx) => {
+      if (s && s.customer_id) out[s.customer_id] = idx + 1;
+    });
+    return out;
+  }, [activeStops]);
+
   const onOptimize = async () => {
     if (!techId || day === "all") {
       toast.error("Pick a specific day + tech before optimizing.");
@@ -836,6 +849,7 @@ export default function DispatchBoardPage() {
             isolatedTechId={isolatedTechId}
             onIsolateTech={setIsolatedTechId}
             focusedStopId={focusedStopId}
+            stopLabelByCustomerId={stopLabelByCustomerId}
           />
         </section>
 

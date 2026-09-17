@@ -541,6 +541,11 @@ export default function RecurringJobs() {
                 </th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Frequency</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Next</th>
+                <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold"
+                     style={{ color: colors.muted }}
+                     data-testid="recurring-th-end-date">
+                  End Date
+                </th>
                 <th className="text-right px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Price</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Status</th>
                 <th className="px-3 py-2.5" />
@@ -548,7 +553,7 @@ export default function RecurringJobs() {
             </thead>
             <tbody>
               {filteredItems.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm"
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="recurring-jobs-empty">
                   {items.length === 0
                     ? "No recurring jobs yet — click \"New recurring job\" to add your first."
@@ -599,6 +604,11 @@ export default function RecurringJobs() {
                   </td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>
                     {(r.upcoming || []).slice(0, 1).join(", ") || "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs"
+                       style={{ color: colors.muted }}
+                       data-testid={`recurring-cell-end-date-${r.id}`}>
+                    {r.end_date || "—"}
                   </td>
                   <td className="px-3 py-2.5 text-right font-semibold" style={{ color: colors.onSurface }}>
                     {fmtMoney(r.price_cents)}
@@ -848,6 +858,11 @@ export default function RecurringJobs() {
                                opacity: editing.recurrence_never_ends ? 0.55 : 1,
                              }}
                              data-testid="recurring-jobs-end" />
+                      <span className="block font-normal mt-1 text-[11px]"
+                             style={{ color: colors.muted }}
+                             data-testid="recurring-jobs-end-helper">
+                        Leave blank for no end date (runs forever).
+                      </span>
                       {(!editing.recurrence_never_ends && editing.end_date) ? (
                         <span className="block font-normal mt-1" style={{ color: colors.muted }}>
                           Final visit on or before {editing.end_date}.

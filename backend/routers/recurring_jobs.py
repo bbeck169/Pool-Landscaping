@@ -227,6 +227,28 @@ def _validate(body: RecurringJobIn | RecurringJobPatch,
             raise HTTPException(422,
                 f"monthly_pattern=nth_weekday is not supported for {freq}")
 
+    # Feb-2026 · Recurring Jobs · end_date ordering. When both dates
+    # are supplied on the same body, ``end_date`` MUST be on or after
+    # ``start_date`` — the end is inclusive so same-day is a valid
+    # single-shot recurrence.
+    _start_raw = getattr(body, "start_date", None)
+    _end_raw = getattr(body, "end_date", None)
+    if _end_raw and _start_raw:
+        try:
+            _sd = date.fromisoformat(_start_raw)
+            _ed = date.fromisoformat(_end_raw)
+        except (TypeError, ValueError):
+            # Malformed date strings fall through the model's own
+            # error path — don't shadow the pydantic message with
+            # a 422 here.
+            return
+        if _ed < _sd:
+            raise HTTPException(
+                400,
+                {"error": "end_date_before_start_date",
+                  "start_date": _start_raw, "end_date": _end_raw},
+            )
+
 
 def _nth_weekday_of_month(year: int, month: int, nth: str, weekday: int) -> Optional[date]:
     """Return the date of the ``nth`` occurrence of ``weekday`` in the
@@ -1101,6 +1123,33 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
     anchor = (last + timedelta(days=1)) if last else start
     dates = _next_occurrences(tpl, anchor, through, max_count=200)
     if not dates:
+        # Feb-2026 · Recurring Jobs · end_date auto-stop. When the
+        # walker has crossed the template's inclusive end_date, the
+        # occurrence generator returns [] every night forever —
+        # burning a template read per active recurring template per
+        # nightly cron for no work. Transition the template to the
+        # existing terminal state (mirrors ``POST /stop``: active
+        # False, end_date already set, ``recurrence_never_ends``
+        # cleared, ``stopped_at`` stamped) so subsequent cron runs
+        # skip it via the ``is_active/active`` filter.
+        _end = _parse_date(tpl.get("end_date"))
+        if _end and anchor > _end and (
+            tpl.get("active") is not False
+            or tpl.get("is_active") is not False
+        ):
+            await db.recurring_job_templates.update_one(
+                {"id": tpl["id"], "tenant_id": tenant_id},
+                {"$set": {"active": False, "is_active": False,
+                            "recurrence_never_ends": False,
+                            "stopped_at": now_iso(),
+                            "updated_at": now_iso()}},
+            )
+            logger.info(
+                "[recurring_job.auto_stopped] template=%s tenant=%s "
+                "end_date=%s anchor=%s",
+                tpl["id"], tenant_id, _end.isoformat(),
+                anchor.isoformat(),
+            )
         return {"inserted": 0, "skipped": 0, "dates": []}
     # Look up customer + tech for the payload.
     cust = await db.customers.find_one(

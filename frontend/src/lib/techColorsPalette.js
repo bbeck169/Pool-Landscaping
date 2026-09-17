@@ -25,6 +25,23 @@ export const TECH_COLOR_PALETTE = [
   { name: "lime",    hex: "#84CC16" },
   { name: "cyan",    hex: "#06B6D4" },
   { name: "fuchsia", hex: "#D946EF" },
+  // ─── Feb-2026 · Palette expansion (Ticket B) ──────────────────
+  // 12 professional/desaturated colors appended AFTER the original
+  // 12 so existing tenants' deterministic ``palette[hash % 12]``
+  // assignments stay byte-identical. Order + case MUST match the
+  // backend mirror at ``backend/constants/tech_colors.py``.
+  { name: "slate_amber",   hex: "#B45309" },
+  { name: "deep_teal",     hex: "#0F766E" },
+  { name: "royal_magenta", hex: "#A21CAF" },
+  { name: "olive",         hex: "#3F6212" },
+  { name: "indigo_violet", hex: "#6D28D9" },
+  { name: "brick_red",     hex: "#B91C1C" },
+  { name: "ocean_blue",    hex: "#0369A1" },
+  { name: "forest_green",  hex: "#4D7C0F" },
+  { name: "ruby_rose",     hex: "#9F1239" },
+  { name: "midnight_blue", hex: "#1E3A8A" },
+  { name: "chestnut",      hex: "#78350F" },
+  { name: "moss",          hex: "#365314" },
 ];
 
 export const PALETTE_HEXES = TECH_COLOR_PALETTE.map((p) => p.hex);

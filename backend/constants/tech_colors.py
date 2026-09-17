@@ -37,6 +37,25 @@ TECH_COLOR_PALETTE: Final[List[Tuple[str, str]]] = [
     ("lime",    "#84CC16"),
     ("cyan",    "#06B6D4"),
     ("fuchsia", "#D946EF"),
+    # ─── Feb-2026 · Palette expansion (Ticket B) ──────────────────
+    # 12 professional/desaturated colors appended AFTER the original
+    # 12 so existing tenants' deterministic ``palette[hash % 12]``
+    # assignments stay byte-identical. Anything that depended on
+    # ``len(PALETTE_HEXES) == 12`` must be re-anchored to
+    # ``len(PALETTE_HEXES)`` (see ``frontend/hooks/useTechColorsPalette``
+    # for the cap that got raised).
+    ("slate_amber",     "#B45309"),
+    ("deep_teal",       "#0F766E"),
+    ("royal_magenta",   "#A21CAF"),
+    ("olive",           "#3F6212"),
+    ("indigo_violet",   "#6D28D9"),
+    ("brick_red",       "#B91C1C"),
+    ("ocean_blue",      "#0369A1"),
+    ("forest_green",    "#4D7C0F"),
+    ("ruby_rose",       "#9F1239"),
+    ("midnight_blue",   "#1E3A8A"),
+    ("chestnut",        "#78350F"),
+    ("moss",            "#365314"),
 ]
 
 PALETTE_HEXES: Final[List[str]] = [hex_ for (_, hex_) in TECH_COLOR_PALETTE]

@@ -175,6 +175,7 @@ function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech", isola
             colorHex={colorForPin(p, pinColorMode, techColorById)}
             onClick={(e) => { e.stopPropagation(); onSelect(p.customer_id); }}
             testId={`dispatch-pin-${p.customer_id}`}
+            label={stopLabelByCustomerId[p.customer_id]}
           />
         </div>
       </AdvancedMarker>
@@ -247,6 +248,12 @@ export default function DispatchMapView({
   onIsolateTech = () => {},
   focusedStopId = null,
   staleThresholdMs,
+  // ── Feb-2026 · Dispatch numbered pins ─────────────────────────
+  // Map of ``customer_id`` → 1-indexed position in
+  // ``board.route_stops``. Pins whose ``customer_id`` isn't in the
+  // map render un-numbered (byte-identical to pre-Feb-2026), so
+  // home-base markers and off-route customers stay hollow.
+  stopLabelByCustomerId = {},
 }) {
   const active = React.useMemo(
     () => pins.find((p) => p.customer_id === activeCustomerId) || null,
@@ -301,6 +308,7 @@ export default function DispatchMapView({
           onSelect={onSelectCustomer}
           pinColorMode={pinColorMode}
           isolatedTechId={isolatedTechId}
+          stopLabelByCustomerId={stopLabelByCustomerId}
         />
         <UnroutedPinsLayer
           pins={unroutedPins}

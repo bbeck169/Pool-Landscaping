@@ -25,9 +25,13 @@ function _fetchPaletteOnce() {
     .then((r) => {
       // Response shape: { palette: [{ name, hex }, ...] }
       const p = Array.isArray(r?.palette) ? r.palette : [];
-      if (p.length === 12) return p;
-      // Server returned something unexpected — fall back to the
-      // local mirror so the UI never renders an empty picker.
+      // Feb-2026 · Palette expansion (Ticket B) — accept any length
+      // >= the local mirror so future backend appends flow through
+      // without a frontend deploy. Guard the empty case so the UI
+      // never renders zero swatches.
+      if (p.length >= _FALLBACK_PALETTE.length) return p;
+      // Server returned something smaller than expected — fall back
+      // to the local mirror so the UI never renders an empty picker.
       return _FALLBACK_PALETTE;
     })
     .catch(() => _FALLBACK_PALETTE);

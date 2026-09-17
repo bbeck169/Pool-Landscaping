@@ -143,5 +143,11 @@
     "audit_backup": "Backup",
     "audit_reason": "Reason",
     "audit_resolution": "Resolution"
+  },
+  "recurring_jobs": {
+    "income_category_label": "Income Category",
+    "service_category_label": "Service Category",
+    "end_date_helper": "Leave blank for no end date (runs forever).",
+    "end_date_column": "End Date"
   }
 }
