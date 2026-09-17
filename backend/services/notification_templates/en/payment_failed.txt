@@ -1,0 +1,6 @@
+Hi {admin_name},
+
+We were unable to process your latest {business_name} payment. To keep your account active, please update your card as soon as possible:
+{update_card_url}
+
+We'll automatically retry the charge over the next few days. If the card still fails, your account will be paused until a working card is on file.

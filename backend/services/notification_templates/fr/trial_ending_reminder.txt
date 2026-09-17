@@ -1,0 +1,8 @@
+Bonjour {admin_name},
+
+Votre essai gratuit {business_name} se termine le {trial_end_local}. Demain, nous prélèverons {plan_amount} sur la carte enregistrée pour poursuivre votre abonnement.
+
+Si vous souhaitez annuler avant cette date, aucune action n'est requise sur la carte — annulez simplement ici :
+{cancel_url}
+
+Des questions ? Répondez simplement à ce message — nous lisons chaque e-mail.

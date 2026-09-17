@@ -1,0 +1,7 @@
+Bonjour {admin_name},
+
+Bienvenue chez {business_name} ! Veuillez vérifier votre adresse e-mail pour activer votre compte et terminer la configuration :
+
+{verify_url}
+
+This link expires in 48 hours. If you did not sign up, please ignore this email — no action is required.

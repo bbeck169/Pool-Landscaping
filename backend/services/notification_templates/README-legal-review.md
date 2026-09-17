@@ -29,6 +29,29 @@ The following sentences carry legal exposure and were **intentionally NOT transl
 
 None of the D5 templates contain refund or dispute language. If a future template adds it, add a section here.
 
+## Feb-2026 · Business Signup SP1 templates
+
+### `signup_email_verify` — 48h expiry wording
+
+**Source string (en)**: `This link expires in 48 hours. If you did not sign up, please ignore this email — no action is required.`
+
+* Currently rendered **verbatim in English** inside `es/signup_email_verify.html`, `fr/signup_email_verify.html`, and the two `.txt` counterparts.
+* Why it's flagged: the "If you did not sign up, please ignore" clause is a security notice that could carry unfair-terms / dark-pattern exposure if mistranslated (e.g. an implication that the recipient WAS signed up by someone else without their consent). Legal must sign off on jurisdiction-appropriate translations.
+
+**Action for legal**: provide es/fr wording OR sign off on keeping the English clause bilingual for v1.
+
+### `trial_ending_reminder` — factual charge notice
+
+**Source string (en)**: `Tomorrow we'll charge {plan_amount} to the card on file to continue your subscription.`
+
+* v1 translates this factual statement to Spanish + French (the amount + card-storage bit is a factual contract restatement, not a warranty). Legal to confirm no jurisdiction requires stronger disclosure language.
+
+### `payment_failed` — factual retry notice
+
+**Source string (en)**: `We'll automatically retry the charge over the next few days. If the card still fails, your account will be paused until a working card is on file.`
+
+* v1 translates to Spanish + French. Legal to confirm the "will be paused" wording matches jurisdictional norms — some markets require a specific grace-period disclosure.
+
 ## Sign-off tracker
 
 | Legal signed | Signer | Date | Notes |

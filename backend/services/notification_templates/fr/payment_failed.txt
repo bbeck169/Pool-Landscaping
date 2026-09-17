@@ -1,0 +1,6 @@
+Bonjour {admin_name},
+
+Nous n'avons pas pu traiter votre dernier paiement {business_name}. Pour garder votre compte actif, veuillez mettre à jour votre carte dès que possible :
+{update_card_url}
+
+Nous réessaierons automatiquement le prélèvement au cours des prochains jours. Si la carte échoue à nouveau, votre compte sera suspendu jusqu'à l'enregistrement d'une carte valide.

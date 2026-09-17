@@ -469,6 +469,10 @@ from routers import admin_notification_dispatch_log as _k63p_dispatch_log_router
 api_router.include_router(_k63p_dispatch_log_router.router)
 from routers import admin_resend_lead_notifications as _k63f_resend_router  # noqa: E402
 api_router.include_router(_k63f_resend_router.router)
+# Feb-2026 · Business Signup SP1 — public self-serve tenant signup,
+# email verification, and billing cancel. See ``routers/signup.py``.
+from routers import signup as _signup_router  # noqa: E402
+api_router.include_router(_signup_router.router)
 # Feb-2026 · P0 · Lead form address autofill — public Google Places
 # proxy consumed by the embedded lead widget + admin marketing-form
 # builder preview. See ``routers/public_places.py`` for the two
@@ -1995,6 +1999,27 @@ async def _background_seed():
             )
         except Exception as _e_cm:  # noqa: BLE001
             logger.warning("[customer-merge] scheduler wiring failed: %s", _e_cm)
+        # Feb-2026 · Business Signup SP1 — trial-ending 24h reminder.
+        # Runs hourly. Query is idempotent — a tenant only receives
+        # ONE reminder because ``trial_reminder_sent_at`` is stamped
+        # after the first successful send.
+        try:
+            from services.tenant_billing_reminders import (
+                run_trial_ending_reminders as _tbr,
+            )
+
+            async def _tbr_tick():
+                await _tbr(db)
+
+            scheduler.add_job(
+                _tbr_tick, "interval", minutes=60,
+                id="trial_ending_reminder", replace_existing=True,
+            )
+            logger.info("scheduler: trial_ending_reminder registered @ hourly")
+        except Exception as _e_tbr:  # noqa: BLE001
+            logger.warning(
+                "[trial-reminder] scheduler wiring failed: %s", _e_tbr,
+            )
         # Feb-2026 · P34 — Automation quiet-hours release worker.
         # Runs every 5 minutes; picks up any deferred SMS / email
         # rows whose ``scheduled_for`` has passed and dispatches them.

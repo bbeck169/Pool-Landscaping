@@ -1,0 +1,8 @@
+Hi {admin_name},
+
+Your {business_name} free trial ends on {trial_end_local}. Tomorrow we'll charge {plan_amount} to the card on file to continue your subscription.
+
+If you'd like to cancel before then, no action is needed on the card — just cancel here:
+{cancel_url}
+
+Questions? Just reply to this email — we read every message.

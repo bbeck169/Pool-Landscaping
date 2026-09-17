@@ -1,0 +1,6 @@
+Hola {admin_name}:
+
+No pudimos procesar su último pago de {business_name}. Para mantener su cuenta activa, actualice su tarjeta lo antes posible:
+{update_card_url}
+
+Volveremos a intentar el cobro automáticamente durante los próximos días. Si la tarjeta sigue fallando, la cuenta se pausará hasta que haya una tarjeta válida registrada.
