@@ -473,6 +473,11 @@ api_router.include_router(_k63f_resend_router.router)
 # email verification, and billing cancel. See ``routers/signup.py``.
 from routers import signup as _signup_router  # noqa: E402
 api_router.include_router(_signup_router.router)
+# Feb-2026 · Business Signup SP2 — new-tenant 4-step onboarding
+# wizard. Distinct route prefix (``/signup-onboarding/…``) from
+# ``routers/onboarding.py`` (Phase 15B per-admin wizard).
+from routers import signup_onboarding_wizard as _sowiz  # noqa: E402
+api_router.include_router(_sowiz.router)
 # Feb-2026 · P0 · Lead form address autofill — public Google Places
 # proxy consumed by the embedded lead widget + admin marketing-form
 # builder preview. See ``routers/public_places.py`` for the two

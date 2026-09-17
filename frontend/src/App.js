@@ -19,6 +19,13 @@ import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import PortalReviewSubmit from "@/pages/portal/PortalReviewSubmit";
 import Signup from "@/pages/Signup";
+// Feb-2026 · Business Signup SP2 — new public + wizard surface.
+import BusinessSignup from "@/pages/BusinessSignup";
+import {
+  BusinessSignupVerify,
+  BusinessSignupVerifyEmailSent,
+} from "@/pages/BusinessSignupVerify";
+import OnboardingWizard from "@/pages/OnboardingWizard";
 import TenantPicker from "@/pages/TenantPicker";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import Placeholder from "@/pages/Placeholder";
@@ -648,6 +655,16 @@ export default function App() {
               endpoint at /api/public/r/{token}/rating. */}
           <Route path="/portal/review/submit" element={<PortalReviewSubmit />} />
           <Route path="/signup" element={<Signup />} />
+          {/* Feb-2026 · Business Signup SP2 — public self-serve
+              tenant signup + email-verify landing + wizard. */}
+          <Route path="/business-signup"
+                  element={<BusinessSignup />} />
+          <Route path="/business-signup/verify"
+                  element={<BusinessSignupVerify />} />
+          <Route path="/business-signup/verify-email-sent"
+                  element={<BusinessSignupVerifyEmailSent />} />
+          <Route path="/onboarding-wizard"
+                  element={<OnboardingWizard />} />
           <Route path="/tenant-picker" element={<TenantPicker />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />
           {/* Feb-2026 · Phase 20 P5 — Public NFC review card page. */}

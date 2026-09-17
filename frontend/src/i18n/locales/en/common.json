@@ -21,5 +21,76 @@
     "helper_business": "Used to bucket schedule, dashboards, and dispatch times in your local zone.",
     "helper_billing": "Used to dispatch the weekly Stripe sync + other per-tenant crons.",
     "saved": "Timezone updated"
+  },
+  "signup": {
+    "title": "Start your 14-day trial",
+    "subtitle": "Card required upfront · No charge until day 15 · Cancel anytime.",
+    "submit": "Start my 14-day trial",
+    "submitting": "Creating your account…",
+    "submitted": "Check your email to verify your account.",
+    "card_placeholder": "Card widget will render here (Stripe Elements wire-up in SP3).",
+    "fields": {
+      "business_name": "Business name",
+      "admin_name": "Your full name",
+      "admin_email": "Email",
+      "admin_password": "Password (min 12 chars)",
+      "admin_phone": "Phone (E.164 preferred)",
+      "primary_industry": "Primary industry",
+      "country": "Country",
+      "country_other": "Other — contact us"
+    },
+    "errors": {
+      "weak_password": "Password must be at least 12 characters with a letter and a digit.",
+      "invalid_industry": "Please pick a supported industry.",
+      "invalid_timezone": "Please pick a valid timezone.",
+      "invalid_country": "Please pick a supported country.",
+      "email_already_registered": "This email is already registered. Try logging in.",
+      "rate_limited": "Too many attempts. Please try again in a few minutes."
+    },
+    "verify": {
+      "title": "Verifying your account",
+      "loading": "Hang tight — verifying your email…",
+      "ok": "You're verified. Redirecting to onboarding…",
+      "success": "Email verified. Redirecting…",
+      "failed": "Verification link is invalid or expired.",
+      "no_token": "Missing verification token. Click the link in your email.",
+      "resend_hint": "Log in to resend the verification link.",
+      "login_cta": "Log in"
+    },
+    "email_sent": {
+      "title": "Check your inbox",
+      "body": "We sent a verification link to",
+      "expiry_note": "The link expires in 48 hours.",
+      "resend": "Resend link"
+    },
+    "resend": {
+      "login_first": "Log in with the credentials you just created to resend."
+    }
+  },
+  "onboarding": {
+    "title": "Let's get you set up",
+    "loading": "Loading…",
+    "next": "Continue",
+    "skip_step": "Skip for now",
+    "skip_all": "Skip everything",
+    "finish": "Finish onboarding",
+    "completed": "Onboarding complete. Welcome!",
+    "step_1": {
+      "title": "Confirm your business profile",
+      "business_name": "Business name",
+      "phone": "Phone",
+      "address": "Address"
+    },
+    "step_2": {
+      "title": "Confirm your timezone"
+    },
+    "step_3": {
+      "title": "Invite your team"
+    },
+    "step_4": {
+      "title": "Choose your active industries",
+      "primary_hint": "Your primary industry is locked in — you can add more.",
+      "primary_badge": "PRIMARY"
+    }
   }
 }
