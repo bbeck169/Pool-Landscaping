@@ -12,6 +12,12 @@ import uuid
 from datetime import datetime, timezone
 
 from services.comm_tokens import extract_tokens
+# Feb 2026 · Invoice Email CTA Label — shared i18n helper. System
+# templates are ``tenant_id=None`` and en-baked at seed time; the
+# admin duplicates them per-tenant and can localise via the
+# template editor. Per-tenant sequences localise via
+# ``seed_system_templates.py`` which threads the tenant locale.
+from services.email_cta_i18n import t_email_cta
 
 # --- Email templates ----------------------------------------------------
 
@@ -122,7 +128,7 @@ def _invoice_created_blocks() -> list:
             "<p>Your latest invoice for {{invoice.amount_due}} is ready to view. "
             "Payment is due by <strong>{{invoice.due_date}}</strong>.</p>"
         ), "padding": "8px 24px"}),
-        _block("button", {"label": "Pay online", "link_url": "{{invoice.portal_link}}",
+        _block("button", {"label": t_email_cta("en", "view_invoice"), "link_url": "{{invoice.portal_link}}",
                             "alignment": "left", "background_color": "#0f6ed1",
                             "text_color": "#ffffff", "border_radius": "6px",
                             "padding": "12px 20px"}),
@@ -146,7 +152,7 @@ def _invoice_overdue_blocks() -> list:
             "a couple of business days to post.</p>"
             "<p>If not, here's the quickest way to bring the account current:</p>"
         ), "padding": "8px 24px"}),
-        _block("button", {"label": "Pay now", "link_url": "{{invoice.portal_link}}",
+        _block("button", {"label": t_email_cta("en", "view_invoice"), "link_url": "{{invoice.portal_link}}",
                             "alignment": "left", "background_color": "#c94a3d",
                             "text_color": "#ffffff", "border_radius": "6px",
                             "padding": "12px 20px"}),

@@ -45,7 +45,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
             "Hi {customer_name},\n\n"
             "Just a friendly reminder that invoice {invoice_number} for "
             "${invoice_total} is due on {due_date}.\n\n"
-            "Pay online: {payment_link}\n\n"
+            "View invoice: {payment_link}\n\n"
             "Thanks,\n{tenant_name}"
         ),
         "sms_template": (
@@ -60,7 +60,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
         "body_template": (
             "Hi {customer_name},\n\n"
             "Invoice {invoice_number} for ${invoice_total} is due today. "
-            "Pay online: {payment_link}\n\n"
+            "View invoice: {payment_link}\n\n"
             "Thanks,\n{tenant_name}"
         ),
         "sms_template": (
@@ -76,7 +76,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
             "Hi {customer_name},\n\n"
             "Invoice {invoice_number} for ${invoice_total} is now "
             "{days_past_due} days past due. Please settle at your "
-            "earliest convenience.\n\nPay online: {payment_link}\n\n"
+            "earliest convenience.\n\nView invoice: {payment_link}\n\n"
             "Questions? Call {tenant_phone}.\n\n{tenant_name}"
         ),
         "sms_template": (
@@ -92,7 +92,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
             "Hi {customer_name},\n\n"
             "This is a second reminder that invoice {invoice_number} for "
             "${invoice_total} is {days_past_due} days past due. Please "
-            "pay to avoid further follow-up.\n\nPay online: {payment_link}\n\n"
+            "pay to avoid further follow-up.\n\nView invoice: {payment_link}\n\n"
             "{tenant_name} · {tenant_phone}"
         ),
         "sms_template": (
@@ -109,7 +109,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
             "Invoice {invoice_number} is now 30+ days past due. This is "
             "our final courtesy reminder before your account is flagged "
             "at risk. Please pay ${invoice_total} today.\n\n"
-            "Pay online: {payment_link}\n\n{tenant_name} · {tenant_phone}"
+            "View invoice: {payment_link}\n\n{tenant_name} · {tenant_phone}"
         ),
         "sms_template": (
             "{tenant_name}: FINAL NOTICE — invoice {invoice_number} is 30d+ "
@@ -125,7 +125,7 @@ DEFAULT_STAGES: List[Dict[str, Any]] = [
             "Invoice {invoice_number} (${invoice_total}) is now 60+ days "
             "past due. Your account has been flagged for collections. "
             "Please contact us immediately at {tenant_phone}.\n\n"
-            "Pay online: {payment_link}\n\n{tenant_name}"
+            "View invoice: {payment_link}\n\n{tenant_name}"
         ),
         "sms_template": (
             "{tenant_name}: your account is flagged for collections. "
@@ -480,7 +480,7 @@ async def manual_send(iid: str, body: ManualSendIn,
             "body_template": (body.custom_message
                 or "Hi {customer_name},\n\nA reminder that invoice "
                 "{invoice_number} for ${invoice_total} remains unpaid.\n\n"
-                "Pay online: {payment_link}\n\nThanks,\n{tenant_name}"),
+                "View invoice: {payment_link}\n\nThanks,\n{tenant_name}"),
             "sms_template":
                 "{tenant_name}: invoice {invoice_number} (${invoice_total}) "
                 "unpaid. Pay: {payment_link}",

@@ -260,10 +260,10 @@ export function PortalInvoiceDetail() {
         </div>
       ) : null}
       {!printable && !redirecting ? (
-        <div className="max-w-4xl mx-auto flex items-center justify-between mb-3 px-2">
+        <div className="max-w-4xl mx-auto mb-3 px-2">
           <button
             onClick={() => navigate("/portal/invoices")}
-            className="flex items-center gap-1 text-sm font-semibold"
+            className="flex items-center gap-1 text-sm font-semibold mb-3"
             style={{ color: colors.muted }}
           >
             <ArrowLeft size={14} /> My invoices
@@ -274,12 +274,20 @@ export function PortalInvoiceDetail() {
               but stale ``amount_paid`` (seed / imported data
               artifact). We now also require the invoice to not
               be terminally paid so the CTA is honest. Matches
-              the ``InvoiceView.canPay`` gate one level deeper. */}
+              the ``InvoiceView.canPay`` gate one level deeper.
+              Feb 2026 · Invoice Pay Now restyle — full-width red
+              CTA (design-system red tokens; no raw hex) dominates
+              the top of the customer-facing portal invoice page. */}
           {doc && balance > 0
               && (doc?.payment_status || "").toLowerCase() !== "paid" ? (
-            <Button onClick={() => setPayNowOpen(true)} testid="port-pay">
+            <button
+              type="button"
+              onClick={() => setPayNowOpen(true)}
+              data-testid="port-pay"
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition"
+            >
               <CreditCard size={16} /> {`Pay ${money(balance)}`}
-            </Button>
+            </button>
           ) : null}
         </div>
       ) : null}

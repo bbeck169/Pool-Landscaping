@@ -155,20 +155,34 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
         toolbar={!printable ? (
           <>
             {canPay ? (
-              <button
-                type="button"
-                onClick={() => setPayOpen(true)}
-                className="iv-btn iv-btn-primary iv-pay-now-cta"
-                data-testid="invoice-pay-now-btn"
-                style={{
-                  background: "#059669",
-                  borderColor: "#059669",
-                  fontSize: 15, fontWeight: 700, padding: "10px 20px",
-                }}
+              /* Feb 2026 · Invoice Pay Now restyle — the top pay CTA
+                 renders full-width red so it dominates the invoice
+                 header/summary panel. ``flex-basis:100%`` forces the
+                 other toolbar buttons (Print, Download PDF, admin
+                 Charge-on-file) onto the next row inside the
+                 flex-end toolbar. Uses design-system red tokens
+                 (bg-red-600 / hover:bg-red-700) — no raw hex. */
+              <div
+                data-testid="invoice-pay-now-wrapper"
+                style={{ flex: "1 1 100%", order: -1 }}
               >
-                <CreditCard size={16} />
-                &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setPayOpen(true)}
+                  className="iv-btn iv-btn-primary iv-pay-now-cta w-full bg-red-600 hover:bg-red-700 text-white justify-center"
+                  data-testid="invoice-pay-now-btn"
+                  style={{
+                    width: "100%",
+                    background: undefined,
+                    borderColor: "transparent",
+                    fontSize: 15, fontWeight: 700, padding: "12px 20px",
+                    justifyContent: "center",
+                  }}
+                >
+                  <CreditCard size={16} />
+                  &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+                </button>
+              </div>
             ) : null}
             {isAdminSurface && canPay && savedCards.length > 0 ? (
               <button

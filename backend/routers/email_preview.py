@@ -61,7 +61,9 @@ def _stub_quote_sent() -> str:
     )
 
 
-def _stub_invoice_reminder() -> str:
+def _stub_invoice_reminder(locale: str = "en") -> str:
+    from services.email_cta_i18n import t_email_cta
+    cta_label = t_email_cta(locale, "view_invoice")
     return (
         '<div style="max-width:560px;margin:0 auto;padding:24px;'
         'font-family:-apple-system,\'Inter\',sans-serif;color:#0F172A;">'
@@ -74,7 +76,7 @@ def _stub_invoice_reminder() -> str:
         '<p style="margin:24px 0;">'
         '<a href="#" style="display:inline-block;background:#0284C7;'
         'color:#fff;padding:12px 22px;border-radius:10px;'
-        'text-decoration:none;font-weight:600;">Pay now</a></p>'
+        f'text-decoration:none;font-weight:600;">{cta_label}</a></p>'
         '</div>'
     )
 
@@ -134,6 +136,11 @@ async def preview_email(
     template: str = Query(...,
                           description="One of: quote_sent, invoice_reminder, "
                                       "password_reset, portal_invite"),
+    locale: str = Query("en",
+                        description="Preview locale: one of en/es/fr. "
+                                    "Only affects invoice_reminder CTA "
+                                    "label (Feb 2026 · Invoice Email "
+                                    "CTA Label ticket)."),
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -158,5 +165,13 @@ async def preview_email(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[email-preview] branding resolve failed: {e}")
         branding = {}
-    html = wrap_html_in_shell(_STUBS[template](), branding)
+    # Feb 2026 · Invoice Email CTA Label — only the invoice_reminder
+    # stub currently varies by locale; other stubs are locale-invariant
+    # so we detect signature and pass only when accepted.
+    stub_fn = _STUBS[template]
+    try:
+        body_html = stub_fn(locale)
+    except TypeError:
+        body_html = stub_fn()
+    html = wrap_html_in_shell(body_html, branding)
     return {"template": template, "html": html}

@@ -125,7 +125,8 @@ def _invoice_display_number(inv: dict) -> str:
 
 
 def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
-                     portal_cta_url: str = "") -> str:
+                     portal_cta_url: str = "",
+                     locale: str = "en") -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
     # Feb-2026 · P0 Pay-link routing fix — always use the PUBLIC
@@ -137,15 +138,26 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
     # URL runs OUTSIDE ``<AppLayout>`` (see App.js) so no login is
     # ever required; the token there is a 30-day pay-only JWT tied
     # to the invoice + tenant.  ``portal_cta_url`` is retained for
-    # backwards-compat callers but is now IGNORED for the Pay Now
+    # backwards-compat callers but is now IGNORED for the CTA
     # button.  See DIAG_PAY_LINK_LOGIN_REDIRECT_BUG.md for the full
     # RCA.
     _ = portal_cta_url  # kwarg retained for callsite compatibility
     from services.pay_link_builder import build_pay_now_url
+    from services.email_cta_i18n import t_email_cta
     pay_link = build_pay_now_url(
         inv["id"], inv.get("tenant_id") or "", src="email",
     )
-    link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
+    # Feb 2026 · Invoice Email CTA Label — CTA text renames from
+    # "Pay Now" to the localised "View Invoice" so all invoice-
+    # adjacent emails point the customer at the viewer (Pay Now
+    # lives on the viewer page itself, restyled full-width red).
+    cta_label = t_email_cta(locale, "view_invoice")
+    link_html = (
+        f'<p><a href="{pay_link}" '
+        f'style="background:#0891b2;color:#fff;padding:12px 20px;'
+        f'border-radius:8px;text-decoration:none;display:inline-block">'
+        f'{cta_label}</a></p>'
+    ) if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.
     n = max(0, int(attachment_count or 0))
     attach_html = ""
@@ -346,6 +358,19 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         })
     except Exception:                                                # noqa: BLE001
         attachment_count = 0
+    # Feb 2026 · Invoice Email CTA Label — resolve the recipient
+    # locale so the "View Invoice" CTA renders in the customer's
+    # language (customer.locale → tenant.default_locale → "en").
+    try:
+        _tenant = await db.tenants.find_one(
+            {"id": inv.get("tenant_id")}, {"_id": 0, "default_locale": 1},
+        ) if inv.get("tenant_id") else None
+    except Exception:                                                # noqa: BLE001
+        _tenant = None
+    from services.i18n_notifications import resolve_recipient_locale
+    _locale = resolve_recipient_locale(
+        customer=cust, tenant=_tenant, audience="customer",
+    )
     # Feb-2026 · P0 Pay-link routing fix — do NOT mint the portal
     # auto-login URL for the Pay Now CTA any more. The public
     # pay-sheet URL from ``build_pay_now_url`` is now the sole
@@ -375,7 +400,8 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         themed_html = wrap_html_in_shell(
             _reminder_html(inv, cust.get("name", "there"),
                              attachment_count=attachment_count,
-                             portal_cta_url=portal_cta_url),
+                             portal_cta_url=portal_cta_url,
+                             locale=_locale),
             branding,
         )
         resend.Emails.send({

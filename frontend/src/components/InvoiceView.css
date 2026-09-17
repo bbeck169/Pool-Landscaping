@@ -14,6 +14,10 @@
   gap: 8px;
   padding: 8px 0 12px;
   justify-content: flex-end;
+  /* Feb 2026 · Invoice Pay Now restyle — allow the full-width Pay
+     CTA (flex-basis:100%, order:-1) to force secondary buttons onto
+     the next row instead of overflowing the toolbar. */
+  flex-wrap: wrap;
 }
 .iv-btn {
   display: inline-flex;

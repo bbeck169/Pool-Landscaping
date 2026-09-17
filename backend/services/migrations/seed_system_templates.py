@@ -54,6 +54,15 @@ For the birthday promo code we ship a static ``BDAY10`` string in the
 template body — per-customer rotating codes are a separate merge-tag
 piece of work explicitly scoped out.
 
+Localisation
+------------
+Feb 2026 · Invoice Email CTA Label ticket — the CTA button label on
+the ``invoice_past_due_7d`` email template is threaded through the
+:func:`services.email_cta_i18n.t_email_cta` helper at seed time,
+keyed on the tenant's ``default_locale``. This produces
+"View Invoice" for ``en`` tenants, "Ver factura" for ``es``, and
+"Voir la facture" for ``fr`` without a runtime merge-tag hop.
+
 Rejecting deletion
 ------------------
 ``routers/marketing_sequences.py::delete_sequence`` reads the
@@ -69,6 +78,7 @@ from typing import Any, Dict, List, Tuple
 
 from config import db
 from utils import new_id, now_iso
+from services.email_cta_i18n import t_email_cta
 
 
 logger = logging.getLogger("seed_system_templates")
@@ -85,7 +95,14 @@ _SENTINEL_ID = "feb2026_seed_system_templates_v1"
 # reuse existing tenant-scoped templates when they exist (avoid
 # duplicate ``marketing_templates`` rows on re-seed).
 
-_TEMPLATES: List[Dict[str, Any]] = [
+
+def _build_templates(locale: str) -> List[Dict[str, Any]]:
+    """Return the seed template list with the CTA label resolved for
+    ``locale`` (Feb 2026 · Invoice Email CTA Label). Sequences that
+    don't include an invoice CTA are locale-invariant.
+    """
+    view_invoice_label = t_email_cta(locale, "view_invoice")
+    return [
     # 1. Invoice past due — 7d win-back
     {
         "system_template_id": "invoice_past_due_7d",
@@ -115,11 +132,11 @@ _TEMPLATES: List[Dict[str, Any]] = [
                 "<strong>{{INVOICE_TOTAL}}</strong> is now 7 days past "
                 "due. If you've already sent payment, thank you — please "
                 "ignore this message.</p>"
-                "<p>Otherwise, you can pay securely in one click:</p>"
+                "<p>Otherwise, you can review your invoice here:</p>"
                 "<p><a href=\"{{INVOICE_PAY_MAGIC_URL}}\" "
                 "style=\"background:#0369A1;color:#fff;padding:10px 18px;"
                 "border-radius:6px;text-decoration:none;display:inline-block\">"
-                "Pay invoice</a></p>"
+                f"{view_invoice_label}</a></p>"
                 "<p>If you have questions or need to set up a payment "
                 "plan, just reply to this email — we're happy to help.</p>"
                 "<p>Thanks,<br/>{{COMPANY_NAME}}</p>"
@@ -257,6 +274,12 @@ _TEMPLATES: List[Dict[str, Any]] = [
 ]
 
 
+# Back-compat alias — legacy tests + imports use ``_TEMPLATES`` as a
+# module-level constant. Resolves to the English-baked variant so
+# behaviour is unchanged for those callers.
+_TEMPLATES: List[Dict[str, Any]] = _build_templates("en")
+
+
 async def _ensure_template(tenant_id: str, tpl_def: Dict[str, Any],
                             channel: str) -> str:
     """Insert a ``marketing_templates`` doc if the tenant doesn't
@@ -292,6 +315,12 @@ async def seed_system_templates_for_tenant(tenant_id: str
     """Seed the 3 canonical sequences for ONE tenant. Idempotent —
     an existing ``system_template_id`` short-circuits.
 
+    Feb 2026 · Invoice Email CTA Label — the ``invoice_past_due_7d``
+    email body's CTA label is resolved against the tenant's
+    ``default_locale`` at seed time (en/es/fr → "View Invoice" /
+    "Ver factura" / "Voir la facture"). Falls back to ``en`` when
+    the tenant record is missing or the locale is unsupported.
+
     Returns::
         {
             "tenant_id": str,
@@ -304,7 +333,15 @@ async def seed_system_templates_for_tenant(tenant_id: str
     existing: List[str] = []
     ids: Dict[str, str] = {}
 
-    for tpl_def in _TEMPLATES:
+    # Resolve locale ONCE per tenant so the CTA label stays consistent
+    # across email + sms + steps within this seed pass.
+    _tenant = await db.tenants.find_one(
+        {"id": tenant_id}, {"_id": 0, "default_locale": 1},
+    ) or {}
+    _tenant_locale = _tenant.get("default_locale") or "en"
+    templates_for_tenant = _build_templates(_tenant_locale)
+
+    for tpl_def in templates_for_tenant:
         stid = tpl_def["system_template_id"]
         existing_seq = await db.marketing_sequences.find_one(
             {"tenant_id": tenant_id, "system_template_id": stid},

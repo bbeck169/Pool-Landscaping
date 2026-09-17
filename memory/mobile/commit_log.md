@@ -2338,3 +2338,16 @@
   - `frontend/src/lib/colorContrast.js`
   - `frontend/src/pages/ops/OpsHub.jsx` (crew color editor pattern)
 
+
+## Iteration 106 — Bug fix: schedule tech filter techScope uses wrong ID
+- **Commit**: ef0bb8dba
+- **Date**: 2026-09-17
+- **Changes**:
+  - Fixed `calendar.tsx` line 408: `techScope` query parameter was using `user?.id` (user account ID) instead of `user?.technician_id` (technicians collection ID). Jobs store the technician ID in their `technician_id` field, so the user-account ID would never match, causing techs to see an empty schedule when the backend scoped by the wrong ID.
+  - Added test assertion to `phase-schedule-tech-filter-technician-id.test.tsx` verifying the `techScope` line uses `user?.technician_id`.
+- **Root cause**: Line 408 in calendar.tsx constructed the API query string `&technician_id=${user.id}` — but `user.id` is the users-collection ID, while `j.technician_id` on jobs stores the technicians-collection ID. These are different ID spaces.
+- **Web predicate mirrored**: Web `CalendarSchedule.jsx` line 486: `if (_isTech) return user?.technician_id || ""` — the web always uses `user.technician_id`, never `user.id`, for tech scoping.
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (1 line changed: `user?.id` → `user?.technician_id`)
+  - `/app/mobile/__tests__/phase-schedule-tech-filter-technician-id.test.tsx` (1 new test case added)
+

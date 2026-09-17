@@ -41,15 +41,40 @@ describe("P0 Bug B · Pay Now CTA on the customer-facing invoice", () => {
     expect(IV_SRC).toMatch(/Pay \$\{fmtMoney\(totals\?\.total_due/);
   });
 
-  it("Toolbar Pay Now uses the landscape-green semantic tone", () => {
-    // #059669 = ``colors.landscape[500]`` / ``accent.emerald[500]``.
-    // Both the testid and the green background must coexist in
-    // the source. Widened window to accomodate multi-line style
-    // block + comment block above the style prop.
+  it("Toolbar Pay Now uses the design-system red danger tone (Feb 2026 restyle)", () => {
+    // Feb 2026 · Invoice Pay Now restyle — the top pay CTA moved from
+    // landscape-green (#059669) to the design-system red token
+    // (bg-red-600 / hover:bg-red-700) so the customer-facing invoice
+    // page has a single, prominent, full-width Pay Now that visually
+    // separates from the toolbar's secondary actions.
     expect(IV_SRC).toContain('data-testid="invoice-pay-now-btn"');
+    // ``className`` sits ABOVE the testid in the JSX (order-agnostic).
     expect(IV_SRC).toMatch(
-      /invoice-pay-now-btn[\s\S]{0,1500}background:\s*"#059669"/,
+      /bg-red-600[\s\S]{0,600}data-testid="invoice-pay-now-btn"|invoice-pay-now-btn[\s\S]{0,600}bg-red-600/,
     );
+    expect(IV_SRC).toMatch(
+      /hover:bg-red-700[\s\S]{0,600}data-testid="invoice-pay-now-btn"|invoice-pay-now-btn[\s\S]{0,600}hover:bg-red-700/,
+    );
+    // Legacy landscape-green is gone from the CTA block.
+    expect(IV_SRC).not.toMatch(
+      /invoice-pay-now-btn[\s\S]{0,600}background:\s*"#059669"/,
+    );
+  });
+
+  it("Toolbar Pay Now spans the full width of its container (Feb 2026 restyle)", () => {
+    // Full-width contract — Tailwind ``w-full`` on the button + a
+    // ``flex-basis: 100%`` wrapper so secondary toolbar buttons wrap
+    // to the next row instead of overflowing.
+    expect(IV_SRC).toMatch(
+      /\bw-full\b[\s\S]{0,400}data-testid="invoice-pay-now-btn"|invoice-pay-now-btn[\s\S]{0,400}\bw-full\b/,
+    );
+    expect(IV_SRC).toMatch(
+      /invoice-pay-now-wrapper[\s\S]{0,400}flex:\s*"1 1 100%"|flex:\s*"1 1 100%"[\s\S]{0,400}invoice-pay-now-wrapper/,
+    );
+  });
+
+  it("Toolbar CSS enables flex-wrap so the full-width Pay CTA lays out cleanly", () => {
+    expect(IV_CSS).toMatch(/\.iv-toolbar\s*\{[\s\S]{0,400}flex-wrap:\s*wrap/);
   });
 
   it("Sticky mobile pay bar renders when there's a balance", () => {
