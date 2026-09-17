@@ -15,5 +15,11 @@
   "checklist": "Checklist",
   "photos": "Photos",
   "chemistry_readings": "Chemistry Readings",
-  "sign_off": "Sign off"
+  "sign_off": "Sign off",
+  "timezone": {
+    "label": "Timezone",
+    "helper_business": "Used to bucket schedule, dashboards, and dispatch times in your local zone.",
+    "helper_billing": "Used to dispatch the weekly Stripe sync + other per-tenant crons.",
+    "saved": "Timezone updated"
+  }
 }

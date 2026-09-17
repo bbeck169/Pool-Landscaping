@@ -15,5 +15,11 @@
   "checklist": "Lista de verificación",
   "photos": "Fotos",
   "chemistry_readings": "Lecturas químicas",
-  "sign_off": "Firmar"
+  "sign_off": "Firmar",
+  "timezone": {
+    "label": "Zona horaria",
+    "helper_business": "Se utiliza para agrupar el calendario, los paneles y los tiempos de despacho en su zona horaria local.",
+    "helper_billing": "Se utiliza para despachar la sincronización semanal de Stripe y otros crones por tenant.",
+    "saved": "Zona horaria actualizada"
+  }
 }

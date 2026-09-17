@@ -15,5 +15,11 @@
   "checklist": "Liste de contrôle",
   "photos": "Photos",
   "chemistry_readings": "Analyses chimiques",
-  "sign_off": "Signature"
+  "sign_off": "Signature",
+  "timezone": {
+    "label": "Fuseau horaire",
+    "helper_business": "Utilisé pour regrouper le planning, les tableaux de bord et les heures de répartition dans votre fuseau local.",
+    "helper_billing": "Utilisé pour déclencher la synchronisation Stripe hebdomadaire et d'autres tâches cron par locataire.",
+    "saved": "Fuseau horaire mis à jour"
+  }
 }

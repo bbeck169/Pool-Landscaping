@@ -15,9 +15,11 @@
  */
 import React from "react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Trash2, Loader2, Upload } from "lucide-react";
 import { api, api_base, TOKEN_KEY } from "@/api";
 import { colors } from "@/theme";
+import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -53,8 +55,11 @@ function _validate(fields) {
 
 
 export default function BusinessSettings() {
+  const { t } = useTranslation("common");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [savingTz, setSavingTz] = React.useState(false);
+  const [tenantTz, setTenantTz] = React.useState("America/Phoenix");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
   const [fields, setFields] = React.useState({
@@ -125,6 +130,18 @@ export default function BusinessSettings() {
       setEffective(r?.effective || {});
       setLogoUrl(stored.logo_url || r?.effective?.logo_url || null);
       setDirty(false);
+      // Feb-2026 · Timezone Finalization — the tenant-wide timezone
+      // is a separate tenant-settings field owned by the
+      // /api/tenants/mine/settings endpoint (not business-settings).
+      // We fetch it alongside so both pages surface the picker on the
+      // same tenant-wide value.
+      try {
+        const tenantDoc = await api.get("/tenants/mine/settings");
+        setTenantTz(tenantDoc?.timezone || "America/Phoenix");
+      } catch {
+        // Non-fatal — page still renders with the default TZ shown
+        // in the picker; the picker's save path will still work.
+      }
     } catch (e) {
       toast.error(e?.message || "Failed to load settings");
     } finally {
@@ -295,6 +312,41 @@ export default function BusinessSettings() {
                       value={fields.tax_id}
                       onChange={onChange("tax_id")}
                       placeholder="EIN 12-3456789" />
+            </div>
+            {/* Feb-2026 · Timezone Finalization — timezone picker
+                lifted from Billing Settings into a shared
+                TimezoneSelect component so both surfaces stay
+                option-for-option identical. Saves through the same
+                PATCH /api/tenants/mine/settings endpoint the Billing
+                Settings picker uses; state lives on the tenant, not
+                on business-settings. */}
+            <div className="mt-4 pt-4"
+                  style={{ borderTop: "1px solid #E5E7EB" }}>
+              <TimezoneSelect
+                value={tenantTz}
+                disabled={savingTz}
+                label={t("timezone.label", "Timezone")}
+                helperText={t(
+                  "timezone.helper_business",
+                  "Used to bucket schedule, dashboards, and dispatch times in your local zone.",
+                )}
+                testid="bs-tenant-timezone-picker"
+                onChange={async (e) => {
+                  const nextTz = e.target.value;
+                  if (savingTz) return;
+                  setSavingTz(true);
+                  try {
+                    const doc = await api.patch("/tenants/mine/settings",
+                                                  { timezone: nextTz });
+                    setTenantTz(doc?.timezone || nextTz);
+                    toast.success(t("timezone.saved", "Timezone updated"));
+                  } catch (err) {
+                    toast.error(err?.message || "Save failed");
+                  } finally {
+                    setSavingTz(false);
+                  }
+                }}
+              />
             </div>
           </section>
 

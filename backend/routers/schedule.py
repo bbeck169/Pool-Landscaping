@@ -78,7 +78,15 @@ async def schedule_today(request: Request,
     import time as _t
     _timings = request.state.timings if hasattr(request.state, "timings") else []
     tid = tenant["id"]
-    tz_name = (tenant.get("settings") or {}).get("tz") or DEFAULT_TZ
+    # Feb-2026 · Timezone Finalization — read the canonical
+    # ``tenant.timezone`` (top-level) instead of the legacy
+    # ``tenant.settings.tz`` path (which was never populated by the
+    # canonical PATCH /api/tenants/mine/settings write path). This
+    # closes the "``/schedule/today`` always thinks the tenant lives
+    # in America/Phoenix" bug that surfaced for every non-Vistancia
+    # tenant.
+    from services.tenant_helpers import get_tenant_timezone_name
+    tz_name = get_tenant_timezone_name(tenant)
     start_iso, end_iso = _today_bounds_utc(tz_name, date)
     if date:
         # Validate strict YYYY-MM-DD

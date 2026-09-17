@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Save, Receipt, CreditCard, RefreshCw, PlayCircle, CheckCircle2, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
 
 export default function BillingSettings() {
   const nav = useNavigate();
@@ -162,23 +163,19 @@ export default function BillingSettings() {
             </button>
           </label>
 
-          {/* Batch 12C · Feb 2026 — Timezone picker. Stored as an IANA
-              name; the picker limits choices to the US zones the
-              cron dispatch cares about but the backend accepts any
-              IANA identifier. */}
-          <div className="mt-4 pt-4 flex items-center justify-between"
+          {/* Batch 12C · Feb 2026 — Timezone picker. Feb-2026 ·
+              Timezone Finalization ship — rendered via the shared
+              TimezoneSelect component so this page and BusinessSettings
+              stay option-for-option identical. Both routes save through
+              the same PATCH /api/tenants/mine/settings endpoint. */}
+          <div className="mt-4 pt-4"
                 style={{ borderTop: "1px solid #E5E7EB" }}>
-            <div className="flex-1 min-w-0 pr-4">
-              <div className="text-sm font-medium" style={{ color: colors.onSurface }}>
-                Tenant timezone
-              </div>
-              <div className="text-xs mt-0.5" style={{ color: colors.muted }}>
-                Used to dispatch the weekly Stripe sync + other per-tenant crons.
-              </div>
-            </div>
-            <select
-              data-testid="tenant-timezone-picker"
+            <TimezoneSelect
               value={tenantSettings.timezone || "America/Phoenix"}
+              disabled={savingTenant}
+              label="Tenant timezone"
+              helperText="Used to dispatch the weekly Stripe sync + other per-tenant crons."
+              testid="tenant-timezone-picker"
               onChange={async (e) => {
                 const nextTz = e.target.value;
                 if (savingTenant) return;
@@ -195,18 +192,7 @@ export default function BillingSettings() {
                   setSavingTenant(false);
                 }
               }}
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-              style={{ border: `1px solid ${colors.border}`,
-                        backgroundColor: colors.surfaceSecondary,
-                        color: colors.onSurfaceSecondary,
-                        opacity: savingTenant ? 0.6 : 1 }}
-            >
-              <option value="America/Phoenix">America/Phoenix (AZ)</option>
-              <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
-              <option value="America/Denver">America/Denver (MT)</option>
-              <option value="America/Chicago">America/Chicago (CT)</option>
-              <option value="America/New_York">America/New_York (ET)</option>
-            </select>
+            />
           </div>
 
           {/* Batch 12C · Feb 2026 — Auto-send add-card link on new
