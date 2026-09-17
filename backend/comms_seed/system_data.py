@@ -118,7 +118,19 @@ def _visit_summary_blocks() -> list:
     ]
 
 
-def _invoice_created_blocks() -> list:
+def _invoice_created_blocks(locale: str = "en") -> list:
+    """Blocks for the ``system.invoice_created`` template.
+
+    Feb 2026 · Invoice Email CTA Label — CTA label localises against
+    ``locale`` so non-English tenants get "Ver factura" / "Voir la
+    facture" instead of an English CTA. Falls back to English per
+    the ``t_email_cta`` contract when an unsupported locale is
+    passed. Module-level ``SYSTEM_EMAIL_TEMPLATES`` bakes the
+    English variant for the system-wide ``tenant_id=None`` seed
+    rows; per-tenant sends resolve the recipient locale at the
+    call site and rebuild the blocks via
+    :func:`build_system_email_templates` (see this module).
+    """
     return [
         _block("heading", {"text": "Invoice {{invoice.invoice_number}} is ready",
                             "level": 1, "alignment": "left", "color": "#111",
@@ -128,7 +140,7 @@ def _invoice_created_blocks() -> list:
             "<p>Your latest invoice for {{invoice.amount_due}} is ready to view. "
             "Payment is due by <strong>{{invoice.due_date}}</strong>.</p>"
         ), "padding": "8px 24px"}),
-        _block("button", {"label": t_email_cta("en", "view_invoice"), "link_url": "{{invoice.portal_link}}",
+        _block("button", {"label": t_email_cta(locale, "view_invoice"), "link_url": "{{invoice.portal_link}}",
                             "alignment": "left", "background_color": "#0f6ed1",
                             "text_color": "#ffffff", "border_radius": "6px",
                             "padding": "12px 20px"}),
@@ -139,7 +151,12 @@ def _invoice_created_blocks() -> list:
     ]
 
 
-def _invoice_overdue_blocks() -> list:
+def _invoice_overdue_blocks(locale: str = "en") -> list:
+    """Blocks for the ``system.invoice_overdue`` template.
+
+    Feb 2026 · Invoice Email CTA Label — parallel to
+    :func:`_invoice_created_blocks`; CTA label honours ``locale``.
+    """
     return [
         _block("heading", {"text": "A quick note on invoice {{invoice.invoice_number}}",
                             "level": 1, "alignment": "left", "color": "#c94a3d",
@@ -152,7 +169,7 @@ def _invoice_overdue_blocks() -> list:
             "a couple of business days to post.</p>"
             "<p>If not, here's the quickest way to bring the account current:</p>"
         ), "padding": "8px 24px"}),
-        _block("button", {"label": t_email_cta("en", "view_invoice"), "link_url": "{{invoice.portal_link}}",
+        _block("button", {"label": t_email_cta(locale, "view_invoice"), "link_url": "{{invoice.portal_link}}",
                             "alignment": "left", "background_color": "#c94a3d",
                             "text_color": "#ffffff", "border_radius": "6px",
                             "padding": "12px 20px"}),
@@ -241,7 +258,24 @@ def _review_private_feedback_admin_alert_blocks() -> list:
     ]
 
 
-SYSTEM_EMAIL_TEMPLATES = [
+def build_system_email_templates(locale: str = "en") -> list:
+    """Feb 2026 · Invoice Email CTA Label — locale-aware factory.
+
+    Returns the SYSTEM_EMAIL_TEMPLATES list with the two invoice-CTA
+    blocks rebuilt for ``locale``. All non-invoice templates are
+    locale-invariant so they pass through unchanged (their CTAs
+    either don't link to the invoice viewer OR aren't in-scope for
+    the current ticket).
+
+    Called at module import time with ``locale="en"`` to preserve
+    the module-level ``SYSTEM_EMAIL_TEMPLATES`` constant that
+    ``comms_seed/seed_comms.py`` iterates on for the shared
+    ``tenant_id=None`` system-wide seed rows. Also invoked by
+    per-tenant sends that resolve the recipient locale at the call
+    site (see the Phase D5 i18n resolver + the send-path unit
+    tests for the expected wiring).
+    """
+    return [
     {
         "code": "system.welcome_new_customer",
         "name": "Welcome — new customer",
@@ -268,14 +302,14 @@ SYSTEM_EMAIL_TEMPLATES = [
         "name": "Invoice created",
         "description": "Sent when a new invoice is generated.",
         "subject": "Invoice {{invoice.invoice_number}} — {{invoice.amount_due}} due {{invoice.due_date}}",
-        "blocks_json": _invoice_created_blocks(),
+        "blocks_json": _invoice_created_blocks(locale),
     },
     {
         "code": "system.invoice_overdue",
         "name": "Invoice overdue — polite nudge",
         "description": "Sent when an invoice becomes past due.",
         "subject": "Reminder: invoice {{invoice.invoice_number}} is past due",
-        "blocks_json": _invoice_overdue_blocks(),
+        "blocks_json": _invoice_overdue_blocks(locale),
     },
     {
         "code": "system.satisfaction_survey_invite",
@@ -302,7 +336,15 @@ SYSTEM_EMAIL_TEMPLATES = [
         "subject": "Private feedback from {{customer.full_name}} — please follow up",
         "blocks_json": _review_private_feedback_admin_alert_blocks(),
     },
-]
+    ]
+
+
+# Module-level constant — kept for back-compat with every caller that
+# imports it (``seed_comms``, ``test_visit_summary_merge_tag_seed``,
+# ``test_reviews_backend`` …). English variant matches the historical
+# shape byte-for-byte apart from the CTA label rename shipped by the
+# Feb 2026 Invoice Email CTA Label ticket.
+SYSTEM_EMAIL_TEMPLATES = build_system_email_templates("en")
 
 
 # --- SMS templates ------------------------------------------------------

@@ -154,6 +154,90 @@ def test_invoice_overdue_blocks_renames_cta_to_view_invoice():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 2b/2c (follow-up) · Locale threading for the two comms_seed blocks
+# ═══════════════════════════════════════════════════════════════════
+# Tester follow-up B2 gap: ``_invoice_created_blocks`` and
+# ``_invoice_overdue_blocks`` hardcoded ``t_email_cta("en", ...)`` in
+# the initial ship, so non-English tenants received an English CTA.
+# The blocks now accept a ``locale`` kwarg; ``build_system_email_templates``
+# threads the tenant/recipient locale through both.
+
+def test_invoice_created_blocks_spanish_uses_ver_factura():
+    from comms_seed.system_data import _invoice_created_blocks
+    label = _find_button_label(_invoice_created_blocks(locale="es"))
+    assert label == "Ver factura"
+
+
+def test_invoice_created_blocks_french_uses_voir_la_facture():
+    from comms_seed.system_data import _invoice_created_blocks
+    label = _find_button_label(_invoice_created_blocks(locale="fr"))
+    assert label == "Voir la facture"
+
+
+def test_invoice_overdue_blocks_spanish_uses_ver_factura():
+    from comms_seed.system_data import _invoice_overdue_blocks
+    label = _find_button_label(_invoice_overdue_blocks(locale="es"))
+    assert label == "Ver factura"
+
+
+def test_invoice_overdue_blocks_french_uses_voir_la_facture():
+    from comms_seed.system_data import _invoice_overdue_blocks
+    label = _find_button_label(_invoice_overdue_blocks(locale="fr"))
+    assert label == "Voir la facture"
+
+
+def test_invoice_blocks_unsupported_locale_falls_back_to_english():
+    """Bogus tenant.default_locale must render a valid CTA — English
+    is the fallback per ``t_email_cta`` contract."""
+    from comms_seed.system_data import (
+        _invoice_created_blocks, _invoice_overdue_blocks,
+    )
+    for bogus in ("de", "ja", "not-a-locale"):
+        assert _find_button_label(
+            _invoice_created_blocks(locale=bogus)) == "View Invoice"
+        assert _find_button_label(
+            _invoice_overdue_blocks(locale=bogus)) == "View Invoice"
+
+
+def test_build_system_email_templates_threads_locale_into_invoice_blocks():
+    """``build_system_email_templates(locale=…)`` returns the same
+    template list with the two invoice-CTA blocks rebuilt for the
+    requested locale. Locale-invariant templates (welcome, appointment
+    reminder, visit summary, etc.) pass through unchanged."""
+    from comms_seed.system_data import build_system_email_templates
+
+    tpls_es = build_system_email_templates("es")
+    created = next(t for t in tpls_es
+                    if t["code"] == "system.invoice_created")
+    overdue = next(t for t in tpls_es
+                    if t["code"] == "system.invoice_overdue")
+    assert _find_button_label(created["blocks_json"]) == "Ver factura"
+    assert _find_button_label(overdue["blocks_json"]) == "Ver factura"
+
+    tpls_fr = build_system_email_templates("fr")
+    created_fr = next(t for t in tpls_fr
+                       if t["code"] == "system.invoice_created")
+    overdue_fr = next(t for t in tpls_fr
+                       if t["code"] == "system.invoice_overdue")
+    assert _find_button_label(created_fr["blocks_json"]) == "Voir la facture"
+    assert _find_button_label(overdue_fr["blocks_json"]) == "Voir la facture"
+
+
+def test_module_level_system_email_templates_stays_english_for_backcompat():
+    """``SYSTEM_EMAIL_TEMPLATES`` remains the ``locale="en"`` variant
+    at module import time so ``seed_comms`` (system-wide
+    ``tenant_id=None`` seed) + every legacy caller keeps behaving
+    byte-identically to pre-refactor."""
+    from comms_seed.system_data import SYSTEM_EMAIL_TEMPLATES
+    created = next(t for t in SYSTEM_EMAIL_TEMPLATES
+                    if t["code"] == "system.invoice_created")
+    overdue = next(t for t in SYSTEM_EMAIL_TEMPLATES
+                    if t["code"] == "system.invoice_overdue")
+    assert _find_button_label(created["blocks_json"]) == "View Invoice"
+    assert _find_button_label(overdue["blocks_json"]) == "View Invoice"
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 2d · seed_system_templates.py — locale-aware CTA
 # ═══════════════════════════════════════════════════════════════════
 

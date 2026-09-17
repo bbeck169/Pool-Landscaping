@@ -27,6 +27,11 @@ const PORTAL_SRC = fs.readFileSync(
   "utf8",
 );
 
+const PUBLIC_MAGIC_SRC = fs.readFileSync(
+  path.resolve(__dirname, "../pages/public/PublicInvoiceMagic.jsx"),
+  "utf8",
+);
+
 
 // ── helpers ────────────────────────────────────────────────────────
 // The className attribute in JSX sits ABOVE the ``data-testid`` on
@@ -147,5 +152,101 @@ describe("Invoice Pay Now restyle · consistency between the two viewers", () =>
   it("BOTH CTAs use w-full (full-width contract)", () => {
     expect(nearBoth(IV_SRC, "invoice-pay-now-btn", "\\bw-full\\b", 400)).toBe(true);
     expect(nearBoth(PORTAL_SRC, "port-pay", "\\bw-full\\b", 400)).toBe(true);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Tester follow-up · PublicInvoiceMagic top pay CTA
+// ═══════════════════════════════════════════════════════════════════
+// The magic-link viewer at ``/i/:token`` now renders its OWN top
+// pay button ABOVE ``<InvoiceView>`` (with ``hideToolbarPayNow``
+// suppressing the toolbar CTA below) so:
+//   1. Static-lint / file-level grep on this file finds the red
+//      full-width class list explicitly.
+//   2. The customer sees a single prominent CTA at the top of the
+//      page, matching the portal viewer's ``port-pay`` pattern.
+
+describe("Invoice Pay Now restyle · PublicInvoiceMagic top pay CTA", () => {
+  it("public-invoice-magic-pay-now uses the design-system red tokens", () => {
+    expect(
+      nearBoth(PUBLIC_MAGIC_SRC, "public-invoice-magic-pay-now",
+        "bg-red-600", 400),
+    ).toBe(true);
+    expect(
+      nearBoth(PUBLIC_MAGIC_SRC, "public-invoice-magic-pay-now",
+        "hover:bg-red-700", 400),
+    ).toBe(true);
+  });
+
+  it("public-invoice-magic-pay-now spans the full width of its container", () => {
+    expect(
+      nearBoth(PUBLIC_MAGIC_SRC, "public-invoice-magic-pay-now",
+        "\\bw-full\\b", 400),
+    ).toBe(true);
+  });
+
+  it("public-invoice-magic-pay-now class list matches the portal port-pay CTA", () => {
+    // Contract: same design-system tokens on both customer-facing
+    // top pay buttons.
+    const expectedTokens = [
+      "w-full",
+      "bg-red-600",
+      "hover:bg-red-700",
+      "text-white",
+      "font-semibold",
+      "rounded-xl",
+    ];
+    for (const cls of expectedTokens) {
+      expect(
+        nearBoth(PUBLIC_MAGIC_SRC, "public-invoice-magic-pay-now",
+          cls.replace(/-/g, "\\-"), 400),
+        `PublicInvoiceMagic pay CTA missing class '${cls}'`,
+      ).toBe(true);
+      expect(
+        nearBoth(PORTAL_SRC, "port-pay", cls.replace(/-/g, "\\-"), 400),
+        `Portal port-pay missing class '${cls}'`,
+      ).toBe(true);
+    }
+  });
+
+  it("PublicInvoiceMagic suppresses the InvoiceView toolbar CTA to avoid duplicate flows", () => {
+    // ``hideToolbarPayNow`` prop on <InvoiceView> gates off the
+    // toolbar pay button so the customer sees exactly ONE CTA.
+    expect(PUBLIC_MAGIC_SRC).toMatch(/hideToolbarPayNow/);
+    expect(PUBLIC_MAGIC_SRC).toMatch(/<InvoiceView[\s\S]{0,400}hideToolbarPayNow/);
+  });
+
+  it("PublicInvoiceMagic pay CTA opens the PaymentForm modal (behavior preserved)", () => {
+    expect(PUBLIC_MAGIC_SRC).toMatch(/import PaymentForm/);
+    expect(
+      nearBoth(PUBLIC_MAGIC_SRC, "public-invoice-magic-pay-now",
+        "setPayOpen\\(true\\)", 400),
+    ).toBe(true);
+    // <PaymentForm> mount is gated on payOpen.
+    expect(PUBLIC_MAGIC_SRC).toMatch(/\{payOpen \? \(\s*<PaymentForm/);
+  });
+
+  it("PublicInvoiceMagic pay CTA renders balance-aware label", () => {
+    // Same ``Pay $X.XX`` copy contract used by the portal + InvoiceView.
+    const idx = PUBLIC_MAGIC_SRC.indexOf('data-testid="public-invoice-magic-pay-now"');
+    expect(idx).toBeGreaterThan(-1);
+    const forward = PUBLIC_MAGIC_SRC.slice(idx, idx + 400);
+    expect(forward).toMatch(/<CreditCard/);
+    expect(forward).toMatch(/Pay \$\$\{fmtMoney/);
+  });
+
+  it("PublicInvoiceMagic pay CTA is gated on canPay (not paid AND balance > 0)", () => {
+    expect(PUBLIC_MAGIC_SRC).toMatch(/const canPay = paymentStatus !== "paid" && totalDue > 0/);
+  });
+
+  it("PublicInvoiceMagic pay CTA has no raw red hex — design-system tokens only", () => {
+    const startIdx = PUBLIC_MAGIC_SRC.indexOf(
+      'data-testid="public-invoice-magic-pay-now"');
+    expect(startIdx).toBeGreaterThan(-1);
+    const openIdx = PUBLIC_MAGIC_SRC.lastIndexOf("<button", startIdx);
+    const closeIdx = PUBLIC_MAGIC_SRC.indexOf("</button>", startIdx);
+    const block = PUBLIC_MAGIC_SRC.slice(openIdx, closeIdx);
+    expect(block).not.toMatch(/#(DC2626|B91C1C|EF4444|FEE2E2)/i);
   });
 });

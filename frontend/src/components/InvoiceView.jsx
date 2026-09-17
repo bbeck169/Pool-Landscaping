@@ -41,7 +41,7 @@ function fmtMoney(n) {
   return v.toFixed(2);
 }
 
-export default function InvoiceView({ invoiceId, printable = false, magicToken = "", magicSrc = "" }) {
+export default function InvoiceView({ invoiceId, printable = false, magicToken = "", magicSrc = "", hideToolbarPayNow = false }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [payOpen, setPayOpen] = useState(false);
@@ -154,14 +154,17 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
         printable={printable}
         toolbar={!printable ? (
           <>
-            {canPay ? (
+            {canPay && !hideToolbarPayNow ? (
               /* Feb 2026 · Invoice Pay Now restyle — the top pay CTA
                  renders full-width red so it dominates the invoice
                  header/summary panel. ``flex-basis:100%`` forces the
                  other toolbar buttons (Print, Download PDF, admin
                  Charge-on-file) onto the next row inside the
                  flex-end toolbar. Uses design-system red tokens
-                 (bg-red-600 / hover:bg-red-700) — no raw hex. */
+                 (bg-red-600 / hover:bg-red-700) — no raw hex.
+                 ``hideToolbarPayNow`` lets a parent surface (e.g.
+                 PublicInvoiceMagic) render its own top-of-page CTA
+                 and suppress the toolbar duplicate. */
               <div
                 data-testid="invoice-pay-now-wrapper"
                 style={{ flex: "1 1 100%", order: -1 }}

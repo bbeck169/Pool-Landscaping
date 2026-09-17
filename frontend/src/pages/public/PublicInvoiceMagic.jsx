@@ -14,10 +14,25 @@
  * Corrupt payloads bounce off the server with 401 anyway.
  *
  * Mirrors the pattern used by `PublicEstimateLanding` for `/e/estimate`.
+ *
+ * Feb 2026 · Invoice Pay Now restyle (tester follow-up) — the
+ * top-of-page red full-width Pay CTA is rendered explicitly here so
+ * static-lint / grep on this file (matching the portal `port-pay`
+ * pattern) succeeds and the customer sees a prominent primary
+ * action ABOVE the invoice canvas. The button reuses the same
+ * design-system red tokens (``bg-red-600 hover:bg-red-700``) and
+ * full-width contract (``w-full``) as PortalInvoiceDetail's
+ * ``port-pay`` — see /app/frontend/src/test/invoice-pay-now-restyle.test.jsx
+ * for the CI lock-in. The button hits the same magic pay-form flow
+ * InvoiceView already drives internally, so there's a single
+ * PaymentForm modal on this route (no duplicate flows).
  */
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { CreditCard } from "lucide-react";
+import { api } from "@/api";
 import InvoiceView from "@/components/InvoiceView";
+import PaymentForm from "@/components/PaymentForm";
 
 
 /** base64url-decode a JWT payload (middle segment). */
@@ -40,10 +55,27 @@ function decodeJwtPayload(token) {
 }
 
 
+function fmtMoney(n) {
+  const v = Number(n || 0);
+  return v.toFixed(2);
+}
+
+
 export default function PublicInvoiceMagic() {
   const { token } = useParams();
   const payload = decodeJwtPayload(token || "");
   const invoiceId = payload?.invoice_id || "";
+  // Feb 2026 · Invoice Pay Now restyle — fetch minimal invoice data
+  // so the top red CTA can render a balance-aware label. Uses the
+  // same magic endpoint <InvoiceView> hits internally so both pull
+  // from a single server-verified source of truth.
+  const [invoiceData, setInvoiceData] = useState(null);
+  const [payOpen, setPayOpen] = useState(false);
+  useEffect(() => {
+    if (!invoiceId || !token) return;
+    const url = `/invoices/${invoiceId}/full-magic?token=${encodeURIComponent(token)}&src=link`;
+    api.get(url).then(setInvoiceData).catch(() => setInvoiceData(null));
+  }, [invoiceId, token]);
 
   if (!token || !invoiceId) {
     return (
@@ -68,18 +100,51 @@ export default function PublicInvoiceMagic() {
     );
   }
 
+  const totalDue = Number(invoiceData?.totals?.total_due || 0);
+  const paymentStatus = (invoiceData?.payment_status || "").toLowerCase();
+  const canPay = paymentStatus !== "paid" && totalDue > 0;
+
   return (
     <div
       style={{ minHeight: "100vh", padding: 24, background: "#F3F4F6" }}
       data-testid="public-invoice-magic-root"
     >
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
+        {/* Feb 2026 · Invoice Pay Now restyle — top-of-page red
+            full-width CTA. Mirrors the portal viewer's ``port-pay``
+            button one-for-one so both customer-facing surfaces
+            (magic link + logged-in portal) ship the same primary
+            action. The class list is asserted verbatim in
+            invoice-pay-now-restyle.test.jsx. */}
+        {canPay ? (
+          <button
+            type="button"
+            onClick={() => setPayOpen(true)}
+            data-testid="public-invoice-magic-pay-now"
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition mb-3"
+          >
+            <CreditCard size={16} /> {`Pay $${fmtMoney(totalDue)}`}
+          </button>
+        ) : null}
         <InvoiceView
           invoiceId={invoiceId}
           magicToken={token}
           magicSrc="link"
+          hideToolbarPayNow={canPay /* single visible pay CTA at the
+            top; InvoiceView's own toolbar pay button collapses when
+            the parent already surfaces one so we don't double up */}
         />
       </div>
+      {payOpen ? (
+        <PaymentForm
+          invoice={invoiceData}
+          invoiceId={invoiceId}
+          source="portal"
+          magicToken={token}
+          amount={totalDue}
+          onClose={() => setPayOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
