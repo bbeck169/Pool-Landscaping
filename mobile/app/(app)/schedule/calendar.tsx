@@ -297,9 +297,9 @@ function ScheduleCalendarInner() {
     api.get("/crews")
       .then((res: any) => setCrews(Array.isArray(res) ? res : Array.isArray(res?.items) ? res.items : []))
       .catch((e) => { console.warn("[schedule] /crews failed:", e?.message || e); setCrews([]); });
-    api.get("/users?role=tech")
-      .then((res: any) => setAllTechs(Array.isArray(res?.users) ? res.users : Array.isArray(res) ? res : []))
-      .catch((e) => { console.warn("[schedule] /users?role=tech failed:", e?.message || e); setAllTechs([]); });
+    api.get("/technicians")
+      .then((res: any) => setAllTechs(Array.isArray(res) ? res : Array.isArray(res?.technicians) ? res.technicians : []))
+      .catch((e) => { console.warn("[schedule] /technicians failed:", e?.message || e); setAllTechs([]); });
     // K25 — load persisted crew filter.
     storage.getItem<string>(CREW_FILTER_KEY, "").then((v: any) => {
       if (typeof v === "string" && v.length > 0) setCrewFilter(v);
@@ -315,12 +315,12 @@ function ScheduleCalendarInner() {
       if (typeof v === "string" && v.length > 0) {
         setTechFilter(v);
       } else {
-        setTechFilter(isTech ? (user?.id || "all") : "all");
+        setTechFilter(isTech ? (user?.technician_id || "all") : "all");
       }
     }).catch(() => {
-      setTechFilter(isTech ? (user?.id || "all") : "all");
+      setTechFilter(isTech ? (user?.technician_id || "all") : "all");
     });
-  }, [user?.id, isTech]);
+  }, [user?.id, user?.technician_id, isTech]);
 
   const setModePersist = (m: Mode) => {
     setMode(m);

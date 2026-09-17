@@ -50,9 +50,9 @@ describe("Phase S1 — Schedule per-tech filter (source assertions)", () => {
     expect(SRC).toContain("tech-filter-option-${t.id}");
   });
 
-  it("default tech filter for tech role is user's own ID", () => {
-    // On mount effect, tech role defaults to user?.id
-    expect(SRC).toContain('setTechFilter(isTech ? (user?.id || "all") : "all")');
+  it("default tech filter for tech role is user's technician_id", () => {
+    // On mount effect, tech role defaults to user?.technician_id
+    expect(SRC).toContain('setTechFilter(isTech ? (user?.technician_id || "all") : "all")');
   });
 
   it("dayJobs, weekCounts, jobsByDay all use filteredJobs", () => {
