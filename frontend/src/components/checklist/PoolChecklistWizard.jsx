@@ -1,12 +1,21 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Save, Check } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 import PoolChecklistForm from "./PoolChecklistForm";
 import PhotoUploader from "./PhotoUploader";
 // Phase W1 · Feb-2026 — shared three-button confirm dialog. Mirrors
 // the C1 / C1.1 exit-flow guard already used by `<ChecklistModal>`.
 import DirtyCloseConfirm from "./DirtyCloseConfirm";
+// Phase CW1 · Feb-2026 — reuse the exact Required-Four gate used by
+// the backend + the ServiceReport page so the wizard's close-job
+// enablement matches the API's 422 boundary byte-for-byte. Only the
+// Required Four (Free Chlorine, pH, Alkalinity, Cyanuric Acid) block
+// close; every other row (Hardness, Salt, Phosphates, TDS, tenant
+// extras) may be truly blank. `alkalinity` / `total_alkalinity` and
+// `cyanuric_acid` / `cya` canonicalise together per CHEM1/CHEM1.1.
+import { missingCoreReadings } from "@/utils/chemistryGate";
 
 /**
  * Phase 56.6 — Pool Job Wizard shell.
@@ -214,19 +223,32 @@ export default function PoolChecklistWizard({
   // ship). Autosave means data isn't lost even when incomplete, so the
   // Next button never blocks; it only surfaces a helper hint when the
   // tech hasn't answered anything yet. Hard validation is enforced only
-  // when they hit "Close Job" on step 6. Reason: the original strict
-  // gate silently disabled Next on step 1 because default readings
-  // arrive with `value: null` — techs saw no hint about why.
-  const readingsAllAnswered = useMemo(() => {
+  // when they hit "Close Job" on step 6.
+  //
+  // Phase CW1 · Feb-2026 — LOOSENED FURTHER. Every visible row was
+  // being treated as required, which meant a tech had to fill (or
+  // "Not Tested"-tag) every optional row — Hardness, Salt, Phosphates,
+  // TDS, tenant extras — before Close Job would light up. Product
+  // decision: only the "Required Four" (Free Chlorine, pH,
+  // Alkalinity, Cyanuric Acid) block close. Other readings may be
+  // truly blank. Mirrors the backend chemistry-gate contract byte-for-
+  // byte via ``missingCoreReadings`` so an admin's UI-gated Close Job
+  // button never lets a submit through that the API then 422s.
+  const { t } = useTranslation("checklist");
+  const missingRequiredFour = useMemo(() => {
     const rows = report?.chemical_readings || [];
-    if (!rows.length) return true;
-    return rows.every(
-      (x) => (x?.value !== undefined && x?.value !== null && x?.value !== "") ||
-             x?.not_tested === true,
-    );
+    // Preserve pre-CW1 behaviour: an empty readings list means the
+    // tech hasn't loaded the form yet — don't block. Only enforce
+    // the Required Four ONCE there are readings to validate.
+    if (!rows.length) return [];
+    return missingCoreReadings(rows);
   }, [report]);
+  const readingsAllAnswered = missingRequiredFour.length === 0;
   const readingsHint = step === 1 && !readingsAllAnswered
-    ? "Tip: enter values or toggle Not Tested for each row before closing the job."
+    ? t(
+        "required_four_hint",
+        "Free Chlorine, pH, Alkalinity, and Cyanuric Acid are required to close the job. Other readings are optional.",
+      )
     : "";
   const stepValid = true;   // Next is never hard-blocked in the wizard.
   const closeJobValid = readingsAllAnswered;
@@ -415,9 +437,12 @@ export default function PoolChecklistWizard({
             type="button"
             onClick={() => {
               if (!closeJobValid) {
+                // Phase CW1 · Feb-2026 — narrow the alert wording to
+                // the Required Four rule that now drives closeJobValid.
                 window.alert(
-                  "Some chemical readings are still blank. Please enter values or " +
-                  "toggle Not Tested on each row before closing the job."
+                  "Free Chlorine, pH, Alkalinity, and Cyanuric Acid are " +
+                  "required to close the job. Please fill any missing " +
+                  "Required Four readings; other readings are optional."
                 );
                 goTo(1);
                 return;
@@ -434,9 +459,16 @@ export default function PoolChecklistWizard({
               opacity: (locked || submitting) ? 0.6 : 1,
             }}
             data-testid="wizard-close-job"
+            // Phase CW1 · Feb-2026 — expose the gate state as a
+            // ``data-close-valid`` attribute so tests + E2E can
+            // observe enablement without depending on CSS colours
+            // or the disabled DOM property (the button is never DOM-
+            // disabled — the click handler nudges the tech back to
+            // step 1 with an alert instead of silently swallowing).
+            data-close-valid={closeJobValid ? "true" : "false"}
             title={closeJobValid
               ? "Submit the service report and mark the job complete."
-              : "Missing chemical readings — click to jump back and fix."}
+              : "Missing Required Four readings — click to jump back and fix."}
           >
             {submitting ? "Submitting…" : "Close Job"}
           </button>

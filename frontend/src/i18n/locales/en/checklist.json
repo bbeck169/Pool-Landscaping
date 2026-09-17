@@ -7,5 +7,6 @@
   "discard_changes": "Discard changes",
   "unsaved_warning": "You have unsaved changes. Discard them?",
   "translation_pending": "EN",
-  "translation_pending_tooltip": "This row hasn't been translated yet; showing the English source."
+  "translation_pending_tooltip": "This row hasn't been translated yet; showing the English source.",
+  "required_four_hint": "Free Chlorine, pH, Alkalinity, and Cyanuric Acid are required to close the job. Other readings are optional."
 }

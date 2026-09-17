@@ -7,5 +7,6 @@
   "discard_changes": "Descartar cambios",
   "unsaved_warning": "Tienes cambios sin guardar. ¿Descartarlos?",
   "translation_pending": "EN",
-  "translation_pending_tooltip": "Este ítem aún no ha sido traducido; se muestra la versión en inglés."
+  "translation_pending_tooltip": "Este ítem aún no ha sido traducido; se muestra la versión en inglés.",
+  "required_four_hint": "Se requieren Cloro Libre, pH, Alcalinidad y Ácido Cianúrico para cerrar el trabajo. Otras lecturas son opcionales."
 }

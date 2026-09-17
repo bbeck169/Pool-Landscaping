@@ -7,5 +7,6 @@
   "discard_changes": "Ignorer les modifications",
   "unsaved_warning": "Vous avez des modifications non enregistrées. Les ignorer ?",
   "translation_pending": "EN",
-  "translation_pending_tooltip": "Cet élément n'est pas encore traduit ; version anglaise affichée."
+  "translation_pending_tooltip": "Cet élément n'est pas encore traduit ; version anglaise affichée.",
+  "required_four_hint": "Chlore libre, pH, alcalinité et acide cyanurique sont requis pour clôturer l'intervention. Les autres lectures sont optionnelles."
 }
