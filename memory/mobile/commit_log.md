@@ -2275,3 +2275,20 @@
 - **Files modified**:
   - `/app/mobile/app/(app)/schedule/calendar.tsx` (import, GridView lockedIds, JobRow lock UI, CalendarView lock UI, gStyles)
 
+
+## Iteration 103 — Bugfix: Schedule tech filter uses wrong ID
+- **Commit**: 07b976b50
+- **Date**: 2026-09-17
+- **Changes**:
+  - Switched allTechs data source from `GET /api/users?role=tech` → `GET /api/technicians` (returns technician record IDs that match `job.technician_id`)
+  - Fixed tech self-scope default from `user?.id` → `user?.technician_id`
+  - Added `user?.technician_id` to useEffect dependency array
+  - Updated S1 test assertion to match new `technician_id` pattern
+  - 7 new test assertions in `phase-schedule-tech-filter-technician-id.test.tsx`
+  - All 37 schedule-related tests pass (S1: 8, SRL helper: 12, SRL render: 10, new fix: 7)
+- **Root cause**: `job.technician_id` stores technician record IDs from `/api/technicians`, but the picker was using user account IDs from `/api/users?role=tech`. These are different entities.
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx`
+  - `/app/mobile/__tests__/s1-schedule-tech-filter.test.tsx` (updated assertion)
+  - `/app/mobile/__tests__/phase-schedule-tech-filter-technician-id.test.tsx` (NEW)
+

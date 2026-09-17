@@ -65,11 +65,16 @@ class RecurringJobIn(BaseModel):
     # by default for backwards compat with existing callers). The
     # nightly generator now gates on ``is_active`` AND
     # ``start_date <= today`` so a template can be created in a
-    # draft state without immediately materializing jobs. New API
-    # records default to ``False`` — legacy DB rows are backfilled
-    # to ``True`` by ``services/migrations/recurring_templates_
-    # is_active_backfill.py``.
-    is_active: bool = False
+    # draft state without immediately materializing jobs.
+    #
+    # Feb-2026 · P1 Auto-Activate + Instant Generation — flipped
+    # the create-default from ``False`` → ``True`` so newly created
+    # recurring templates immediately materialize the first 14 days
+    # of visits without waiting for the nightly cron. Callers that
+    # want a draft template must explicitly send ``is_active: false``
+    # in the payload. Legacy DB rows are backfilled to ``True`` by
+    # ``services/migrations/recurring_templates_is_active_backfill.py``.
+    is_active: bool = True
     # Feb-2026 · Never-end recurrence. When True, `end_date` is forced
     # to None on save so `_next_occurrences` walks unbounded (capped
     # only by the nightly 14-day generator horizon → rolling forever).
@@ -587,6 +592,24 @@ async def create_recurring(body: RecurringJobIn,
     })
     await db.recurring_job_templates.insert_one(doc)
     doc.pop("_id", None)
+    # Feb-2026 · P1 Auto-Activate + Instant Generation — fire the
+    # 14-day inline generator when the template is being created
+    # in the active state. Fail-open: a generation error must not
+    # block the create response (log a warning, return the
+    # persisted template anyway). The start-date guard lives inside
+    # ``_instant_generate_for_template``.
+    generated_count = 0
+    skipped_no_start_date = False
+    if doc.get("is_active"):
+        try:
+            _gen = await _instant_generate_for_template(doc)
+            generated_count = int(_gen.get("inserted") or 0)
+            skipped_no_start_date = bool(_gen.get("skipped_no_start_date"))
+        except Exception as _gen_exc:                            # noqa: BLE001
+            logger.warning(
+                "[recurring_job.instant_generation_failed] template=%s "
+                "op=create error=%s", doc.get("id"), _gen_exc,
+            )
     # Attach the client-only ``auto_assign_info`` bundle so the
     # frontend can pick the toast variant + render the badge in one
     # round-trip. Kept out of the persisted doc so the DB shape
@@ -599,6 +622,11 @@ async def create_recurring(body: RecurringJobIn,
         "day_of_week": auto.get("day_of_week"),
         "extra_minutes": int(auto.get("extra_minutes") or 0),
     }
+    # Feb-2026 · P1 Auto-Activate — surface the instant-generation
+    # telemetry so the FE can toast "N visits scheduled" without a
+    # follow-up call.
+    doc["generated_count"] = generated_count
+    doc["skipped_no_start_date"] = skipped_no_start_date
     return doc
 
 
@@ -761,13 +789,21 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     # image (once, projected) so the audit diff has real ``before``
     # values. Only fires when a category field is actually part of
     # the write set.
+    #
+    # Feb-2026 · P1 Auto-Activate — we ALSO need the pre-image
+    # ``is_active`` to detect the False→True transition that fires
+    # inline generation. Merge both projections into a single
+    # lookup when either is required.
+    _needs_category_pre = any(k in updates for k in _CATEGORY_KEYS)
+    _needs_is_active_pre = "is_active" in updates
     _pre_image: Dict[str, Any] = {}
-    if any(k in updates for k in _CATEGORY_KEYS):
+    if _needs_category_pre or _needs_is_active_pre:
         _pre_image = await db.recurring_job_templates.find_one(
             {"id": tpl_id, "tenant_id": tenant["id"]},
             {"_id": 0, "id": 1,
               "income_category_id": 1, "income_category_name": 1,
-              "service_category_id": 1, "service_category_name": 1},
+              "service_category_id": 1, "service_category_name": 1,
+              "is_active": 1},
         ) or {}
     res = await db.recurring_job_templates.update_one(
         {"id": tpl_id, "tenant_id": tenant["id"]},
@@ -775,14 +811,38 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     )
     if res.matched_count == 0:
         raise HTTPException(404, "template not found")
-    if _pre_image:
+    if _needs_category_pre and _pre_image:
         await _write_recurring_category_audit(
             tenant_id=tenant["id"], tpl_id=tpl_id,
             actor=user, before=_pre_image, updates=updates,
         )
-    return await db.recurring_job_templates.find_one(
+    _final = await db.recurring_job_templates.find_one(
         {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0}
     )
+    # Feb-2026 · P1 Auto-Activate + Instant Generation — PATCH fires
+    # inline generation ONLY when ``is_active`` transitions
+    # False→True (or unset→True). If the PATCH doesn't touch
+    # ``is_active`` OR sets it to False, no generation runs.
+    generated_count = 0
+    skipped_no_start_date = False
+    _before_is_active = _pre_image.get("is_active")
+    _incoming_is_active = updates.get("is_active")
+    if (_needs_is_active_pre
+        and _incoming_is_active is True
+        and _before_is_active is not True):
+        try:
+            _gen = await _instant_generate_for_template(_final or {})
+            generated_count = int(_gen.get("inserted") or 0)
+            skipped_no_start_date = bool(_gen.get("skipped_no_start_date"))
+        except Exception as _gen_exc:                            # noqa: BLE001
+            logger.warning(
+                "[recurring_job.instant_generation_failed] template=%s "
+                "op=patch error=%s", tpl_id, _gen_exc,
+            )
+    if _final is not None:
+        _final["generated_count"] = generated_count
+        _final["skipped_no_start_date"] = skipped_no_start_date
+    return _final
 
 
 # Feb-2026 · Recurring Jobs · category audit. Writes ONE
@@ -974,6 +1034,139 @@ async def bulk_hard_delete_recurring(
     }
 
 
+# Feb-2026 · P1 Auto-Activate + Bulk Activate + Instant Generation.
+# Batch cap of 100 is intentionally strict — payloads over 100 ids
+# return 400 so the client MUST slice + call in batches. A WARNING
+# log fires whenever a request hits the cap so ops can eyeball
+# whether the cap needs raising.
+_BULK_ACTIVATE_MAX = 100
+
+
+class _BulkActivateIn(BaseModel):
+    recurring_job_ids: List[str] = Field(..., min_items=1)
+
+
+@router.post("/recurring-jobs/bulk-activate")
+async def bulk_activate_recurring(
+    body: _BulkActivateIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Feb-2026 · P1 — bulk-activate recurring templates and fire
+    the 14-day instant generator on each one.
+
+    Per-id semantics:
+      * ``activated``        — template was not previously
+        ``is_active=True``; both ``active`` and ``is_active`` are
+        stamped True and instant generation runs.
+      * ``already_active``   — template was already
+        ``is_active=True``; the fields are re-stamped (idempotent)
+        and instant generation still runs so newly-eligible
+        occurrences since the last cron get filled in.
+      * ``failed``           — the template couldn't be found under
+        the caller's tenant, or generation raised. ``error`` carries
+        the reason.
+
+    Every result row carries ``generated_count`` and
+    ``skipped_no_start_date`` so operators see honest telemetry.
+    """
+    ids_seen: set = set()
+    ordered_ids: List[str] = []
+    for tid in body.recurring_job_ids:
+        if tid and tid not in ids_seen:
+            ids_seen.add(tid)
+            ordered_ids.append(tid)
+
+    if len(ordered_ids) > _BULK_ACTIVATE_MAX:
+        logger.warning(
+            "[recurring_job.bulk_activate.batch_too_large] tenant=%s "
+            "received=%d cap=%d",
+            tenant.get("id"), len(ordered_ids), _BULK_ACTIVATE_MAX,
+        )
+        raise HTTPException(400, {
+            "error": "batch_too_large",
+            "max": _BULK_ACTIVATE_MAX,
+            "received": len(ordered_ids),
+        })
+
+    results: List[Dict[str, Any]] = []
+    activated = 0
+    already_active = 0
+    failed = 0
+    for tid in ordered_ids:
+        tpl = await db.recurring_job_templates.find_one(
+            {"id": tid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not tpl:
+            failed += 1
+            results.append({
+                "id": tid, "status": "failed",
+                "generated_count": 0, "skipped_no_start_date": False,
+                "error": "not_found",
+            })
+            continue
+        was_active = tpl.get("is_active") is True
+        # Stamp both ``active`` + ``is_active`` (idempotent). The
+        # legacy ``active`` flag is kept in sync so downstream code
+        # gated on either field sees a consistent view.
+        try:
+            await db.recurring_job_templates.update_one(
+                {"id": tid, "tenant_id": tenant["id"]},
+                {"$set": {"active": True, "is_active": True,
+                          "updated_at": now_iso()}},
+            )
+            # Refresh the in-memory doc so the generator sees the
+            # freshly-stamped active flags.
+            tpl["active"] = True
+            tpl["is_active"] = True
+        except Exception as _upd_exc:                            # noqa: BLE001
+            failed += 1
+            results.append({
+                "id": tid, "status": "failed",
+                "generated_count": 0, "skipped_no_start_date": False,
+                "error": f"update_failed: {_upd_exc}",
+            })
+            continue
+        # Fire the 14-day instant generator. Fail-open — a
+        # per-template generation error must NOT block the rest of
+        # the batch; the row status stays ``activated`` / ``already_
+        # active`` (the flag flip succeeded) but ``error`` carries
+        # the exception detail.
+        gen_count = 0
+        skipped_no_start_date = False
+        gen_error: Optional[str] = None
+        try:
+            _gen = await _instant_generate_for_template(tpl)
+            gen_count = int(_gen.get("inserted") or 0)
+            skipped_no_start_date = bool(_gen.get("skipped_no_start_date"))
+        except Exception as _gen_exc:                            # noqa: BLE001
+            logger.warning(
+                "[recurring_job.instant_generation_failed] template=%s "
+                "op=bulk_activate error=%s", tid, _gen_exc,
+            )
+            gen_error = str(_gen_exc)
+        row: Dict[str, Any] = {
+            "id": tid,
+            "status": "already_active" if was_active else "activated",
+            "generated_count": gen_count,
+            "skipped_no_start_date": skipped_no_start_date,
+        }
+        if gen_error is not None:
+            row["error"] = gen_error
+        results.append(row)
+        if was_active:
+            already_active += 1
+        else:
+            activated += 1
+
+    return {
+        "activated": activated,
+        "already_active": already_active,
+        "failed": failed,
+        "results": results,
+    }
+
+
 @router.delete("/recurring-jobs/{tpl_id}")
 async def delete_recurring(tpl_id: str,
                              hard: bool = Query(False),
@@ -1111,6 +1304,44 @@ async def stop_recurring_from_job(jid: str,
     if not tpl_id:
         raise HTTPException(400, "job is not part of a recurring series")
     return await _stop_template_and_prune_future(tpl_id, tenant["id"])
+
+
+# Feb-2026 · P1 Auto-Activate + Instant Generation — 2-week horizon
+# for inline visit creation. The nightly generator's existing longer
+# horizon is unchanged; this constant applies ONLY to the inline
+# hooks in create / patch / bulk-activate.
+INSTANT_GENERATION_HORIZON_DAYS = 14
+
+
+async def _instant_generate_for_template(
+    tpl: Dict[str, Any], *, horizon_days: int = INSTANT_GENERATION_HORIZON_DAYS,
+) -> Dict[str, Any]:
+    """Fire ``_generate_from_template`` with a 14-day horizon starting
+    from today. Instant generation covers 2 weeks so techs see the
+    near-term visits without waiting for the nightly generator.
+
+    Uniform start-date guard: when ``start_date`` is missing or fails
+    to parse as a valid ISO date, we skip generation with an INFO log
+    and return a well-formed no-op result. Callers do NOT reject the
+    create/patch/bulk-activate request just because generation was
+    skipped — the template can still be persisted; the user just
+    won't see immediate visits until they supply a ``start_date``.
+
+    Returns ``{inserted, skipped, dates, skipped_no_start_date}``.
+    """
+    _start_raw = tpl.get("start_date")
+    if not _start_raw or not _parse_date(_start_raw):
+        logger.info(
+            "[recurring_job.instant_generation_skipped] template=%s "
+            "reason=missing_start_date",
+            tpl.get("id"),
+        )
+        return {"inserted": 0, "skipped": 0, "dates": [],
+                "skipped_no_start_date": True}
+    through = date.today() + timedelta(days=horizon_days)
+    result = await _generate_from_template(tpl, through)
+    result["skipped_no_start_date"] = False
+    return result
 
 
 async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[str, Any]:

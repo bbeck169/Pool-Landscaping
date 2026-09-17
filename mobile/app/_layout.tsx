@@ -33,6 +33,8 @@ import { startListening as startNetBus, wireAutoFlush, flush as flushSyncQueue }
 import { wirePhotoAutoUpload, flushPhotos } from "@/src/services/sync/photoWorker";
 import { wireVideoAutoUpload, flushVideos } from "@/src/services/sync/videoWorker";
 import { getSyncDb } from "@/src/services/sync/db";
+// P37c · Geofence region sync — register active job geofences on boot.
+import { syncJobGeofencesP37c } from "@/src/background/jobGeofence";
 // Phase O6 · Sync UI components.
 import { OfflineBanner, ConflictSheet, SyncToast, StoragePressureBanner } from "@/src/components/sync";
 // Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
@@ -115,6 +117,9 @@ export default function RootLayout() {
         const { uploadPendingCrash } = require("@/src/utils/crashReporter");
         uploadPendingCrash().catch(() => {});
       } catch { /* swallow */ }
+      // P37c · Register geofences for active jobs on boot.
+      // Fire-and-forget; never blocks boot; silent on failure.
+      try { syncJobGeofencesP37c().catch(() => {}); } catch { /* swallow */ }
       logNav("boot.sync.done");
     })();
   }, []);

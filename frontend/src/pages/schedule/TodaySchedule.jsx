@@ -37,6 +37,14 @@ import NavigateJobButton from "../../components/schedule/NavigateJobButton";
 // Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh button
 // used across all schedule surfaces (Today + Calendar + Grid).
 import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
+// Feb-2026 · P0 Timezone Fix — tenant-tz-aware "today" helpers.
+// See ``/app/frontend/src/lib/tenantTz.js`` for the source-of-truth
+// ladder: server ``data.tz`` → tenant context → ``America/Phoenix``.
+import {
+  getTenantTodayISO,
+  shiftTenantISODate,
+  TENANT_TZ_FALLBACK,
+} from "@/lib/tenantTz";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -74,19 +82,27 @@ export default function TodaySchedule() {
   const [autoToast, setAutoToast] = useState(null); // {entry_id, job_id, job_title, customer_name}
   const autoToastRef = useRef(null);
   const [pendingCancel, setPendingCancel] = useState(false);
-  // Selected date — from URL query or today.
+  // Selected date — from URL query or tenant-local "today".
+  // NOTE: bootstrap uses ``TENANT_TZ_FALLBACK`` because ``data.tz``
+  // isn't available yet on first render.  Once ``data`` loads, all
+  // subsequent ``isToday``/URL-sync effects reference the server-
+  // provided ``tenantTz`` so a non-Phoenix tenant self-corrects.
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
       const d = p.get("date");
       if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
     } catch {}
-    return new Date().toISOString().slice(0, 10);
+    return getTenantTodayISO(TENANT_TZ_FALLBACK);
   });
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [nowIso, setNowIso] = useState(new Date().toISOString());
   const [legMap, setLegMap] = useState({});  // {`from|to`: {distance,duration}}
+  // Tenant IANA tz — authoritative when the server response lands,
+  // fallback to America/Phoenix (backend default) beforehand so the
+  // pre-load "today" comparison never falsely rolls at UTC midnight.
+  const tenantTz = data?.tz || TENANT_TZ_FALLBACK;
   const { isLoaded } = useJsApiLoader({
     id: "gm-script",
     googleMapsApiKey: process.env.REACT_APP_GOOGLE_API_KEY,
@@ -103,19 +119,17 @@ export default function TodaySchedule() {
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getTenantTodayISO(tenantTz);
       if (selectedDate === today) url.searchParams.delete("date");
       else url.searchParams.set("date", selectedDate);
       window.history.replaceState({}, "", url.toString());
     } catch {}
-  }, [selectedDate]);
+  }, [selectedDate, tenantTz]);
 
   const shiftDate = (delta) => {
-    const d = new Date(selectedDate + "T12:00:00");
-    d.setDate(d.getDate() + delta);
-    setSelectedDate(d.toISOString().slice(0, 10));
+    setSelectedDate((prev) => shiftTenantISODate(prev, delta, tenantTz));
   };
-  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
+  const isToday = selectedDate === getTenantTodayISO(tenantTz);
 
   // "Now" indicator ticks
   useEffect(() => {
@@ -429,7 +443,7 @@ export default function TodaySchedule() {
                      "could_not_service"].includes(
               String(j.status || "").toLowerCase()),
           )}
-          date={new Date().toISOString().slice(0, 10)}
+          date={getTenantTodayISO(tenantTz)}
           onClose={() => setReorderOpen(false)}
           onSaved={() => { setReorderOpen(false); load?.(); }}
         />
@@ -573,7 +587,7 @@ export default function TodaySchedule() {
           <ChevronRight size={16}/>
         </button>
         {!isToday && (
-          <button onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+          <button onClick={() => setSelectedDate(getTenantTodayISO(tenantTz))}
                   className="px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide"
                   style={{ backgroundColor: colors.brand, color: "#fff" }}
                   data-testid="schedule-date-today">

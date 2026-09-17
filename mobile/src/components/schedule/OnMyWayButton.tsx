@@ -109,6 +109,20 @@ export default function OnMyWayButton({
         onlineFn: () => api.post(`/jobs/${jobId}/on-my-way`, body),
       });
 
+      // P37c · Manual arrival — fire POST /jobs/{id}/arrive alongside
+      // the SMS so the backend records the arrival event in the GPS
+      // pipeline. Fire-and-forget; never surface errors to the tech.
+      try {
+        const arriveBody: Record<string, any> = { source: "manual" };
+        if (coords) {
+          arriveBody.lat = coords.origin_lat;
+          arriveBody.lng = coords.origin_lng;
+        }
+        const arrRes: any = await api.post(`/jobs/${jobId}/arrive`, arriveBody);
+        // Silently ignore already_arrived / already_running — not an error.
+        if (arrRes?.already_arrived || arrRes?.already_running) { /* noop */ }
+      } catch { /* silent — manual arrive is best-effort */ }
+
       if (queued) {
         Alert.alert("Queued offline", queuedMessage("A"));
         return;

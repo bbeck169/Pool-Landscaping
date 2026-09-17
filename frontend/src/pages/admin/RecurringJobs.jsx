@@ -74,6 +74,10 @@ export default function RecurringJobs() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkAcked, setBulkAcked] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Feb-2026 · P1 Auto-Activate + Bulk Activate — separate busy flag
+  // so the "Bulk Activate" toolbar button gates on its own in-flight
+  // state independently of the destructive "Delete permanently" flow.
+  const [bulkActivateBusy, setBulkActivateBusy] = useState(false);
   // Feb-2026 P0 · Orphan-backfill state. Populated lazily on mount
   // so operators see a "Missing N template(s)" banner without
   // running the mutating backfill first.
@@ -311,6 +315,65 @@ export default function RecurringJobs() {
     }
   };
 
+  // Feb-2026 · P1 Auto-Activate + Bulk Activate + Instant Generation.
+  //
+  // Posts every selected template id to
+  // ``POST /api/recurring-jobs/bulk-activate``.  The backend returns
+  // HTTP 200 with per-id status rows + aggregate counts. The batch
+  // cap is 100 — we slice payloads > 100 in place so the operator
+  // never sees a raw 400 ``batch_too_large`` error. Toast reflects
+  // the truth: activated / already-active / failed / total newly-
+  // generated visits + a "skipped (missing start date)" note when
+  // that condition applies to any row.
+  const BULK_ACTIVATE_BATCH = 100;
+  const bulkActivate = async () => {
+    if (selectedIds.size === 0) return;
+    if (bulkActivateBusy) return;
+    setBulkActivateBusy(true);
+    try {
+      const allIds = Array.from(selectedIds);
+      let activated = 0;
+      let already_active = 0;
+      let failed = 0;
+      let generated = 0;
+      let skippedNoStart = 0;
+      for (let i = 0; i < allIds.length; i += BULK_ACTIVATE_BATCH) {
+        const slice = allIds.slice(i, i + BULK_ACTIVATE_BATCH);
+        // eslint-disable-next-line no-await-in-loop
+        const res = await api.post("/recurring-jobs/bulk-activate", {
+          recurring_job_ids: slice,
+        });
+        activated += Number(res?.activated || 0);
+        already_active += Number(res?.already_active || 0);
+        failed += Number(res?.failed || 0);
+        for (const row of res?.results || []) {
+          generated += Number(row?.generated_count || 0);
+          if (row?.skipped_no_start_date) skippedNoStart += 1;
+        }
+      }
+      const parts = [];
+      parts.push(`${activated} activated`);
+      if (already_active > 0) parts.push(`${already_active} already active`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      const tail = skippedNoStart > 0
+        ? ` · ${skippedNoStart} skipped (missing start date)`
+        : "";
+      const line = `${parts.join(", ")} · ${generated} visit${
+        generated === 1 ? "" : "s"} generated${tail}`;
+      if (failed > 0) {
+        toast.warning(line);
+      } else {
+        toast.success(line);
+      }
+      setSelectedIds(new Set());
+      await load();
+    } catch (e) {
+      toast.error(e?.message || "Bulk activate failed");
+    } finally {
+      setBulkActivateBusy(false);
+    }
+  };
+
   // Header "select all on page" checkbox.  Respects the R2 client-
   // side search filter — bulk-select on page = every row currently
   // visible under the active search query.
@@ -391,6 +454,33 @@ export default function RecurringJobs() {
                 style={{ background: colors.brand, color: "#fff", border: 0 }}
                 data-testid="recurring-jobs-create">
           <Plus size={14} /> New recurring job
+        </button>
+        {/* Feb-2026 · P1 Auto-Activate + Bulk Activate — green
+             toolbar button that flips ``is_active=True`` on every
+             selected template AND fires the 14-day inline generator
+             so operators see near-term visits without waiting for
+             the nightly cron. Sits immediately BEFORE the
+             destructive "Delete permanently" button; both share the
+             same disabled-when-empty visual language. */}
+        <button
+          type="button"
+          onClick={bulkActivate}
+          disabled={selectedIds.size === 0 || bulkActivateBusy}
+          className="inline-flex items-center gap-1 text-sm font-bold px-3 py-2 rounded-md ml-2"
+          style={{
+            background: selectedIds.size === 0 ? "#DCFCE7" : "#059669",
+            color: selectedIds.size === 0 ? "#065F46" : "#FFFFFF",
+            border: 0,
+            opacity: (selectedIds.size === 0 || bulkActivateBusy) ? 0.5 : 1,
+            cursor: (selectedIds.size === 0 || bulkActivateBusy)
+              ? "not-allowed" : "pointer",
+          }}
+          aria-disabled={selectedIds.size === 0 || bulkActivateBusy}
+          data-testid="recurring-bulk-activate"
+        >
+          <Play size={14} />{" "}
+          {bulkActivateBusy ? "Activating…" :
+            `Bulk Activate${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
         </button>
         {/* Phase R1 · Feb-2026 — bulk hard-delete toolbar button.
              Always rendered so its testid is queryable by unit

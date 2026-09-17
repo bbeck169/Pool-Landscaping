@@ -89,6 +89,8 @@ import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-nativ
 import type { HourlyEntry } from "@/src/api/weather";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+// P37c · GPS consent modal — mounted for techs, self-checks consent on focus.
+import GpsConsentModal from "@/src/components/gps/GpsConsentModal";
 
 type Job = {
   id: string;
@@ -1723,6 +1725,9 @@ function CalendarView({
           {weatherWidget}
         </View>
       ) : null}
+
+      {/* P37c · GPS consent modal — shown once per session for techs without active consent */}
+      {isTech ? <GpsConsentModal /> : null}
     </View>
   );
 }

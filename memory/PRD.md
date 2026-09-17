@@ -1,3 +1,28 @@
+## Phase P1 · Recurring Jobs · Auto-Activate + Bulk Activate + Instant Generation — SHIPPED (Feb 2026)
+
+**Scope**
+- `RecurringJobIn.is_active` default flipped `False` → `True` so newly created templates immediately materialize the first 14 days of visits (unless the caller explicitly sends `is_active: false`).
+- New helper `_instant_generate_for_template(tpl, *, horizon_days=14)` in `backend/routers/recurring_jobs.py`. Uniform start-date guard: missing/invalid `start_date` → INFO log `[recurring_job.instant_generation_skipped]`, no exception, `skipped_no_start_date: true` in the response. Nightly generator horizon unchanged.
+- Inline generation fires fail-open on THREE paths: `create` (when `is_active` True), `PATCH` (only on False → True transition; PATCH not touching `is_active` never generates), `bulk-activate` (every id, including already-active templates so newly-eligible occurrences fill in).
+- New endpoint `POST /api/recurring-jobs/bulk-activate` with `require_admin_or_manager`. Batch cap 100 → HTTP 400 `{error:"batch_too_large", max:100, received:N}` + WARNING log. Per-id `results` carry `{id, status: "activated"|"already_active"|"failed", generated_count, skipped_no_start_date, error?}`. Aggregate `{activated, already_active, failed}` in the response envelope.
+- Frontend `pages/admin/RecurringJobs.jsx` toolbar gains `recurring-bulk-activate` button next to the existing bulk-delete pill. Client slices payloads > 100 into 100-sized batches. Truthful toasts (success on `failed=0`, warning otherwise) surface `N activated, M already active, K failed · V visits generated · S skipped (missing start date)`.
+
+**Tests**
+- `backend/tests/test_p1_recurring_auto_activate_and_bulk_activate.py` — 8 pytest cases, all green against the live supervisor-managed backend.
+- `frontend/src/test/recurring-jobs-bulk-activate.test.jsx` — 6 Vitest cases covering button gating, batch slicing, mixed-status toasts, and selection clearing.
+
+
+## Phase P0 · "Today's Schedule" tenant-tz fix (UTC-midnight rollover) — SHIPPED (Feb 2026)
+
+**Scope**
+- New zero-dep helper `frontend/src/lib/tenantTz.js` — `getTenantTodayISO`, `getTenantISODate`, `shiftTenantISODate`, `isTenantTodayISO`, `TENANT_TZ_FALLBACK = "America/Phoenix"`. All rely on `Intl.DateTimeFormat` (stdlib). DST-safe day math.
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — replaced every `new Date().toISOString().slice(0, 10)` (5 sites: init, URL sync, shift, isToday check, "Today" button, BulkReorderModal seed) with tenant-tz-aware helpers. Source-of-truth ladder: server response `data.tz` → `TENANT_TZ_FALLBACK`.
+- Fixes the reported bug: Phoenix (UTC-7) users saw today's jobs disappear from "Today's Schedule" at 5 PM local (00:00 UTC) because `toISOString().slice(0, 10)` returned tomorrow's UTC date.
+
+**Tests**
+- `frontend/src/test/phase-p0-tenant-tz-today.test.jsx` — 12 Vitest cases: Phoenix/LA/NY/UTC midnight boundaries, DST spring-forward, unknown-tz fallback, plus source-code regression guards on `TodaySchedule.jsx`. All green.
+
+
 ## Hotfix #4 · Trainings designation visibility — SHIPPED (Feb 2026)
 
 **Symptom**: Cross-trained techs (`department = "both"`) only saw a subset of training modules. Pool-only + landscaping-only modules were silently filtered out.
