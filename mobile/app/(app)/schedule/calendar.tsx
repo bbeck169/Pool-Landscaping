@@ -405,7 +405,10 @@ function ScheduleCalendarInner() {
       const crewFiltered = !!crewFilter;
       // K32 — tech auto-scope: always send technician_id for tech role
       // (defense in depth — server may also scope, but client enforces).
-      const techScope = isTech && user?.id ? `&technician_id=${user.id}` : "";
+      // K42 — MUST use ``user.technician_id`` (authoritative technicians.id),
+      // NOT ``user.id`` (users.id). Jobs store technicians.id in their
+      // ``technician_id`` field, so a user-account ID won't match.
+      const techScope = isTech && user?.technician_id ? `&technician_id=${user.technician_id}` : "";
       const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}`;
       // K15 · outer timeout race — if cachedGet (network+SQLite)
       // hasn't resolved in 25 s, give up and show the error card.

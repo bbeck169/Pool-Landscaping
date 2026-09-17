@@ -65,4 +65,13 @@ describe("Phase S1-fix — tech filter uses technician_id", () => {
   it("picker options check t.id against techFilter (technician record ID)", () => {
     expect(SRC).toContain("techFilter === t.id");
   });
+
+  it("techScope query param uses user.technician_id NOT user.id (K42 fix)", () => {
+    // The query-param line that scopes the /jobs fetch for techs MUST
+    // reference user?.technician_id (technicians.id) — NOT user?.id
+    // (users.id). Jobs store technicians.id in their technician_id field.
+    expect(SRC).toContain("user?.technician_id ? `&technician_id=${user.technician_id}`");
+    // The old buggy pattern must NOT be present in the techScope line
+    expect(SRC).not.toMatch(/techScope.*user\?\.id.*technician_id=.*user\.id/);
+  });
 });
