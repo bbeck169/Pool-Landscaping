@@ -199,6 +199,38 @@ export function formatPinLabel(label) {
 
 
 /**
+ * Feb-2026 · Redesigned pin helper — lighten (positive amount) or
+ * darken (negative amount) a hex by ``amt`` (0..1). Used to build
+ * the glossy top/bottom stops of the head gradient.
+ */
+export function mixWithWhite(hex, amt) {
+  if (!hex || typeof hex !== "string") return "#FFFFFF";
+  const s = hex.trim();
+  if (!s.startsWith("#")) return hex;
+  const raw = s.slice(1);
+  let r; let g; let b;
+  if (raw.length === 3) {
+    r = parseInt(raw[0] + raw[0], 16);
+    g = parseInt(raw[1] + raw[1], 16);
+    b = parseInt(raw[2] + raw[2], 16);
+  } else if (raw.length === 6) {
+    r = parseInt(raw.slice(0, 2), 16);
+    g = parseInt(raw.slice(2, 4), 16);
+    b = parseInt(raw.slice(4, 6), 16);
+  } else {
+    return hex;
+  }
+  if ([r, g, b].some((v) => Number.isNaN(v))) return hex;
+  const mix = (channel) => {
+    if (amt >= 0) return Math.round(channel + (255 - channel) * amt);
+    return Math.round(channel + channel * amt);  // amt is negative
+  };
+  const hx = (v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0").toUpperCase();
+  return `#${hx(mix(r))}${hx(mix(g))}${hx(mix(b))}`;
+}
+
+
+/**
  * Inline React teardrop pin.
  *
  * @param {object}  p
@@ -223,6 +255,10 @@ export default function TeardropPin({
   title,
   testid = "teardrop-pin",
   label,
+  // Feb-2026 · Redesigned pin — new "selected/active" prop drives
+  // the scale + heavier shadow + brighter ring. Default (false) is
+  // byte-compatible with existing consumers.
+  selected = false,
 }) {
   const fill = color || _SAFE_PALETTE[0];
   const outerStroke = stroke || deriveDarker(fill);
@@ -245,6 +281,27 @@ export default function TeardropPin({
     return Math.round(base);
   }, [size, formattedLabel]);
   const labelTextColor = isLabeled ? pickLabelTextColor(fill) : null;
+  // Feb-2026 · Redesigned pin — unique gradient/shadow ids per-pin
+  // so multiple pins on the same page don't collide on the SVG
+  // ``defs`` namespace (jsdom-safe + Safari-safe).
+  const gradId = `td-grad-${rid}`;
+  const shadowId = `td-shadow-${rid}`;
+  const highlightId = `td-highlight-${rid}`;
+  // Selected state boosts the ring saturation (via lighter mix with
+  // white on the highlight stop) + doubles shadow opacity + adds a
+  // 1.10x CSS transform anchored on the tip. Keeps the same size
+  // envelope so parent-level layout math isn't affected — the
+  // scale-up happens INSIDE the SVG via ``transform`` on the
+  // teardrop <g> element.
+  const shadowOpacity = selected ? 0.36 : 0.20;
+  const shadowRy = selected ? 1.7 : 1.2;
+  const selectedGroupTransform = selected
+    ? "translate(12 31) scale(1.10) translate(-12 -31)"
+    : undefined;
+  // Slightly brighter ring when selected — mix the base fill with
+  // white by 22%. Uses the shared ``mixWithWhite`` helper below.
+  const ringFillTop = selected ? mixWithWhite(fill, 0.35) : mixWithWhite(fill, 0.20);
+  const ringFillBottom = selected ? mixWithWhite(fill, -0.12) : mixWithWhite(fill, -0.20);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -252,13 +309,52 @@ export default function TeardropPin({
       height={height}
       viewBox="0 0 24 32"
       role={title ? "img" : "presentation"}
-      aria-label={title || undefined}
+      aria-label={title || (isLabeled ? `Map pin ${formattedLabel}` : undefined)}
       data-testid={testid}
       data-pulse={pulse ? "true" : "false"}
       data-label={isLabeled ? formattedLabel : undefined}
+      data-selected={selected ? "true" : "false"}
       style={{ overflow: "visible", display: "inline-block" }}
     >
       {title ? <title>{title}</title> : null}
+      {/* Feb-2026 · Redesigned pin — original SVG artwork.
+           Defs = per-pin gradient (glossy head), highlight ellipse,
+           soft drop-shadow filter. All ids are scoped by ``rid`` so
+           multiple pins on the same page don't clash. */}
+      <defs>
+        <linearGradient id={gradId} x1="0.15" y1="0.15" x2="0.85" y2="0.85">
+          <stop offset="0" stopColor={ringFillTop} />
+          <stop offset="0.55" stopColor={fill} />
+          <stop offset="1" stopColor={ringFillBottom} />
+        </linearGradient>
+        <radialGradient id={highlightId} cx="0.32" cy="0.30" r="0.38">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.55" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+        </radialGradient>
+        <filter id={shadowId} x="-40%" y="-20%" width="180%" height="160%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" />
+          <feOffset dx="0" dy="0.4" result="offset" />
+          <feComponentTransfer>
+            <feFuncA type="linear" slope={shadowOpacity} />
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      {/* Soft blurred ellipse under the tip. Independent of the
+           SVG filter so it always renders (older engines that skip
+           filters still show a grounded pin). */}
+      <ellipse
+        cx="12"
+        cy="31.4"
+        rx={selected ? 5 : 4.2}
+        ry={shadowRy}
+        fill="#000000"
+        fillOpacity={shadowOpacity}
+        data-testid={`${testid}-shadow`}
+      />
       {pulse ? (
         <>
           <style>{`
@@ -281,31 +377,57 @@ export default function TeardropPin({
           />
         </>
       ) : null}
-      <path
-        d={isLabeled ? _TEARDROP_PATH_SOLID : _TEARDROP_PATH}
-        fill={fill}
-        stroke={outerStroke}
-        strokeWidth="1"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        data-testid={`${testid}-body`}
-      />
-      {isLabeled ? (
-        <text
-          x="12"
-          y="10"
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={labelFontPx}
-          fontFamily="system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
-          fontWeight="700"
-          fill={labelTextColor}
-          style={{ pointerEvents: "none", userSelect: "none" }}
-          data-testid={`${testid}-label`}
-        >
-          {formattedLabel}
-        </text>
-      ) : null}
+      <g transform={selectedGroupTransform}
+          data-testid={`${testid}-group`}>
+        {/* Colored teardrop body — glossy linear gradient. Always
+             renders as the solid silhouette; the inner white disc
+             below sits ON TOP when a label is present. */}
+        <path
+          d={_TEARDROP_PATH_SOLID}
+          fill={`url(#${gradId})`}
+          stroke={outerStroke}
+          strokeWidth={selected ? "1.2" : "1"}
+          strokeLinejoin="round"
+          data-color={fill}
+          data-testid={`${testid}-body`}
+        />
+        {/* Glossy highlight — top-left → transparent. Reads as a
+             specular sheen without disturbing the underlying color. */}
+        <circle
+          cx="12" cy="10" r="8.2"
+          fill={`url(#${highlightId})`}
+          data-testid={`${testid}-highlight`}
+        />
+        {isLabeled ? (
+          <>
+            {/* White inner disc that hosts the numbered label. Kept
+                 slightly smaller than the head to leave a colored
+                 ring visible. */}
+            <circle
+              cx="12" cy="10" r="5.6"
+              fill="#FFFFFF"
+              stroke={outerStroke}
+              strokeOpacity="0.35"
+              strokeWidth="0.4"
+              data-testid={`${testid}-disc`}
+            />
+            <text
+              x="12"
+              y="10"
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={labelFontPx}
+              fontFamily="system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+              fontWeight="700"
+              fill="#0F172A"
+              style={{ pointerEvents: "none", userSelect: "none" }}
+              data-testid={`${testid}-label`}
+            >
+              {formattedLabel}
+            </text>
+          </>
+        ) : null}
+      </g>
     </svg>
   );
 }

@@ -17,6 +17,9 @@ import EditItemModal from "@/components/pricebook/EditItemModal";
 // the 12-chip palette picker so the UI can only produce colors
 // that Phase 1 palette-locked backend endpoints accept.
 import PaletteChipPicker from "@/components/team/PaletteChipPicker";
+// Feb-2026 · Global Custom Color Picker · full picker (presets +
+// recents + freeform + contrast guard).
+import ColorPicker from "@/components/ui/ColorPicker";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
@@ -595,10 +598,17 @@ function Crews() {
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>COLOR</div>
             <div data-testid="crew-color-swatches">
-              <PaletteChipPicker
+              {/* Feb-2026 · Global ColorPicker — replaces the earlier
+                   presets-only ``PaletteChipPicker``. Enables freeform
+                   hex + per-user recent-colors row + WCAG contrast
+                   guard. Wire ``onChange`` synchronously so the parent
+                   ``form.color`` stays the source of truth; the picker
+                   itself pushes the recent-colors POST fire-and-
+                   forget. */}
+              <ColorPicker
                 value={form.color}
-                onPick={(hex) => setForm({ ...form, color: hex })}
-                testidPrefix="crew-color-chip"
+                onChange={(hex) => setForm({ ...form, color: hex })}
+                testidPrefix="crew-color-picker"
               />
             </div>
           </div>
@@ -1518,7 +1528,7 @@ export function TechColorSwatch({ user, editable, onChange }) {
       </button>
       {open && editable ? (
         <div
-          className="absolute z-50 mt-1 right-0 rounded-xl shadow-lg p-3 w-64"
+          className="absolute z-50 mt-1 right-0 rounded-xl shadow-lg p-3 w-80"
           style={{
             backgroundColor: colors.surface,
             border: `1px solid ${colors.border}`,
@@ -1528,11 +1538,15 @@ export function TechColorSwatch({ user, editable, onChange }) {
           <div className="text-xs font-semibold mb-2" style={{ color: colors.onSurface }}>
             Display color
           </div>
-          <PaletteChipPicker
+          {/* Feb-2026 · Global ColorPicker — replaces PaletteChipPicker
+               so admins can pick freeform hexes (with contrast guard).
+               The popover width bumps 64 → 80 to fit the freeform
+               row cleanly without wrapping. */}
+          <ColorPicker
             value={currentColor}
-            onPick={pick}
+            onChange={pick}
             disabled={saving}
-            testidPrefix={`team-color-chip-${user.id}`}
+            testidPrefix={`team-color-picker-${user.id}`}
           />
           <div className="flex items-center justify-between gap-2 mt-3">
             <button

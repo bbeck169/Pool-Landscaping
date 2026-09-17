@@ -92,7 +92,10 @@ describe("SettingsHub · sidebar entries stay in sync with the router", () => {
     // Bumped from 5 → 6 canonical keys.
     // Feb-2026 · Multi-industry Phase B — added ``industries``
     // (25-checkbox multi-select tenant vertical picker).
-    // Bumped from 6 → 7 canonical keys.
+    // Bumped from 6 → 7 → 9 canonical keys (Feb-2026: added
+    // ``org-notifications`` for Ticket #3 + ``ai-configuration``
+    // for Ticket #4). Any future addition MUST update this list
+    // AND wire the route in ``App.js``.
     const start = HUB_SRC.indexOf("const SECTIONS = [");
     const end = HUB_SRC.indexOf("];", start);
     expect(start).toBeGreaterThan(-1);
@@ -101,8 +104,9 @@ describe("SettingsHub · sidebar entries stay in sync with the router", () => {
     const keys = (block.match(/key:\s*"([^"]+)"/g) || [])
       .map((s) => s.match(/"([^"]+)"/)[1]);
     expect(keys.sort()).toEqual(
-      ["branding", "business", "general",
-        "industries", "integrations", "social", "theme"],
+      ["ai-configuration", "branding", "business", "general",
+        "industries", "integrations", "org-notifications",
+        "social", "theme"],
     );
   });
 

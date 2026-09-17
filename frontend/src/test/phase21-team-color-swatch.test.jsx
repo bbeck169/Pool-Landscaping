@@ -18,28 +18,34 @@ import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-// The palette-picker fetches from ``/tech-colors/palette``; return
-// the 12-slot Feb-2026 palette. ``patch`` is stubbed for good measure
-// though this test drives ``onChange`` directly (which the parent
-// wires to ``api.patch``).
+// The palette-picker previously fetched from ``/tech-colors/palette``;
+// Feb-2026 the shared ``<ColorPicker />`` imports the palette constant
+// directly + fetches ``/users/me/recent-colors`` for the recents row.
+// Both stubbed here so the popover mounts without network.
 vi.mock("@/api", () => ({
   api: {
-    get: vi.fn().mockResolvedValue({
-      palette: [
-        { name: "blue",    hex: "#3B82F6" },
-        { name: "red",     hex: "#EF4444" },
-        { name: "emerald", hex: "#10B981" },
-        { name: "amber",   hex: "#F59E0B" },
-        { name: "violet",  hex: "#8B5CF6" },
-        { name: "pink",    hex: "#EC4899" },
-        { name: "teal",    hex: "#14B8A6" },
-        { name: "orange",  hex: "#F97316" },
-        { name: "indigo",  hex: "#6366F1" },
-        { name: "lime",    hex: "#84CC16" },
-        { name: "cyan",    hex: "#06B6D4" },
-        { name: "fuchsia", hex: "#D946EF" },
-      ],
+    get: vi.fn().mockImplementation((path) => {
+      if (path === "/users/me/recent-colors") {
+        return Promise.resolve({ recent_colors: [] });
+      }
+      return Promise.resolve({
+        palette: [
+          { name: "blue",    hex: "#3B82F6" },
+          { name: "red",     hex: "#EF4444" },
+          { name: "emerald", hex: "#10B981" },
+          { name: "amber",   hex: "#F59E0B" },
+          { name: "violet",  hex: "#8B5CF6" },
+          { name: "pink",    hex: "#EC4899" },
+          { name: "teal",    hex: "#14B8A6" },
+          { name: "orange",  hex: "#F97316" },
+          { name: "indigo",  hex: "#6366F1" },
+          { name: "lime",    hex: "#84CC16" },
+          { name: "cyan",    hex: "#06B6D4" },
+          { name: "fuchsia", hex: "#D946EF" },
+        ],
+      });
     }),
+    post: vi.fn().mockResolvedValue({ recent_colors: [] }),
     patch: vi.fn(),
   },
 }));
@@ -96,7 +102,12 @@ describe("TechColorSwatch", () => {
     expect(screen.queryByTestId("team-color-picker-popover-u3")).toBeNull();
   });
 
-  it("clicking a palette chip calls onChange with that palette hex", async () => {
+  it("clicking a preset chip calls onChange with that palette hex", async () => {
+    // Feb-2026 · Post-``ColorPicker`` swap: preset testid shape
+    // is now ``team-color-picker-<user>-preset-#RRGGBB`` and the
+    // WCAG 3.0 contrast guard disables low-contrast entries
+    // (emerald ``#10B981`` is one of those). Uses pink ``#EC4899``
+    // which passes the guard.
     const onChange = vi.fn().mockResolvedValue(undefined);
     render(
       <TechColorSwatch
@@ -106,11 +117,11 @@ describe("TechColorSwatch", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("team-row-color-swatch-u4"));
-    // Wait for the palette hook to resolve (chips render behind
-    // the ``-loading`` testid until ``useEffect`` fires).
-    const chip = await screen.findByTestId("team-color-chip-u4-emerald");
+    const chip = await screen.findByTestId(
+      "team-color-picker-u4-preset-#EC4899",
+    );
     fireEvent.click(chip);
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith("#10B981"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("#EC4899"));
   });
 
   it("Clear calls onChange with null and is disabled when unset", async () => {

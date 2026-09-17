@@ -1017,6 +1017,10 @@ api_router.include_router(_fb_pp_settings.router)
 from routers import tenant_org_settings as _fb_org_settings  # noqa: E402
 api_router.include_router(_fb_org_settings.router)
 
+# Feb-2026 · Global Custom Color Picker · per-user recent colors.
+from routers import user_recent_colors as _fb_recent_colors  # noqa: E402
+api_router.include_router(_fb_recent_colors.router)
+
 
 for module in [notifications_router,
                # Feb 2026 · Customer Merge Phase 1 — MUST be registered

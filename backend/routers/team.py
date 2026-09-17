@@ -501,28 +501,14 @@ async def update_user(user_id: str, body: dict,
         if raw is None or raw == "":
             new_color = None
         else:
-            import re as _color_re
-            if not isinstance(raw, str) or not _color_re.fullmatch(
-                r"#[0-9A-Fa-f]{6}", raw,
-            ):
-                raise HTTPException(
-                    400,
-                    "display_color_hex must be a '#RRGGBB' string (e.g. #0EA5E9)",
-                )
-            # Feb-2026 · Live-Tech-Map Phase 1 — palette lock. Only
-            # the 12 approved Tailwind 500-tier hexes may be assigned
-            # via this endpoint. Off-palette values already present
-            # on rows are TOLERATED on reads (backwards compat) but
-            # NEW writes must land inside the palette so the Settings
-            # UI + dispatch board render consistently.
-            from constants.tech_colors import is_palette_color, PALETTE_HEXES
-            if not is_palette_color(raw):
-                raise HTTPException(
-                    400,
-                    "display_color_hex must be one of the approved "
-                    f"palette colors: {PALETTE_HEXES}",
-                )
-            new_color = raw.upper()
+            # Feb-2026 · Global Color Picker · relaxed the earlier
+            # 12-color palette lock. Callers may now save ANY hex,
+            # but the color MUST clear WCAG contrast ≥ 3.0 against
+            # white so the pin's white inner disc keeps the label
+            # legible.  Validator canonicalises to upper-case
+            # ``#RRGGBB`` shape.
+            from services.color import validate_color_hex_for_pin
+            new_color = validate_color_hex_for_pin(raw)
         old_color = target.get("display_color_hex")
         if new_color != old_color:
             updates["display_color_hex"] = new_color

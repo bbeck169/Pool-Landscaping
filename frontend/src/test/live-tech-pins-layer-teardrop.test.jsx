@@ -51,14 +51,14 @@ describe("LiveTechPinsLayer · Phase M1 teardrop", () => {
     render(<LiveTechPinsLayer positions={_positions} techColorById={techColorById} />);
     const svg = screen.getByTestId("dispatch-live-tech-pin-u-alice");
     const body = screen.getByTestId("dispatch-live-tech-pin-u-alice-body");
-    expect(body.getAttribute("fill")).toBe("#DB2777");
+    expect(body.getAttribute("data-color")).toBe("#DB2777");
     expect(svg.getAttribute("data-pulse")).toBe("true");
   });
 
   it("falls back to ``colorFromId`` when the admin has NOT set a color", () => {
     render(<LiveTechPinsLayer positions={_positions} techColorById={new Map()} />);
     const body = screen.getByTestId("dispatch-live-tech-pin-u-bob-body");
-    expect(body.getAttribute("fill")).toBe(colorFromId("u-bob"));
+    expect(body.getAttribute("data-color")).toBe(colorFromId("u-bob"));
   });
 
   it("halo group renders ONLY on fresh pings (staleness < 120 s)", () => {

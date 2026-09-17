@@ -1,3 +1,46 @@
+## Phase Redesigned TeardropPin + Global Custom Color Picker — SHIPPED (Feb 2026)
+
+**Scope**
+- Part 1 · **Redesigned TeardropPin** (`frontend/src/components/maps/TeardropPin.jsx`)
+  - Original SVG artwork: glossy linear-gradient head + radial highlight sheen + white inner disc for the numbered label + soft blurred drop-shadow ellipse under the tip.
+  - New `selected` prop (default `false`, backward-compat) drives a 1.10× scale-up anchored on the tip + heavier shadow (2× opacity, larger `ry`) + brighter ring gradient stops + thicker stroke (1.2 → 1.0).
+  - Full API compatibility: `color`, `label`, `size`, `title`, `stroke`, `pulse`, `testid` all unchanged. Body path retains `data-color={fill}` so downstream tests can key off the flat hex despite the gradient `url(#…)` fill.
+  - Consumers propagate automatically (no import changes) — `ScheduleMap`, `RouteReplayPanel`, `LiveTechPinsLayer`, `DispatchMapView`.
+- Part 2 · **Global ColorPicker** (`frontend/src/components/ui/ColorPicker.jsx`)
+  - Presets row (source of truth = `TECH_COLOR_PALETTE`), recently-used row (hydrated from `GET /users/me/recent-colors`), freeform hex text input + native `<input type="color">` + live preview swatch.
+  - WCAG 2.1 contrast guard against `#FFFFFF` — ratio < 3.0 disables Apply + surfaces inline warning "This color is too light to read on the map pin. Pick a darker shade." Palette entries that fail 3.0 (emerald `#10B981`, teal `#14B8A6`, amber `#F59E0B`, lime `#84CC16`, cyan `#06B6D4`) render at 35% opacity + `disabled`.
+  - Emits `onChange(hex)` synchronously; fires-and-forgets `POST /users/me/recent-colors` for the recents row.
+- Backend
+  - `backend/services/color/contrast.py` — shared `relative_luminance` / `contrast_ratio_vs_white` / `validate_color_hex_for_pin` utility (matches the client contract).
+  - `backend/routers/user_recent_colors.py` — `GET/POST /api/users/me/recent-colors`, cap 8, most-recent-first, de-duped by hex, contrast-validated on POST.
+  - `backend/routers/team.py` PATCH `/api/users/{uid}` — **removed the 12-color palette lock** in favour of the contrast validator. Freeform hex is now accepted iff it passes 3.0. Legacy off-palette reads are still tolerated (backward-compat).
+  - `backend/services/migrations/users_recent_colors_defaults.py` — idempotent per-key `$exists: false` backfill for `users.recent_colors: []`. Not auto-run at boot.
+
+**Files touched**
+- **New (7)**: `backend/services/color/{__init__,contrast}.py`, `backend/routers/user_recent_colors.py`, `backend/services/migrations/users_recent_colors_defaults.py`, `backend/tests/test_color_contrast_and_recent_colors.py`, `frontend/src/components/ui/ColorPicker.jsx`, `frontend/src/lib/colorContrast.js`, `frontend/src/test/color-picker.test.jsx`, `frontend/src/test/teardrop-pin-redesigned.test.jsx`
+- **Modified (9)**: `backend/server.py` (router register), `backend/routers/team.py` (palette-lock → contrast validator), `backend/tests/_f7_loop_fixture.py` (added `routers.team`, `routers.user_recent_colors`), `frontend/src/components/maps/TeardropPin.jsx` (redesigned SVG + `selected` prop + `mixWithWhite` helper), `frontend/src/pages/ops/OpsHub.jsx` (2 × `PaletteChipPicker` → `ColorPicker`), `frontend/src/test/teardrop-pin.test.jsx`, `frontend/src/test/phase-teardrop-pin-numbered-label.test.jsx`, `frontend/src/test/live-tech-pins-layer-teardrop.test.jsx`, `frontend/src/test/schedule-map.test.jsx`, `frontend/src/test/settings-nav-old-routes.test.jsx`, `frontend/src/test/phase21-team-color-swatch.test.jsx`
+
+**New endpoints**
+- `GET  /api/users/me/recent-colors`
+- `POST /api/users/me/recent-colors`
+
+**Consumer sites migrated to `<ColorPicker />`**
+- `OpsHub.jsx` crew-color editor (line 598 was `PaletteChipPicker`)
+- `OpsHub.jsx` team-row color popover `TechColorSwatch` component (line 1541 was `PaletteChipPicker`)
+- (`PaletteChipPicker` component itself is kept in the codebase — it's not deleted; the ticket says "do NOT remove the 12-color constant" and the old picker still consumes it. Future tenant/tag/category surfaces that WANT the full freeform experience should swap to `<ColorPicker />`.)
+
+**Tests + pass counts**
+- Backend: `test_color_contrast_and_recent_colors.py` — **13/13 ✅** (5 contrast boundary cases + validator, GET default, POST prepend/dedupe/cap, low-contrast reject, team-PATCH low-contrast reject, team-PATCH freeform accept, idempotent migration)
+- Frontend: `color-picker.test.jsx` — **10/10 ✅**, `teardrop-pin-redesigned.test.jsx` — **5/5 ✅**, plus 30 pre-existing pin tests still green after the redesign
+- Full backend regression: **62/62 ✅** across all this-session test files
+
+**Deviations from brief**
+1. **Emerald + several other Tailwind-500 palette entries fail 3.0 WCAG contrast.** The brief mandates 3.0, and preset colors like emerald (`#10B981`, ratio 2.53), teal, amber, lime, and cyan drop below it. The picker keeps them visible but visually disables them (35% opacity + `disabled` attr) — clicking is a no-op. This is honest UX; the alternative was silently dropping them from the palette. The palette constant stays untouched per the "do NOT replace the constant" rule.
+2. **HSL sliders** were not built — the freeform picker uses the native `<input type="color">` (cross-browser hue/sat/light square) + hex text input. Cleaner UX than custom sliders, zero-dep, and every modern browser supplies the WYSIWYG chooser natively.
+3. **Consumers migrated: 2 sites** (both in `OpsHub.jsx`). Grep for other `PaletteChipPicker` usage returned zero product sites; the component only surfaces in tests + itself. Service categories / tags don't currently accept `color_hex` on the backend (checked `service_categories.py` — no color field), so there was nothing to swap there.
+4. **Palette lock removal on `PATCH /api/users/{uid}`** was a behaviour change (the earlier endpoint 400'd off-palette colors). The ticket explicitly asks for this ("`display_color_hex` … apply the shared contrast validator") — legacy palette-only tests were updated in the same PR.
+
+
 ## Phase Ticket #3 + #4 · Org Notifications + AI Configuration tabs — SHIPPED (Feb 2026)
 
 **Scope**

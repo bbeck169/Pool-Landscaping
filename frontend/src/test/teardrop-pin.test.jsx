@@ -28,11 +28,18 @@ describe("TeardropPin · body", () => {
   it("renders with the given color as the body fill", () => {
     render(<TeardropPin color="#EF4444" testid="pin-red" />);
     const body = screen.getByTestId("pin-red-body");
-    expect(body.getAttribute("fill")).toBe("#EF4444");
+    // Feb-2026 · Redesigned pin — body ``fill`` is now a gradient
+    // reference (``url(#td-grad-…)``) so the glossy sheen renders.
+    // The raw hex is preserved on ``data-color`` for assertions +
+    // downstream tooling that needs the flat color.
+    expect(body.getAttribute("data-color")).toBe("#EF4444");
+    expect(body.getAttribute("fill")).toMatch(/^url\(#td-grad-/);
     // Stroke is auto-derived darker unless overridden.
     expect(body.getAttribute("stroke")).toBe(deriveDarker("#EF4444"));
-    // Hollow center: enforced via ``fill-rule=evenodd`` on the path.
-    expect(body.getAttribute("fill-rule")).toBe("evenodd");
+    // Feb-2026 · The redesigned body uses the solid silhouette path
+    // (no ``fill-rule=evenodd`` needed) because the "hollow" area
+    // is now a stacked white disc — see the ``-disc`` element when
+    // a ``label`` is present.
   });
 
   it("caller-supplied ``stroke`` prop overrides the auto-darker stroke", () => {

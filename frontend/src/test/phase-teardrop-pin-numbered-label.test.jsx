@@ -62,8 +62,11 @@ describe("<TeardropPin label>", () => {
     const d = body.getAttribute("d");
     // Solid path has 1 subpath (no ``M 12 5.5`` second Move-To).
     expect(d).not.toContain("M 12 5.5");
-    // White text on dark navy background.
-    expect(text.getAttribute("fill")).toBe("#FFFFFF");
+    // Feb-2026 · Redesigned pin — the label sits on a white inner
+    // disc, so the text is always dark slate for consistent
+    // legibility regardless of the pin's ring color.
+    expect(text.getAttribute("fill")).toBe("#0F172A");
+    expect(getByTestId("teardrop-pin-disc")).toBeTruthy();
     expect(container).toBeTruthy();
   });
 
@@ -74,20 +77,17 @@ describe("<TeardropPin label>", () => {
     expect(getByTestId("teardrop-pin-label").textContent).toBe("100");
   });
 
-  it("preserves the hollow-circle path when label is undefined", () => {
+  it("preserves the solid silhouette path when label is undefined", () => {
+    // Feb-2026 · Redesigned pin — the body is ALWAYS the solid
+    // silhouette now (the "hollow" area of the old design became a
+    // stacked white disc only when a label is present). When label
+    // is undefined, no disc + no label render.
     const { getByTestId, queryByTestId } = render(
       <TeardropPin color="#1E3A8A" />,
     );
     const body = getByTestId("teardrop-pin-body");
-    expect(body.getAttribute("d")).toContain("M 12 5.5");
+    expect(body.getAttribute("d")).not.toContain("M 12 5.5");
     expect(queryByTestId("teardrop-pin-label")).toBeNull();
-  });
-
-  it("flips text color on light backgrounds", () => {
-    const { getByTestId } = render(
-      <TeardropPin color="#FDE68A" label={5} />,
-    );
-    expect(getByTestId("teardrop-pin-label").getAttribute("fill"))
-      .toBe("#0F172A");
+    expect(queryByTestId("teardrop-pin-disc")).toBeNull();
   });
 });

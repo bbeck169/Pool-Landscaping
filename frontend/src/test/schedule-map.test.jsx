@@ -127,10 +127,10 @@ describe("<ScheduleMap />", () => {
     // ``fill`` attribute.  Same per-marker colour semantics, just
     // exposed one hop deeper in the DOM.
     expect(
-      screen.getByTestId("schedule-map-pin-job-1-svg-body").getAttribute("fill"),
+      screen.getByTestId("schedule-map-pin-job-1-svg-body").getAttribute("data-color"),
     ).toBe("#FF0000");
     expect(
-      screen.getByTestId("schedule-map-pin-job-2-svg-body").getAttribute("fill"),
+      screen.getByTestId("schedule-map-pin-job-2-svg-body").getAttribute("data-color"),
     ).toBe("#00FF00");
   });
 
@@ -149,7 +149,7 @@ describe("<ScheduleMap />", () => {
     // instead of the wrapping button's inline ``background`` style.
     // slate-400 hex is ``#94A3B8``.
     expect(
-      screen.getByTestId("schedule-map-pin-job-un-svg-body").getAttribute("fill"),
+      screen.getByTestId("schedule-map-pin-job-un-svg-body").getAttribute("data-color"),
     ).toBe("#94A3B8");
   });
 
