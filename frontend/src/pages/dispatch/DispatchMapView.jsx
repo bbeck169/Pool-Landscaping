@@ -42,19 +42,25 @@ function decodePolyline(encoded) {
   return points;
 }
 
-function PinDot({ scheduled, colorHex, onClick, testId }) {
+function PinDot({ scheduled, colorHex, onClick, testId, label }) {
   // Phase M1 · Feb-2026 · Sitewide custom teardrop pin.  Preserves
   // the pre-existing per-marker color semantics (status /
   // job-category / assigned-tech color feed through unchanged) —
   // only the SHAPE changes.  The ``scheduled`` prop still lights
   // the pin up with a subtle amber ring so today's stops stay
   // easy to spot on the board.
+  //
+  // Feb-2026 · Dispatch numbered pins — optional ``label`` prop is
+  // forwarded to ``TeardropPin`` which renders a centered
+  // zero-padded number inside the pin head (and drops the hollow
+  // inner circle). ``undefined``/``null``/``""`` preserves the
+  // pre-numbered rendering byte-identically.
   return (
     <button
       type="button"
       onClick={onClick}
       data-testid={testId}
-      aria-label="Customer pin"
+      aria-label={label ? `Stop ${label}` : "Customer pin"}
       style={{
         background: "transparent",
         border: 0,
@@ -69,6 +75,7 @@ function PinDot({ scheduled, colorHex, onClick, testId }) {
       <TeardropPin
         color={colorHex || "#0EA5E9"}
         testid={`${testId}-svg`}
+        label={label}
       />
     </button>
   );
@@ -90,7 +97,7 @@ function PolylineOverlay({ encoded }) {
   return null;
 }
 
-function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech", isolatedTechId = null }) {
+function PinsLayer({ pins, techColorById, onSelect, pinColorMode = "tech", isolatedTechId = null, stopLabelByCustomerId = {} }) {
   const map = useMap();
   const clustererRef = React.useRef(null);
   const markersRef = React.useRef([]);

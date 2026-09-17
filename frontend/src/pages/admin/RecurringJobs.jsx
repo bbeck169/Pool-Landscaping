@@ -16,6 +16,7 @@ import {
   MonthlyNthWeekdaySelector,
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
+import CategoryComboCell from "@/components/recurring/CategoryComboCell";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -528,6 +529,16 @@ export default function RecurringJobs() {
                 </th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Customer</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Service</th>
+                <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold"
+                     style={{ color: colors.muted }}
+                     data-testid="recurring-th-service-category">
+                  Service Category
+                </th>
+                <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold"
+                     style={{ color: colors.muted }}
+                     data-testid="recurring-th-income-category">
+                  Income Category
+                </th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Frequency</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Next</th>
                 <th className="text-right px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Price</th>
@@ -537,7 +548,7 @@ export default function RecurringJobs() {
             </thead>
             <tbody>
               {filteredItems.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm"
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="recurring-jobs-empty">
                   {items.length === 0
                     ? "No recurring jobs yet — click \"New recurring job\" to add your first."
@@ -561,6 +572,26 @@ export default function RecurringJobs() {
                   </td>
                   <td className="px-3 py-2.5" style={{ color: colors.onSurface }}>{r.customer_name}</td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>{r.service_type}</td>
+                  <td className="px-3 py-2.5"
+                       data-testid={`recurring-cell-service-category-${r.id}`}>
+                    <CategoryComboCell
+                      axis="service"
+                      row={r}
+                      value={r.service_category_name || ""}
+                      onPatched={(patch) => setItems((prev) =>
+                        prev.map((x) => x.id === r.id ? { ...x, ...patch } : x))}
+                    />
+                  </td>
+                  <td className="px-3 py-2.5"
+                       data-testid={`recurring-cell-income-category-${r.id}`}>
+                    <CategoryComboCell
+                      axis="income"
+                      row={r}
+                      value={r.income_category_name || ""}
+                      onPatched={(patch) => setItems((prev) =>
+                        prev.map((x) => x.id === r.id ? { ...x, ...patch } : x))}
+                    />
+                  </td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>
                     {r.frequency}{r.frequency === "weekly" || r.frequency === "biweekly" ? ` (${DOW[r.day_of_week] || "?"})` : ""}
                     {r.frequency === "monthly" ? ` (day ${r.day_of_month})` : ""}

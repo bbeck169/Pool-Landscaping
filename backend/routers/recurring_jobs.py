@@ -88,6 +88,15 @@ class RecurringJobIn(BaseModel):
     # tag. Optional at the schema level; validation in the create/
     # update handlers via ``services.work_class.normalize_work_class``.
     work_class: Optional[str] = "service"
+    # Feb-2026 · Recurring Jobs · category taxonomy passthrough.
+    # ``service_category_id`` and ``income_category_id`` reference
+    # the tenant-scoped master collections (db.service_categories +
+    # db.income_categories). Both remain optional so pre-existing
+    # templates keep working. The PATCH handler validates each
+    # against its collection using the same resolve/active gate as
+    # the invoice line-item recategorize flow.
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
     # Phase K4 · Feb-2026 — optional generator cursor at create time.
     # The Schedule flow uses this to seed the template with a cursor
     # equal to the last date it pre-materialized so the H10 daily
@@ -128,6 +137,14 @@ class RecurringJobPatch(BaseModel):
     monthly_weekday: Optional[int] = None
     # Feb 2026 · Retag pass-through for recurring templates.
     work_class: Optional[str] = None
+    # Feb-2026 · Recurring Jobs · category taxonomy passthrough on
+    # PATCH. Values must resolve to active rows in the tenant's
+    # ``service_categories`` / ``income_categories`` master lists —
+    # gate is applied in ``patch_recurring``. Explicit empty string
+    # clears the field (same convention as the ``crew_id`` / tech
+    # switch above).
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
 
 
 async def _resolve_crew_ref(tenant_id: str, crew_id: Optional[str]
@@ -624,6 +641,46 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
                             tenant: dict = Depends(get_current_tenant)):
     _validate(body)
     raw = body.dict(exclude_unset=True)
+    # Feb-2026 · Recurring Jobs · category taxonomy passthrough.
+    # Validate + normalize the two optional category fields against
+    # the master collections before hitting Mongo. Empty string
+    # clears the field on the doc via ``$set: None``.
+    _CATEGORY_KEYS = {
+        "income_category_id": "income_categories",
+        "service_category_id": "service_categories",
+    }
+    _category_resolved: Dict[str, Any] = {}
+    for _field, _coll in _CATEGORY_KEYS.items():
+        if _field not in raw:
+            continue
+        _val = raw[_field]
+        if isinstance(_val, str):
+            _val = _val.strip()
+            if len(_val) > 80:
+                raise HTTPException(
+                    422, {"error": f"{_field}_too_long", "max_len": 80},
+                )
+            if "<" in _val or ">" in _val:
+                raise HTTPException(
+                    422, {"error": f"{_field}_no_html"},
+                )
+        if not _val:
+            # Empty string clears — stamp None on the doc.
+            raw[_field] = None
+            _category_resolved[_field] = None
+            continue
+        _cat = await db[_coll].find_one(
+            {"id": _val, "tenant_id": tenant["id"],
+              "is_archived": {"$ne": True}},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+        if not _cat:
+            raise HTTPException(
+                404, {"error": f"{_field}_not_found_or_archived",
+                        "attempted": _val, "collection": _coll},
+            )
+        raw[_field] = _cat["id"]
+        _category_resolved[_field] = _cat
     # Feb-2026 · Recurring Jobs · is_active gate. Rejects
     # ``is_active=true`` when neither the incoming patch nor the
     # existing doc carries a ``start_date``. Look up the current
@@ -644,10 +701,15 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     # so a "flip from crew to tech" wipes the opposite side. The
     # legacy filter dropped None to preserve nullable-optional
     # semantics; carve those fields out.
+    #
+    # Feb-2026 · Recurring Jobs · category taxonomy — same treatment
+    # for ``income_category_id`` / ``service_category_id`` so an
+    # explicit clear (empty-string PATCH) actually writes ``None``.
     _ASSIGN_KEYS = {"assigned_tech_id", "crew_id"}
+    _CLEARABLE = _ASSIGN_KEYS | set(_CATEGORY_KEYS.keys())
     updates: Dict[str, Any] = {
         k: v for k, v in raw.items()
-        if v is not None or k == "active" or k == "is_active" or k in _ASSIGN_KEYS
+        if v is not None or k == "active" or k == "is_active" or k in _CLEARABLE
     }
     # If the caller supplied both assignment fields with non-None
     # values, reject before writing.
@@ -663,19 +725,77 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
             updates["crew_name"] = (crew or {}).get("name")
         else:
             updates["crew_name"] = None
+    # Feb-2026 · Recurring Jobs · category taxonomy — stamp denorm
+    # names on the doc so the list endpoint can render labels
+    # without a per-row category-collection point-lookup.
+    for _field, _cat in _category_resolved.items():
+        _denorm = _field.replace("_id", "_name")
+        updates[_denorm] = (_cat or {}).get("name") if _cat else None
     # Feb-2026 · Never-end intent overrides end_date on patch too.
     if updates.get("recurrence_never_ends") is True:
         updates["end_date"] = None
     updates["updated_at"] = now_iso()
+    # Feb-2026 · Recurring Jobs · category audit. Fetch the pre-
+    # image (once, projected) so the audit diff has real ``before``
+    # values. Only fires when a category field is actually part of
+    # the write set.
+    _pre_image: Dict[str, Any] = {}
+    if any(k in updates for k in _CATEGORY_KEYS):
+        _pre_image = await db.recurring_job_templates.find_one(
+            {"id": tpl_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1,
+              "income_category_id": 1, "income_category_name": 1,
+              "service_category_id": 1, "service_category_name": 1},
+        ) or {}
     res = await db.recurring_job_templates.update_one(
         {"id": tpl_id, "tenant_id": tenant["id"]},
         {"$set": updates},
     )
     if res.matched_count == 0:
         raise HTTPException(404, "template not found")
+    if _pre_image:
+        await _write_recurring_category_audit(
+            tenant_id=tenant["id"], tpl_id=tpl_id,
+            actor=user, before=_pre_image, updates=updates,
+        )
     return await db.recurring_job_templates.find_one(
         {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0}
     )
+
+
+# Feb-2026 · Recurring Jobs · category audit. Writes ONE
+# ``audit_logs`` row per PATCH that changes at least one category
+# field, mirroring the ``line_item.recategorize`` shape used by
+# ``routers/income_categories.py`` (grep-consistency).
+async def _write_recurring_category_audit(
+    *, tenant_id: str, tpl_id: str, actor: Dict[str, Any],
+    before: Dict[str, Any], updates: Dict[str, Any],
+) -> None:
+    diff: Dict[str, Dict[str, Any]] = {}
+    for field in ("income_category_id", "income_category_name",
+                  "service_category_id", "service_category_name"):
+        if field in updates and before.get(field) != updates.get(field):
+            diff[field] = {"before": before.get(field),
+                            "after": updates.get(field)}
+    if not diff:
+        return
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "event": "recurring_job.recategorize",
+            "recurring_template_id": tpl_id,
+            "actor_id": (actor or {}).get("id"),
+            "actor_email": (actor or {}).get("email"),
+            "actor_role": ((actor or {}).get("role") or "").lower(),
+            "diff": diff,
+            "created_at": now_iso(),
+        })
+    except Exception:                                              # noqa: BLE001
+        logger.exception(
+            "[recurring-jobs.audit] insert failed for template=%s",
+            tpl_id,
+        )
 
 
 # ─── Phase R1 · Feb-2026 · Recurring-Jobs Bulk Hard Delete ────────────

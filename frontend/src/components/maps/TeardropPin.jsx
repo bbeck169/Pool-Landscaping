@@ -136,6 +136,67 @@ const _TEARDROP_PATH =
   "M 12 31 C 6.5 24 3 16 3 10 A 9 9 0 1 1 21 10 C 21 16 17.5 24 12 31 Z " +
   "M 12 5.5 A 4.5 4.5 0 1 0 12 14.5 A 4.5 4.5 0 1 0 12 5.5 Z";
 
+// Feb-2026 · Numbered-pin variant. When ``TeardropPin`` receives a
+// ``label`` prop, we drop the inner hollow-circle sub-path (which
+// would sit under the number and read as noise) and switch to the
+// solid teardrop silhouette below. Byte-identical outer curve as
+// ``_TEARDROP_PATH`` — only the inner cutout differs.
+const _TEARDROP_PATH_SOLID =
+  "M 12 31 C 6.5 24 3 16 3 10 A 9 9 0 1 1 21 10 C 21 16 17.5 24 12 31 Z";
+
+
+/**
+ * Perceived-brightness threshold for choosing white vs dark text on
+ * top of ``color``. Uses the classic ITU-R BT.601 luma formula —
+ * cheap + good-enough for hex swatches. Threshold 128 lands the
+ * flip near the middle of the usable range (matches the
+ * WCAG-friendly cutoff used in ``routers/income_categories`` for
+ * category chip contrast).
+ */
+export function pickLabelTextColor(bgHex) {
+  if (!bgHex || typeof bgHex !== "string") return "#FFFFFF";
+  const s = bgHex.trim();
+  let r; let g; let b;
+  if (s.startsWith("#")) {
+    const hex = s.slice(1);
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else if (hex.length === 6) {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+    } else {
+      return "#FFFFFF";
+    }
+  } else {
+    return "#FFFFFF";
+  }
+  if ([r, g, b].some((v) => Number.isNaN(v))) return "#FFFFFF";
+  const luma = (r * 299 + g * 587 + b * 114) / 1000;
+  return luma < 140 ? "#FFFFFF" : "#0F172A";
+}
+
+
+/** Feb-2026 · Numbered-pin label formatter. Pads left to 2 digits
+ * for readability (``1`` → ``"01"``) but never truncates 3+ digit
+ * inputs (``100`` → ``"100"``). Accepts number OR numeric string;
+ * anything else stringifies as-is. */
+export function formatPinLabel(label) {
+  if (label === null || label === undefined || label === "") return null;
+  if (typeof label === "number") {
+    if (!Number.isFinite(label)) return String(label);
+    if (label < 10 && label >= 0) return `0${label}`;
+    return String(label);
+  }
+  const s = String(label);
+  if (/^\d+$/.test(s)) {
+    return s.length === 1 ? `0${s}` : s;
+  }
+  return s;
+}
+
 
 /**
  * Inline React teardrop pin.
@@ -147,6 +208,12 @@ const _TEARDROP_PATH =
  * @param {number=} p.size    — override the canonical 36px width.
  * @param {string=} p.title   — accessible label (``<title>`` element).
  * @param {string=} p.testid  — data-testid on the SVG root.
+ * @param {(string|number)=} p.label  — Feb-2026 · Optional numbered
+ *   label to render inside the pin head. When provided, the inner
+ *   hollow-circle cutout is replaced with a solid silhouette + a
+ *   centered zero-padded text element. Auto-picks white / dark
+ *   text based on background luma. When absent, byte-identical to
+ *   the pre-Feb-2026 hollow pin.
  */
 export default function TeardropPin({
   color,
@@ -155,6 +222,7 @@ export default function TeardropPin({
   size = CANONICAL_WIDTH,
   title,
   testid = "teardrop-pin",
+  label,
 }) {
   const fill = color || _SAFE_PALETTE[0];
   const outerStroke = stroke || deriveDarker(fill);
@@ -164,6 +232,19 @@ export default function TeardropPin({
   // singleton-ify the ``<style>``.
   const rid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const pulseClass = useMemo(() => `td-pulse-${rid}`, [rid]);
+  const formattedLabel = formatPinLabel(label);
+  const isLabeled = formattedLabel !== null;
+  // Font size scales with pin size — head diameter is 18/24 of the
+  // viewBox width, so a font size ~55% of head diameter reads
+  // legibly at typical zoom levels (10px at size=36, 14px at
+  // size=52). Longer labels (3+ chars) tighten by ~15%.
+  const labelFontPx = React.useMemo(() => {
+    const base = size * (18 / 24) * 0.55;
+    const chars = (formattedLabel || "").length;
+    if (chars >= 3) return Math.round(base * 0.82);
+    return Math.round(base);
+  }, [size, formattedLabel]);
+  const labelTextColor = isLabeled ? pickLabelTextColor(fill) : null;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -174,6 +255,7 @@ export default function TeardropPin({
       aria-label={title || undefined}
       data-testid={testid}
       data-pulse={pulse ? "true" : "false"}
+      data-label={isLabeled ? formattedLabel : undefined}
       style={{ overflow: "visible", display: "inline-block" }}
     >
       {title ? <title>{title}</title> : null}
@@ -200,7 +282,7 @@ export default function TeardropPin({
         </>
       ) : null}
       <path
-        d={_TEARDROP_PATH}
+        d={isLabeled ? _TEARDROP_PATH_SOLID : _TEARDROP_PATH}
         fill={fill}
         stroke={outerStroke}
         strokeWidth="1"
@@ -208,6 +290,22 @@ export default function TeardropPin({
         clipRule="evenodd"
         data-testid={`${testid}-body`}
       />
+      {isLabeled ? (
+        <text
+          x="12"
+          y="10"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={labelFontPx}
+          fontFamily="system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+          fontWeight="700"
+          fill={labelTextColor}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          data-testid={`${testid}-label`}
+        >
+          {formattedLabel}
+        </text>
+      ) : null}
     </svg>
   );
 }
