@@ -785,49 +785,160 @@ def _grid_points(center_lat: float, center_lng: float,
 async def _generate_heatmap(heatmap_id: str, tenant_id: str,
                              keyword: str,
                              center_lat: float, center_lng: float,
-                             grid_size: int, radius_miles: float):
-    """Background heatmap worker."""
+                             grid_size: int, radius_miles: float,
+                             *, bypass_cache: bool = False):
+    """Background heatmap worker.
+
+    Feb-2026 · Rank Heatmap DataForSEO wire-up:
+      1. Consult ``heatmap_run_cache`` (6h TTL) for a live result.
+      2. On MISS: pull tenant's target domain, generate the grid,
+         fire one ``dfs.serp_google_organic_live`` call per point in
+         parallel (soft cap 100 points), parse ``rank_position``,
+         degrade per-point on error, bump the tenant cost counter,
+         cache the result if any point returned real data.
+      3. On HIT: return the cached grid unchanged with
+         ``served_from_cache=True`` + ``cached_at`` stamps.
+      4. If DataForSEO credentials are unset → single flat mocked
+         payload with ``mocked_reason="dataforseo_not_configured"``.
+
+    The function signature is preserved except for a new keyword-only
+    ``bypass_cache`` flag so ops can force a fresh run.
+    """
     started = now_iso()
     await db.seo_rank_heatmaps.update_one(
         {"id": heatmap_id, "tenant_id": tenant_id},
         {"$set": {"status": "running", "started_at": started}},
     )
     try:
+        # ── Soft-cap grid size to guard against credit blowout ────
         pts = _grid_points(center_lat, center_lng, grid_size, radius_miles)
-        # Currently no SERP provider configured — flag mocked=true & synthesize
-        # deterministically-random ranks around a plausible mid-teen average
-        # so the UI has data to render.
-        # random.Random(seed) — non-security use (deterministic mock SERP data).
-        # nosec B311: seeded random is intentional here — swapping to
-        # ``secrets`` would break the "same tenant+keyword → same mock" contract
-        # the UI regression tests rely on. See /app/backend/pyproject.toml
-        # (Phase O4 · Feb-2026 code-review triage) for the full rationale.
-        rng = random.Random(f"{tenant_id}:{keyword}")  # nosec B311
-        results = []
-        for p in pts:
-            rank = int(rng.gauss(mu=14, sigma=6))
-            rank = max(1, min(40, rank))
-            results.append({
-                **p,
-                "rank": rank,
-                "top_10_urls": [
-                    f"https://example-{i}.com/{keyword.replace(' ', '-')}"
-                    for i in range(1, min(11, rank) + 1)
-                ][:10],
-            })
-        avg = round(sum(r["rank"] for r in results) / len(results), 1)
-        top10 = sum(1 for r in results if r["rank"] <= 10)
+        _POINT_CAP = 100
+        truncated = False
+        if len(pts) > _POINT_CAP:
+            logger.warning(
+                "[heatmap] tenant=%s keyword=%r grid_size=%d yields "
+                "%d points, exceeding the soft cap of %d — "
+                "truncating.", tenant_id, keyword, grid_size,
+                len(pts), _POINT_CAP,
+            )
+            pts = pts[:_POINT_CAP]
+            truncated = True
+
+        # ── Cache probe ────────────────────────────────────────────
+        cache_key = _heatmap_cache_key(
+            tenant_id, keyword, center_lat, center_lng,
+            radius_miles, grid_size,
+        )
+        if not bypass_cache:
+            cached = await db.heatmap_run_cache.find_one({"key": cache_key},
+                                                             {"_id": 0})
+            if cached:
+                logger.info(
+                    "[heatmap] cache HIT tenant=%s keyword=%r key=%s",
+                    tenant_id, keyword, cache_key,
+                )
+                await db.seo_rank_heatmaps.update_one(
+                    {"id": heatmap_id, "tenant_id": tenant_id},
+                    {"$set": {
+                        "status": "done", "finished_at": now_iso(),
+                        "points": cached["points"],
+                        "avg_rank": cached.get("avg_rank"),
+                        "top_position_count": cached.get("top_position_count"),
+                        "mocked": cached.get("mocked", False),
+                        "mocked_reason": cached.get("mocked_reason"),
+                        "served_from_cache": True,
+                        "cached_at": cached.get("cached_at"),
+                    }},
+                )
+                return
+
+        # ── DFS credential gate ────────────────────────────────────
+        if _dfs.get_credentials_or_none() is None:
+            logger.info(
+                "[heatmap] DataForSEO not configured — degrading to "
+                "mocked payload for tenant=%s keyword=%r",
+                tenant_id, keyword,
+            )
+            await _write_mocked_heatmap(
+                heatmap_id, tenant_id, keyword, pts,
+                reason="dataforseo_not_configured",
+            )
+            return
+
+        # ── Pull target domain (tenant business card) ─────────────
+        target_domain = await _tenant_target_domain(tenant_id)
+
+        # ── Fire one SERP call per grid point in parallel ─────────
+        tasks = [
+            _dfs.serp_google_organic_live(keyword, p["lat"], p["lng"])
+            for p in pts
+        ]
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # ── Assemble per-point results, degrade on error ──────────
+        results: List[Dict[str, Any]] = []
+        real_call_count = 0
+        for pt, resp in zip(pts, responses):
+            row = _resolve_heatmap_point(pt, resp, target_domain, keyword)
+            if not row.get("mocked"):
+                real_call_count += 1
+            results.append(row)
+
+        real_ranks = [r["rank"] for r in results
+                        if not r.get("mocked") and isinstance(r.get("rank"), int)]
+        avg = round(sum(real_ranks) / len(real_ranks), 1) if real_ranks else None
+        top10 = sum(1 for r in results
+                     if isinstance(r.get("rank"), int) and r["rank"] <= 10
+                     and not r.get("mocked"))
+        top_level_mocked = real_call_count == 0
+
+        # ── Cost telemetry (only count real API calls) ────────────
+        if real_call_count:
+            await db.tenants.update_one(
+                {"id": tenant_id},
+                {"$inc": {"metrics.dataforseo_heatmap_calls": real_call_count}},
+            )
+        logger.info(
+            "[heatmap] tenant=%s keyword=%r real_calls=%d/%d truncated=%s "
+            "target_domain=%r avg_rank=%s top10=%d",
+            tenant_id, keyword, real_call_count, len(pts), truncated,
+            target_domain, avg, top10,
+        )
+
+        finished = now_iso()
+        payload = {
+            "status": "done", "finished_at": finished,
+            "points": results, "avg_rank": avg,
+            "top_position_count": top10,
+            "mocked": top_level_mocked,
+            "mocked_reason": (
+                "All grid points degraded to synthetic ranks — see "
+                "per-point ``error`` fields for the DFS reason."
+                if top_level_mocked else None
+            ),
+            "served_from_cache": False,
+        }
         await db.seo_rank_heatmaps.update_one(
             {"id": heatmap_id, "tenant_id": tenant_id},
-            {"$set": {
-                "status": "done", "finished_at": now_iso(),
-                "points": results, "avg_rank": avg,
-                "top_position_count": top10,
-                "mocked": True,
-                "mocked_reason": "No SERP provider configured — "
-                                 "results are synthesized for UI preview.",
-            }},
+            {"$set": payload},
         )
+
+        # ── Cache write (skip if all points degraded) ─────────────
+        if top_level_mocked:
+            logger.warning(
+                "[heatmap] tenant=%s keyword=%r all points degraded — "
+                "skipping cache write so a re-run can pick up recovered "
+                "DFS availability sooner than 6h.",
+                tenant_id, keyword,
+            )
+        else:
+            await _write_heatmap_cache(
+                cache_key, results, avg, top10, finished,
+            )
+            logger.info(
+                "[heatmap] cache WRITE tenant=%s keyword=%r key=%s "
+                "expires_in=6h", tenant_id, keyword, cache_key,
+            )
     except Exception as e:
         logger.exception(f"heatmap failed: {e}")
         await db.seo_rank_heatmaps.update_one(
@@ -837,10 +948,160 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
         )
 
 
+# ─────────────────────────────────────────────────────────────────
+# Heatmap DFS helpers (Feb-2026)
+# ─────────────────────────────────────────────────────────────────
+from services import dataforseo_client as _dfs  # noqa: E402
+from datetime import timedelta as _timedelta    # noqa: E402
+
+
+def _heatmap_cache_key(tenant_id: str, keyword: str,
+                        center_lat: float, center_lng: float,
+                        radius_miles: float, grid_size: int) -> str:
+    """4dp lat/lng rounding (~11m precision) so micro-jitter can't
+    bypass the cache. Keyword is trim-lowercased."""
+    kw = (keyword or "").strip().lower()
+    return (
+        f"{tenant_id}|{kw}|{round(center_lat, 4):.4f}|"
+        f"{round(center_lng, 4):.4f}|{radius_miles}|{grid_size}"
+    )
+
+
+async def _tenant_target_domain(tenant_id: str) -> Optional[str]:
+    """Same pull path as rank_tracker._tenant_center_and_domain —
+    kept local to avoid a cross-router import cycle."""
+    t = await db.tenants.find_one({"id": tenant_id},
+                                     {"_id": 0, "settings.business_card": 1})
+    card = ((t or {}).get("settings") or {}).get("business_card") or {}
+    website = (card.get("website_url") or "").strip()
+    if not website:
+        return None
+    try:
+        netloc = urlparse(website).netloc or website
+        return netloc.lower().replace("www.", "").strip("/") or None
+    except Exception:
+        return None
+
+
+def _resolve_heatmap_point(pt: Dict[str, float], resp: Any,
+                            target_domain: Optional[str],
+                            keyword: str) -> Dict[str, Any]:
+    """Turn a ``dfs.serp_google_organic_live`` tuple (or Exception)
+    into a single grid-point row. Degrades to a per-point mocked
+    result on any error — the whole heatmap never fails just because
+    one SERP call flinched."""
+    if isinstance(resp, Exception):
+        status, body, err = 0, None, f"exception: {resp}"
+    else:
+        status, body, err = resp
+    if err:
+        # Fall back to a synthetic rank for THIS point only, so the
+        # UI has data to render. Deterministic seed = same keyword
+        # + coord → same mock rank across re-runs.
+        rng = random.Random(f"{keyword}:{pt['lat']}:{pt['lng']}")  # nosec B311
+        rank = max(1, min(40, int(rng.gauss(mu=14, sigma=6))))
+        return {**pt, "rank": rank, "mocked": True, "error": err,
+                 "api_status": status, "top_10_urls": []}
+    # Real DFS response — pull our tenant's domain rank + the top-N
+    # urls so the UI can show competitors above us.
+    detailed = _dfs.parse_serp_ranks_detailed(
+        body, [target_domain] if target_domain else [],
+    )
+    match = (detailed.get(target_domain) if target_domain else None) or {}
+    rank_val: Optional[int] = match.get("rank") if isinstance(match, dict) else None
+    # Also collect the top-10 SERP URLs from the response for the UI.
+    top10_urls: List[str] = []
+    tasks_arr = (body or {}).get("tasks") or []
+    if tasks_arr:
+        first_result = (tasks_arr[0].get("result") or [{}])[0]
+        for item in (first_result.get("items") or [])[:10]:
+            url = item.get("url")
+            if url:
+                top10_urls.append(url)
+    return {
+        **pt,
+        "rank": rank_val if isinstance(rank_val, int) else None,
+        "mocked": False,
+        "top_10_urls": top10_urls,
+        "url_found": match.get("url") if isinstance(match, dict) else None,
+    }
+
+
+async def _write_mocked_heatmap(heatmap_id: str, tenant_id: str,
+                                  keyword: str, pts: List[Dict[str, float]],
+                                  *, reason: str) -> None:
+    """Preserves the pre-wire-up mocked shape verbatim so existing
+    frontend consumers continue to render."""
+    rng = random.Random(f"{tenant_id}:{keyword}")  # nosec B311
+    results = []
+    for p in pts:
+        rank = max(1, min(40, int(rng.gauss(mu=14, sigma=6))))
+        results.append({
+            **p, "rank": rank, "mocked": True,
+            "top_10_urls": [
+                f"https://example-{i}.com/{keyword.replace(' ', '-')}"
+                for i in range(1, min(11, rank) + 1)
+            ][:10],
+        })
+    avg = round(sum(r["rank"] for r in results) / len(results), 1)
+    top10 = sum(1 for r in results if r["rank"] <= 10)
+    await db.seo_rank_heatmaps.update_one(
+        {"id": heatmap_id, "tenant_id": tenant_id},
+        {"$set": {
+            "status": "done", "finished_at": now_iso(),
+            "points": results, "avg_rank": avg,
+            "top_position_count": top10,
+            "mocked": True, "mocked_reason": reason,
+            "served_from_cache": False,
+        }},
+    )
+
+
+async def _write_heatmap_cache(cache_key: str,
+                                 points: List[Dict[str, Any]],
+                                 avg_rank: Optional[float],
+                                 top_position_count: int,
+                                 cached_at: str) -> None:
+    """Upsert. TTL index on ``expires_at`` is created on module import
+    (see ``_ensure_heatmap_cache_index`` below)."""
+    now = datetime.now(timezone.utc)
+    await db.heatmap_run_cache.update_one(
+        {"key": cache_key},
+        {"$set": {
+            "key": cache_key,
+            "points": points,
+            "avg_rank": avg_rank,
+            "top_position_count": top_position_count,
+            "mocked": False,
+            "cached_at": cached_at,
+            "expires_at": now + _timedelta(hours=6),
+        }},
+        upsert=True,
+    )
+
+
+async def _ensure_heatmap_cache_index() -> None:
+    """Idempotent TTL index setup. Called from server startup."""
+    try:
+        await db.heatmap_run_cache.create_index(
+            "expires_at", expireAfterSeconds=0,
+            name="heatmap_run_cache_ttl",
+        )
+        await db.heatmap_run_cache.create_index(
+            "key", unique=True, name="heatmap_run_cache_key_unique",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[heatmap] cache index setup skipped: {exc}")
+
+
 @router.post("/seo/rank-heatmaps")
 async def start_heatmap(body: RankHeatmapIn, bg: BackgroundTasks,
+                         bypass_cache: bool = Query(False,
+                             description="Force a re-run past the 6h cooldown. "
+                                             "Admin route already gates access."),
                          user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant)):
+    dfs_configured = _dfs.get_credentials_or_none() is not None
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],
@@ -855,16 +1116,23 @@ async def start_heatmap(body: RankHeatmapIn, bg: BackgroundTasks,
         "points": [],
         "avg_rank": None,
         "top_position_count": 0,
-        "mocked": True,
-        "mocked_reason": None,
+        # Feb-2026 · reflect the actual DFS config state so callers
+        # can hint the user immediately rather than wait for the
+        # background job to finish and re-render.
+        "mocked": not dfs_configured,
+        "mocked_reason": None if dfs_configured else "dataforseo_not_configured",
         "created_at": now_iso(),
     }
     await db.seo_rank_heatmaps.insert_one(dict(doc))
     bg.add_task(_generate_heatmap, doc["id"], tenant["id"],
                 body.keyword, body.center_lat, body.center_lng,
-                body.grid_size, body.radius_miles)
-    return {"heatmap_id": doc["id"], "status": "queued", "mocked": True,
-            "reason": "No SERP provider configured — results will be synthesized."}
+                body.grid_size, body.radius_miles,
+                bypass_cache=bypass_cache)
+    reason = None
+    if not dfs_configured:
+        reason = "DataForSEO not configured — results will be synthesized."
+    return {"heatmap_id": doc["id"], "status": "queued",
+             "mocked": not dfs_configured, "reason": reason}
 
 
 @router.get("/seo/rank-heatmaps")

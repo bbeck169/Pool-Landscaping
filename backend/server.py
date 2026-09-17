@@ -1653,6 +1653,14 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"[dataforseo] boot log skipped: {e}")
 
+    # Feb-2026 · Rank Heatmap DFS wire-up — ensure the 6h TTL index
+    # on ``heatmap_run_cache`` exists so cache entries auto-expire.
+    try:
+        from routers.seo_agentic import _ensure_heatmap_cache_index
+        await _ensure_heatmap_cache_index()
+    except Exception as e:
+        logger.warning(f"[heatmap] cache index setup skipped: {e}")
+
     # Feb-2026 · Phase 24 — seed the 7 default AI visibility prompts
     # for any tenant with an empty prompt list. Idempotent.
     try:

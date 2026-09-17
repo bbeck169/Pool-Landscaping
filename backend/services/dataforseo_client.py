@@ -34,6 +34,13 @@ def _creds() -> Optional[Tuple[str, str]]:
     return login, pw
 
 
+def get_credentials_or_none() -> Optional[Tuple[str, str]]:
+    """Public alias of ``_creds`` — callers outside this module use
+    this to gate DFS-dependent code paths without probing env vars
+    directly."""
+    return _creds()
+
+
 def log_auth_config() -> None:
     """Called from server boot so a truthy line appears in the logs."""
     c = _creds()
