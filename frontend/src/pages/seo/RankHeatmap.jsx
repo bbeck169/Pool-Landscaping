@@ -66,15 +66,29 @@ export default function RankHeatmap() {
         </p>
       </div>
 
-      {(current?.mocked || rows[0]?.mocked) && (
+      {current?.mocked && (
         <div className="mb-4 p-3 rounded-xl text-xs flex items-start gap-2"
              style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
              data-testid="rank-heatmap-mocked-banner">
           <Info size={14} style={{ marginTop: 1 }}/>
           <div>
-            <b>SERP provider not configured</b> — ranks below are synthesized
-            for UI preview. Configure a SERP integration (SerpAPI, DataForSEO,
-            or a Google Maps Local API key) to see real data.
+            {current?.mocked_reason === "dataforseo_not_configured" ? (
+              <>
+                <b>SERP provider not configured</b> — ranks below are synthesized
+                for UI preview. Configure a SERP integration (DataForSEO or SerpAPI)
+                to see real data.
+              </>
+            ) : current?.mocked_reason === "tenant_domain_not_configured" ? (
+              <>
+                <b>Business website missing</b> — set your website URL in
+                Settings → Business Card so we can find your ranking in the SERPs.
+              </>
+            ) : (
+              <>
+                <b>Synthesized preview</b> — {current?.mocked_reason ||
+                "the SERP provider fell back to synthesized data. Re-run to try again."}
+              </>
+            )}
           </div>
         </div>
       )}

@@ -1020,7 +1020,13 @@ def _resolve_heatmap_point(pt: Dict[str, float], resp: Any,
                 top10_urls.append(url)
     return {
         **pt,
+        # ``rank_val`` may be None when the tenant's target domain
+        # didn't appear anywhere in the first 100 SERP results. That
+        # is REAL data ("we don't rank here"), not a mocked-fallback
+        # — surface it explicitly so the UI can render "> 100" or
+        # "not ranking" instead of a blank cell.
         "rank": rank_val if isinstance(rank_val, int) else None,
+        "not_ranked": rank_val is None,
         "mocked": False,
         "top_10_urls": top10_urls,
         "url_found": match.get("url") if isinstance(match, dict) else None,
