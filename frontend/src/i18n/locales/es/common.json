@@ -121,5 +121,27 @@
       "remove_confirm_no": "Cancelar",
       "last_verified": "Última verificación: {{when}}"
     }
+  },
+  "payment_providers": {
+    "title": "Procesadores de Pago",
+    "description": "Elige un procesador principal para cobrar tarjetas y un respaldo opcional que se usa automáticamente cuando el principal no está disponible. Cambiar de procesador puede restablecer los métodos de pago guardados de tus clientes; los cargos existentes no se ven afectados. [Legal review — English-only.]",
+    "primary_label": "Procesador de pago principal",
+    "backup_label": "Procesador de pago de respaldo",
+    "backup_none": "Ninguno (sin failover)",
+    "test_button": "Probar conexión",
+    "testing": "Probando…",
+    "result_ok": "Conectado",
+    "result_fail": "Falló",
+    "same_provider_error": "El principal y el de respaldo deben ser proveedores distintos.",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "saved": "Procesadores de pago actualizados",
+    "recent_failovers": "Eventos recientes de failover",
+    "audit_when": "Cuándo",
+    "audit_op": "Operación",
+    "audit_primary": "Principal",
+    "audit_backup": "Respaldo",
+    "audit_reason": "Motivo",
+    "audit_resolution": "Resolución"
   }
 }

@@ -10,6 +10,7 @@ from .lumino_provider import LuminoProvider
 from .models import UnknownPaymentsProvider
 from .paypal_provider import PayPalProvider
 from .square_provider import SquareProvider
+from .stripe_provider import StripeByoProvider
 from .tenant_base import PaymentsByoProvider
 
 
@@ -18,6 +19,7 @@ _PROVIDER_CLASSES: Dict[str, Type[PaymentsByoProvider]] = {
     PayPalProvider.provider_key: PayPalProvider,
     AuthorizeNetProvider.provider_key: AuthorizeNetProvider,
     LuminoProvider.provider_key: LuminoProvider,
+    StripeByoProvider.provider_key: StripeByoProvider,
 }
 _PROVIDER_CACHE: Dict[str, PaymentsByoProvider] = {}
 _SHORT_NAME_TO_KEY: Dict[str, str] = {
@@ -25,6 +27,7 @@ _SHORT_NAME_TO_KEY: Dict[str, str] = {
     "paypal":   PayPalProvider.provider_key,
     "authnet":  AuthorizeNetProvider.provider_key,
     "lumino":   LuminoProvider.provider_key,
+    "stripe":   StripeByoProvider.provider_key,
 }
 
 

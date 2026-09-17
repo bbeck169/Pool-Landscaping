@@ -121,5 +121,27 @@
       "remove_confirm_no": "Annuler",
       "last_verified": "Dernière vérification : {{when}}"
     }
+  },
+  "payment_providers": {
+    "title": "Processeurs de Paiement",
+    "description": "Choisissez un processeur principal pour débiter les cartes et un processeur de secours facultatif utilisé automatiquement lorsque le principal est indisponible. Le changement de processeur peut réinitialiser les moyens de paiement enregistrés des clients ; les paiements existants ne sont pas affectés. [Legal review — English-only.]",
+    "primary_label": "Processeur de paiement principal",
+    "backup_label": "Processeur de paiement de secours",
+    "backup_none": "Aucun (pas de bascule)",
+    "test_button": "Tester la connexion",
+    "testing": "Test en cours…",
+    "result_ok": "Connecté",
+    "result_fail": "Échec",
+    "same_provider_error": "Le principal et le processeur de secours doivent être différents.",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "saved": "Processeurs de paiement mis à jour",
+    "recent_failovers": "Événements de bascule récents",
+    "audit_when": "Quand",
+    "audit_op": "Opération",
+    "audit_primary": "Principal",
+    "audit_backup": "Secours",
+    "audit_reason": "Motif",
+    "audit_resolution": "Résolution"
   }
 }

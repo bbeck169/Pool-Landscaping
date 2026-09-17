@@ -372,17 +372,70 @@ async def post_charge(
     if _is_tech(user) or _is_customer(user):
         raise HTTPException(403, "Admin/manager only")
     _require_admin(user)
-    try:
-        return await stripe_svc.charge_card_on_file(
+
+    # Feb-2026 · Payment Processor Primary/Backup — canary call-site.
+    # This endpoint is wired through :func:`with_failover` so that
+    # a tenant that has configured ``backup_provider`` gets a
+    # runtime retry on transient Stripe errors (5xx / network). The
+    # non-retryable errors below (ChargeAlreadySucceededError,
+    # InvoiceAlreadyPaidError, ValueError, generic Exception) STAY
+    # in this handler and NEVER trigger a backup retry — declines
+    # and 4xx bodies must surface to the operator, not double-charge.
+    from services.payments_byo.failover_router import (
+        PaymentProviderUnavailableError,
+        ProviderTransientError,
+        is_transient_httpx_error,
+        with_failover,
+    )
+    from services.payments_byo.stripe_provider import StripeByoProvider
+
+    async def _do_charge(provider):
+        # When the failover router selected Stripe (the primary in
+        # ~100% of tenants), preserve byte-identical semantics by
+        # calling the same ``charge_card_on_file`` this handler
+        # always has. This keeps existing tests + observability
+        # (stripe_charges collection, 409-on-already-paid) intact.
+        if isinstance(provider, StripeByoProvider):
+            try:
+                return await stripe_svc.charge_card_on_file(
+                    tenant_id=tenant["id"],
+                    customer_id=body.customer_id,
+                    payment_method_id=body.payment_method_id,
+                    amount_cents=body.amount_cents,
+                    currency=body.currency,
+                    invoice_id=body.invoice_id,
+                    description=body.description,
+                    metadata=body.metadata,
+                    actor_user_id=user.get("id"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Classify: only httpx transients / 5xx are eligible
+                # for backup retry. Everything else re-raises so
+                # the outer except-chain converts to 4xx/402/502.
+                if is_transient_httpx_error(exc):
+                    raise ProviderTransientError(str(exc)) from exc
+                raise
+        # Backup provider path — normalized BYO ``create_charge``.
+        # Stripe-only fields (customer_id / payment_method_id) are
+        # forwarded so that a Stripe-shaped body still validates
+        # against a backup that doesn't need them.
+        return await provider.create_charge(
             tenant_id=tenant["id"],
-            customer_id=body.customer_id,
-            payment_method_id=body.payment_method_id,
             amount_cents=body.amount_cents,
             currency=body.currency,
-            invoice_id=body.invoice_id,
+            customer_id=body.customer_id,
+            payment_method_id=body.payment_method_id,
             description=body.description,
-            metadata=body.metadata,
-            actor_user_id=user.get("id"),
+            metadata=body.metadata or None,
+        )
+
+    try:
+        return await with_failover(
+            tenant_id=tenant["id"],
+            operation="create_charge",
+            call=_do_charge,
+            db=db,
+            retryable_errors=(ProviderTransientError,),
         )
     except stripe_svc.ChargeAlreadySucceededError as exc:
         # Feb-2026 · FIX 1 — return 409 + existing PI so callers
@@ -393,6 +446,11 @@ async def post_charge(
         })
     except stripe_svc.InvoiceAlreadyPaidError as exc:
         raise HTTPException(409, {"detail": "invoice already paid"})
+    except PaymentProviderUnavailableError as exc:
+        raise HTTPException(503, {
+            "detail": "payment_provider_unavailable",
+            "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:  # noqa: BLE001

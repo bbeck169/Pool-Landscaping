@@ -20,6 +20,7 @@ import { Image as ImageIcon, Trash2, Loader2, Upload } from "lucide-react";
 import { api, api_base, TOKEN_KEY } from "@/api";
 import { colors } from "@/theme";
 import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
+import PaymentProvidersCard from "@/components/settings/PaymentProvidersCard";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -567,6 +568,8 @@ export default function BusinessSettings() {
           </section>
 
           {/* ── Save bar ────────────────────────────────────── */}
+          <PaymentProvidersCard />
+
           <div className="lg:col-span-3 flex justify-end">
             <button
               type="button"

@@ -1005,6 +1005,14 @@ _p17_qbo_router.log_boot()
 from routers import tenant_integrations as _i17a_tenant_integrations  # noqa: E402
 api_router.include_router(_i17a_tenant_integrations.router)
 
+# Feb-2026 · Payment Processor Primary/Backup — /api/tenants/mine/
+# {settings/payment-providers, payment-audit, payment-providers/test}.
+# Backed by services.payments_byo failover_router + registry
+# (Stripe adapter registered alongside Square / PayPal / Authnet /
+# Lumino BYO). One canary call-site is wired in ``stripe_router``.
+from routers import payment_providers_settings as _fb_pp_settings  # noqa: E402
+api_router.include_router(_fb_pp_settings.router)
+
 
 for module in [notifications_router,
                # Feb 2026 · Customer Merge Phase 1 — MUST be registered

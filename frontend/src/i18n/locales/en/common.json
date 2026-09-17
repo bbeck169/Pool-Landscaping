@@ -121,5 +121,27 @@
       "remove_confirm_no": "Cancel",
       "last_verified": "Last verified: {{when}}"
     }
+  },
+  "payment_providers": {
+    "title": "Payment Processors",
+    "description": "Pick a primary processor for charging cards and an optional backup used automatically when the primary is unavailable. Switching processors may reset stored payment methods for customers; existing charges are unaffected. [Legal review — English-only.]",
+    "primary_label": "Primary payment processor",
+    "backup_label": "Backup payment processor",
+    "backup_none": "None (no failover)",
+    "test_button": "Test connection",
+    "testing": "Testing…",
+    "result_ok": "Connected",
+    "result_fail": "Failed",
+    "same_provider_error": "Primary and backup must be different providers.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Payment processors updated",
+    "recent_failovers": "Recent failover events",
+    "audit_when": "When",
+    "audit_op": "Operation",
+    "audit_primary": "Primary",
+    "audit_backup": "Backup",
+    "audit_reason": "Reason",
+    "audit_resolution": "Resolution"
   }
 }
