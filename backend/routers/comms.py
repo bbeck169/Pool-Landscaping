@@ -993,6 +993,57 @@ async def invoice_followup_approve(body: ApproveIn,
 
 # --- Send-now + sends log endpoints ------------------------------------
 
+# ── Feb 2026 · Invoice Email CTA Label — runtime locale rebuild ────
+# The two system invoice-CTA templates (``system.invoice_created`` +
+# ``system.invoice_overdue``) are seeded ONCE at ``tenant_id=None``
+# with English CTA copy baked in ``blocks_json``. At send time the
+# recipient may be a non-English customer, so we swap the frozen
+# blocks with a freshly-rebuilt localised copy from
+# :func:`build_system_email_templates`.
+
+_INVOICE_CTA_TEMPLATE_CODES = {
+    "system.invoice_created", "system.invoice_overdue",
+}
+
+
+def _apply_runtime_locale_to_invoice_template(
+    tpl: dict,
+    template_code: str,
+    customer: Optional[dict],
+    tenant: Optional[dict],
+) -> dict:
+    """Return a shallow-copied template with ``blocks_json`` rebuilt
+    in the recipient's locale WHEN the template is one of the two
+    invoice-CTA system templates. Non-invoice templates + templates
+    that a tenant has customised (``is_system=False``) pass through
+    unchanged so admin-authored copy isn't silently overwritten.
+    """
+    if template_code not in _INVOICE_CTA_TEMPLATE_CODES:
+        return tpl
+    # Only rewrite the shared system rows; tenants that DUPLICATED the
+    # template into their own custom copy keep whatever they wrote.
+    if not tpl.get("is_system"):
+        return tpl
+    from services.i18n_notifications import resolve_recipient_locale
+    from comms_seed.system_data import build_system_email_templates
+    locale = resolve_recipient_locale(
+        customer=customer, tenant=tenant, audience="customer",
+    )
+    fresh = next(
+        (t for t in build_system_email_templates(locale)
+          if t.get("code") == template_code),
+        None,
+    )
+    if not fresh:
+        return tpl
+    # Preserve every DB-only field (tenant_id, is_system, timestamps,
+    # etc.) — only ``blocks_json`` needs the swap. ``subject`` is
+    # locale-invariant for both templates so we leave it alone.
+    localised = dict(tpl)
+    localised["blocks_json"] = fresh["blocks_json"]
+    return localised
+
+
 async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
                               channel: str, recipient_id: str,
                               extras: Optional[Dict[str, Any]] = None,
@@ -1019,6 +1070,19 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
         tpl = await _find_email_template(tenant_id, template_code)
         if not tpl:
             return None
+        # Feb 2026 · Invoice Email CTA Label — RUNTIME locale for
+        # invoice-CTA templates. The DB-seeded ``blocks_json`` was
+        # baked in English at seed time (``tenant_id=None`` shared
+        # system row). At send time we resolve the recipient's
+        # locale (customer.locale → tenant.default_locale → "en")
+        # and rebuild the two invoice-CTA blocks in that locale via
+        # ``build_system_email_templates``. Non-invoice templates
+        # pass through unchanged. This is the "true" delivery of
+        # B2 — the customer receives "Ver factura" / "Voir la
+        # facture" in their inbox instead of the English CTA.
+        tpl = _apply_runtime_locale_to_invoice_template(
+            tpl, template_code, customer, tenant,
+        )
         # Feb-2026 · Multi-Contact Phase 2 · fan-out (automation).
         # Called by the automation engine — respects mute.
         from services.customer_multi_contact import (
@@ -1137,6 +1201,13 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
         tpl = await _find_email_template(tenant_id, template_code)
         if not tpl:
             raise HTTPException(404, f"email template {template_code!r} not found")
+        # Feb 2026 · Invoice Email CTA Label — RUNTIME locale. Same
+        # rebuild logic ``deliver_one_by_ids`` uses; ensures the
+        # admin test-fire endpoint + ``/send-now`` respect the
+        # recipient locale the same way the automation engine does.
+        tpl = _apply_runtime_locale_to_invoice_template(
+            tpl, template_code, customer, tenant,
+        )
         # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
         # Admin-triggered test-fire — bypasses the customer-level
         # mute (per-entry opt-outs still respected via the helper).

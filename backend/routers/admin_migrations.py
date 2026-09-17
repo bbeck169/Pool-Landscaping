@@ -1455,3 +1455,61 @@ async def remove_total_chlorine(
         (report.get("totals") or {}),
     )
     return report
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /admin/migrations/run-dunning-stage-cta-backfill
+# Feb 2026 · Invoice Email CTA Label ticket — admin trigger for the
+# dunning stage CTA backfill. The migration rewrites persisted
+# ``dunning_settings.stages[*].body_template`` where the legacy
+# "Pay online: " prefix still appears, replacing it with "View
+# invoice: ". Dry-run default; caller must pass ``dry_run=false`` to
+# write. Idempotent — a second call after a real run is a no-op.
+# See ``services/migrations/dunning_stages_view_invoice_backfill.py``
+# for the migration mechanics + audit stamp contract.
+# ─────────────────────────────────────────────────────────────────────
+class _DunningStageCtaBackfillBody(BaseModel):
+    dry_run: bool = Field(
+        default=True,
+        description=(
+            "Safety-first default. When true (default), returns the "
+            "per-tenant diff report without mutating. Set to false to "
+            "actually rewrite the ``Pay online: `` prefix to "
+            "``View invoice: `` on every affected stage + stamp the "
+            "``dunning_stage_cta_migrated`` audit line."
+        ),
+    )
+
+
+@router.post(
+    "/admin/migrations/run-dunning-stage-cta-backfill",
+    operation_id="admin.migrations.run_dunning_stage_cta_backfill",
+    summary="Rewrite legacy 'Pay online:' dunning-stage CTA copy to 'View invoice:'.",
+)
+async def run_dunning_stage_cta_backfill(
+    body: _DunningStageCtaBackfillBody = Body(
+        default_factory=_DunningStageCtaBackfillBody),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Super_admin trigger for the dunning-stage CTA migration.
+
+    Response mirrors the CLI's ``run_backfill`` JSON exactly:
+    ``{dry_run, tenants_scanned, tenants_affected, stages_rewritten,
+    audit_stamped, per_tenant: [{tenant_id, stages_rewritten, diffs:
+    [{stage_id, before, after}]}]}``.
+    """
+    _require_super_admin(user)
+    from services.migrations.dunning_stages_view_invoice_backfill import (
+        run_backfill,
+    )
+    report = await run_backfill(dry_run=bool(body.dry_run))
+    logger.info(
+        "[dunning-stage-cta-backfill-api] user=%s caller_tenant=%s "
+        "dry_run=%s tenants_scanned=%s tenants_affected=%s "
+        "stages_rewritten=%s audit_stamped=%s",
+        user.get("id"), tenant.get("id"), body.dry_run,
+        report.get("tenants_scanned"), report.get("tenants_affected"),
+        report.get("stages_rewritten"), report.get("audit_stamped"),
+    )
+    return report
