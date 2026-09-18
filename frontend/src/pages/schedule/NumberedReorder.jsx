@@ -227,7 +227,24 @@ export function useNumberedOrder(jobs, opts = {}) {
    *  Returns { ok, response? } like ``save()``.
    */
   const insertShift = useCallback(async (jobId, newPosition) => {
-    if (!techUserId || !date) {
+    // Sprint 3d · Feb-2026 follow-up — resolve ``technician_id`` and
+    // ``date`` from the *moved job itself*, not from the closure
+    // hints.  On a multi-tech day view, the closure ``techUserId``
+    // was seeded from the first reorderable job in the list, so
+    // moving a job that belonged to a *different* tech shipped a
+    // stale technician_id and the backend correctly rejected with
+    // ``job_id not on this tech's day``.  The job row always carries
+    // its own tech + date, so use them as the source of truth and
+    // fall back to the hook-level hints only if the job data is
+    // missing something.
+    const job = jobs.find((j) => j.id === jobId);
+    const resolvedTech = (job && (
+      job.tech_user_id || job.assigned_to || job.technician_id
+    )) || techUserId;
+    const resolvedDate =
+      (job?.scheduled_date ? String(job.scheduled_date).slice(0, 10) : "")
+      || date;
+    if (!resolvedTech || !resolvedDate) {
       return { ok: false, reason: "missing_tech_or_date" };
     }
     const posInt = parseInt(newPosition, 10);
@@ -238,8 +255,10 @@ export function useNumberedOrder(jobs, opts = {}) {
     setSaving(true);
     try {
       const r = await api.post("/jobs/reorder-day-route", {
-        date, technician_id: techUserId, job_id: jobId,
-        new_position: posInt,
+        date:          resolvedDate,
+        technician_id: resolvedTech,
+        job_id:        jobId,
+        new_position:  posInt,
       });
       setBanner({
         kind: "info",
@@ -257,7 +276,7 @@ export function useNumberedOrder(jobs, opts = {}) {
     } finally {
       setSaving(false);
     }
-  }, [techUserId, date, onSaved, onError]);
+  }, [jobs, techUserId, date, onSaved, onError]);
 
   // Auto-save on blur. Sprint 3d · Feb-2026 — if the touched job's
   // typed value differs from its current (server) position, fire

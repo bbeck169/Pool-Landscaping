@@ -168,4 +168,48 @@ describe("useNumberedOrder + NumberOrderInput · Sprint 3d insert-shift", () => 
         .toMatch(/Moved.*1.*3/);
     });
   });
+
+  it("multi-tech day view — POST payload uses the MOVED job's own tech + date, not the hook's closure hint", async () => {
+    // Sprint 3d follow-up regression — the calendar can render a
+    // multi-tech day. Previously the closure ``techUserId`` was
+    // seeded from the first job in the list, so reordering a job
+    // that belonged to a *different* tech shipped the wrong
+    // ``technician_id`` and the backend rejected with
+    // "job_id not on this tech's day". The fix reads the tech +
+    // date from the moved job itself.
+    const jobsMixed = [
+      {
+        id: "job-tech-a-1", route_index: 0, customer_name: "A1",
+        tech_user_id: "tech-alice", scheduled_date: "2026-09-09T09:00:00+00:00",
+      },
+      {
+        id: "job-tech-b-1", route_index: 1, customer_name: "B1",
+        // NOTE: different tech than the first row — this is the
+        // row whose row-order input the user edits.
+        tech_user_id: "tech-bob",   scheduled_date: "2026-09-09T09:00:00+00:00",
+      },
+    ];
+    api.post.mockResolvedValue({
+      success: true, changed: true, renumbered: [],
+      old_position: 2, new_position: 1, affected_job_ids: [],
+    });
+    // Harness passes techUserId="tech-a" (the hook-level HINT) —
+    // if we shipped that, the backend would 404. The fix must
+    // ignore the hint and use each job's own tech_user_id.
+    render(<Harness jobs={jobsMixed} techUserId="tech-alice" date="2026-09-09" />);
+    const inputB = screen.getByTestId("route-order-input-job-tech-b-1");
+    fireEvent.focus(inputB);
+    fireEvent.change(inputB, { target: { value: "1" } });
+    fireEvent.blur(inputB);
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(api.post).toHaveBeenCalledWith(
+      "/jobs/reorder-day-route",
+      expect.objectContaining({
+        job_id:        "job-tech-b-1",
+        technician_id: "tech-bob",     // MOVED job's tech, NOT "tech-alice"
+        date:          "2026-09-09",
+        new_position:  1,
+      }),
+    );
+  });
 });
