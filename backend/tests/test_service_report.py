@@ -58,7 +58,17 @@ def customer_h():
 
 @pytest.fixture(scope="module")
 def sunbelt_admin_h():
-    return {"Authorization": f"Bearer {_login('admin@sunbelt.com')['access_token']}"}
+    # Sprint 3a · Feb 2026 — the `sunbelt` demo tenant is a permanent
+    # cross-tenant fixture in production seed DBs but is not created by
+    # any in-repo seed script; some pods (including fresh forks) start
+    # without it. Align with `test_estimator.py::sunbelt_admin_h` and
+    # skip gracefully when the tenant admin isn't reachable, so the
+    # tenant-isolation test doesn't ERROR at fixture setup on those
+    # environments.
+    try:
+        return {"Authorization": f"Bearer {_login('admin@sunbelt.com')['access_token']}"}
+    except Exception:
+        pytest.skip("no sunbelt admin seeded in this environment")
 
 
 def _make_job_direct(dbc, tenant_slug: str, tech_id_field: str, service_type: str,
@@ -219,7 +229,29 @@ def test_submit_locks_report(tech_h, tech_user, dbc):
     tid = tech_user["user"].get("technician_id") or tech_user["user"]["id"]
     jid = _make_job_direct(dbc, "aquaterra", tid, "Pool weekly")
     try:
-        requests.get(f"{API}/jobs/{jid}/service-report", headers=tech_h, timeout=15)
+        # Sprint 3a · Feb 2026 — PATCH the four "Required Four"
+        # chemistry readings before submitting so the CHEM1 gate
+        # ({free_cl, ph, alkalinity, cya}) doesn't 422 the test.
+        # The bootstrap GET seeds the readings shape; we overlay
+        # values on the canonical keys before submit.
+        bootstrap = requests.get(f"{API}/jobs/{jid}/service-report",
+                                    headers=tech_h, timeout=15).json()
+        readings = list(bootstrap.get("chemical_readings") or [])
+        _required_values = {
+            "free_chlorine": 2.5,
+            "ph": 7.5,
+            "alkalinity": 100,
+            "cyanuric": 40,
+        }
+        for row in readings:
+            k = row.get("key")
+            if k in _required_values:
+                row["value"] = _required_values[k]
+        pr = requests.patch(f"{API}/jobs/{jid}/service-report",
+                              headers=tech_h,
+                              json={"chemical_readings": readings},
+                              timeout=15)
+        assert pr.status_code == 200, pr.text
         r = requests.post(f"{API}/jobs/{jid}/service-report/submit",
                           headers=tech_h, timeout=15)
         assert r.status_code == 200 and r.json()["submitted_at"]
@@ -284,7 +316,11 @@ def test_empty_tenant_template_falls_back_to_pool_defaults(admin_h, tech_h, tech
         assert data["template"] == "pool"
         keys = [f["key"] for f in data["chemical_reading_fields"]]
         # Every canonical chemistry field must still be present.
-        for expected in ("chlorine", "ph", "alkalinity", "cyanuric",
+        # Sprint 3a · Feb 2026 — the CHEM1 rename swapped ``chlorine``
+        # for ``free_chlorine`` (aligns with the front-end reading key
+        # + the API's ``missing_fields`` catalog). Assertion updated
+        # to match the current schema.
+        for expected in ("free_chlorine", "ph", "alkalinity", "cyanuric",
                           "calcium_hardness", "salt", "water_temp"):
             assert expected in keys, (
                 f"chemistry field '{expected}' missing after tenant saved "
@@ -313,8 +349,11 @@ def test_algae_field_round_trips_alongside_chemistry(admin_h, tech_h, tech_user,
         readings = list(initial.get("chemical_readings") or [])
         assert readings, "bootstrap must return chemistry rows"
         # Populate a couple of chemistry values + set algae=light.
+        # Sprint 3a · Feb 2026 — canonical chlorine key is
+        # ``free_chlorine`` (CHEM1 rename); the pre-rename ``chlorine``
+        # match returned zero rows and StopIteration'd the assertion.
         for row in readings:
-            if row.get("key") == "chlorine":
+            if row.get("key") == "free_chlorine":
                 row["value"] = 2.5
             if row.get("key") == "ph":
                 row["value"] = 7.5
@@ -334,7 +373,7 @@ def test_algae_field_round_trips_alongside_chemistry(admin_h, tech_h, tech_user,
         after = r2.json()
         assert after["observations"]["visible_algae"] == "light"
         assert after["observations"]["algae_notes"] == "TEST_light on skimmer"
-        chl = next(x for x in after["chemical_readings"] if x.get("key") == "chlorine")
+        chl = next(x for x in after["chemical_readings"] if x.get("key") == "free_chlorine")
         ph = next(x for x in after["chemical_readings"] if x.get("key") == "ph")
         assert chl["value"] == 2.5
         assert ph["value"] == 7.5

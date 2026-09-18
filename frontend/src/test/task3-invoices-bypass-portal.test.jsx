@@ -82,6 +82,15 @@ function LocationSpy() {
 describe("PublicInvoiceMagic (`/i/:token`)", () => {
   beforeEach(() => {
     getSpy.mockReset();
+    // Sprint 3a · Feb 2026 — the component's useEffect fires
+    // ``api.get(url).then(...)`` on mount. ``vi.fn()`` returns
+    // ``undefined`` by default which crashes ``.then``. Set a
+    // no-op resolved Promise so the token-decode test (which
+    // doesn't otherwise care about the /full-magic GET) doesn't
+    // blow up on the effect. Individual tests can still override
+    // this via ``getSpy.mockImplementation(...)`` when they need
+    // specific responses.
+    getSpy.mockResolvedValue({});
     _currentRole = "customer";
   });
   afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -125,6 +134,10 @@ describe("PublicInvoiceMagic (`/i/:token`)", () => {
 describe("PortalInvoiceDetail (Task 3 — customer bypass)", () => {
   beforeEach(() => {
     getSpy.mockReset();
+    // Sprint 3a · Feb 2026 — same default as the sibling describe
+    // block; component effects call ``api.get`` on mount and
+    // ``vi.fn()`` returning ``undefined`` breaks ``.then``.
+    getSpy.mockResolvedValue({});
     _currentRole = "customer";
   });
   afterEach(() => { cleanup(); vi.clearAllMocks(); });

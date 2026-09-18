@@ -55,6 +55,45 @@ def ensure_phase_d4_seed_ran():
     yield
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _sprint3a_snapshot_tenant_hvac_overrides():
+    """Sprint 3a · Feb 2026 — snapshot + strip aquaterra's stale
+    ``tenant_checklist_overrides`` for ``hvac`` so the endpoint
+    resolver falls through to the DEFAULT template (which the D4
+    seeder populated with ``label_i18n.{es,fr}``).
+
+    Root cause: the endpoint checks ``tenant_checklist_overrides``
+    BEFORE ``industry_checklist_templates``. A prior test run left
+    an override row on aquaterra whose ``items`` lack any
+    ``label_i18n`` field — so the endpoint returned English regardless
+    of ``?locale=es``. This fixture snapshots the row, deletes it for
+    the duration of the test module, and restores it at teardown so
+    downstream tests aren't affected. Applies to every super-admin
+    tenant slug the tests hit (currently aquaterra only)."""
+    tenant = _sync.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+    if not tenant:
+        yield
+        return
+    tid = tenant["id"]
+    snapshots = list(_sync.tenant_checklist_overrides.find(
+        {"tenant_id": tid, "industry": {"$in": ["hvac"]}},
+        {"_id": 0},
+    ))
+    _sync.tenant_checklist_overrides.delete_many(
+        {"tenant_id": tid, "industry": {"$in": ["hvac"]}},
+    )
+    try:
+        yield
+    finally:
+        # Restore whatever we snapshotted so downstream tests / real
+        # tenant state are untouched.
+        for snap in snapshots:
+            _sync.tenant_checklist_overrides.replace_one(
+                {"tenant_id": snap["tenant_id"], "industry": snap["industry"]},
+                snap, upsert=True,
+            )
+
+
 # ─────────────────────── endpoint · query param ─────────────────────
 def test_endpoint_locale_query_param_returns_spanish(super_headers):
     r = http.get(f"{API}/checklists/industry/hvac?locale=es",
