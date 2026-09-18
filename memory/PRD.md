@@ -18347,3 +18347,140 @@ button label switches to `Enabling…` / `Scheduling…` while
   guards + enable/disable added.
 - P0 secret rotation (still yours to action).
 
+
+
+---
+
+## Sprint 3c wrap-up (Feb 2026) — Force-off endpoint + Zillow 502 guard
+
+**Date**: Feb 2026 (this session)
+
+### Item 1 · Super-admin force-off endpoint
+- **NEW**: `services/entitlements/check.py` gains
+  `BILLING_STATUS_CANCEL_IMMEDIATE = "cancelled_immediate"` — distinct
+  from `cancelled_end_of_cycle`; access denied instantly (no grace).
+- **NEW**: `routers/admin_entitlements.py` —
+  `POST /api/admin/entitlements/{tenant_id}/{feature_key}/force-off`.
+    * Super-admin only (409 `super_admin_required` on regular admin).
+    * Idempotent (returns `already_forced_off` + `stripe_cleanup_status="skipped"` on second call).
+    * Flips entitlement to `enabled=false`, `billing_status="cancelled_immediate"`, `cancels_at=now()`, `disabled_by_user_id`.
+    * Attempts synchronous Stripe subscription-item delete (immediate proration credit). If Stripe fails, response carries `stripe_cleanup_status="failed"` + underlying error — local revocation still persists so downstream guards enforce immediately.
+    * Writes `feature_force_off` audit line with optional `reason` body param.
+- **MOD**: `server.py` — registers the new admin router.
+
+### Item 2 · Zillow-lookup 502 handler-level guard
+- **MOD**: `routers/d2d.py` — both `d2d_zillow_lookup` and
+  `d2d_prospect_enrich_zillow` now catch unhandled provider-layer
+  exceptions and return **502 `zillow_provider_unavailable`** with a
+  clean body (`error`, `code`, `message`, `underlying`). Preserves the
+  existing `ZillowNotConfigured` → 503 and `ZillowRateLimited` → 429
+  paths. Underlying exception logged at WARN so ops can still trace.
+- **NOT FIXED (deeper pre-existing product bug — flagged as follow-up)**:
+  `services/enrichment/zillow.py:315` imports `get_zillow_client` and
+  `ZillowError` from `services/property_data/zillow_adapter.py`, but
+  the adapter only exports `class ZillowClient` (no factory, no error
+  class). Additionally, `_map_provider_response(raw)` at
+  `enrichment/zillow.py:147` reads flat fields off `raw` but the
+  adapter wraps responses in `{"unavailable": bool, "data": {...},
+  "cached": bool}`. Two-stack contract drift — needs a dedicated
+  fix sprint (P1 backlog: `zillow-adapter-contract-repair`).
+
+### Tests — `test_feature_marketplace_force_off.py` (9/9 passed)
+- RBAC: admin 403, unknown feature 404, unknown tenant 404.
+- Force-off happy path (audit line + reason preserved).
+- Force-off idempotent (second call → `already_forced_off`,
+  `stripe_cleanup_status="skipped"`).
+- Force-off upgrades from EoC-cancel → immediate.
+- Downstream SEO Heatmap guard denies 402 immediately post force-off.
+- **AI Analytics layered gate · Branch B** — previously
+  HUMAN_REQUIRED. Verified end-to-end: entitled + toggle_off →
+  `org_toggle_disabled`; force-off + toggle_on → `feature_not_enabled`
+  with `org_toggle_state=true`.
+- Zillow-lookup no longer 500s (returns 502 with clean body OR real
+  200 when the plumbing is later fixed).
+
+### Live preview curl evidence — Branch B verification
+```
+== SETUP: enable ai_analytics + toggle OFF ==
+  billing_status = active
+  toggle OFF stamped
+
+== STEP 1 (entitled + toggle OFF): GET /analytics/overview ==
+{"detail":{"code":"org_toggle_disabled","org_toggle_state":false,…}}
+HTTP 402
+
+== STEP 2: FORCE-OFF ai_analytics (super_admin) ==
+{"status":"forced_off","stripe_cleanup_status":"success",
+ "stripe_cleanup_detail":"sandbox",
+ "entitlement":{"billing_status":"cancelled_immediate",
+                 "enabled":false, "cancels_at":"2026-09-18T08:47:54…"}}
+
+== STEP 3: toggle back ON, GET /analytics/overview ==
+{"detail":{"code":"feature_not_enabled","org_toggle_state":true,…}}
+HTTP 402
+
+== IDEMPOTENCY: force-off again ==
+  status = already_forced_off  stripe_cleanup = skipped
+
+== RBAC: admin invoking force-off ==
+{"detail":{"detail":"super_admin_required",…}}
+HTTP 403
+```
+
+### Live preview curl evidence — Zillow 502 (before/after)
+```
+BEFORE (500 Internal Server Error, opaque):
+HTTP 500  Internal Server Error
+
+AFTER (502, clean body with actionable error code):
+HTTP 502
+{"error":"zillow_provider_unavailable",
+ "code":"zillow_provider_unavailable",
+ "message":"The Zillow provider integration is currently unavailable…",
+ "underlying":"ImportError: cannot import name 'get_zillow_client' …"}
+```
+
+### Stripe state after force-off
+- Sandbox posture triggered on `si_sandbox_*` item id → synthetic
+  delete returned `success` — no real Stripe API call made, no
+  orphan subscription items. Deterministic + safe for preview envs.
+- Production posture: `_stripe_immediate_delete` would call
+  `stripe.SubscriptionItem.delete(item_id,
+  proration_behavior="create_prorations", idempotency_key="ent_force_off:{mode}:{tenant}:{feature}")`.
+  Failure is caught and reported in `stripe_cleanup_status`; local
+  revocation still writes.
+
+### State restoration
+- Aquaterra `feature_entitlements` re-seeded to migration-installed
+  defaults (4 rows, `enabled=false`) via the backfill migration.
+- Aquaterra `settings.ai.analytics_enabled` unset.
+- Test subscription mirrors (`sub_test_aq_marketplace`,
+  `sub_test_aq_forceoff`, `sub_demo_aq_marketplace`) deleted.
+- Audit rows preserved (append-only history).
+
+### Test health (Sprint 3b+3c aggregate)
+- Backend: **85 passed, 1 skipped** across
+  `test_feature_marketplace.py` (23), `test_feature_marketplace_force_off.py` (9),
+  `test_chemistry_tenant_settings.py` (23), `test_chemistry_dosing_engine.py` (20),
+  `test_service_report.py` (9 + 1 skip).
+- Frontend Vitest: **43/43** across 5 suites
+  (`feature-marketplace-settings`, `chemistry-configuration-settings`,
+  `ticket3-ticket4-org-settings`, `settings-hub`,
+  `admin-unlinked-technicians-widget`).
+
+### Guardrails honored
+- No GitHub clones / no external repos touched.
+- No changes inside `/app/mobile/`.
+- All responses / code comments / docs in English.
+- Full state restoration on exit — no test pollution left behind.
+
+### New backlog item added
+- **`zillow-adapter-contract-repair` (P1)** — fix the stacked
+  `services.enrichment.zillow` ↔ `services.property_data.zillow_adapter`
+  contract drift (missing `get_zillow_client`/`ZillowError` exports +
+  `_map_provider_response` return-shape mismatch). Symptom masked by
+  the 502 handler-level guard; real Zillow calls still non-functional
+  until this is fixed. Estimated: 1-day sprint (add factory + error
+  class, teach `_map_provider_response` about the wrapper envelope,
+  add a live adapter integration test).
+

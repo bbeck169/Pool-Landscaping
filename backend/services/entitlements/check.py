@@ -28,6 +28,11 @@ log = logging.getLogger("entitlements.check")
 BILLING_STATUS_ACTIVE = "active"
 BILLING_STATUS_PENDING = "pending_stripe"
 BILLING_STATUS_CANCEL_EOC = "cancelled_end_of_cycle"
+# Sprint 3c wrap-up · Feb-2026 — super_admin force-off marker.
+# Distinct from ``cancelled_end_of_cycle`` because access is
+# revoked IMMEDIATELY (no grace window). The ``has_feature`` check
+# denies on this status regardless of any ``cancels_at`` value.
+BILLING_STATUS_CANCEL_IMMEDIATE = "cancelled_immediate"
 
 
 def _now_iso() -> str:

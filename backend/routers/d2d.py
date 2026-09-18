@@ -505,6 +505,34 @@ async def d2d_zillow_lookup(
                        "message": str(e),
                        "used": state["used"], "cap": state["cap"]},
         )
+    except HTTPException:
+        raise
+    except Exception as exc:                                        # noqa: BLE001
+        # Sprint 3c wrap-up · Feb-2026 — surface unexpected
+        # provider-layer failures (ImportError / adapter contract
+        # drift / provider timeout) as a specific 502 instead of a
+        # generic 500. This lets the frontend render an actionable
+        # error and lets ops filter logs for real Zillow outages
+        # vs code bugs. The underlying exception is logged at WARN
+        # so the plumbing bug is still visible in the trail.
+        import logging
+        logging.getLogger("d2d.zillow_lookup").warning(
+            "[zillow-lookup] provider-layer failure address=%s tenant=%s "
+            "err=%s: %s",
+            address, tenant.get("id"), type(exc).__name__, exc,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error":   "zillow_provider_unavailable",
+                "code":    "zillow_provider_unavailable",
+                "message": (
+                    "The Zillow provider integration is currently "
+                    "unavailable. This has been logged for ops."
+                ),
+                "underlying": f"{type(exc).__name__}: {str(exc)[:180]}",
+            },
+        )
     return prop.model_dump()
 
 
@@ -551,6 +579,31 @@ async def d2d_prospect_enrich_zillow(
             content={"error": "zillow_rate_limited",
                        "message": str(e),
                        "used": state["used"], "cap": state["cap"]},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:                                        # noqa: BLE001
+        # Sprint 3c wrap-up · Feb-2026 — see matching guard in
+        # ``d2d_zillow_lookup``. Surface provider-layer failures
+        # as 502 so the frontend gets a clean actionable error.
+        import logging
+        logging.getLogger("d2d.zillow_enrich").warning(
+            "[zillow-enrich] provider-layer failure prospect=%s "
+            "tenant=%s err=%s: %s",
+            prospect_id, tenant.get("id"),
+            type(exc).__name__, exc,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error":   "zillow_provider_unavailable",
+                "code":    "zillow_provider_unavailable",
+                "message": (
+                    "The Zillow provider integration is currently "
+                    "unavailable. This has been logged for ops."
+                ),
+                "underlying": f"{type(exc).__name__}: {str(exc)[:180]}",
+            },
         )
     payload = prop.model_dump()
     await db.d2d_knocks.update_one(
