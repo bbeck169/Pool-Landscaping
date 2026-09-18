@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin
 from routers.tenants import get_current_tenant
+from services.entitlements.deps import require_feature
 
 router = APIRouter()
 
@@ -1125,7 +1126,14 @@ async def _ensure_heatmap_cache_index() -> None:
         logger.warning(f"[heatmap] cache index setup skipped: {exc}")
 
 
-@router.post("/seo/rank-heatmaps")
+@router.post(
+    "/seo/rank-heatmaps",
+    # Sprint 3c · Feb-2026 — Feature Marketplace entitlement.
+    # Only the WRITE/generate boundary is gated (per note 2a); the
+    # GET list + GET-by-id below remain open so a disabled tenant
+    # can still view historical heatmaps read-only.
+    dependencies=[Depends(require_feature("seo_heatmap"))],
+)
 async def start_heatmap(body: RankHeatmapIn, bg: BackgroundTasks,
                          bypass_cache: bool = Query(False,
                              description="Force a re-run past the 6h cooldown. "

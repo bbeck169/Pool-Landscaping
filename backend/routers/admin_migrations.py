@@ -1500,6 +1500,47 @@ async def backfill_tenant_chemistry_defaults(
 
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Sprint 3c · Feb-2026 — Backfill ``feature_entitlements`` rows so
+# every tenant has one row per feature (enabled=false). Super_admin
+# only, dry-run flag. Idempotent — per-(tenant, feature) exists guard.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/entitlements/backfill-feature-defaults",
+    operation_id="admin.entitlements.backfill_feature_defaults",
+    summary="Sprint 3c · Seed feature_entitlements rows on every tenant",
+)
+async def backfill_feature_entitlements_defaults(
+    dry_run: bool = Query(
+        True,
+        description=(
+            "When true (default), returns the counts of rows that "
+            "would be inserted without writing. Pass ``dry_run=false`` "
+            "to persist the enabled=false rows."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Sprint 3c · Feb-2026 — one-shot backfill for the Feature
+    Marketplace: ensures every tenant has one ``feature_entitlements``
+    row per registered feature (``enabled=false``, ``billing_status=None``).
+    Idempotent. See ``services/migrations/feature_entitlements_backfill.py``.
+    """
+    _require_super_admin(user)
+    from services.migrations.feature_entitlements_backfill import backfill
+    report = await backfill(db, dry_run=bool(dry_run))
+    logger.info(
+        "[feature-entitlements-backfill-api] user=%s caller_tenant=%s "
+        "dry_run=%s totals=%s",
+        user.get("id"), tenant.get("id"), dry_run,
+        (report.get("counts") or {}),
+    )
+    return report
+
+
+
+
 
 # ─────────────────────────────────────────────────────────────────────
 # POST /admin/migrations/run-dunning-stage-cta-backfill

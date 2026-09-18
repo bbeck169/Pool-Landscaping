@@ -168,6 +168,7 @@ import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
 import OrgNotificationsSettings from "@/pages/settings/OrgNotificationsSettings";
 import AIConfigurationSettings from "@/pages/settings/AIConfigurationSettings";
 import ChemistryConfigurationSettings from "@/pages/settings/ChemistryConfigurationSettings";
+import FeatureMarketplaceSettings from "@/pages/settings/FeatureMarketplaceSettings";
 import SettingsSocial from "@/pages/settings/SettingsSocial";
 import MyProfilePage from "@/pages/account/MyProfilePage";
 import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
@@ -1364,6 +1365,8 @@ export default function App() {
               <Route path="ai-configuration" element={<AIConfigurationSettings />} />
               {/* Sprint 3b · Feb-2026 — Chemistry Configuration. */}
               <Route path="chemistry-configuration" element={<ChemistryConfigurationSettings />} />
+              {/* Sprint 3c · Feb-2026 — Feature Marketplace. */}
+              <Route path="feature-marketplace" element={<FeatureMarketplaceSettings />} />
             </Route>
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

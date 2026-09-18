@@ -18110,3 +18110,240 @@ Frontend:
 - Notif-pipeline module-level `MongoClient` hardening (Sprint 3b was
   the notif hardening candidate — deferred to the next infra sprint).
 
+
+
+---
+
+## Sprint 3c (Feb 2026) — Feature Marketplace · COMPLETE
+
+**Date**: Feb 2026 (this session)
+
+### Scope
+Ship a Feature Marketplace tab in Organization Settings where admins can
+browse and enable four premium add-ons — **Zillow Data**, **SEO Rank
+Heatmap**, **AI Analytics**, **AI Copilot** — with real Stripe billing
+(immediate proration on enable, end-of-cycle cancel on disable) and real
+entitlement enforcement on the four downstream feature entry points.
+
+### Data model
+New collection: `feature_entitlements` (one doc per tenant × feature):
+```json
+{
+  "id": "…", "tenant_id": "…", "feature_key": "seo_heatmap",
+  "enabled": true, "enabled_at": "…", "enabled_by_user_id": "…",
+  "billing_status": "active" | "cancelled_end_of_cycle" | null,
+  "cancels_at": "…ISO…" | null,
+  "stripe_subscription_item_id": "si_…" | "si_sandbox_…",
+  "stripe_subscription_id": "sub_…",
+  "created_at": "…", "updated_at": "…"
+}
+```
+Chosen representation for scheduled-cancel: `enabled=true` kept
+(access continues through the cycle) with
+`billing_status="cancelled_end_of_cycle"` + `cancels_at`. The
+`is_entitlement_active` predicate + downstream guards enforce the
+`cancels_at` cutoff at read time.
+
+### Part 1 · Backend — services + router
+- **NEW**: `services/entitlements/__init__.py`
+- **NEW**: `services/entitlements/registry.py` — hardcoded feature
+  catalogue with placeholder prices ($49 / $99 / $49 / $149) and
+  `stripe_price_id_env` mapping to
+  `STRIPE_PRICE_ID_{ZILLOW,SEO_HEATMAP,AI_ANALYTICS,AI_COPILOT}`.
+- **NEW**: `services/entitlements/check.py` — pure predicate
+  `is_entitlement_active(doc)`, async `has_feature(tenant, feature)`,
+  and layered `ai_analytics_effective_gate(tenant)` that returns
+  `{allowed, code, org_toggle_state}` per Sprint 3c note 5a.
+- **NEW**: `services/entitlements/stripe_ops.py` — sandbox-safe
+  Stripe subscription-item CRUD. Sandbox triggers on unset secrets
+  OR `price_id.startswith("price_sandbox_")` so preview envs + tests
+  can round-trip without provisioning real Stripe prices.
+  Idempotency key: `f"ent_enable:{mode}:{tenant}:{feature}"`.
+  Immediate proration on add (`proration_behavior="create_prorations"`);
+  end-of-cycle cancel stamps a `crm_cancel_at_period_end=1` metadata
+  flag on the subscription-item + stores `cancels_at` from the
+  subscription's `current_period_end`.
+- **NEW**: `services/entitlements/deps.py` — FastAPI dependency
+  factories:
+    * `require_feature(feature_key)` — 402
+      `{"detail":"feature_not_enabled","code":"feature_not_enabled",
+      "feature_key": …}` for the three pure-entitlement features.
+    * `require_ai_analytics` — layered gate. Two distinct 402 codes:
+      `feature_not_enabled` (not purchased) vs `org_toggle_disabled`
+      (purchased but org toggle off); response body includes
+      `org_toggle_state` so the frontend renders distinct messaging.
+- **NEW**: `routers/feature_marketplace.py` — 4 endpoints:
+    * `GET  /api/tenants/mine/feature-marketplace`
+    * `POST /api/tenants/mine/feature-marketplace/{key}/enable`
+      (idempotent, 200 `already_enabled` when active; 409
+      `no_active_subscription`; 502 `stripe_error`; 503
+      `feature_not_configured`; 404 unknown feature)
+    * `POST /api/tenants/mine/feature-marketplace/{key}/disable`
+      (idempotent, 200 `already_scheduled` when in EoC state; 409
+      `feature_not_enabled` when never on)
+    * `GET  /api/tenants/mine/feature-marketplace/{key}/audit` — last
+      20 rows from `audit_logs` filtered by tenant + feature + event.
+- **NEW**: `services/migrations/feature_entitlements_backfill.py` —
+  CLI + module. Idempotent per-`(tenant, feature)` existence guard.
+- **MOD**: `routers/admin_migrations.py` — added `POST /admin/
+  entitlements/backfill-feature-defaults` (super_admin, dry-run flag).
+- **MOD**: `server.py` — registers the new router.
+- **MOD**: `backend/.env` — added 4 placeholder Stripe price envs
+  (`STRIPE_PRICE_ID_{ZILLOW,SEO_HEATMAP,AI_ANALYTICS,AI_COPILOT}=
+  price_sandbox_<feature>_demo`). Ops runbook item: swap these for
+  real Stripe price IDs on production deploy.
+
+### Part 2 · Guards on the four feature entry points
+Guards guard **write / consume** boundaries only — reads stay open so
+disabled tenants see an empty state + upgrade prompt.
+- **MOD**: `routers/d2d.py` — `POST /d2d/zillow-lookup` and
+  `POST /d2d/prospects/{id}/enrich-zillow` guarded with
+  `require_feature("zillow_data")`.
+- **MOD**: `routers/seo_agentic.py` — `POST /seo/rank-heatmaps` guarded
+  with `require_feature("seo_heatmap")`. GET list + GET-by-id remain
+  open.
+- **MOD**: `routers/analytics.py` — the whole `APIRouter` gets
+  `Depends(require_ai_analytics)` at construction, so all 6 endpoints
+  (`/analytics/{overview,customer-ltv,churn-risk,tech-productivity,
+  revenue-anomalies,forecast-v2}`) enforce the layered
+  `analytics_enabled AND has_feature("ai_analytics")` gate. Siblings
+  `marketing_analytics.py`, `widget_analytics.py`, `analytics_monthly.py`
+  untouched.
+- **MOD**: `routers/ai_employees.py` — `POST
+  /ai-employees/{eid}/conversations` and `POST
+  /ai-employees/{eid}/conversations/{cid}/messages` guarded with
+  `require_feature("ai_copilot")`. All list/get/patch config +
+  actions approve/reject endpoints remain open so admins can review
+  + configure before enabling.
+
+### Part 3 · Frontend
+- **NEW**: `frontend/src/pages/settings/FeatureMarketplaceSettings.jsx`
+  — admin-only 2-column grid, 4 tiles, per-tile status pill, per-tile
+  Enable/Disable buttons, shadcn Dialog confirm modal with prorated /
+  end-of-cycle copy, sonner toasts for success/error.
+- **NEW**: `frontend/src/test/feature-marketplace-settings.test.jsx`
+  — 7 Vitest specs.
+- **MOD**: `frontend/src/App.js` — new `/settings/feature-marketplace`
+  route.
+- **MOD**: `frontend/src/layouts/SettingsHub.jsx` — new "Feature
+  Marketplace" sidebar entry (ShoppingBag icon).
+
+### Test health
+- Backend: `test_feature_marketplace.py` — **23 passed, 0 failed**.
+  Covers: GET (all 4 features + tech 403), POST enable (happy /
+  idempotent / not_configured resolver / no_active_subscription 409 /
+  unknown feature 404), POST disable (schedules cancel / idempotent /
+  never-enabled 409), audit endpoint, `is_entitlement_active` pure
+  predicate, `has_feature` cross-status semantics (active grants,
+  cancelled_end_of_cycle with future cutoff grants, cancelled with past
+  cutoff denies), `ai_analytics_effective_gate` all 4 layer
+  combinations, SEO heatmap POST 402 when disabled + 2xx when enabled,
+  `/analytics/*` 402 with distinct `code` when either layer off,
+  admin backfill (super_admin gate + idempotency + counts shape).
+- Frontend: **7 Vitest passed** — non-admin forbidden, 4 tiles render
+  with correct pricing/status pills (Available / Enabled / Cancels
+  YYYY-MM-DD / Not configured), not-configured button disabled,
+  scheduled-cancel button disabled, Enable + Disable modal → POST
+  flow, enable failure surfaces toast error.
+- Regression check: `chemistry-configuration-settings.test.jsx` (9),
+  `ticket3-ticket4-org-settings.test.jsx` (9), `settings-hub.test.jsx`
+  (8) — **33/33 combined**. No regressions.
+
+### Preview curl evidence — SEO Heatmap enable → guard → disable → audit
+```
+== ENABLE seo_heatmap ==
+{ "status":"enabled", "enabled":true, "billing_status":"active",
+  "availability":"already_enabled",
+  "cancels_at":null, "monthly_price_cents":9900, … }
+
+== GUARD (POST /api/seo/rank-heatmaps) ==
+HTTP 422  (pydantic body-validation for the demo payload — critically
+           NOT 402, proving the guard now passes for this tenant)
+
+== DISABLE seo_heatmap ==
+{ "status":"scheduled_cancel",
+  "billing_status":"cancelled_end_of_cycle",
+  "cancels_at":"2026-03-15T00:00:00+00:00",
+  "availability":"available", … }
+
+== AUDIT seo_heatmap ==
+feature_disabled 2026-09-18T08:26:25.030821+00:00
+feature_enabled  2026-09-18T08:26:24.991919+00:00
+```
+Stripe reachability: BOTH `STRIPE_SECRET_KEY_TEST` and
+`STRIPE_SECRET_KEY_LIVE` are set on the preview env. The sandbox
+price prefix (`price_sandbox_*`) triggers the deterministic-item
+sandbox path — same shape as production would return, just without
+a real Stripe API round trip. When ops sets real `price_1P…` IDs on
+production, the exact same code path fires the real Stripe API.
+
+### Stripe env var status on preview
+```
+STRIPE_PRICE_ID_ZILLOW=price_sandbox_zillow_demo             # SET (sandbox)
+STRIPE_PRICE_ID_SEO_HEATMAP=price_sandbox_seo_heatmap_demo   # SET (sandbox)
+STRIPE_PRICE_ID_AI_ANALYTICS=price_sandbox_ai_analytics_demo # SET (sandbox)
+STRIPE_PRICE_ID_AI_COPILOT=price_sandbox_ai_copilot_demo     # SET (sandbox)
+STRIPE_SECRET_KEY_TEST                                        # SET
+STRIPE_SECRET_KEY_LIVE                                        # SET
+```
+Ops runbook item: swap the 4 `price_sandbox_*` placeholders for real
+Stripe price IDs on production deploy. See
+`services/entitlements/stripe_ops.py::_sandbox_mode` — real Stripe
+kicks in the moment the price ID stops matching the `price_sandbox_`
+prefix.
+
+### Migration output
+```
+DRY RUN  (after resetting 5 tenants):
+  counts={zillow_data:5, seo_heatmap:5, ai_analytics:5, ai_copilot:5}
+  total_writes=20
+REAL RUN:  same counts, 20 rows written.
+IDEMPOTENT DRY RUN (after real):
+  counts={all keys: 0}, total_writes=0.
+```
+
+### DOM note — marketplace tab structure
+Root: `[data-testid="feature-marketplace-card"]`. Child grid:
+`[data-testid="feature-tile-grid"]` with four tiles:
+
+* `[data-testid="feature-tile-zillow_data"]`     — icon `home`,        $49/mo
+* `[data-testid="feature-tile-seo_heatmap"]`     — icon `map`,         $99/mo
+* `[data-testid="feature-tile-ai_analytics"]`    — icon `trending-up`, $49/mo
+* `[data-testid="feature-tile-ai_copilot"]`      — icon `bot`,        $149/mo
+
+Each tile carries per-state testids:
+`feature-tile-{title,price,status,button}-{feature_key}`. Enable/Disable
+open `feature-{enable,disable}-modal` (shadcn Dialog) with
+`feature-{enable,disable}-{confirm,cancel}` buttons — the confirm
+button label switches to `Enabling…` / `Scheduling…` while
+`busy===feature_key`. All eight state/action testids are exercised by
+`feature-marketplace-settings.test.jsx`.
+
+### Deviations from spec
+1. **Feature access enforcement**: for `ai_analytics` specifically,
+   the guard is the **layered** `require_ai_analytics` dep (per note
+   5a — org toggle AND entitlement); for the other three features
+   it's the pure `require_feature(key)` dep. Both are documented
+   inline in `services/entitlements/deps.py`.
+2. **Guard boundary for SEO Heatmap**: only `POST /seo/rank-heatmaps`
+   is guarded (per note 2a — write-only). GET list + GET-by-id remain
+   open so a disabled tenant sees historical heatmaps read-only.
+3. **Guard boundary for AI Copilot**: only the two paywalled write
+   POSTs (`/ai-employees/{eid}/conversations` and `…/messages`) are
+   guarded (per note 4a — LLM-costing paths). List/get/patch config +
+   actions/approve/reject stay open so admins can review + configure
+   before enabling.
+
+### Guardrails honored
+- No GitHub clones / no external repos touched.
+- No changes inside `/app/mobile/`.
+- All responses / code comments / docs in English.
+
+### Deferred / out-of-Sprint-3c scope
+- Phase D-mobile parity for Feature Marketplace tab (mobile agent).
+- Metered / usage-based pricing (explicit non-goal per Sprint 3c brief).
+- Customer-facing feature surfaces (non-goal — internal-only).
+- Rebuilding underlying features (Zillow / SEO / AI internals) — only
+  guards + enable/disable added.
+- P0 secret rotation (still yours to action).
+

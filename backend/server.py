@@ -1027,6 +1027,12 @@ api_router.include_router(_fb_org_settings.router)
 from routers import tenant_chemistry_settings as _fb_chem_settings  # noqa: E402
 api_router.include_router(_fb_chem_settings.router)
 
+# Sprint 3c · Feb-2026 · Feature Marketplace (Zillow / SEO Heatmap /
+# AI Analytics / AI Copilot enable-disable + Stripe subscription
+# item wiring).
+from routers import feature_marketplace as _fb_feature_marketplace  # noqa: E402
+api_router.include_router(_fb_feature_marketplace.router)
+
 # Feb-2026 · Global Custom Color Picker · per-user recent colors.
 from routers import user_recent_colors as _fb_recent_colors  # noqa: E402
 api_router.include_router(_fb_recent_colors.router)

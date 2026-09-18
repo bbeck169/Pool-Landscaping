@@ -23,8 +23,12 @@ from utils import require_admin, now_iso
 # at a ``users.id`` (not in the ``technicians`` table).
 from services.service_report_view import resolve_technician_names
 from routers.tenants import get_current_tenant
+# Sprint 3c · Feb-2026 — layered AI Analytics gate:
+# ``analytics_enabled`` (org toggle) AND ``has_feature("ai_analytics")``
+# (billing entitlement). See ``services/entitlements/deps.py``.
+from services.entitlements.deps import require_ai_analytics
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_ai_analytics)])
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────

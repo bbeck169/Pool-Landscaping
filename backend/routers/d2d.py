@@ -9,6 +9,7 @@ import httpx
 from config import db, OPENWEB_NINJA_API_KEY, logger
 from utils import now_iso, new_id, get_current_user, require_admin, require_zillow_access
 from routers.tenants import get_current_tenant
+from services.entitlements.deps import require_feature
 from models import D2DKnockIn, D2DKnockUpdate
 from services import zillow_rate_limit as zrl
 
@@ -468,7 +469,13 @@ class ZillowLookupIn(BaseModel):
     force_refresh: bool = False
 
 
-@router.post("/d2d/zillow-lookup")
+@router.post(
+    "/d2d/zillow-lookup",
+    # Sprint 3c · Feb-2026 — Feature Marketplace entitlement gate.
+    # 402 ``feature_not_enabled`` when the tenant hasn't purchased
+    # the Zillow Data add-on.
+    dependencies=[Depends(require_feature("zillow_data"))],
+)
 async def d2d_zillow_lookup(
     body: ZillowLookupIn,
     user: dict = Depends(get_current_user),
@@ -501,7 +508,11 @@ async def d2d_zillow_lookup(
     return prop.model_dump()
 
 
-@router.post("/d2d/prospects/{prospect_id}/enrich-zillow")
+@router.post(
+    "/d2d/prospects/{prospect_id}/enrich-zillow",
+    # Sprint 3c · Feb-2026 — Feature Marketplace entitlement gate.
+    dependencies=[Depends(require_feature("zillow_data"))],
+)
 async def d2d_prospect_enrich_zillow(
     prospect_id: str,
     user: dict = Depends(get_current_user),

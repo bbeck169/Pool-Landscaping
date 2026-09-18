@@ -35,6 +35,11 @@ from config import db, logger, EMERGENT_LLM_KEY
 from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso, require_admin
 from services.ai_credits import debit_credits, credit_credits
+# Sprint 3c · Feb-2026 — Feature Marketplace guard for the AI
+# Copilot **write / consume** boundary (LLM-costing POSTs). Reads
+# stay open so a tenant can view + configure their AI Employees
+# to make an informed enable decision.
+from services.entitlements.deps import require_feature
 
 router = APIRouter(tags=["AI Employees"])
 
@@ -712,7 +717,11 @@ async def list_conversations(eid: str,
     return rows
 
 
-@router.post("/ai-employees/{eid}/conversations", status_code=201)
+@router.post(
+    "/ai-employees/{eid}/conversations", status_code=201,
+    # Sprint 3c · Feb-2026 · Feature Marketplace — AI Copilot gate.
+    dependencies=[Depends(require_feature("ai_copilot"))],
+)
 async def create_conversation(eid: str, body: ConversationCreate,
                                 user: dict = Depends(require_admin),
                                 tenant: dict = Depends(get_current_tenant)):
@@ -753,7 +762,10 @@ async def list_messages(eid: str, cid: str,
 
 
 @router.post("/ai-employees/{eid}/conversations/{cid}/messages",
-              status_code=201)
+              status_code=201,
+              # Sprint 3c · Feb-2026 · Feature Marketplace — AI
+              # Copilot gate on the LLM-costing send-message path.
+              dependencies=[Depends(require_feature("ai_copilot"))])
 async def send_message(eid: str, cid: str, body: MessageIn,
                          user: dict = Depends(require_admin),
                          tenant: dict = Depends(get_current_tenant)):

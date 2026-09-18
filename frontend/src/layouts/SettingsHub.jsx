@@ -27,6 +27,7 @@ import {
   Bell,
   Bot,
   Beaker,
+  ShoppingBag,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -104,6 +105,13 @@ const SECTIONS = [
     label: "Chemistry Configuration",
     Icon: Beaker,
     hint: "Per-tenant chemistry target ranges, gate mode + sandboxed dosing formulas · Sprint 3b",
+  },
+  {
+    key: "feature-marketplace",
+    to: "/settings/feature-marketplace",
+    label: "Feature Marketplace",
+    Icon: ShoppingBag,
+    hint: "Browse and enable premium add-ons (Zillow, SEO Heatmap, AI Analytics, AI Copilot) · Sprint 3c",
   },
 ];
 
