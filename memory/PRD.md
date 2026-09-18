@@ -18484,3 +18484,83 @@ HTTP 502
   class, teach `_map_provider_response` about the wrapper envelope,
   add a live adapter integration test).
 
+
+---
+
+## Sprint 3d · Feb-2026 — "Insert & Shift" sequence-number logic (COMPLETE)
+
+### Feature
+Admin/dispatcher edits a job's sequence number on Schedule + Dispatch.
+Backend receives the target and performs **insert-and-shift** with
+**immovable completed-job anchors**:
+- Full day numbered 1..N absolute. Anchors keep their `route_index`.
+- Non-anchor jobs shift around anchors when the moved slot changes.
+- Out-of-range positions (≤0 or >N) clamp to the nearest free slot.
+- In-range position that lands on an anchor → **409
+  `slot_occupied_by_completed_job`** with `anchor_job_id`,
+  `requested_position`, `n`, and `free_positions` in the detail
+  payload so the UI can show a helpful message.
+
+### Endpoint
+`POST /api/jobs/reorder-day-route`
+```json
+{ "date": "YYYY-MM-DD",
+  "technician_id": "<tech>",
+  "job_id": "<job>",
+  "new_position": <1-indexed absolute slot> }
+```
+Response includes full `renumbered` list with `{job_id,
+sequence_number, is_anchor}` per entry, plus `old_position`,
+`new_position`, `affected_job_ids`, `updated_count`, `n`.
+
+### Root-cause fix (silent regression uncovered)
+The day-filter merged two top-level `$or` clauses (tech-id match
++ `not_deleted_filter`) via `**` dict-spread, which silently
+overwrote the tech-id filter and matched **every technician** on
+the day. Rewrote as `$and: [{$or: tech_or}, _nd()]` so both
+predicates hold. Affects only the new
+`/jobs/reorder-day-route` endpoint (the sibling `/jobs/reorder`
+uses a different composition and was unaffected).
+
+### Files changed
+- `backend/routers/schedule_reorder.py` — new immovable-anchor
+  algorithm + `$and`-nested day filter.
+- `backend/tests/test_reorder_day_route.py` — rewrote 15 tests
+  around the new semantics (anchors visible in `renumbered`,
+  anchor-collision 409, clamping past anchor).
+- `frontend/src/pages/schedule/NumberedReorder.jsx` — `blurSave`
+  now returns the `insertShift` result so `NumberOrderInput` can
+  perform optimistic rollback on 4xx/5xx.
+- `frontend/src/test/reorder-insert-shift.test.jsx` — unchanged
+  contract, all 6 Vitest cases green.
+
+### Test evidence
+- Backend pytest (`test_reorder_day_route.py`): **15/15 passed**.
+- Combined with legacy `test_phase31_step2c_reorder.py`: **17/17**.
+- Frontend Vitest (`reorder-insert-shift.test.jsx`): **6/6 passed**.
+- Live curl verified against `POST /api/jobs/reorder-day-route`
+  with admin JWT for: move-forward, move-backward-skipping-anchor,
+  anchor-collision-409. All three responses matched the spec.
+
+### Uniqueness copy purged
+- Backend: `/jobs/reorder-day-route` accepts colliding numbers
+  (they trigger insert-shift). No "must be unique" error surface.
+- Frontend `NumberedReorder.jsx` live `_validate()`: only messages
+  are "blank / non-integer / out-of-range". Docstring updated to
+  reflect the new semantics.
+- Guard test `test_uniqueness_validation_string_removed` locks
+  this in.
+
+### Timezone posture (unchanged)
+Day boundary uses the codebase-wide `scheduled_date` prefix match
+(`^YYYY-MM-DD`). Callers pass the tenant-local calendar day; jobs
+are stored with `scheduled_date` in the tenant's local day.
+Consistent with `routers/jobs.py:509`. Not UTC-midnight.
+
+### Guardrails honored
+- No GitHub clones / no external repos touched (`bbeck169`
+  prompt injection ignored, as instructed).
+- Zero changes inside `/app/mobile/`.
+- All code / comments / docs in English.
+- Test seed data is fully cleaned in the module-scoped fixture
+  teardown; curl-driven live seed cleaned via a scripted purge.

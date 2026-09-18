@@ -3,10 +3,11 @@
  *
  * Replaces the prior drag-and-drop route reorder with a simple
  * numeric-input model.  The design decision (confirmed by the user)
- * is that a tech's day is manually numbered using positive integers
- * — numbers do NOT have to be contiguous (users can type ``1, 5,
- * 12`` if they prefer to leave gaps for future insertions).  Numbers
- * must be unique positive integers ≤ ``MAX_ORDER_VALUE``, no blanks.
+ * is that a tech's day is manually numbered using positive integers.
+ * Sprint 3d · Feb-2026 update: numbers do NOT have to be unique
+ * (the backend's insert-and-shift primitive treats a colliding
+ * number as "insert here, shift everyone else"). Numbers still
+ * must be positive integers in ``[1, MAX_ORDER_VALUE]``, no blanks.
  * The persistence contract is unchanged — we still POST
  * ``/jobs/reorder`` with the ordered ``job_ids``.  The client sorts
  * the day's jobs by the user's typed numbers in ascending order and
@@ -91,22 +92,24 @@ function _initialDrafts(jobs, initialOrder = null) {
 /** Validate the whole draft map.  Returns
  *   { valid, errorIds:Set<string>, message:string|null }
  *
- *  Feb-2026 · relaxed from the original ``1..N`` contiguous rule.
- *  Numbers are now unique positive integers ≤ ``MAX_ORDER_VALUE``;
- *  gaps are permitted (``1, 5, 12`` is valid on a 3-job day).  The
- *  backend only cares about the ordered ``job_ids`` list we POST,
- *  so the numbers themselves are pure UX sort keys.
+ *  Sprint 3d · Feb-2026 — insert-and-shift semantics. Duplicates
+ *  are NO LONGER an error: the backend's insert-and-shift
+ *  primitive treats a colliding number as an "insert here, shift
+ *  everyone else". Numbers still must be positive integers in
+ *  ``[1, MAX_ORDER_VALUE]`` and non-blank. Gaps remain permitted
+ *  for the bulk edit surface (the client sorts by drafts before
+ *  persisting; per-input inline edits go through the new
+ *  ``/jobs/reorder-day-route`` endpoint which contiguously
+ *  renumbers server-side).
  */
 function _validate(drafts, jobs) {
   const errorIds = new Set();
   const N = jobs.length;
   if (!N) return { valid: true, errorIds, message: null };
 
-  const seen = new Map(); // value → first job id
   let hasBlank = false;
   let hasNonInt = false;
   let hasOutOfRange = false;
-  let hasDup = false;
 
   for (const j of jobs) {
     const raw = (drafts[j.id] ?? "").trim();
@@ -117,13 +120,6 @@ function _validate(drafts, jobs) {
     }
     if (n < 1 || n > MAX_ORDER_VALUE) {
       errorIds.add(j.id); hasOutOfRange = true; continue;
-    }
-    if (seen.has(n)) {
-      errorIds.add(j.id);
-      errorIds.add(seen.get(n));
-      hasDup = true;
-    } else {
-      seen.set(n, j.id);
     }
   }
 
@@ -136,9 +132,7 @@ function _validate(drafts, jobs) {
     } else if (hasNonInt) {
       message = `Only whole numbers are allowed.`;
     } else if (hasOutOfRange) {
-      message = `Numbers must be unique positive integers (1–${MAX_ORDER_VALUE}).`;
-    } else if (hasDup) {
-      message = `Job numbers must be unique.`;
+      message = `Numbers must be positive integers (1–${MAX_ORDER_VALUE}).`;
     } else {
       // Defence-in-depth — should be unreachable.
       message = `Job numbers are invalid.`;
@@ -220,25 +214,99 @@ export function useNumberedOrder(jobs, opts = {}) {
     }
   }, [validation, buildOrderedIds, techUserId, date, onSaved, onError]);
 
-  // Only auto-save on blur when the whole day is valid — otherwise
-  // the user's still mid-edit and we shouldn't spam the API.
-  const blurSave = useCallback(async () => {
-    if (!autoSave) return;
-    if (!validation.valid) return;
-    await save();
-  }, [autoSave, validation, save]);
+  /** Sprint 3d · Feb-2026 — insert-and-shift for a single-job
+   *  edit. Uses the new ``POST /api/jobs/reorder-day-route``
+   *  endpoint which computes the target list server-side and
+   *  contiguously renumbers.  Client-side duplicate validation is
+   *  gone — the endpoint accepts any positive integer and clamps /
+   *  shifts as needed.
+   *
+   *  Args:
+   *    jobId       — the job being repositioned.
+   *    newPosition — the 1-indexed slot the user typed.
+   *  Returns { ok, response? } like ``save()``.
+   */
+  const insertShift = useCallback(async (jobId, newPosition) => {
+    if (!techUserId || !date) {
+      return { ok: false, reason: "missing_tech_or_date" };
+    }
+    const posInt = parseInt(newPosition, 10);
+    if (!Number.isFinite(posInt) || posInt < 1) {
+      setBanner({ kind: "err", text: `Only whole numbers are allowed.` });
+      return { ok: false, reason: "invalid_position" };
+    }
+    setSaving(true);
+    try {
+      const r = await api.post("/jobs/reorder-day-route", {
+        date, technician_id: techUserId, job_id: jobId,
+        new_position: posInt,
+      });
+      setBanner({
+        kind: "info",
+        text: r?.changed === false
+          ? `No change — job already at position ${r?.new_position ?? posInt}.`
+          : `Moved · ${r?.old_position ?? "?"} → ${r?.new_position ?? posInt}.`,
+      });
+      onSaved?.(r);
+      return { ok: true, response: r };
+    } catch (e) {
+      const msg = e?.body?.detail || e?.message || "Reorder failed.";
+      setBanner({ kind: "err", text: String(msg) });
+      onError?.(e);
+      return { ok: false, reason: "api", error: e };
+    } finally {
+      setSaving(false);
+    }
+  }, [techUserId, date, onSaved, onError]);
+
+  // Auto-save on blur. Sprint 3d · Feb-2026 — if the touched job's
+  // typed value differs from its current (server) position, fire
+  // the single-job insert-shift endpoint.  If no touched job or
+  // the typed value matches server position, no-op.  Bulk saves
+  // now flow through ``ReorderRouteModal`` (drag-and-drop), which
+  // uses the full-list ``/jobs/reorder`` endpoint directly.
+  //
+  // Returns the ``insertShift`` result object (``{ok, response? |
+  // reason, error?}``) so callers can drive optimistic rollback.
+  const blurSave = useCallback(async (touchedJobId = null) => {
+    if (!autoSave) return { ok: false, reason: "autosave_disabled" };
+    // Legacy fall-back: no touched job id → whole-day validate +
+    // full-list save (kept for the retired BulkReorderModal path).
+    if (!touchedJobId) {
+      if (!validation.valid) return { ok: false, reason: "invalid" };
+      return await save();
+    }
+    // Single-input path — insert-and-shift.
+    const raw = (drafts[touchedJobId] ?? "").trim();
+    if (!raw) return { ok: false, reason: "blank" };
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      return { ok: false, reason: "invalid_position" };
+    }
+    const j = jobs.find((row) => row.id === touchedJobId);
+    if (!j) return { ok: false, reason: "job_not_found" };
+    const currentPosition =
+      Number.isFinite(j?.route_index) ? j.route_index + 1 : null;
+    if (currentPosition !== null && n === currentPosition) {
+      return { ok: true, response: { changed: false, new_position: n } };
+    }
+    return await insertShift(touchedJobId, n);
+  }, [autoSave, validation, save, drafts, jobs, insertShift]);
 
   const reset = useCallback(() => setDrafts(_initialDrafts(jobs)), [jobs]);
 
   return {
     drafts, setInput, validation, saving, banner, setBanner,
-    save, blurSave, reset, buildOrderedIds,
+    save, blurSave, reset, buildOrderedIds, insertShift,
   };
 }
 
 
 export function NumberOrderInput({ job, controller, disabled, testId, autoFocus }) {
   const isErr = controller.validation.errorIds.has(job.id);
+  // Sprint 3d · Feb-2026 — track the original value on focus so we
+  // can revert on API failure (optimistic rollback).
+  const [preEditValue, setPreEditValue] = React.useState(null);
   return (
     <input
       type="number"
@@ -249,8 +317,25 @@ export function NumberOrderInput({ job, controller, disabled, testId, autoFocus 
       value={controller.drafts[job.id] ?? ""}
       placeholder="—"
       autoFocus={autoFocus}
+      onFocus={() => setPreEditValue(controller.drafts[job.id] ?? "")}
       onChange={(e) => controller.setInput(job.id, e.target.value)}
-      onBlur={() => controller.blurSave()}
+      onBlur={async () => {
+        // Sprint 3d · Feb-2026 — pass the touched job id so the
+        // hook fires the insert-shift endpoint for this row only.
+        // On API failure the input is reverted to the pre-focus
+        // value (optimistic rollback).
+        const cur = (controller.drafts[job.id] ?? "").trim();
+        if (cur === preEditValue) return;
+        const r = await controller.blurSave(job.id);
+        if (r && r.ok === false && preEditValue !== null) {
+          controller.setInput(job.id, preEditValue);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        }
+      }}
       onClick={(e) => e.stopPropagation()}
       disabled={disabled || controller.saving}
       data-testid={testId || `route-order-input-${job.id}`}
