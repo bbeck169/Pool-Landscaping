@@ -141,9 +141,10 @@ def _invoice_created_blocks(locale: str = "en") -> list:
             "Payment is due by <strong>{{invoice.due_date}}</strong>.</p>"
         ), "padding": "8px 24px"}),
         _block("button", {"label": t_email_cta(locale, "view_invoice"), "link_url": "{{invoice.portal_link}}",
-                            "alignment": "left", "background_color": "#0f6ed1",
-                            "text_color": "#ffffff", "border_radius": "6px",
-                            "padding": "12px 20px"}),
+                            "alignment": "left", "background_color": "#DC2626",
+                            "text_color": "#ffffff", "border_radius": "8px",
+                            "padding": "12px 20px",
+                            "font_size": "22px", "font_weight": "700"}),
         _block("text", {"html": (
             "<p>Questions about a line item? Reply and we'll walk through it with you.</p>"
         ), "padding": "16px 24px 8px", "text_color": "#333"}),
@@ -170,9 +171,10 @@ def _invoice_overdue_blocks(locale: str = "en") -> list:
             "<p>If not, here's the quickest way to bring the account current:</p>"
         ), "padding": "8px 24px"}),
         _block("button", {"label": t_email_cta(locale, "view_invoice"), "link_url": "{{invoice.portal_link}}",
-                            "alignment": "left", "background_color": "#c94a3d",
-                            "text_color": "#ffffff", "border_radius": "6px",
-                            "padding": "12px 20px"}),
+                            "alignment": "left", "background_color": "#DC2626",
+                            "text_color": "#ffffff", "border_radius": "8px",
+                            "padding": "12px 20px",
+                            "font_size": "22px", "font_weight": "700"}),
         _block("text", {"html": (
             "<p>If cash flow is tight, reply to this email and we'll set up a short "
             "payment plan — we're a family business and we understand.</p>"

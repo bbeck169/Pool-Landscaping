@@ -233,9 +233,19 @@ def _render_block(b: Dict[str, Any]) -> str:  # noqa: C901
         color = _H(p.get("text_color") or "#ffffff")
         radius = _H(str(p.get("border_radius") or "6px"))
         pad = _H(p.get("padding") or "12px 24px")
+        # Feb 2026 · Invoice email button restyle — ``font_size`` +
+        # ``font_weight`` props are now honoured (backward-compat
+        # defaults preserved: 15px inherited via ``inherit`` fell
+        # into 600 weight; new callers can bump the CTA to 22px /
+        # 700 to match the visibility ask on the 5 invoice-URL
+        # CTAs.  Unknown values pass through to inline style so
+        # email clients that respect them can render them.
+        font_size = _H(str(p.get("font_size") or "inherit"))
+        font_weight = _H(str(p.get("font_weight") or "600"))
         btn = (f'<a href="{link}" style="display:inline-block;background:{bg};'
                f'color:{color};padding:{pad};text-decoration:none;'
-               f'border-radius:{radius};font-weight:600;">{label}</a>')
+               f'border-radius:{radius};font-weight:{font_weight};'
+               f'font-size:{font_size};">{label}</a>')
         return _cell(f'<div style="text-align:{align};">{btn}</div>',
                       "24px")
     if t == "divider":

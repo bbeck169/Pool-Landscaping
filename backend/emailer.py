@@ -154,8 +154,9 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
     cta_label = t_email_cta(locale, "view_invoice")
     link_html = (
         f'<p><a href="{pay_link}" '
-        f'style="background:#0891b2;color:#fff;padding:12px 20px;'
-        f'border-radius:8px;text-decoration:none;display:inline-block">'
+        f'style="background:#DC2626;color:#fff;padding:12px 20px;'
+        f'border-radius:8px;text-decoration:none;display:inline-block;'
+        f'font-size:22px;font-weight:700;">'
         f'{cta_label}</a></p>'
     ) if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.

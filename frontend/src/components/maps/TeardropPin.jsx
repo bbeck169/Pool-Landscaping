@@ -246,6 +246,13 @@ export function mixWithWhite(hex, amt) {
  *   centered zero-padded text element. Auto-picks white / dark
  *   text based on background luma. When absent, byte-identical to
  *   the pre-Feb-2026 hollow pin.
+ * @param {number=} p.headingDegrees  — Feb-2026 · Optional heading
+ *   angle in degrees (0 = north / up, 90 = east, 180 = south,
+ *   270 = west) used by LiveTech pins to indicate the tech's
+ *   current direction of travel. When a finite number is provided,
+ *   a small filled chevron is rendered above the pin head and
+ *   rotated by ``headingDegrees`` around the head centre (12, 10).
+ *   Non-finite or missing values suppress the chevron.
  */
 export default function TeardropPin({
   color,
@@ -259,6 +266,9 @@ export default function TeardropPin({
   // the scale + heavier shadow + brighter ring. Default (false) is
   // byte-compatible with existing consumers.
   selected = false,
+  // Feb-2026 · Section D · Direction chevron. Numeric heading in
+  // degrees clockwise-from-north. See JSDoc above.
+  headingDegrees,
 }) {
   const fill = color || _SAFE_PALETTE[0];
   const outerStroke = stroke || deriveDarker(fill);
@@ -314,6 +324,7 @@ export default function TeardropPin({
       data-pulse={pulse ? "true" : "false"}
       data-label={isLabeled ? formattedLabel : undefined}
       data-selected={selected ? "true" : "false"}
+      data-heading={Number.isFinite(headingDegrees) ? String(headingDegrees) : undefined}
       style={{ overflow: "visible", display: "inline-block" }}
     >
       {title ? <title>{title}</title> : null}
@@ -426,6 +437,31 @@ export default function TeardropPin({
               {formattedLabel}
             </text>
           </>
+        ) : null}
+        {/* Feb-2026 · Section D · Direction chevron. Rendered only
+             when ``headingDegrees`` is a finite number. Tip sits
+             above the head silhouette (y = -2) and the base spans
+             (9.5..14.5) at y = 3, so the chevron reads as a small
+             arrow pointing "up" at heading 0. Rotated around the
+             head centre (12, 10) so any heading orbits smoothly.
+             ``pointerEvents:none`` keeps the click surface on the
+             pin body — the chevron is decorative. */}
+        {Number.isFinite(headingDegrees) ? (
+          <g
+            transform={`rotate(${headingDegrees} 12 10)`}
+            data-testid={`${testid}-chevron`}
+            data-heading={headingDegrees}
+            style={{ pointerEvents: "none" }}
+          >
+            <path
+              d="M 12 -2 L 14.5 3 L 9.5 3 Z"
+              fill={fill}
+              stroke={outerStroke}
+              strokeWidth="0.6"
+              strokeLinejoin="round"
+              data-testid={`${testid}-chevron-tip`}
+            />
+          </g>
         ) : null}
       </g>
     </svg>

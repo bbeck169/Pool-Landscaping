@@ -50,18 +50,52 @@ describe("AdminTopBar source · sprocket gate + placement", () => {
     expect(TOPBAR_SRC).toMatch(/to="\/settings"/);
   });
 
-  it("sprocket sits immediately BEFORE `SignOutButton` in every "
-      + "responsive variant", () => {
-    // Each of the three action clusters (tech-wrap, narrow-wrap,
-    // wide-wrap) must render <SettingsSprocket /> followed by
-    // <SignOutButton />. We assert on all three by counting the
-    // adjacent pair occurrences.
+  it("sprocket sits BEFORE `SignOutButton` in every "
+      + "responsive variant (LanguageSelector may sit between)", () => {
+    // Feb 2026 · Consolidated Settings Hub + D3 i18n phase — each of
+    // the three action clusters (tech-wrap, narrow-wrap, wide-wrap)
+    // renders ``<SettingsSprocket />`` followed by (optionally)
+    // ``<LanguageSelector />`` and then ``<SignOutButton />``. The
+    // LanguageSelector was inserted between the two by the D3
+    // language-picker phase; strict adjacency was the WRONG
+    // invariant to lock — what matters is that the sprocket sits
+    // LEFT of sign-out in every variant and the two aren't
+    // separated by more than a single component (protects against
+    // e.g. someone dropping a giant menu between them).
+    //
+    // We match: <SettingsSprocket /> …optional whitespace + at most
+    // one JSX element… <SignOutButton />. Repeat across all three
+    // action clusters.
     const pairs = TOPBAR_SRC.match(
-      /<SettingsSprocket\s*\/>\s*<SignOutButton\s*\/>/g,
+      /<SettingsSprocket\s*\/>(?:\s*<[A-Z][A-Za-z]*(?:\s+[^>/]*)?\s*\/>)?\s*<SignOutButton\s*\/>/g,
     ) || [];
-    // The wide-wrap + narrow-wrap variants MUST be covered.
-    // The tech-wrap (visible.length === 0) also renders the pair.
     expect(pairs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("sprocket sits LEFT of sign-out in every variant "
+      + "(no reversed ordering slipped in)", () => {
+    // Belt-and-suspenders check: for every variant that mentions
+    // both components, the SettingsSprocket string offset must be
+    // less than the SignOutButton offset within the SAME variant.
+    // We slice the source between successive JSX action-cluster
+    // sentinels (the shipped variants both end with </div>) and
+    // assert the ordering per slice.
+    const sprocketMatches = [...TOPBAR_SRC.matchAll(/<SettingsSprocket\s*\/>/g)];
+    const signoutMatches = [...TOPBAR_SRC.matchAll(/<SignOutButton\s*\/>/g)];
+    expect(sprocketMatches.length).toBeGreaterThanOrEqual(3);
+    expect(signoutMatches.length).toBeGreaterThanOrEqual(3);
+    // Each matched sprocket must have a sign-out AFTER it AND
+    // there must be no sign-out sitting BEFORE it in the same
+    // 400-char window (which is the outer size of every variant
+    // action cluster).
+    for (const spro of sprocketMatches) {
+      const idx = spro.index;
+      const window = TOPBAR_SRC.slice(Math.max(0, idx - 400), idx);
+      expect(
+        /<SignOutButton\s*\/>/.test(window),
+        `Found <SignOutButton /> BEFORE <SettingsSprocket /> at index ${idx}`,
+      ).toBe(false);
+    }
   });
 });
 

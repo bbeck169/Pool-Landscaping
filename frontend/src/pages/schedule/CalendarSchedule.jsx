@@ -82,6 +82,16 @@ import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // boundary around ScheduleMap, that throw takes out the entire
 // schedule day view. Boundary keeps the rest of the page usable.
 import ScheduleMapErrorBoundary from "@/components/schedule/ScheduleMapErrorBoundary";
+// Feb 2026 · P0 Timezone Fix (Section C follow-up) — tenant-tz-aware
+// "today" helpers. Same helpers already used by TodaySchedule for
+// the analogous UTC-midnight bug where jobs hop dates at 5 PM local
+// for a Phoenix tenant viewed from an eastern-tz browser. Source-of-
+// truth ladder: server ``data.tz`` → tenant context → America/Phoenix.
+import {
+  getTenantTodayISO,
+  getTenantISODate,
+  TENANT_TZ_FALLBACK,
+} from "@/lib/tenantTz";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 // Single source of truth: ``frontend/src/lib/jobStatus.js`` (web) +
 // ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
@@ -242,6 +252,14 @@ export default function CalendarSchedule() {
   const [techs, setTechs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Feb 2026 · P0 Timezone Fix (Section C) — resolve the tenant IANA
+  // tz once per render. Falls back to ``America/Phoenix`` (the backend
+  // default + the TodaySchedule bootstrap value) so a post-5PM local
+  // click on "Today" doesn't roll to tomorrow's calendar cell. Refined
+  // from ``user.tenant.timezone`` when the auth payload carries it.
+  const tenantTz = user?.tenant?.timezone
+    || user?.tenant_timezone
+    || TENANT_TZ_FALLBACK;
   // K65.fix · Feb-2026 — flag that flips when the last load() call
   // aborted on the 20 s client-side hard timeout.  Drives the
   // "[Retry]" affordance on the error banner so the user has a
@@ -444,7 +462,18 @@ export default function CalendarSchedule() {
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
   const [date, setDate] = useState(() => {
     const d = params.get("date");
-    return d ? new Date(`${d}T00:00:00`) : new Date();
+    // Feb 2026 · P0 Timezone Fix (Section C follow-up) — anchor
+    // the URL-derived ``date`` at UTC noon so the tenant-tz-aware
+    // ``getTenantISODate`` resolves back to the SAME ISO param the
+    // caller passed, regardless of the browser's TZ (see the
+    // WeekStrip onSelectDate handler below for the same rationale).
+    if (d) {
+      const [y, mo, da] = d.split("-").map(Number);
+      if ([y, mo, da].every((n) => Number.isFinite(n))) {
+        return new Date(Date.UTC(y, mo - 1, da, 12, 0, 0));
+      }
+    }
+    return new Date();
   });
   const [range, setRange] = useState({ start: null, end: null });   // for the "Custom" preset row
 
@@ -823,7 +852,12 @@ export default function CalendarSchedule() {
   };
 
   /* ─── Phase 30W · Grid-view derived state + actions ────────────── */
-  const focusISO = format(date, "yyyy-MM-dd");
+  // Feb 2026 · P0 Timezone Fix (Section C) — swap browser-local
+  // ``format(date, "yyyy-MM-dd")`` for the tenant-tz-aware ISO date
+  // so a Phoenix tenant viewed from an eastern-tz browser at 8 PM
+  // Phoenix (post-UTC-midnight) STILL renders the correct day's
+  // job list. Matches the TodaySchedule fix pattern.
+  const focusISO = getTenantISODate(date, tenantTz);
   const dayJobs = useMemo(() => {
     const list = filteredJobs.filter((j) => (j.scheduled_date || "").slice(0, 10) === focusISO);
     // Phase 30X · date-only surface. Order by route position only — no
@@ -987,8 +1021,17 @@ export default function CalendarSchedule() {
         selectedDate={focusISO}
         counts={weekCounts}
         onSelectDate={(iso) => {
+          // Feb 2026 · P0 Timezone Fix (Section C follow-up) — anchor
+          // the ``date`` state at UTC noon on the picked ISO so
+          // ``getTenantISODate(date, tenantTz)`` always resolves back
+          // to the SAME ISO the user clicked, regardless of the
+          // browser's local TZ. Constructing ``new Date(y, m-1, d)``
+          // in browser-local time silently shifted the tenant day
+          // back by one for any browser east of Phoenix (UTC-7),
+          // which broke the Grid-view job filter for east-coast
+          // dispatchers overseeing Phoenix tenants.
           const [y, m, d] = iso.split("-").map(Number);
-          const next = new Date(y, m - 1, d);
+          const next = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
           setDate(next);
           setParam("date", iso);
         }}
@@ -1587,6 +1630,7 @@ export default function CalendarSchedule() {
           onOptimizeRoute={optimizeRoute}
           optimizing={optimizing}
           reorderableJobIds={reorderableJobs.map((j) => j.id)}
+          tenantTz={tenantTz}
         />
       )}
 
@@ -1797,11 +1841,26 @@ export function GridPanel({
   // set that is actually reorderable (non-terminal only).
   orderController, onOpenBulkReorder, reorderableJobIds,
   onOptimizeRoute, optimizing,
+  // Feb 2026 · P0 Timezone Fix (Section C follow-up) — tenant IANA
+  // tz passed by the parent CalendarSchedule.  When present, the
+  // Grid header's "focused day" ISO + "Today" pill both flip to
+  // the tenant's day (matches the parent-level fix). Defaults to
+  // ``TENANT_TZ_FALLBACK`` so the isolated Vitest harness (which
+  // renders <GridPanel> without a parent) still behaves correctly.
+  tenantTz = TENANT_TZ_FALLBACK,
 }) {
-  const focusISO = format(date, "yyyy-MM-dd");
-  const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
+  const focusISO = getTenantISODate(date, tenantTz);
+  const isToday = focusISO === getTenantTodayISO(tenantTz);
+  // Feb 2026 · P0 Timezone Fix (Section C follow-up) — day label
+  // MUST match ``focusISO`` (which is tenant-tz-scoped).  Using
+  // ``date.toLocaleDateString`` with no explicit ``timeZone`` fell
+  // back to the browser's local zone, so an east-coast browser
+  // viewing a Phoenix tenant at 8 PM Phoenix would see the header
+  // read "Friday, Sep 18" while the ISO / jobs list rendered
+  // "Sep 17". Explicit ``timeZone: tenantTz`` keeps them in lock-step.
   const dayLabel = date.toLocaleDateString(undefined, {
     weekday: "long", year: "numeric", month: "short", day: "numeric",
+    timeZone: tenantTz,
   });
 
   return (

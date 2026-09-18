@@ -74,9 +74,9 @@ def _stub_invoice_reminder(locale: str = "en") -> str:
         'This is a friendly reminder that invoice #INV-PREVIEW '
         'has an outstanding balance of $250.00.</p>'
         '<p style="margin:24px 0;">'
-        '<a href="#" style="display:inline-block;background:#0284C7;'
+        '<a href="#" style="display:inline-block;background:#DC2626;'
         'color:#fff;padding:12px 22px;border-radius:10px;'
-        f'text-decoration:none;font-weight:600;">{cta_label}</a></p>'
+        f'text-decoration:none;font-weight:700;font-size:22px;">{cta_label}</a></p>'
         '</div>'
     )
 
