@@ -757,7 +757,7 @@ async def me(user: dict = Depends(get_current_user)):
 #
 #   POST /api/auth/forgot-password  → generic 200 (enum-safe). If the
 #     email matches a user, mint a single-use opaque token, persist to
-#     ``password_reset_tokens`` with a 30-min expiry, and send a
+#     ``password_reset_tokens`` with a 30-day expiry, and send a
 #     tokenized link via the guarded email adapter (dry-runs in preview
 #     unless the recipient is on ``COMMS_TEST_ALLOWLIST_EMAILS`` — see
 #     Task L).
@@ -779,9 +779,40 @@ async def me(user: dict = Depends(get_current_user)):
 #
 from collections import defaultdict, deque
 
-_RESET_TTL_MINUTES = 30
+# Password-reset link TTL. Feb-2026 · hotfix widened the window
+# from a half-hour (the original 30-min value) to **30 days** per
+# product spec (Phase 30 planned 30-day lifecycles; the constant +
+# email copy had drifted). Kept as ``_RESET_TTL_MINUTES`` because
+# callers already speak minutes and ``timedelta(minutes=…)`` is the
+# natural unit for ``password_reset_tokens.expires_at``.
+_RESET_TTL_DAYS = 30
+_RESET_TTL_MINUTES = _RESET_TTL_DAYS * 24 * 60      # 43200
 _RESET_RATE_MAX_PER_HOUR = 5
 _RESET_IP_HITS: Dict[str, deque] = defaultdict(deque)  # noqa: F821
+
+
+def _format_expiry_label(minutes: int) -> str:
+    """Render an expiry duration as a human-facing label for email
+    copy. Prefers the largest unit that produces a clean integer:
+
+        >>> _format_expiry_label(43200)   # 30 days
+        '30 days'
+        >>> _format_expiry_label(120)     # 2 hours
+        '2 hours'
+        >>> _format_expiry_label(30)      # 30 minutes
+        '30 minutes'
+
+    Fractional / non-round values fall through to minutes so we
+    never lose fidelity."""
+    if minutes <= 0:
+        return "0 minutes"
+    if minutes % (24 * 60) == 0:
+        d = minutes // (24 * 60)
+        return f"{d} day" if d == 1 else f"{d} days"
+    if minutes % 60 == 0:
+        h = minutes // 60
+        return f"{h} hour" if h == 1 else f"{h} hours"
+    return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
 
 
 def _password_policy_ok(pw: str) -> Optional[str]:
@@ -828,7 +859,7 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
     Always returns the same neutral 200 payload so callers can't
     enumerate whether an account exists. When the email matches a
     real user we mint a single-use opaque token, persist it to
-    ``password_reset_tokens`` (TTL 30 min, ``used_at`` field on
+    ``password_reset_tokens`` (TTL 30 days, ``used_at`` field on
     consumption), and hand a tokenized link to the guarded email
     adapter (dry-run in preview unless the recipient is on
     ``COMMS_TEST_ALLOWLIST_EMAILS``).
@@ -1162,7 +1193,12 @@ def _password_reset_email_html(*, first_name: str, reset_link: str,
                                  expiry_minutes: int) -> str:
     """Render the Task-O password-reset email body. Kept inline to
     avoid a new template collection; visual polish can graduate to
-    the ``email_templates`` seed later (``password_reset_self_serve``)."""
+    the ``email_templates`` seed later (``password_reset_self_serve``).
+
+    Feb-2026 · hotfix — the copy now renders the TTL through
+    :func:`_format_expiry_label` so a 43200-minute (30-day) window
+    reads as "30 days" instead of "43200 minutes"."""
+    expiry_label = _format_expiry_label(expiry_minutes)
     return (
         f"<div style=\"font-family:-apple-system,'Inter',sans-serif;"
         f"color:#0F172A;max-width:560px;margin:0 auto;padding:24px;\">"
@@ -1178,7 +1214,7 @@ def _password_reset_email_html(*, first_name: str, reset_link: str,
         f"padding:12px 22px;border-radius:10px;text-decoration:none;"
         f"font-weight:600;\">Reset password</a></p>"
         f"<p style=\"margin:0 0 8px;font-size:13px;color:#475569;\">"
-        f"This link expires in {expiry_minutes} minutes. If you didn't "
+        f"This link expires in {expiry_label}. If you didn't "
         f"request this reset you can safely ignore this email — your "
         f"password won't change.</p>"
         f"<p style=\"margin:16px 0 0;font-size:12px;color:#94A3B8;"

@@ -304,7 +304,12 @@ async def _do_portal_provision(cid: str, tenant_id: str, actor: dict,
 class PortalResetLinkResp(BaseModel):
     ok: bool = True
     sent_to: str
-    token_ttl_minutes: int = 30
+    # Feb-2026 · hotfix — bumped from 30 (minutes) to 43200 (30 days)
+    # to track the widened ``_RESET_TTL_MINUTES``.  Field unit is
+    # still MINUTES (keeps the name honest and existing frontend
+    # consumers that divide by 60 or format via a shared helper
+    # continue to work).
+    token_ttl_minutes: int = 43200
     provisioned_user: bool = False
 
 
@@ -347,7 +352,7 @@ async def portal_reset_link(cid: str,
        ``db.audit_logs`` with actor id + email, target customer id,
        tenant id, masked recipient, and adapter outcome.
 
-    Response: ``{ok, sent_to (masked), token_ttl_minutes: 30,
+    Response: ``{ok, sent_to (masked), token_ttl_minutes: 43200,
     provisioned_user: bool}``. Never leaks the full recipient email
     or the token itself to the caller.
     """
@@ -486,7 +491,9 @@ class PortalResetLinkCopyResp(BaseModel):
     ok: bool = True
     reset_url: str
     expires_at: str
-    token_ttl_minutes: int = 30
+    # Feb-2026 · hotfix — matches ``_RESET_TTL_MINUTES``. Unit is
+    # still minutes; see ``PortalResetLinkResp`` for rationale.
+    token_ttl_minutes: int = 43200
     provisioned_user: bool = False
 
 

@@ -95,7 +95,12 @@ def _stub_password_reset() -> str:
         'color:#fff;padding:12px 22px;border-radius:10px;'
         'text-decoration:none;font-weight:600;">Reset password</a></p>'
         '<p style="margin:0;font-size:13px;color:#475569;">'
-        'This link expires in 15 minutes.</p>'
+        # Feb-2026 · hotfix — the real customer-facing reset link is
+        # valid for 30 days (``_RESET_TTL_MINUTES = 43200``). The
+        # preview stub was showing a stale 15-min copy; brought back
+        # in sync so support screenshots of the preview match what
+        # customers actually receive.
+        'This link expires in 30 days.</p>'
         '</div>'
     )
 
