@@ -1,8 +1,19 @@
-"""Phase I1.7.b · Feb-2026 — Resend email provider (tenant-scoped)."""
+"""Phase I1.7.b · Feb-2026 — Resend email provider (tenant-scoped).
+
+Feb-2026 comms hotfix — ``send_email()`` accepts an optional
+``from_name`` display-name override so callers (BYO passthrough,
+marketing/campaigns, tenant-branded transactional sends) can
+render the correct "AquaTerra Pools <no-reply@…>" header in the
+recipient's inbox. The header is assembled with
+``email.utils.formataddr`` so display names with commas,
+semicolons, or quotes are RFC 5322-safe (blocks header injection
+via a crafted tenant name).
+"""
 from __future__ import annotations
 
 import logging
 import uuid
+from email.utils import formataddr
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -24,6 +35,47 @@ from .base import EmailProvider
 
 log = logging.getLogger("messaging.email.resend")
 _RESEND_BASE = "https://api.resend.com"
+
+
+def _mask_email(e: Optional[str]) -> str:
+    """PII-safe recipient rendering for log lines."""
+    if not e or "@" not in e:
+        return "***"
+    local, _, domain = e.partition("@")
+    if len(local) <= 2:
+        return f"*@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+
+def _mask_recipients(rs: Optional[List[str]]) -> str:
+    if not rs:
+        return "<none>"
+    return ",".join(_mask_email(r) for r in rs[:3]) + (
+        f" (+{len(rs) - 3})" if len(rs) > 3 else ""
+    )
+
+
+def _build_from_header(from_email: str, from_name: Optional[str]) -> str:
+    """Render an RFC 5322-safe ``From`` header. ``formataddr``
+    handles quoting / escaping when the display name contains a
+    comma, semicolon, quote, or angle bracket.
+
+    Defense-in-depth: strip ASCII control characters (CR, LF,
+    NULL, and other <0x20 bytes) BEFORE handing the name to
+    ``formataddr`` so a crafted tenant name cannot smuggle a raw
+    ``\\r\\nBcc: ...`` sequence into the JSON payload. Resend's
+    transport layer already ignores in-JSON CRLF, but we belt-
+    and-braces so downstream consumers of the payload (log lines,
+    audits, alternate providers) never see them either.
+    """
+    if from_name is not None:
+        sanitized = "".join(
+            ch for ch in from_name if ord(ch) >= 0x20 and ch != "\x7f"
+        )
+        stripped = sanitized.strip()
+        if stripped:
+            return formataddr((stripped, from_email))
+    return from_email
 
 
 class ResendEmailProvider(EmailProvider):
@@ -53,22 +105,45 @@ class ResendEmailProvider(EmailProvider):
         self, *, tenant_id: str, to: List[str], subject: str,
         html_body: Optional[str] = None, text_body: Optional[str] = None,
         from_addr: Optional[str] = None,
+        from_name: Optional[str] = None,
         attachments: Optional[List[EmailAttachment]] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> EmailResult:
+        """Send a message via Resend for a tenant's BYO account.
+
+        Feb-2026 comms hotfix:
+          * ``from_name`` (optional) — per-call display-name override
+            (typically ``tenant.name`` for brand fidelity). Empty
+            string / None falls back to ``cfg['from_name']`` from
+            the tenant's saved provider config, then to the bare
+            address.
+          * ``From`` header is rendered with
+            :func:`email.utils.formataddr` so display names with
+            commas / quotes / brackets can't inject extra headers.
+          * All send failures are logged at ``ERROR`` with the
+            exception type + message, masked recipient(s), a
+            truncated subject, and the Resend ``x-request-id`` /
+            ``resend-request-id`` header (when present).
+        """
         if email_testmode_mock():
             return EmailResult(
                 id=f"resend_test_{uuid.uuid4().hex[:20]}",
                 status="queued", to=to,
                 provider_key=self.provider_key, tenant_id=tenant_id,
-                raw={"mock": True, "at": now_iso()},
+                raw={"mock": True, "at": now_iso(),
+                     "from_name": (from_name or "").strip() or None},
             )
         cfg = await self._cfg(tenant_id)
         addr = from_addr or cfg["from_addr"]
-        if cfg.get("from_name"):
-            addr = f"{cfg['from_name']} <{addr}>"
-        payload: Dict[str, Any] = {"from": addr, "to": to, "subject": subject}
+        # Call-arg wins; fall back to the tenant's stored default;
+        # empty/whitespace-only strings are treated as None.
+        effective_from_name = (
+            (from_name.strip() if isinstance(from_name, str) else None)
+            or (cfg.get("from_name") if cfg.get("from_name") else None)
+        )
+        from_header = _build_from_header(addr, effective_from_name)
+        payload: Dict[str, Any] = {"from": from_header, "to": to, "subject": subject}
         if html_body: payload["html"] = html_body
         if text_body: payload["text"] = text_body
         if reply_to: payload["reply_to"] = reply_to
@@ -83,8 +158,23 @@ class ResendEmailProvider(EmailProvider):
                 json=payload,
                 headers={"Authorization": f"Bearer {cfg['api_key']}"},
             )
+            # Resend surfaces its trace id on either header; the
+            # public docs use lower-case ``x-request-id`` and the
+            # Cloudflare edge sometimes echoes ``resend-request-id``.
+            req_id = (
+                r.headers.get("x-request-id")
+                or r.headers.get("resend-request-id")
+                or r.headers.get("cf-ray")
+            )
             j = r.json() if r.content else {}
             if r.status_code >= 400:
+                log.error(
+                    "[resend] send_email non-2xx tenant=%s to=%s "
+                    "subject=%r status=%s request_id=%s body=%r",
+                    tenant_id, _mask_recipients(to),
+                    (subject or "")[:100], r.status_code, req_id,
+                    str(j)[:400] if j else "",
+                )
                 await log_secret_error(
                     tenant_id, self.provider_key,
                     code=f"RESEND_{r.status_code}",
@@ -103,14 +193,20 @@ class ResendEmailProvider(EmailProvider):
                 raw=j,
             )
         except Exception as e:
-            log.warning("resend send_email failed: %s", type(e).__name__)
+            log.error(
+                "[resend] send_email exception tenant=%s to=%s "
+                "subject=%r err=%s: %s",
+                tenant_id, _mask_recipients(to),
+                (subject or "")[:100], type(e).__name__, e,
+                exc_info=True,
+            )
             await log_secret_error(tenant_id, self.provider_key,
                                      code="RESEND_EXCEPTION",
-                                     message=type(e).__name__)
+                                     message=f"{type(e).__name__}: {e}")
             return EmailResult(
                 id="", status="failed", to=to,
                 provider_key=self.provider_key, tenant_id=tenant_id,
-                raw={}, error=type(e).__name__,
+                raw={}, error=f"{type(e).__name__}: {e}",
             )
         finally:
             if self._http is None:

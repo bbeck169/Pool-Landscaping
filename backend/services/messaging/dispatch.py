@@ -93,7 +93,8 @@ async def dispatch_email(
         result = await provider.send_email(
             tenant_id=tenant_id, to=to, subject=subject,
             html_body=html_body, text_body=text_body,
-            from_addr=from_addr, attachments=attachments,
+            from_addr=from_addr, from_name=from_name,
+            attachments=attachments,
             reply_to=reply_to, metadata=metadata,
         )
         return {

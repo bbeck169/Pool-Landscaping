@@ -28,6 +28,7 @@ class EmailProvider(ABC):
         html_body: Optional[str] = None,
         text_body: Optional[str] = None,
         from_addr: Optional[str] = None,
+        from_name: Optional[str] = None,
         attachments: Optional[List[EmailAttachment]] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,

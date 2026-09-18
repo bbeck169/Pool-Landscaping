@@ -53,6 +53,7 @@ class SendGridEmailProvider(EmailProvider):
         self, *, tenant_id: str, to: List[str], subject: str,
         html_body: Optional[str] = None, text_body: Optional[str] = None,
         from_addr: Optional[str] = None,
+        from_name: Optional[str] = None,
         attachments: Optional[List[EmailAttachment]] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -70,9 +71,16 @@ class SendGridEmailProvider(EmailProvider):
         if html_body: contents.append({"type": "text/html", "value": html_body})
         if not contents:
             contents.append({"type": "text/plain", "value": ""})
+        # Feb-2026 comms hotfix — per-call ``from_name`` override wins
+        # over the tenant's saved default.
+        effective_from_name = (
+            (from_name.strip() if isinstance(from_name, str) else None)
+            or (cfg.get("from_name") if cfg.get("from_name") else None)
+        )
         payload: Dict[str, Any] = {
             "personalizations": [{"to": [{"email": e} for e in to]}],
-            "from": {"email": from_addr or cfg["from_addr"], "name": cfg.get("from_name")},
+            "from": {"email": from_addr or cfg["from_addr"],
+                     "name":  effective_from_name},
             "subject": subject,
             "content": contents,
         }

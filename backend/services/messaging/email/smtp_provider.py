@@ -16,6 +16,7 @@ import uuid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
+from email.utils import formataddr
 from typing import Any, Dict, List, Optional
 
 from services.secrets import log_error as log_secret_error, mark_used
@@ -101,6 +102,7 @@ class SmtpEmailProvider(EmailProvider):
         self, *, tenant_id: str, to: List[str], subject: str,
         html_body: Optional[str] = None, text_body: Optional[str] = None,
         from_addr: Optional[str] = None,
+        from_name: Optional[str] = None,
         attachments: Optional[List[EmailAttachment]] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -114,10 +116,21 @@ class SmtpEmailProvider(EmailProvider):
             )
         cfg = await self._cfg(tenant_id)
         addr = from_addr or cfg["from_addr"]
+        # Feb-2026 comms hotfix — accept per-call ``from_name``; render
+        # ``From`` with ``formataddr`` so display names with commas /
+        # quotes are RFC 5322-safe.
+        effective_from_name = (
+            (from_name.strip() if isinstance(from_name, str) else None)
+            or (cfg.get("from_name") if cfg.get("from_name") else None)
+        )
+        if effective_from_name:
+            from_header = formataddr((effective_from_name, addr))
+        else:
+            from_header = addr
         try:
             message_id = await asyncio.to_thread(
                 self._send_blocking, cfg, to, subject, html_body,
-                text_body, addr, attachments, reply_to,
+                text_body, from_header, attachments, reply_to,
             )
             await mark_used(tenant_id, self.provider_key)
             return EmailResult(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from email.utils import formataddr
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -57,6 +58,7 @@ class MailgunEmailProvider(EmailProvider):
         self, *, tenant_id: str, to: List[str], subject: str,
         html_body: Optional[str] = None, text_body: Optional[str] = None,
         from_addr: Optional[str] = None,
+        from_name: Optional[str] = None,
         attachments: Optional[List[EmailAttachment]] = None,
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -69,8 +71,20 @@ class MailgunEmailProvider(EmailProvider):
                 raw={"mock": True, "at": now_iso()},
             )
         cfg = await self._cfg(tenant_id)
+        # Feb-2026 comms hotfix — accept per-call ``from_name`` and
+        # render the ``from`` line with ``formataddr`` for RFC 5322
+        # safety.
+        from_email = from_addr or cfg["from_addr"]
+        effective_from_name = (
+            (from_name.strip() if isinstance(from_name, str) else None)
+            or (cfg.get("from_name") if cfg.get("from_name") else None)
+        )
+        if effective_from_name:
+            from_header = formataddr((effective_from_name, from_email))
+        else:
+            from_header = from_email
         data: List[Any] = [
-            ("from", from_addr or cfg["from_addr"]),
+            ("from", from_header),
             ("subject", subject),
         ]
         for e in to:
