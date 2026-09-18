@@ -906,7 +906,13 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             // subsequent inline saves and forward the ack flag on the
             // PUT body so the backend lock gate accepts the mutation.
             const _st = String(doc.status || "").toLowerCase();
-            const _locked = ["sent", "accepted", "paid"].includes(_st);
+            // Feb 2026 · Follow-up — extend the ack-bypass list to
+            // ``past_due`` / ``unpaid`` / ``overdue`` so admin
+            // operators can correct aged-status invoices without a
+            // void-and-re-issue dance. Backend
+            // ``_ALLOWED_WITH_ACK`` is kept in sync.
+            const _locked = ["sent", "accepted", "paid",
+                              "past_due", "unpaid", "overdue"].includes(_st);
             if (_locked && !lockBypassAcked) {
               setPendingLines(nextLines);
               setLockDialogOpen(true);
@@ -1197,7 +1203,11 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                     disabled={termsSaving}
                     onClick={async () => {
                       const _st = String(doc.status || "").toLowerCase();
-                      const _locked = ["sent", "accepted", "paid"].includes(_st);
+                      // Feb 2026 · Follow-up — see the K71 editor
+                      // save above; ack-bypass list widened for
+                      // aged invoice statuses.
+                      const _locked = ["sent", "accepted", "paid",
+                                        "past_due", "unpaid", "overdue"].includes(_st);
                       if (_locked && !lockBypassAcked) {
                         setPendingLines({ __terms__: termsDraft });
                         setLockDialogOpen(true);

@@ -55,9 +55,17 @@ _ALLOWED: Dict[str, set[str]] = {
 # with an explicit ``acknowledged_lock_bypass=True`` body flag from
 # the frontend confirm-dialog. Anything NOT in this set stays hard-
 # locked regardless of the flag (``void`` / ``cancelled``).
+#
+# Feb 2026 · Follow-up — admin/super_admin operators need to correct
+# invoices that have aged into ``past_due`` / ``unpaid`` / ``overdue``
+# state (data entry errors, disputed line items) without a
+# void-and-re-issue dance. Added the three lifecycle statuses to the
+# invoice ack-bypass list. The estimate list is intentionally NOT
+# widened here — those statuses don't apply to quotes.
 _ALLOWED_WITH_ACK: Dict[str, set[str]] = {
     "estimate": {"accepted", "declined"},
-    "invoice": {"sent", "accepted", "paid", "partial"},
+    "invoice": {"sent", "accepted", "paid", "partial",
+                 "past_due", "unpaid", "overdue"},
 }
 
 
