@@ -17818,3 +17818,94 @@ Steps:
 
 ### P0 — OPS ACTION STILL REQUIRED (unchanged from prior handover)
 - `.env.bak.1785270663` contains leaked production secrets (Stripe, JWT, DataForSEO, MongoDB, RingCentral, Resend, Google Maps, S3). Manual rotation + backup purge on production remains pending user/ops action.
+
+---
+
+## Sprint 2 (Feb 2026) — Admin Unlinked-Technicians Widget + Device Doc · COMPLETE
+
+**Date**: Feb 2026 (this session)
+
+### Section A · Admin "Unlinked Technicians" widget (P1 · vii)
+
+**Backend** (`/app/backend/routers/admin_unlinked_techs.py` — new router; registered in `server.py`):
+- `GET /api/admin/technicians/unlinked` — admin+ only; returns unlinked techs for caller's tenant, sorted by name+created_at.
+- `POST /api/admin/technicians/{tech_id}/create-user` — creates a matching `users` row (role=technician, department preserved, 12-char cryptographically-random bcrypt-hashed temp password, `must_reset_password: true`, `invited_at: now()`, palette-validated `display_color_hex`, `technician_id` backref), links `technicians.user_id`, writes `technician_user_created_and_linked` audit-log row, best-effort invite email via existing `_send_team_invite_email` helper.
+- Guardrails: 409 `already_linked` (with existing user_id), 409 `email_already_in_use` (with existing user_id, tenant-scoped), 400 `email_required`, 404 for cross-tenant + unknown tech ids, 403 for non-admin roles.
+- Returns temp password ONCE in the response so the admin can relay when the invite email is skipped/fails.
+
+**Frontend** (`/app/frontend/src/components/team/UnlinkedTechniciansWidget.jsx` — new component, mounted in `TeamRoster` inside `OpsHub.jsx`):
+- Yellow attention card, self-hides when 0 rows OR non-admin OR GET rejects.
+- Table: Name · Email · Phone · Created · "Create user account" action.
+- Success modal shows temp password with copy-to-clipboard + invite-email-status line.
+- 409 errors surface as inline red row below the failed row, with a Refresh button; widget stays mounted.
+- Count badge on the header, top-level Refresh button.
+- Every actionable element carries a canonical `data-testid` (`unlinked-technicians-widget`, `unlinked-tech-row-*`, `unlinked-tech-create-btn-*`, `unlinked-tech-temp-password-modal`, etc.).
+
+**Tests**:
+- Pytest (`tests/test_admin_unlinked_techs.py`, 12/12 pass): tenant-isolated 2-tenant seed via `httpx.ASGITransport`, covers GET happy path + tech 403 + unauthenticated 401 + tenant isolation, POST happy path (with audit + link verification) + already_linked 409 + duplicate email 409 + missing email 400 + unknown 404 + cross-tenant 404 + tech 403.
+- Vitest (`src/test/admin-unlinked-technicians-widget.test.jsx`, 10/10 pass): empty state hides widget, GET error hides widget, isAdmin=false renders null + never calls API, populated table + count badge, refresh re-fetches, happy-path modal + copy-to-clipboard + parent onCreated callback, "failed" invite line, 409 email_already_in_use + already_linked inline error surfaces without dismissing widget.
+
+**Preview verification for Sara Nguyen**:
+```
+GET before:  1 unlinked tech
+  tech_id: 3b6ebe3c-fa87-4dec-a5db-7a55a86cfc7c
+  name:    Sara Nguyen
+  email:   sara@aquaterra.com
+  phone:   480-555-0177
+  created_at: 2026-08-19T15:49:26.387194+00:00
+
+POST create-user:  200 OK
+  user_id: dc7015c6-4065-49ab-afbe-253f02ce0a3f
+  email:   sara@aquaterra.com
+  temporary_password: xk4srP2rjw9m   (12 chars ✓)
+  invite_email_status: sent          (Resend live domain ✓)
+
+DB verification:
+  technicians[Sara].user_id      = dc7015c6-4065-49ab-afbe-253f02ce0a3f
+  technicians[Sara].linked_at    = 2026-09-18T06:48:46.218417+00:00
+  technicians[Sara].linked_by    = 72fbbc5e-...(admin)
+  users[new].role                = technician
+  users[new].must_reset_password = true
+  users[new].invited_at          = 2026-09-18T06:48:46.218417+00:00
+  users[new].display_color_hex   = #3B82F6 (palette blue, WCAG-passing)
+  users[new].technician_id       = 3b6ebe3c-... (backref)
+  audit_log row: action=technician_user_created_and_linked, actor_email=admin@aquaterra.com
+
+GET after:   [] (empty)
+```
+Screenshot captured of the yellow attention card in the Team tab (`/team` route).
+
+### Section B · Native TeardropPin device-check checklist (P0 · 1a)
+
+**File**: `/app/memory/mobile_teardrop_device_check.md` (new)
+
+Includes 5 tests, prerequisites, failure modes, and reporting-back template:
+1. Dispatch/Schedule map pin geometry (colored head + white inner circle + label + tapered stem + drop shadow)
+2. Live tech tracking (with future direction chevron guard for the Sprint 1 Section D parity ship)
+3. Color contrast with pin body (bright/off-palette guardrails)
+4. ColorPicker screen (`@react-native-community/slider` native module smoke test)
+5. Clustering + zoom transitions (regression guard)
+
+### Overall Sprint 2 Test Health
+- Backend Pytest (Sprint 2 + Sprint 1 backend + work_class regression): **82/82 pass**.
+- Frontend Vitest (Sprint 2 widget + Sprint 1 teardrops + schedule + sprocket): **73/73 pass**.
+- Preview verified end-to-end for Sara Nguyen on the aquaterra tenant.
+- No `/app/mobile/` changes; mobile parity is a separate delegation.
+
+### Files touched
+- `backend/routers/admin_unlinked_techs.py` (new)
+- `backend/server.py` (router registration only)
+- `backend/tests/test_admin_unlinked_techs.py` (new)
+- `frontend/src/components/team/UnlinkedTechniciansWidget.jsx` (new)
+- `frontend/src/pages/ops/OpsHub.jsx` (import + widget mount inside `TeamRoster`)
+- `frontend/src/test/admin-unlinked-technicians-widget.test.jsx` (new)
+- `memory/mobile_teardrop_device_check.md` (new)
+
+### Follow-ups (Sprint 3 candidates)
+- Extend the widget with a "Bulk link all" action for tenants with >5 unlinked techs (batch create-user).
+- Add a "Copy temp password to clipboard on modal open" auto-focus for keyboard-heavy admins.
+- Mobile parity for Sprint 1 Section D chevron (delegated to mobile agent per guardrail).
+- Same deferred P2 test failures remain (`test_repair_service_report.py`, `test_phase_d4_endpoint_and_seeder.py`, `task3-invoices-bypass-portal.test.jsx`).
+
+### P0 · Secret rotation still pending user/ops action
+`.env.bak.1785270663` — leaked production keys (Stripe, JWT, DataForSEO, MongoDB, RingCentral, Resend, Google Maps, S3). Rotation + backup purge still open.

@@ -20,6 +20,10 @@ import PaletteChipPicker from "@/components/team/PaletteChipPicker";
 // Feb-2026 · Global Custom Color Picker · full picker (presets +
 // recents + freeform + contrast guard).
 import ColorPicker from "@/components/ui/ColorPicker";
+// Feb-2026 · Sprint 2 · Section A — Admin "Unlinked Technicians"
+// widget. Renders inside the Team tab above the roster list;
+// self-hides for non-admins and when zero techs are unlinked.
+import UnlinkedTechniciansWidget from "@/components/team/UnlinkedTechniciansWidget";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
@@ -826,6 +830,12 @@ function TeamRoster() {
 
   return (
     <Card testid="team-page">
+      {/* Feb-2026 · Sprint 2 · Section A — Unlinked Technicians widget.
+          Self-hides for non-admins and when zero techs are unlinked. */}
+      <UnlinkedTechniciansWidget
+        isAdmin={isAdmin}
+        onCreated={() => refresh()}
+      />
       {/* Header row — filter chips (left) + Add Team Member (right). */}
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap" data-testid="team-filter-row">

@@ -849,6 +849,12 @@ api_router.include_router(_p18_inventory_reports.router)
 api_router.include_router(_p19_admin_users.router)
 api_router.include_router(_p19_integrations_admin.router)
 
+# Feb-2026 · Sprint 2 · Section A — Admin "Unlinked Technicians" widget.
+# Surfaces every technician doc whose ``user_id`` is null so admins
+# can one-click create + link a matching users row.
+from routers import admin_unlinked_techs as _sprint2_admin_unlinked_techs  # noqa: E402
+api_router.include_router(_sprint2_admin_unlinked_techs.router)
+
 # Feb-2026 · Client-side error ingest + admin browser.
 from routers import client_errors as _client_errors_router  # noqa: E402
 api_router.include_router(_client_errors_router.router)
