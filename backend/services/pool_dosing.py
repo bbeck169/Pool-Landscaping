@@ -184,6 +184,8 @@ def compute(
     service_date=None,
     recent_service_reports: Optional[list] = None,
     visible_algae: str = "none",
+    tenant_targets: Optional[dict] = None,
+    tenant_formulas: Optional[dict] = None,
 ) -> list[dict]:
     """Return an ordered list of chemical dose recommendations.
 
@@ -195,6 +197,19 @@ def compute(
       5. Calcium Hardness (equipment protection)
       6. Salt (only when salt reading is present)
     Capped at 6 items.
+
+    Sprint 3b · Feb-2026 — ``tenant_targets`` (optional) overrides
+    the hardcoded ``_TARGETS`` for pH / total_alkalinity /
+    cyanuric_acid / calcium_hardness / salt AND the low-season
+    chlorine range. Shape: ``{"free_chlorine": {"min": .., "max": ..,
+    "ideal": ..}, ...}``. Falls back to ``_TARGETS`` for missing keys.
+    ``tenant_formulas`` (optional) is a dict keyed by formula key
+    (see ``services.chemistry_dosing_engine.FORMULA_KEYS``) — when
+    present the sandboxed engine computes the dose instead of the
+    hardcoded arithmetic. Missing / empty entries fall through to
+    the hardcoded math (AZ default behaviour, zero regression).
+    Backward compatible: calling with neither kwarg is identical to
+    the pre-Sprint-3b behaviour.
 
     Phase 56.10 — algae remediation:
       * When `visible_algae` is "light" or "heavy", additional entries
@@ -212,9 +227,62 @@ def compute(
     r = _normalize(readings)
     out: list[dict] = []
 
+    # Sprint 3b — resolve per-chemical (min, max, ideal) tuples with
+    # tenant overrides sprinkled on top of the AZ hardcoded map.
+    def _resolve(key: str) -> tuple[float, float, float]:
+        az_lo, az_hi, az_ideal = _TARGETS[key]
+        t = (tenant_targets or {}).get(key)
+        if not isinstance(t, dict):
+            return az_lo, az_hi, az_ideal
+        try:
+            m_min = float(t.get("min", az_lo))
+            m_max = float(t.get("max", az_hi))
+            m_ideal = float(t.get("ideal", az_ideal))
+        except (TypeError, ValueError):
+            return az_lo, az_hi, az_ideal
+        return m_min, m_max, m_ideal
+
+    def _tenant_dose(formula_key: str, current_val: float,
+                     lo: float, hi: float, ideal: float) -> Optional[float]:
+        """Evaluate a tenant-authored formula for ``formula_key`` if
+        present; return ``None`` when the tenant hasn't overridden
+        (caller falls through to the hardcoded arithmetic)."""
+        if not tenant_formulas:
+            return None
+        raw = tenant_formulas.get(formula_key)
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            from services.chemistry_dosing_engine import evaluate as _te
+            res = _te(
+                chemical=formula_key,
+                current=current_val,
+                target_range={"min": lo, "max": hi, "ideal": ideal},
+                volume_gallons=pool_gallons,
+                tenant_formula=raw,
+            )
+        except Exception:                                       # noqa: BLE001
+            return None
+        if res.get("evaluation_ok") and res.get("source") == "tenant":
+            return float(res.get("recommended_dose_oz") or 0.0)
+        return None
+
     # Season-aware chlorine target (Phase 56.5).
     fc_target_ppm, fc_target_tuple, season = resolve_chlorine_target(service_date)
-    fc_lo, fc_hi, _ = fc_target_tuple
+    fc_lo, fc_hi, _fc_ideal = fc_target_tuple
+    # Sprint 3b · Feb-2026 — tenant may override the low-season
+    # chlorine range. In high season, the 5.0 ppm bull's-eye from
+    # ``resolve_chlorine_target`` stays authoritative — pool
+    # sanitation demands a fixed high-season minimum regardless of
+    # tenant preference.
+    if season == "low" and tenant_targets and tenant_targets.get("free_chlorine"):
+        t_fc = tenant_targets["free_chlorine"]
+        try:
+            fc_lo = float(t_fc.get("min", fc_lo))
+            fc_hi = float(t_fc.get("max", fc_hi))
+            fc_target_ppm = float(t_fc.get("ideal", round((fc_lo + fc_hi) / 2, 2)))
+        except (TypeError, ValueError):
+            pass
 
     # 1. Free chlorine — sanitiser.
     if "free_chlorine" in r:
@@ -241,8 +309,14 @@ def compute(
             else:
                 # Liquid chlorine 12.5% — 10 fl-oz per 10k gal ≈ +2 ppm.
                 # Phase 56.5 unit tweak — surface as gallons (2dp).
-                oz = 10.0 * (delta / 2.0) * scale
-                qty = round(oz / _OZ_PER_GAL, 2)
+                override = _tenant_dose(
+                    "free_chlorine", fc, fc_lo, fc_hi, fc_target_ppm,
+                )
+                if override is not None:
+                    qty = round(override, 2)
+                else:
+                    oz = 10.0 * (delta / 2.0) * scale
+                    qty = round(oz / _OZ_PER_GAL, 2)
                 unit = "gal"
                 chemical = "Liquid chlorine (12.5%)"
                 reason = (
@@ -270,104 +344,128 @@ def compute(
     # 2. pH.
     if "ph" in r:
         ph = r["ph"]
-        lo, hi, tgt = _TARGETS["ph"]
+        lo, hi, tgt = _resolve("ph")
         if ph < lo:
             # Soda ash (Phase 56.5b unit fix) — 6 oz per 10k gal ≈ +0.2 pH.
             # Displayed as lbs (1 lb = 16 oz) to match how techs stock and
             # scoop the product. Underlying chemistry unchanged.
-            delta = tgt - ph
-            oz = 6.0 * (delta / 0.2) * scale
-            lbs = round(oz / 16.0, 1)
+            override = _tenant_dose("ph_up", ph, lo, hi, tgt)
+            if override is not None:
+                lbs = round(override, 1)
+            else:
+                delta = tgt - ph
+                oz = 6.0 * (delta / 0.2) * scale
+                lbs = round(oz / 16.0, 1)
             out.append(_rec(
                 "Soda ash (sodium carbonate)", lbs, "lbs",
                 f"pH is {ph} — below {lo}. {lbs} lbs raises pH gently without bumping alkalinity much.",
-                "routine", "ph", ph, _TARGETS["ph"],
+                "routine", "ph", ph, (lo, hi, tgt),
             ))
         elif ph > hi:
             # Muriatic acid — express in gallons per Phase 56.5 unit fix.
-            delta = ph - tgt
-            oz = 8.0 * (delta / 0.2) * scale
-            gal = round(oz / _OZ_PER_GAL, 2)
+            override = _tenant_dose("ph_down", ph, lo, hi, tgt)
+            if override is not None:
+                gal = round(override, 2)
+            else:
+                delta = ph - tgt
+                oz = 8.0 * (delta / 0.2) * scale
+                gal = round(oz / _OZ_PER_GAL, 2)
             out.append(_rec(
                 "Muriatic acid", gal, "gal",
                 f"pH is {ph} — above {hi}. Also nudges total alkalinity down.",
-                "routine", "ph", ph, _TARGETS["ph"],
+                "routine", "ph", ph, (lo, hi, tgt),
             ))
 
     # 3. Total Alkalinity.
     if "total_alkalinity" in r:
         ta = r["total_alkalinity"]
-        lo, hi, tgt = _TARGETS["total_alkalinity"]
+        lo, hi, tgt = _resolve("total_alkalinity")
         if ta < lo:
             # Sodium bicarbonate (Phase 56.5b unit fix) — 21 oz per 10k gal
             # ≈ +10 ppm. Displayed as lbs to match tech stocking.
-            delta = tgt - ta
-            oz = 21.0 * (delta / 10.0) * scale
-            lbs = round(oz / 16.0, 1)
+            override = _tenant_dose("alkalinity_up", ta, lo, hi, tgt)
+            if override is not None:
+                lbs = round(override, 1)
+            else:
+                delta = tgt - ta
+                oz = 21.0 * (delta / 10.0) * scale
+                lbs = round(oz / 16.0, 1)
             out.append(_rec(
                 "Sodium bicarbonate (baking soda)", lbs, "lbs",
                 f"Total alkalinity is {ta} ppm — below {lo}. {lbs} lbs buffers pH swings.",
-                "routine", "total_alkalinity", ta, _TARGETS["total_alkalinity"],
+                "routine", "total_alkalinity", ta, (lo, hi, tgt),
             ))
-        elif ta > hi and r.get("ph", 7.4) > _TARGETS["ph"][1]:
+        elif ta > hi and r.get("ph", 7.4) > _resolve("ph")[1]:
             delta = ta - tgt
             oz = 25.0 * (delta / 10.0) * scale
             gal = round(oz / _OZ_PER_GAL, 2)
             out.append(_rec(
                 "Muriatic acid (to lower TA)", gal, "gal",
                 f"Total alkalinity is {ta} ppm AND pH is high — acid lowers both.",
-                "routine", "total_alkalinity", ta, _TARGETS["total_alkalinity"],
+                "routine", "total_alkalinity", ta, (lo, hi, tgt),
             ))
 
     # 4. Cyanuric Acid (stabiliser).
     if "cyanuric_acid" in r:
         cya = r["cyanuric_acid"]
-        lo, hi, tgt = _TARGETS["cyanuric_acid"]
+        lo, hi, tgt = _resolve("cyanuric_acid")
         if cya < lo:
-            delta = tgt - cya
-            oz = round(13.0 * (delta / 10.0) * scale, 1)
+            override = _tenant_dose("cyanuric_acid_up", cya, lo, hi, tgt)
+            if override is not None:
+                oz = round(override, 1)
+            else:
+                delta = tgt - cya
+                oz = round(13.0 * (delta / 10.0) * scale, 1)
             out.append(_rec(
                 "Stabiliser (cyanuric acid granular)", oz, "oz",
                 f"Cyanuric acid is {cya} ppm — below {lo}. Protects chlorine from UV burn-off.",
-                "routine", "cyanuric_acid", cya, _TARGETS["cyanuric_acid"],
+                "routine", "cyanuric_acid", cya, (lo, hi, tgt),
             ))
         elif cya > hi:
             out.append(_rec(
                 "Partial drain + refill", 0, "",
                 f"Cyanuric acid is {cya} ppm — above {hi}. Only fix is to drain some water.",
-                "routine", "cyanuric_acid", cya, _TARGETS["cyanuric_acid"],
+                "routine", "cyanuric_acid", cya, (lo, hi, tgt),
             ))
 
     # 5. Calcium Hardness.
     if "calcium_hardness" in r:
         ch = r["calcium_hardness"]
-        lo, hi, tgt = _TARGETS["calcium_hardness"]
+        lo, hi, tgt = _resolve("calcium_hardness")
         if ch < lo:
-            delta = tgt - ch
-            oz = round(10.0 * (delta / 10.0) * scale, 1)
+            override = _tenant_dose("calcium_hardness_up", ch, lo, hi, tgt)
+            if override is not None:
+                oz = round(override, 1)
+            else:
+                delta = tgt - ch
+                oz = round(10.0 * (delta / 10.0) * scale, 1)
             out.append(_rec(
                 "Calcium chloride", oz, "oz",
                 f"Calcium hardness is {ch} ppm — below {lo}. Prevents plaster etching.",
-                "routine", "calcium_hardness", ch, _TARGETS["calcium_hardness"],
+                "routine", "calcium_hardness", ch, (lo, hi, tgt),
             ))
         elif ch > hi:
             out.append(_rec(
                 "Partial drain + refill", 0, "",
                 f"Calcium hardness is {ch} ppm — above {hi}. Only fix is to drain some water.",
-                "routine", "calcium_hardness", ch, _TARGETS["calcium_hardness"],
+                "routine", "calcium_hardness", ch, (lo, hi, tgt),
             ))
 
     # 6. Salt.
     if "salt" in r:
         s = r["salt"]
-        lo, hi, tgt = _TARGETS["salt"]
+        lo, hi, tgt = _resolve("salt")
         if s < lo:
-            delta = tgt - s
-            lb = round(25.0 * (delta / 300.0) * scale, 1)
+            override = _tenant_dose("salt_up", s, lo, hi, tgt)
+            if override is not None:
+                lb = round(override, 1)
+            else:
+                delta = tgt - s
+                lb = round(25.0 * (delta / 300.0) * scale, 1)
             out.append(_rec(
                 "Pool salt (NaCl)", lb, "lbs",
                 f"Salt is {s} ppm — below {lo}. Required for the chlorine generator to run.",
-                "routine", "salt", s, _TARGETS["salt"],
+                "routine", "salt", s, (lo, hi, tgt),
             ))
 
     out.sort(key=lambda x: 0 if x["urgency"] == "immediate" else 1)

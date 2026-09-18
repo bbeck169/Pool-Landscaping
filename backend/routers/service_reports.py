@@ -685,17 +685,43 @@ async def submit_service_report(
     from services.chemistry_gate import (
         assert_bodies_required_readings_present,
         assert_core_readings_present, gather_readings_for_job, is_pool_job,
+        missing_core_reading_labels,
     )
     _report_wc = (rep.get("work_class") or "").lower()
     _job_wc = (job.get("work_class") or "").lower()
     _is_repair = "repair" in (_report_wc, _job_wc)
-    if is_pool_job(job) and not _is_repair:
-        assert_core_readings_present(gather_readings_for_job(job, rep))
-        # Phase CHEM1 · Feb-2026 — multi-body enforcement. Iterates
-        # every water body whose type requires readings (currently
-        # ``pool``) and raises 422 with per-body detail when any
-        # Required Four value is missing on any such body.
-        assert_bodies_required_readings_present(rep.get("water_bodies"))
+    # Sprint 3b · Feb-2026 — tenant-configurable gate mode.
+    #   strict     → block submit if any Required Four missing (current)
+    #   warn_only  → allow submit + attach warnings[] on the response
+    #   off        → skip the gate entirely
+    # Falls back to ``strict`` when the tenant hasn't configured it —
+    # zero-regression posture for AZ tenants.
+    from services.chemistry_tenant_targets import (
+        get_tenant_chemistry_settings,
+    )
+    _chem_cfg = await get_tenant_chemistry_settings(tenant["id"], db)
+    _gate_mode = _chem_cfg.get("gate_mode", "strict")
+    _gate_warnings: List[str] = []
+    if is_pool_job(job) and not _is_repair and _gate_mode != "off":
+        _readings_for_gate = gather_readings_for_job(job, rep)
+        if _gate_mode == "warn_only":
+            _missing = missing_core_reading_labels(_readings_for_gate)
+            if _missing:
+                _gate_warnings.append(
+                    "chemistry_core_readings_missing: " + ", ".join(_missing),
+                )
+                logger.info(
+                    "[chem-gate-warn] job=%s tenant=%s missing=%s "
+                    "gate_mode=warn_only",
+                    jid, tenant["id"], _missing,
+                )
+        else:
+            assert_core_readings_present(_readings_for_gate)
+            # Phase CHEM1 · Feb-2026 — multi-body enforcement. Iterates
+            # every water body whose type requires readings (currently
+            # ``pool``) and raises 422 with per-body detail when any
+            # Required Four value is missing on any such body.
+            assert_bodies_required_readings_present(rep.get("water_bodies"))
     # Phase MI1 · Feb 2026 — required-checklist-item gate for the
     # six non-pool industries (Landscaping / HVAC / Pest Control /
     # Cleaning / Solar / Handyman). Pool jobs continue to use the
@@ -1321,6 +1347,12 @@ async def submit_service_report(
         }
     if invoice_id:
         out["invoice_id"] = invoice_id
+    # Sprint 3b · Feb-2026 — surface chemistry-gate warnings when
+    # ``gate_mode=warn_only`` and the Required Four had gaps. The
+    # submit still succeeded; this lets the UI + FE consumers flag
+    # the missing readings without blocking close.
+    if _gate_warnings:
+        out["warnings"] = list((out or {}).get("warnings") or []) + _gate_warnings
     # Feb-2026 · P12A — structured end log with elapsed_ms so the
     # tail duration of the SYNC path is greppable in the prod log
     # stream on any future 520 regression.  WARN when > 50s so the
@@ -1744,12 +1776,31 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
             "pool_gallons": None,
         }
 
+    # Sprint 3b · Feb-2026 — fetch tenant chemistry settings so
+    # tenant-authored targets + formulas can override the AZ defaults
+    # inside ``_pool_compute``. Merged shape is always populated
+    # (falls back to AZ defaults when the tenant hasn't customised).
+    from services.chemistry_tenant_targets import (
+        get_tenant_chemistry_settings,
+    )
+    chem_cfg = await get_tenant_chemistry_settings(tenant["id"], db)
+    # ``_pool_compute`` expects the ``total_alkalinity`` key
+    # internally; the tenant settings block uses ``alkalinity``
+    # (canonical gate key). Bridge them here so the dosing engine
+    # sees the right shape without leaking the naming into the
+    # tenant-facing surface.
+    _dosing_targets = dict(chem_cfg["targets"])
+    if "alkalinity" in _dosing_targets:
+        _dosing_targets["total_alkalinity"] = _dosing_targets["alkalinity"]
+
     recs = _pool_compute(
         body.readings or {}, gallons,
         customer=customer_doc,
         service_date=service_date_for_dosing,
         recent_service_reports=recent_reports,
         visible_algae=(body.visible_algae or "none"),
+        tenant_targets=_dosing_targets,
+        tenant_formulas=chem_cfg.get("dosing_formulas") or {},
     )
     source = "deterministic-only"
     tokens = 0

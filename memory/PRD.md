@@ -17957,3 +17957,156 @@ Modernize legacy `TestClient` tests to `httpx.ASGITransport` + `anyio` and clear
 - No changes inside `/app/mobile/`.
 - All responses / commit-messages / docs in English.
 
+
+
+---
+
+## Sprint 3b (Feb 2026) — Chemistry Config & Sandboxed Dosing Engine · COMPLETE
+
+**Date**: Feb 2026 (this session)
+
+### Scope
+Move hardcoded AZ chemistry targets into tenant-editable settings, and add
+a `simpleeval`-sandboxed dosing formula engine so tenants can author
+custom dosing math per chemical. Preserved existing AZ dosing math as
+the fallback so default AZ tenants see zero regression.
+
+### Part 1 · Tenant-editable chemistry targets
+- New backend service: `services/chemistry_tenant_targets.py` — AZ defaults,
+  outer sanity bounds (salt widened to 0–6000 ppm per Sprint 3b brief),
+  validator (`min<max`, non-negative, within outer bounds), per-request
+  ContextVar cache, `get_tenant_chemistry_settings(tenant_id)`.
+- New router: `routers/tenant_chemistry_settings.py`.
+- Endpoints (admin+/super_admin):
+    * `GET  /api/tenants/mine/settings/chemistry`
+    * `PATCH /api/tenants/mine/settings/chemistry` (targets partial + gate_mode)
+    * `GET  /api/tenants/mine/settings/chemistry/dosing-formulas`
+    * `PATCH /api/tenants/mine/settings/chemistry/dosing-formulas`
+    * `POST /api/chemistry/dose/preview`
+- Chemical keys mirror the codebase — `free_chlorine`, `ph`, `alkalinity`,
+  `cyanuric_acid`, `calcium_hardness`, `salt` (six chemicals, `chlorine_total`
+  intentionally excluded per Phase CHEM1). Persistence lives under
+  `tenants.settings.chemistry.*`.
+- Migration: `services/migrations/tenant_chemistry_defaults_backfill.py`
+  (idempotent, per-key `$exists: false` guard). CLI: `python -m …
+  tenant_chemistry_defaults_backfill [--dry-run]`. Admin endpoint:
+  `POST /api/admin/chemistry/backfill-tenant-defaults?dry_run=<bool>`
+  (super_admin only) wired into `routers/admin_migrations.py`.
+
+### Part 2 · Sandboxed dosing formula engine
+- New backend service: `services/chemistry_dosing_engine.py`.
+- Dependency: `simpleeval==1.0.8` added to `backend/requirements.txt`.
+- Whitelist matches AZ default formula needs EXACTLY (per brief — no more,
+  no less):
+    * names: `current`, `min_target`, `max_target`, `avg_target`,
+      `volume_gallons`, `delta`
+    * functions: `abs`, `min`, `max`, `round` (no `math.log10` — AZ
+      defaults don't need it)
+- Guardrails: preflight blocks dunder / `import` / `lambda` / newline /
+  `;` / attribute-access (regex, allows numeric literals like `0.00013`);
+  `simpleeval.MAX_POWER=100`; wall-clock `0.1s` via `ThreadPoolExecutor`;
+  formula length capped at 200 chars.
+- AZ default formulas encoded as sandbox-safe SimpleEval strings and
+  regression-tested against `pool_dosing.compute()` output (see
+  `test_chemistry_dosing_engine.py::test_az_default_*_matches_pool_dosing`).
+
+### Part 3 · Callsite wiring
+- `services/pool_dosing.py::compute()` now accepts optional
+  `tenant_targets` + `tenant_formulas` kwargs. When absent, behaviour is
+  byte-identical to the pre-Sprint-3b codepath (regression guard in
+  `test_pool_dosing_compute_is_unchanged_without_tenant_overrides`). When
+  present, per-chemical tenant overrides take priority; bad tenant
+  formulas silently fall through to the AZ default math with a WARN log.
+- Only in-repo callsite (`routers/service_reports.py::recommend_chemicals`)
+  now fetches the tenant's chemistry settings via
+  `get_tenant_chemistry_settings(tenant["id"])` and threads them into
+  `_pool_compute()`. The internal `alkalinity` ↔ `total_alkalinity` key
+  bridge is applied at the wiring layer only — tenant UX + API stays
+  on the canonical `alkalinity` key.
+- Chemistry gate (`service_reports.submit_service_report`) now respects
+  `gate_mode`:
+    * `strict` (default) — current behaviour (block 422 if Required Four
+      missing).
+    * `warn_only` — allow submit; attach `warnings[]` to the response and
+      log a structured WARN.
+    * `off` — skip the gate entirely.
+
+### Sample formulas (live evidence via `POST /api/chemistry/dose/preview`)
+| Case | Formula | Response |
+| --- | --- | --- |
+| ACCEPT | `max(0, (avg_target - current) * volume_gallons * 0.00013)` | `{recommended_dose_oz: 1.3, source: "tenant"}` |
+| REJECT unsafe | `__import__("os").system("ls")` | `400 chemistry_formula_invalid: forbidden substring '__'` |
+| REJECT attribute | `current.real * volume_gallons` | `400 chemistry_formula_invalid: unsafe_construct: attribute access` |
+| REJECT blow-up | `2 ** 2 ** 2 ** 2 ** 2` | `400 chemistry_formula_invalid: number_too_high` |
+| REJECT syntax | `(2 + )` | `400 chemistry_formula_invalid: bad_syntax` |
+
+### Migration demo output
+```
+DRY RUN  (before): counts={all keys: 5}, total_writes=40
+REAL RUN         : counts={all keys: 5}, total_writes=40
+IDEMPOTENT DRY RUN (after real): counts={all keys: 0}, total_writes=0
+```
+Reset was demonstrated by unsetting `settings.chemistry` on 5 tenants
+first. Confirms idempotency: a second sweep after a real run flips zero rows.
+
+### Test health
+- Backend: `test_chemistry_dosing_engine.py` (**20 passed**, 0 failed) +
+  `test_chemistry_tenant_settings.py` (**23 passed**, 0 failed) +
+  Sprint 3a scope (`test_service_report.py`, `test_phase_d4_endpoint_and_seeder.py`)
+  still green — **62 passed, 1 skipped** aggregate on Sprint 3a+3b scope.
+- Frontend: `chemistry-configuration-settings.test.jsx` (**9 passed**,
+  0 failed). Adjacent suites regressed clean:
+  `ticket3-ticket4-org-settings.test.jsx` (9), `settings-hub.test.jsx`
+  (8), `admin-unlinked-technicians-widget.test.jsx` (10) — 27/27.
+
+### Files touched
+Backend:
+- **NEW**: `backend/services/chemistry_tenant_targets.py`
+- **NEW**: `backend/services/chemistry_dosing_engine.py`
+- **NEW**: `backend/routers/tenant_chemistry_settings.py`
+- **NEW**: `backend/services/migrations/tenant_chemistry_defaults_backfill.py`
+- **NEW**: `backend/tests/test_chemistry_dosing_engine.py`
+- **NEW**: `backend/tests/test_chemistry_tenant_settings.py`
+- MODIFIED: `backend/services/pool_dosing.py` — additive `tenant_targets`
+  + `tenant_formulas` kwargs, per-chemical `_resolve()` + `_tenant_dose()`
+  helpers, low-season chlorine range respects tenant override.
+- MODIFIED: `backend/routers/service_reports.py` — dosing callsite wired;
+  gate_mode branching in submit; `warnings[]` on response.
+- MODIFIED: `backend/routers/admin_migrations.py` — added
+  `POST /admin/chemistry/backfill-tenant-defaults` (super_admin, dry-run flag).
+- MODIFIED: `backend/server.py` — registers the new router.
+- MODIFIED: `backend/requirements.txt` — added `simpleeval==1.0.8`.
+
+Frontend:
+- **NEW**: `frontend/src/pages/settings/ChemistryConfigurationSettings.jsx`
+- **NEW**: `frontend/src/test/chemistry-configuration-settings.test.jsx`
+- MODIFIED: `frontend/src/App.js` — new `/settings/chemistry-configuration` route.
+- MODIFIED: `frontend/src/layouts/SettingsHub.jsx` — new "Chemistry
+  Configuration" sidebar entry (Beaker icon).
+
+### Deviations from spec (with justification)
+1. **`chlorine_total` dropped** from editable targets per user override
+   1a — Phase CHEM1 removed total chlorine as a required reading.
+2. **Canonical codebase keys** used (`free_chlorine`, `alkalinity`, …)
+   per user override 2a — matches the ~300 existing files.
+3. **`math.log10` NOT in whitelist** per user reminder — none of the AZ
+   default formulas need it; the whitelist is `abs/min/max/round` only.
+4. **Alkalinity aliasing** — the tenant-facing key is `alkalinity`
+   (matches chemistry gate). `pool_dosing.compute()` internally uses
+   `total_alkalinity` — the bridge is applied at the wiring layer
+   (`recommend_chemicals`), keeping the tenant UX + API surface clean.
+
+### Guardrails honored
+- No GitHub clones / no external repos touched.
+- No changes inside `/app/mobile/`.
+- All responses / code comments / docs in English.
+
+### Deferred / out-of-Sprint-3b scope
+- Phase D-mobile parity for chemistry configuration UI (mobile agent).
+- Non-chlorine sanitiser support (salt / mineral / ionizer) — explicit
+  non-goal per Sprint 3b brief.
+- Per-formula unit customization (currently defaults tied to chemical).
+- P0 secret rotation (still yours to action).
+- Notif-pipeline module-level `MongoClient` hardening (Sprint 3b was
+  the notif hardening candidate — deferred to the next infra sprint).
+

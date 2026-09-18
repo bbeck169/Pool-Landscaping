@@ -1458,6 +1458,50 @@ async def remove_total_chlorine(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Sprint 3b · Feb-2026 — Backfill AZ chemistry defaults on every
+# tenant missing ``settings.chemistry.*``. Super_admin only,
+# dry-run flag. Idempotent — per-key ``$exists: false`` filters.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/chemistry/backfill-tenant-defaults",
+    operation_id="admin.chemistry.backfill_tenant_defaults",
+    summary="Sprint 3b · Seed AZ chemistry defaults on every tenant",
+)
+async def backfill_tenant_chemistry_defaults(
+    dry_run: bool = Query(
+        True,
+        description=(
+            "When true (default), returns the counts of rows that "
+            "would be updated without writing. Pass ``dry_run=false`` "
+            "to persist the AZ defaults."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Sprint 3b · Feb-2026 — one-shot backfill for the tenant-
+    editable chemistry targets + gate_mode + dosing_formulas block.
+    Idempotent: per-key ``$exists: false`` guard means custom values
+    are never overwritten. See
+    ``services/migrations/tenant_chemistry_defaults_backfill.py``.
+    """
+    _require_super_admin(user)
+    from services.migrations.tenant_chemistry_defaults_backfill import (
+        backfill,
+    )
+    report = await backfill(db, dry_run=bool(dry_run))
+    logger.info(
+        "[chem-tenant-defaults-backfill-api] user=%s caller_tenant=%s "
+        "dry_run=%s totals=%s",
+        user.get("id"), tenant.get("id"), dry_run,
+        (report.get("counts") or {}),
+    )
+    return report
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────
 # POST /admin/migrations/run-dunning-stage-cta-backfill
 # Feb 2026 · Invoice Email CTA Label ticket — admin trigger for the
 # dunning stage CTA backfill. The migration rewrites persisted

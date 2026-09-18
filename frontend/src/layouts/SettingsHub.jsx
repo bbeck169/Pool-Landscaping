@@ -26,6 +26,7 @@ import {
   Building2,
   Bell,
   Bot,
+  Beaker,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -96,6 +97,13 @@ const SECTIONS = [
     label: "AI Configuration",
     Icon: Bot,
     hint: "AI persona name, Knowledge Base uploads, AI analytics telemetry",
+  },
+  {
+    key: "chemistry-configuration",
+    to: "/settings/chemistry-configuration",
+    label: "Chemistry Configuration",
+    Icon: Beaker,
+    hint: "Per-tenant chemistry target ranges, gate mode + sandboxed dosing formulas · Sprint 3b",
   },
 ];
 
