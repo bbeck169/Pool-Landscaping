@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
+import { MediaLibraryPicker } from "@/components/marketing/MediaLibraryPicker";
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerWarrantiesLibrary from "@/components/customers/CustomerWarrantiesLibrary";
@@ -1905,6 +1906,14 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   const [pickedId, setPickedId] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
+  // Feb-2026 · Customer-Attachments (Option D) — media picker state.
+  // ``attachments`` is an array of ``{id, file_name, mime_type, ...}``
+  // objects gathered by the multi-select MediaLibraryPicker. When the
+  // user hits Send we ship the ids in the request body; the backend
+  // resolves them to inbox-visible attachments (email) or
+  // signed-URL-suffixed body (SMS).
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [attachments, setAttachments] = useState([]);
   const isEmail = payload?.channel === "email";
   useEffect(() => {
     if (payload) {
@@ -1912,6 +1921,7 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       setMessage("");
       setPickedId("");
       setPreview(null);
+      setAttachments([]);   // reset per-open
       setTemplatesLoading(true);
       api.get(`/marketing/templates?channel=${isEmail ? "email" : "sms"}&active=true`)
         .then((r) => setTemplates(r?.templates || []))
@@ -1955,24 +1965,33 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
     }
     setBusy(true);
     try {
+      // Feb-2026 · Customer-Attachments (Option D) — include attachment
+      // file IDs when the operator picked any. Omit the field entirely
+      // (don't send an empty array) so the backend's default branch
+      // stays quiet.
+      const attachmentIds = attachments.map((a) => a.id).filter(Boolean);
       if (isEmail) {
-        await api.post(`/customers/${customer.id}/send-email`, {
+        const body = {
           to: payload.to,
           subject: subject || `Message from ${customer?.name || "your service"}`,
           body: message,
           customer_id: customer?.id,
-        });
+        };
+        if (attachmentIds.length > 0) body.attachments = attachmentIds;
+        await api.post(`/customers/${customer.id}/send-email`, body);
       } else {
         // BUG F · Feb 2026 — POST to the customer-scoped SMS endpoint
         // (was hitting the non-existent ``/sms/send`` which 404'd with
         // "not found"). New wrapper mirrors ``send-email`` — validates
         // the recipient against the customer's mirrored phones and
         // persists a ``customer_direct_message`` comms_log row.
-        await api.post(`/customers/${customer.id}/send-sms`, {
+        const body = {
           to: payload.to,
           body: message,
           customer_id: customer?.id,
-        });
+        };
+        if (attachmentIds.length > 0) body.attachments = attachmentIds;
+        await api.post(`/customers/${customer.id}/send-sms`, body);
       }
       onSent();
     } catch (e) {
@@ -2079,6 +2098,86 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
               data-testid="cd-send-message"
             />
           </div>
+          {/* Feb-2026 · Customer-Attachments (Option D) — attach files
+              row.  Paperclip trigger opens the multi-select media
+              library picker; selected files render as removable chips.
+              For SMS, we surface a hint that files are appended as
+              download links (not carried in-band). */}
+          <div data-testid="cd-send-attachments-row">
+            <div
+              className="text-xs font-semibold mb-1"
+              style={{ color: colors.muted }}
+            >
+              ATTACHMENTS
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setAttachOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+                style={{
+                  borderColor: colors.border,
+                  color: colors.onSurface,
+                  background: colors.surface,
+                }}
+                data-testid="cd-send-attach-btn"
+                aria-label="Attach files from media library"
+              >
+                <Paperclip className="w-3.5 h-3.5" />
+                Attach files
+              </button>
+              {attachments.length === 0 ? (
+                <span
+                  className="text-xs"
+                  style={{ color: colors.muted }}
+                  data-testid="cd-send-attach-empty"
+                >
+                  No files attached
+                </span>
+              ) : null}
+              {attachments.map((a) => (
+                <span
+                  key={a.id}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
+                  style={{
+                    background: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid={`cd-send-attach-chip-${a.id}`}
+                  title={a.file_name || a.id}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="max-w-[160px] truncate">
+                    {a.file_name || a.id}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAttachments((prev) =>
+                        prev.filter((x) => x.id !== a.id),
+                      )
+                    }
+                    className="ml-0.5 text-zinc-400 hover:text-zinc-900"
+                    aria-label={`Remove ${a.file_name || a.id}`}
+                    data-testid={`cd-send-attach-remove-${a.id}`}
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            {!isEmail && attachments.length > 0 ? (
+              <div
+                className="text-[11px] mt-1.5"
+                style={{ color: colors.muted }}
+                data-testid="cd-send-attach-sms-hint"
+              >
+                SMS can't carry files — download links will be appended
+                to the message body.
+              </div>
+            ) : null}
+          </div>
           {preview ? (
             <div className="rounded-lg p-3 text-sm"
                  style={{ background: colors.surfaceSecondary,
@@ -2115,8 +2214,36 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
           ) : null}
         </div>
       </div>
+      {/* Feb-2026 · Customer-Attachments (Option D) — multi-select
+          media library picker.  Rendered as a sibling <Dialog> so it
+          layers on top of the compose modal.  ``kind={null}`` shows
+          both images and documents; the user filters inside the
+          picker. */}
+      <MediaLibraryPicker
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        multiSelect
+        onSelectMultiple={(items) => {
+          // De-dupe by id when the user re-opens the picker after an
+          // initial pick.
+          setAttachments((prev) => {
+            const byId = new Map(prev.map((a) => [a.id, a]));
+            items.forEach((it) => { byId.set(it.id, it); });
+            return Array.from(byId.values());
+          });
+        }}
+      />
     </Modal>
   );
 }
+
+// Feb-2026 · Customer-Attachments (Option D) — test-only re-export.
+// The Vitest suite (``customer-attach-files.test.jsx``) mounts the
+// modal in isolation to exercise the attach + submit flow without
+// spinning up the full CustomerDetail page.  Kept separate from
+// the default export so runtime consumers still just render the
+// page component.
+export const CustomerDetailModule = { SendComposeModal };
+
 
 

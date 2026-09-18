@@ -358,3 +358,62 @@ Run in this order after all migrations + EAS + rotation are done:
 | Technicians user_id backfill | 0.672 s | 0 to link, 1 skip (Sara Nguyen — expected) | ✅ |
 
 All three complete in under **1 second wall-clock** on preview. Prod is expected to complete in seconds even with a higher tenant / user cardinality (all queries hit indexed fields).
+
+---
+
+## Post-deploy — bucket retention audit (Feb-2026 · Customer-Attachments Option D)
+
+### Context
+The Feb-2026 Customer-Attachments (Option D) release widens the
+`marketing_media` library from images-only to include PDF, DOCX,
+XLSX, CSV, and TXT files. Storage backing is unchanged (Emergent
+Object Storage, bucket path
+`pool-crm/tenants/{tenant_id}/marketing_media/{uuid}.{ext}`), but the
+per-object mix is now heterogeneous.
+
+### What ops needs to review
+1. **Retention / lifecycle policy** — the current bucket policy was
+   sized for image thumbnails. Confirm any TTL / expiration rule
+   still makes sense for larger blobs (a PDF at 15 MB or an XLSX at
+   10 MB is 3–5× the historical average) and for regulated-content
+   use-cases (invoices, work orders — customers may need to
+   download a link months later). Suggested policy:
+     * No auto-delete for uploaded blobs. Soft-delete already exists
+       in Mongo (`marketing_media.deleted_at`) with a template-ref
+       guard; a periodic sweep can hard-purge blobs whose Mongo row
+       has been soft-deleted for > 90 days.
+2. **Antivirus / scanning** — magic-byte checks are in place, but
+   PDF and DOCX are attack surfaces that a bytes-in-bytes-out check
+   won't catch. If the ops team has a bucket scanner (ClamAV /
+   AWS Macie), confirm it now inspects the widened prefix.
+3. **Cross-region replication** — if the bucket is replicated,
+   confirm the widened extensions still pass any cross-region
+   copy filter.
+4. **Egress budgeting** — the SMS attach path generates public
+   HMAC-signed URLs (`/api/marketing/media/{id}/download?tid=…&sig=…`).
+   Egress from this endpoint may spike after the first customer
+   campaign that attaches PDFs. Set an alert on Cloudflare / bucket
+   egress bytes for the tenant-media prefix.
+5. **TTL + rate-limit follow-up (deferred to P1)** — the signed URL
+   currently has no expiration and no rate limit (same as the
+   pre-widening images path). If usage data warrants tightening
+   (e.g., a customer's invoice link is being scraped), roll out
+   the deferred P1 hotfix: add an `exp` claim to
+   `_sign_media()` + SlowAPI per-IP limiter on the download route.
+   Both are prepared in the STOP-and-report; no code has been
+   written yet. Track under backlog **P1 · media-signed-url-ttl-rl**.
+
+### Where to look
+* Bucket lifecycle: Emergent Object Storage admin console (or ask
+  the platform team for the current policy JSON on the shared
+  bucket).
+* Egress metrics: `Prod Ops → Object Storage → Egress` dashboard.
+* Soft-delete inventory:
+  `db.marketing_media.countDocuments({deleted_at: {$ne: null}})`
+  per-tenant.
+
+### Sign-off
+Ops sign-off is NOT blocking for the code release — the widened
+library is safe to deploy immediately (magic-byte checks + per-type
+size caps enforce the invariants at the upload boundary). This
+subsection is a follow-up checklist, not a gate.

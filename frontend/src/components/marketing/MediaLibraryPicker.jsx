@@ -9,8 +9,11 @@
  * ``onSelect({id, url, cdn_url, alt_text})`` fires when the primary
  * "Use this image" button is clicked.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Search, Upload, X as XIcon, Link as LinkIcon, Check, ImageOff } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Search, Upload, X as XIcon, Link as LinkIcon, Check, ImageOff,
+  FileText, FileSpreadsheet, File as FileIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import {
@@ -32,6 +35,83 @@ function absMediaUrl(u) {
   if (/^https?:/i.test(u)) return u;
   if (BASE && u.startsWith("/")) return `${BASE}${u}`;
   return u;
+}
+
+
+/**
+ * Feb-2026 · Customer-Attachments (Option D).
+ *
+ * The library was image-only. It now stores PDFs and Office docs.
+ * ``isImageMime`` gates the ``<img>`` thumb path so we don't try
+ * to render a PDF as an image (which would just show the broken-
+ * image placeholder). Non-image mimes fall back to a labeled
+ * file-type tile via ``<FileThumb>``.
+ */
+function isImageMime(m) {
+  return (m || "").toLowerCase().startsWith("image/");
+}
+
+
+function pickFileIcon(mime) {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("spreadsheet") || m === "text/csv") return FileSpreadsheet;
+  if (m === "application/pdf" || m.startsWith("text/") || m.includes("word"))
+    return FileText;
+  return FileIcon;
+}
+
+
+function FileThumb({ item, className }) {
+  const Icon = pickFileIcon(item?.mime_type);
+  const ext = (
+    (item?.file_name || "").split(".").pop() || ""
+  ).toLowerCase().slice(0, 5);
+  return (
+    <div
+      className={`${className || ""} bg-zinc-50 flex flex-col items-center justify-center text-zinc-500 gap-1`}
+      data-testid="media-file-thumb"
+    >
+      <Icon className="w-8 h-8" />
+      {ext ? (
+        <span className="text-[10px] font-semibold uppercase tracking-wide">
+          {ext}
+        </span>
+      ) : null}
+      <span
+        className="text-[10px] text-zinc-500 px-2 text-center truncate max-w-full"
+        title={item?.file_name || ""}
+      >
+        {item?.file_name || "file"}
+      </span>
+    </div>
+  );
+}
+
+
+/**
+ * Client-side variant of the ``accept`` attribute check. Same fuzzy
+ * matching browsers do: comma-separated list where each entry is
+ * either a wildcard mime (``image/*``), a full mime, or a
+ * ``.extension``. Server remains the source of truth.
+ */
+function _clientAccepts(file, acceptAttr) {
+  if (!acceptAttr) return true;
+  const parts = acceptAttr.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return true;
+  const name = (file.name || "").toLowerCase();
+  const mime = (file.type || "").toLowerCase();
+  for (const p of parts) {
+    const pl = p.toLowerCase();
+    if (pl.startsWith(".")) {
+      if (name.endsWith(pl)) return true;
+    } else if (pl.endsWith("/*")) {
+      const prefix = pl.slice(0, -1);
+      if (mime.startsWith(prefix)) return true;
+    } else if (pl.includes("/")) {
+      if (mime === pl) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -108,7 +188,26 @@ async function uploadFile(file, onProgress) {
   });
 }
 
-export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
+/**
+ * Feb-2026 · Customer-Attachments (Option D) — additive props:
+ *   * ``multiSelect``  — when true, the picker gathers selections into
+ *     an array and surfaces them via ``onSelectMultiple(items[])`` on
+ *     the "Use N files" primary button. Existing single-select
+ *     callers (``TemplateEditor``) are untouched — default is false
+ *     and ``onSelect`` fires as before.
+ *   * ``kind``         — ``"image"`` | ``"document"`` | ``null`` (all).
+ *     Fed to the backend list endpoint as a filter and gates the
+ *     upload input's ``accept`` attribute.
+ *   * ``accept``       — HTML file-input accept string; defaults to a
+ *     sensible set based on ``kind``.
+ */
+export function MediaLibraryPicker({
+  open, onOpenChange, onSelect,
+  multiSelect = false,
+  onSelectMultiple,
+  kind: kindProp = null,
+  accept: acceptProp = null,
+}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -122,6 +221,33 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
   const [hasMore, setHasMore] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Feb-2026 · Kind filter (Images / Documents / All). Internal state
+  // is seeded from the ``kindProp``; user can flip it inside the modal.
+  const [kind, setKind] = useState(kindProp);
+  useEffect(() => { setKind(kindProp); }, [kindProp]);
+
+  // Feb-2026 · Multi-select batch buffer. Only used when
+  // ``multiSelect`` is true. Keyed by media id for O(1) toggle.
+  const [batch, setBatch] = useState({});
+  const batchList = useMemo(() => Object.values(batch), [batch]);
+  const batchCount = batchList.length;
+  const isBatched = (id) => Object.prototype.hasOwnProperty.call(batch, id);
+  const toggleBatch = (m) => {
+    setBatch((prev) => {
+      const next = { ...prev };
+      if (next[m.id]) delete next[m.id];
+      else next[m.id] = m;
+      return next;
+    });
+  };
+
+  const acceptAttr = acceptProp
+    || (kind === "document"
+          ? ".pdf,.docx,.xlsx,.csv,.txt,application/pdf"
+          : kind === "image"
+              ? "image/*"
+              : "image/*,.pdf,.docx,.xlsx,.csv,.txt");
+
   const load = useCallback(async (reset = true) => {
     setLoading(true);
     try {
@@ -129,6 +255,7 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
       const params = new URLSearchParams({ page_size: "48" });
       if (q) params.set("search", q);
       if (tagFilter) params.set("tag", tagFilter);
+      if (kind) params.set("kind", kind);
       params.set("page", String(nextPageToRequest));
       const res = await api.get(`/marketing/media?${params}`);
       const items = res.rows || res.items || res.media || [];
@@ -147,15 +274,16 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
     } finally {
       setLoading(false);
     }
-  }, [q, tagFilter, nextPage, rows]);
+  }, [q, tagFilter, kind, nextPage, rows]);
 
   useEffect(() => {
     if (!open) return;
     setSelected(null);
+    setBatch({});
     setNextPage(1);
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, q, tagFilter]);
+  }, [open, q, tagFilter, kind]);
 
   async function onPickFiles(files) {
     if (!files || files.length === 0) return;
@@ -163,9 +291,11 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
     setProgress(0);
     try {
       for (const f of files) {
-        // Basic client-side validation — server also validates.
-        if (!/^image\//.test(f.type)) {
-          toast.error(`${f.name}: not an image`);
+        // Feb-2026 — client-side validation is a hint; the server is
+        // the source of truth (magic bytes + per-type size caps).
+        const okByAccept = _clientAccepts(f, acceptAttr);
+        if (!okByAccept) {
+          toast.error(`${f.name}: file type not allowed`);
           continue;
         }
         const created = await uploadFile(f, setProgress);
@@ -201,7 +331,27 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
         cdn_url: absUrl,
         storage_url: rawUrl,
         alt_text: m.alt_text || "",
+        mime_type: m.mime_type || null,
+        file_name: m.file_name || null,
       });
+    }
+    onOpenChange(false);
+  }
+
+  function confirmBatch() {
+    if (typeof onSelectMultiple === "function") {
+      onSelectMultiple(
+        batchList.map((m) => ({
+          id: m.id,
+          url: absMediaUrl(m.cdn_url || m.storage_url || m.url),
+          cdn_url: absMediaUrl(m.cdn_url || m.storage_url || m.url),
+          storage_url: m.storage_url || m.url || m.cdn_url,
+          alt_text: m.alt_text || "",
+          mime_type: m.mime_type || null,
+          file_name: m.file_name || null,
+          size_bytes: m.size_bytes || null,
+        })),
+      );
     }
     onOpenChange(false);
   }
@@ -245,7 +395,7 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept={acceptAttr}
                 multiple
                 hidden
                 onChange={(e) => onPickFiles(Array.from(e.target.files || []))}
@@ -260,6 +410,29 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
                 <Upload className="w-4 h-4" />
                 {uploading ? `Uploading ${progress.toFixed(0)}%` : "Upload"}
               </button>
+            </div>
+            {/* Feb-2026 · Kind filter row — Images / Documents / All */}
+            <div
+              className="px-6 py-2 flex items-center gap-1.5 border-b border-zinc-100"
+              data-testid="media-picker-kind-filter"
+            >
+              {[
+                { k: null,         label: "All"       },
+                { k: "image",      label: "Images"    },
+                { k: "document",   label: "Documents" },
+              ].map(({ k, label }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setKind(k)}
+                  data-testid={`media-picker-kind-${k || "all"}`}
+                  className={`px-2.5 py-1 rounded-full text-xs whitespace-nowrap ${
+                    kind === k ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
             {allTags.length > 0 && (
               <div className="px-6 py-2 flex items-center gap-1.5 border-b border-zinc-100 overflow-x-auto">
@@ -302,34 +475,52 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
               {!loading && rows.length === 0 && (
                 <div className="text-center py-16 text-sm text-zinc-400"
                      data-testid="media-picker-empty">
-                  No images yet — drop files or click Upload.
+                  {kind === "document"
+                    ? "No documents yet — drop files or click Upload."
+                    : kind === "image"
+                        ? "No images yet — drop files or click Upload."
+                        : "No files yet — drop files or click Upload."}
                 </div>
               )}
               <div className="grid grid-cols-4 gap-3">
-                {rows.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => setSelected(m)}
-                    data-testid={`media-picker-item-${m.id}`}
-                    className={`relative aspect-square rounded-lg overflow-hidden border transition ${
-                      selected?.id === m.id
-                        ? "border-zinc-900 ring-2 ring-zinc-900"
-                        : "border-zinc-200 hover:border-zinc-400"
-                    }`}
-                    title={m.file_name || ""}
-                  >
-                    <MediaThumb
-                      src={absMediaUrl(m.cdn_url || m.storage_url || m.url)}
-                      alt={m.alt_text || m.file_name || "media"}
-                      className="w-full h-full object-cover"
-                    />
-                    {selected?.id === m.id && (
-                      <span className="absolute top-1.5 right-1.5 bg-zinc-900 text-white rounded-full p-1">
-                        <Check className="w-3 h-3" />
-                      </span>
-                    )}
-                  </button>
-                ))}
+                {rows.map((m) => {
+                  const isImg = isImageMime(m.mime_type);
+                  const inBatch = isBatched(m.id);
+                  const primaryHighlight = multiSelect
+                    ? inBatch
+                    : selected?.id === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => {
+                        if (multiSelect) toggleBatch(m);
+                        else setSelected(m);
+                      }}
+                      data-testid={`media-picker-item-${m.id}`}
+                      className={`relative aspect-square rounded-lg overflow-hidden border transition ${
+                        primaryHighlight
+                          ? "border-zinc-900 ring-2 ring-zinc-900"
+                          : "border-zinc-200 hover:border-zinc-400"
+                      }`}
+                      title={m.file_name || ""}
+                    >
+                      {isImg ? (
+                        <MediaThumb
+                          src={absMediaUrl(m.cdn_url || m.storage_url || m.url)}
+                          alt={m.alt_text || m.file_name || "media"}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <FileThumb item={m} className="w-full h-full" />
+                      )}
+                      {primaryHighlight && (
+                        <span className="absolute top-1.5 right-1.5 bg-zinc-900 text-white rounded-full p-1">
+                          <Check className="w-3 h-3" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
               {hasMore && !loading && (
                 <div className="text-center mt-4">
@@ -347,18 +538,111 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
 
           {/* Right — detail pane */}
           <div className="w-80 flex flex-col">
-            {!selected ? (
+            {multiSelect ? (
+              // Feb-2026 · Customer-Attachments (Option D) — batch mode.
+              // Right pane becomes a "selected files" list with an
+              // Attach primary CTA. Individual detail editing (alt
+              // text / tags) is not offered here on purpose — batch
+              // attach is a picking operation, not a curation one.
+              <>
+                <div className="p-4 border-b border-zinc-100 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-zinc-900">
+                    Selected ({batchCount})
+                  </div>
+                  {batchCount > 0 ? (
+                    <button
+                      onClick={() => setBatch({})}
+                      className="text-xs text-zinc-500 hover:text-zinc-900"
+                      data-testid="media-picker-batch-clear"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {batchList.length === 0 ? (
+                    <div
+                      className="text-center py-8 text-sm text-zinc-400"
+                      data-testid="media-picker-batch-empty"
+                    >
+                      Tap tiles to add them here.
+                    </div>
+                  ) : batchList.map((m) => {
+                    const isImg = isImageMime(m.mime_type);
+                    return (
+                      <div
+                        key={m.id}
+                        className="flex items-center gap-2 rounded-lg border border-zinc-200 p-2"
+                        data-testid={`media-picker-batch-row-${m.id}`}
+                      >
+                        <div className="w-10 h-10 rounded overflow-hidden bg-zinc-100 flex-shrink-0">
+                          {isImg ? (
+                            <MediaThumb
+                              src={absMediaUrl(m.cdn_url || m.storage_url || m.url)}
+                              alt={m.alt_text || m.file_name || ""}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <FileThumb item={m} className="w-full h-full" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0 text-xs">
+                          <div className="truncate font-medium text-zinc-900">
+                            {m.file_name || m.id}
+                          </div>
+                          <div className="text-zinc-500 truncate">
+                            {m.mime_type || "unknown"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => toggleBatch(m)}
+                          className="text-zinc-400 hover:text-zinc-900 p-1"
+                          aria-label={`Remove ${m.file_name || m.id}`}
+                          data-testid={`media-picker-batch-remove-${m.id}`}
+                        >
+                          <XIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="p-4 border-t border-zinc-100 flex items-center gap-2">
+                  <button
+                    onClick={() => onOpenChange(false)}
+                    className="px-3 py-2 rounded-lg border border-zinc-200 text-sm hover:bg-zinc-50"
+                    data-testid="media-picker-batch-cancel"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmBatch}
+                    disabled={batchCount === 0}
+                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-900 text-white text-sm hover:bg-zinc-800 disabled:opacity-40"
+                    data-testid="media-picker-batch-confirm"
+                  >
+                    <Check className="w-4 h-4" />
+                    {batchCount === 0
+                      ? "Attach"
+                      : `Attach ${batchCount} file${batchCount === 1 ? "" : "s"}`}
+                  </button>
+                </div>
+              </>
+            ) : !selected ? (
               <div className="flex-1 flex items-center justify-center p-6 text-center text-sm text-zinc-400">
-                Select an image to see details.
+                Select an item to see details.
               </div>
             ) : (
               <>
                 <div className="p-4 border-b border-zinc-100">
-                  <MediaThumb
-                    src={absMediaUrl(selected.cdn_url || selected.storage_url || selected.url)}
-                    alt={selected.alt_text || ""}
-                    className="w-full max-h-40 object-contain rounded"
-                  />
+                  {isImageMime(selected.mime_type) ? (
+                    <MediaThumb
+                      src={absMediaUrl(selected.cdn_url || selected.storage_url || selected.url)}
+                      alt={selected.alt_text || ""}
+                      className="w-full max-h-40 object-contain rounded"
+                    />
+                  ) : (
+                    <FileThumb item={selected} className="w-full h-40 rounded" />
+                  )}
                 </div>
                 <div className="p-4 space-y-3 flex-1 overflow-y-auto">
                   <div>
@@ -412,7 +696,7 @@ export function MediaLibraryPicker({ open, onOpenChange, onSelect }) {
                     data-testid="media-picker-select-btn"
                   >
                     <Check className="w-4 h-4" />
-                    Use this image
+                    {isImageMime(selected.mime_type) ? "Use this image" : "Use this file"}
                   </button>
                 </div>
               </>

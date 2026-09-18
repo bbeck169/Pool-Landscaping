@@ -20,11 +20,24 @@ from __future__ import annotations
 import base64
 from typing import Any, Dict, List, Optional, Tuple
 
-from config import db
 from services.marketing_media.storage_client import (
     StorageUnavailable, get_object,
 )
 from services.tenants.business_settings import resolve_absolute_url
+
+
+def _db():
+    """Late-bound Motor DB accessor.
+
+    Feb-2026 test-infra note — importing ``config.db`` at module load
+    binds the reference to whichever event loop was live at import.
+    Test infra rotates the loop via ``_f7_loop_fixture.run_test``,
+    which iterates a known list of modules to rebind. Rather than
+    force every new helper module onto that list, resolve ``db`` at
+    call-time so we always see the current binding.
+    """
+    from config import db
+    return db
 
 
 # ─── Size caps (email-attachment side) ────────────────────────────
@@ -56,7 +69,7 @@ class AttachmentTooLarge(Exception):
 
 
 async def _fetch_row(tenant_id: str, file_id: str) -> Dict[str, Any]:
-    row = await db.marketing_media.find_one(
+    row = await _db().marketing_media.find_one(
         {"id": file_id, "tenant_id": tenant_id, "deleted_at": None},
         {"_id": 0},
     )
