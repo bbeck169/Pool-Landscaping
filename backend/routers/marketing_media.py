@@ -14,6 +14,15 @@ session.
 * Soft-delete is guarded by a grep against
   ``marketing_templates.body`` — active templates that still reference
   the URL block the delete with **409**.
+
+Feb-2026 · Customer-Attachments widening (Option D)
+    The library was image-only through Q1. To power customer
+    email/SMS attachments (invoices, work orders, quotes, receipts,
+    etc.), the allowed set now includes PDF, DOCX, XLSX, CSV, and TXT
+    with per-type size caps and magic-byte checks (or extension +
+    content-sniff for the two text formats where magic bytes are
+    unreliable — see the ``_TEXT_SNIFF_EXT`` comment). Video is
+    deliberately out of scope for this phase.
 """
 from __future__ import annotations
 
@@ -40,12 +49,29 @@ from utils import get_current_user, new_id, now_iso, require_admin
 router = APIRouter()
 
 # ─────────── Constants
-_MAX_SIZE = 5 * 1024 * 1024               # 5 MB
-_MAX_SIZE_SVG = 200 * 1024                # 200 KB
-_ALLOWED_EXT = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+_MAX_SIZE_IMG = 5 * 1024 * 1024           # 5 MB — images
+_MAX_SIZE_SVG = 200 * 1024                # 200 KB — SVG
+_MAX_SIZE_PDF = 15 * 1024 * 1024          # 15 MB — PDF
+_MAX_SIZE_DOC = 10 * 1024 * 1024          # 10 MB — docx/xlsx/csv/txt
+
+# Feb-2026 legacy alias — used by any external tests / callers that
+# imported ``_MAX_SIZE`` before the multi-type widening.
+_MAX_SIZE = _MAX_SIZE_IMG
+
+_ALLOWED_EXT = {
+    # images
+    "png", "jpg", "jpeg", "gif", "webp", "svg",
+    # documents (Feb-2026 widening)
+    "pdf", "docx", "xlsx", "csv", "txt",
+}
 _MIME_BY_EXT = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+    "pdf":  "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv":  "text/csv",
+    "txt":  "text/plain",
 }
 _MAGIC_HEADERS = {
     "png": [b"\x89PNG\r\n\x1a\n"],
@@ -53,13 +79,43 @@ _MAGIC_HEADERS = {
     "gif": [b"GIF87a", b"GIF89a"],
     "webp": [b"RIFF"],  # + b"WEBP" at offset 8; checked separately
     "svg": [b"<?xml", b"<svg"],
+    # Feb-2026 widening.
+    "pdf":  [b"%PDF-"],
+    # DOCX / XLSX are OpenXML — a ZIP archive under the hood; both
+    # begin with the PKZIP local-file-header magic. We accept the
+    # standard signature and the "empty archive" variant.
+    "docx": [b"PK\x03\x04", b"PK\x05\x06"],
+    "xlsx": [b"PK\x03\x04", b"PK\x05\x06"],
+    # CSV / TXT — see ``_TEXT_SNIFF_EXT`` note below.
+    "csv":  [],
+    "txt":  [],
 }
+# Extensions whose magic bytes are unreliable enough that we fall
+# back to extension + content sniff. Documented in the STOP-and-report
+# — the user pre-approved this fallback with an explicit note.
+_TEXT_SNIFF_EXT = {"csv", "txt"}
+
+_IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp", "svg"}
+_DOC_EXT   = {"pdf", "docx", "xlsx", "csv", "txt"}
+
 _SVG_DANGER = re.compile(
     rb"(<script\b)|(\son\w+\s*=)|(href\s*=\s*[\"']?\s*javascript:)",
     re.IGNORECASE,
 )
 _FILENAME_SAFE = re.compile(r"[^a-zA-Z0-9._-]")
 _MANAGERS = {"admin", "super_admin", "manager"}
+
+
+def _size_cap_for_ext(ext: str) -> int:
+    if ext == "svg":
+        return _MAX_SIZE_SVG
+    if ext in _IMAGE_EXT:
+        return _MAX_SIZE_IMG
+    if ext == "pdf":
+        return _MAX_SIZE_PDF
+    if ext in _DOC_EXT:
+        return _MAX_SIZE_DOC
+    return _MAX_SIZE_IMG   # conservative default
 
 
 def _require_managers(user: dict) -> None:
@@ -81,12 +137,38 @@ def _detect_ext(file_name: str, declared_mime: str) -> str:
 
 
 def _magic_bytes_ok(ext: str, data: bytes) -> bool:
+    if ext in _TEXT_SNIFF_EXT:
+        # Fallback: extension + content sniff. Content sniffing is
+        # done in ``_text_sniff_ok``; we accept anything here so the
+        # caller pipes into the sniffer.
+        return True
     hdrs = _MAGIC_HEADERS.get(ext) or []
     if not any(data.startswith(h) for h in hdrs):
         return False
     if ext == "webp" and data[8:12] != b"WEBP":
         return False
     return True
+
+
+def _text_sniff_ok(ext: str, data: bytes) -> bool:
+    """CSV / TXT content sniff. Rejects binary blobs masquerading as
+    text (any NUL byte in the first 8 KB) and non-UTF-8 payloads."""
+    if ext not in _TEXT_SNIFF_EXT:
+        return True
+    sample = data[:8192]
+    if b"\x00" in sample:
+        return False
+    try:
+        sample.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        # Some tenant exports are Windows-1252 / Latin-1 — accept
+        # those too, they're still safe plain-text.
+        try:
+            sample.decode("latin-1")
+            return True
+        except UnicodeDecodeError:
+            return False
 
 
 def _strip_exif(data: bytes, ext: str) -> bytes:
@@ -181,7 +263,9 @@ async def upload_media(
     if size == 0:
         raise HTTPException(400, "Empty file")
     ext = _detect_ext(file.filename or "", file.content_type or "")
-    limit = _MAX_SIZE_SVG if ext == "svg" else _MAX_SIZE
+    # Feb-2026 · per-type size caps for the widened library (image
+    # 5 MB / SVG 200 KB / PDF 15 MB / doc 10 MB).
+    limit = _size_cap_for_ext(ext)
     if size > limit:
         raise HTTPException(413, f"File exceeds {limit // 1024} KB limit")
     if not _magic_bytes_ok(ext, raw):
@@ -189,6 +273,11 @@ async def upload_media(
             415,
             "File contents don't match declared type "
             "(magic-bytes check failed)",
+        )
+    # CSV / TXT bypass magic bytes; enforce a content sniff instead.
+    if ext in _TEXT_SNIFF_EXT and not _text_sniff_ok(ext, raw):
+        raise HTTPException(
+            415, "Text file contains binary content or an unsupported encoding",
         )
     if ext == "svg" and _SVG_DANGER.search(raw):
         raise HTTPException(
@@ -280,6 +369,14 @@ async def download_media(
 async def list_media(
     page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=100),
     tag: Optional[str] = None, search: Optional[str] = None,
+    kind: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by file kind. Feb-2026 widening — accepts "
+            "``image`` (png/jpg/gif/webp/svg), ``document`` "
+            "(pdf/docx/xlsx/csv/txt), or unset for all."
+        ),
+    ),
     include_deleted: int = 0,
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
@@ -290,6 +387,18 @@ async def list_media(
         q["deleted_at"] = None
     if tag:
         q["tags"] = tag
+    if kind == "image":
+        q["mime_type"] = {"$regex": "^image/"}
+    elif kind == "document":
+        # Anything the widened library treats as a document. Keep this
+        # in lockstep with ``_DOC_EXT`` above.
+        q["mime_type"] = {"$in": [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text/csv",
+            "text/plain",
+        ]}
     if search:
         s = search.strip()
         q["$or"] = [

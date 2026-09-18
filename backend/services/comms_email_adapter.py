@@ -33,8 +33,17 @@ async def _is_opted_out(tenant_id: str, email: str) -> bool:
 async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
                      from_name: Optional[str] = None,
                      from_email: Optional[str] = None,
-                     headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Send an email via Resend. Never raises."""
+                     headers: Optional[Dict[str, str]] = None,
+                     attachments: Optional[list] = None) -> Dict[str, Any]:
+    """Send an email via Resend. Never raises.
+
+    Feb-2026 · Customer-Attachments (Option D) — optional
+    ``attachments`` accepts a list of Resend-shaped dicts
+    ``{filename, content_type, content_base64}``. Resend's Python
+    SDK expects the base64 payload under ``content`` (not
+    ``content_base64``); we remap right before the SDK call so
+    the internal API stays semantic.
+    """
     if not to_email:
         return {"status": "failed", "error": "empty recipient email"}
     if await _is_opted_out(tenant_id, to_email):
@@ -79,6 +88,7 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
         _byo = await try_dispatch_email_tenant_byo(
             tenant_id=tenant_id, to=to_email, subject=subject,
             html=html, from_addr=from_email, from_name=from_name,
+            attachments=attachments,
         )
     except Exception as _byo_exc:  # noqa: BLE001
         logger.warning(
@@ -125,6 +135,18 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
     }
     if headers:
         payload["headers"] = headers
+    # Feb-2026 · Customer-Attachments (Option D). Resend's Python SDK
+    # accepts attachments as ``[{filename, content, content_type}]``
+    # where ``content`` is the base64 string.
+    if attachments:
+        payload["attachments"] = [
+            {
+                "filename":      a.get("filename") or "attachment.bin",
+                "content":       a.get("content_base64") or "",
+                "content_type":  a.get("content_type") or "application/octet-stream",
+            }
+            for a in attachments
+        ]
 
     # Feb-2026 · Comms whitelist gate (P0 safety directive).
     try:

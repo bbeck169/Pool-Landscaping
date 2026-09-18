@@ -3027,6 +3027,10 @@ class _SendEmailBody(BaseModel):
     subject: str
     body: str
     customer_id: Optional[str] = None
+    # Feb-2026 · Customer-Attachments (Option D) — optional list of
+    # ``marketing_media.id`` values. Empty list and unset field are
+    # equivalent; both skip the attachment path entirely.
+    attachments: Optional[List[str]] = None
 
 
 # BUG F · Feb 2026 — customer-direct SMS body. Mirrors the email
@@ -3036,6 +3040,10 @@ class _SendSmsBody(BaseModel):
     to: str
     body: str
     customer_id: Optional[str] = None
+    # Feb-2026 · Customer-Attachments (Option D) — optional list of
+    # ``marketing_media.id`` values. Each resolves to a signed public
+    # download URL appended to the SMS body.
+    attachments: Optional[List[str]] = None
 
 
 # Phase 29 · Feb 2026 — customer contact composer preview body.
@@ -3220,11 +3228,50 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
         raise HTTPException(400, "recipient not among the customer's emails")
     if not body.body.strip():
         raise HTTPException(422, "empty message")
+
+    # Feb-2026 · Customer-Attachments (Option D). Resolve file IDs into
+    # base64 attachment dicts. Cross-tenant, size, and storage errors
+    # all abort the send with a targeted 4xx/5xx so the frontend can
+    # render an actionable red toast — never a half-attached email.
+    attachment_ids = body.attachments or []
+    email_attachments: List[Dict[str, Any]] = []
+    if attachment_ids:
+        from services.marketing_media.attachments import (
+            AttachmentTooLarge, MediaFileNotFound,
+            resolve_email_attachments,
+        )
+        from services.marketing_media.storage_client import StorageUnavailable
+        try:
+            email_attachments = await resolve_email_attachments(
+                tenant["id"], attachment_ids,
+            )
+        except MediaFileNotFound as exc:
+            raise HTTPException(
+                404,
+                detail={"code": "file_not_found", "file_id": exc.file_id},
+            )
+        except AttachmentTooLarge as exc:
+            raise HTTPException(
+                413,
+                detail={
+                    "code":         exc.code,
+                    "file_id":      exc.file_id,
+                    "size_bytes":   exc.size_bytes,
+                    "limit_bytes":  exc.limit_bytes,
+                },
+            )
+        except StorageUnavailable as exc:
+            raise HTTPException(
+                502, detail={"code": "storage_unavailable",
+                              "message": str(exc)[:200]},
+            )
+
     from services.comms_email_adapter import send_email
     res = await send_email(
         tenant["id"], to,
         subject=body.subject.strip() or "Message",
         html=f"<pre style=\"font-family:inherit;white-space:pre-wrap\">{body.body}</pre>",
+        attachments=email_attachments or None,
     )
 
     # BUG F — persist the send so it shows on the customer activity
@@ -3245,7 +3292,8 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
             "provider_response_id": res.get("provider_id"),
             "trigger_entity": {"kind": "customer_direct_message",
                                 "customer_id": cid,
-                                "sent_by": user.get("id")},
+                                "sent_by": user.get("id"),
+                                "attachment_ids": attachment_ids or None},
             "created_at": now_iso(),
         })
     except Exception as e:
@@ -3382,10 +3430,41 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
     if not (body.body or "").strip():
         raise HTTPException(422, "empty message")
 
+    # Feb-2026 · Customer-Attachments (Option D) — resolve file IDs
+    # to signed public URLs and append them to the outgoing body.
+    # SMS carries no attachment bytes so the trust model is the same
+    # HMAC-signed marketing_media link already used for image
+    # thumbnails in delivered emails.
+    sms_body = body.body
+    attachment_ids = body.attachments or []
+    if attachment_ids:
+        from routers.marketing_media import _sign_media
+        from services.marketing_media.attachments import (
+            MediaFileNotFound, format_sms_attachments_suffix,
+            resolve_sms_public_urls,
+        )
+        try:
+            urls = await resolve_sms_public_urls(
+                tenant["id"], attachment_ids, sign_media=_sign_media,
+            )
+        except MediaFileNotFound as exc:
+            raise HTTPException(
+                404,
+                detail={"code": "file_not_found", "file_id": exc.file_id},
+            )
+        sms_body = sms_body.rstrip() + format_sms_attachments_suffix(urls)
+        if len(sms_body) > 480:
+            logger.warning(
+                "[customer-attachments] SMS body %d chars > 480 "
+                "(will segment across %d parts) tenant=%s customer=%s",
+                len(sms_body), (len(sms_body) + 159) // 160,
+                tenant["id"], cid,
+            )
+
     from services.sms.rc_adapter import send as _sms_send
     res = await _sms_send(
         to=to_raw,
-        body=body.body,
+        body=sms_body,
         category="transactional",
         tenant_id=tenant["id"],
         customer_id=cid,
@@ -3399,13 +3478,14 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
             "channel": "sms",
             "direction": "outbound",
             "recipient": to_raw,
-            "body": body.body,
+            "body": sms_body,
             "delivery_status": res.get("provider_status") or "unknown",
             "provider": res.get("provider") or "ringcentral",
             "provider_response_id": res.get("provider_response_id"),
             "trigger_entity": {"kind": "customer_direct_message",
                                 "customer_id": cid,
-                                "sent_by": user.get("id")},
+                                "sent_by": user.get("id"),
+                                "attachment_ids": attachment_ids or None},
             "created_at": now_iso(),
         })
     except Exception as e:

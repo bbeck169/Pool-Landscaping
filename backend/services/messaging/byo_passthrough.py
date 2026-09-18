@@ -168,12 +168,21 @@ async def try_dispatch_email_tenant_byo(
     from_name: Optional[str] = None,
     reply_to: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    attachments: Optional[list] = None,
     db=None,
 ) -> Optional[Dict[str, Any]]:
     """Attempt a tenant-BYO email send. Return ``None`` when no
     tenant provider is configured (caller proceeds with its existing
     platform path). Return a normalized envelope when the BYO
-    provider handled it (or hit its cap / errored). Never raises."""
+    provider handled it (or hit its cap / errored). Never raises.
+
+    Feb-2026 · Customer-Attachments (Option D) — ``attachments`` is
+    a list of Resend-shape dicts
+    ``{filename, content_type, content_base64}`` (matches
+    :func:`services.comms_email_adapter.send_email`). We remap to
+    :class:`services.messaging.models.EmailAttachment` before
+    handing off to the provider.
+    """
     if not tenant_id or not to:
         return None
     try:
@@ -206,6 +215,23 @@ async def try_dispatch_email_tenant_byo(
         env["provider"] = provider_key
         return env
     try:
+        # Feb-2026 · Customer-Attachments (Option D) — remap the
+        # Resend-shape attachment dicts to typed EmailAttachment models
+        # for the provider layer. Empty / None passes through untouched.
+        _mapped_attachments = None
+        if attachments:
+            from .models import EmailAttachment
+            _mapped_attachments = [
+                EmailAttachment(
+                    filename=(a.get("filename") if isinstance(a, dict) else a.filename)
+                              or "attachment.bin",
+                    content_b64=(a.get("content_base64") if isinstance(a, dict) else a.content_b64)
+                                  or "",
+                    content_type=(a.get("content_type") if isinstance(a, dict) else a.content_type)
+                                   or "application/octet-stream",
+                )
+                for a in attachments
+            ]
         result = await provider.send_email(
             tenant_id=tenant_id,
             to=[to],
@@ -214,7 +240,7 @@ async def try_dispatch_email_tenant_byo(
             text_body=text,
             from_addr=from_addr,
             from_name=from_name,
-            attachments=None,
+            attachments=_mapped_attachments,
             reply_to=reply_to,
             metadata=metadata,
         )
