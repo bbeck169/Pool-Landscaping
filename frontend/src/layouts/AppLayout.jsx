@@ -67,6 +67,7 @@ import {
   LayoutGrid,
   GraduationCap,
   Film,
+  LogOut,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -490,6 +491,30 @@ function AppLayout() {
           <BrandLogo variant="icon" testId="side-nav-logo" height={40} />
         </div>
         <QuickPinsRail role={effectiveRole || user.role} />
+        {/* Feb-2026 · rail-Logout — one-click sign-out anchored at
+            the bottom of the sidebar rail.  Styled to mirror the
+            "+ Add pin" trigger inside ``QuickPinsRail`` (icon on
+            top, 10px semibold caps label below, dashed border,
+            transparent background) so the rail reads as a single
+            vertical rhythm.  Wired to the existing ``onLogout``
+            handler — no confirm modal, mirrors the header's
+            one-click sign-out behavior. */}
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+          style={{
+            color:       colors.nav.fg,
+            borderColor: colors.nav.border,
+            background:  "transparent",
+          }}
+          data-testid="sidebar-logout-button"
+          aria-label="Log out"
+          title="Log out"
+        >
+          <LogOut size={18} />
+          <span className="leading-none text-center">Logout</span>
+        </button>
       </aside>
 
 
