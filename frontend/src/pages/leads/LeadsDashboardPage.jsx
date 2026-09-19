@@ -11,6 +11,7 @@ import { Search, ArrowRight, X, Trash2, ChevronDown, Mail, MessageCircle } from 
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import LeadComposeModal from "./LeadComposeModal";
+import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 
 // Phase K52.1a · Feb-2026 — the local ``colors`` const previously
 // shadowed the shared ``@/theme`` export.  It carried a slate-tinted
@@ -405,7 +406,7 @@ export default function LeadsDashboardPage() {
               {(l.created_at || "").slice(0, 10)}
             </div>
             <div className="col-span-2 font-semibold" style={{ color: colors.onSurface }}>
-              {l.name || "—"}
+              <CustomerLink customerId={l.customer_id} name={l.name || "—"} />
               {/* Phase F5 · Feb-2026 — company_name subtitle when
                   the form submission carried one. */}
               {l.company_name ? (
@@ -420,7 +421,7 @@ export default function LeadsDashboardPage() {
             </div>
             <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {l.email && <div>{l.email}</div>}
-              {l.phone && <div>{l.phone}</div>}
+              {l.phone && <div><PhoneLink phone={l.phone} /></div>}
             </div>
             {/* Feb-2026 · Address column — added between Contact and
                 Source per user request.  Truncates to a single line
@@ -456,10 +457,18 @@ export default function LeadsDashboardPage() {
                 }
                 return (
                   <>
-                    {line1 ? <div className="truncate">{line1}</div> : null}
+                    {line1 ? (
+                      <div className="truncate">
+                        <AddressLink address={line1} />
+                      </div>
+                    ) : null}
                     {cszZip ? (
                       <div className="truncate" style={{ opacity: 0.8 }}>
-                        {cszZip}
+                        <AddressLink
+                          address={[line1, cszZip].filter(Boolean).join(", ")}
+                        >
+                          {cszZip}
+                        </AddressLink>
                       </div>
                     ) : null}
                   </>

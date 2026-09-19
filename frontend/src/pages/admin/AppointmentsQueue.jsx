@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { CalendarClock, Check, X, RefreshCw } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { CustomerLink } from "@/components/customer";
 
 export default function AppointmentsQueue() {
   const [rows, setRows] = useState([]);
@@ -86,7 +87,7 @@ export default function AppointmentsQueue() {
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div>
                 <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
-                  {r.customer_name} · {r.service_type}
+                  <CustomerLink customerId={r.customer_id} name={r.customer_name} /> · {r.service_type}
                 </div>
                 <div className="text-xs mt-1" style={{ color: colors.muted }}>
                   {r.preferred_date} · {r.preferred_window}
@@ -123,7 +124,7 @@ export default function AppointmentsQueue() {
                    style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold truncate" style={{ color: colors.onSurface }}>
-                    {r.customer_name} · {r.service_type}
+                    <CustomerLink customerId={r.customer_id} name={r.customer_name} /> · {r.service_type}
                   </div>
                   <div className="text-xs truncate" style={{ color: colors.muted }}>
                     {r.preferred_date} · {r.preferred_window}

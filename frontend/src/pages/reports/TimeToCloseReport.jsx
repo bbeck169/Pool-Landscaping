@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { Hourglass, BarChart3, Activity, FileText } from "lucide-react";
+import { CustomerLink } from "@/components/customer";
 
 const _n = (v) => (v === null || v === undefined ? "—"
   : typeof v === "number" ? v.toLocaleString() : String(v));
@@ -183,7 +184,7 @@ export default function TimeToCloseReport() {
                   <tr key={r.lead_id} data-testid={`ttc-row-${r.lead_id}`}
                       style={{ borderTop: `1px solid ${colors.border}` }}>
                     <Td>{(r.lead_id || "").slice(0, 8)}…</Td>
-                    <Td>{r.customer_name || "—"}</Td>
+                    <Td><CustomerLink customerId={r.customer_id} name={r.customer_name || "—"} /></Td>
                     <Td>{_shortDate(r.created_at)}</Td>
                     <Td>{_shortDate(r.closed_at)}</Td>
                     <Td>{_n(r.days_to_close)}</Td>

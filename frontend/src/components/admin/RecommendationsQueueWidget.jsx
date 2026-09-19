@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import { TrendingUp, ChevronDown, ChevronRight, Send, X, Eye, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { CustomerLink } from "@/components/customer";
 
 
 export default function RecommendationsQueueWidget() {
@@ -108,7 +109,7 @@ export default function RecommendationsQueueWidget() {
               {state.rows.map((r) => (
                 <tr key={r.id} data-testid={`recs-queue-row-${r.id}`}>
                   <td className="px-3 py-2 font-bold" style={{ color: colors.onSurface }}>
-                    {r.customer_name || "(no name)"}
+                    <CustomerLink customerId={r.customer_id} name={r.customer_name || "(no name)"} />
                     <div className="text-[10px] font-normal" style={{ color: colors.muted }}>
                       {r.customer_email || "no email"}
                     </div>
@@ -172,7 +173,10 @@ export default function RecommendationsQueueWidget() {
                  style={{ borderBottom: `1px solid ${colors.border}` }}>
               <div>
                 <div className="text-lg font-bold" style={{ color: colors.onSurface }}>
-                  {preview.row.customer_name || "(no name)"}
+                  <CustomerLink
+                    customerId={preview.row.customer_id}
+                    name={preview.row.customer_name || "(no name)"}
+                  />
                 </div>
                 <div className="text-xs" style={{ color: colors.muted }}>
                   {preview.row.customer_email || "no email"} · draft aged {preview.row.age_days} days

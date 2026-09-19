@@ -70,6 +70,7 @@ import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } f
 // Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh
 // button used by every schedule surface (month/agenda/grid + Today).
 import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
+import { CustomerLink, AddressLink } from "@/components/customer";
 // Feb-2026 · numbered-order reorder — the ScheduleDayDnDPanel import
 // was removed as part of the DnD → numbered-input pivot.  The number
 // input primitives + the bulk-reorder modal are imported above.
@@ -2270,7 +2271,7 @@ export function GridPanel({
                       }}
                       data-testid={`grid-job-title-${j.id}`}
                     >
-                      {j.customer_name || "Unknown"}
+                      <CustomerLink customerId={j.customer_id} name={j.customer_name || "Unknown"} />
                     </span>
                     {/* Feb-2026 · Batched Wave #1 — per-job
                         Navigate button lives INSIDE the title row
@@ -2306,7 +2307,7 @@ export function GridPanel({
                     />
                   </div>
                   {j.address ? (
-                    <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>
+                    <div className="text-xs truncate" style={{ color: colors.muted }}><AddressLink address={j.address} /></div>
                   ) : null}
                   {/* Feb-2026 · schedule polish — gate-code amber
                       pill (with lucide Key icon).  Merges the

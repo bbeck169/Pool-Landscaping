@@ -73,6 +73,7 @@ function humanDate(iso) {
 // exact "Mon D, YYYY · h:mm AM/PM" string.  Re-exported here as a
 // named alias so existing K12 imports keep working.
 import { formatCompletedAt } from "../../lib/dateTimeFormat";
+import { CustomerLink, AddressLink } from "@/components/customer";
 export { formatCompletedAt };
 
 // ── Sub-components ─────────────────────────────────────────────────
@@ -251,11 +252,13 @@ function JobCard({ job, onOpen, isSelected, onToggleSelect, canBulk, onEdit }) {
             style={{ color: colors.muted }}
           >
             <span className="inline-flex items-center gap-1">
-              <User size={11} /> {job.customer_name || "—"}
+              <User size={11} /> <CustomerLink customerId={job.customer_id} name={job.customer_name || "—"} />
             </span>
             <span>·</span>
             <span className="inline-flex items-center gap-1">
-              <MapPin size={11} /> {job.property_label || job.property_address || "No property"}
+              <MapPin size={11} /> {(job.property_label || job.property_address)
+                                    ? <AddressLink address={job.property_label || job.property_address} />
+                                    : "No property"}
             </span>
             <span>·</span>
             <span className="inline-flex items-center gap-1">

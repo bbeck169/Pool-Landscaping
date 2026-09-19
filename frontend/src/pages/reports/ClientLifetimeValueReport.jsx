@@ -8,6 +8,7 @@ import { toast } from "@/hooks/use-toast";
 import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { TrendingUp, Users, DollarSign, Award } from "lucide-react";
+import { CustomerLink } from "@/components/customer";
 
 const _money = (v) => {
   if (v === null || v === undefined) return "—";
@@ -204,7 +205,7 @@ export default function ClientLifetimeValueReport() {
                   <tr key={r.customer_id}
                       data-testid={`clv-row-${r.customer_id}`}
                       style={{ borderTop: `1px solid ${colors.border}` }}>
-                    <Td>{r.customer_name}</Td>
+                    <Td><CustomerLink customerId={r.customer_id} name={r.customer_name} /></Td>
                     <Td>{r.client_type}</Td>
                     <Td>{r.is_active ? "Yes" : "No"}</Td>
                     <Td>{_shortDate(r.first_service_date)}</Td>

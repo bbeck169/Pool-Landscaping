@@ -6,6 +6,7 @@ import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, money, gradients } from "@/theme";
 import { useAuth } from "@/auth";
+import { CustomerLink, AddressLink } from "@/components/customer";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useIndustries } from "@/hooks/useIndustries";
 import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast } from "@/components/ui-kit";
@@ -195,7 +196,7 @@ function Dispatch() {
                   <div className="font-semibold truncate" style={{ color: colors.onSurface }}>{j.title}</div>
                   <StatusPill status={j.status} />
                 </div>
-                <div className="text-xs mt-1" style={{ color: colors.muted }}>{j.customer_name} · {j.address || "—"}</div>
+                <div className="text-xs mt-1" style={{ color: colors.muted }}><CustomerLink customerId={j.customer_id} name={j.customer_name} /> · {j.address ? <AddressLink address={j.address} /> : "—"}</div>
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-xs" style={{ color: colors.muted }}>{j.technician_name || "Unassigned"}</span>
                   <button onClick={() => setPicking(j)} className="text-xs font-semibold" style={{ color: colors.brand }} data-testid={`dispatch-assign-${j.id}`}>Reassign</button>
@@ -237,7 +238,7 @@ function SchedulePage() {
       {dayJobs.length === 0 ? <EmptyState title="No jobs scheduled" /> :
        <ul className="space-y-2">{dayJobs.map((j) => (
          <li key={j.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary, opacity: locked ? 0.55 : 1 }} data-testid={`sched-${j.id}`}>
-           <div className="flex-1"><div className="font-semibold text-sm">{j.title}</div><div className="text-xs" style={{ color: colors.muted }}>{j.technician_name || "Unassigned"} · {j.customer_name}</div></div>
+           <div className="flex-1"><div className="font-semibold text-sm">{j.title}</div><div className="text-xs" style={{ color: colors.muted }}>{j.technician_name || "Unassigned"} · <CustomerLink customerId={j.customer_id} name={j.customer_name} /></div></div>
            <StatusPill status={j.status} />
          </li>
        ))}</ul>}
@@ -352,7 +353,7 @@ function Routes() {
                <span data-testid={`route-${j.id}-tech`}>{techLabel}</span>
                {secondary ? (<><span>·</span><span>{secondary}</span></>) : null}
                <span>·</span>
-               <span>{j.address || "—"}</span>
+               <span>{j.address ? <AddressLink address={j.address} /> : "—"}</span>
              </div>
            </div>
            <button onClick={() => move(i, -1)} className="opacity-70">↑</button>

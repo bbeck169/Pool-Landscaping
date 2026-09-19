@@ -8,6 +8,7 @@ import React from "react";
 import { toast } from "sonner";
 import { X, Link2Off, MapPin } from "lucide-react";
 import { api } from "@/api";
+import { AddressLink } from "@/components/customer";
 
 function _haversineM(lat1, lon1, lat2, lon2) {
   const R = 6371000;
@@ -150,7 +151,7 @@ export default function StopAttributionModal({ stop, onClose, onSaved }) {
                   <div className="text-sm font-medium truncate">{c.name}</div>
                   <div className="text-xs text-zinc-500 truncate">
                     {c.customer_name || "—"}
-                    {c.address ? ` · ${c.address}` : ""}
+                    {c.address ? <> · <AddressLink address={c.address} /></> : ""}
                   </div>
                 </div>
                 <div className="text-xs text-zinc-500 w-20 text-right">

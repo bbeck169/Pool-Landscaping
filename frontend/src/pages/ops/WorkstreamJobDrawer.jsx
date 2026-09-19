@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { X, ExternalLink, Camera, ListChecks, FlaskConical, Beaker, AlertTriangle, StickyNote, Wrench, PenTool, Link2, Share2 } from 'lucide-react';
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
+import { CustomerLink } from "@/components/customer";
 
 /**
  * Right-side slide-in drawer showing the full field-report for a job.
@@ -82,7 +83,7 @@ export default function WorkstreamJobDrawer({ jobId, onClose, onShareToast, onPe
             </div>
             {job && (
               <div className="text-xs mt-0.5 flex items-center gap-2" style={{ color: colors.muted }}>
-                <span>{job.customer_name}</span>
+                <span><CustomerLink customerId={job.customer_id} name={job.customer_name} /></span>
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
                       style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}>
                   {job.status}

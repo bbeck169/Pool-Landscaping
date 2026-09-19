@@ -64,6 +64,7 @@ import { Loader2, Save, ShieldCheck, X } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { getChecklistType } from "@/lib/checklistType";
+import { AddressLink } from "@/components/customer";
 // Phase MI1.1 · Feb 2026 — non-pool / non-landscape jobs are routed
 // through the industry-aware form so HVAC / Pest / Cleaning / Solar
 // / Handyman techs stop seeing the Pool template.
@@ -534,7 +535,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             {job?.title || job?.service_type || "Job Checklist"}
           </div>
           <div className="text-xs opacity-90 truncate">
-            {job?.customer_name || "—"}{job?.address ? ` · ${job.address}` : ""}
+            {job?.customer_name || "—"}{job?.address ? <> · <AddressLink address={job.address} /></> : ""}
           </div>
         </div>
         <div

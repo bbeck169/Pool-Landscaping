@@ -16,6 +16,7 @@ import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
+import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 // Phase 27 · Feb-2026 — Global avatar swap for dense layouts.
 // Compact tech avatar rendered next to the customer line so
 // admins/dispatchers can spot the assigned tech at a glance
@@ -874,11 +875,11 @@ function TimelineItem({ item, idx, yFor, tz, onOpen }) {
         </div>
         <div className="font-bold text-sm" style={{ color: colors.onSurface }}>{item.title}</div>
         <div className="text-xs" style={{ color: colors.muted }}>
-          {item.customer_name || "—"}
+          <CustomerLink customerId={item.customer_id} name={item.customer_name || "—"} />
         </div>
         {item.address && (
           <div className="flex items-center gap-1 text-xs mt-1" style={{ color: colors.onSurfaceSecondary }}>
-            <MapPin size={11}/> <span className="truncate">{item.address}</span>
+            <MapPin size={11}/> <span className="truncate"><AddressLink address={item.address} /></span>
           </div>
         )}
         {item.lat && item.lng && (
@@ -1035,7 +1036,7 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 </div>
                 <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: colors.onSurface }}
                      data-testid={`schedule-card-customer-${j.id}`}>
-                  <span>{j.customer_name || "—"}</span>
+                  <span><CustomerLink customerId={j.customer_id} name={j.customer_name || "—"} /></span>
                   {/* Feb-2026 · Batch #4 · Item 2 — Navigate arrow
                       moved inline with the customer name (from far-
                       right where it used to sit next to the OPEN
@@ -1062,7 +1063,7 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 </div>
                 <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}
                      data-testid={`schedule-card-address-${j.id}`}>
-                  {j.address || "—"}
+                  {j.address ? <AddressLink address={j.address} /> : "—"}
                 </div>
                 {cityLine && (
                   <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>

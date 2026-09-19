@@ -2367,3 +2367,33 @@
 - **Web files referenced**:
   - `/app/frontend/src/lib/jobCategory.js` (authoritative source of truth)
 
+
+## Iteration 108 — Clickable Customer Data: PhoneLink + AddressLink + CustomerLink
+- **Commit**: 8838452e7
+- **Date**: 2026-09-19
+- **Changes**:
+  - Created 3 shared primitives in `/app/mobile/src/components/customer/`:
+    - `PhoneLink.tsx` — normalizes to tel:+1XXXXXXXXXX, opens device dialer, plain text fallback for empty
+    - `AddressLink.tsx` — iOS maps://, Android geo:, Web Google Maps HTTPS, AddressObject support
+    - `CustomerLink.tsx` — navigates to /customer/{id} via expo-router, plain text fallback
+    - `index.ts` — barrel export
+  - Updated 6 callsites:
+    1. `app/(app)/customers.tsx` — row subtitle: address → AddressLink, phone → PhoneLink
+    2. `app/leads/index.tsx` — row subtitle: phone → PhoneLink
+    3. `app/leads/[id].tsx` — contact card: phone → PhoneLink, address → AddressLink
+    4. `app/job/[id].tsx` — hero: customer name → CustomerLink, address row → AddressLink, property address → AddressLink
+    5. `app/(app)/schedule/calendar.tsx` — job card: address → AddressLink
+    6. `app/customer/[id].tsx` — contact card: phone → PhoneLink, address → AddressLink, billing → AddressLink
+  - Skipped callsites (justified): checklist hero (compact combined text), landscape picker (row tap conflict), admin debug screens
+  - 18 Jest tests, all passing
+- **Files created**:
+  - `/app/mobile/src/components/customer/PhoneLink.tsx`
+  - `/app/mobile/src/components/customer/AddressLink.tsx`
+  - `/app/mobile/src/components/customer/CustomerLink.tsx`
+  - `/app/mobile/src/components/customer/index.ts`
+  - `/app/mobile/__tests__/clickable-customer-data.test.tsx` (18 tests)
+- **Files modified**:
+  - `app/(app)/customers.tsx`, `app/leads/index.tsx`, `app/leads/[id].tsx`
+  - `app/job/[id].tsx`, `app/(app)/schedule/calendar.tsx`, `app/customer/[id].tsx`
+- **New dependencies**: None
+

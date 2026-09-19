@@ -12,6 +12,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { Gate } from "@/hooks/usePermissions";
 import formatAddress from "@/utils/formatAddress";
+import { CustomerLink, AddressLink } from "@/components/customer";
 
 /* ═════════ DISPATCH BOARD ═════════════════════════════════════════════ */
 export default function DispatchBoard() {
@@ -201,13 +202,13 @@ export default function DispatchBoard() {
                   </td>
                   <td className="p-2 font-bold"
                       style={{ color: colors.onSurface }}>
-                    {j.customer_name}
+                    <CustomerLink customerId={j.customer_id} name={j.customer_name} />
                   </td>
                   <td className="p-2 text-xs" style={{ color: colors.muted }}>
                     {j.service_type || j.job_type || "—"}
                   </td>
                   <td className="p-2 text-xs" style={{ color: colors.muted }}>
-                    {formatAddress(j.address)}
+                    {j.address ? <AddressLink address={j.address}>{formatAddress(j.address)}</AddressLink> : formatAddress(j.address)}
                   </td>
                   <td className="p-2 text-right">
                     <button onClick={() => assignOne(j.id)}

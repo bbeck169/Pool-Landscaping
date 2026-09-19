@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
+import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import {
@@ -618,7 +619,7 @@ export default function InvoicesList() {
                   </td>
                   <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`} onClick={() => navigate(`/invoices/${r.id}`)}>{r.invoice_number || "—"}</td>
                   <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.title}</td>
-                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}>{formatCustomerName(r)}</td>
+                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
                   {/* Phase K47 · Feb-2026 — Viewed indicator */}

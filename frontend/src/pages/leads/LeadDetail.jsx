@@ -16,6 +16,7 @@ import { useAuth } from "@/auth";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw, Bell, MessageCircle } from "lucide-react";
 import LeadComposeModal from "./LeadComposeModal";
+import { PhoneLink, AddressLink } from "@/components/customer";
 
 // Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
 // Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.
@@ -413,7 +414,7 @@ export default function LeadDetail() {
                 <div className="flex items-start gap-2">
                   <Phone size={14} className="mt-0.5 text-slate-500" />
                   <div className="flex-1">
-                    <div data-testid="lead-phone">{lead.phone}</div>
+                    <div data-testid="lead-phone"><PhoneLink phone={lead.phone} /></div>
                     <div className="mt-1">
                       <ClickToCallButton
                         phoneNumber={lead.phone}
@@ -457,7 +458,18 @@ export default function LeadDetail() {
                     {line1 ? (
                       <div className="flex items-start gap-2">
                         <MapPin size={14} className="mt-0.5 text-slate-500" />
-                        <div data-testid="lead-address">{line1}</div>
+                        <div data-testid="lead-address">
+                          <AddressLink
+                            address={{
+                              line1,
+                              city: lead.city,
+                              state: lead.state,
+                              zip: lead.zip,
+                            }}
+                          >
+                            {line1}
+                          </AddressLink>
+                        </div>
                       </div>
                     ) : null}
                     {/* K63 · Feb-2026 — Data-parity fill-in.  Widget

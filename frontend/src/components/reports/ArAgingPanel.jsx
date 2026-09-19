@@ -7,6 +7,7 @@ import { HorizontalBarChart } from "./HorizontalBarChart";
 import { downloadCsv } from "./downloadCsv";
 import { downloadServerPdf } from "./downloadServerPdf";
 import { formatCurrency } from "./formatters";
+import { CustomerLink } from "@/components/customer";
 
 function buildQuery(f) {
   const p = new URLSearchParams();
@@ -170,7 +171,7 @@ export function ArAgingPanel({ filters, onCustomerFocus, testid = "ar-aging-pane
                   style={{ borderTop: `1px solid ${colors.border}` }}
                   data-testid={`${testid}-row-${r.customer_id || "unknown"}`}>
                 <td className="px-3 py-2" style={{ color: colors.onSurface }}>
-                  {r.customer_name || "(unnamed)"}
+                  <CustomerLink customerId={r.customer_id} name={r.customer_name || "(unnamed)"} />
                 </td>
                 <td className="text-right px-3 py-2"
                     style={{ color: colors.onSurfaceSecondary }}>

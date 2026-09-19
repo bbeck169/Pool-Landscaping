@@ -14,6 +14,7 @@ import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
+import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -2364,7 +2365,7 @@ export default function CustomersList() {
                           textDecoration: c.deleted_at ? "line-through" : "none",
                         }}
                       >
-                        {c.name}
+                        <CustomerLink customerId={c.id} name={c.name} />
                       </span>
                       {/* Feb-2026 · P26 — Restore pill for admin-tier
                            (widened from super_admin by the Customer
@@ -2529,13 +2530,13 @@ export default function CustomersList() {
                     </div>
                   </td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>
-                    <div>{c.phone || "—"}</div>
+                    <div>{c.phone ? <PhoneLink phone={c.phone} /> : "—"}</div>
                     <div className="text-xs" style={{ color: colors.muted }}>
                       {c.email || "—"}
                     </div>
                   </td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>
-                    {c.address || "—"}
+                    {c.address ? <AddressLink address={c.address} /> : "—"}
                   </td>
                   <td className="px-3 py-3 hidden md:table-cell text-xs" style={{ color: colors.muted }}>
                     {nextScheduled(c)}

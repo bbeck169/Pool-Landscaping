@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { ShieldCheck } from "lucide-react";
+import { CustomerLink } from "@/components/customer";
 
 function _daysBadgeColor(days) {
   if (days == null) return colors.muted;
@@ -97,7 +98,7 @@ export default function WarrantiesExpiringTile() {
                   <div className="text-[11px] truncate"
                        style={{ color: colors.muted }}
                        title={it.customer_name}>
-                    {it.customer_name || "—"}
+                    <CustomerLink customerId={it.customer_id} name={it.customer_name || "—"} />
                     {it.linked_summary ? ` · ${it.linked_summary}` : ""}
                   </div>
                 </div>

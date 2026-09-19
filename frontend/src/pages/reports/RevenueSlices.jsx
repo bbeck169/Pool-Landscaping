@@ -6,6 +6,7 @@ import {
 import { ArrowLeft, Search, Download } from "lucide-react";
 import { api } from "@/api";
 import { colors, money, gradients } from "@/theme";
+import { CustomerLink } from "@/components/customer";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
 // One reusable slice-report shell used by all 5 slice pages + Gross Sales + Invoiced Items.
@@ -251,7 +252,7 @@ export function RevenueByCustomer() {
       ]}
       columns={[
         { key: "customer_name", header: "Customer", value: (r) => r.customer_name,
-          render: (r) => r.customer_name },
+          render: (r) => <CustomerLink customerId={r.customer_id} name={r.customer_name} /> },
         { key: "invoices", header: "Invoices", value: (r) => Number(r.invoices || 0),
           render: (r) => r.invoices },
         { key: "amount", header: "Revenue", value: (r) => Number(r.amount || 0),
@@ -279,7 +280,8 @@ export function GrossSales() {
       columns={[
         { key: "created_at", header: "Date", value: (r) => r.created_at || "",
           render: (r) => (r.created_at || "").slice(0, 10) },
-        { key: "customer_name", header: "Customer", value: (r) => r.customer_name },
+        { key: "customer_name", header: "Customer", value: (r) => r.customer_name,
+          render: (r) => <CustomerLink customerId={r.customer_id} name={r.customer_name} /> },
         { key: "title", header: "Invoice", value: (r) => r.title },
         { key: "total", header: "Total", value: (r) => Number(r.total || 0),
           render: (r) => money(r.total) },

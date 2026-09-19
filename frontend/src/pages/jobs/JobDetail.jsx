@@ -13,6 +13,7 @@ import LineItemsSection from "@/pages/jobs/LineItemsSection";
 import TimelineSection from "@/pages/jobs/TimelineSection";
 import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
+import { CustomerLink, AddressLink } from "@/components/customer";
 import JobNew from "@/pages/jobs/JobNew";
 // Feb-2026 · Slice 6 — 24h post-completion edit window UI.
 import JobEditPanel from "@/pages/jobs/JobEditPanel";
@@ -209,15 +210,14 @@ export default function JobDetail() {
               {job.title}
             </h1>
             <p className="text-sm mt-1" style={{ color: colors.onSurfaceSecondary }}>
-              <span
-                onClick={() => customer && navigate(`/customers/${customer.id}`)}
-                className="font-semibold cursor-pointer hover:underline"
+              <CustomerLink
+                customerId={customer?.id || job?.customer_id}
+                name={formatCustomerName(job)}
+                className="font-semibold"
                 data-testid="job-detail-customer-name"
-              >
-                {formatCustomerName(job)}
-              </span>
+              />
               <span className="mx-1.5">·</span>
-              <MapPin size={12} className="inline" /> {job.address || "—"}
+              <MapPin size={12} className="inline" /> {job.address ? <AddressLink address={job.address} /> : "—"}
             </p>
             {/* Phase 6B · Feb 2026 — one-click call to the job's
                 customer. Falls back to tel: for tech mobile-web. */}

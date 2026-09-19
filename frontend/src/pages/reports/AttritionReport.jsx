@@ -13,6 +13,7 @@ import { toast } from "@/hooks/use-toast";
 import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { UserMinus, Users, DollarSign } from "lucide-react";
+import { CustomerLink } from "@/components/customer";
 
 function _n(v) {
   if (v === null || v === undefined) return "—";
@@ -235,7 +236,7 @@ export default function AttritionReport() {
                   <tr key={r.customer_id}
                       data-testid={`attrition-row-${r.customer_id}`}
                       style={{ borderTop: `1px solid ${colors.border}` }}>
-                    <Td>{r.customer_name || "—"}</Td>
+                    <Td><CustomerLink customerId={r.customer_id} name={r.customer_name || "—"} /></Td>
                     <Td>{_shortDate(r.became_inactive_at)}</Td>
                     <Td>{r.inactive_reason || "—"}</Td>
                     <Td>{_money(r.lifetime_value)}</Td>

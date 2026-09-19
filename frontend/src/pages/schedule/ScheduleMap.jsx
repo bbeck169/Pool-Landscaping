@@ -49,6 +49,7 @@ import { Map, AdvancedMarker, InfoWindow, useMap } from "../../lib/maps";
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import TeardropPin from "@/components/maps/TeardropPin";
+import { CustomerLink, AddressLink } from "@/components/customer";
 
 // Deterministic fallback color for jobs whose technician has no
 // ``display_color_hex`` picked (or is unassigned).
@@ -334,14 +335,17 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
                 style={{ fontWeight: 600, fontSize: 13, color: colors.onSurface }}
                 data-testid={`schedule-map-info-customer-${active.job.id}`}
               >
-                {active.job.customer_name || active.job.title || "Job"}
+                <CustomerLink
+                  customerId={active.job.customer_id}
+                  name={active.job.customer_name || active.job.title || "Job"}
+                />
               </div>
               {active.job.address ? (
                 <div
                   style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}
                   data-testid={`schedule-map-info-address-${active.job.id}`}
                 >
-                  {active.job.address}
+                  <AddressLink address={active.job.address} />
                 </div>
               ) : null}
               {_fmtTime(active.job) ? (

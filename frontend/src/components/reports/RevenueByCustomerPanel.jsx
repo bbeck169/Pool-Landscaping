@@ -7,6 +7,7 @@ import { HorizontalBarChart } from "./HorizontalBarChart";
 import { downloadCsv } from "./downloadCsv";
 import { formatCurrency } from "./formatters";
 import { DeltaCell } from "./DeltaCell";
+import { CustomerLink } from "@/components/customer";
 
 const PAGE_SIZE = 25;
 const TOP_N_DEFAULT = 20;
@@ -221,7 +222,7 @@ export function RevenueByCustomerPanel({ filters, params, setParams }) {
                 style={{ borderTop: `1px solid ${colors.border}` }}
               >
                 <td className="px-3 py-2" style={{ color: colors.onSurface }}>
-                  {r.customer_name || "(unnamed)"}
+                  <CustomerLink customerId={r.customer_id} name={r.customer_name || "(unnamed)"} />
                 </td>
                 <td className="text-right px-3 py-2" style={{ color: colors.onSurfaceSecondary }}>
                   {r.invoice_count}

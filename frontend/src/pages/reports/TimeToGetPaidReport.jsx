@@ -15,6 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { Clock, BarChart3, Activity, FileText } from "lucide-react";
+import { CustomerLink } from "@/components/customer";
 
 function _n(v) {
   if (v === null || v === undefined) return "—";
@@ -236,7 +237,7 @@ export default function TimeToGetPaidReport() {
                       data-testid={`ttgp-row-${r.invoice_id}`}
                       style={{ borderTop: `1px solid ${colors.border}` }}>
                     <Td>{(r.invoice_id || "").slice(0, 8)}…</Td>
-                    <Td>{r.customer_name || "—"}</Td>
+                    <Td><CustomerLink customerId={r.customer_id} name={r.customer_name || "—"} /></Td>
                     <Td>{_shortDate(r.sent_at)}</Td>
                     <Td>{_shortDate(r.paid_at)}</Td>
                     <Td>{_n(r.days_to_paid)}</Td>

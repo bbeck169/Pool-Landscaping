@@ -18,6 +18,7 @@ import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+import { PhoneLink, AddressLink } from "@/components/customer";
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
@@ -660,7 +661,9 @@ export default function CustomerDetail() {
                   ? (customer.mobiles || [])
                       .map((m) => `${m.number_e164}${m.label ? ` (${m.label})` : ""}`)
                       .join("  ·  ")
-                  : customer.phone,
+                  : (customer.phone
+                      ? <PhoneLink phone={customer.phone} />
+                      : null),
               testid: "customer-mobiles-display",
             },
             {
@@ -683,7 +686,11 @@ export default function CustomerDetail() {
                   : "— (not set)",
               testid: "customer-pool-gallons-display",
             },
-            { icon: BellRing, label: "Alert phone", value: customer.alert_phone, warn: true },
+            { icon: BellRing, label: "Alert phone",
+              value: customer.alert_phone
+                      ? <PhoneLink phone={customer.alert_phone} />
+                      : null,
+              warn: true },
             { icon: BellRing, label: "Alert email", value: customer.alert_email, warn: true },
           ].map((c) => (
             <div
@@ -796,8 +803,18 @@ export default function CustomerDetail() {
                 }
               />
               <div data-testid="cd-address-block" className="space-y-2">
-                <Info label="Primary address" value={customer.address} />
-                <Info label="Billing address" value={customer.billing_address} />
+                <Info
+                  label="Primary address"
+                  value={customer.address
+                          ? <AddressLink address={customer.address} />
+                          : null}
+                />
+                <Info
+                  label="Billing address"
+                  value={customer.billing_address
+                          ? <AddressLink address={customer.billing_address} />
+                          : null}
+                />
                 <Info label="Gate code" value={customer.gate_code} />
                 {(customer.secondary_addresses || []).length ? (
                   <div>
@@ -806,7 +823,7 @@ export default function CustomerDetail() {
                     </div>
                     <ul className="space-y-1 text-sm" style={{ color: colors.onSurface }}>
                       {customer.secondary_addresses.map((a, i) => (
-                        <li key={i}>· {a}</li>
+                        <li key={i}>· <AddressLink address={a} /></li>
                       ))}
                     </ul>
                   </div>

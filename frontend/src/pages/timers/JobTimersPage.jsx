@@ -20,6 +20,7 @@ import { useSearchParams, Link } from "react-router-dom";import { toast } from "
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui-kit";
+import { CustomerLink } from "@/components/customer";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -328,7 +329,7 @@ function TimersTab({ isAdmin, filters, setFilters, page, setPage }) {
                         {r.job_title}
                       </Link>
                     ) : <span className="opacity-60">—</span>}
-                    <div className="text-xs opacity-70">{r.customer_name || ""}</div>
+                    <div className="text-xs opacity-70"><CustomerLink customerId={r.customer_id} name={r.customer_name || ""} /></div>
                   </td>
                   <td className="px-3 py-2">
                     {r.entity_type === "crew"

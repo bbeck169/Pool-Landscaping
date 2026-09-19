@@ -27,6 +27,7 @@ import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Modal, Button } from "@/components/ui-kit";
+import { PhoneLink, AddressLink } from "@/components/customer";
 
 
 // Feb 2026 · CONFIRM_TOKEN retired — the "Type MERGE" input was
@@ -92,10 +93,12 @@ function CustomerCard({ customer, isPrimary, onSelectPrimary }) {
         {customer.email || "no email"}
       </div>
       <div className="text-xs truncate" style={{ color: colors.muted }}>
-        {customer.phone || "no phone"}
+        {customer.phone ? <PhoneLink phone={customer.phone} /> : "no phone"}
       </div>
       <div className="text-xs" style={{ color: colors.muted }}>
-        {customer.address || customer.address_line1 || "no address"}
+        {(customer.address || customer.address_line1)
+          ? <AddressLink address={customer.address || customer.address_line1} />
+          : "no address"}
       </div>
       {customer.service_line ? (
         <div className="text-[11px]" style={{ color: colors.muted }}>

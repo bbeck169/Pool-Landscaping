@@ -17,6 +17,7 @@ import {
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CategoryComboCell from "@/components/recurring/CategoryComboCell";
+import { CustomerLink, PhoneLink } from "@/components/customer";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -665,7 +666,7 @@ export default function RecurringJobs() {
                       className="cursor-pointer"
                     />
                   </td>
-                  <td className="px-3 py-2.5" style={{ color: colors.onSurface }}>{r.customer_name}</td>
+                  <td className="px-3 py-2.5" style={{ color: colors.onSurface }}><CustomerLink customerId={r.customer_id} name={r.customer_name} /></td>
                   <td className="px-3 py-2.5 text-xs" style={{ color: colors.muted }}>{r.service_type}</td>
                   <td className="px-3 py-2.5"
                        data-testid={`recurring-cell-service-category-${r.id}`}>
