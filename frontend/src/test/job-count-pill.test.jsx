@@ -39,6 +39,75 @@ describe("classifyJob", () => {
     expect(classifyJob(null)).toBeNull();
     expect(classifyJob(undefined)).toBeNull();
   });
+
+  // Feb-2026 · Classifier update — parity spec with mobile
+  // ``mobile/lib/jobCategory.ts``. Any drift here MUST land on
+  // mobile in the same PR window; the shared header comment locks
+  // both surfaces to the same regex + priority + fallback rules.
+  describe("Feb-2026 classifier update — parity with mobile", () => {
+    it("landscape stem now matches both 'Landscaping' and 'Monthly Landscaping'", () => {
+      // Typo hotfix: rule stem widened from ``landscape`` → ``landscap``.
+      expect(classifyJob({ service_type: "Landscaping" })).toBe("service");
+      expect(classifyJob({ service_type: "Monthly Landscaping" })).toBe("service");
+      // Existing "landscape maintenance" call site still works
+      // (regression guard for the old stem).
+      expect(classifyJob({ service_type: "landscape maintenance" })).toBe("service");
+    });
+
+    it("new Service keywords classify as 'service' (Inspection, Weekly, Monthly)", () => {
+      expect(classifyJob({ service_type: "Weekly Cleanup" })).toBe("service");
+      expect(classifyJob({ service_type: "Monthly Filter Check" })).toBe("service");
+      expect(classifyJob({ service_type: "Annual Inspection" })).toBe("service");
+      // Case-insensitive — mirrors the ``/i`` flag on the SERVICES rx.
+      expect(classifyJob({ service_type: "weekly cleanup" })).toBe("service");
+      expect(classifyJob({ service_type: "INSPECTION" })).toBe("service");
+    });
+
+    it("completed fallback: unmatched completed jobs classify as 'service'", () => {
+      // Rule #4 — completed jobs whose service_type didn't match
+      // either regex fall through to the Services bucket so
+      // finished work never leaks out of the pill totals.
+      expect(
+        classifyJob({ service_type: "Random unmatched string", status: "completed" }),
+      ).toBe("service");
+    });
+
+    it("completed fallback does NOT fire for non-completed jobs", () => {
+      expect(
+        classifyJob({ service_type: "Random unmatched string", status: "pending" }),
+      ).toBeNull();
+      expect(
+        classifyJob({ service_type: "Random unmatched string", status: "in_progress" }),
+      ).toBeNull();
+      expect(
+        classifyJob({ service_type: "Random unmatched string", status: "cancelled" }),
+      ).toBeNull();
+      // No status field at all → still null.
+      expect(classifyJob({ service_type: "Random unmatched string" })).toBeNull();
+    });
+
+    it("completed fallback does NOT override the Repair rule", () => {
+      // Repair still wins on match, regardless of completion state.
+      expect(
+        classifyJob({ service_type: "Pump Repair", status: "completed" }),
+      ).toBe("repair");
+      expect(
+        classifyJob({ service_type: "Fix Leak", status: "completed" }),
+      ).toBe("repair");
+      expect(
+        classifyJob({ service_type: "install filter", status: "completed" }),
+      ).toBe("repair");
+    });
+
+    it("empty / missing service_type stays null even when completed (no bucket leak)", () => {
+      // Guards the existing ``computePillCounts`` invariant that
+      // ``{ service_type: '', status: 'completed' }`` does NOT bump
+      // the Services total — the empty-string short-circuit must
+      // still fire before the fallback.
+      expect(classifyJob({ service_type: "", status: "completed" })).toBeNull();
+      expect(classifyJob({ status: "completed" })).toBeNull();
+    });
+  });
 });
 
 
