@@ -2397,3 +2397,26 @@
   - `app/job/[id].tsx`, `app/(app)/schedule/calendar.tsx`, `app/customer/[id].tsx`
 - **New dependencies**: None
 
+
+## Iteration 109 — K43: resolveTechnicianId fallback via /api/technicians/me
+- **Commit**: c41487a85
+- **Date**: 2026-09-19
+- **Changes**:
+  - Created `lib/technicianResolver.ts`: `resolveTechnicianId(user)` — fast-path when `user.technician_id` is truthy, slow-path via `GET /api/technicians/me`, module-level cache by user.id, 404 → null (not in roster), non-404 errors not cached (allow retry).
+  - `calendar.tsx`: replaced all `user?.technician_id` direct reads with `resolvedTechId` state + useEffect resolver. `techScope` and `techFilter` default now use resolved value. Added empty-profile banner: "Your technician profile is not linked yet — contact your admin to get set up."
+  - `checklist.tsx`: replaced `user.technician_id` ownership check with `myTechId` state + useEffect resolver.
+  - `auth.tsx`: added `clearTechnicianIdCache()` call on logout.
+  - 9 Jest tests, all passing.
+- **Files created**:
+  - `/app/mobile/lib/technicianResolver.ts`
+  - `/app/mobile/__tests__/technicianResolver.test.ts` (9 tests)
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (resolver state, techScope, filter default, empty-profile banner + styles)
+  - `/app/mobile/app/job/[id]/checklist.tsx` (ownership check uses resolved ID)
+  - `/app/mobile/src/auth.tsx` (cache clear on logout)
+- **Callsites migrated to resolveTechnicianId**:
+  - `calendar.tsx` line 412: techScope query param
+  - `calendar.tsx` line 321/324: techFilter default
+  - `checklist.tsx` line 893: canEditServiceType ownership check
+  - `auth.tsx` logout: cache invalidation
+

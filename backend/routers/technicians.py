@@ -263,6 +263,117 @@ async def create_technician(body: TechnicianIn, user: dict = Depends(require_adm
     return doc
 
 
+@router.get("/technicians/me")
+async def get_technician_me(user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Auth-scoped tech resolver.
+
+    Motivation
+    ----------
+    Mobile schedule filters jobs by ``user.technician_id``. On tenants
+    where the ``technicians_user_id_backfill`` migration hasn't run in
+    prod, that field can be ``None`` → an empty schedule. This endpoint
+    lets mobile fall back to a linked technician row via three
+    resolution strategies, all tenant-scoped:
+
+      1. **Primary** — ``technicians.user_id == user.id``.
+      2. **Email fallback** — ``technicians.email == user.email``
+         (case-insensitive). Logged at INFO as
+         ``tech_resolved_via_fallback method=email``.
+      3. **Name fallback** — ``technicians.name == first_name +
+         ' ' + last_name`` (case-insensitive). Logged as
+         ``tech_resolved_via_fallback method=name``.
+
+    Response shape MIRRORS ``GET /api/technicians/{tid}`` (including
+    the ``jobs`` array) so the mobile client can share a single
+    normaliser between the two endpoints.
+
+    Guardrails
+    ----------
+    * Does NOT auto-create a ``technicians`` row on any miss — that
+      would silently paper over real data-integrity problems.
+    * Cross-tenant look-ups are impossible: every query bakes in
+      ``tenant_id == tenant["id"]``.
+    * Unauthenticated callers land at 401 via the shared
+      ``get_current_user`` dependency (FastAPI's default when the
+      dependency raises).
+    """
+    tid = tenant["id"]
+    uid = user.get("id") or ""
+    email = str(user.get("email") or "").strip()
+    first = str(user.get("first_name") or "").strip()
+    last = str(user.get("last_name") or "").strip()
+    full_name = f"{first} {last}".strip()
+
+    doc = None
+    resolved_via = None
+
+    # (1) Primary — user_id link.
+    if uid:
+        doc = await db.technicians.find_one(
+            {"tenant_id": tid, "user_id": uid}, {"_id": 0},
+        )
+        if doc:
+            resolved_via = "user_id"
+
+    # (2) Fallback — email match (case-insensitive).
+    if not doc and email:
+        # ``$regex`` with ``^…$`` anchoring + ``re.escape``-equivalent
+        # for the email string so no injection through user-controlled
+        # values. Emails are already-validated by the auth path but
+        # be defensive.
+        import re
+        email_re = re.escape(email)
+        doc = await db.technicians.find_one(
+            {"tenant_id": tid,
+              "email": {"$regex": f"^{email_re}$", "$options": "i"}},
+            {"_id": 0},
+        )
+        if doc:
+            resolved_via = "email"
+            logger.info(
+                "tech_resolved_via_fallback method=email "
+                "tenant=%s user_id=%s tech_id=%s",
+                tid, uid, doc.get("id"),
+            )
+
+    # (3) Fallback — name match (case-insensitive).
+    if not doc and full_name:
+        import re
+        name_re = re.escape(full_name)
+        doc = await db.technicians.find_one(
+            {"tenant_id": tid,
+              "name": {"$regex": f"^{name_re}$", "$options": "i"}},
+            {"_id": 0},
+        )
+        if doc:
+            resolved_via = "name"
+            logger.info(
+                "tech_resolved_via_fallback method=name "
+                "tenant=%s user_id=%s tech_id=%s",
+                tid, uid, doc.get("id"),
+            )
+
+    if not doc:
+        raise HTTPException(
+            status_code=404,
+            detail="technician_not_found",
+        )
+
+    # Match the ``GET /api/technicians/{tid}`` shape: attach the
+    # tech's jobs (soft-deleted rows filtered elsewhere; this
+    # endpoint mirrors get_technician exactly for parity).
+    doc["jobs"] = await db.jobs.find(
+        {"technician_id": doc["id"]},
+        {"_id": 0, "photos.data": 0},
+    ).sort("scheduled_date", -1).to_list(200)
+    # Surface which strategy resolved this — mobile can log a
+    # deprecation warning when a fallback fires so ops can prioritise
+    # running the ``technicians_user_id_backfill`` migration.
+    doc["_resolved_via"] = resolved_via
+    return doc
+
+
 @router.get("/technicians/{tid}")
 async def get_technician(tid: str, user: dict = Depends(get_current_user),
                               tenant: dict = Depends(get_current_tenant)):

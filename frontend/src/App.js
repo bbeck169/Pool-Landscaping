@@ -165,7 +165,6 @@ import IndustriesSettings from "@/pages/settings/IndustriesSettings";
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
 import ProposalAnalyticsPage from "@/pages/settings/ProposalAnalyticsPage";
-import ProposalAnalyticsPage from "@/pages/settings/ProposalAnalyticsPage";
 // Feb-2026 · Ticket #3 + #4 — Org Notifications + AI Configuration tabs.
 import OrgNotificationsSettings from "@/pages/settings/OrgNotificationsSettings";
 import AIConfigurationSettings from "@/pages/settings/AIConfigurationSettings";

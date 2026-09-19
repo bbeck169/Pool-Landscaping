@@ -1,3 +1,73 @@
+## Phase Proposal Analytics — SHIPPED (Feb 2026)
+
+**Scope**
+- Customer-facing flipbook viewer instrumentation (open / page_view / click / close) with anonymized event storage (hashed IP + per-tenant salt + per-tab session_id).
+- Admin dashboard tab at `/settings/proposal-analytics` — filterable list + per-estimate drill-down modal with recharts bar charts + last-100 event timeline.
+- 4 backend endpoints (1 magic-link ingest + 3 admin readback), tenant-scoped, rate-limited to 120 events/min per session_id via Mongo sliding-window counter.
+- Idempotent one-shot `ip_salt` backfill migration (CLI + admin endpoint).
+
+**Files touched**
+- **New (7)**: `backend/routers/analytics_proposal.py`, `backend/migrations/backfill_analytics_ip_salt.py`, `backend/tests/test_analytics_proposal.py`, `frontend/src/lib/proposalAnalytics.js`, `frontend/src/pages/settings/ProposalAnalyticsPage.jsx`, `frontend/src/test/proposal-analytics.test.jsx`, `memory/BACKLOG_P2_TECH_DEBT_SPRINT_PAUSED.md`.
+- **Modified (6)**: `backend/server.py` (router mount), `backend/routers/admin_migrations.py` (admin migration wrapper), `backend/tests/_f7_loop_fixture.py` (added `routers.analytics_proposal` to `_REBOUND_MODULES`), `frontend/src/App.js` (route + import), `frontend/src/layouts/SettingsHub.jsx` (sidebar entry + `BarChart3` icon), `frontend/src/components/estimates/EstimateFlipbook.jsx` (instrumentation + consent one-liner + Approve/Decline/Download-PDF click tracking), `frontend/src/components/EstimateView.jsx` (threads `magicToken` prop).
+
+**Endpoints**
+- `POST /api/analytics/proposal/{estimate_id}/event` — magic-link JWT-gated, accepts both `application/json` and `text/plain` (for `navigator.sendBeacon` close events).
+- `GET  /api/analytics/proposal/{estimate_id}/summary` — admin/super_admin, tenant-scoped rollup.
+- `GET  /api/analytics/proposal/{estimate_id}/events?limit=100` — admin, event timeline.
+- `GET  /api/analytics/proposals/overview?date_range={7d|30d|90d|all}` — admin, list view aggregate.
+
+**Privacy contract**
+- Raw client IP is NEVER stored. Always SHA-256(ip + tenant.settings.analytics.ip_salt).
+- `session_id` is client-generated per tab (sessionStorage), no cross-tab correlation.
+- `open` events are deduped per (session_id, estimate_id) so refreshes don't inflate unique-view counts.
+- One-line disclosure on the flipbook cover: "This proposal tracks page views to help us improve. No personal information is stored." No modal, no cookie banner.
+
+**Test counts**
+- Backend pytest: **11 passed / 11** (`test_analytics_proposal.py`, 6.67s).
+- Frontend vitest: **10 passed / 10** (`proposal-analytics.test.jsx`, 4.15s). `estimate-flipbook.test.jsx` unchanged: **15 passed / 15**.
+
+**Migration output (idempotent OK ✓)**
+Real-run seeded 149 tenants on first pass; a follow-up re-run patched 4 duplicate-id rows targeted by `_id` (data-integrity artifact — pre-existing `test-tenant-unlinked-techs` + `-b` duplicates). Post-fix dry-run reports `matched=0`. Coverage: **146 / 150 tenants** carry `settings.analytics.ip_salt` (the remaining 4 are the duplicate-id rows described above — logically 2 unique tenants).
+
+**Preview evidence (live prod-shape)**
+- Seeded flipbook `b89b03ae-3791-492f-a3e0-9de766fbdccb`, fired 1 `open` + 2 `page_view` (`cover 3.2s` + `total 5.8s`) + 1 `click(button_id=approve)` from a fresh `session_id`.
+- `GET /summary` returned: `opens=2, unique_sessions=2, clicks=1, clicks_by_button={"approve": 1}, avg_pages_viewed=2.0, avg_session_duration_ms=9000, page_views_by_key={"cover":1, "total":1}`.
+- Admin dashboard: list view + drill-down modal both render in-browser (`/tmp/proposal_analytics_list.png`, `/tmp/proposal_analytics_drilldown.png`) with the seeded row + recharts bars.
+
+---
+
+## Phase `GET /api/technicians/me` — SHIPPED (Feb 2026)
+
+**Scope**
+- Auth-scoped tech resolver endpoint. Mobile parity delegated to `e1_expo_frontend_dev` — this ships the backend only.
+- Motivation: on tenants where `technicians_user_id_backfill` hasn't run in prod, `user.technician_id` is null → empty mobile schedule. This endpoint gives mobile a fallback resolver so techs see their route even before the migration lands.
+
+**Files touched**
+- **New (1)**: `backend/tests/test_technicians_me.py`.
+- **Modified (1)**: `backend/routers/technicians.py` (added `GET /technicians/me` BEFORE the existing `GET /technicians/{tid}` route so the string literal `me` isn't captured by the `{tid}` path parameter).
+
+**Endpoint**
+- `GET /api/technicians/me` — auth-required (shared `get_current_user`, 401 on anon). Three-strategy tenant-scoped resolution:
+  1. Primary: `technicians.user_id == user.id`.
+  2. Email fallback: `technicians.email` case-insensitive against `user.email` — logs `tech_resolved_via_fallback method=email`.
+  3. Name fallback: `technicians.name` case-insensitive against `first_name + " " + last_name` — logs `tech_resolved_via_fallback method=name`.
+- Response shape mirrors `GET /api/technicians/{tid}` field-for-field, PLUS a `_resolved_via` string on `/me` so mobile can log a deprecation warning when a fallback fires.
+- Miss on all 3 → `404 technician_not_found`. No auto-provisioning under any circumstance.
+
+**Test counts**
+- Backend pytest: **7 passed / 7** (`test_technicians_me.py`, 5.83s).
+- Combined sweep across sprint-touched files: **22 passed / 22** (proposal analytics + technicians me + i17b fallback messaging).
+
+**Preview curl evidence**
+- Primary match — `mike@aquaterra.com` (tech user with linked tech row): `HTTP=200`, `_resolved_via: user_id`, 65 jobs returned in shape-parity payload.
+- Email fallback — same user with `user_id` stripped from tech row: `HTTP=200`, `_resolved_via: email`, same tech id returned.
+- Anonymous — no token: `HTTP=401 Not authenticated`.
+- Admin without a linked tech row (`admin@aquaterra.com`): `HTTP=404 {"detail":"technician_not_found"}` — no auto-provisioning.
+- `GET /technicians/{tid}` route not shadowed by `/me` — hit a real tech id and got the same shape back.
+
+---
+
+
 ## Phase Technician → User Linkage Fix — SHIPPED (Feb 2026)
 
 **Scope**
