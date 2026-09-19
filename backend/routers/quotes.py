@@ -587,16 +587,27 @@ async def update_quote(qid: str, body: QuoteUpdate,
     from services.quotes.status_gate import (
         assert_quote_mutable_for_put,
         audit_put_denial,
+        audit_super_admin_silent_bypass,
         is_quote_mutable_for_put,
+        should_super_admin_silent_bypass,
     )
     # Feb-2026 · Editable Sent Docs · Phase 1 — honour the frontend
     # confirm-dialog ``acknowledged_lock_bypass`` flag. Pulled from
     # the body BEFORE the status gate so ``sent``/``accepted``/
     # ``paid`` docs unlock when the operator has acknowledged.
     _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
-    if not is_quote_mutable_for_put(existing, bypass_lock=_ack):
+    # Feb-2026 · Invoice God Mode — super_admins skip the ack popup
+    # entirely on ``past_due`` / ``unpaid`` / ``overdue`` invoices.
+    # Compute the role + silent-bypass flag here so we can (a) let
+    # the gate accept the mutation without the ack flag, and (b) emit
+    # a distinct audit line after ``upd`` is sanitised.
+    _role = str((user or {}).get("role") or "").lower()
+    _silent_bypass = should_super_admin_silent_bypass(existing, _role)
+    if not is_quote_mutable_for_put(existing, bypass_lock=_ack, role=_role):
         await audit_put_denial(db, quote=existing, actor=user)
-        assert_quote_mutable_for_put(existing, bypass_lock=_ack)  # raises 409
+        assert_quote_mutable_for_put(
+            existing, bypass_lock=_ack, role=_role,
+        )  # raises 409
     upd = {k: v for k, v in body.dict().items() if v is not None}
     # Feb-2026 · Task 6 · Defect fix — coalesce write-side field
     # names so ``terms_and_conditions`` (matches the GET payload
@@ -646,6 +657,14 @@ async def update_quote(qid: str, body: QuoteUpdate,
     # flags — never persist them on the doc row.
     _edit_reason = upd.pop("edit_reason", None)
     upd.pop("acknowledged_lock_bypass", None)
+    # Feb-2026 · Invoice God Mode — write the distinct audit line
+    # AFTER ``upd`` has been sanitised (request-only flags stripped,
+    # ``terms``/``terms_and_conditions`` coalesced) so the audit row
+    # captures the exact field bag that will land on the doc.
+    if _silent_bypass:
+        await audit_super_admin_silent_bypass(
+            db, quote=existing, actor=user, new_fields=upd,
+        )
     # Feb-2026 · Editable Sent Docs · Phase 1 — also reject any
     # ``quote_number`` mutation defensively (the schema doesn't
     # include the field but keeps drift-safe).

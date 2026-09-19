@@ -2351,3 +2351,19 @@
   - `/app/mobile/app/(app)/schedule/calendar.tsx` (1 line changed: `user?.id` → `user?.technician_id`)
   - `/app/mobile/__tests__/phase-schedule-tech-filter-technician-id.test.tsx` (1 new test case added)
 
+
+## Iteration 107 — Mirror web jobCategory classifier update
+- **Commit**: 165b0c13e
+- **Date**: 2026-09-18
+- **Changes**:
+  - Widened `_SERVICES_RX`: `landscape` → `landscap` stem + added `inspection|weekly|monthly` keywords
+  - Added completed-job fallback (rule #4): unmatched completed jobs → `"service"`, non-completed stay `null`
+  - Updated header docstring to match web's 5-rule block verbatim
+  - 7 new Jest tests, all passing
+- **Files modified**:
+  - `/app/mobile/lib/jobCategory.ts` (3 changes: regex, fallback, docstring)
+- **Files created**:
+  - `/app/mobile/__tests__/jobCategory.test.ts` (7 tests)
+- **Web files referenced**:
+  - `/app/frontend/src/lib/jobCategory.js` (authoritative source of truth)
+

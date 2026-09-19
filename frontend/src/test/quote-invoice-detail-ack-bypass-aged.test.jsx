@@ -28,9 +28,12 @@ describe("QuoteInvoiceDetail · ack-bypass locked-list widened", () => {
     // literal contains all 6 statuses in either legacy order.
     const idx = SRC.indexOf("setPendingLines(nextLines)");
     expect(idx).toBeGreaterThan(-1);
-    // Grab a ~800-char window BEFORE the setPendingLines call — the
-    // _locked declaration sits in that block.
-    const before = SRC.slice(Math.max(0, idx - 800), idx);
+    // Grab a ~1500-char window BEFORE the setPendingLines call —
+    // widened from 800 in Feb-2026 to keep this assertion resilient
+    // to future save-site expansions (e.g. the Invoice God Mode
+    // silent-bypass adds ~500 chars between ``_locked`` and the
+    // sentinel).
+    const before = SRC.slice(Math.max(0, idx - 1500), idx);
     for (const status of ["sent", "accepted", "paid",
                             "past_due", "unpaid", "overdue"]) {
       expect(
@@ -43,10 +46,11 @@ describe("QuoteInvoiceDetail · ack-bypass locked-list widened", () => {
   it("Terms editor save uses the widened _locked array", () => {
     // The second _locked declaration is inside the terms editor's
     // Save-button onClick handler — anchored on the sentinel
-    // ``setPendingLines({ __terms__: termsDraft })``.
+    // ``setPendingLines({ __terms__: termsDraft })``. Window widened
+    // to 1500 for the same Invoice God Mode reason noted above.
     const idx = SRC.indexOf("__terms__: termsDraft");
     expect(idx).toBeGreaterThan(-1);
-    const before = SRC.slice(Math.max(0, idx - 800), idx);
+    const before = SRC.slice(Math.max(0, idx - 1500), idx);
     for (const status of ["sent", "accepted", "paid",
                             "past_due", "unpaid", "overdue"]) {
       expect(

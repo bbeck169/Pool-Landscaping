@@ -913,7 +913,16 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             // ``_ALLOWED_WITH_ACK`` is kept in sync.
             const _locked = ["sent", "accepted", "paid",
                               "past_due", "unpaid", "overdue"].includes(_st);
-            if (_locked && !lockBypassAcked) {
+            // Feb-2026 · Invoice God Mode — super_admins skip the
+            // ack popup entirely on aged-invoice statuses. The
+            // server-side gate applies the role-based bypass and
+            // writes a distinct audit line, so we intentionally
+            // omit the ack flag from the payload here to keep the
+            // silent path traceable in ops dashboards.
+            const _role = String(user?.role || "").toLowerCase();
+            const _silentBypass = _role === "super_admin"
+                                    && ["past_due", "unpaid", "overdue"].includes(_st);
+            if (_locked && !_silentBypass && !lockBypassAcked) {
               setPendingLines(nextLines);
               setLockDialogOpen(true);
               return false;
@@ -922,7 +931,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             // K71 two-taxonomy validation on any touched line.
             try {
               const _body = { line_items: nextLines };
-              if (_locked) _body.acknowledged_lock_bypass = true;
+              if (_locked && !_silentBypass) _body.acknowledged_lock_bypass = true;
               await api.put(`/quotes/${id}`, _body);
               setToast({ tone: "success", message: "Line item saved" });
               await load();
@@ -1208,7 +1217,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                       // aged invoice statuses.
                       const _locked = ["sent", "accepted", "paid",
                                         "past_due", "unpaid", "overdue"].includes(_st);
-                      if (_locked && !lockBypassAcked) {
+                      // Feb-2026 · Invoice God Mode — super_admin
+                      // silent-bypass mirrors the line-items save
+                      // above. Omit the ack flag so the backend
+                      // writes the distinct silent-bypass audit
+                      // line instead of the standard ack one.
+                      const _role = String(user?.role || "").toLowerCase();
+                      const _silentBypass = _role === "super_admin"
+                                              && ["past_due", "unpaid", "overdue"].includes(_st);
+                      if (_locked && !_silentBypass && !lockBypassAcked) {
                         setPendingLines({ __terms__: termsDraft });
                         setLockDialogOpen(true);
                         return;
@@ -1216,7 +1233,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                       setTermsSaving(true);
                       try {
                         const _body = { terms_and_conditions: termsDraft };
-                        if (_locked) _body.acknowledged_lock_bypass = true;
+                        if (_locked && !_silentBypass) _body.acknowledged_lock_bypass = true;
                         await api.put(`/quotes/${id}`, _body);
                         setToast({ tone: "success", message: "Terms saved" });
                         await load();

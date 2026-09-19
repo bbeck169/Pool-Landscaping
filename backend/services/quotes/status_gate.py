@@ -68,6 +68,23 @@ _ALLOWED_WITH_ACK: Dict[str, set[str]] = {
                  "past_due", "unpaid", "overdue"},
 }
 
+# Feb-2026 · Invoice God Mode — super_admin silent-bypass list.
+#
+# Rationale: super_admins are the escalation point for aged-invoice
+# corrections. Requiring them to click through the ack popup on
+# every ``past_due`` / ``unpaid`` / ``overdue`` fix creates friction
+# that hides in the audit trail as noise (they always confirm), so
+# product decided super_admin should skip the popup entirely for
+# these three statuses. Regular ``admin`` still sees the popup and
+# still writes the standard ack path — the friction stays where it
+# provides real signal.
+#
+# INTENTIONALLY scoped to the three aged statuses. Do NOT widen to
+# ``paid`` / ``void`` / ``cancelled`` without an explicit product
+# decision — those statuses gate real accounting integrity, not
+# just visual freshness.
+_SUPER_ADMIN_SILENT_BYPASS: set[str] = {"past_due", "unpaid", "overdue"}
+
 
 def _external_doc_type(quote: Dict[str, Any]) -> str:
     """Map DB ``doc_type`` (quote/invoice) → external label
@@ -87,8 +104,29 @@ def _current_status(quote: Dict[str, Any]) -> str:
     return (quote.get("status") or "draft").lower()
 
 
+def should_super_admin_silent_bypass(
+    quote: Dict[str, Any], role: Optional[str],
+) -> bool:
+    """Feb-2026 · Invoice God Mode — silent-bypass predicate.
+
+    Returns ``True`` only when the caller is a ``super_admin`` AND
+    the target doc is an invoice whose current status is one of
+    :data:`_SUPER_ADMIN_SILENT_BYPASS`. Any other combination —
+    non-``super_admin`` role, missing role, non-invoice doc_type,
+    or an out-of-scope status — returns ``False``.
+    """
+    if str(role or "").lower() != "super_admin":
+        return False
+    if _external_doc_type(quote) != "invoice":
+        return False
+    return _current_status(quote) in _SUPER_ADMIN_SILENT_BYPASS
+
+
 def is_quote_mutable_for_put(
-    quote: Dict[str, Any], *, bypass_lock: bool = False,
+    quote: Dict[str, Any],
+    *,
+    bypass_lock: bool = False,
+    role: Optional[str] = None,
 ) -> bool:
     """Pure predicate — returns whether a ``PUT`` may proceed.
 
@@ -96,12 +134,19 @@ def is_quote_mutable_for_put(
     ``bypass_lock=True`` (frontend confirm-dialog ack), the caller
     additionally unlocks statuses in :data:`_ALLOWED_WITH_ACK`.
     Statuses NOT in either set stay locked (``void`` / ``cancelled``).
+
+    Feb-2026 · Invoice God Mode — when ``role == "super_admin"`` AND
+    the invoice status is in :data:`_SUPER_ADMIN_SILENT_BYPASS`, the
+    predicate returns ``True`` without requiring ``bypass_lock`` so
+    super_admins skip the ack popup entirely.
     """
     doc_type = _external_doc_type(quote)
     status = _current_status(quote)
     if status in _ALLOWED.get(doc_type, set()):
         return True
     if bypass_lock and status in _ALLOWED_WITH_ACK.get(doc_type, set()):
+        return True
+    if should_super_admin_silent_bypass(quote, role):
         return True
     return False
 
@@ -132,7 +177,10 @@ def denial_payload(quote: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def assert_quote_mutable_for_put(
-    quote: Dict[str, Any], *, bypass_lock: bool = False,
+    quote: Dict[str, Any],
+    *,
+    bypass_lock: bool = False,
+    role: Optional[str] = None,
 ) -> None:
     """Raise ``HTTPException(409)`` if the quote's status forbids PUT.
 
@@ -145,8 +193,12 @@ def assert_quote_mutable_for_put(
     ``acknowledged_lock_bypass: true`` in the request body from the
     frontend confirm-dialog. This unlocks ``sent``/``accepted``/
     ``paid``/``partial``/``declined`` per :data:`_ALLOWED_WITH_ACK`.
+
+    Feb-2026 · Invoice God Mode — pass ``role`` so super_admins skip
+    the lock entirely on ``past_due`` / ``unpaid`` / ``overdue``
+    invoices (see :func:`should_super_admin_silent_bypass`).
     """
-    if is_quote_mutable_for_put(quote, bypass_lock=bypass_lock):
+    if is_quote_mutable_for_put(quote, bypass_lock=bypass_lock, role=role):
         return
     raise HTTPException(status_code=409, detail=denial_payload(quote))
 
@@ -179,9 +231,50 @@ async def audit_put_denial(
         pass
 
 
+async def audit_super_admin_silent_bypass(
+    db,
+    *,
+    quote: Dict[str, Any],
+    actor: Dict[str, Any],
+    new_fields: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Feb-2026 · Invoice God Mode — audit line for silent bypasses.
+
+    Written whenever :func:`should_super_admin_silent_bypass` fires
+    on a successful PUT. Distinct event name (``put_quote_status_
+    super_admin_silent_bypass``) so ops dashboards can separate the
+    silent path from the standard ack path — silent bypasses are
+    rare and high-privilege, they warrant their own filter.
+
+    ``new_fields`` receives the sanitised ``upd`` dict (post-strip of
+    request-only flags like ``acknowledged_lock_bypass`` and
+    ``edit_reason``) so the audit row captures exactly what the
+    invoice mutated to. Best-effort: audit-log write failures MUST
+    NOT convert a 200 into a 500.
+    """
+    try:
+        await db.audit_logs.insert_one({
+            "event": "put_quote_status_super_admin_silent_bypass",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "user_id": (actor or {}).get("id"),
+            "user_email": (actor or {}).get("email"),
+            "user_role": (actor or {}).get("role"),
+            "tenant_id": quote.get("tenant_id"),
+            "quote_id": quote.get("id"),
+            "doc_type": _external_doc_type(quote),
+            "old_status": _current_status(quote),
+            "new_fields": dict(new_fields or {}),
+        })
+    except Exception:
+        # Never fail the caller because of an audit-log write.
+        pass
+
+
 __all__ = [
     "assert_quote_mutable_for_put",
     "audit_put_denial",
+    "audit_super_admin_silent_bypass",
     "denial_payload",
     "is_quote_mutable_for_put",
+    "should_super_admin_silent_bypass",
 ]
