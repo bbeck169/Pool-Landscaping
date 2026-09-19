@@ -48,6 +48,7 @@ import DocDesktopShell from "@/components/documents/DocDesktopShell";
 // footer bands paint in the tenant's brand primary. Admin
 // preview mode consumes the admin surface hook instead.
 import { useTenantBranding, useBusinessSettings } from "@/hooks/useTenantBranding";
+import EstimateFlipbook from "@/components/estimates/EstimateFlipbook";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -372,6 +373,65 @@ export default function EstimateView({
   // printable surfaces skip it to keep the admin toolbar untouched
   // and the printable rendering PDF-parity intact.
   const showCustomerMobileHeader = !isAdmin && !printable;
+  // Feb-2026 · Interactive Flipbook Estimate Viewer — customer-facing
+  // branch. Admin previews + printable / PDF surfaces intentionally
+  // stay on the classic renderer so PDF export, print, and the
+  // admin toolbar keep parity. Flipbook is a customer-persuasion
+  // surface, not an operations surface.
+  if (data?.flipbook_enabled && !isAdmin && !printable) {
+    return (
+      <div className={`ev-shell iv-shell`} data-testid="estimate-view">
+        <EstimateFlipbook
+          data={data}
+          onAccept={accept}
+          onDeclineClick={() => setDeclineOpen(true)}
+          onDownloadPdf={openPdf}
+          signatureGateBlocked={signatureGateBlocked}
+          onSignNow={openSignNowFlow}
+          actionable={actionable}
+          busy={busy}
+          toast={toast}
+        />
+        {/* Decline modal remains owned by the classic
+            EstimateView because the flipbook accept page only
+            needs to trigger it. */}
+        {declineOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            role="dialog"
+            data-testid="flipbook-decline-modal"
+          >
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
+              <div className="text-lg font-bold mb-2">Decline proposal</div>
+              <textarea
+                className="w-full h-32 rounded border p-2 text-sm"
+                placeholder="Optional — tell us why so we can improve"
+                value={declineMsg}
+                onChange={(e) => setDeclineMsg(e.target.value)}
+                data-testid="flipbook-decline-reason"
+              />
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-full"
+                  style={{ border: "1px solid #cbd5e1" }}
+                  onClick={() => { setDeclineOpen(false); setDeclineMsg(""); }}
+                  data-testid="flipbook-decline-cancel"
+                >Cancel</button>
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-full text-white"
+                  style={{ backgroundColor: "#dc2626" }}
+                  onClick={submitDecline}
+                  data-testid="flipbook-decline-submit"
+                >Decline proposal</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div className={`ev-shell iv-shell ${printable ? "iv-printable" : ""}`} data-testid="estimate-view">
       {showCustomerMobileHeader ? (

@@ -46,6 +46,7 @@ import SendToCustomerModal from "@/components/quotes/SendToCustomerModal";
 // (checkbox + per-category description editor + preview modal).
 // Rendered on QUOTES only; invoices keep the itemized view.
 import K79CustomerViewSection from "@/components/quotes/K79CustomerViewSection";
+import FlipbookComposeSection from "@/components/quotes/FlipbookComposeSection";
 // Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
@@ -882,6 +883,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           only surface. */}
       {isStaff && !isInvoice ? (
         <K79CustomerViewSection doc={doc} onDocRefresh={load} />
+      ) : null}
+
+      {/* Feb-2026 · Interactive Flipbook Estimate Viewer — per-estimate
+          admin opt-in + background-image picker. Same audience gate
+          as the K79 grouped-view controls above (admin, quote/estimate
+          only). Invoices intentionally excluded — the flipbook is a
+          proposal-persuasion surface, not an accounting one. */}
+      {isStaff && !isInvoice ? (
+        <FlipbookComposeSection doc={doc} onDocRefresh={load} />
       ) : null}
 
       {/* Line items */}

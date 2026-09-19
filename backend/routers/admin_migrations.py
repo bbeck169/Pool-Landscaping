@@ -1598,3 +1598,41 @@ async def run_dunning_stage_cta_backfill(
         report.get("stages_rewritten"), report.get("audit_stamped"),
     )
     return report
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · Interactive Flipbook Estimate Viewer — defaults backfill
+# ═══════════════════════════════════════════════════════════════════
+
+
+class FlipbookBackfillIn(BaseModel):
+    dry_run: bool = True
+
+
+@router.post("/admin/migrations/backfill-flipbook-defaults")
+async def flipbook_backfill(
+    body: FlipbookBackfillIn = Body(default_factory=FlipbookBackfillIn),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Super-admin trigger for :mod:`migrations.backfill_flipbook_defaults`.
+
+    Wraps the shared coroutine so ops can seed
+    ``flipbook_enabled=false`` and ``flipbook_background_ids=[]`` on
+    historical quotes from the deployed admin app without a pod
+    shell. Dry-run by default. The migration is idempotent — a
+    fully-migrated collection reports ``matched=0``.
+    """
+    _require_super_admin(user)
+    from migrations.backfill_flipbook_defaults import (
+        backfill_flipbook_defaults,
+    )
+    report = await backfill_flipbook_defaults(db, dry_run=body.dry_run)
+    logger.info(
+        "[flipbook-backfill] caller=%s tenant=%s dry=%s "
+        "matched=%s modified=%s",
+        user.get("id"), tenant.get("id"), body.dry_run,
+        report.get("matched"), report.get("modified"),
+    )
+    return report
+

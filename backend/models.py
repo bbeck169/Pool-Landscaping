@@ -417,6 +417,15 @@ class QuoteUpdate(BaseModel):
     # Optional operator note surfaced on the ``document_versions``
     # audit row for this edit.
     edit_reason: Optional[str] = None
+    # Feb-2026 · Interactive Flipbook Estimate Viewer — per-estimate
+    # opt-in. When ``flipbook_enabled=true`` the customer-facing
+    # magic-link surface renders the estimate as a page-flip book
+    # (react-pageflip) instead of the classic scrollable view. The
+    # optional ``flipbook_background_ids`` list holds media-library
+    # image IDs that render as page backgrounds. Both fields are
+    # money-neutral and persist on the doc row.
+    flipbook_enabled: Optional[bool] = None
+    flipbook_background_ids: Optional[List[str]] = None
 
 
 class TermsSettingsIn(BaseModel):

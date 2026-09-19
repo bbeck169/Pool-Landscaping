@@ -297,6 +297,15 @@ async def _build_payload(est: dict, tenant: dict, *,
         # URLs for the customer viewer. Empty list on auth'd admin
         # payloads (where ``magic_token`` isn't threaded in).
         "attachments": attachments,
+        # Feb-2026 · Interactive Flipbook Estimate Viewer — surface
+        # the two per-estimate opt-in fields to BOTH admin previews
+        # and the magic-link customer viewer. ``EstimateView.jsx``
+        # branches on ``flipbook_enabled`` to swap the render mode.
+        # Background IDs are exposed as-is; the frontend resolves
+        # each to a signed media URL via the standard
+        # ``/api/marketing/media/{id}/download`` endpoint.
+        "flipbook_enabled": bool(est.get("flipbook_enabled") or False),
+        "flipbook_background_ids": list(est.get("flipbook_background_ids") or []),
     }
 
 

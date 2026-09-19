@@ -677,6 +677,47 @@ async def update_quote(qid: str, body: QuoteUpdate,
     if "invoice_number" in upd and upd["invoice_number"] != existing.get("invoice_number"):
         raise HTTPException(400, "invoice_number is immutable once assigned")
     upd.pop("invoice_number", None)
+    # Feb-2026 · Interactive Flipbook Estimate Viewer — server-side
+    # validation for the two new fields. Any admin who tries to save
+    # a background PDF (or any non-image kind) or more than 10 images
+    # fails fast BEFORE the doc mutates. Cross-tenant IDs return 404
+    # so we don't leak the existence of another tenant's media rows.
+    if "flipbook_background_ids" in upd:
+        _bgs = upd["flipbook_background_ids"] or []
+        if not isinstance(_bgs, list):
+            raise HTTPException(400, "flipbook_background_ids must be a list")
+        # Coerce every entry to str and drop empties.
+        _bgs = [str(x).strip() for x in _bgs if str(x).strip()]
+        if len(_bgs) > 10:
+            raise HTTPException(
+                400,
+                {"error": "too_many_backgrounds",
+                  "message": "flipbook_background_ids may not exceed 10 images",
+                  "max": 10, "got": len(_bgs)},
+            )
+        for _mid in _bgs:
+            _mrow = await db.marketing_media.find_one(
+                {"id": _mid, "tenant_id": tenant["id"], "deleted_at": None},
+                {"_id": 0, "id": 1, "mime_type": 1},
+            )
+            if not _mrow:
+                raise HTTPException(
+                    404,
+                    {"error": "file_not_found",
+                      "message": "flipbook_background_ids entry not found",
+                      "id": _mid},
+                )
+            _mime = str(_mrow.get("mime_type") or "").lower()
+            if not _mime.startswith("image/"):
+                raise HTTPException(
+                    400,
+                    {"error": "background_must_be_image",
+                      "message": "flipbook_background_ids entries must reference image files",
+                      "id": _mid, "mime_type": _mime},
+                )
+        # Store the normalised list back on upd so persistence sees
+        # the sanitised shape (empty-strings stripped, coerced-strs).
+        upd["flipbook_background_ids"] = _bgs
     # Feb-2026 MP1.5 — property_id patch validation. Must reference an
     # active property belonging to this quote's customer + tenant.
     if "property_id" in upd and upd["property_id"]:
