@@ -9,18 +9,31 @@ Covers:
      tenant provider is configured, ``dispatch_*`` returns
      ``{"status": "failed"}`` and does NOT log a fallback entry
      (nothing to audit).
+
+Feb-2026 P2 tech-debt · migrated off the module-global
+``_LOOP + AsyncIOMotorClient`` + ``monkeypatch(_default_db)``
+pattern (which hung on collection due to Motor loop rebinding
+racing with ``services.secrets.store._default_db``). Uses the
+canonical ``run_test(coro_factory)`` helper from
+``tests._f7_loop_fixture`` — the same pattern already in use by
+``test_reorder_day_route.py``, ``test_recurring_job_end_date.py``,
+etc. ``config.db`` is the only global handle in the messaging
+dispatch path (both ``services.messaging.dispatch._log_fallback``
+and ``services.secrets.store._default_db`` resolve it lazily), so
+the standard ``_REBOUND_MODULES`` list already covers everything —
+no fixture extension required.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
+
+from tests._f7_loop_fixture import run_test
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -38,31 +51,6 @@ from services.messaging.sms.registry import reset_cache_for_tests as _reset_sms 
 TENANT = f"i17b-fallback-{uuid.uuid4().hex[:8]}"
 
 
-_LOOP: asyncio.AbstractEventLoop | None = None
-_MOTOR_CLIENT: AsyncIOMotorClient | None = None
-_MOTOR_DB = None
-
-
-def _setup_loop():
-    global _LOOP, _MOTOR_CLIENT, _MOTOR_DB
-    if _LOOP is None:
-        _LOOP = asyncio.new_event_loop()
-        asyncio.set_event_loop(_LOOP)
-        _MOTOR_CLIENT = AsyncIOMotorClient(os.environ["MONGO_URL"])
-        _MOTOR_DB = _MOTOR_CLIENT[os.environ["DB_NAME"]]
-        import services.secrets.store as _store
-        _store._default_db = lambda: _MOTOR_DB   # type: ignore
-        # ``dispatch._log_fallback`` also uses config.db by default —
-        # replace it with a small wrapper that picks up OUR db.
-        import services.messaging.dispatch as _dispatch
-        _orig = _dispatch._log_fallback
-        async def _wrapper(*, tenant_id, kind, reason, db=None):
-            return await _orig(tenant_id=tenant_id, kind=kind,
-                                reason=reason, db=db or _MOTOR_DB)
-        _dispatch._log_fallback = _wrapper   # type: ignore
-    return _LOOP, _MOTOR_DB
-
-
 @pytest.fixture(autouse=True)
 def _wipe():
     _reset_sms()
@@ -72,11 +60,6 @@ def _wipe():
     yield
     _sync[FALLBACK_LOG_COLLECTION].delete_many({"tenant_id": TENANT})
     _sync.tenant_secrets.delete_many({"tenant_id": TENANT})
-
-
-def _run(coro):
-    loop, _db = _setup_loop()
-    return loop.run_until_complete(coro)
 
 
 def test_sms_dispatch_falls_back_and_audits(monkeypatch):
@@ -90,7 +73,9 @@ def test_sms_dispatch_falls_back_and_audits(monkeypatch):
     monkeypatch.setattr(legacy, "send_sms", _fake_platform, raising=True)
     monkeypatch.setenv("MESSAGING_PLATFORM_FALLBACK_ENABLED", "true")
 
-    result = _run(dispatch_sms(tenant_id=TENANT, to="+15559999999", body="hi"))
+    result = run_test(lambda db: dispatch_sms(
+        tenant_id=TENANT, to="+15559999999", body="hi", db=db,
+    ))
     assert result["status"] == "sent"
     assert calls and calls[0]["to"] == "+15559999999"
 
@@ -110,9 +95,9 @@ def test_email_dispatch_falls_back_and_audits(monkeypatch):
     monkeypatch.setattr(legacy, "send_email", _fake_platform, raising=True)
     monkeypatch.setenv("MESSAGING_PLATFORM_FALLBACK_ENABLED", "true")
 
-    result = _run(dispatch_email(
+    result = run_test(lambda db: dispatch_email(
         tenant_id=TENANT, to=["dest@example.com"],
-        subject="hi", html_body="<b>hi</b>",
+        subject="hi", html_body="<b>hi</b>", db=db,
     ))
     assert result["status"] == "sent"
     assert calls and calls[0]["to"] == "dest@example.com"
@@ -123,7 +108,9 @@ def test_email_dispatch_falls_back_and_audits(monkeypatch):
 
 def test_sms_dispatch_fails_when_fallback_disabled_and_no_tenant_provider(monkeypatch):
     monkeypatch.setenv("MESSAGING_PLATFORM_FALLBACK_ENABLED", "false")
-    result = _run(dispatch_sms(tenant_id=TENANT, to="+15559999999", body="hi"))
+    result = run_test(lambda db: dispatch_sms(
+        tenant_id=TENANT, to="+15559999999", body="hi", db=db,
+    ))
     assert result["status"] == "failed"
     assert "fallback disabled" in (result.get("error") or "")
     entries = list(_sync[FALLBACK_LOG_COLLECTION].find({"tenant_id": TENANT}))
@@ -132,9 +119,9 @@ def test_sms_dispatch_fails_when_fallback_disabled_and_no_tenant_provider(monkey
 
 def test_email_dispatch_fails_when_fallback_disabled_and_no_tenant_provider(monkeypatch):
     monkeypatch.setenv("MESSAGING_PLATFORM_FALLBACK_ENABLED", "false")
-    result = _run(dispatch_email(
+    result = run_test(lambda db: dispatch_email(
         tenant_id=TENANT, to=["x@example.com"],
-        subject="hi", html_body="<b>hi</b>",
+        subject="hi", html_body="<b>hi</b>", db=db,
     ))
     assert result["status"] == "failed"
     entries = list(_sync[FALLBACK_LOG_COLLECTION].find({"tenant_id": TENANT}))
