@@ -164,6 +164,8 @@ import BusinessSettings from "@/pages/settings/BusinessSettings";
 import IndustriesSettings from "@/pages/settings/IndustriesSettings";
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
+import ProposalAnalyticsPage from "@/pages/settings/ProposalAnalyticsPage";
+import ProposalAnalyticsPage from "@/pages/settings/ProposalAnalyticsPage";
 // Feb-2026 · Ticket #3 + #4 — Org Notifications + AI Configuration tabs.
 import OrgNotificationsSettings from "@/pages/settings/OrgNotificationsSettings";
 import AIConfigurationSettings from "@/pages/settings/AIConfigurationSettings";
@@ -1367,6 +1369,10 @@ export default function App() {
               <Route path="chemistry-configuration" element={<ChemistryConfigurationSettings />} />
               {/* Sprint 3c · Feb-2026 — Feature Marketplace. */}
               <Route path="feature-marketplace" element={<FeatureMarketplaceSettings />} />
+              {/* Feb-2026 · Proposal Analytics — flipbook estimate
+                  engagement dashboard. Admin-only via the parent
+                  <AdminOnly> wrapper on the ``settings`` route. */}
+              <Route path="proposal-analytics" element={<ProposalAnalyticsPage />} />
             </Route>
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

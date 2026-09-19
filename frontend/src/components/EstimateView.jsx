@@ -391,6 +391,7 @@ export default function EstimateView({
           actionable={actionable}
           busy={busy}
           toast={toast}
+          magicToken={token || null}
         />
         {/* Decline modal remains owned by the classic
             EstimateView because the flipbook accept page only

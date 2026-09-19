@@ -28,6 +28,7 @@ import {
   Bot,
   Beaker,
   ShoppingBag,
+  BarChart3,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -112,6 +113,13 @@ const SECTIONS = [
     label: "Feature Marketplace",
     Icon: ShoppingBag,
     hint: "Browse and enable premium add-ons (Zillow, SEO Heatmap, AI Analytics, AI Copilot) · Sprint 3c",
+  },
+  {
+    key: "proposal-analytics",
+    to: "/settings/proposal-analytics",
+    label: "Proposal Analytics",
+    Icon: BarChart3,
+    hint: "Anonymized engagement for flipbook estimates — opens, clicks, page views, time on page",
   },
 ];
 

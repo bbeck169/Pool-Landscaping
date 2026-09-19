@@ -92,6 +92,7 @@ import AppTextInput from "@/src/components/ui/AppTextInput";
 // P37c · GPS consent modal — mounted for techs, self-checks consent on focus.
 import GpsConsentModal from "@/src/components/gps/GpsConsentModal";
 import { AddressLink } from "@/src/components/customer";
+import { resolveTechnicianId } from "@/lib/technicianResolver";
 
 type Job = {
   id: string;
@@ -275,6 +276,21 @@ function ScheduleCalendarInner() {
   const [techFilter, setTechFilter] = useState<string>("all");
   const [techPickerOpen, setTechPickerOpen] = useState(false);
 
+  // K43 — Resolved technician_id: when user.technician_id is null
+  // (pre-backfill tenant), we resolve it via GET /api/technicians/me.
+  // null = genuinely not in roster; undefined = still resolving.
+  const [resolvedTechId, setResolvedTechId] = useState<string | null | undefined>(
+    user?.technician_id || undefined,
+  );
+  useEffect(() => {
+    if (!isTech) { setResolvedTechId(undefined); return; }
+    let alive = true;
+    resolveTechnicianId(user).then((tid) => {
+      if (alive) setResolvedTechId(tid);
+    });
+    return () => { alive = false; };
+  }, [user?.id, user?.technician_id, isTech]);
+
   // Phase P17 — OOM fix: cache the last-fetched date range so day-tap
   // navigation inside the already-loaded window skips the network.
   // Margin = 3 days → only re-fetch when the user navigates close to
@@ -318,12 +334,13 @@ function ScheduleCalendarInner() {
       if (typeof v === "string" && v.length > 0) {
         setTechFilter(v);
       } else {
-        setTechFilter(isTech ? (user?.technician_id || "all") : "all");
+        // K43 — use resolvedTechId (handles pre-backfill tenants).
+        setTechFilter(isTech ? (resolvedTechId || "all") : "all");
       }
     }).catch(() => {
-      setTechFilter(isTech ? (user?.technician_id || "all") : "all");
+      setTechFilter(isTech ? (resolvedTechId || "all") : "all");
     });
-  }, [user?.id, user?.technician_id, isTech]);
+  }, [user?.id, resolvedTechId, isTech]);
 
   const setModePersist = (m: Mode) => {
     setMode(m);
@@ -409,7 +426,9 @@ function ScheduleCalendarInner() {
       // K42 — MUST use ``user.technician_id`` (authoritative technicians.id),
       // NOT ``user.id`` (users.id). Jobs store technicians.id in their
       // ``technician_id`` field, so a user-account ID won't match.
-      const techScope = isTech && user?.technician_id ? `&technician_id=${user.technician_id}` : "";
+      // K43 — use resolvedTechId which falls back to /api/technicians/me
+      // when user.technician_id is null (pre-backfill tenants).
+      const techScope = isTech && resolvedTechId ? `&technician_id=${resolvedTechId}` : "";
       const jobsUrl = `/jobs?start=${start}&end=${end}${!isTech && crewFiltered ? `&crew_id=${crewFilter}` : ""}${techScope}`;
       // K15 · outer timeout race — if cachedGet (network+SQLite)
       // hasn't resolved in 25 s, give up and show the error card.
@@ -438,7 +457,7 @@ function ScheduleCalendarInner() {
       // Only write loading=false if THIS controller is still current.
       if (loadAbortRef.current === ac) { setLoading(false); setLoadingTimedOut(false); }
     }
-  }, [focus, user?.id, crewFilter, isTech]);
+  }, [focus, user?.id, crewFilter, isTech, resolvedTechId]);
 
   useFocusEffect(useCallback(() => {
     logNav("schedule/calendar.focus", {
@@ -796,6 +815,16 @@ function ScheduleCalendarInner() {
       )}
 
       {/* K15 · Error card with retry — replaces the old tiny inline bar */}
+      {/* K43 — Empty-profile message when tech has no linked technician row. */}
+      {isTech && resolvedTechId === null && !loading && !err ? (
+        <View style={styles.noProfileCard} testID="schedule-no-profile">
+          <Ionicons name="person-circle-outline" size={28} color={colors.warning} />
+          <Text style={styles.noProfileText}>
+            Your technician profile is not linked yet — contact your admin to get set up.
+          </Text>
+        </View>
+      ) : null}
+
       {err ? (
         <View style={styles.errCard} testID="schedule-error">
           <View style={styles.errCardRow}>
@@ -1768,6 +1797,16 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderRadius: radius.lg,
     backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FCA5A5",
     gap: spacing.sm,
+  },
+  noProfileCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginBottom: spacing.md,
+    padding: spacing.md, borderRadius: radius.lg,
+    backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FCD34D",
+  },
+  noProfileText: {
+    flex: 1, fontFamily: font.medium, fontSize: fontSize.sm,
+    color: "#92400E", lineHeight: 20,
   },
   errCardRow: {
     flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,

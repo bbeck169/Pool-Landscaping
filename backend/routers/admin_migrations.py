@@ -1636,3 +1636,37 @@ async def flipbook_backfill(
     )
     return report
 
+
+class AnalyticsIpSaltBackfillIn(BaseModel):
+    dry_run: bool = Field(default=True)
+
+
+@router.post("/admin/migrations/backfill-analytics-ip-salt")
+async def analytics_ip_salt_backfill(
+    body: AnalyticsIpSaltBackfillIn = Body(
+        default_factory=AnalyticsIpSaltBackfillIn,
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Super-admin trigger for
+    :mod:`migrations.backfill_analytics_ip_salt`.
+
+    Seeds ``settings.analytics.ip_salt`` on every ``tenants`` doc
+    that lacks it so the Proposal Analytics ingest endpoint has a
+    tenant-scoped salt to SHA-256 the client IP against. Dry-run by
+    default. Idempotent — fully-seeded pods report ``matched=0``.
+    """
+    _require_super_admin(user)
+    from migrations.backfill_analytics_ip_salt import (
+        backfill_analytics_ip_salt,
+    )
+    report = await backfill_analytics_ip_salt(db, dry_run=body.dry_run)
+    logger.info(
+        "[analytics-ip-salt-backfill] caller=%s tenant=%s dry=%s "
+        "matched=%s modified=%s",
+        user.get("id"), tenant.get("id"), body.dry_run,
+        report.get("matched"), report.get("modified"),
+    )
+    return report
+

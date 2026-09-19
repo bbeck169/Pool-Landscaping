@@ -35,6 +35,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { Download, ChevronRight, Loader2, Check, X } from "lucide-react";
 
 import Flipbook from "@/components/estimates/FlipbookShim";
+import { useProposalAnalytics } from "@/lib/proposalAnalytics";
 
 
 // ─── helpers ───────────────────────────────────────────────────────
@@ -219,10 +220,29 @@ const FlipPage = React.forwardRef(function FlipPage(
 export function EstimateFlipbook({
   data, onAccept, onDeclineClick, onDownloadPdf,
   signatureGateBlocked, onSignNow, actionable,
-  busy, toast,
+  busy, toast, magicToken,
 }) {
   const flipbookRef = useRef(null);
   const [pageIdx, setPageIdx] = useState(0);
+
+  // Feb-2026 · Proposal Analytics — instrumentation hook.
+  //   * Fires ``open`` on mount (deduped per session_id server-side).
+  //   * Fires ``close`` + final ``page_view`` on ``pagehide`` /
+  //     ``beforeunload`` via ``navigator.sendBeacon`` so events
+  //     survive tab-close navigation races.
+  //   * ``setCurrentPage`` is called from ``onFlip`` below so the
+  //     hook knows which page was open when the tab closes.
+  //   * ``fireEvent`` is used inline on the CTA buttons + on page
+  //     flips to log ``page_view`` (with duration_ms since the
+  //     previous flip). Only wires when ``magicToken`` is present —
+  //     admin previews skip analytics.
+  const _analytics = useProposalAnalytics(
+    data?.estimate_id || null,
+    magicToken || null,
+  );
+  const _prevPageRef = useRef({
+    idx: 0, key: "cover", entered_at: Date.now(),
+  });
 
   const backgrounds = useMemo(
     () => (Array.isArray(data?.flipbook_background_ids)
@@ -306,7 +326,27 @@ export function EstimateFlipbook({
     try { flipbookRef.current?.pageFlip()?.flip(n); } catch { /* ignore */ }
     setPageIdx(n);
   };
-  const onFlip = (e) => { setPageIdx(Number(e?.data ?? 0)); };
+  const onFlip = (e) => {
+    const next = Number(e?.data ?? 0);
+    // Feb-2026 · Proposal Analytics — log the OUTGOING page (the one
+    // the user just left) with duration_ms, then update the hook's
+    // page context so the unload flush fires against the fresh page.
+    const prev = _prevPageRef.current;
+    const nextPage = pages[next] || { kind: "cover", key: "cover" };
+    const nextPageKey = _pageKeyFor(nextPage);
+    if (magicToken && prev.entered_at) {
+      _analytics.fireEvent("page_view", {
+        page_index: prev.idx,
+        page_key: prev.key,
+        duration_ms: Math.max(0, Date.now() - prev.entered_at),
+      });
+    }
+    _prevPageRef.current = {
+      idx: next, key: nextPageKey, entered_at: Date.now(),
+    };
+    _analytics.setCurrentPage(next, nextPageKey);
+    setPageIdx(next);
+  };
 
   // Keyboard nav — arrow left/right flips one page.
   React.useEffect(() => {
@@ -416,7 +456,11 @@ export function EstimateFlipbook({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <button
                       type="button"
-                      onClick={onDownloadPdf}
+                      onClick={() => {
+                        if (magicToken) _analytics.fireEvent("click",
+                          { button_id: "download_pdf" });
+                        onDownloadPdf?.();
+                      }}
                       className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm"
                       style={{ backgroundColor: "#0f172a", color: "#fff", fontFamily: "Inter, system-ui, sans-serif" }}
                       data-testid="flipbook-cover-download-pdf"
@@ -426,6 +470,21 @@ export function EstimateFlipbook({
                     <div style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#475569", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12 }}>
                       flip <ChevronRight size={14} />
                     </div>
+                  </div>
+                  {/* Feb-2026 · Proposal Analytics — one-line
+                      privacy disclosure, always visible on the
+                      flipbook cover. No modal, no cookie banner. */}
+                  <div
+                    className="mt-2"
+                    style={{
+                      fontSize: 10, color: "#94a3b8",
+                      fontFamily: "Inter, system-ui, sans-serif",
+                      textAlign: "center",
+                    }}
+                    data-testid="flipbook-privacy-notice"
+                  >
+                    This proposal tracks page views to help us
+                    improve. No personal information is stored.
                   </div>
                 </FlipPage>
               );
@@ -583,7 +642,11 @@ export function EstimateFlipbook({
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontFamily: "Inter, system-ui, sans-serif" }}>
                   <button
                     type="button"
-                    onClick={onAccept}
+                    onClick={() => {
+                      if (magicToken) _analytics.fireEvent("click",
+                        { button_id: "approve" });
+                      onAccept?.();
+                    }}
                     disabled={!actionable || signatureGateBlocked || busy}
                     className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-white font-semibold disabled:opacity-50"
                     style={{ backgroundColor: "#16a34a" }}
@@ -594,7 +657,11 @@ export function EstimateFlipbook({
                   </button>
                   <button
                     type="button"
-                    onClick={onDeclineClick}
+                    onClick={() => {
+                      if (magicToken) _analytics.fireEvent("click",
+                        { button_id: "decline" });
+                      onDeclineClick?.();
+                    }}
                     disabled={!actionable || busy}
                     className="inline-flex items-center gap-2 px-6 py-3 rounded-full font-semibold disabled:opacity-50"
                     style={{ border: "2px solid #0f172a", color: "#0f172a", backgroundColor: "transparent" }}

@@ -33,6 +33,7 @@ import * as Clipboard from "expo-clipboard";
 
 import { api, ApiError } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { resolveTechnicianId } from "@/lib/technicianResolver";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
@@ -112,6 +113,14 @@ export default function JobChecklistScreen() {
 
   const role = user?.role || "";
   const canWrite = role === "admin" || role === "super_admin" || role === "technician";
+
+  // K43 — resolve technician_id for ownership checks (pre-backfill tenants).
+  const [myTechId, setMyTechId] = useState<string | null>(user?.technician_id || null);
+  useEffect(() => {
+    let alive = true;
+    resolveTechnicianId(user).then((tid) => { if (alive) setMyTechId(tid); });
+    return () => { alive = false; };
+  }, [user?.id, user?.technician_id]);
 
   const [job, setJob] = useState<any>(null);
   const [report, setReport] = useState<any>(null);
@@ -888,8 +897,8 @@ export default function JobChecklistScreen() {
   // from the prior ticket).
   const canEditServiceType: boolean = !locked && (
     role === "admin" || role === "super_admin" || role === "manager" ||
-    (role === "technician" && !!user?.technician_id
-      && user.technician_id === job.technician_id)
+    (role === "technician" && !!myTechId
+      && myTechId === job.technician_id)
   );
 
   return (

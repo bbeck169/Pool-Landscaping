@@ -33,6 +33,7 @@ _REBOUND_MODULES = (
     "emailer",
     "routers.admin_health_check",
     "routers.analytics_monthly",
+    "routers.analytics_proposal",
     "routers.auth",
     "routers.charge_templates",
     "routers.crew_productivity",

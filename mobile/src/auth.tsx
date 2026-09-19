@@ -11,7 +11,7 @@ import {
 } from "@/src/lib/offline/jwtCache";
 import { wipeCache, initCache } from "@/src/lib/offline/cache";
 import { writeThroughMe } from "@/src/lib/offline/apiCache";
-// Phase 1 Offline Read — purge read_cache on logout.
+import { clearTechnicianIdCache } from "@/lib/technicianResolver";
 import { clearAllCache as clearAllReadCache } from "@/src/services/readCache";
 
 export type User = {
@@ -177,6 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await wipeCache().catch(() => {});
     // Phase 1 Offline Read — purge the read_cache (job bootstraps, hydration meta).
     await clearAllReadCache().catch(() => {});
+    clearTechnicianIdCache();
     await clearImpersonation();
     setUser(null);
   };

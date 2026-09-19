@@ -465,6 +465,15 @@ api_router.include_router(_feb2026_admin_maintenance.router)
 # form submission fans out email + SMS notifications.
 from routers import tenant_lead_notifications as _k63_lead_notif_router  # noqa: E402
 api_router.include_router(_k63_lead_notif_router.router)
+
+# Feb-2026 · Proposal Analytics — flipbook estimate open / page_view /
+# click / close ingestion + admin readback endpoints (list / summary /
+# events). Mounted under ``/api`` via api_router. Public POST is
+# gated by the same magic-link JWT the customer viewer uses; admin
+# GETs enforce ``admin | super_admin`` + tenant scope. See
+# ``routers/analytics_proposal.py`` for the full contract.
+from routers import analytics_proposal as _feb2026_analytics_proposal  # noqa: E402
+api_router.include_router(_feb2026_analytics_proposal.router)
 from routers import admin_notification_dispatch_log as _k63p_dispatch_log_router  # noqa: E402
 api_router.include_router(_k63p_dispatch_log_router.router)
 from routers import admin_resend_lead_notifications as _k63f_resend_router  # noqa: E402
