@@ -187,6 +187,64 @@ describe("<EstimateFlipbook /> — page assembly", () => {
 
 
 describe("<EstimateFlipbook /> — backgrounds", () => {
+  it("prefers pre-signed flipbook_background_urls over raw IDs", () => {
+    // Feb-2026 follow-up · the payload builder emits
+    // ``flipbook_background_urls`` (HMAC-signed) so anonymous
+    // customer <img> tags can load the asset without an
+    // Authorization header. The component MUST use those URLs
+    // instead of hand-rolling the raw ``/api/marketing/media/..``
+    // path (which requires auth and 401s for anon viewers).
+    const data = _minPayload({
+      flipbook_background_ids: ["m-1", "m-2"],
+      flipbook_background_urls: [
+        "/api/marketing/media/m-1/download?tid=t-flip&sig=abc123",
+        "/api/marketing/media/m-2/download?tid=t-flip&sig=def456",
+      ],
+    });
+    render(
+      <EstimateFlipbook
+        data={data}
+        onAccept={vi.fn()} onDeclineClick={vi.fn()} onDownloadPdf={vi.fn()}
+        onSignNow={vi.fn()} actionable={true} busy={false}
+      />,
+    );
+    const bgSrcs = Array.from(
+      document.querySelectorAll(".flipbook-page img"),
+    )
+      .map((im) => im.getAttribute("src"))
+      .filter((s) => s && s.includes("/api/marketing/media/"));
+    expect(bgSrcs.length).toBeGreaterThan(0);
+    for (const src of bgSrcs) {
+      // Every marketing-media <img> MUST carry the HMAC ``sig``
+      // query param — otherwise the anon viewer would 401.
+      expect(src).toMatch(/[?&]sig=/);
+      expect(src).toMatch(/[?&]tid=t-flip/);
+    }
+  });
+
+  it("falls back to raw /download path when signed URLs are missing", () => {
+    // Defensive path — an admin preview or an older payload shape
+    // that skips signing should still render (401 is caught by the
+    // ``<img onError>`` handler).
+    const data = _minPayload({
+      flipbook_background_ids: ["m-legacy"],
+      flipbook_background_urls: undefined,
+    });
+    render(
+      <EstimateFlipbook
+        data={data}
+        onAccept={vi.fn()} onDeclineClick={vi.fn()} onDownloadPdf={vi.fn()}
+        onSignNow={vi.fn()} actionable={true} busy={false}
+      />,
+    );
+    const bg = Array.from(document.querySelectorAll(".flipbook-page img"))
+      .find((im) => im.src.includes("/api/marketing/media/m-legacy"));
+    expect(bg).toBeTruthy();
+    expect(bg.src).toContain("/api/marketing/media/m-legacy/download");
+    // No sig param on the fallback path.
+    expect(bg.src).not.toMatch(/[?&]sig=/);
+  });
+
   it("cycles background images when pages > images", () => {
     const data = _minPayload({
       flipbook_background_ids: ["only-one"],

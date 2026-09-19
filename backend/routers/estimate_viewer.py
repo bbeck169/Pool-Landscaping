@@ -59,6 +59,11 @@ from routers.invoice_viewer import _resolve_logo_path
 from routers.invoice_viewer import (
     _fmt_addr, _load_company, _load_customer,
 )
+# Feb-2026 · Interactive Flipbook Estimate Viewer — reuse the HMAC
+# signed-download helper already used by the SMS attachment surface
+# so anonymous customer <img> tags can load flipbook backgrounds
+# without an Authorization header.
+from routers.marketing_media import _signed_download_url
 
 router = APIRouter()
 
@@ -301,11 +306,20 @@ async def _build_payload(est: dict, tenant: dict, *,
         # the two per-estimate opt-in fields to BOTH admin previews
         # and the magic-link customer viewer. ``EstimateView.jsx``
         # branches on ``flipbook_enabled`` to swap the render mode.
-        # Background IDs are exposed as-is; the frontend resolves
-        # each to a signed media URL via the standard
-        # ``/api/marketing/media/{id}/download`` endpoint.
+        # ``flipbook_background_ids`` is exposed as-is for admin /
+        # UI use; ``flipbook_background_urls`` carries the pre-signed
+        # HMAC download URL (``?tid=&sig=``) for each ID so the
+        # anonymous customer ``<img>`` tags can load the assets
+        # without an ``Authorization`` header (same trust model as
+        # the SMS attachment surface — see
+        # ``routers/marketing_media._signed_download_url``).
         "flipbook_enabled": bool(est.get("flipbook_enabled") or False),
         "flipbook_background_ids": list(est.get("flipbook_background_ids") or []),
+        "flipbook_background_urls": [
+            _signed_download_url(tenant["id"], str(_mid))
+            for _mid in (est.get("flipbook_background_ids") or [])
+            if _mid
+        ],
     }
 
 

@@ -63,6 +63,30 @@ function _bgUrl(id) {
 }
 
 
+/** Feb-2026 · Interactive Flipbook Estimate Viewer — page background
+ * URL resolver.
+ *
+ * Prefers the pre-signed URL emitted by the payload builder
+ * (``flipbook_background_urls[i]``) because it carries the HMAC
+ * signature needed for anonymous ``<img>`` tags to load
+ * ``/api/marketing/media/{mid}/download`` without an
+ * ``Authorization`` header. Falls back to the raw path when the
+ * signed URL is missing (defensive — an older payload shape or an
+ * admin preview that skipped signing). Falls back to ``null`` when
+ * the tenant has no backgrounds attached (empty list → soft tint).
+ */
+function _resolveBgUrl(signedList, idList, i) {
+  if (Array.isArray(signedList) && signedList.length > 0) {
+    return signedList[i % signedList.length] || null;
+  }
+  if (Array.isArray(idList) && idList.length > 0) {
+    const _id = idList[i % idList.length];
+    return _id ? _bgUrl(_id) : null;
+  }
+  return null;
+}
+
+
 /** Group the payload's ``line_items`` by ``service_category_id``,
  * preserving first-appearance order (matches the backend's
  * ``group_lines_for_customer`` invariant). Uses labels from the
@@ -116,10 +140,9 @@ function _groupLines(lineItems, customerView) {
  * dimensions locked from CSS variables.
  */
 const FlipPage = React.forwardRef(function FlipPage(
-  { bgId, tint, children, testid },
+  { bgSrc, bgLabel, tint, children, testid },
   ref,
 ) {
-  const bgSrc = bgId ? _bgUrl(bgId) : null;
   return (
     <div
       ref={ref}
@@ -146,7 +169,7 @@ const FlipPage = React.forwardRef(function FlipPage(
               e.currentTarget.dataset.warned = "1";
               // eslint-disable-next-line no-console
               console.warn(
-                `[flipbook] background image failed to load: ${bgId}`,
+                `[flipbook] background image failed to load: ${bgLabel || bgSrc}`,
               );
             }
             e.currentTarget.style.visibility = "hidden";
@@ -206,8 +229,15 @@ export function EstimateFlipbook({
             ? data.flipbook_background_ids : []),
     [data?.flipbook_background_ids],
   );
-  const bgForPage = (i) => backgrounds.length
-    ? backgrounds[i % backgrounds.length] : null;
+  const signedBackgrounds = useMemo(
+    () => (Array.isArray(data?.flipbook_background_urls)
+            ? data.flipbook_background_urls : []),
+    [data?.flipbook_background_urls],
+  );
+  const bgForPage = (i) => _resolveBgUrl(signedBackgrounds, backgrounds, i);
+  const bgLabelForPage = (i) => (backgrounds.length
+    ? String(backgrounds[i % backgrounds.length] || "")
+    : "");
 
   const groups = useMemo(
     () => _groupLines(data?.line_items || [], data?.customer_view),
@@ -350,7 +380,8 @@ export function EstimateFlipbook({
               return (
                 <FlipPage
                   key={p.key}
-                  bgId={bgForPage(i)}
+                  bgSrc={bgForPage(i)}
+                  bgLabel={bgLabelForPage(i)}
                   tint={_tint}
                   testid="flipbook-page-cover"
                 >
@@ -403,7 +434,8 @@ export function EstimateFlipbook({
               return (
                 <FlipPage
                   key={p.key}
-                  bgId={bgForPage(i)}
+                  bgSrc={bgForPage(i)}
+                  bgLabel={bgLabelForPage(i)}
                   tint={_tint}
                   testid={`flipbook-page-filler-${p.filler.key}`}
                 >
@@ -426,7 +458,8 @@ export function EstimateFlipbook({
               return (
                 <FlipPage
                   key={p.key}
-                  bgId={bgForPage(i)}
+                  bgSrc={bgForPage(i)}
+                  bgLabel={bgLabelForPage(i)}
                   tint={_tint}
                   testid={`flipbook-page-group-${g.key}`}
                 >
@@ -476,7 +509,8 @@ export function EstimateFlipbook({
               return (
                 <FlipPage
                   key={p.key}
-                  bgId={bgForPage(i)}
+                  bgSrc={bgForPage(i)}
+                  bgLabel={bgLabelForPage(i)}
                   tint={_tint}
                   testid="flipbook-page-total"
                 >
@@ -512,7 +546,8 @@ export function EstimateFlipbook({
             return (
               <FlipPage
                 key={p.key}
-                bgId={bgForPage(i)}
+                bgSrc={bgForPage(i)}
+                bgLabel={bgLabelForPage(i)}
                 tint={_tint}
                 testid="flipbook-page-accept"
               >

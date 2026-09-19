@@ -400,6 +400,43 @@ async def test_get_full_returns_flipbook_fields():
     body = r.json()
     assert body["flipbook_enabled"] is True
     assert body["flipbook_background_ids"] == ["m-1", "m-2"]
+    # Feb-2026 follow-up · the payload MUST also carry the pre-signed
+    # HMAC download URL for each background so anonymous customer
+    # ``<img>`` tags can load the asset without an ``Authorization``
+    # header (same trust model as the SMS attachment surface).
+    from routers.marketing_media import _sign_media, _verify_media_sig
+    expected_urls = [
+        f"/api/marketing/media/m-1/download?tid=t-flip&sig={_sign_media('t-flip', 'm-1')}",
+        f"/api/marketing/media/m-2/download?tid=t-flip&sig={_sign_media('t-flip', 'm-2')}",
+    ]
+    assert body["flipbook_background_urls"] == expected_urls
+    # Each signed URL round-trips through ``_verify_media_sig`` OK
+    # — locks the flipbook payload to the same HMAC contract the
+    # SMS attachment surface uses.
+    from urllib.parse import urlparse, parse_qs
+    for url, mid in zip(body["flipbook_background_urls"], ["m-1", "m-2"]):
+        q = parse_qs(urlparse(url).query)
+        assert q["tid"] == ["t-flip"]
+        assert _verify_media_sig("t-flip", mid, q["sig"][0]) is True
+
+
+async def test_signed_url_matches_hmac_verifier():
+    """Round-trip guard on the shared HMAC helper. If ``_sign_media``
+    or ``_verify_media_sig`` drift, this test breaks the flipbook
+    payload contract along with the SMS attachment path — surfacing
+    the shared-helper regression before it ships."""
+    from routers.marketing_media import (
+        _signed_download_url, _verify_media_sig,
+    )
+    from urllib.parse import urlparse, parse_qs
+    url = _signed_download_url("t-flip", "m-99")
+    q = parse_qs(urlparse(url).query)
+    assert q["tid"] == ["t-flip"]
+    assert _verify_media_sig("t-flip", "m-99", q["sig"][0]) is True
+    # Cross-tenant guess fails.
+    assert _verify_media_sig("t-other", "m-99", q["sig"][0]) is False
+    # Cross-mid guess fails.
+    assert _verify_media_sig("t-flip", "m-other", q["sig"][0]) is False
 
 
 async def test_get_full_returns_defaults_when_fields_missing():
@@ -423,6 +460,8 @@ async def test_get_full_returns_defaults_when_fields_missing():
     body = r.json()
     assert body["flipbook_enabled"] is False
     assert body["flipbook_background_ids"] == []
+    # Empty ID list → empty URL list (no signing on empty input).
+    assert body["flipbook_background_urls"] == []
 
 
 # ═══════════════════════════════════════════════════════════════════
