@@ -193,4 +193,15 @@ describe("<ScheduleMap />", () => {
     expect(screen.getByTestId("schedule-map-info-tech-job-un").textContent)
       .toMatch(/Unassigned/);
   });
+
+  // Feb-2026 · Responsive height — the container's inline height was
+  // bumped from a fixed 240px to a viewport-aware clamp so the map
+  // grows on tall desktops but still leaves room for the job list on
+  // short mobile viewports.  Guard the exact clamp expression so any
+  // future refactor that drops the responsive sizing fails loudly.
+  it("uses a responsive clamp for the container height", () => {
+    render(<ScheduleMap jobs={_jobs} techs={_techs} techColorMap={_techColorMap} />);
+    const container = screen.getByTestId("schedule-map-container");
+    expect(container.style.height).toBe("clamp(240px, 45vh, 480px)");
+  });
 });

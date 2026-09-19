@@ -302,7 +302,7 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
       className="rounded-xl overflow-hidden mb-3"
       style={{
         border: `1px solid ${colors.border}`,
-        height: 240,
+        height: 'clamp(240px, 45vh, 480px)',
         position: "relative",
       }}
       data-testid="schedule-map-container"
