@@ -62,7 +62,7 @@ def encode_add_card_token(customer_id: str, tenant_id: str, *,
     """Mint a short-lived JWT that unlocks the public
     ``/portal/add-card`` page for a specific customer.
 
-    Feb-2026 update — default TTL is now 24 hours (was 30 days). See
+    Feb-2026 update — default TTL is now 7 days (was 30 days). See
     the module-level ``ADD_CARD_LINK_TTL_SECONDS`` constant for the
     single source of truth (env-overridable via
     ``PORTAL_ADD_CARD_LINK_TTL_HOURS``). Callers can still pass an

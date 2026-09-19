@@ -4946,7 +4946,7 @@ async def admin_reverify_bank(
                 f"<p>Hi {cust.get('name') or 'there'},</p>"
                 f"<p>Please complete your ACH bank verification so we can process your recurring payments:</p>"
                 f'<p><a href="{link}">Verify bank account</a></p>'
-                f"<p>This link is valid for 30 days.</p>"
+                f"<p>This link is valid for 7 days.</p>"
             )
             res = await _asyncio.wait_for(send_email(
                 tenant_id=tenant["id"], to_email=cust["email"],

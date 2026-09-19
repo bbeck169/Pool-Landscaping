@@ -5,7 +5,19 @@ import os
 import logging
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+# Feb-2026 · Payments env hardening —
+# ``override=False`` is python-dotenv's default, but writing it
+# explicitly protects against a future refactor accidentally flipping
+# it: the pod's PROCESS ENVIRONMENT must always win over any
+# committed ``.env`` file for secrets like ``STRIPE_SECRET_KEY_LIVE``
+# and ``JWT_SECRET``. Ops rotates those independently of the repo.
+#
+# We deliberately load ONLY ``.env`` here — ``.env.bak.*``,
+# ``.env.local``, ``.env.production.example``, and ``.env.example`` are
+# intentionally excluded from the runtime search path (see
+# ``services.env_guard.DOTENV_EXCLUSION_GLOBS``). Backup / example
+# files must never be authoritative for secrets.
+load_dotenv(ROOT_DIR / '.env', override=False)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -42,3 +54,17 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pool_crm")
+
+# Feb-2026 · Payments env hardening — placeholder-shape guard on
+# ``STRIPE_SECRET_KEY_LIVE``. Runs once at module load so the LOUD log
+# line lands at boot. Ops greps for ``STRIPE_LIVE_KEY_PLACEHOLDER_DETECTED``
+# in pod logs. The guard NEVER raises — an empty key is legitimate in
+# preview / test pods, and a real payment call will surface a Stripe
+# 401 anyway. This is purely a diagnostic hint.
+try:
+    from services.env_guard import check_stripe_live_key
+    check_stripe_live_key(logger=logger)
+except Exception as _guard_exc:  # pragma: no cover — never break boot
+    logger.warning(
+        "env_guard.check_stripe_live_key skipped: %s", _guard_exc,
+    )
