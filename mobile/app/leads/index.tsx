@@ -10,6 +10,7 @@ import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import AddressAutocomplete, { type AddressSelection } from "@/src/components/common/AddressAutocomplete";
+import { PhoneLink } from "@/src/components/customer";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -196,7 +197,13 @@ export default function Leads() {
                 <Text style={styles.name}>{item.name}</Text>
                 <StatusChip status={item.status} />
               </View>
-              <Text style={styles.sub}>{item.source} · {item.phone || item.email || "—"}</Text>
+              <Text style={styles.sub}>
+                {item.source} · {item.phone ? (
+                  <PhoneLink phone={item.phone} style={styles.sub} showIcon={false} testID={`lead-phone-${item.id}`}>{item.phone}</PhoneLink>
+                ) : (
+                  <Text>{item.email || "—"}</Text>
+                )}
+              </Text>
               {item.est_value ? <Text style={styles.value}>Est. {money(item.est_value)}</Text> : null}
             </Pressable>
           )}

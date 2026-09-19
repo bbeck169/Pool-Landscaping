@@ -44,6 +44,7 @@ import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButt
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { CustomerLink, AddressLink } from "@/src/components/customer";
 
 // P0 fix — hard timeout so the detail screen never hangs on slow networks.
 const LOAD_TIMEOUT_MS = 20_000;
@@ -459,7 +460,7 @@ export default function JobDetail() {
           <View style={styles.heroContent}>
             <StatusChip status={job.status} testID="job-status-chip" />
             <Text style={styles.heroTitle}>{job.title}</Text>
-            <Text style={styles.heroCustomer}>{formatCustomerName(job)}</Text>
+            <CustomerLink customerId={job.customer_id} name={formatCustomerName(job)} style={styles.heroCustomer} testID="job-customer-link" />
           </View>
         </View>
 
@@ -496,12 +497,12 @@ export default function JobDetail() {
                   {property.label || "Property"}
                 </Text>
               </View>
-              <Text
+              <AddressLink
+                address={[property.address?.line1, property.address?.city, property.address?.state, property.address?.postal_code].filter(Boolean).join(", ")}
+                showIcon={false}
                 style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: 13 }}
                 testID="job-property-address"
-              >
-                {[property.address?.line1, property.address?.city, property.address?.state, property.address?.postal_code].filter(Boolean).join(", ")}
-              </Text>
+              />
               {property.service_notes?.pool || property.service_notes?.landscape ? (
                 <Text
                   style={{ marginTop: 6, color: colors.onSurfaceSecondary, fontSize: 12, fontStyle: "italic" }}
@@ -515,7 +516,10 @@ export default function JobDetail() {
           ) : null}
           <Row icon="pricetag-outline" label="Service Type" value={job.service_type} />
           <Row icon="calendar-outline" label="Scheduled" value={job.scheduled_date || "Unscheduled"} />
-          <Row icon="location-outline" label="Address" value={job.address || "—"} />
+          <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+            <Ionicons name="location-outline" size={16} color={colors.brand} />
+            <AddressLink address={job.address || "—"} showIcon={false} testID="job-address-link" />
+          </View>
           {!isTech ? <Row icon="cash-outline" label="Price" value={money(job.price)} /> : null}
 
           {/* F7 Line Items CRUD — full editor (admin: price/category/writeback; tech: qty+desc) */}

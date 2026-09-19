@@ -91,6 +91,7 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 // P37c · GPS consent modal — mounted for techs, self-checks consent on focus.
 import GpsConsentModal from "@/src/components/gps/GpsConsentModal";
+import { AddressLink } from "@/src/components/customer";
 
 type Job = {
   id: string;
@@ -1554,7 +1555,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           truncated={job.notes_truncated}
         />
         {job.address ? (
-          <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
+          <AddressLink address={job.address} showIcon={false} style={gStyles.addr} testID={`job-card-addr-${job.id}`} />
         ) : null}
         {/* Phase 1 Offline Read — "Cached ✓" pill */}
         {cachedForOffline ? (

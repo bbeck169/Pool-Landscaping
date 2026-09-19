@@ -18,6 +18,7 @@ import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { PhoneLink, AddressLink } from "@/src/components/customer";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -244,10 +245,7 @@ export default function LeadDetailScreen() {
           )}
           <View style={st.contactSection}>
             {lead.phone ? (
-              <TouchableOpacity style={st.contactRow} onPress={() => Linking.openURL(`tel:${lead.phone}`)} testID="lead-phone">
-                <Ionicons name="call-outline" size={16} color={colors.brand} />
-                <Text style={st.contactText}>{lead.phone}</Text>
-              </TouchableOpacity>
+              <PhoneLink phone={lead.phone} style={st.contactText} testID="lead-phone" />
             ) : null}
             {lead.email ? (
               <TouchableOpacity style={st.contactRow} onPress={() => Linking.openURL(`mailto:${lead.email}`)} testID="lead-email">
@@ -256,10 +254,7 @@ export default function LeadDetailScreen() {
               </TouchableOpacity>
             ) : null}
             {(lead.address || lead.service_address) ? (
-              <View style={st.contactRow}>
-                <Ionicons name="location-outline" size={16} color={colors.brand} />
-                <Text style={st.contactText}>{lead.service_address || lead.address}</Text>
-              </View>
+              <AddressLink address={lead.service_address || lead.address} style={st.contactText} testID="lead-address" />
             ) : null}
           </View>
           {lead.est_value ? <Text style={st.estValue}>Est. value: ${Number(lead.est_value).toLocaleString()}</Text> : null}

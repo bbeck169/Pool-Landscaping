@@ -18,6 +18,7 @@ import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bul
 import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerButton";
 import PortalOnboardingHealthTile from "@/src/components/customers/PortalOnboardingHealthTile";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { PhoneLink, AddressLink } from "@/src/components/customer";
 
 export default function Customers() {
   const router = useRouter();
@@ -427,7 +428,15 @@ export default function Customers() {
                     />
                   ) : null}
                 </View>
-                <Text style={styles.sub} numberOfLines={1}>{item.address || item.phone || item.email || "—"}</Text>
+                <Text style={styles.sub} numberOfLines={1}>
+                  {item.address ? (
+                    <AddressLink address={item.address} style={styles.sub} showIcon={false} testID={`customer-row-addr-${item.id}`}>{item.address}</AddressLink>
+                  ) : item.phone ? (
+                    <PhoneLink phone={item.phone} style={styles.sub} showIcon={false} testID={`customer-row-phone-${item.id}`}>{item.phone}</PhoneLink>
+                  ) : (
+                    <Text style={styles.sub}>{item.email || "—"}</Text>
+                  )}
+                </Text>
               </View>
               {/* P45 — Add card pill in right actions cluster (navy/white) */}
               {isAdmin && !item.has_card_on_file ? (

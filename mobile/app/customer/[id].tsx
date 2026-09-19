@@ -33,6 +33,7 @@ import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { PhoneLink, AddressLink } from "@/src/components/customer";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -426,10 +427,31 @@ export default function CustomerDetail() {
           onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
         />
         <View style={styles.card}>
-          <ContactRow icon="call-outline" value={primaryPhone} onPress={() => primaryPhone && Linking.openURL(`tel:${primaryPhone}`)} />
+          {primaryPhone ? (
+            <View style={styles.contactRow}>
+              <View style={styles.contactIcon}>
+                <Ionicons name="call-outline" size={18} color={colors.brand} />
+              </View>
+              <PhoneLink phone={primaryPhone} showIcon={false} style={styles.contactValue} testID="customer-phone-link" />
+            </View>
+          ) : null}
           <ContactRow icon="mail-outline" value={primaryEmail} onPress={() => primaryEmail && Linking.openURL(`mailto:${primaryEmail}`)} />
-          <ContactRow icon="location-outline" value={c.address} />
-          <ContactRow icon="card-outline" value={c.billing_address ? `Billing: ${c.billing_address}` : ""} />
+          {c.address ? (
+            <View style={styles.contactRow}>
+              <View style={styles.contactIcon}>
+                <Ionicons name="location-outline" size={18} color={colors.brand} />
+              </View>
+              <AddressLink address={c.address} showIcon={false} style={styles.contactValue} testID="customer-address-link" />
+            </View>
+          ) : null}
+          {c.billing_address ? (
+            <View style={styles.contactRow}>
+              <View style={styles.contactIcon}>
+                <Ionicons name="card-outline" size={18} color={colors.brand} />
+              </View>
+              <AddressLink address={`Billing: ${c.billing_address}`} showIcon={false} style={styles.contactValue} testID="customer-billing-link" />
+            </View>
+          ) : null}
           {/* Phase 34d — always render (with placeholder when null) so it has
               the same visual weight as phone/email. */}
           <View style={styles.contactRow} testID="customer-pool-gallons-display">
