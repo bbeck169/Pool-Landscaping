@@ -537,3 +537,252 @@ def test_health_payments_public_no_auth(monkeypatch):
     assert status == 200
     # No Authorization header was sent — route must respond, not 401.
     assert body["status"] == "unconfigured"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 16-19 · C1 hotfix — PATCH /api/jobs/{id} follow_up acceptance.
+# ═════════════════════════════════════════════════════════════════════
+async def _mk_completed_job_for_patch(
+    _db, *, tid: str, tech_id: str = "",
+    recurring_template_id: str = "",
+) -> str:
+    """Seed a completed job the PATCH endpoint's gates accept.
+
+    The 24h edit-window PATCH requires ``status == "completed"`` AND
+    a fresh ``completed_at`` inside the window.  Landscape work_class
+    keeps the chemistry gate quiet on subsequent edits.
+    """
+    jid = await _mk_job(
+        _db, tid, status="completed",
+        tech_id=tech_id,
+        recurring_template_id=recurring_template_id,
+        completed_at=_iso(datetime.now(timezone.utc) - timedelta(minutes=5)),
+    )
+    await _db.jobs.update_one(
+        {"id": jid},
+        {"$set": {"service_type": "Landscape Cleanup",
+                   "work_class": "service"}})
+    return jid
+
+
+async def _patch_job_patch(client: httpx.AsyncClient, token: str,
+                             jid: str, body: Dict[str, Any]) -> httpx.Response:
+    return await client.patch(
+        f"{API}/jobs/{jid}", json=body,
+        headers={"Authorization": f"Bearer {token}"})
+
+
+def test_patch_admin_sets_follow_up_at(c1_seed):
+    """Admin PATCH ``follow_up_at`` → 200 and the field persists."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_completed_job_for_patch(_db, tid=S["tenant_id"])
+        override = _iso(datetime.now(timezone.utc) + timedelta(days=3))
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await _patch_job_patch(
+                c, S["admin_token"], jid,
+                {"follow_up_at": override, "edit_reason": "phase c1 test"})
+            result["status"] = r.status_code
+            result["body"] = r.json() if r.status_code < 500 else r.text
+        fresh = await _db.jobs.find_one({"id": jid}, {"_id": 0})
+        result["persisted"] = fresh.get("follow_up_at")
+        result["override"] = override
+
+    run_test(_go)
+    assert result["status"] == 200, result
+    assert result["persisted"] == result["override"], result
+
+
+def test_patch_admin_sets_needs_follow_up(c1_seed):
+    """Admin PATCH ``needs_follow_up`` → 200 and the field persists."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_completed_job_for_patch(_db, tid=S["tenant_id"])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await _patch_job_patch(
+                c, S["admin_token"], jid,
+                {"needs_follow_up": True, "edit_reason": "phase c1 test"})
+            result["status"] = r.status_code
+        fresh = await _db.jobs.find_one({"id": jid}, {"_id": 0})
+        result["persisted"] = fresh.get("needs_follow_up")
+
+    run_test(_go)
+    assert result["status"] == 200, result
+    assert result["persisted"] is True, result
+
+
+def test_patch_tech_cannot_set_follow_up_fields(c1_seed):
+    """Tech PATCH either follow-up field → 403 with the exact
+    ``update_job`` wording so PATCH/PUT stay in lock-step."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_completed_job_for_patch(
+            _db, tid=S["tenant_id"], tech_id=S["tech_pk"])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r1 = await _patch_job_patch(
+                c, S["tech_token"], jid,
+                {"follow_up_at": _iso(datetime.now(timezone.utc)),
+                 "edit_reason": "tech attempt"})
+            r2 = await _patch_job_patch(
+                c, S["tech_token"], jid,
+                {"needs_follow_up": True, "edit_reason": "tech attempt"})
+            result["fu_status"]  = r1.status_code
+            result["fu_detail"]  = r1.json().get("detail")
+            result["nfu_status"] = r2.status_code
+            result["nfu_detail"] = r2.json().get("detail")
+
+    run_test(_go)
+    exact_msg = "Only admin-equivalent roles can set follow-up fields"
+    assert result["fu_status"] == 403,  result
+    assert result["fu_detail"] == exact_msg, result
+    assert result["nfu_status"] == 403, result
+    assert result["nfu_detail"] == exact_msg, result
+
+
+def test_patch_unknown_field_returns_422(c1_seed):
+    """``extra="forbid"`` wire test — unknown key → 422."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_completed_job_for_patch(_db, tid=S["tenant_id"])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await _patch_job_patch(
+                c, S["admin_token"], jid,
+                {"totally_unknown_field": "sneaky",
+                 "edit_reason": "phase c1 extra_forbid check"})
+            result["status"] = r.status_code
+            result["body"] = r.text
+
+    run_test(_go)
+    assert result["status"] == 422, result
+    # FastAPI's default validation error surface names the offending
+    # field — assertion stays resilient by matching the field name
+    # substring, not the exact JSON shape.
+    assert "totally_unknown_field" in result["body"], result
+
+
+def test_patch_known_field_still_accepted_after_extra_forbid(c1_seed):
+    """Regression guard — ``notes`` PATCH must still succeed post
+    ``extra="forbid"``.  Belt-and-braces so nobody regresses the
+    existing edit-window contract while tightening the schema."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_completed_job_for_patch(_db, tid=S["tenant_id"])
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await _patch_job_patch(
+                c, S["admin_token"], jid,
+                {"notes": "phase c1 regression note",
+                 "edit_reason": "phase c1 regression"})
+            result["status"] = r.status_code
+        fresh = await _db.jobs.find_one({"id": jid}, {"_id": 0})
+        result["notes"] = fresh.get("notes")
+
+    run_test(_go)
+    assert result["status"] == 200, result
+    assert "phase c1 regression note" in (result["notes"] or ""), result
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 20-21 · Auto-fill end-to-end proof (tighter ±5s windows on top of
+# tests 7 + 8 above).
+# ═════════════════════════════════════════════════════════════════════
+def test_auto_fill_e2e_weekly_7d_within_5s(c1_seed):
+    """Weekly-recurring job → ``completed_at`` ≈ now (±5s) AND
+    ``follow_up_at`` ≈ completed_at + 7d (±5s)."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        tpl = await _mk_template(
+            _db, S["tenant_id"], frequency="weekly", interval_days=7)
+        jid = await _mk_job(
+            _db, S["tenant_id"], status="scheduled",
+            tech_id=S["tech_pk"], recurring_template_id=tpl)
+        await _db.jobs.update_one(
+            {"id": jid},
+            {"$set": {"service_type": "Landscape Cleanup"}})
+        before = datetime.now(timezone.utc)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            await _patch_job(c, S["admin_token"], jid,
+                                 {"status": "completed"})
+        after = datetime.now(timezone.utc)
+        fresh = await _db.jobs.find_one({"id": jid}, {"_id": 0})
+        result["before"]   = before
+        result["after"]    = after
+        result["ca"]       = fresh.get("completed_at")
+        result["fu"]       = fresh.get("follow_up_at")
+
+    run_test(_go)
+    ca = datetime.fromisoformat(result["ca"].replace("Z", "+00:00"))
+    fu = datetime.fromisoformat(result["fu"].replace("Z", "+00:00"))
+
+    # completed_at within [before-5s, after+5s].
+    lo = result["before"] - timedelta(seconds=5)
+    hi = result["after"]  + timedelta(seconds=5)
+    assert lo <= ca <= hi, (lo, ca, hi)
+    # follow_up_at within completed_at + 7d ± 5s.
+    delta = fu - ca
+    assert abs(delta - timedelta(days=7)) < timedelta(seconds=5), delta
+
+
+def test_auto_fill_e2e_non_recurring_14d_within_5s(c1_seed):
+    """Non-recurring job → ``follow_up_at`` ≈ completed_at + 14d (±5s)."""
+    S = c1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        jid = await _mk_job(
+            _db, S["tenant_id"], status="scheduled",
+            tech_id=S["tech_pk"])
+        await _db.jobs.update_one(
+            {"id": jid},
+            {"$set": {"service_type": "Landscape Cleanup"}})
+        before = datetime.now(timezone.utc)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            await _patch_job(c, S["admin_token"], jid,
+                                 {"status": "completed"})
+        after = datetime.now(timezone.utc)
+        fresh = await _db.jobs.find_one({"id": jid}, {"_id": 0})
+        result["before"] = before
+        result["after"]  = after
+        result["ca"]     = fresh.get("completed_at")
+        result["fu"]     = fresh.get("follow_up_at")
+
+    run_test(_go)
+    ca = datetime.fromisoformat(result["ca"].replace("Z", "+00:00"))
+    fu = datetime.fromisoformat(result["fu"].replace("Z", "+00:00"))
+    lo = result["before"] - timedelta(seconds=5)
+    hi = result["after"]  + timedelta(seconds=5)
+    assert lo <= ca <= hi, (lo, ca, hi)
+    delta = fu - ca
+    assert abs(delta - timedelta(days=14)) < timedelta(seconds=5), delta

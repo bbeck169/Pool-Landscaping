@@ -2219,9 +2219,15 @@ async def delete_job(jid: str,
 # Feb-2026 · 24-hour post-completion edit window (PATCH + edit history)
 # ═════════════════════════════════════════════════════════════════════
 class JobEditPatch(BaseModel):
-    # Only the mutable set — anything not listed here is silently
-    # dropped by the endpoint's ``.dict(exclude_none=True)`` filter.
-    # Immutable-field guard runs separately (see ``edit_window``).
+    # Phase C1 hotfix · Feb-2026 — silent-drop is worse than a hard
+    # fail. ``extra="forbid"`` raises 422 on unknown keys so future
+    # contract drift can never go unnoticed again (matches the
+    # tester's recommendation).
+    model_config = ConfigDict(extra="forbid")
+
+    # Only the mutable set — anything not listed here is REJECTED by
+    # Pydantic (extra="forbid" above).  Immutable-field guard runs
+    # separately (see ``edit_window``).
     chemical_readings: Optional[List[Dict[str, Any]]] = None
     chemicals_added:   Optional[List[Dict[str, Any]]] = None
     checklist:         Optional[List[Dict[str, Any]]] = None
@@ -2235,6 +2241,14 @@ class JobEditPatch(BaseModel):
     # server-side against the linked invoice's paid/partial-paid
     # status before the write lands.
     price_cents:       Optional[int] = None
+    # Phase C1 hotfix · Feb-2026 — follow-up controls on the 24h
+    # edit-window PATCH surface. Types match ``JobUpdate`` (the
+    # working PUT schema) so PATCH and PUT accept identical
+    # payloads. Role gate ("admin-equivalent only") is enforced in
+    # ``patch_job_edit_window`` in lock-step with the PUT path so
+    # techs get the exact same 403 wording end-to-end.
+    follow_up_at:      Optional[str] = None
+    needs_follow_up:   Optional[bool] = None
     # Free-text reason surfaced in the audit doc.  Never mutates the
     # job itself.
     edit_reason:       Optional[str] = None
@@ -2319,6 +2333,21 @@ async def patch_job_edit_window(
     audit_reason = incoming.pop("edit_reason", None)
     audit_source = incoming.pop("edit_source", "web")
     assert_immutable_fields_untouched(incoming)
+
+    # Phase C1 hotfix · Feb-2026 — follow-up controls are admin-only,
+    # mirroring the PUT ``update_job`` role gate byte-for-byte so
+    # PATCH and PUT stay in lock-step. Techs authorised on the job
+    # itself may still edit chemistry / notes / photos via this
+    # endpoint — only the two follow-up fields are gated. Matches
+    # the exact wording from ``update_job`` so clients can compare
+    # ``err.data.detail`` on either surface and see the same string.
+    _ADMIN_ROLES_C1 = {"admin", "super_admin", "owner", "manager"}
+    if ("follow_up_at" in incoming or "needs_follow_up" in incoming) \
+            and role not in _ADMIN_ROLES_C1:
+        raise HTTPException(
+            403,
+            "Only admin-equivalent roles can set follow-up fields",
+        )
 
     # Gate 4 · status guard — only completed jobs may be edited via
     # this endpoint.  Non-completed jobs still use the existing

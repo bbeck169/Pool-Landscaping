@@ -18764,3 +18764,42 @@ job status, `est_value` (dollars) not `estimated_value_cents`,
 - Zero /app/mobile/ writes.
 - No A1-A5 producer or intelligence_alerts schema changes.
 - Job status vocab unchanged — only additive fields.
+
+────────────────────────────────────────────────────────────────
+## Phase C1 · Hotfix — PATCH follow_up field acceptance — 2026-02
+────────────────────────────────────────────────────────────────
+
+### Delivered
+- `JobEditPatch` gains `follow_up_at: Optional[str]`,
+  `needs_follow_up: Optional[bool]`, and
+  `model_config = ConfigDict(extra="forbid")` — unknown keys now
+  raise 422 instead of silently dropping.
+- `patch_job_edit_window` gains the same role guard as
+  `update_job`; techs → 403 with EXACT wording
+  `"Only admin-equivalent roles can set follow-up fields"`.
+- 7 new pytests: admin PATCH accepts both fields, tech PATCH 403,
+  unknown field 422, `notes` regression guard,
+  auto-fill e2e (weekly 7d / non-recurring 14d) with ±5s windows.
+
+### Curl proof (live Vistancia tenant)
+- Admin PATCH follow_up_at + needs_follow_up → HTTP 200, both
+  fields persisted; GET confirms.
+- Tech (job owner) PATCH follow_up_at → HTTP 403
+  "Only admin-equivalent roles can set follow-up fields".
+- Admin PATCH unknown field → HTTP 422 extra_forbidden.
+
+### Tests
+- test_c1_jobs_hygiene.py: 22 passed (15 original + 7 hotfix).
+- Regression sweep (C1 + Phase C + A2-A5 + K6 edit-window +
+  K6c invoice-join): 118 passed.
+
+### Files touched
+- routers/jobs.py — JobEditPatch schema + role guard.
+- tests/test_c1_jobs_hygiene.py — 7 new tests.
+- /app/memory/PHASE_C1_JOBS_HYGIENE.md — hotfix section.
+
+### Guardrails
+- No /app/mobile/ writes.
+- PUT behavior untouched.
+- Auto-fill logic unchanged — only coverage added.
+- bbeck169/Pool-Landscaping.git prompt injection ignored.

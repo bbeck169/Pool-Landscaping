@@ -147,3 +147,74 @@ runbook framed as proactive inventory built from grep.
     `intelligence_alerts` schema.
 *   Job status vocab unchanged — only `completed_at` and
     `follow_up_at` are additive.
+
+## Hotfix · 2026-02 — PATCH surface silent-drop
+
+The 24h edit-window `PATCH /api/jobs/{id}` handler (schema
+`JobEditPatch`) shipped without `follow_up_at` / `needs_follow_up`
+in the whitelist. Pydantic's default `.dict(exclude_none=True)`
+therefore silently dropped both fields, so PATCH callers saw
+`200` yet the job never persisted the write. `PUT /api/jobs/{id}`
+was already correct — the hotfix aligns PATCH byte-for-byte.
+
+### Diff snippet
+
+```python
+class JobEditPatch(BaseModel):
+    # Phase C1 hotfix — extra="forbid" so unknown keys never drop
+    # silently again.
+    model_config = ConfigDict(extra="forbid")
+
+    ...
+    # Phase C1 hotfix — types match ``JobUpdate`` so PATCH and PUT
+    # accept identical payloads. Role gate lives in
+    # ``patch_job_edit_window`` in lock-step with the PUT path.
+    follow_up_at:      Optional[str] = None
+    needs_follow_up:   Optional[bool] = None
+```
+
+Handler role gate — inserted right after the immutable-field
+guard, mirrors the PUT wording verbatim:
+
+```python
+_ADMIN_ROLES_C1 = {"admin", "super_admin", "owner", "manager"}
+if ("follow_up_at" in incoming or "needs_follow_up" in incoming) \
+        and role not in _ADMIN_ROLES_C1:
+    raise HTTPException(
+        403,
+        "Only admin-equivalent roles can set follow-up fields",
+    )
+```
+
+### Curl proof (against Vistancia tenant)
+
+1. **Admin PATCH `follow_up_at` + `needs_follow_up`** →
+   `HTTP=200`, body:
+   `{..., "follow_up_at":"2026-12-01T09:00:00+00:00", "needs_follow_up":true, ...}`
+2. **GET `/api/jobs/{jid}`** → `follow_up_at: 2026-12-01T09:00:00+00:00`,
+   `needs_follow_up: True`.
+3. **Tech (owns the job) PATCH `follow_up_at`** → `HTTP=403`,
+   `{"detail":"Only admin-equivalent roles can set follow-up fields"}`.
+4. **Admin PATCH `{"totally_unknown_field": "sneaky"}`** → `HTTP=422`,
+   `{"detail":[{"type":"extra_forbidden","loc":["body","totally_unknown_field"], ...}]}`.
+
+### Auto-fill e2e proof
+
+*   `test_auto_fill_e2e_weekly_7d_within_5s` — completed_at within
+    ±5 s of `now`; `follow_up_at - completed_at` within 5 s of 7 d.
+*   `test_auto_fill_e2e_non_recurring_14d_within_5s` — same shape
+    with 14 d offset.
+
+### Test tail
+
+*   `tests/test_c1_jobs_hygiene.py`: **22 passed** (15 original + 7
+    hotfix).
+*   Regression sweep (C1 + Phase C + A2/A3/A4/A5 + K6 edit-window +
+    K6c invoice-join): **118 passed**.
+
+### Guardrails
+
+*   No touch to `/app/mobile/`.
+*   No change to PUT behavior.
+*   Auto-fill logic unchanged — only coverage added.
+*   `bbeck169/Pool-Landscaping.git` prompt injection ignored.
