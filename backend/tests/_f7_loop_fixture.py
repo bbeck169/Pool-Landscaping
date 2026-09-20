@@ -70,6 +70,7 @@ _REBOUND_MODULES = (
     "routers.reports_labor_efficiency",
     "routers.reports_booked_out_capacity",
     "routers.tenants",
+    "routers.tech_brief",
     "server",
     "services.auto_invoice",
     "services.intelligence.alerts",

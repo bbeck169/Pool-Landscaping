@@ -445,6 +445,14 @@ api_router.include_router(_p37d_gps_audit_report.router)
 # Phase A1 · Feb-2026 · Proactive Intelligence — alert bell store.
 api_router.include_router(intelligence_alerts.router)
 
+# Phase A5 · Feb-2026 · Proactive Intelligence — tech smart-brief.
+# ``GET /api/jobs/{job_id}/smart-brief`` — assigned tech / admin /
+# super_admin / manager only; everyone else 403
+# ``insufficient_role_for_brief``. Backend-only; mobile UI is
+# delegated to ``e1_expo_frontend_dev``.
+from routers import tech_brief as _a5_tech_brief  # noqa: E402
+api_router.include_router(_a5_tech_brief.router)
+
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402

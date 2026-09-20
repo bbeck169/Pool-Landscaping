@@ -305,6 +305,11 @@ async def resend_agreement_renewal_email(
     only; tech gets 403 ``insufficient_role_for_alerts``.
 
     ``agreement_id`` refers to a ``warranty_contracts.id``.
+
+    Phase A5 · Feb-2026 nit fix — returns HTTP 404
+    ``agreement_not_found`` when the contract doesn't exist,
+    HTTP 400 ``contract_inactive`` when the contract is present
+    but not in ``active`` status. Successful sends stay 200.
     """
     _require_admin(user)
     from services.intelligence.renewal_scan import (
@@ -313,4 +318,13 @@ async def resend_agreement_renewal_email(
     result = await resend_renewal_email_for_contract(
         tenant["id"], agreement_id,
     )
+    reason = (result or {}).get("reason")
+    if reason == "contract_not_found":
+        raise HTTPException(
+            status_code=404, detail="agreement_not_found",
+        )
+    if reason == "contract_inactive":
+        raise HTTPException(
+            status_code=400, detail="agreement_inactive",
+        )
     return result
