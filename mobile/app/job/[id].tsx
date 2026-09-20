@@ -42,6 +42,7 @@ import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/s
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
+import SmartBriefCard from "@/src/components/job/SmartBriefCard";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { CustomerLink, AddressLink } from "@/src/components/customer";
@@ -465,6 +466,8 @@ export default function JobDetail() {
         </View>
 
         <View style={styles.body}>
+          {/* A5 · Smart Brief — tech intelligence pane at top of job detail */}
+          <SmartBriefCard jobId={id as string} testID="smart-brief" />
           {/* Phase 1 Offline Read — "showing cached copy" banner */}
           {offlineRead && !online ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FEF3C7", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: spacing.md }} testID="job-detail-cached-banner">
