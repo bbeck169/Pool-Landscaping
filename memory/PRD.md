@@ -1,3 +1,35 @@
+## Phase S1 hotfix — TenantSwitcher regression for super_admin — SHIPPED (Feb 2026)
+
+**External `e1_tester` regression:** super_admin was seeing NO switcher in the top nav. Root cause was in `services/user_tenants.py`, NOT the S1.3 role guard: both `get_user_tenants()` and `user_has_membership()` walked `user.tenant_memberships` only, and `super@aquaterra.com` has just 1 row there. Meant `available_tenants.length < 2` on the frontend → switcher hid; and `POST /auth/switch-tenant` to any active tenant not in that array 403'd with `tenant_not_in_memberships` (the tester's second finding — same bug, second symptom).
+
+**Fix** — `services/user_tenants.py`
+- `get_user_tenants(user)` — for `super_admin`, returns every `active=True` tenant (mirrors `/api/tenants/memberships/mine`).
+- `user_has_membership(user, tid)` — returns `True` for any super_admin. Endpoint still validates tenant exists + active before minting the new JWT (fake tenant_ids still 403).
+
+**Frontend guard untouched.** The S1.3 predicate in `TenantSwitcher.jsx` was correct all along.
+
+**New tests**
+- Backend pytest `test_saas_security_lockdown_s1.py`: **+4** cases (super cross-tenant switch, fake tenant still 403, admin still locked, `/auth/me.available_tenants` lists every active). Total **16/16 green**.
+- Frontend vitest `TenantSwitcher.super_admin_positive.test.jsx`: **+3** cases wired to the real `<PermissionsProvider>` (no `usePermissions` mock). Total S1 vitest **17/17 green**.
+
+**Live-pod curl proofs (`/app/memory/s1_proofs/hotfix_proofs.log`)**
+- super `GET /auth/me.available_tenants` count: **123** (was 1) ✅
+- super `POST /auth/switch-tenant → pool.tenant`: **200** with new JWT ✅ (was 403)
+- super `POST /auth/switch-tenant → landscaping.tenant`: **200** ✅ (was 403)
+- super `POST /auth/switch-tenant → fake tenant`: **403** `tenant_not_in_memberships` ✅ (fake still blocked)
+- admin `POST /auth/switch-tenant`: **403** `insufficient_role_for_tenant_switch` ✅ (S1.2 lockdown intact)
+
+**Live-pod screenshots**
+- `/app/memory/s1_proofs/super_admin_topbar_visible.png` — pill visible for super with label "Pool & Landscaping of Vistancia".
+- `/app/memory/s1_proofs/super_admin_topbar_dropdown_open.png` — dropdown open, 123 tenants listed under "SWITCH TENANT" header.
+- `/app/memory/s1_proofs/admin_topbar_hidden.png` — admin's topbar right cluster shows no tenant pill.
+
+Detail doc: `/app/memory/PHASE_S1_SECURITY_LOCKDOWN.md` (updated in place).
+
+---
+
+
+
 ## Phase S1 — SaaS Security Lockdown (Multi-Tenant) — SHIPPED (Feb 2026)
 
 **Scope (4 subitems, single sprint-closing bundle)**

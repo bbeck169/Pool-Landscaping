@@ -370,3 +370,153 @@ def test_s1_promote_admin_to_super_admin_by_super_admin_200(s1_seed):
     run_test(_go)
     assert result["status"] == 200, result
     assert result["body"]["new_role"] == "super_admin"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# S1 hotfix · Feb-2026 — super_admin cross-tenant switch.
+#
+# Regression guard for the hotfix landed against the ``services/
+# user_tenants.py`` scope-expansion bug (external tester saw
+# ``/api/tenants/memberships/mine`` return every tenant for
+# ``super@aquaterra.com`` but ``POST /api/auth/switch-tenant`` reject
+# with ``tenant_not_in_memberships`` because the guard walked
+# ``user.tenant_memberships`` only). Both helpers now grant the
+# super_admin role platform-wide access; the S1.2 role gate still
+# 403s any non-super caller before ``user_has_membership`` is even
+# consulted.
+# ═════════════════════════════════════════════════════════════════════
+def test_s1_super_can_switch_to_active_tenant_not_in_memberships(s1_seed):
+    """super_admin can switch to a tenant that is active on the
+    platform even when it isn't listed in their own
+    ``tenant_memberships`` array."""
+    S = s1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+    other_tid = f"s1-other-tid-{uuid.uuid4().hex[:6]}"
+
+    async def _go(_db):
+        # Seed a second, unrelated active tenant. Super has NO
+        # membership row for it.
+        await _db.tenants.insert_one({
+            "id": other_tid, "name": "S1 Other Tenant",
+            "slug": f"s1o-{uuid.uuid4().hex[:6]}",
+            "active": True, "settings": {}})
+        # Clear super's memberships explicitly so the ONLY reason a
+        # cross-tenant switch could succeed is the hotfix branch.
+        await _db.users.update_one(
+            {"id": S["super_uid"]},
+            {"$set": {"tenant_memberships": []}})
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport,
+                                            base_url="http://test") as c:
+                r = await c.post(
+                    f"{API}/auth/switch-tenant",
+                    json={"tenant_id": other_tid},
+                    headers={"Authorization": f"Bearer {S['super_token']}"})
+                result["status"] = r.status_code
+                result["body"] = r.json()
+        finally:
+            await _db.tenants.delete_many({"id": other_tid})
+
+    run_test(_go)
+    assert result["status"] == 200, result
+    assert result["body"]["active_tenant"]["id"] == other_tid
+    assert result["body"].get("access_token")
+
+
+def test_s1_super_switch_to_missing_tenant_still_403(s1_seed):
+    """The hotfix widens the ``user_has_membership`` check for
+    super_admin but must NOT bypass the tenant-exists + active
+    check — otherwise a super could type any string and mint a JWT
+    with an active_tenant_id claim pointing nowhere."""
+    S = s1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await c.post(
+                f"{API}/auth/switch-tenant",
+                json={"tenant_id": f"nonexistent-{uuid.uuid4().hex[:6]}"},
+                headers={"Authorization": f"Bearer {S['super_token']}"})
+            result["status"] = r.status_code
+            result["detail"] = r.json().get("detail")
+
+    run_test(_go)
+    assert result["status"] == 403
+    assert result["detail"] == "tenant_not_in_memberships"
+
+
+def test_s1_admin_switch_still_locked_after_hotfix(s1_seed):
+    """S1.2 role gate stays intact: admin still 403s even though
+    ``user_has_membership`` is now more permissive for super_admin.
+    Belt-and-braces regression."""
+    S = s1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        # Give admin a legit membership row for the same tenant
+        # they'd try to switch INTO — proves the 403 is coming from
+        # the role gate, not the membership check.
+        await _db.users.update_one(
+            {"id": S["admin_uid"]},
+            {"$set": {"tenant_memberships": [
+                {"tenant_id": S["tid"], "role": "admin",
+                  "joined_at": "2025-01-01T00:00:00+00:00"},
+            ]}})
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await c.post(
+                f"{API}/auth/switch-tenant",
+                json={"tenant_id": S["tid"]},
+                headers={"Authorization": f"Bearer {S['admin_token']}"})
+            result["status"] = r.status_code
+            result["detail"] = r.json().get("detail")
+
+    run_test(_go)
+    assert result["status"] == 403
+    assert result["detail"] == "insufficient_role_for_tenant_switch"
+
+
+def test_s1_super_available_tenants_lists_every_active(s1_seed):
+    """After the hotfix, ``GET /api/auth/me.available_tenants`` for
+    super_admin returns every ``active=True`` tenant even when the
+    ``tenant_memberships`` array is empty."""
+    S = s1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+    extra_tid = f"s1-extra-{uuid.uuid4().hex[:6]}"
+
+    async def _go(_db):
+        await _db.tenants.insert_one({
+            "id": extra_tid, "name": "S1 Extra Tenant",
+            "slug": f"s1x-{uuid.uuid4().hex[:6]}",
+            "active": True, "settings": {}})
+        await _db.users.update_one(
+            {"id": S["super_uid"]},
+            {"$set": {"tenant_memberships": []}})
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport,
+                                            base_url="http://test") as c:
+                r = await c.get(
+                    f"{API}/auth/me",
+                    headers={"Authorization": f"Bearer {S['super_token']}"})
+                result["status"] = r.status_code
+                body = r.json()
+                result["ids"] = [t["id"]
+                                    for t in body.get("available_tenants", [])]
+        finally:
+            await _db.tenants.delete_many({"id": extra_tid})
+
+    run_test(_go)
+    assert result["status"] == 200, result
+    # Both the seeded super's own tenant and the unrelated extra one
+    # must be present in available_tenants.
+    assert S["tid"] in result["ids"]
+    assert extra_tid in result["ids"]

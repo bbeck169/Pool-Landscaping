@@ -35,6 +35,16 @@ def _memberships_for(user: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def user_has_membership(user: Dict[str, Any], tenant_id: str) -> bool:
+    # Phase S1 hotfix · Feb-2026 — super_admin acts cross-tenant.
+    # Their operational contract (see ``/api/tenants/memberships/mine``)
+    # already lists every active tenant, so ``user_has_membership``
+    # must agree. The switch-tenant endpoint still validates that
+    # the target tenant exists + is active before minting the new
+    # JWT — this only widens the "in your set" check, it doesn't
+    # bypass the S1.2 role gate (which still 403s any non-super
+    # caller before reaching this function).
+    if (user.get("role") or "").lower() == "super_admin":
+        return True
     for m in _memberships_for(user):
         if m.get("tenant_id") == tenant_id:
             return True
@@ -71,7 +81,33 @@ async def get_user_tenants(user: Dict[str, Any]) -> List[Dict[str, Any]]:
     frontend switcher can highlight it. The value defaults to the
     user's persistent ``active_tenant_id`` (if any) else the legacy
     ``user.tenant_id``.
+
+    Phase S1 hotfix · Feb-2026 — for ``super_admin`` this returns
+    **every** active tenant on the platform (mirroring
+    ``GET /api/tenants/memberships/mine``). Non-super roles still
+    resolve strictly from ``user.tenant_memberships``. The S1.2
+    role gate on ``POST /api/auth/switch-tenant`` still prevents
+    anyone else from acting on this expanded list.
     """
+    active_now = (user.get("active_tenant_id")
+                    or user.get("tenant_id"))
+    role = (user.get("role") or "").lower()
+
+    if role == "super_admin":
+        rows: List[Dict[str, Any]] = []
+        async for t in db.tenants.find(
+            {"active": True},
+            {"_id": 0, "id": 1, "name": 1, "slug": 1},
+        ).sort("name", 1):
+            rows.append({
+                "id":            t["id"],
+                "name":          t.get("name") or t["id"],
+                "slug":          t.get("slug"),
+                "role":          "super_admin",
+                "is_active_now": t["id"] == active_now,
+            })
+        return rows
+
     memberships = _memberships_for(user)
     if not memberships:
         return []
@@ -85,8 +121,6 @@ async def get_user_tenants(user: Dict[str, Any]) -> List[Dict[str, Any]]:
             rows.append(t)
     tenant_by_id = {t["id"]: t for t in rows}
 
-    active_now = (user.get("active_tenant_id")
-                    or user.get("tenant_id"))
     out: List[Dict[str, Any]] = []
     for m in memberships:
         tid = m.get("tenant_id")

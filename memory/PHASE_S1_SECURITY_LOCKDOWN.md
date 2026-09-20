@@ -38,7 +38,67 @@ Existing `admin@aquaterra.com` cross-tenant memberships remain as dead data (the
 
 Startup hook: `promote_founder_on_boot()` runs once on process start; promotes `FOUNDER_SUPER_ADMIN_EMAIL` if the DB row exists and is not already `super_admin`. **Never** demotes existing `super_admin` rows.
 
+## S1 hotfix — TenantSwitcher regression for super_admin (Feb 2026)
+
+### The regression
+External `e1_tester` sweep found 4/5 acceptance criteria clean but **TenantSwitcher was hidden for super_admin too**. Second finding: `POST /api/auth/switch-tenant` from super_admin → tenant `200d48ac-…` (pool.tenant) returned `403 tenant_not_in_memberships` even though the same tenant appeared in `/api/tenants/memberships/mine`.
+
+### Root cause (single bug, two symptoms)
+`services/user_tenants.py::get_user_tenants()` and `user_has_membership()` walked `user.tenant_memberships` only. `super@aquaterra.com` has just **one** row in that array, so:
+- `/api/auth/me.available_tenants` returned 1 tenant → frontend fell into the `memberships.length < 2 → null` branch and hid the switcher for the super_admin who was supposed to see it.
+- `POST /api/auth/switch-tenant` guard rejected every cross-tenant target the tester tried, even active ones.
+
+The S1.3 role predicate in `TenantSwitcher.jsx` was correct — the bug was upstream in the data layer.
+
+### Fix
+`services/user_tenants.py`
+- `get_user_tenants(user)` — when `user.role == "super_admin"`, returns every `tenants.find({"active": True})` document (mirrors `/api/tenants/memberships/mine`).
+- `user_has_membership(user, tenant_id)` — returns `True` for any super_admin (the switch endpoint still validates that the tenant exists + is active before minting the JWT, so a fake tenant_id still 403s).
+
+Frontend guard: **unchanged**. The predicate `if (effectiveRole !== "super_admin") return null;` is correct.
+
+### New regression tests
+
+**pytest** — `tests/test_saas_security_lockdown_s1.py` +4 cases:
+- `test_s1_super_can_switch_to_active_tenant_not_in_memberships` — super_admin switches to a tenant they have no membership row for → 200.
+- `test_s1_super_switch_to_missing_tenant_still_403` — non-existent tenant → still 403 `tenant_not_in_memberships`.
+- `test_s1_admin_switch_still_locked_after_hotfix` — admin still 403 `insufficient_role_for_tenant_switch` even with a valid membership row.
+- `test_s1_super_available_tenants_lists_every_active` — `/auth/me.available_tenants` for super_admin lists every active tenant.
+
+**vitest** — new `components/topbar/__tests__/TenantSwitcher.super_admin_positive.test.jsx` +3 cases, mounted inside a real `<PermissionsProvider>` (no mock of `usePermissions`):
+- super_admin with 2 memberships → trigger renders (real hook path).
+- admin with 2 memberships → renders null.
+- super_admin with a stale `preview_role="admin"` in sessionStorage → renders null (fail-closed while previewing).
+
+### Test counts after hotfix
+- Backend pytest `test_saas_security_lockdown_s1.py`: **16 / 16 green** (was 12/12).
+- Frontend vitest S1 suites: **17 / 17 green** (was 14/14).
+
+### Live-pod curl proofs (log: `/app/memory/s1_proofs/hotfix_proofs.log`)
+
+| # | Actor          | Call                                                           | Result |
+|---|----------------|----------------------------------------------------------------|--------|
+| 1 | super_admin    | `GET /api/auth/me` — `available_tenants` length                | **123** (was 1) ✅ |
+| 2 | super_admin    | `POST /api/auth/switch-tenant {tenant_id: pool.tenant}`        | **200** with new JWT ✅ |
+| 3 | super_admin    | `POST /api/auth/switch-tenant {tenant_id: landscaping.tenant}` | **200** with new JWT ✅ |
+| 4 | super_admin    | `POST /api/auth/switch-tenant {tenant_id: "totally-fake"}`     | **403** `tenant_not_in_memberships` ✅ (fake tenants still blocked) |
+| 5 | admin          | `POST /api/auth/switch-tenant`                                 | **403** `insufficient_role_for_tenant_switch` ✅ (S1.2 lockdown intact) |
+
+### Live-pod screenshots
+- `/app/memory/s1_proofs/super_admin_topbar_visible.png` — super's topbar right cluster shows the tenant pill (label "Pool & Landscaping of Vistancia").
+- `/app/memory/s1_proofs/super_admin_topbar_dropdown_open.png` — dropdown open, "SWITCH TENANT" header + 123 tenants rendered.
+- `/app/memory/s1_proofs/admin_topbar_hidden.png` — admin's topbar right cluster shows Add Job / Add Customer only, **no** tenant pill.
+
+Console dump from Playwright confirms:
+```
+super switcher present: 1
+super switcher label: Pool & Landscaping of Vistancia
+dropdown items: {count: 123, sample: ['CRA cra-02939e0a', 'CRA cra-233a2c77', …]}
+admin switcher count: 0
+```
+
 ## Verification — TEST COUNTS
+
 
 ### Backend pytest
 ```
