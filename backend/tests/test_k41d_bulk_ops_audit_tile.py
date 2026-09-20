@@ -27,14 +27,17 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API = "http://localhost:8001/api"
-_client = MongoClient(os.environ["MONGO_URL"])
-_db = _client[os.environ["DB_NAME"]]
-
-
+_client = _shared_client()
+_db = _shared_db()
 def _login_super():
     r = requests.post(
         f"{API}/auth/login",

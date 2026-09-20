@@ -34,6 +34,11 @@ export default function TenantSwitcher() {
   ).toLowerCase();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
+  // Phase G3.3 · Feb-2026 — text filter for the dropdown. Super_admin
+  // now sees every active tenant on the platform (up to 100+), so a
+  // simple substring match on ``name || slug || id`` is a big UX win
+  // over scrolling. Filter state resets each time the dropdown opens.
+  const [filter, setFilter] = useState("");
   // Feb-2026 fix — the wide topbar wrap has ``overflow-x-auto`` which
   // clips absolutely-positioned children, so the dropdown must render
   // via a React portal into document.body and self-position from the
@@ -47,6 +52,22 @@ export default function TenantSwitcher() {
                         || memberships.find((t) => t.is_active_now)?.id;
   const active      = memberships.find((t) => t.id === activeId)
                         || memberships[0];
+
+  const filteredMemberships = React.useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return memberships;
+    return memberships.filter((t) => {
+      const hay = `${t.name || ""} ${t.slug || ""} ${t.id || ""}`
+                    .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [memberships, filter]);
+
+  // Reset the filter every time the menu opens so the user starts
+  // from a clean slate; keep it in DOM only while open.
+  useEffect(() => {
+    if (!open) setFilter("");
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open || !wrap.current) return;
@@ -143,7 +164,7 @@ export default function TenantSwitcher() {
         <div
           ref={menuRef}
           role="menu"
-          className="fixed w-64 rounded-xl shadow-lg py-1"
+          className="fixed w-72 rounded-xl shadow-lg py-1 max-h-96 overflow-y-auto"
           style={{
             top:   `${menuPos.top}px`,
             right: `${menuPos.right}px`,
@@ -157,7 +178,34 @@ export default function TenantSwitcher() {
                 style={{ color: colors.muted }}>
             Switch tenant
           </div>
-          {memberships.map((t) => (
+          {memberships.length > 6 ? (
+            <div className="px-2 py-1">
+              <input
+                type="text"
+                autoFocus
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter tenants…"
+                data-testid="topbar-tenant-switcher-filter"
+                className="w-full px-2 py-1 text-xs rounded focus:outline-none focus-visible:ring-1"
+                style={{
+                  background: colors.surfaceSecondary,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+              />
+            </div>
+          ) : null}
+          {filteredMemberships.length === 0 ? (
+            <div
+              className="px-3 py-3 text-xs"
+              style={{ color: colors.muted }}
+              data-testid="topbar-tenant-switcher-empty"
+            >
+              No tenants match “{filter}”.
+            </div>
+          ) : null}
+          {filteredMemberships.map((t) => (
             <button
               key={t.id}
               type="button"

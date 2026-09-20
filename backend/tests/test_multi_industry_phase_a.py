@@ -12,6 +12,11 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from services.industries import (
     DEFAULT_INDUSTRY,
@@ -27,8 +32,7 @@ from services.migrations.tenant_industries_backfill import (
 
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
+_sync = _shared_db()
 _FE_ENV = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
 BASE = (_FE_ENV.get("REACT_APP_BACKEND_URL")
         or os.environ.get("REACT_APP_BACKEND_URL", "")).rstrip("/")

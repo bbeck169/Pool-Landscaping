@@ -24,13 +24,17 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 _ENV = dotenv_values(_BACKEND_ENV)
 _MONGO_URL = _ENV.get("MONGO_URL") or os.environ.get("MONGO_URL")
 _DB_NAME = _ENV.get("DB_NAME") or os.environ.get("DB_NAME")
-_sync = MongoClient(_MONGO_URL)[_DB_NAME]
-
+_sync = _shared_db()
 API = os.environ.get("BACKEND_API_URL") or "http://localhost:8001/api"
 
 _BACKEND_DIR = str(Path(__file__).resolve().parents[1])

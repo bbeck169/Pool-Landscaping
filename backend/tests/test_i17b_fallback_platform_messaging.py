@@ -32,13 +32,17 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from tests._f7_loop_fixture import run_test
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-_sync = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-
+_sync = _shared_db()
 from services.messaging import (  # noqa: E402
     FALLBACK_LOG_COLLECTION,
     dispatch_email,

@@ -48,12 +48,16 @@ import pytest
 from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 os.environ.setdefault("ALLOW_TEST_HOOKS", "1")
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
+_sync = _shared_db()
 JWT_SECRET = (
     _ENV.get("JWT_SECRET") or os.environ.get("JWT_SECRET")
     or "dev-secret-change-me"

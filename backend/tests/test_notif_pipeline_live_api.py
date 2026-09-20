@@ -34,6 +34,11 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -45,7 +50,7 @@ if not BASE_URL:
     raise RuntimeError("REACT_APP_BACKEND_URL missing")
 API = BASE_URL.rstrip("/") + "/api"
 
-_sync = MongoClient(_BACKEND_ENV["MONGO_URL"])[_BACKEND_ENV["DB_NAME"]]
+_sync = _shared_db()
 _TENANT = _sync.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
 TENANT_ID = _TENANT["id"]
 TENANT_TZ = (_TENANT.get("timezone") or "America/Phoenix")

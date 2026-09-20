@@ -31,13 +31,16 @@ import requests
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 API = "http://localhost:8001/api"
-_sync = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-
-
+_sync = _shared_db()
 # ── Shared event-loop plumbing (mirrors I1.7.b tests) ─────────────
 _LOOP: asyncio.AbstractEventLoop | None = None
 _MOTOR_DB = None

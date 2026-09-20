@@ -15,13 +15,17 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API = "http://localhost:8001/api"
-_sync = MongoClient(os.environ["MONGO_URL"])
-_db = _sync[os.environ["DB_NAME"]]
-
+_sync = _shared_client()
+_db = _shared_db()
 _CACHE: dict = {}
 
 

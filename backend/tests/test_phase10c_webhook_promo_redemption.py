@@ -19,11 +19,16 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from tests._shared_loop import run as _run
 
 _env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_env["MONGO_URL"])[_env["DB_NAME"]]
+_sync = _shared_db()
 _TENANT_ID = _sync.tenants.find_one({}, {"_id": 0, "id": 1})["id"]
 
 

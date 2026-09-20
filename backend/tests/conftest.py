@@ -10,6 +10,26 @@ SEC-001 followup — ``demo_pw(email)`` sources the currently-active demo-user
 password from ``/app/memory/test_credentials.md`` (rewritten by
 ``scripts/rotate_demo_passwords.py``). Falls back to ``"password123"`` when the
 file has no entry for that account, so pre-rotation environments still work.
+
+Phase G3.1 · Feb-2026 — SHARED MONGO SINGLETON
+----------------------------------------------
+**DO NOT** open a new ``MongoClient()`` at module scope in a new test
+file. The suite has ~250 test files; each eager client would open its
+own pool (default ``maxPoolSize=100``) at import time, which reliably
+tripped ``ServerSelectionTimeoutError`` on full-suite collection.
+
+Use the shared lazy singleton::
+
+    from tests._shared_mongo import shared_db as _shared_db
+    _sync = _shared_db()                    # returns a ``Database``
+
+Or when you specifically need a ``MongoClient``::
+
+    from tests._shared_mongo import shared_client as _shared_client
+    _sync = _shared_client()
+
+The singleton is process-scoped and lazily instantiated on first
+call, so importing the module in a coverage-only path is free.
 """
 import os
 import re

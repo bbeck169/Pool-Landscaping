@@ -21,13 +21,16 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 API = "http://localhost:8001/api"
 
 _env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_env["MONGO_URL"])[_env["DB_NAME"]]
-
-
+_sync = _shared_db()
 # ═══════════════════════════ credits_apply ════════════════════════════
 def test_apply_happy_path_deducts_and_writes_ledger():
     from services.credits_apply import apply_credits_to_invoice

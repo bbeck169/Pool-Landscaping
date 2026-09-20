@@ -18,13 +18,16 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from migrations.task_p19_backfill_empty_website_visitor_leads import backfill
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
-
+_sync = _shared_db()
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 

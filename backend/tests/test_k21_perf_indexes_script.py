@@ -23,14 +23,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from scripts import k21_seed_perf_indexes as seed
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-
-
+_sync = _shared_db()
 def _drop_k21():
     """Remove any pre-existing K21 indexes so the test starts from
     a clean slate."""

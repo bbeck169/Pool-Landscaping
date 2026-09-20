@@ -34,16 +34,19 @@ import pytest
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 BASE_URL = "http://localhost:8001"
 API = f"{BASE_URL}/api"
 
-_sync = MongoClient(os.environ["MONGO_URL"])
-_db = _sync[os.environ["DB_NAME"]]
-
-
+_sync = _shared_client()
+_db = _shared_db()
 # ═════════════════════════════════════════════════════════════════════
 # Helpers
 # ═════════════════════════════════════════════════════════════════════

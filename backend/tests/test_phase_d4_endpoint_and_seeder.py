@@ -17,13 +17,16 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from tests._phase34_http_shim import http
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
-
+_sync = _shared_db()
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
 

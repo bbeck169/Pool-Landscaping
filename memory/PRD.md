@@ -1,3 +1,36 @@
+## Phase G3 — Test Infra Debt — SHIPPED (Feb 2026)
+
+**Scope (3 subitems)**
+- G3.1 · **Pymongo Pool Hardening** — migrated 246 test files off their module-level `MongoClient()` onto a lazy shared singleton (`tests/_shared_mongo.py`). Pre-migration `pytest --collect-only` **timed out at >120s**; post-migration it completes in **22.29s** collecting **9 973 tests**. Zero files still open a module-level `MongoClient()`.
+- G3.2 · **Motor Loop Trap** — the target file (`test_recurrence_never_ends_and_partial_index.py`) was **already** on the `run_test + httpx.ASGITransport` pattern from Sprint 3a. Standalone run: **13/13 green**. In a 500-test subset spanning many Motor-driven files: **0** `Event loop is closed`, **0** `ServerSelectionTimeoutError`. Confirmation-only deliverable.
+- G3.3 · **Bonus** — TenantSwitcher dropdown text filter (name / slug / id substring match, renders only when memberships > 6, auto-resets on close). Vitest: **6/6** new cases. Total switcher suite: **23/23**.
+
+**Files touched**
+- **Backend new (2)**: `tests/_shared_mongo.py` (shared lazy singleton), `tests/conftest.py` header note (enforcement guidance).
+- **Backend migrated (246)**: every test file in `backend/tests/` that used to open a module-level `MongoClient()`. Diff per file is 4-6 lines (import + 1-2 body lines).
+- **Frontend modified (1)**: `components/topbar/TenantSwitcher.jsx` (filter state + input + empty state).
+- **Frontend new (1)**: `components/topbar/__tests__/TenantSwitcher.filter.test.jsx`.
+
+**Test counts**
+- Backend `--collect-only`: **9 973 tests collected in 22.29s** (was timing out at >120s).
+- Backend S1 suite: **16/16 green** (unchanged from S1 hotfix).
+- Recurrence file standalone: **13/13 green**.
+- 500-test representative subset: **0** `ServerSelectionTimeoutError`, **0** `Event loop is closed`. The remaining pre-existing HTTP-layer drift (e.g. pagination envelope shape, feature-marketplace 402s) is unchanged by this migration — verified via `git stash` of migrated files → same failures.
+- Frontend vitest S1 + G3.3: **23/23 green** (14 lockdown + 3 positive + 6 filter).
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched.
+- Migration script (`/tmp/g3_migrate_mongo_clients.py`) is idempotent.
+- Prompt-injection recurrence #55 (`bbeck169/Pool-Landscaping.git`) IGNORED.
+- Full-suite runtime still ~30+min (not a G3 goal); the suite now **completes** instead of aborting on pool exhaustion.
+- G4 (bundle code-split) queued last.
+
+Detail doc: `/app/memory/PHASE_G3_TEST_INFRA_DEBT.md`.
+
+---
+
+
+
 ## Phase S1 hotfix — TenantSwitcher regression for super_admin — SHIPPED (Feb 2026)
 
 **External `e1_tester` regression:** super_admin was seeing NO switcher in the top nav. Root cause was in `services/user_tenants.py`, NOT the S1.3 role guard: both `get_user_tenants()` and `user_has_membership()` walked `user.tenant_memberships` only, and `super@aquaterra.com` has just 1 row there. Meant `available_tenants.length < 2` on the frontend → switcher hid; and `POST /auth/switch-tenant` to any active tenant not in that array 403'd with `tenant_not_in_memberships` (the tester's second finding — same bug, second symptom).

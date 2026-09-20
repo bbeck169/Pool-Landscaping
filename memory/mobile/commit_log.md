@@ -2463,3 +2463,19 @@
 - **Admin tab bar**: Schedule | Customers | Messages | Pipeline | More
 - **Tech tab bar**: Schedule | Customers | Messages | Jobs | Profile
 - **Screenshot verified**: Both admin (admin@aquaterra.com) and tech (mike@aquaterra.com) show correct 5-tab bars. Navigation to Schedule, Customers, Messages, Jobs tabs all confirmed working.
+
+
+## Iteration 112 — G2: Messages Tab Unread Badge
+- **Commit**: 3b3c771756b4baaf17a68d2e2452e4ab5ec4ced2
+- **Date**: 2026-09-20
+- **Changes**:
+  - Created `src/hooks/useUnreadCount.ts`: fetches `GET /api/messages/unread-count` on mount, every 60s, and on AppState "active" (foreground resume). Returns formatted badge: undefined (0), numeric (1-99), or "99+" (>99). Auth errors silently swallowed.
+  - Wired into `app/(app)/_layout.tsx`: Messages tab now shows `tabBarBadge: unreadBadge` + red badge style.
+  - 8 Jest tests covering: numeric badge, "99+" cap, 0 hides badge, fetch failure no-crash, 60s poll, foreground refetch, cleanup on unmount, disabled state.
+- **Files created**:
+  - `/app/mobile/src/hooks/useUnreadCount.ts` (73 lines)
+  - `/app/mobile/__tests__/useUnreadCount.test.ts` (8 tests, all passing)
+- **Files modified**:
+  - `/app/mobile/app/(app)/_layout.tsx` (+3 lines: import, hook call, tabBarBadge/tabBarBadgeStyle)
+- **API contract consumed**: `GET /api/messages/unread-count` → `{ unread_count: N, by_channel: {...} }`
+- **Screenshot verified**: mike@aquaterra.com shows red "2" badge on Messages tab; admin@aquaterra.com shows no badge (0 unread).

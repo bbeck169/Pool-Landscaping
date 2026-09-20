@@ -36,6 +36,11 @@ import httpx
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 
 BASE = "http://localhost:8001"
@@ -43,9 +48,7 @@ BASE = "http://localhost:8001"
 _ENV = dotenv_values("/app/backend/.env")
 _MONGO_URL = _ENV.get("MONGO_URL") or os.environ.get("MONGO_URL")
 _DB_NAME = _ENV.get("DB_NAME") or os.environ.get("DB_NAME")
-_sync = MongoClient(_MONGO_URL)[_DB_NAME] if (_MONGO_URL and _DB_NAME) else None
-
-
+_sync = _shared_db() if (_MONGO_URL and _DB_NAME) else None
 def _super_admin_token() -> str:
     r = httpx.post(f"{BASE}/api/auth/login", json={
         "email": "super@aquaterra.com", "password": "password123",

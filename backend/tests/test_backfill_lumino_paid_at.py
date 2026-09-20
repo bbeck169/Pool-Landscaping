@@ -15,10 +15,14 @@ import pytest
 from dotenv import dotenv_values
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
+_sync = _shared_db()
 _LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(_LOOP)
 _FRESH = AsyncIOMotorClient(_ENV["MONGO_URL"], io_loop=_LOOP)

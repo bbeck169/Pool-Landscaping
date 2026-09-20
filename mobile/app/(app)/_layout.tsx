@@ -9,10 +9,15 @@ import { SyncBanner } from "@/src/components/SyncBanner";
 import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
 import AIDockDrawer from "@/src/components/ai/AIDockDrawer";
 import { registerForPushNotifications } from "@/src/services/pushNotifications";
+import { useUnreadCount } from "@/src/hooks/useUnreadCount";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
   const [dockOpen, setDockOpen] = useState(false);
+
+  // G2 · Unread messages badge on the Messages tab.
+  // Enabled for admin + tech (same roles that see the tab).
+  const unreadBadge = useUnreadCount(!!user && user.role !== "customer");
 
   // Register push notifications after successful auth
   useEffect(() => {
@@ -88,6 +93,8 @@ export default function AppLayout() {
           href: (isAdmin || isTech) ? "/(app)/huddle" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
           tabBarTestID: "tab-messages",
+          tabBarBadge: unreadBadge,
+          tabBarBadgeStyle: unreadBadge != null ? { backgroundColor: colors.error, fontFamily: font.semibold, fontSize: 10 } : undefined,
         }}
       />
 

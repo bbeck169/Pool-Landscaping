@@ -22,13 +22,16 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 
 os.environ.setdefault("ALLOW_TEST_HOOKS", "1")
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
-
+_sync = _shared_db()
 def _new_id() -> str:
     return f"backfill-signup-test-{uuid.uuid4().hex[:12]}"
 

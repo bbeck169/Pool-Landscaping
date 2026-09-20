@@ -8,6 +8,11 @@ import pytest
 import requests
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from services.address_masker import mask_street, mask_address
 
@@ -15,8 +20,7 @@ _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"
 _ENV = dotenv_values(_BACKEND_ENV)
 _MONGO_URL = _ENV.get("MONGO_URL") or os.environ.get("MONGO_URL")
 _DB_NAME = _ENV.get("DB_NAME") or os.environ.get("DB_NAME")
-_sync = MongoClient(_MONGO_URL)[_DB_NAME]
-
+_sync = _shared_db()
 _REACT_ENV = Path(__file__).resolve().parents[2] / "frontend" / ".env"
 _REACT = dotenv_values(_REACT_ENV) if _REACT_ENV.is_file() else {}
 _PUBLIC_URL = _REACT.get("REACT_APP_BACKEND_URL") or os.environ.get(

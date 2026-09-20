@@ -4,9 +4,14 @@ import os, uuid, requests, pytest, asyncio
 from pathlib import Path
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 _E = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_E.get("MONGO_URL") or os.environ["MONGO_URL"])[_E.get("DB_NAME") or os.environ["DB_NAME"]]
+_sync = _shared_db()
 _R = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
 API = os.environ.get("BACKEND_API_URL") or ((_R.get("REACT_APP_BACKEND_URL") or "").rstrip("/") + "/api")
 

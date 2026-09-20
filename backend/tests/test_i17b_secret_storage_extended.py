@@ -15,11 +15,15 @@ import pytest
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-_sync = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-
+_sync = _shared_db()
 from services.messaging._helpers import (  # noqa: E402
     load_provider_config,
     save_provider_config,

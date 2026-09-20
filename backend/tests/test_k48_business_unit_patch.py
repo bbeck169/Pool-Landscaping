@@ -30,14 +30,17 @@ import pytest
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API = "http://localhost:8001/api"
-_sync = MongoClient(os.environ["MONGO_URL"])
-_db = _sync[os.environ["DB_NAME"]]
-
-
+_sync = _shared_client()
+_db = _shared_db()
 # ── Auth helpers (mirror the pattern used in test_invoice_edit.py) ─
 def _login(email: str) -> str:
     for _ in range(3):

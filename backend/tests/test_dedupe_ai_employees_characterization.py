@@ -42,12 +42,16 @@ from datetime import datetime, timezone
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+from tests._shared_mongo import (
+    shared_client as _shared_client,
+    shared_db as _shared_db,
+)
+
 
 from tests._phase34_asyncio import batch_safe_run as _run
 
 _ENV = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
-_sync = MongoClient(_ENV["MONGO_URL"])[_ENV["DB_NAME"]]
-
+_sync = _shared_db()
 _TENANT_A = f"p8-tenant-a-{uuid.uuid4().hex[:6]}"
 _TENANT_B = f"p8-tenant-b-{uuid.uuid4().hex[:6]}"
 
