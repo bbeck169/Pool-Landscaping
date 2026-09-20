@@ -140,22 +140,49 @@ def t1_seed():
 def test_pilot_create_is_idempotent():
     async def _go(_db):
         # Import lazily so the module rebind happens after the fixture.
-        from scripts.create_pilot_tenants import (
-            _create_pilot, PILOTS as _P)
-        r1 = [await _create_pilot(_db, s, dry_run=False) for s in _P]
-        r2 = [await _create_pilot(_db, s, dry_run=False) for s in _P]
-        # Cleanup so we don't pollute other tests.
+        from scripts.create_pilot_tenants import _create_pilot
+        # Feb-2026 hotfix — DO NOT touch the production ``pool`` /
+        # ``landscaping`` slugs. Use test-isolated slugs so the
+        # cleanup step below can nuke everything we created without
+        # accidentally wiping the live pilot tenants that admin flows
+        # depend on.
+        test_specs = [
+            {
+                "legacy_id": f"t1-legacy-pool-{uuid.uuid4()}",
+                "slug":      f"t1-test-pool-{uuid.uuid4().hex[:8]}",
+                "name":      "Test Pool Pilot",
+                "default_industry": "pool",
+            },
+            {
+                "legacy_id": f"t1-legacy-land-{uuid.uuid4()}",
+                "slug":      f"t1-test-land-{uuid.uuid4().hex[:8]}",
+                "name":      "Test Landscape Pilot",
+                "default_industry": "landscape",
+            },
+        ]
+        r1 = [await _create_pilot(_db, s, dry_run=False) for s in test_specs]
+        r2 = [await _create_pilot(_db, s, dry_run=False) for s in test_specs]
+        created_ids = [r["id"] for r in r1 if r["id"]]
+        legacy_ids  = [s["legacy_id"] for s in test_specs]
+        # Cleanup — scoped to the ids/slugs this test created.
         await _db.tenants.delete_many(
-            {"id": {"$in": [s["id"] for s in _P]}})
+            {"$or": [
+                {"id":   {"$in": created_ids + legacy_ids}},
+                {"slug": {"$in": [s["slug"] for s in test_specs]}},
+            ]})
         await _db.service_categories.delete_many(
-            {"tenant_id": {"$in": [s["id"] for s in _P]}})
+            {"tenant_id": {"$in": created_ids + legacy_ids}})
         await _db.income_categories.delete_many(
-            {"tenant_id": {"$in": [s["id"] for s in _P]}})
+            {"tenant_id": {"$in": created_ids + legacy_ids}})
         return r1, r2
 
     r1, r2 = run_test(_go)
-    assert set(r1) <= {"created", "already_exists"}
-    assert all(status == "already_exists" for status in r2), r2
+    r1_statuses = [r["status"] for r in r1]
+    r2_statuses = [r["status"] for r in r2]
+    assert set(r1_statuses) <= {
+        "created", "already_exists", "renamed_from_legacy",
+    }, r1_statuses
+    assert all(s == "already_exists" for s in r2_statuses), r2_statuses
 
 
 # ═════════════════════════════════════════════════════════════════════

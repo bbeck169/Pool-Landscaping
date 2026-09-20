@@ -1,3 +1,23 @@
+## Phase T1 HOTFIX — UUID-based pilots + pytest cleanup scoping — SHIPPED (Feb 2026)
+
+**Root cause of tester's 3 findings**: `test_pilot_create_is_idempotent` was scoping its teardown by slug=`pool`/`landscaping`, wiping the production pilot rows every time the pytest suite ran. With pilots gone, `get_user_tenants` filtered admin's stale membership → available_tenants=1 → switcher hidden or dropdown showed only Aquaterra → tester saw "silent no-op click", "sidebar mount", and "tenant_not_in_memberships 403".
+
+**Fixes applied**
+- `backend/scripts/create_pilot_tenants.py` — rewritten to mint real UUID4 `id`s per pilot with stable slugs `pool`/`landscaping`. Legacy `pool.tenant`/`landscaping.tenant` rows are auto-renamed to a fresh UUID + every user membership referencing the old string id is rewritten (`_migrate_legacy_membership_refs`). New helper `resolve_pilot_id(db, slug)` for tests/curl callers.
+- `backend/tests/test_tenant_split_t1.py::test_pilot_create_is_idempotent` — no longer touches production `pool`/`landscaping` slugs. Uses per-test UUID-seeded slugs (`t1-test-pool-<uuid>`, `t1-test-land-<uuid>`) so the teardown can nuke only what the test created.
+- One-shot manual cleanup: admin@aquaterra.com's stale membership row pointing at a dead pilot UUID was rewritten to reference the current pool pilot UUID.
+
+**Verification (all green)**
+- Backend pytest: **10 / 10** (`test_tenant_split_t1.py`) — production pilot rows survive the run.
+- Frontend vitest: **6 / 6** (`TenantSwitcher.test.jsx`).
+- Live-pod curl round-trip (`admin@aquaterra.com`): super_admin `/api/tenants` shows both pilots with real UUID ids and slugs `pool`/`landscaping` → `/auth/me` returns 2 memberships → `POST /auth/switch-tenant` (UUID) mints new JWT with `active_tenant_id=<pool_uuid>` → `GET /customers` count=0 (pool empty) → switch back → count=28 (Aquaterra data intact).
+- Frontend UI: `data-testid=admin-topbar-wide-wrap [data-testid=topbar-tenant-switcher-btn]` = 1; `aside [data-testid=topbar-tenant-switcher-btn]` = 0; click opens dropdown with 2 items. Screenshot: `/app/memory/screenshots/t1_tenant_switcher_topnav.jpg`.
+
+Bugs 1 + 2 + 3 all resolved. Prompt-injection recurrence still ignored (52nd hit).
+
+---
+
+
 ## Phase T1 — Tenant Split (Non-Destructive) + Multi-Tenant Users + Top-Nav Switcher — SHIPPED (Feb 2026)
 
 **Scope**

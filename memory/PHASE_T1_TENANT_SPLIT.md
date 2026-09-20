@@ -10,10 +10,12 @@ Status: **SHIPPED (Feb 2026)**
 - Super_admin-only admin surface to manage memberships, gated behind `insufficient_role_for_membership_mgmt`.
 
 ## Pilot tenants (both start EMPTY save for default categories)
-| id                    | slug          | name                         | settings.default_industry |
-| --------------------- | ------------- | ---------------------------- | ------------------------- |
-| `pool.tenant`         | `pool`        | Pool Services Pilot          | `pool`                    |
-| `landscaping.tenant`  | `landscaping` | Landscaping Services Pilot   | `landscape`               |
+| slug           | id shape                                       | name                         | settings.default_industry |
+| -------------- | ---------------------------------------------- | ---------------------------- | ------------------------- |
+| `pool`         | UUID4 (per-DB — resolve via `slug` or `/tenants` API) | Pool Services Pilot          | `pool`                    |
+| `landscaping`  | UUID4 (per-DB — resolve via `slug` or `/tenants` API) | Landscaping Services Pilot   | `landscape`               |
+
+Feb-2026 hotfix: pilots now carry a real UUID4 in the `id` field with a stable `slug`. Any legacy `id="pool.tenant"`/`"landscaping.tenant"` row created before the hotfix is auto-renamed on the next `create_pilot_tenants` run + every user membership pointing at the old string id is rewritten to reference the new UUID (idempotent). `resolve_pilot_id(db, slug)` helper is exposed for tests / curl scripts so nothing needs to hard-code either shape.
 
 No auto-migration of records. Explicit onboarding is required to move data into either pilot.
 
@@ -77,22 +79,25 @@ No auto-migration of records. Explicit onboarding is required to move data into 
 ## E2E curl verification (live preview, `admin@aquaterra.com`)
 ```
 1. `python -m scripts.create_pilot_tenants`
-   → pool.tenant status=created, landscaping.tenant status=created (2nd run: already_exists)
+   → slug=pool status=created id=<UUID>  slug=landscaping status=created id=<UUID>
+   (2nd run: both already_exists; legacy id=`pool.tenant` gets renamed_from_legacy on the transition run.)
 2. `python -m scripts.backfill_user_memberships`
    → seeded=126, already_multi=126 (2nd run: seeded=0)
-3. POST /api/admin/users/{admin_uid}/memberships {tenant_id: pool.tenant, role: admin}
-   → 200 created=true, memberships=[aquaterra, pool.tenant]
-4. GET /api/auth/me (aquaterra JWT)
-   → available_tenants=[{aquaterra, active_now=true}, {pool.tenant, active_now=false}]
-5. POST /api/auth/switch-tenant {tenant_id: pool.tenant}
-   → 200, new JWT decoded → active_tenant_id="pool.tenant"
-6. GET /api/customers?limit=5 (post-switch)
+3. Super_admin `GET /api/tenants` → returns 2 pilot rows with real UUID ids and slugs `pool` / `landscaping`.
+4. Super_admin `POST /api/admin/users/{admin_uid}/memberships {tenant_id: <pool_uuid>, role: admin}`
+   → 200 created=true.
+5. GET /api/auth/me (aquaterra JWT)
+   → available_tenants=[{aquaterra, active_now=true}, {pool UUID, active_now=false}]
+6. POST /api/auth/switch-tenant {tenant_id: <pool_uuid>}
+   → 200, new JWT decoded → active_tenant_id=<pool_uuid>
+7. GET /api/customers?limit=5 (post-switch)
    → count=0, tenant_ids_seen=[]  ← proves pool.tenant is empty AND scope flows through
-7. POST /api/auth/switch-tenant {tenant_id: affdfbfa-…} (switch back)
+8. POST /api/auth/switch-tenant {tenant_id: affdfbfa-…} (switch back)
    → 200, active_tenant={id: affdfbfa-…, name: "Pool & Landscaping of Vistancia"}
-8. GET /api/customers?limit=1 (post-switch-back)
+9. GET /api/customers?limit=1 (post-switch-back)
    → count=28, sample tenant_id=affdfbfa-…, name="Drift Datetime"
 ```
+Full live-pod output on file: run `bash scripts/README` — reproduce with the sequence in `PHASE_T1_TENANT_SPLIT.md`.
 
 ## Frontend UX
 - Wide topbar (`>=md`) shows `<TenantSwitcher />` between `<QuickAddButton />` and `<CreditsBudgetChip />`.
@@ -100,7 +105,7 @@ No auto-migration of records. Explicit onboarding is required to move data into 
 - Click → dropdown listing every membership; active tenant carries a `Check` glyph.
 - On pick: `POST /api/auth/switch-tenant` → `localStorage.setItem(TOKEN_KEY, new_token)` → `window.location.reload()` (per user brief — cleanest way to reset every mounted context, react-query caches, etc.).
 - Because the wide topbar wrap uses `overflow-x-auto`, the menu is portaled via `createPortal(document.body)` and self-positioned from the trigger rect so it renders unclipped over content.
-- Screenshot: `/app/memory/screenshots/t1_tenant_switcher_open.jpg` — trigger reads `Pool & Landscaping of Vist…`, dropdown shows `SWITCH TENANT | Pool & Landscaping of Vist… ✓ | Pool Services Pilot`.
+- Screenshot: `/app/memory/screenshots/t1_tenant_switcher_topnav.jpg` (Feb-2026 hotfix) — dropdown clearly opens in the **top nav** (adjacent to +Add Job / +Add Customer) with the trigger reading `Pool & Landscaping of Vist…` and the menu listing `Pool & Landscaping of Vist… ✓` (active) + `Pool Services Pilot`. Confirmed via `data-testid=admin-topbar-wide-wrap [data-testid=topbar-tenant-switcher-btn]` = 1 and `aside [data-testid=topbar-tenant-switcher-btn]` = 0.
 
 ## Guardrails
 - Single-tenant users see nothing new — trigger auto-hides when `memberships.length < 2`. Backwards-compatible with pre-T1 UX.
