@@ -1,6 +1,11 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/auth";
+// Phase G4 · Feb-2026 — Route-level lazy loading. `<PageSkeleton />`
+// is the shared Suspense fallback used while a route chunk is being
+// fetched. Kept intentionally dependency-free so it lives in the
+// main bundle at ~1 KB gzip.
+import PageSkeleton from "@/components/PageSkeleton";
 // Phase I1.5.c · Feb-2026 — Tenant theme provider (CSS-var overlay).
 // Wraps the authenticated app so ``useTenantTheme()`` returns the
 // tenant-persisted palette and the DOM has ``--tenant-*`` vars set
@@ -11,403 +16,467 @@ import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import ScrollToTop from "@/components/ScrollToTop";
 import useTelephonyLiveEvents from "@/hooks/useTelephonyLiveEvents";
 import AppLayout from "@/layouts/AppLayout";
-import PublicEstimateLanding from "@/pages/portal/PublicEstimateLanding";
+const PublicEstimateLanding = React.lazy(() => import(/* webpackChunkName: "p-portal-publicestimatelanding" */ "@/pages/portal/PublicEstimateLanding"));
 import Login from "@/pages/Login";
 // Phase 34 · Feb 2026 — self-serve password reset landing (stub UI).
 // Backend endpoint tracked in /app/memory/todo_password_reset.md.
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
-import PortalReviewSubmit from "@/pages/portal/PortalReviewSubmit";
-import PortalAgreementRenew from "@/pages/portal/PortalAgreementRenew";
-import Signup from "@/pages/Signup";
+const PortalReviewSubmit = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreviewsubmit" */ "@/pages/portal/PortalReviewSubmit"));
+const PortalAgreementRenew = React.lazy(() => import(/* webpackChunkName: "p-portal-portalagreementrenew" */ "@/pages/portal/PortalAgreementRenew"));
+const Signup = React.lazy(() => import(/* webpackChunkName: "p-signup" */ "@/pages/Signup"));
 // Feb-2026 · Business Signup SP2 — new public + wizard surface.
-import BusinessSignup from "@/pages/BusinessSignup";
-import {
-  BusinessSignupVerify,
-  BusinessSignupVerifyEmailSent,
-} from "@/pages/BusinessSignupVerify";
-import OnboardingWizard from "@/pages/OnboardingWizard";
-import TenantPicker from "@/pages/TenantPicker";
-import AdminDashboard from "@/pages/admin/Dashboard";
+const BusinessSignup = React.lazy(() => import(/* webpackChunkName: "p-businesssignup" */ "@/pages/BusinessSignup"));
+const BusinessSignupVerify = React.lazy(() => import(/* webpackChunkName: "p-businesssignupverify" */ "@/pages/BusinessSignupVerify").then(m => ({ default: m.BusinessSignupVerify })));
+const BusinessSignupVerifyEmailSent = React.lazy(() => import(/* webpackChunkName: "p-businesssignupverify" */ "@/pages/BusinessSignupVerify").then(m => ({ default: m.BusinessSignupVerifyEmailSent })));
+const OnboardingWizard = React.lazy(() => import(/* webpackChunkName: "p-onboardingwizard" */ "@/pages/OnboardingWizard"));
+const TenantPicker = React.lazy(() => import(/* webpackChunkName: "p-tenantpicker" */ "@/pages/TenantPicker"));
+const AdminDashboard = React.lazy(() => import(/* webpackChunkName: "p-admin-dashboard" */ "@/pages/admin/Dashboard"));
 import Placeholder from "@/pages/Placeholder";
-import CustomersList from "@/pages/customers/CustomersList";
-import CustomerForm from "@/pages/customers/CustomerForm";
-import CustomerDetail from "@/pages/customers/CustomerDetail";
-import CustomerChemistry from "@/pages/customers/CustomerChemistry";
-import CustomerChemistryHistory from "@/pages/customers/CustomerChemistryHistory";
-import { RequestJobPage, AdminJobRequestsPage } from "@/pages/job_requests/JobRequestsPages";
-import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
-import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
-import ServiceLogPage from "@/pages/workstream/ServiceLogPage";
-import CFODashboard from "@/pages/cfo/CFODashboard";
-import JobNew from "@/pages/jobs/JobNew";
-import JobDetail from "@/pages/jobs/JobDetail";
-import JobsList from "@/pages/jobs/JobsList";
-import AdminUsersList from "@/pages/admin/AdminUsersList";
-import AdminTagsList from "@/pages/admin/AdminTagsList";
-import AdminCommsSuppressionLog from "@/pages/admin/AdminCommsSuppressionLog";
-import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
-import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
-import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
+const CustomersList = React.lazy(() => import(/* webpackChunkName: "p-customers-customerslist" */ "@/pages/customers/CustomersList"));
+const CustomerForm = React.lazy(() => import(/* webpackChunkName: "p-customers-customerform" */ "@/pages/customers/CustomerForm"));
+const CustomerDetail = React.lazy(() => import(/* webpackChunkName: "p-customers-customerdetail" */ "@/pages/customers/CustomerDetail"));
+const CustomerChemistry = React.lazy(() => import(/* webpackChunkName: "p-customers-customerchemistry" */ "@/pages/customers/CustomerChemistry"));
+const CustomerChemistryHistory = React.lazy(() => import(/* webpackChunkName: "p-customers-customerchemistryhistory" */ "@/pages/customers/CustomerChemistryHistory"));
+const RequestJobPage = React.lazy(() => import(/* webpackChunkName: "p-job-requests-jobrequestspages" */ "@/pages/job_requests/JobRequestsPages").then(m => ({ default: m.RequestJobPage })));
+const AdminJobRequestsPage = React.lazy(() => import(/* webpackChunkName: "p-job-requests-jobrequestspages" */ "@/pages/job_requests/JobRequestsPages").then(m => ({ default: m.AdminJobRequestsPage })));
+const CalendarSchedule = React.lazy(() => import(/* webpackChunkName: "p-schedule-calendarschedule" */ "@/pages/schedule/CalendarSchedule"));
+const WorkstreamPage = React.lazy(() => import(/* webpackChunkName: "p-workstream-workstreampage" */ "@/pages/workstream/WorkstreamPage"));
+const ServiceLogPage = React.lazy(() => import(/* webpackChunkName: "p-workstream-servicelogpage" */ "@/pages/workstream/ServiceLogPage"));
+const CFODashboard = React.lazy(() => import(/* webpackChunkName: "p-cfo-cfodashboard" */ "@/pages/cfo/CFODashboard"));
+const JobNew = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobnew" */ "@/pages/jobs/JobNew"));
+const JobDetail = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobdetail" */ "@/pages/jobs/JobDetail"));
+const JobsList = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobslist" */ "@/pages/jobs/JobsList"));
+const AdminUsersList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminuserslist" */ "@/pages/admin/AdminUsersList"));
+const AdminTagsList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintagslist" */ "@/pages/admin/AdminTagsList"));
+const AdminCommsSuppressionLog = React.lazy(() => import(/* webpackChunkName: "p-admin-admincommssuppressionlog" */ "@/pages/admin/AdminCommsSuppressionLog"));
+const AdminServiceReportsList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminservicereportslist" */ "@/pages/admin/AdminServiceReportsList"));
+const AdminTimeEntriesList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintimeentrieslist" */ "@/pages/admin/AdminTimeEntriesList"));
+const ReflowHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-admin-reflowhistorypage" */ "@/pages/admin/ReflowHistoryPage"));
 // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
-import AdminChargeTemplatesPage from "@/pages/admin/AdminChargeTemplatesPage";
+const AdminChargeTemplatesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminchargetemplatespage" */ "@/pages/admin/AdminChargeTemplatesPage"));
 // Phase F3 · Feb-2026 — Soshie moderation queue.
-import SoshieModerationQueuePage from "@/pages/admin/SoshieModerationQueue";
+const SoshieModerationQueuePage = React.lazy(() => import(/* webpackChunkName: "p-admin-soshiemoderationqueue" */ "@/pages/admin/SoshieModerationQueue"));
 // Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
-import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
-import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
-import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
-import QuickBooksIntegrationPage from "@/pages/admin/integrations/QuickBooksIntegrationPage";
+const AiPersonasScopePage = React.lazy(() => import(/* webpackChunkName: "p-admin-aipersonasscopepage" */ "@/pages/admin/AiPersonasScopePage"));
+const AiToolAuditPage = React.lazy(() => import(/* webpackChunkName: "p-admin-aitoolauditpage" */ "@/pages/admin/AiToolAuditPage"));
+const PortalPaymentReturn = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpaymentreturn" */ "@/pages/portal/PortalPaymentReturn"));
+const QuickBooksIntegrationPage = React.lazy(() => import(/* webpackChunkName: "p-admin-integrations-quickbooksintegrationpage" */ "@/pages/admin/integrations/QuickBooksIntegrationPage"));
 import {
   BulkChargeRunsList as _P14bRunsList,
   BulkChargeRunDetail as _P14bRunDetail,
 } from "@/pages/admin/BulkChargeRunsPage";
-import QuotesList from "@/pages/quotes/QuotesList";
-import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
-import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
-import InvoicesList from "@/pages/invoices/InvoicesList";
-import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
-import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
-import LateFeesSettings from "@/pages/settings/LateFees";
-import IncomeCategoriesPage from "@/pages/settings/IncomeCategoriesPage";
-import PricebookSuppliersAdmin from "@/pages/settings/PricebookSuppliersAdmin";
-import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
+const QuotesList = React.lazy(() => import(/* webpackChunkName: "p-quotes-quoteslist" */ "@/pages/quotes/QuotesList"));
+const QuoteInvoiceNew = React.lazy(() => import(/* webpackChunkName: "p-quotes-quoteinvoicenew" */ "@/pages/quotes/QuoteInvoiceNew"));
+const QuoteInvoiceDetail = React.lazy(() => import(/* webpackChunkName: "p-quotes-quoteinvoicedetail" */ "@/pages/quotes/QuoteInvoiceDetail"));
+const InvoicesList = React.lazy(() => import(/* webpackChunkName: "p-invoices-invoiceslist" */ "@/pages/invoices/InvoicesList"));
+const MasterInvoicesList = React.lazy(() => import(/* webpackChunkName: "p-invoices-masterinvoice" */ "@/pages/invoices/MasterInvoice").then(m => ({ default: m.MasterInvoicesList })));
+const MasterInvoiceNew = React.lazy(() => import(/* webpackChunkName: "p-invoices-masterinvoice" */ "@/pages/invoices/MasterInvoice").then(m => ({ default: m.MasterInvoiceNew })));
+const MasterInvoiceDetail = React.lazy(() => import(/* webpackChunkName: "p-invoices-masterinvoice" */ "@/pages/invoices/MasterInvoice").then(m => ({ default: m.MasterInvoiceDetail })));
+const PaymentHandlesSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-paymenthandles" */ "@/pages/settings/PaymentHandles"));
+const LateFeesSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-latefees" */ "@/pages/settings/LateFees"));
+const IncomeCategoriesPage = React.lazy(() => import(/* webpackChunkName: "p-settings-incomecategoriespage" */ "@/pages/settings/IncomeCategoriesPage"));
+const PricebookSuppliersAdmin = React.lazy(() => import(/* webpackChunkName: "p-settings-pricebooksuppliersadmin" */ "@/pages/settings/PricebookSuppliersAdmin"));
+const PricebookCostComparison = React.lazy(() => import(/* webpackChunkName: "p-reports-pricebookcostcomparison" */ "@/pages/reports/PricebookCostComparison"));
 // Pricebook × Profit-Reporting Phase 1 · Feb-2026 — consolidated
 // Categories admin (Income + Service tabs) reached from the
 // Pricebook toolbar. Coexists with the legacy standalone pages so
 // bookmarked deep-links keep working.
-import CategoriesAdmin from "@/pages/pricebook/CategoriesAdmin";
-import SupplierSpendReport from "@/pages/reports/SupplierSpendReport";
-import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
-import JobOutcomeReasonsPage from "@/pages/settings/JobOutcomeReasonsPage";
+const CategoriesAdmin = React.lazy(() => import(/* webpackChunkName: "p-pricebook-categoriesadmin" */ "@/pages/pricebook/CategoriesAdmin"));
+const SupplierSpendReport = React.lazy(() => import(/* webpackChunkName: "p-reports-supplierspendreport" */ "@/pages/reports/SupplierSpendReport"));
+const ServiceCategoriesPage = React.lazy(() => import(/* webpackChunkName: "p-settings-servicecategoriespage" */ "@/pages/settings/ServiceCategoriesPage"));
+const JobOutcomeReasonsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-joboutcomereasonspage" */ "@/pages/settings/JobOutcomeReasonsPage"));
 // Feb-2026 · P29b — Muted Reasons admin (super_admin / admin / manager).
-import MutedReasonsPage from "@/pages/settings/MutedReasonsPage";
+const MutedReasonsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-mutedreasonspage" */ "@/pages/settings/MutedReasonsPage"));
 // Feb-2026 · P34 — Automation quiet-hours admin (super_admin / admin / manager).
-import QuietHoursPage from "@/pages/settings/QuietHoursPage";
+const QuietHoursPage = React.lazy(() => import(/* webpackChunkName: "p-settings-quiethourspage" */ "@/pages/settings/QuietHoursPage"));
 // Feb-2026 · P36 — Customer Tags settings manager (super_admin / admin / manager).
-import CustomerTagsSettingsPage from "@/pages/settings/CustomerTagsSettingsPage";
+const CustomerTagsSettingsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-customertagssettingspage" */ "@/pages/settings/CustomerTagsSettingsPage"));
 // Feb-2026 · P37b — GPS auto-start settings (super_admin / admin / manager).
-import GpsAutoStartPage from "@/pages/settings/GpsAutoStartPage";
-import BillingSettings from "@/pages/settings/BillingSettings";
-import SupplierSettings from "@/pages/settings/SupplierSettings";
-import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
+const GpsAutoStartPage = React.lazy(() => import(/* webpackChunkName: "p-settings-gpsautostartpage" */ "@/pages/settings/GpsAutoStartPage"));
+const BillingSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-billingsettings" */ "@/pages/settings/BillingSettings"));
+const SupplierSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-suppliersettings" */ "@/pages/settings/SupplierSettings"));
+const SupplierSyncAnalytics = React.lazy(() => import(/* webpackChunkName: "p-reports-suppliersyncanalytics" */ "@/pages/reports/SupplierSyncAnalytics"));
 // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
 // Feb-2026 · K55.a — import removed as part of the SuperCool +
 // HomeWorks integration sunset (PHASE_K55_a_FRONTEND_REMOVAL.md).
-import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
-import PortalPhotos from "@/pages/portal/PortalPhotos";
-import PortalReviews from "@/pages/portal/PortalReviews";
-import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
+const AutoVisitEmailSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-autovisitemailsettings" */ "@/pages/settings/AutoVisitEmailSettings"));
+const PortalPhotos = React.lazy(() => import(/* webpackChunkName: "p-portal-portalphotos" */ "@/pages/portal/PortalPhotos"));
+const PortalReviews = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreviews" */ "@/pages/portal/PortalReviews"));
+const AdminReviewsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminreviewspage" */ "@/pages/admin/AdminReviewsPage"));
 // Phase A1 · Feb-2026 — Proactive Intelligence full-list page.
 // Route ``/admin/intelligence/alerts`` — gated to admin + super_admin
 // via <AdminOrSuperAdminOnly>; the backend router returns 403 for any
 // other caller (``insufficient_role_for_alerts``), so the two gates
 // stay in lock-step.
-import IntelligenceAlerts from "@/pages/admin/IntelligenceAlerts";
+const IntelligenceAlerts = React.lazy(() => import(/* webpackChunkName: "p-admin-intelligencealerts" */ "@/pages/admin/IntelligenceAlerts"));
 // Phase C · Feb-2026 — Sales Pipeline Kanban page.
 // Route ``/admin/pipeline`` — gated to admin + super_admin + manager
 // via ``<AdminOrManager>``. Backend returns 403
 // ``insufficient_role_for_pipeline`` for any other caller.
-import SalesPipeline from "@/pages/admin/SalesPipeline";
-import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
+const SalesPipeline = React.lazy(() => import(/* webpackChunkName: "p-admin-salespipeline" */ "@/pages/admin/SalesPipeline"));
+const MarketingTemplatesLibraryPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingtemplateslibrarypage" */ "@/pages/marketing/MarketingTemplatesLibraryPage"));
 // Phase 9B · Feb 2026 — Rebuilt Marketing Templates admin (TipTap +
 // merge-tag palette + media picker + unresolved-token red-chip banner).
-import MarketingTemplatesListPage, {
-  MarketingTemplateDetailPage,
-} from "@/pages/marketing/MarketingTemplatesAdmin";
-import MarketingMediaAdminPage from "@/pages/marketing/MarketingMediaAdmin";
+const MarketingTemplatesListPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingtemplatesadmin" */ "@/pages/marketing/MarketingTemplatesAdmin"));
+const MarketingTemplateDetailPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingtemplatesadmin" */ "@/pages/marketing/MarketingTemplatesAdmin").then(m => ({ default: m.MarketingTemplateDetailPage })));
+const MarketingMediaAdminPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingmediaadmin" */ "@/pages/marketing/MarketingMediaAdmin"));
 // Feb-2026 · Phase B · Marketing Content Studio (Supercool image gen).
-import ContentStudioPage from "@/pages/marketing/ContentStudioPage";
+const ContentStudioPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-contentstudiopage" */ "@/pages/marketing/ContentStudioPage"));
 // Phase 10 · Feb 2026 — Referrals + promo codes admin + portal.
-import PortalReferralsPage from "@/pages/portal/PortalReferralsPage";
-import AdminPromoCodesPage from "@/pages/marketing/AdminPromoCodesPage";
-import AdminReferralsPage from "@/pages/marketing/AdminReferralsPage";
-import CustomerCreditsPage from "@/pages/customers/CustomerCreditsPage";
-import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
-import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
-import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
-import MarketingAnalyticsPage from "@/pages/marketing/MarketingAnalyticsPage";
-import MarketingSuppressionsPage from "@/pages/marketing/MarketingSuppressionsPage";
-import BroadcastsPage from "@/pages/marketing/BroadcastsPage";
-import CommunicationsLogPage from "@/pages/marketing/CommunicationsLogPage";
-import PortalPreferences from "@/pages/portal/PortalPreferences";
-import PrivacyPolicy from "@/pages/PrivacyPolicy";
-import TermsOfService from "@/pages/TermsOfService";
-import AiTransparency from "@/pages/AiTransparency";
-import PortalVideos from "@/pages/portal/PortalVideos";
-import {
-  CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
-  CommsAutomationsPage, CommsSendsHistoryPage,
-} from "@/pages/comms/CommsPages";
-import {
-  ReviewsDashboard, ReviewsRequestsPage,
-  ReviewsPlatformsPage, ReviewsWidgetPage,
-} from "@/pages/reviews/ReviewsPages";
-import PublicReviewLanding from "@/pages/reviews/PublicReviewLanding";
-import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
+const PortalReferralsPage = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreferralspage" */ "@/pages/portal/PortalReferralsPage"));
+const AdminPromoCodesPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-adminpromocodespage" */ "@/pages/marketing/AdminPromoCodesPage"));
+const AdminReferralsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-adminreferralspage" */ "@/pages/marketing/AdminReferralsPage"));
+const CustomerCreditsPage = React.lazy(() => import(/* webpackChunkName: "p-customers-customercreditspage" */ "@/pages/customers/CustomerCreditsPage"));
+const MarketingSegmentsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingsegmentspage" */ "@/pages/marketing/MarketingSegmentsPage"));
+const MarketingSequencesPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingsequencespage" */ "@/pages/marketing/MarketingSequencesPage"));
+const MarketingReviewRequestsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingreviewrequestspage" */ "@/pages/marketing/MarketingReviewRequestsPage"));
+const MarketingAnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketinganalyticspage" */ "@/pages/marketing/MarketingAnalyticsPage"));
+const MarketingSuppressionsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingsuppressionspage" */ "@/pages/marketing/MarketingSuppressionsPage"));
+const BroadcastsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-broadcastspage" */ "@/pages/marketing/BroadcastsPage"));
+const CommunicationsLogPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-communicationslogpage" */ "@/pages/marketing/CommunicationsLogPage"));
+const PortalPreferences = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpreferences" */ "@/pages/portal/PortalPreferences"));
+const PrivacyPolicy = React.lazy(() => import(/* webpackChunkName: "p-privacypolicy" */ "@/pages/PrivacyPolicy"));
+const TermsOfService = React.lazy(() => import(/* webpackChunkName: "p-termsofservice" */ "@/pages/TermsOfService"));
+const AiTransparency = React.lazy(() => import(/* webpackChunkName: "p-aitransparency" */ "@/pages/AiTransparency"));
+const PortalVideos = React.lazy(() => import(/* webpackChunkName: "p-portal-portalvideos" */ "@/pages/portal/PortalVideos"));
+const CommsTemplatesLibrary = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsTemplatesLibrary })));
+const CommsEmailBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsEmailBuilder })));
+const CommsSmsBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsSmsBuilder })));
+const CommsAutomationsPage = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsAutomationsPage })));
+const CommsSendsHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsSendsHistoryPage })));
+const ReviewsDashboard = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsDashboard })));
+const ReviewsRequestsPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsRequestsPage })));
+const ReviewsPlatformsPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsPlatformsPage })));
+const ReviewsWidgetPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsWidgetPage })));
+const PublicReviewLanding = React.lazy(() => import(/* webpackChunkName: "p-reviews-publicreviewlanding" */ "@/pages/reviews/PublicReviewLanding"));
+const PublicReviewsWidgetPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-publicreviewswidgetpage" */ "@/pages/reviews/PublicReviewsWidgetPage"));
 // QuoteIQ Q1-UI · Feb 2026
-import AICreditsPage from "@/pages/settings/AICreditsPage";
-import ChemicalsPage from "@/pages/settings/ChemicalsPage";
+const AICreditsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-aicreditspage" */ "@/pages/settings/AICreditsPage"));
+const ChemicalsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-chemicalspage" */ "@/pages/settings/ChemicalsPage"));
 // Feb-2026 · Phase 20 P3 — Website SEO analyzer.
-import WebsiteSeoPage from "@/pages/settings/WebsiteSeoPage";
+const WebsiteSeoPage = React.lazy(() => import(/* webpackChunkName: "p-settings-websiteseopage" */ "@/pages/settings/WebsiteSeoPage"));
 // Feb-2026 · Phase 20 P4 — GBP checklist.
-import LocalSeoPage from "@/pages/settings/LocalSeoPage";
+const LocalSeoPage = React.lazy(() => import(/* webpackChunkName: "p-settings-localseopage" */ "@/pages/settings/LocalSeoPage"));
 // Feb-2026 · Phase 20 P1 — GBP post drafter.
-import GbpPostsPage from "@/pages/marketing/GbpPostsPage";
+const GbpPostsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-gbppostspage" */ "@/pages/marketing/GbpPostsPage"));
 // Feb-2026 · Phase 20 P5 — Public NFC review card.
-import NfcReviewCardPage from "@/pages/public/NfcReviewCardPage";
+const NfcReviewCardPage = React.lazy(() => import(/* webpackChunkName: "p-public-nfcreviewcardpage" */ "@/pages/public/NfcReviewCardPage"));
 // Feb-2026 · Item 4 — AI Brain + Copilot admin pages.
-import AIBrainPage from "@/pages/settings/AIBrainPage";
-import CopilotPage from "@/pages/admin/CopilotPage";
-import AiMeasurePage from "@/pages/admin/AiMeasurePage";
-import LuminoBackfillPage from "@/pages/admin/LuminoBackfillPage";
-import ProfitReportPage from "@/pages/admin/ProfitReportPage";
-import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
+const AIBrainPage = React.lazy(() => import(/* webpackChunkName: "p-settings-aibrainpage" */ "@/pages/settings/AIBrainPage"));
+const CopilotPage = React.lazy(() => import(/* webpackChunkName: "p-admin-copilotpage" */ "@/pages/admin/CopilotPage"));
+const AiMeasurePage = React.lazy(() => import(/* webpackChunkName: "p-admin-aimeasurepage" */ "@/pages/admin/AiMeasurePage"));
+const LuminoBackfillPage = React.lazy(() => import(/* webpackChunkName: "p-admin-luminobackfillpage" */ "@/pages/admin/LuminoBackfillPage"));
+const ProfitReportPage = React.lazy(() => import(/* webpackChunkName: "p-admin-profitreportpage" */ "@/pages/admin/ProfitReportPage"));
+const GpsSettingsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-gpssettingspage" */ "@/pages/admin/GpsSettingsPage"));
 // Feb-2026 · Item 6 — Business Card admin editor.
-import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+const BusinessCardSettingsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-businesscardsettings" */ "@/pages/settings/BusinessCardSettings"));
 // Phase MI1 · Feb 2026 — multi-industry checklist template editor.
-import ChecklistTemplatesSettings from "@/pages/admin/ChecklistTemplatesSettings";
+const ChecklistTemplatesSettings = React.lazy(() => import(/* webpackChunkName: "p-admin-checklisttemplatessettings" */ "@/pages/admin/ChecklistTemplatesSettings"));
 // Feb-2026 · TD-08 promoted — admin logo upload UI.
-import BrandLogoSettings from "@/pages/settings/BrandLogoSettings";
+const BrandLogoSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-brandlogosettings" */ "@/pages/settings/BrandLogoSettings"));
 // Phase I1.5.b · Feb-2026 — Tenant theme editor UI + live preview.
-import ThemeSettings from "@/pages/settings/ThemeSettings";
+const ThemeSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-themesettings" */ "@/pages/settings/ThemeSettings"));
 // Feb-2026 · Business Settings — company defaults + brand colours.
-import BusinessSettings from "@/pages/settings/BusinessSettings";
-import IndustriesSettings from "@/pages/settings/IndustriesSettings";
+const BusinessSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-businesssettings" */ "@/pages/settings/BusinessSettings"));
+const IndustriesSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-industriessettings" */ "@/pages/settings/IndustriesSettings"));
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
-import ProposalAnalyticsPage from "@/pages/settings/ProposalAnalyticsPage";
+const ProposalAnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-proposalanalyticspage" */ "@/pages/settings/ProposalAnalyticsPage"));
 // Feb-2026 · Ticket #3 + #4 — Org Notifications + AI Configuration tabs.
-import OrgNotificationsSettings from "@/pages/settings/OrgNotificationsSettings";
-import AIConfigurationSettings from "@/pages/settings/AIConfigurationSettings";
-import ChemistryConfigurationSettings from "@/pages/settings/ChemistryConfigurationSettings";
-import FeatureMarketplaceSettings from "@/pages/settings/FeatureMarketplaceSettings";
-import SettingsSocial from "@/pages/settings/SettingsSocial";
-import MyProfilePage from "@/pages/account/MyProfilePage";
-import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
-import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
-import OrphanUsersPage from "@/pages/settings/OrphanUsersPage";
-import CitationBuilderPage from "@/pages/settings/CitationBuilderPage";
-import RankTrackerPage from "@/pages/settings/RankTrackerPage";
-import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
+const OrgNotificationsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-orgnotificationssettings" */ "@/pages/settings/OrgNotificationsSettings"));
+const AIConfigurationSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-aiconfigurationsettings" */ "@/pages/settings/AIConfigurationSettings"));
+const ChemistryConfigurationSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-chemistryconfigurationsettings" */ "@/pages/settings/ChemistryConfigurationSettings"));
+const FeatureMarketplaceSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-featuremarketplacesettings" */ "@/pages/settings/FeatureMarketplaceSettings"));
+const SettingsSocial = React.lazy(() => import(/* webpackChunkName: "p-settings-settingssocial" */ "@/pages/settings/SettingsSocial"));
+const MyProfilePage = React.lazy(() => import(/* webpackChunkName: "p-account-myprofilepage" */ "@/pages/account/MyProfilePage"));
+const GoogleReviewSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-googlereviewsettings" */ "@/pages/settings/GoogleReviewSettings"));
+const VanitySlugsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-vanityslugspage" */ "@/pages/settings/VanitySlugsPage"));
+const OrphanUsersPage = React.lazy(() => import(/* webpackChunkName: "p-settings-orphanuserspage" */ "@/pages/settings/OrphanUsersPage"));
+const CitationBuilderPage = React.lazy(() => import(/* webpackChunkName: "p-settings-citationbuilderpage" */ "@/pages/settings/CitationBuilderPage"));
+const RankTrackerPage = React.lazy(() => import(/* webpackChunkName: "p-settings-ranktrackerpage" */ "@/pages/settings/RankTrackerPage"));
+const DealsKanbanPage = React.lazy(() => import(/* webpackChunkName: "p-deals-dealskanbanpage" */ "@/pages/deals/DealsKanbanPage"));
 // QuoteIQ Q2-UI · Feb 2026
-import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
+const AIEstimatorPage = React.lazy(() => import(/* webpackChunkName: "p-estimates-aiestimatorpage" */ "@/pages/estimates/AIEstimatorPage"));
 // Phase 34 · Feb-2026 · Task H — the customer-facing Book Service
 // surface has been retired. The route ``/portal/book`` now redirects
 // to ``/portal/request-service`` (see below). The former
 // ``PortalBook`` page component was deleted in Phase B1 (Feb 2026)
 // after confirming no route or import referenced it.
-import PortalChatsPage from "@/pages/portal/PortalChatsPage";
-import PortalPhotosPage from "@/pages/portal/PortalPhotosPage";
-import PortalVideosPage from "@/pages/portal/PortalVideosPage";
-import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
-import AdminAssets from "@/pages/admin/AdminAssets";
-import MyOnboarding, { OnboardingTemplates, OnboardingQueue }
-  from "@/pages/onboarding/EmployeeOnboarding";
-import ReferralAnalyticsV2, { ReferralTiers }
-  from "@/pages/admin/ReferralInsights";
-import SeoAudits, { SeoAuditDetail } from "@/pages/seo/SeoAudits";
-import ContentScorer from "@/pages/seo/ContentScorer";
-import RankHeatmap from "@/pages/seo/RankHeatmap";
-import TopicalMap from "@/pages/seo/TopicalMap";
-import LlmVisibility from "@/pages/seo/LlmVisibility";
-import AtlasAgent from "@/pages/seo/AtlasAgent";
-import OttoAutoFix from "@/pages/seo/OttoAutoFix";
-import WebsiteStudio, { WebsiteStudioEditor } from "@/pages/seo/WebsiteStudio";
-import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabelReports";
-import EstimatorList, { EstimatorNew, EstimatorDetail, EstimatorRates } from "@/pages/estimator/EstimatorPages";
-import DunningSettings, { DunningQueue, DunningAnalytics } from "@/pages/dunning/DunningPages";
-import InventoryList, { InventoryDetail, InventoryPOs, InventoryAlerts, InventoryAnalytics } from "@/pages/inventory/InventoryPages";
+const PortalChatsPage = React.lazy(() => import(/* webpackChunkName: "p-portal-portalchatspage" */ "@/pages/portal/PortalChatsPage"));
+const PortalPhotosPage = React.lazy(() => import(/* webpackChunkName: "p-portal-portalphotospage" */ "@/pages/portal/PortalPhotosPage"));
+const PortalVideosPage = React.lazy(() => import(/* webpackChunkName: "p-portal-portalvideospage" */ "@/pages/portal/PortalVideosPage"));
+const AppointmentsQueue = React.lazy(() => import(/* webpackChunkName: "p-admin-appointmentsqueue" */ "@/pages/admin/AppointmentsQueue"));
+const AdminAssets = React.lazy(() => import(/* webpackChunkName: "p-admin-adminassets" */ "@/pages/admin/AdminAssets"));
+const MyOnboarding = React.lazy(() => import(/* webpackChunkName: "p-onboarding-employeeonboarding" */ "@/pages/onboarding/EmployeeOnboarding"));
+const OnboardingTemplates = React.lazy(() => import(/* webpackChunkName: "p-onboarding-employeeonboarding" */ "@/pages/onboarding/EmployeeOnboarding").then(m => ({ default: m.OnboardingTemplates })));
+const OnboardingQueue = React.lazy(() => import(/* webpackChunkName: "p-onboarding-employeeonboarding" */ "@/pages/onboarding/EmployeeOnboarding").then(m => ({ default: m.OnboardingQueue })));
+const ReferralAnalyticsV2 = React.lazy(() => import(/* webpackChunkName: "p-admin-referralinsights" */ "@/pages/admin/ReferralInsights"));
+const ReferralTiers = React.lazy(() => import(/* webpackChunkName: "p-admin-referralinsights" */ "@/pages/admin/ReferralInsights").then(m => ({ default: m.ReferralTiers })));
+const SeoAudits = React.lazy(() => import(/* webpackChunkName: "p-seo-seoaudits" */ "@/pages/seo/SeoAudits"));
+const SeoAuditDetail = React.lazy(() => import(/* webpackChunkName: "p-seo-seoaudits" */ "@/pages/seo/SeoAudits").then(m => ({ default: m.SeoAuditDetail })));
+const ContentScorer = React.lazy(() => import(/* webpackChunkName: "p-seo-contentscorer" */ "@/pages/seo/ContentScorer"));
+const RankHeatmap = React.lazy(() => import(/* webpackChunkName: "p-seo-rankheatmap" */ "@/pages/seo/RankHeatmap"));
+const TopicalMap = React.lazy(() => import(/* webpackChunkName: "p-seo-topicalmap" */ "@/pages/seo/TopicalMap"));
+const LlmVisibility = React.lazy(() => import(/* webpackChunkName: "p-seo-llmvisibility" */ "@/pages/seo/LlmVisibility"));
+const AtlasAgent = React.lazy(() => import(/* webpackChunkName: "p-seo-atlasagent" */ "@/pages/seo/AtlasAgent"));
+const OttoAutoFix = React.lazy(() => import(/* webpackChunkName: "p-seo-ottoautofix" */ "@/pages/seo/OttoAutoFix"));
+const WebsiteStudio = React.lazy(() => import(/* webpackChunkName: "p-seo-websitestudio" */ "@/pages/seo/WebsiteStudio"));
+const WebsiteStudioEditor = React.lazy(() => import(/* webpackChunkName: "p-seo-websitestudio" */ "@/pages/seo/WebsiteStudio").then(m => ({ default: m.WebsiteStudioEditor })));
+const WhiteLabelReports = React.lazy(() => import(/* webpackChunkName: "p-seo-whitelabelreports" */ "@/pages/seo/WhiteLabelReports"));
+const WhiteLabelReportDetail = React.lazy(() => import(/* webpackChunkName: "p-seo-whitelabelreports" */ "@/pages/seo/WhiteLabelReports").then(m => ({ default: m.WhiteLabelReportDetail })));
+const EstimatorList = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimatorpages" */ "@/pages/estimator/EstimatorPages"));
+const EstimatorNew = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimatorpages" */ "@/pages/estimator/EstimatorPages").then(m => ({ default: m.EstimatorNew })));
+const EstimatorDetail = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimatorpages" */ "@/pages/estimator/EstimatorPages").then(m => ({ default: m.EstimatorDetail })));
+const EstimatorRates = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimatorpages" */ "@/pages/estimator/EstimatorPages").then(m => ({ default: m.EstimatorRates })));
+const DunningSettings = React.lazy(() => import(/* webpackChunkName: "p-dunning-dunningpages" */ "@/pages/dunning/DunningPages"));
+const DunningQueue = React.lazy(() => import(/* webpackChunkName: "p-dunning-dunningpages" */ "@/pages/dunning/DunningPages").then(m => ({ default: m.DunningQueue })));
+const DunningAnalytics = React.lazy(() => import(/* webpackChunkName: "p-dunning-dunningpages" */ "@/pages/dunning/DunningPages").then(m => ({ default: m.DunningAnalytics })));
+const InventoryList = React.lazy(() => import(/* webpackChunkName: "p-inventory-inventorypages" */ "@/pages/inventory/InventoryPages"));
+const InventoryDetail = React.lazy(() => import(/* webpackChunkName: "p-inventory-inventorypages" */ "@/pages/inventory/InventoryPages").then(m => ({ default: m.InventoryDetail })));
+const InventoryPOs = React.lazy(() => import(/* webpackChunkName: "p-inventory-inventorypages" */ "@/pages/inventory/InventoryPages").then(m => ({ default: m.InventoryPOs })));
+const InventoryAlerts = React.lazy(() => import(/* webpackChunkName: "p-inventory-inventorypages" */ "@/pages/inventory/InventoryPages").then(m => ({ default: m.InventoryAlerts })));
+const InventoryAnalytics = React.lazy(() => import(/* webpackChunkName: "p-inventory-inventorypages" */ "@/pages/inventory/InventoryPages").then(m => ({ default: m.InventoryAnalytics })));
 // Phase 18 · Feb-2026 — Chemical Cost Report (Admin+ only).
-import ChemicalCostReport from "@/pages/inventory/ChemicalCostReport";
-import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAnalytics } from "@/pages/checks/ChecksPages";
-import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
-import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
+const ChemicalCostReport = React.lazy(() => import(/* webpackChunkName: "p-inventory-chemicalcostreport" */ "@/pages/inventory/ChemicalCostReport"));
+const CheckRegister = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages"));
+const CheckNew = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages").then(m => ({ default: m.CheckNew })));
+const CheckDetail = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages").then(m => ({ default: m.CheckDetail })));
+const CheckBanks = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages").then(m => ({ default: m.CheckBanks })));
+const CheckPayees = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages").then(m => ({ default: m.CheckPayees })));
+const CheckAnalytics = React.lazy(() => import(/* webpackChunkName: "p-checks-checkspages" */ "@/pages/checks/ChecksPages").then(m => ({ default: m.CheckAnalytics })));
+const PropertyLookupPage = React.lazy(() => import(/* webpackChunkName: "p-property-lookup-propertylookuppage" */ "@/pages/property-lookup/PropertyLookupPage"));
+const DispatchBoard = React.lazy(() => import(/* webpackChunkName: "p-dispatch-dispatchpages" */ "@/pages/dispatch/DispatchPages"));
+const WeatherReschedule = React.lazy(() => import(/* webpackChunkName: "p-dispatch-dispatchpages" */ "@/pages/dispatch/DispatchPages").then(m => ({ default: m.WeatherReschedule })));
 // Phase 17 · Feb 2026 — Google Maps + Directions redesigned dispatch board.
-import DispatchBoardPage from "@/pages/dispatch/DispatchBoardPage";
+const DispatchBoardPage = React.lazy(() => import(/* webpackChunkName: "p-dispatch-dispatchboardpage" */ "@/pages/dispatch/DispatchBoardPage"));
 // Feb-2026 · P1 diagnostic — wrap DispatchBoardPage in an ErrorBoundary
 // so mobile crashes surface a friendly panel instead of a blank screen,
 // and get reported to /api/client-errors for admin review.
 import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
-import AdminDiagnosticsErrorsPage from "@/pages/admin/AdminDiagnosticsErrorsPage";
-import DriverActivityPage from "@/pages/admin/DriverActivityPage";
-import ModerationCheckinsPage from "@/pages/admin/ModerationCheckinsPage";
-import SeoAuditorPage from "@/pages/admin/SeoAuditorPage";
-import AEOPage from "@/pages/admin/AEOPage";
-import WeeklyDigestPage from "@/pages/admin/WeeklyDigestPage";
-import AEODigestPage from "@/pages/admin/AEODigestPage";
-import ProspectsKanbanPage from "@/pages/admin/outreach/ProspectsKanbanPage";
-import OutreachTemplatesPage from "@/pages/admin/outreach/TemplatesPage";
-import KeywordIdeatorPage from "@/pages/admin/KeywordIdeatorPage";
-import GpsUsersPage from "@/pages/admin/GpsUsersPage";
+const AdminDiagnosticsErrorsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-admindiagnosticserrorspage" */ "@/pages/admin/AdminDiagnosticsErrorsPage"));
+const DriverActivityPage = React.lazy(() => import(/* webpackChunkName: "p-admin-driveractivitypage" */ "@/pages/admin/DriverActivityPage"));
+const ModerationCheckinsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-moderationcheckinspage" */ "@/pages/admin/ModerationCheckinsPage"));
+const SeoAuditorPage = React.lazy(() => import(/* webpackChunkName: "p-admin-seoauditorpage" */ "@/pages/admin/SeoAuditorPage"));
+const AEOPage = React.lazy(() => import(/* webpackChunkName: "p-admin-aeopage" */ "@/pages/admin/AEOPage"));
+const WeeklyDigestPage = React.lazy(() => import(/* webpackChunkName: "p-admin-weeklydigestpage" */ "@/pages/admin/WeeklyDigestPage"));
+const AEODigestPage = React.lazy(() => import(/* webpackChunkName: "p-admin-aeodigestpage" */ "@/pages/admin/AEODigestPage"));
+const ProspectsKanbanPage = React.lazy(() => import(/* webpackChunkName: "p-admin-outreach-prospectskanbanpage" */ "@/pages/admin/outreach/ProspectsKanbanPage"));
+const OutreachTemplatesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-outreach-templatespage" */ "@/pages/admin/outreach/TemplatesPage"));
+const KeywordIdeatorPage = React.lazy(() => import(/* webpackChunkName: "p-admin-keywordideatorpage" */ "@/pages/admin/KeywordIdeatorPage"));
+const GpsUsersPage = React.lazy(() => import(/* webpackChunkName: "p-admin-gpsuserspage" */ "@/pages/admin/GpsUsersPage"));
 // Phase G5a · Feb-2026 — Geofences + crossings inbox.
-import GeofencesPage from "@/pages/admin/GeofencesPage";
-import CrossingsInbox from "@/pages/admin/CrossingsInbox";
+const GeofencesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-geofencespage" */ "@/pages/admin/GeofencesPage"));
+const CrossingsInbox = React.lazy(() => import(/* webpackChunkName: "p-admin-crossingsinbox" */ "@/pages/admin/CrossingsInbox"));
 // Phase G5b · Feb-2026 — Stop → Job attribution report.
-import TimeOnSitePage from "@/pages/admin/TimeOnSitePage";
+const TimeOnSitePage = React.lazy(() => import(/* webpackChunkName: "p-admin-timeonsitepage" */ "@/pages/admin/TimeOnSitePage"));
 // Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard.
-import DriverScorecardPage from "@/pages/admin/DriverScorecardPage";
-import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
+const DriverScorecardPage = React.lazy(() => import(/* webpackChunkName: "p-admin-driverscorecardpage" */ "@/pages/admin/DriverScorecardPage"));
+const WidgetEmbedPage = React.lazy(() => import(/* webpackChunkName: "p-admin-widgetembedpage" */ "@/pages/admin/WidgetEmbedPage"));
 // MR3 · Feb-2026 — Public widget analytics.
-import WidgetAnalyticsPage from "@/pages/admin/WidgetAnalyticsPage";
+const WidgetAnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-widgetanalyticspage" */ "@/pages/admin/WidgetAnalyticsPage"));
 // Phase 2 · Feb-2026 (REWORKED) — Admin-only shared Route Replay viewer.
-import AdminSharedReplayPage from "@/pages/admin/AdminSharedReplayPage";
-import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
-import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
+const AdminSharedReplayPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminsharedreplaypage" */ "@/pages/admin/AdminSharedReplayPage"));
+const CheckBatchNew = React.lazy(() => import(/* webpackChunkName: "p-checks-checkbatchpages" */ "@/pages/checks/CheckBatchPages"));
+const CheckPayrollImport = React.lazy(() => import(/* webpackChunkName: "p-checks-checkbatchpages" */ "@/pages/checks/CheckBatchPages").then(m => ({ default: m.CheckPayrollImport })));
+const ChurnDashboard = React.lazy(() => import(/* webpackChunkName: "p-customer-success-churnpages" */ "@/pages/customer-success/ChurnPages"));
+const ContentRefresh = React.lazy(() => import(/* webpackChunkName: "p-customer-success-churnpages" */ "@/pages/customer-success/ChurnPages").then(m => ({ default: m.ContentRefresh })));
 // Feb-2026 · Import collision fix — the OLD PortalWarranties export
 // inside WarrantyPages.jsx has been superseded by the read-only
 // customer portal implementation at ``@/pages/portal/PortalWarranties``.
 // Drop it from this named-import list so it doesn't clash with the
 // default import from the portal module (see line ~361).
-import WarrantyPlans, { WarrantyContracts, WarrantyClaims } from "@/pages/warranties/WarrantyPages";
-import TermsSettings from "@/pages/settings/Terms";
-import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
+const WarrantyPlans = React.lazy(() => import(/* webpackChunkName: "p-warranties-warrantypages" */ "@/pages/warranties/WarrantyPages"));
+const WarrantyContracts = React.lazy(() => import(/* webpackChunkName: "p-warranties-warrantypages" */ "@/pages/warranties/WarrantyPages").then(m => ({ default: m.WarrantyContracts })));
+const WarrantyClaims = React.lazy(() => import(/* webpackChunkName: "p-warranties-warrantypages" */ "@/pages/warranties/WarrantyPages").then(m => ({ default: m.WarrantyClaims })));
+const TermsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-terms" */ "@/pages/settings/Terms"));
+const LegalDocsList = React.lazy(() => import(/* webpackChunkName: "p-settings-legaldocs" */ "@/pages/settings/LegalDocs").then(m => ({ default: m.LegalDocsList })));
+const LegalDocEditor = React.lazy(() => import(/* webpackChunkName: "p-settings-legaldocs" */ "@/pages/settings/LegalDocs").then(m => ({ default: m.LegalDocEditor })));
 // Feb-2026 · Slice 2B — Multi-ToS admin editor (Pool + Landscaping).
-import TosAdminEditor from "@/pages/settings/TosAdminEditor";
-import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
+const TosAdminEditor = React.lazy(() => import(/* webpackChunkName: "p-settings-tosadmineditor" */ "@/pages/settings/TosAdminEditor"));
+const IntegrationsHub = React.lazy(() => import(/* webpackChunkName: "p-settings-integrationspages" */ "@/pages/settings/IntegrationsPages").then(m => ({ default: m.IntegrationsHub })));
+const MapSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-integrationspages" */ "@/pages/settings/IntegrationsPages").then(m => ({ default: m.MapSettings })));
 // Feb-2026 · K55.a — SuperCool + HomeWorks integration surfaces
 // removed as part of the sunset.  Historical DB data (per-doc
 // ``homeworks_*`` audit fields + ``db.mcp_oauth_tokens`` where
 // ``provider="supercool"``) is preserved intact.  See
 // /app/memory/PHASE_K55_a_FRONTEND_REMOVAL.md.
 // Feb-2026 · Item 3 — Deletions audit page (super_admin only).
-import DeletionsAuditPage from "@/pages/admin/audit/DeletionsAuditPage";
+const DeletionsAuditPage = React.lazy(() => import(/* webpackChunkName: "p-admin-audit-deletionsauditpage" */ "@/pages/admin/audit/DeletionsAuditPage"));
 // Feb-2026 · Admin migrations dashboard (super_admin only) — driver
 // for one-off backfills (P19 empty-lead enrichment initially).
-import AdminMigrationsPage from "@/pages/admin/AdminMigrationsPage";
+const AdminMigrationsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminmigrationspage" */ "@/pages/admin/AdminMigrationsPage"));
 // Phase H6 · Feb-2026 — Monthly analytics rollup dashboard.
-import AnalyticsMonthlyPage from "@/pages/admin/AnalyticsMonthlyPage";
-import PortalTerms from "@/pages/portal/PortalTerms";
-import {
-  MarketingHub, BrandMemory,
-  Posts, ApprovalQueue, ContentCalendar, SchedulingConfig, Performance,
-  TemplatesHub, Reviews,
-} from "@/pages/marketing/MarketingPages";
+const AnalyticsMonthlyPage = React.lazy(() => import(/* webpackChunkName: "p-admin-analyticsmonthlypage" */ "@/pages/admin/AnalyticsMonthlyPage"));
+const PortalTerms = React.lazy(() => import(/* webpackChunkName: "p-portal-portalterms" */ "@/pages/portal/PortalTerms"));
+const MarketingHub = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.MarketingHub })));
+const BrandMemory = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.BrandMemory })));
+const Posts = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.Posts })));
+const ApprovalQueue = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.ApprovalQueue })));
+const ContentCalendar = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.ContentCalendar })));
+const SchedulingConfig = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.SchedulingConfig })));
+const Performance = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.Performance })));
+const TemplatesHub = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.TemplatesHub })));
+const Reviews = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingpages" */ "@/pages/marketing/MarketingPages").then(m => ({ default: m.Reviews })));
 // M2 UI — new Campaigns experience overrides the legacy placeholders
 // from MarketingPages.jsx. Routes below (/marketing/campaigns*) point
 // at these.
-import {
-  CampaignsList, CampaignNew, CampaignDetail,
-} from "@/pages/marketing/M2Campaigns";
-import BeforeAfterStudio from "@/pages/marketing/BeforeAfterStudio";
-import DirectoriesHub from "@/pages/marketing/directories/DirectoriesHub";
-import NapProfilePage from "@/pages/marketing/directories/NapProfilePage";
-import DirectorySubmissionsPage from "@/pages/marketing/directories/DirectorySubmissionsPage";
-import AutopilotPage from "@/pages/marketing/AutopilotPage";
-import InstaQuoteAdminPage from "@/pages/marketing/InstaQuoteAdmin";
-import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
-import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
-import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
-import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
+const CampaignsList = React.lazy(() => import(/* webpackChunkName: "p-marketing-m2campaigns" */ "@/pages/marketing/M2Campaigns").then(m => ({ default: m.CampaignsList })));
+const CampaignNew = React.lazy(() => import(/* webpackChunkName: "p-marketing-m2campaigns" */ "@/pages/marketing/M2Campaigns").then(m => ({ default: m.CampaignNew })));
+const CampaignDetail = React.lazy(() => import(/* webpackChunkName: "p-marketing-m2campaigns" */ "@/pages/marketing/M2Campaigns").then(m => ({ default: m.CampaignDetail })));
+const BeforeAfterStudio = React.lazy(() => import(/* webpackChunkName: "p-marketing-beforeafterstudio" */ "@/pages/marketing/BeforeAfterStudio"));
+const DirectoriesHub = React.lazy(() => import(/* webpackChunkName: "p-marketing-directories-directorieshub" */ "@/pages/marketing/directories/DirectoriesHub"));
+const NapProfilePage = React.lazy(() => import(/* webpackChunkName: "p-marketing-directories-napprofilepage" */ "@/pages/marketing/directories/NapProfilePage"));
+const DirectorySubmissionsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-directories-directorysubmissionspage" */ "@/pages/marketing/directories/DirectorySubmissionsPage"));
+const AutopilotPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-autopilotpage" */ "@/pages/marketing/AutopilotPage"));
+const InstaQuoteAdminPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-instaquoteadmin" */ "@/pages/marketing/InstaQuoteAdmin"));
+const PublicInstaQuotePage = React.lazy(() => import(/* webpackChunkName: "p-public-publicinstaquote" */ "@/pages/public/PublicInstaQuote"));
+const InstaScheduleAdminPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-instascheduleadmin" */ "@/pages/marketing/InstaScheduleAdmin"));
+const PublicInstaSchedulePage = React.lazy(() => import(/* webpackChunkName: "p-public-publicinstaschedule" */ "@/pages/public/PublicInstaSchedule"));
+const PublicInvoicePay = React.lazy(() => import(/* webpackChunkName: "p-public-publicinvoicepay" */ "@/pages/public/PublicInvoicePay"));
 // Feb-2026 · Task 3 · Invoices bypass portal — new magic-link
 // route `/i/:token` renders the full itemized InvoiceView with an
 // inline Pay Now button. Coexists with `/pay/invoice/:id?token=…`
 // (kept as backwards-compat alias for older emails).
-import PublicInvoiceMagic from "@/pages/public/PublicInvoiceMagic";
+const PublicInvoiceMagic = React.lazy(() => import(/* webpackChunkName: "p-public-publicinvoicemagic" */ "@/pages/public/PublicInvoiceMagic"));
 // Phase 22 · Feb 2026 — Public Service Images portal (no auth).
-import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
+const ServiceImagesPortalPage = React.lazy(() => import(/* webpackChunkName: "p-public-serviceimagesportalpage" */ "@/pages/public/ServiceImagesPortalPage"));
 // Phase 47c (Feb 2026) — /portal/add-card RESTORED as a direct-Stripe
 // magic-link flow (Elements + SetupIntent). Un-does the Phase LZ4
 // retirement now that the user has directed every payment surface to
 // route through Stripe directly (no Lumino / Zapier).
-import AddCardPage from "@/pages/public/AddCardPage";
-import TeamChatPage from "@/pages/chat/TeamChatPage";
-import Walkie from "@/pages/walkie/Walkie";
-import {
-  SequencesList, SequenceNew, SequenceDetail,
-} from "@/pages/marketing/SequencePages";
-import {
-  SeoHub, ArticlesList, ArticleEditor, KeywordSuggest, SeoAudit, RankGrid,
-  WordPressSettings, GbpHub,
-} from "@/pages/seo/SeoPages";
-import { AiEmployeesList, AiEmployeeDetail, TasksPage,
-  AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
-} from "@/pages/aiops/AiOpsPages";
+const AddCardPage = React.lazy(() => import(/* webpackChunkName: "p-public-addcardpage" */ "@/pages/public/AddCardPage"));
+const TeamChatPage = React.lazy(() => import(/* webpackChunkName: "p-chat-teamchatpage" */ "@/pages/chat/TeamChatPage"));
+const Walkie = React.lazy(() => import(/* webpackChunkName: "p-walkie-walkie" */ "@/pages/walkie/Walkie"));
+const SequencesList = React.lazy(() => import(/* webpackChunkName: "p-marketing-sequencepages" */ "@/pages/marketing/SequencePages").then(m => ({ default: m.SequencesList })));
+const SequenceNew = React.lazy(() => import(/* webpackChunkName: "p-marketing-sequencepages" */ "@/pages/marketing/SequencePages").then(m => ({ default: m.SequenceNew })));
+const SequenceDetail = React.lazy(() => import(/* webpackChunkName: "p-marketing-sequencepages" */ "@/pages/marketing/SequencePages").then(m => ({ default: m.SequenceDetail })));
+const SeoHub = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.SeoHub })));
+const ArticlesList = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.ArticlesList })));
+const ArticleEditor = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.ArticleEditor })));
+const KeywordSuggest = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.KeywordSuggest })));
+const SeoAudit = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.SeoAudit })));
+const RankGrid = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.RankGrid })));
+const WordPressSettings = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.WordPressSettings })));
+const GbpHub = React.lazy(() => import(/* webpackChunkName: "p-seo-seopages" */ "@/pages/seo/SeoPages").then(m => ({ default: m.GbpHub })));
+const AiEmployeesList = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.AiEmployeesList })));
+const AiEmployeeDetail = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.AiEmployeeDetail })));
+const TasksPage = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.TasksPage })));
+const AccessSettings = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.AccessSettings })));
+const AccessHistory = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.AccessHistory })));
+const RingCentralSettings = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.RingCentralSettings })));
+const CallLogsPage = React.lazy(() => import(/* webpackChunkName: "p-aiops-aiopspages" */ "@/pages/aiops/AiOpsPages").then(m => ({ default: m.CallLogsPage })));
 // Phase S2 · Feb-2026 — Soshie Hub (Brand Brain + Autopilot + Review Queue).
-import SoshieHub from "@/pages/soshie/SoshieHub";
+const SoshieHub = React.lazy(() => import(/* webpackChunkName: "p-soshie-soshiehub" */ "@/pages/soshie/SoshieHub"));
 // Phase 11 · Feb 2026 — Equipment Service Trackers (Filter & Salt Cell).
-import {
-  FilterTrackerListPage, FilterTrackerManagePage,
-  SaltCellTrackerListPage, SaltCellTrackerManagePage,
-} from "@/pages/tracking/EquipmentTrackerPages";
-import NotificationsPage from "@/pages/notifications/NotificationsPage";
-import NotificationPrefs from "@/pages/settings/NotificationPrefs";
-import LeadAlertsSettings from "@/pages/settings/LeadAlertsSettings";
+const FilterTrackerListPage = React.lazy(() => import(/* webpackChunkName: "p-tracking-equipmenttrackerpages" */ "@/pages/tracking/EquipmentTrackerPages").then(m => ({ default: m.FilterTrackerListPage })));
+const FilterTrackerManagePage = React.lazy(() => import(/* webpackChunkName: "p-tracking-equipmenttrackerpages" */ "@/pages/tracking/EquipmentTrackerPages").then(m => ({ default: m.FilterTrackerManagePage })));
+const SaltCellTrackerListPage = React.lazy(() => import(/* webpackChunkName: "p-tracking-equipmenttrackerpages" */ "@/pages/tracking/EquipmentTrackerPages").then(m => ({ default: m.SaltCellTrackerListPage })));
+const SaltCellTrackerManagePage = React.lazy(() => import(/* webpackChunkName: "p-tracking-equipmenttrackerpages" */ "@/pages/tracking/EquipmentTrackerPages").then(m => ({ default: m.SaltCellTrackerManagePage })));
+const NotificationsPage = React.lazy(() => import(/* webpackChunkName: "p-notifications-notificationspage" */ "@/pages/notifications/NotificationsPage"));
+const NotificationPrefs = React.lazy(() => import(/* webpackChunkName: "p-settings-notificationprefs" */ "@/pages/settings/NotificationPrefs"));
+const LeadAlertsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-leadalertssettings" */ "@/pages/settings/LeadAlertsSettings"));
 // StripeReconciliation page removed in Phase LZ4 (Feb 2026);
 // Stripe SDK is retired. Import + route deleted.
-import {
-  D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
-} from "@/pages/d2d/D2dPages";
-import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
-import NotFound from "@/pages/NotFound";
-import { CheckinsList } from "@/pages/misc/GapClosures";
-import { CommunicationThread, TechnicianProfile, FormsList, FormEditor, PublicForm } from "@/pages/phase14/Phase14Pages";
+const D2dDashboard = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dDashboard })));
+const D2dMap = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dMap })));
+const D2dKnocks = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dKnocks })));
+const D2dOpenLeads = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dOpenLeads })));
+const D2dSoldLeads = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dSoldLeads })));
+const D2dReport = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dReport })));
+const D2dLeaderboard = React.lazy(() => import(/* webpackChunkName: "p-d2d-d2dpages" */ "@/pages/d2d/D2dPages").then(m => ({ default: m.D2dLeaderboard })));
+const DispatchMap = React.lazy(() => import(/* webpackChunkName: "p-ops-mappages" */ "@/pages/ops/MapPages").then(m => ({ default: m.DispatchMap })));
+const ScheduleMap = React.lazy(() => import(/* webpackChunkName: "p-ops-mappages" */ "@/pages/ops/MapPages").then(m => ({ default: m.ScheduleMap })));
+const NotFound = React.lazy(() => import(/* webpackChunkName: "p-notfound" */ "@/pages/NotFound"));
+const CheckinsList = React.lazy(() => import(/* webpackChunkName: "p-misc-gapclosures" */ "@/pages/misc/GapClosures").then(m => ({ default: m.CheckinsList })));
+const CommunicationThread = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.CommunicationThread })));
+const TechnicianProfile = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.TechnicianProfile })));
+const FormsList = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.FormsList })));
+const FormEditor = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.FormEditor })));
+const PublicForm = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.PublicForm })));
 import { PermissionsProvider } from "@/hooks/usePermissions";
-import {
-  LandscapeAI, CadList, CadEditor, SatelliteMeasure, VirtualBid,
-  DigitalCardList, PublicCard, WeatherHub,
-} from "@/pages/aitools/AiToolsPages";
-import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
-import OpsHub from "@/pages/ops/OpsHub";
+const LandscapeAI = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.LandscapeAI })));
+const CadList = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.CadList })));
+const CadEditor = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.CadEditor })));
+const SatelliteMeasure = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.SatelliteMeasure })));
+const VirtualBid = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.VirtualBid })));
+const DigitalCardList = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.DigitalCardList })));
+const PublicCard = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.PublicCard })));
+const WeatherHub = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.WeatherHub })));
+const EstimatesList = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimator" */ "@/pages/estimator/Estimator").then(m => ({ default: m.EstimatesList })));
+const EstimatorSettings = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimator" */ "@/pages/estimator/Estimator").then(m => ({ default: m.EstimatorSettings })));
+const EstimatorTemplates = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimator" */ "@/pages/estimator/Estimator").then(m => ({ default: m.EstimatorTemplates })));
+const EstimatorEditor = React.lazy(() => import(/* webpackChunkName: "p-estimator-estimator" */ "@/pages/estimator/Estimator").then(m => ({ default: m.EstimatorEditor })));
+const OpsHub = React.lazy(() => import(/* webpackChunkName: "p-ops-opshub" */ "@/pages/ops/OpsHub"));
 // Feb-2026 · Job Timers Phase 1 + Chemical Cost Report — fresh pages.
-import JobTimersPage from "@/pages/timers/JobTimersPage";
-import ChemicalCostReportPage from "@/pages/reports/ChemicalCostReportPage";
-import RepairCalculatorPage from "@/pages/ops/RepairCalculatorPage";
-import ReportsHub from "@/pages/reports/ReportsHub";
-import ReportsSuite from "@/pages/reports/ReportsSuite";
-import BusinessSummary from "@/pages/reports/BusinessSummary";
-import BusinessSnapshot from "@/pages/reports/BusinessSnapshot";
+const JobTimersPage = React.lazy(() => import(/* webpackChunkName: "p-timers-jobtimerspage" */ "@/pages/timers/JobTimersPage"));
+const ChemicalCostReportPage = React.lazy(() => import(/* webpackChunkName: "p-reports-chemicalcostreportpage" */ "@/pages/reports/ChemicalCostReportPage"));
+const RepairCalculatorPage = React.lazy(() => import(/* webpackChunkName: "p-ops-repaircalculatorpage" */ "@/pages/ops/RepairCalculatorPage"));
+const ReportsHub = React.lazy(() => import(/* webpackChunkName: "p-reports-reportshub" */ "@/pages/reports/ReportsHub"));
+const ReportsSuite = React.lazy(() => import(/* webpackChunkName: "p-reports-reportssuite" */ "@/pages/reports/ReportsSuite"));
+const BusinessSummary = React.lazy(() => import(/* webpackChunkName: "p-reports-businesssummary" */ "@/pages/reports/BusinessSummary"));
+const BusinessSnapshot = React.lazy(() => import(/* webpackChunkName: "p-reports-businesssnapshot" */ "@/pages/reports/BusinessSnapshot"));
 // Feb-2026 · Reports Gap Fill Phase 5a.1 (Part B).
-import AttritionReport from "@/pages/reports/AttritionReport";
-import TimeToGetPaidReport from "@/pages/reports/TimeToGetPaidReport";
+const AttritionReport = React.lazy(() => import(/* webpackChunkName: "p-reports-attritionreport" */ "@/pages/reports/AttritionReport"));
+const TimeToGetPaidReport = React.lazy(() => import(/* webpackChunkName: "p-reports-timetogetpaidreport" */ "@/pages/reports/TimeToGetPaidReport"));
 // Feb-2026 · Reports Gap Fill Phase 5a.2 — cockpit-mirror trio.
-import RevenueByServiceReport from "@/pages/reports/RevenueByServiceReport";
-import RecurringVsProjectReport from "@/pages/reports/RecurringVsProjectReport";
-import ClientLifetimeValueReport from "@/pages/reports/ClientLifetimeValueReport";
+const RevenueByServiceReport = React.lazy(() => import(/* webpackChunkName: "p-reports-revenuebyservicereport" */ "@/pages/reports/RevenueByServiceReport"));
+const RecurringVsProjectReport = React.lazy(() => import(/* webpackChunkName: "p-reports-recurringvsprojectreport" */ "@/pages/reports/RecurringVsProjectReport"));
+const ClientLifetimeValueReport = React.lazy(() => import(/* webpackChunkName: "p-reports-clientlifetimevaluereport" */ "@/pages/reports/ClientLifetimeValueReport"));
 // Feb-2026 · Reports Gap Fill Phase 5b.1 — Close Ratio + Time to Close.
-import CloseRatioReport from "@/pages/reports/CloseRatioReport";
-import TimeToCloseReport from "@/pages/reports/TimeToCloseReport";
+const CloseRatioReport = React.lazy(() => import(/* webpackChunkName: "p-reports-closeratioreport" */ "@/pages/reports/CloseRatioReport"));
+const TimeToCloseReport = React.lazy(() => import(/* webpackChunkName: "p-reports-timetoclosereport" */ "@/pages/reports/TimeToCloseReport"));
 // Feb-2026 · Reports Gap Fill Phase 5b.2 — Labor Efficiency + Booked Out / Capacity.
-import LaborEfficiencyReport from "@/pages/reports/LaborEfficiencyReport";
-import BookedOutCapacityReport from "@/pages/reports/BookedOutCapacityReport";
-import Forecast from "@/pages/reports/Forecast";
-import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
-import GpsAutoStartAudit from "@/pages/reports/GpsAutoStartAudit";
-import IncomeByCategory from "@/pages/reports/IncomeByCategoryPage";
-import UncategorizedItemsReport from "@/pages/reports/UncategorizedItemsReport";
-import {
-  RevenueByCity, RevenueByCrew, RevenueByCustomer, GrossSales, InvoicedItems,
-} from "@/pages/reports/RevenueSlices";
-import {
-  PaymentsLedger, AutoBilling, ImpExp, IncomeCategoriesCrud,
-} from "@/pages/finance/FinancePages";
-import AutobillingRuns from "@/pages/finance/AutobillingRuns";
-import PortalHome from "@/pages/portal/PortalHome";
-import {
-  PortalServices, PortalServiceDetail,
-  PortalInvoices, PortalInvoiceDetail,
-  PortalEstimates, PortalEstimateDetail,
-  PortalPayments, PortalPaymentMethod,
-  PortalDocuments, PortalMessages, PortalProfile,
-  PortalRequestService, PortalPaymentComplete,
-} from "@/pages/portal/PortalPages";
-import PortalWarranties from "@/pages/portal/PortalWarranties";
-import {
-  PortalServiceReports, PortalServiceReportDetail,
-} from "@/pages/portal/PortalServiceReports";
-import PortalSignPage from "@/pages/portal/PortalSign";
-import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
+const LaborEfficiencyReport = React.lazy(() => import(/* webpackChunkName: "p-reports-laborefficiencyreport" */ "@/pages/reports/LaborEfficiencyReport"));
+const BookedOutCapacityReport = React.lazy(() => import(/* webpackChunkName: "p-reports-bookedoutcapacityreport" */ "@/pages/reports/BookedOutCapacityReport"));
+const Forecast = React.lazy(() => import(/* webpackChunkName: "p-reports-forecast" */ "@/pages/reports/Forecast"));
+const CustomerRetentionReport = React.lazy(() => import(/* webpackChunkName: "p-reports-customerretentionreport" */ "@/pages/reports/CustomerRetentionReport"));
+const GpsAutoStartAudit = React.lazy(() => import(/* webpackChunkName: "p-reports-gpsautostartaudit" */ "@/pages/reports/GpsAutoStartAudit"));
+const IncomeByCategory = React.lazy(() => import(/* webpackChunkName: "p-reports-incomebycategorypage" */ "@/pages/reports/IncomeByCategoryPage"));
+const UncategorizedItemsReport = React.lazy(() => import(/* webpackChunkName: "p-reports-uncategorizeditemsreport" */ "@/pages/reports/UncategorizedItemsReport"));
+const RevenueByCity = React.lazy(() => import(/* webpackChunkName: "p-reports-revenueslices" */ "@/pages/reports/RevenueSlices").then(m => ({ default: m.RevenueByCity })));
+const RevenueByCrew = React.lazy(() => import(/* webpackChunkName: "p-reports-revenueslices" */ "@/pages/reports/RevenueSlices").then(m => ({ default: m.RevenueByCrew })));
+const RevenueByCustomer = React.lazy(() => import(/* webpackChunkName: "p-reports-revenueslices" */ "@/pages/reports/RevenueSlices").then(m => ({ default: m.RevenueByCustomer })));
+const GrossSales = React.lazy(() => import(/* webpackChunkName: "p-reports-revenueslices" */ "@/pages/reports/RevenueSlices").then(m => ({ default: m.GrossSales })));
+const InvoicedItems = React.lazy(() => import(/* webpackChunkName: "p-reports-revenueslices" */ "@/pages/reports/RevenueSlices").then(m => ({ default: m.InvoicedItems })));
+const PaymentsLedger = React.lazy(() => import(/* webpackChunkName: "p-finance-financepages" */ "@/pages/finance/FinancePages").then(m => ({ default: m.PaymentsLedger })));
+const AutoBilling = React.lazy(() => import(/* webpackChunkName: "p-finance-financepages" */ "@/pages/finance/FinancePages").then(m => ({ default: m.AutoBilling })));
+const ImpExp = React.lazy(() => import(/* webpackChunkName: "p-finance-financepages" */ "@/pages/finance/FinancePages").then(m => ({ default: m.ImpExp })));
+const IncomeCategoriesCrud = React.lazy(() => import(/* webpackChunkName: "p-finance-financepages" */ "@/pages/finance/FinancePages").then(m => ({ default: m.IncomeCategoriesCrud })));
+const AutobillingRuns = React.lazy(() => import(/* webpackChunkName: "p-finance-autobillingruns" */ "@/pages/finance/AutobillingRuns"));
+const PortalHome = React.lazy(() => import(/* webpackChunkName: "p-portal-portalhome" */ "@/pages/portal/PortalHome"));
+const PortalServices = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalServices })));
+const PortalServiceDetail = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalServiceDetail })));
+const PortalInvoices = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalInvoices })));
+const PortalInvoiceDetail = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalInvoiceDetail })));
+const PortalEstimates = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalEstimates })));
+const PortalEstimateDetail = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalEstimateDetail })));
+const PortalPayments = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalPayments })));
+const PortalPaymentMethod = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalPaymentMethod })));
+const PortalDocuments = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalDocuments })));
+const PortalMessages = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalMessages })));
+const PortalProfile = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalProfile })));
+const PortalRequestService = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalRequestService })));
+const PortalPaymentComplete = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpages" */ "@/pages/portal/PortalPages").then(m => ({ default: m.PortalPaymentComplete })));
+const PortalWarranties = React.lazy(() => import(/* webpackChunkName: "p-portal-portalwarranties" */ "@/pages/portal/PortalWarranties"));
+const PortalServiceReports = React.lazy(() => import(/* webpackChunkName: "p-portal-portalservicereports" */ "@/pages/portal/PortalServiceReports").then(m => ({ default: m.PortalServiceReports })));
+const PortalServiceReportDetail = React.lazy(() => import(/* webpackChunkName: "p-portal-portalservicereports" */ "@/pages/portal/PortalServiceReports").then(m => ({ default: m.PortalServiceReportDetail })));
+const PortalSignPage = React.lazy(() => import(/* webpackChunkName: "p-portal-portalsign" */ "@/pages/portal/PortalSign"));
+const CsatDashboard = React.lazy(() => import(/* webpackChunkName: "p-csat-csatpages" */ "@/pages/csat/CsatPages").then(m => ({ default: m.CsatDashboard })));
+const CsatDetail = React.lazy(() => import(/* webpackChunkName: "p-csat-csatpages" */ "@/pages/csat/CsatPages").then(m => ({ default: m.CsatDetail })));
+const PublicCsat = React.lazy(() => import(/* webpackChunkName: "p-csat-csatpages" */ "@/pages/csat/CsatPages").then(m => ({ default: m.PublicCsat })));
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
-import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
+const AnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-analytics-analyticspage" */ "@/pages/analytics/AnalyticsPage"));
 import OnboardingPage from '@/pages/onboarding/OnboardingPage';
-import LeadRequestPage from "@/pages/leads/LeadRequestPage";
-import LeadDetail from "@/pages/leads/LeadDetail";
-import PublicLeadIntake from "@/pages/public/PublicLeadIntake";
-import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
-import WidgetDemoPage from "@/pages/widget/WidgetDemoPage";
-import MarketingFormsPage from "@/pages/marketing/MarketingFormsPage";
-import LeadsDashboardPage from "@/pages/leads/LeadsDashboardPage";
-import TenantsAdminPage, { TenantBrandSettings } from "@/pages/tenants/TenantsAdminPage";
+const LeadRequestPage = React.lazy(() => import(/* webpackChunkName: "p-leads-leadrequestpage" */ "@/pages/leads/LeadRequestPage"));
+const LeadDetail = React.lazy(() => import(/* webpackChunkName: "p-leads-leaddetail" */ "@/pages/leads/LeadDetail"));
+const PublicLeadIntake = React.lazy(() => import(/* webpackChunkName: "p-public-publicleadintake" */ "@/pages/public/PublicLeadIntake"));
+const PublicLeadRequestPage = React.lazy(() => import(/* webpackChunkName: "p-public-publicleadrequest" */ "@/pages/public/PublicLeadRequest"));
+const WidgetDemoPage = React.lazy(() => import(/* webpackChunkName: "p-widget-widgetdemopage" */ "@/pages/widget/WidgetDemoPage"));
+const MarketingFormsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingformspage" */ "@/pages/marketing/MarketingFormsPage"));
+const LeadsDashboardPage = React.lazy(() => import(/* webpackChunkName: "p-leads-leadsdashboardpage" */ "@/pages/leads/LeadsDashboardPage"));
+const TenantsAdminPage = React.lazy(() => import(/* webpackChunkName: "p-tenants-tenantsadminpage" */ "@/pages/tenants/TenantsAdminPage"));
+const TenantBrandSettings = React.lazy(() => import(/* webpackChunkName: "p-tenants-tenantsadminpage" */ "@/pages/tenants/TenantsAdminPage").then(m => ({ default: m.TenantBrandSettings })));
 import {
   TimesheetsPage as WorkforceTimesheets, CrewMapPage as WorkforceCrewMap,
   JobCostingPage as WorkforceJobCosting, MileagePage as WorkforceMileage,
@@ -417,53 +486,53 @@ import {
   RolesPage as OsRoles, ScorecardsPage as OsScorecards, HuddlesPage as OsHuddles,
   LeanboardsPage as OsLeanboards, SprintsPage as OsSprints,
 } from "@/pages/os/BusinessOS";
-import { LanaChatPage as OsLana } from "@/pages/os/LanaAndPlans";
-import TodaySchedule from "@/pages/schedule/TodaySchedule";
-import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
-import ServiceReport from "@/pages/tech/ServiceReport";
-import ToolsHub from "@/pages/tech/ToolsHub";
-import ComingSoonPage from "@/pages/common/ComingSoonPage";
-import PoolCalculators from "@/pages/tech/PoolCalculators";
-import BusinessPricingTools from "@/pages/admin/BusinessPricingTools";
-import BusinessAnalysisTools from "@/pages/admin/BusinessAnalysisTools";
-import DocumentGenerators from "@/pages/admin/DocumentGenerators";
-import ServicePriceChecker from "@/pages/admin/ServicePriceChecker";
-import PricingDefaultsEditor from "@/pages/admin/PricingDefaultsEditor";
-import BusinessCard from "@/pages/tech/BusinessCard";
-import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
-import PoolServiceReport from "@/pages/reports/PoolServiceReport";
-import JobMarginLeaderboard from "@/pages/admin/JobMarginLeaderboard";
-import ChemicalCosts from "@/pages/admin/ChemicalCosts";
-import RecurringJobs from "@/pages/admin/RecurringJobs";
-import CFOReports from "@/pages/admin/CFOReports";
-import VendorBills from "@/pages/admin/VendorBills";
-import PricingInsights from "@/pages/admin/PricingInsights";
-import RingCentralAdmin from "@/pages/admin/RingCentralAdmin";
-import TelephonyPage from "@/pages/settings/TelephonyPage";
-import TrainingList from "@/pages/training/TrainingList";
-import TrainingModuleDetail from "@/pages/training/TrainingModuleDetail";
-import TrainingQuiz from "@/pages/training/TrainingQuiz";
-import AdminTraining from "@/pages/training/AdminTraining";
-import BudgetSetup from "@/pages/budget/BudgetSetup";
-import BudgetDashboard from "@/pages/budget/BudgetDashboard";
-import BudgetWizard from "@/pages/budget/BudgetWizard";
+const OsLana = React.lazy(() => import(/* webpackChunkName: "p-os-lanaandplans" */ "@/pages/os/LanaAndPlans").then(m => ({ default: m.LanaChatPage })));
+const TodaySchedule = React.lazy(() => import(/* webpackChunkName: "p-schedule-todayschedule" */ "@/pages/schedule/TodaySchedule"));
+const TechHuddlePage = React.lazy(() => import(/* webpackChunkName: "p-tech-techpages" */ "@/pages/tech/TechPages").then(m => ({ default: m.TechHuddlePage })));
+const TechTimeClockPage = React.lazy(() => import(/* webpackChunkName: "p-tech-techpages" */ "@/pages/tech/TechPages").then(m => ({ default: m.TechTimeClockPage })));
+const ServiceReport = React.lazy(() => import(/* webpackChunkName: "p-tech-servicereport" */ "@/pages/tech/ServiceReport"));
+const ToolsHub = React.lazy(() => import(/* webpackChunkName: "p-tech-toolshub" */ "@/pages/tech/ToolsHub"));
+const ComingSoonPage = React.lazy(() => import(/* webpackChunkName: "p-common-comingsoonpage" */ "@/pages/common/ComingSoonPage"));
+const PoolCalculators = React.lazy(() => import(/* webpackChunkName: "p-tech-poolcalculators" */ "@/pages/tech/PoolCalculators"));
+const BusinessPricingTools = React.lazy(() => import(/* webpackChunkName: "p-admin-businesspricingtools" */ "@/pages/admin/BusinessPricingTools"));
+const BusinessAnalysisTools = React.lazy(() => import(/* webpackChunkName: "p-admin-businessanalysistools" */ "@/pages/admin/BusinessAnalysisTools"));
+const DocumentGenerators = React.lazy(() => import(/* webpackChunkName: "p-admin-documentgenerators" */ "@/pages/admin/DocumentGenerators"));
+const ServicePriceChecker = React.lazy(() => import(/* webpackChunkName: "p-admin-servicepricechecker" */ "@/pages/admin/ServicePriceChecker"));
+const PricingDefaultsEditor = React.lazy(() => import(/* webpackChunkName: "p-admin-pricingdefaultseditor" */ "@/pages/admin/PricingDefaultsEditor"));
+const BusinessCard = React.lazy(() => import(/* webpackChunkName: "p-tech-businesscard" */ "@/pages/tech/BusinessCard"));
+const LandscapingTimeClock = React.lazy(() => import(/* webpackChunkName: "p-tech-landscapingtimeclock" */ "@/pages/tech/LandscapingTimeClock"));
+const PoolServiceReport = React.lazy(() => import(/* webpackChunkName: "p-reports-poolservicereport" */ "@/pages/reports/PoolServiceReport"));
+const JobMarginLeaderboard = React.lazy(() => import(/* webpackChunkName: "p-admin-jobmarginleaderboard" */ "@/pages/admin/JobMarginLeaderboard"));
+const ChemicalCosts = React.lazy(() => import(/* webpackChunkName: "p-admin-chemicalcosts" */ "@/pages/admin/ChemicalCosts"));
+const RecurringJobs = React.lazy(() => import(/* webpackChunkName: "p-admin-recurringjobs" */ "@/pages/admin/RecurringJobs"));
+const CFOReports = React.lazy(() => import(/* webpackChunkName: "p-admin-cforeports" */ "@/pages/admin/CFOReports"));
+const VendorBills = React.lazy(() => import(/* webpackChunkName: "p-admin-vendorbills" */ "@/pages/admin/VendorBills"));
+const PricingInsights = React.lazy(() => import(/* webpackChunkName: "p-admin-pricinginsights" */ "@/pages/admin/PricingInsights"));
+const RingCentralAdmin = React.lazy(() => import(/* webpackChunkName: "p-admin-ringcentraladmin" */ "@/pages/admin/RingCentralAdmin"));
+const TelephonyPage = React.lazy(() => import(/* webpackChunkName: "p-settings-telephonypage" */ "@/pages/settings/TelephonyPage"));
+const TrainingList = React.lazy(() => import(/* webpackChunkName: "p-training-traininglist" */ "@/pages/training/TrainingList"));
+const TrainingModuleDetail = React.lazy(() => import(/* webpackChunkName: "p-training-trainingmoduledetail" */ "@/pages/training/TrainingModuleDetail"));
+const TrainingQuiz = React.lazy(() => import(/* webpackChunkName: "p-training-trainingquiz" */ "@/pages/training/TrainingQuiz"));
+const AdminTraining = React.lazy(() => import(/* webpackChunkName: "p-training-admintraining" */ "@/pages/training/AdminTraining"));
+const BudgetSetup = React.lazy(() => import(/* webpackChunkName: "p-budget-budgetsetup" */ "@/pages/budget/BudgetSetup"));
+const BudgetDashboard = React.lazy(() => import(/* webpackChunkName: "p-budget-budgetdashboard" */ "@/pages/budget/BudgetDashboard"));
+const BudgetWizard = React.lazy(() => import(/* webpackChunkName: "p-budget-budgetwizard" */ "@/pages/budget/BudgetWizard"));
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
          ShortLinksPage as SocialShortLinks, BrandKitPage as SocialBrandKit }
   from "@/pages/social/SocialExtras";
-import ServiceTemplatesEditor from "@/pages/admin/ServiceTemplatesEditor";
+const ServiceTemplatesEditor = React.lazy(() => import(/* webpackChunkName: "p-admin-servicetemplateseditor" */ "@/pages/admin/ServiceTemplatesEditor"));
 // Phase 2 · Templates Library — Admin Web UI
-import TemplatesLibraryPage from "@/pages/admin/TemplatesLibraryPage";
-import TemplateFillPage from "@/pages/admin/TemplateFillPage";
-import TemplateInstanceNewRedirect from "@/pages/admin/TemplateInstanceNewRedirect";
+const TemplatesLibraryPage = React.lazy(() => import(/* webpackChunkName: "p-admin-templateslibrarypage" */ "@/pages/admin/TemplatesLibraryPage"));
+const TemplateFillPage = React.lazy(() => import(/* webpackChunkName: "p-admin-templatefillpage" */ "@/pages/admin/TemplateFillPage"));
+const TemplateInstanceNewRedirect = React.lazy(() => import(/* webpackChunkName: "p-admin-templateinstancenewredirect" */ "@/pages/admin/TemplateInstanceNewRedirect"));
 // Phase 4 · Batch B — Handbook + Onboarding
-import HandbookPage from "@/pages/HandbookPage";
-import TimeOffPage from "@/pages/TimeOffPage";
-import AdminTimeOffPage from "@/pages/AdminTimeOffPage";
-import EmployeeOnboardingChecklistPage from "@/pages/OnboardingPage";
-import AdminOnboardingDashboardPage from "@/pages/admin/AdminOnboardingDashboardPage";
-
+const HandbookPage = React.lazy(() => import(/* webpackChunkName: "p-handbookpage" */ "@/pages/HandbookPage"));
+const TimeOffPage = React.lazy(() => import(/* webpackChunkName: "p-timeoffpage" */ "@/pages/TimeOffPage"));
+const AdminTimeOffPage = React.lazy(() => import(/* webpackChunkName: "p-admintimeoffpage" */ "@/pages/AdminTimeOffPage"));
+const EmployeeOnboardingChecklistPage = React.lazy(() => import(/* webpackChunkName: "p-onboardingpage" */ "@/pages/OnboardingPage"));
+const AdminOnboardingDashboardPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminonboardingdashboardpage" */ "@/pages/admin/AdminOnboardingDashboardPage"));
 function CustomerServiceReportRedirect() {
   // Preserve the report id when redirecting from the /customer alias to
   // the primary /portal path. Kept alongside AdminOnly/NoTech so route
@@ -653,6 +722,7 @@ export default function App() {
       <BrowserRouter>
         <ScrollToTop />
         <TelephonyLiveEventsBridge />
+        <React.Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           {/* Feb-2026 · P11b — Privacy Policy placeholder (App Store item 4). */}
@@ -1494,6 +1564,7 @@ export default function App() {
           {/* Anything unmatched → home */}
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </React.Suspense>
         {/* Global Sonner host — MUST be mounted here or every `toast.*()`
              call across the app silently no-ops. Positioned top-right with
              a data-testid on the wrapper so E2E can locate it in the DOM. */}

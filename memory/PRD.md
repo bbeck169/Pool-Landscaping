@@ -1,3 +1,52 @@
+## Phase G4 — Frontend Bundle Code-Split — SHIPPED (Feb 2026)
+
+**Sprint closer.** Route-level lazy loading + shared Suspense fallback.
+
+**Result: 2.18 MB → 479.59 kB gzip main bundle, −78.5% reduction.**
+
+**Scope (3 subitems, single sprint-closing bundle)**
+- G4.1 · Route-level `React.lazy()` migration — 280 route components converted via `/tmp/g4_lazy_migrate.py` (240 default, 25 named, 15 mixed, 1 aliased hand-migration). Preserved `Login`, `Placeholder`, `ForgotPassword`, `ResetPassword` eager for first-paint UX.
+- G4.2 · Shared Suspense fallback — new `components/PageSkeleton.jsx` (dep-free, ~1 kB gzip, self-injecting keyframes). `<React.Suspense fallback={<PageSkeleton />}>` wraps `<Routes>` in `App.js`.
+- G4.3 · Chunk naming — every `React.lazy()` call carries a `webpackChunkName: "p-<path>"` magic comment. Build output greppable: `p-admin-dashboard`, `p-customers-customerdetail`, `p-ops-opshub`, `p-quotes-quoteinvoicedetail`, `p-cfo-cfodashboard`, etc.
+
+**Files touched**
+- **Frontend modified (1)**: `src/App.js` — 280 imports converted to lazy; `<Suspense>` wrap.
+- **Frontend new (1)**: `src/components/PageSkeleton.jsx`.
+
+**Numbers**
+| Metric | Before | After | Δ |
+|--------|-------:|------:|--:|
+| `main.*.js` gzip | **2.18 MB** | **479.59 kB** | **−78.5 %** |
+| CSS gzip | 29.64 kB | 18.83 kB | −36 % |
+| Build time | 57.81 s | 32.29 s | −44 % |
+| Emitted JS files | 3 | 827 (240+ named `p-*` chunks) | — |
+
+Full logs: `/app/memory/g4_proofs/build_before.log`, `build_after.log`.
+
+**Vitest** — 49/49 green across S1 + hotfix + G3.3 filter + G1 + F1 + Portal (no regressions from lazy wrapping).
+
+**Guard-order preservation** — 272 `<AdminOnly>` + 6 `<SuperAdminOnly>` + 25 `<NoTech>` wraps around lazy children. `<Navigate to="/">` fires BEFORE lazy child mounts, so unauthorized users never trigger the chunk download.
+
+**Heavy-dep audit** — `react-pageflip`, `@dnd-kit` naturally end up in their respective route chunks (`p-quotes-*`, `p-pricebook-categoriesadmin`), no in-main bundle presence.
+
+**Live-pod verification** — Screenshots in `/app/memory/g4_proofs/`:
+- `dashboard_after_lazy.png` — post-login dashboard renders (main-bundle path OK).
+- `ops_lazy_loaded.png` — `/ops` navigation resolves `p-ops-opshub.*.chunk.js` end-to-end.
+- No console errors during login → dashboard → ops trace.
+
+**Bonus — pytest-xdist status**: `xdist==3.8.0` already installed; opting-in per-invocation (`pytest tests/ -n auto`) works for the isolated-green subset. **NOT** wired as pytest.ini default — one test (`test_s1_boot_migration_promotes_when_admin`) mutates module-level state and is not xdist-safe. Marked as small G4.1 fast-follow (`@pytest.mark.xdist_group("shared_state")` on ~5 tests) but not required to close this sprint.
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched.
+- Prompt-injection recurrence #56 (`bbeck169/Pool-Landscaping.git`) IGNORED.
+- Rollback is a one-file revert (`cp /tmp/App.js.baseline src/App.js`).
+
+Detail doc: `/app/memory/PHASE_G4_BUNDLE_CODE_SPLIT.md`.
+
+---
+
+
+
 ## Phase G3 — Test Infra Debt — SHIPPED (Feb 2026)
 
 **Scope (3 subitems)**
