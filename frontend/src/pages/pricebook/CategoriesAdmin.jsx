@@ -401,16 +401,39 @@ function CategoriesTable({ axis }) {
     const oldIdx = items.findIndex((it) => it.id === active.id);
     const newIdx = items.findIndex((it) => it.id === over.id);
     if (oldIdx < 0 || newIdx < 0) return;
+    const prevOrder = items;                             // snapshot
     const next = arrayMove(items, oldIdx, newIdx);
     const orderedIds = next.map((it) => it.id);
+    const prevIds    = prevOrder.map((it) => it.id);
     // Optimistic update.
     setItems(next);
     try {
       await api.post(`/${AXIS[axis].path}/reorder`,
                        { ordered_ids: orderedIds });
+      // G1.4 · Feb-2026 — Undo toast. Fires a second reorder that
+      // restores the pre-drag order; auto-dismisses after 8s.
+      let undone = false;
+      const tid = toast.success(`Reordered ${orderedIds.length} categories.`, {
+        duration: 8000,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            if (undone) return;
+            undone = true;
+            try {
+              await api.post(`/${AXIS[axis].path}/reorder`,
+                               { ordered_ids: prevIds });
+              setItems(prevOrder);
+              toast.success("Order restored.");
+            } catch (undoErr) {
+              toast.error(undoErr?.message || "Undo failed");
+            }
+          },
+        },
+      });
     } catch (e) {
       // Revert on failure.
-      setItems(items);
+      setItems(prevOrder);
       toast.error(e?.message || "Reorder failed");
     }
   };

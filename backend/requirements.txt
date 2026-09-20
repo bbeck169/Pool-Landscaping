@@ -102,6 +102,7 @@ protobuf==5.29.6
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycodestyle==2.14.0
+pycountry==24.6.1
 pycparser==3.0
 pydantic==2.13.4
 pydantic_core==2.46.4

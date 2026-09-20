@@ -681,15 +681,26 @@ export function CurrencyCard() {
   const [state, setState] = React.useState("loading"); // loading | ready | saving | error
   const [current, setCurrent] = React.useState("USD");
   const [supported, setSupported] = React.useState([]);
+  // G1.6 · Feb-2026 — full ISO catalog via /api/reference/currencies.
+  const [catalog, setCatalog] = React.useState([]);
+  const [filter, setFilter] = React.useState("");
 
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const r = await api.get("/tenants/mine/settings/business");
+        const [biz, cat] = await Promise.all([
+          api.get("/tenants/mine/settings/business"),
+          api.get("/reference/currencies")
+             .catch(() => ({ currencies: [] })),
+        ]);
         if (cancelled) return;
-        setCurrent(r?.currency || "USD");
-        setSupported(r?.supported_currencies || []);
+        setCurrent(biz?.currency || "USD");
+        setSupported(biz?.supported_currencies || []);
+        setCatalog((cat?.currencies || []).length
+          ? cat.currencies
+          : (biz?.supported_currencies || []).map(
+              (c) => ({ code: c.code, name: c.code, symbol: c.symbol })));
         setState("ready");
       } catch (e) {
         if (cancelled) return;
@@ -698,6 +709,14 @@ export function CurrencyCard() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  const filteredCatalog = React.useMemo(() => {
+    const q = (filter || "").toLowerCase().trim();
+    if (!q) return catalog;
+    return catalog.filter((c) =>
+      c.code.toLowerCase().includes(q) ||
+      (c.name || "").toLowerCase().includes(q));
+  }, [catalog, filter]);
 
   const onChange = async (e) => {
     const code = e.target.value;
@@ -743,26 +762,39 @@ export function CurrencyCard() {
         <div className="text-xs" style={{ color: "#DC2626" }}
               data-testid="bs-currency-error">Failed to load currency setting.</div>
       ) : (
-        <div className="flex items-center gap-3">
-          <select
-            value={current}
-            onChange={onChange}
-            disabled={state === "saving"}
+        <div className="flex flex-col gap-2 max-w-md">
+          <input
+            type="text"
+            placeholder="Search currency (e.g. Japanese Yen, JPY)…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
             className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={{ border: `1px solid ${colors.border}`, background: "#FFF",
-                      minWidth: 220 }}
-            data-testid="bs-currency-select"
-          >
-            {supported.map((c) => (
-              <option key={c.code} value={c.code}
-                        data-testid={`bs-currency-option-${c.code}`}>
-                {c.code} — {c.symbol}
-              </option>
-            ))}
-          </select>
-          <span className="text-2xl" data-testid="bs-currency-symbol">
-            {(supported.find((c) => c.code === current) || {}).symbol || "$"}
-          </span>
+            style={{ border: `1px solid ${colors.border}`, background: "#FFF" }}
+            data-testid="bs-currency-search"
+          />
+          <div className="flex items-center gap-3">
+            <select
+              value={current}
+              onChange={onChange}
+              disabled={state === "saving"}
+              size={Math.min(6, Math.max(1, filteredCatalog.length))}
+              className="px-3 py-2 rounded-lg text-sm outline-none flex-1"
+              style={{ border: `1px solid ${colors.border}`, background: "#FFF" }}
+              data-testid="bs-currency-select"
+            >
+              {filteredCatalog.map((c) => (
+                <option key={c.code} value={c.code}
+                          data-testid={`bs-currency-option-${c.code}`}>
+                  {c.code} — {c.name || c.code} {c.symbol && c.symbol !== c.code ? `(${c.symbol})` : ""}
+                </option>
+              ))}
+            </select>
+            <span className="text-2xl" data-testid="bs-currency-symbol">
+              {(catalog.find((c) => c.code === current) || {}).symbol
+                 || (supported.find((c) => c.code === current) || {}).symbol
+                 || "$"}
+            </span>
+          </div>
         </div>
       )}
     </section>

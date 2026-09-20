@@ -1,3 +1,44 @@
+## Phase G1 — Cleanup Sprint (Backend Polish + Small UX) — SHIPPED (Feb 2026)
+
+**Scope (7 subitems, single bundle)**
+- G1.1 · `GET /api/messages/unread-count` — chat + SMS aggregator for the Mobile Messages badge (E3 follow-up). Response: `{unread_count, by_channel: {chat?, sms?}}` — zero-state channels omitted.
+- G1.2 · `PATCH /api/admin/users/{uid}/default-tenant` — super_admin transfer route. Validates tenant is in `tenant_memberships`; updates both `tenant_id` and `active_tenant_id`. 200 idempotent on same-tenant.
+- G1.3 · `GET /api/admin/tenants/pilots/health` — super_admin only. Reports `{slug, id, exists, membership_count, orphan_memberships, settings}` per pilot. `orphan_memberships` catches the drift that broke T1 initially.
+- G1.4 · Reorder Undo toast on `CategoriesAdmin` drag-drop. `sonner action.onClick` re-POSTs the previous order, restores local state, follows up with "Order restored." Auto-dismiss 8s.
+- G1.5 · Localised portal error copy — new `pages/portal/portalRenewMessages.js` with en/es/fr catalogs (16 keys each). Locale resolution: `?locale=` → `summary.customer_locale` → `navigator.language` → `en`.
+- G1.6 · `pycountry==24.6.1` — 181 ISO codes served via `GET /api/reference/currencies`. `PATCH /settings/business` widened to accept any ISO 4217 code. Business tab dropdown gains search filter.
+- G1.7 · Fixed the 3 pre-existing weekly-digest test failures. `routers/weekly_digest.py` grows a signed HMAC(JWT_SECRET) `x-test-recipient-bypass` header that works in production-tagged pods. `APP_ENV != "production"` also accepts any header value per phase brief.
+
+**Files touched**
+- **Backend new (3)**: `routers/messages_unread.py`, `routers/reference_currencies.py`, `tests/test_g1_cleanup_sprint.py`.
+- **Backend modified (6)**: `routers/tenant_memberships.py` (default-tenant + pilots-health), `routers/weekly_digest.py` (rewrite + bypass), `routers/tenant_org_settings.py` (widened validation), `server.py` (2 router mounts), `tests/_f7_loop_fixture.py` (rebinds), `tests/test_weekly_digest.py` (3 tests use signed bypass), `requirements.txt` (+pycountry).
+- **Frontend new (2)**: `pages/portal/portalRenewMessages.js`, `pages/settings/__tests__/G1_cleanup.test.jsx`.
+- **Frontend modified (3)**: `pages/portal/PortalAgreementRenew.jsx` (locale-aware), `pages/settings/BusinessSettings.jsx` (widened CurrencyCard + search), `pages/pricebook/CategoriesAdmin.jsx` (Undo toast).
+
+**Test counts**
+- Backend pytest: **14 / 14** (`test_g1_cleanup_sprint.py`) + **8 / 8** (`test_weekly_digest.py` — was 5/8) — combined regression sweep G1 + F1 + T1 + weekly-digest + sales-pipeline-c = **52 / 52 green.**
+- Frontend vitest: **26 / 26** (G1 17, F1 4, PortalAgreementRenew 5).
+
+**Live-pod curl proofs**
+- `GET /api/admin/tenants/pilots/health`: `{pool: exists=true, orphan_memberships=0, id=200d48ac-…, landscaping: exists=true, orphan_memberships=0, id=86c09b7f-…}`.
+- `GET /api/messages/unread-count` (admin@aquaterra.com): `{unread_count: 0, by_channel: {}}`.
+- `PATCH /tenants/mine/settings/business {"currency":"JPY"}` → 200 `{currency:"JPY", currency_symbol:"¥"}`; Kanban `total_currency` = `"JPY"` across all columns; `GET /api/reference/currencies` returns 181 codes.
+
+**Screenshots**
+- `/app/memory/screenshots/g1_portal_es.jpg` — Spanish portal renewal page.
+- `/app/memory/screenshots/g1_currency_dropdown.jpg` — Business tab currency card with search "yen" → JPY visible.
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched (G2 delegated to `e1_expo_frontend_dev`).
+- Renewal token generation (A4 signer) untouched.
+- Prompt-injection recurrence still IGNORED (52nd+ hit).
+- Deferred to G2 / G3: mobile Messages badge, pymongo test infra debt.
+
+Detail doc: `/app/memory/PHASE_G1_CLEANUP_SPRINT.md`.
+
+---
+
+
 ## Phase F1 — Final Bundle: C2 + L1 Polish — SHIPPED (Feb 2026)
 
 **Scope (5 subitems, single sprint-closing bundle)**

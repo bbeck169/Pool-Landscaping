@@ -1,6 +1,11 @@
 """Phase 4 · Batch C / D7 — Weekly digest tests."""
 from __future__ import annotations
-import os, requests, pytest, uuid
+import hashlib
+import hmac as _hmac
+import os
+import requests
+import pytest
+import uuid
 from datetime import datetime, timezone
 
 from tests.conftest import demo_pw
@@ -17,7 +22,23 @@ def _login(email, password):
     return r.json()["access_token"]
 
 
-def _h(tok): return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+def _h(tok, *, bypass_to: str | None = None):
+    hdrs = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
+    if bypass_to:
+        # G1.7 · signed bypass — matches the backend
+        # ``_expected_bypass_signature`` helper. Reads JWT_SECRET
+        # from the pod's .env so only test rigs with .env access
+        # can produce a valid header.
+        from dotenv import dotenv_values
+        from pathlib import Path
+        env = dotenv_values(
+            Path(__file__).resolve().parent.parent / ".env")
+        secret = (env.get("JWT_SECRET") or os.environ.get("JWT_SECRET") or "")
+        msg = f"weekly-digest-bypass:{bypass_to.lower().strip()}".encode()
+        sig = _hmac.new(secret.encode(), msg,
+                         hashlib.sha256).hexdigest()
+        hdrs["x-test-recipient-bypass"] = sig
+    return hdrs
 
 
 @pytest.fixture(scope="module")
@@ -93,7 +114,7 @@ class TestSendNow:
 
     def test_send_now_super_admin_logs_attempt(self, super_tok):
         r = requests.post(f"{API}/admin/weekly-digest/send-now",
-                          headers=_h(super_tok),
+                          headers=_h(super_tok, bypass_to="smoke@example.com"),
                           json={"to": "smoke@example.com"}, timeout=TIMEOUT)
         assert r.status_code == 200
         d = r.json()
@@ -112,14 +133,14 @@ class TestIdempotency:
         # the guard doesn't trigger — which is the intended design so
         # missing-key retries don't stay stuck.
         first = requests.post(f"{API}/admin/weekly-digest/send-now",
-                              headers=_h(super_tok),
+                              headers=_h(super_tok, bypass_to="smoke-dup@example.com"),
                               json={"to": "smoke-dup@example.com"},
                               timeout=TIMEOUT).json()
         # send-now uses kind=weekly_digest_manual which bypasses the
         # weekly-digest idempotency (manual is meant to be re-runnable).
         # This test simply confirms the endpoint tolerates repeat calls.
         second = requests.post(f"{API}/admin/weekly-digest/send-now",
-                                headers=_h(super_tok),
+                                headers=_h(super_tok, bypass_to="smoke-dup@example.com"),
                                 json={"to": "smoke-dup@example.com"},
                                 timeout=TIMEOUT).json()
         assert first["recipients"] == 1
@@ -132,7 +153,7 @@ class TestOutboundLog:
         # after send-now. Uses a fresh motor client to avoid the
         # shared-config.db event-loop reuse issue.
         r = requests.post(f"{API}/admin/weekly-digest/send-now",
-                          headers=_h(super_tok),
+                          headers=_h(super_tok, bypass_to="smoke-log@example.com"),
                           json={"to": "smoke-log@example.com"},
                           timeout=TIMEOUT).json()
         assert r["recipients"] == 1

@@ -1095,6 +1095,12 @@ api_router.include_router(_fb_org_settings.router)
 from routers import portal_agreements as _f1_portal_agreements  # noqa: E402
 api_router.include_router(_f1_portal_agreements.router)
 
+# Phase G1 · Feb-2026 — Cleanup Sprint routers.
+from routers import messages_unread as _g11_messages_unread  # noqa: E402
+api_router.include_router(_g11_messages_unread.router)
+from routers import reference_currencies as _g16_ref_currencies  # noqa: E402
+api_router.include_router(_g16_ref_currencies.router)
+
 # Sprint 3b · Feb-2026 · Chemistry Configuration + Sandboxed Dosing.
 from routers import tenant_chemistry_settings as _fb_chem_settings  # noqa: E402
 api_router.include_router(_fb_chem_settings.router)

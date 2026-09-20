@@ -19,11 +19,12 @@
  *   * 409 → "This agreement is no longer available for renewal."
  *   * default → "Something went wrong. Please try again."
  */
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CheckCircle2, AlertTriangle, Loader2, Calendar,
           DollarSign, Sparkles } from "lucide-react";
 import { api } from "@/api";
+import { pickLocale, t } from "./portalRenewMessages";
 
 
 function _currencySymbol(code) {
@@ -42,17 +43,15 @@ function _fmtDate(iso) {
 }
 
 
-function _errorMessage(code) {
-  switch (code) {
-    case "token_expired":
-      return "This renewal link has expired. Please contact us for a fresh link.";
-    case "token_invalid":
-      return "This renewal link is invalid. Please contact us to renew.";
-    case "agreement_state_invalid":
-      return "This agreement is no longer available for renewal. It may have already been renewed.";
-    default:
-      return "Something went wrong. Please try again in a moment.";
-  }
+function _errorMessage(code, locale) {
+  // G1.5 · localised — falls back to English if the code isn't
+  // recognised.
+  const key = ({
+    "token_expired":            "portal.renew.error.token_expired",
+    "token_invalid":            "portal.renew.error.token_invalid",
+    "agreement_state_invalid":  "portal.renew.error.agreement_state_invalid",
+  })[code] || "portal.renew.error.generic";
+  return t(locale, key);
 }
 
 
@@ -60,12 +59,18 @@ export default function PortalAgreementRenew() {
   const { agreement_id } = useParams();
   const [search] = useSearchParams();
   const token = search.get("token") || "";
+  const queryLocale = search.get("locale") || "";
 
   const [state, setState] = useState("loading"); // loading | ready | success | error
   const [summary, setSummary] = useState(null);
   const [error, setError]   = useState(null);
   const [renewing, setRenewing] = useState(false);
   const [success, setSuccess] = useState(null);
+
+  const locale = useMemo(() => pickLocale({
+    queryLocale,
+    customerLocale: summary?.customer_locale,
+  }), [queryLocale, summary]);
 
   const loadSummary = useCallback(async () => {
     if (!token) {
@@ -128,7 +133,7 @@ export default function PortalAgreementRenew() {
                 style={{ color: "#71717A" }}
                 data-testid="portal-renewal-loading">
             <Loader2 size={16} className="animate-spin" />
-            Loading your agreement…
+            {t(locale, "portal.renew.summary.loading")}
           </div>
         </div>
       </div>
@@ -142,11 +147,14 @@ export default function PortalAgreementRenew() {
           <div className="flex items-center gap-2 mb-3"
                 style={{ color: "#B45309" }}>
             <AlertTriangle size={18} />
-            <span style={{ fontWeight: 700 }}>We can't process this renewal</span>
+            <span style={{ fontWeight: 700 }}>
+              {t(locale, "portal.renew.error.title")}
+            </span>
           </div>
           <p style={{ color: "#3F3F46", lineHeight: 1.5 }}
-              data-testid={`portal-renewal-error-${error || "unknown"}`}>
-            {_errorMessage(error)}
+              data-testid={`portal-renewal-error-${error || "unknown"}`}
+              data-locale={locale}>
+            {_errorMessage(error, locale)}
           </p>
         </div>
       </div>
@@ -160,17 +168,19 @@ export default function PortalAgreementRenew() {
           <div className="flex items-center gap-2 mb-3"
                 style={{ color: "#166534" }}>
             <CheckCircle2 size={20} />
-            <span style={{ fontWeight: 700, fontSize: 18 }}>You're all set</span>
+            <span style={{ fontWeight: 700, fontSize: 18 }}>
+              {t(locale, "portal.renew.success.title")}
+            </span>
           </div>
-          <p style={{ color: "#3F3F46", lineHeight: 1.6, marginBottom: 20 }}>
-            Your <strong>{success.plan_name}</strong> service agreement
-            has been renewed. A confirmation email is on its way.
-          </p>
+          <p style={{ color: "#3F3F46", lineHeight: 1.6, marginBottom: 20 }}
+              dangerouslySetInnerHTML={{ __html: t(locale,
+                "portal.renew.success.body",
+                { plan_name: success.plan_name || "" }) }} />
           <div style={{
             background: "#F0FDF4", border: "1px solid #BBF7D0",
             borderRadius: 12, padding: "1rem",
           }}>
-            <div style={label}>Next expiration</div>
+            <div style={label}>{t(locale, "portal.renew.success.next_label")}</div>
             <div style={value} data-testid="portal-renewal-success-next">
               {_fmtDate(success.next_expires_at)}
             </div>
@@ -191,7 +201,7 @@ export default function PortalAgreementRenew() {
           <Sparkles size={16} />
           <span style={{ fontSize: 12, fontWeight: 700,
                           letterSpacing: "0.05em", textTransform: "uppercase" }}>
-            Renew your service agreement
+            {t(locale, "portal.renew.summary.headline")}
           </span>
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 800, color: "#18181B",
@@ -205,7 +215,7 @@ export default function PortalAgreementRenew() {
           marginBottom: 24,
         }}>
           <div>
-            <div style={label}>Current expires</div>
+            <div style={label}>{t(locale, "portal.renew.current_expires")}</div>
             <div style={{ ...value, display: "flex", alignItems: "center", gap: 6 }}
                   data-testid="portal-renewal-current-expires">
               <Calendar size={14} style={{ color: "#71717A" }} />
@@ -213,7 +223,7 @@ export default function PortalAgreementRenew() {
             </div>
           </div>
           <div>
-            <div style={label}>New expires</div>
+            <div style={label}>{t(locale, "portal.renew.new_expires")}</div>
             <div style={{ ...value, display: "flex", alignItems: "center", gap: 6, color: "#0284C7" }}
                   data-testid="portal-renewal-next-expires">
               <Calendar size={14} style={{ color: "#0284C7" }} />
@@ -226,7 +236,7 @@ export default function PortalAgreementRenew() {
           background: "#F4F4F5", borderRadius: 12,
           padding: "1rem", marginBottom: 24,
         }}>
-          <div style={label}>Renewal price</div>
+          <div style={label}>{t(locale, "portal.renew.price_label")}</div>
           <div style={{ ...value, fontSize: 22, display: "flex",
                           alignItems: "center", gap: 4, color: "#18181B" }}
                 data-testid="portal-renewal-price">
@@ -252,15 +262,18 @@ export default function PortalAgreementRenew() {
           }}
         >
           {renewing ? <Loader2 size={16} className="animate-spin" /> : null}
-          {summary.already_renewed ? "Already renewed" :
-             renewing ? "Renewing…" : "Renew Now"}
+          {summary.already_renewed
+            ? t(locale, "portal.renew.cta.already_renewed")
+            : renewing
+              ? t(locale, "portal.renew.cta.renewing")
+              : t(locale, "portal.renew.cta")}
         </button>
 
         <p style={{
           marginTop: 16, fontSize: 12, textAlign: "center",
           color: "#71717A", lineHeight: 1.5,
         }}>
-          Confirmation will be sent to the email on file.
+          {t(locale, "portal.renew.confirmation_hint")}
         </p>
       </div>
     </div>

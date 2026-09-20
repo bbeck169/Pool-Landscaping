@@ -176,11 +176,10 @@ async def patch_ai_settings(
 
 
 # ── Business schemas (F1.1 · Feb-2026 — tenant currency) ─────────
-# Whitelist of ISO 4217 codes the frontend Business tab exposes as a
-# dropdown. Kept intentionally short until we bring in a proper
-# ``pycountry`` dep — every one of these was verified against
-# https://en.wikipedia.org/wiki/ISO_4217 at ship-time. Adding a new
-# code is a symmetric edit here + in the frontend dropdown.
+# G1.6 · Feb-2026 hotfix — the whitelist is kept as a curated
+# shortlist (for the dropdown's ``supported_currencies`` field) but
+# the PATCH validator now accepts any ISO 4217 code via
+# ``services / routers.reference_currencies.is_valid_iso_currency``.
 SUPPORTED_CURRENCIES = ("USD", "EUR", "GBP", "CAD", "AUD")
 CURRENCY_SYMBOLS = {
     "USD": "$", "EUR": "€", "GBP": "£", "CAD": "$", "AUD": "$",
@@ -205,9 +204,16 @@ def _read_business(tenant: Dict[str, Any]) -> Dict[str, Any]:
     currency = (settings.get("currency")
                   or (tenant.get("business") or {}).get("currency")
                   or "USD").upper()
+    # Prefer the pycountry-backed symbol map so pods that PATCH to a
+    # non-shortlist ISO code still get a real symbol on read.
+    try:
+        from routers.reference_currencies import _SYMBOLS as _FULL_SYMS
+        sym = _FULL_SYMS.get(currency, CURRENCY_SYMBOLS.get(currency, currency))
+    except Exception:  # noqa: BLE001
+        sym = CURRENCY_SYMBOLS.get(currency, currency)
     return {
         "currency": currency,
-        "currency_symbol": CURRENCY_SYMBOLS.get(currency, currency),
+        "currency_symbol": sym,
         "supported_currencies": [
             {"code": c, "symbol": CURRENCY_SYMBOLS[c]}
             for c in SUPPORTED_CURRENCIES
@@ -232,7 +238,11 @@ async def patch_business_settings(
     updates: Dict[str, Any] = {}
     if body.currency is not None:
         code = body.currency.strip().upper()
-        if code not in SUPPORTED_CURRENCIES:
+        # G1.6 · widen validation to any ISO 4217 code, not just the
+        # curated shortlist. Preserves the 400 shape for downstream
+        # callers that hard-coded the ``unsupported_currency`` branch.
+        from routers.reference_currencies import is_valid_iso_currency
+        if not is_valid_iso_currency(code):
             raise HTTPException(
                 status_code=400,
                 detail={
