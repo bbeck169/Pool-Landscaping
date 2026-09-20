@@ -32,6 +32,9 @@ const getMock  = vi.fn();
 const postMock = vi.fn();
 const navigateMock = vi.fn();
 let authRole = "admin";
+let authLoading = false;
+let authUserPresent = true;
+let previewRole = null;
 
 vi.mock("@/api", () => ({
   api: {
@@ -41,7 +44,20 @@ vi.mock("@/api", () => ({
 }));
 
 vi.mock("@/auth", () => ({
-  useAuth: () => ({ user: { role: authRole } }),
+  useAuth: () => ({
+    user: authUserPresent ? { role: authRole } : null,
+    loading: authLoading,
+  }),
+}));
+
+// Phase A1 Hotfix · Feb-2026 — the component now also consults
+// ``usePermissions().effectiveRole`` so a super_admin previewing
+// as a technician hides the bell too. Mock the hook here so we
+// can independently drive the preview role.
+vi.mock("@/hooks/usePermissions", () => ({
+  usePermissions: () => ({
+    effectiveRole: previewRole || authRole,
+  }),
 }));
 
 vi.mock("@/theme", () => ({
@@ -112,6 +128,9 @@ function _render() {
 
 beforeEach(() => {
   authRole = "admin";
+  authLoading = false;
+  authUserPresent = true;
+  previewRole = null;
   getMock.mockReset();
   postMock.mockReset();
   navigateMock.mockReset();
@@ -121,11 +140,16 @@ afterEach(() => cleanup());
 
 
 describe("AlertBell · role gating", () => {
-  it("renders null for a technician session", async () => {
+  it("renders null for a technician session (queryByTestId assertion)", async () => {
     authRole = "technician";
     getMock.mockResolvedValue(mkApiResponse([], 0));
     const { container } = _render();
+    // Fail-closed root: no root div, no button, no dropdown, no badge.
     expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
+    expect(screen.queryByTestId("alert-bell-btn")).toBeNull();
+    expect(screen.queryByTestId("alert-bell-badge")).toBeNull();
+    expect(screen.queryByTestId("alert-bell-dropdown")).toBeNull();
     // And never fetches — the bell short-circuits at the role check.
     expect(getMock).not.toHaveBeenCalled();
   });
@@ -135,6 +159,7 @@ describe("AlertBell · role gating", () => {
     getMock.mockResolvedValue(mkApiResponse([], 0));
     const { container } = _render();
     expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
     expect(getMock).not.toHaveBeenCalled();
   });
 
@@ -143,6 +168,53 @@ describe("AlertBell · role gating", () => {
     getMock.mockResolvedValue(mkApiResponse([], 0));
     const { container } = _render();
     expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("renders null for a dispatcher session", async () => {
+    authRole = "dispatcher";
+    getMock.mockResolvedValue(mkApiResponse([], 0));
+    const { container } = _render();
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("renders null for an unknown role string", async () => {
+    authRole = "some_future_role";
+    getMock.mockResolvedValue(mkApiResponse([], 0));
+    const { container } = _render();
+    expect(container.firstChild).toBeNull();
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("fail-closed while the auth provider is still loading", async () => {
+    authRole = "admin";
+    authLoading = true;
+    getMock.mockResolvedValue(mkApiResponse([], 0));
+    const { container } = _render();
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("fail-closed for an unauthenticated session (user is null)", async () => {
+    authUserPresent = false;
+    getMock.mockResolvedValue(mkApiResponse([], 0));
+    const { container } = _render();
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it("hides the bell when a super_admin previews as technician", async () => {
+    authRole = "super_admin";
+    previewRole = "technician";
+    getMock.mockResolvedValue(mkApiResponse([], 0));
+    const { container } = _render();
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("alert-bell-root")).toBeNull();
     expect(getMock).not.toHaveBeenCalled();
   });
 

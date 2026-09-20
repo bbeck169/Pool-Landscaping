@@ -24,15 +24,27 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState }
   from "react";
 import { Bell, X as XIcon, CheckCheck, ExternalLink, AlertCircle,
-          Info as InfoIcon } from "lucide-react";
+         Info as InfoIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "@/api";
 import { useAuth } from "@/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { colors } from "@/theme";
 
 
 const _POLL_INTERVAL_MS = 60_000;
+// Phase A1 Hotfix · Feb-2026 — canonical "admin surface" role set,
+// kept in sync with:
+//   1. Backend router gate ``insufficient_role_for_alerts`` in
+//      ``backend/routers/intelligence_alerts.py``.
+//   2. ``hard_rule: "admin_or_super_admin"`` filter branch in the
+//      admin nav / topbar / sidebar (see ``adminNav.js`` + friends).
+// Every other role — technician, customer, manager, dispatcher,
+// marketer, sales, unknown-string, ``null`` (auth loading) —
+// falls through the ``has()`` check and the bell short-circuits to
+// ``return null``.  Fail-closed: unauthenticated / preview-role /
+// loading states never leak the bell surface.
 const _FULL_ROLES = new Set(["admin", "super_admin"]);
 const _SEV_META = {
   urgent:      { color: "#DC2626", icon: AlertCircle },
@@ -62,9 +74,22 @@ function _dot(count) {
 
 
 export default function AlertBell() {
+  // Phase A1 Hotfix · Feb-2026 — respect the "test as..." preview
+  // role too. A super_admin previewing as a technician should see
+  // the app the way that technician sees it — including the
+  // absence of the alert bell. ``effectiveRole`` from
+  // ``usePermissions`` is the same source-of-truth used by the
+  // admin nav filter, so the surface stays in lock-step. When the
+  // permissions provider is missing (test env with no wrapper),
+  // ``effectiveRole`` still resolves to "admin" via the built-in
+  // fallback, so this doesn't regress unrelated tests.
   const auth = useAuth();
-  const role = String(auth?.user?.role || "").toLowerCase();
-  const enabled = _FULL_ROLES.has(role);
+  const { effectiveRole } = usePermissions();
+  const rawRole = String(effectiveRole || auth?.user?.role || "").toLowerCase();
+  // Fail-closed: if the auth provider is loading, we have no user,
+  // or the token was cleared mid-render, ``rawRole`` is "" and
+  // ``_FULL_ROLES.has("")`` returns false — bell renders null.
+  const enabled = !auth?.loading && !!auth?.user && _FULL_ROLES.has(rawRole);
   const navigate = useNavigate();
 
   const [open, setOpen]                 = useState(false);

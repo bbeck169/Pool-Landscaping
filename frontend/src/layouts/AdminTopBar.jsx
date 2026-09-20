@@ -56,10 +56,13 @@ import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 // self-gates via ``canPreview`` so it's a no-op for non-super_admin.
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { Settings as SettingsIcon } from "lucide-react";
-// Phase A1 · Feb-2026 — Proactive Intelligence alert bell. Self-gates
-// to admin/super_admin via its internal role check; renders null for
-// every other role so this import is a no-op for tech/customer
-// branches.
+// Phase A1 · Feb-2026 — Proactive Intelligence alert bell. The
+// component itself is self-gated to admin/super_admin (fail-closed
+// on loading auth state); ``AdminBellSlot`` below adds a second
+// belt-and-braces gate at the AdminTopBar level so we never even
+// mount the component tree for tech / customer / manager /
+// dispatcher / marketer / sales sessions, matching the backend
+// ``insufficient_role_for_alerts`` contract exactly.
 import AlertBell from "@/components/nav/AlertBell";
 import {
   DropdownMenu,
@@ -340,6 +343,23 @@ function MobileMenu({ visible, fixedItems }) {
 }
 
 
+// Phase A1 Hotfix · Feb-2026 — AdminTopBar-level bell gate.
+// Belt-and-braces companion to the internal ``AlertBell`` role
+// check. Uses ``effectiveRole`` (respects the "test as..." preview
+// role) and ``auth.loading`` (fail-closed while the user object
+// resolves). Every role EXCEPT admin + super_admin renders null,
+// matching the backend ``insufficient_role_for_alerts`` gate.
+function AdminBellSlot() {
+  const auth = useAuth();
+  const { effectiveRole } = usePermissions();
+  const role = String(effectiveRole || auth?.user?.role || "").toLowerCase();
+  if (auth?.loading) return null;
+  if (!auth?.user) return null;
+  if (role !== "admin" && role !== "super_admin") return null;
+  return <AlertBell />;
+}
+
+
 export default function AdminTopBar() {
   const visible = useVisibleGroups();
   const _auth = useAuth();
@@ -442,7 +462,7 @@ export default function AdminTopBar() {
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
               <SettingsSprocket />
-              <AlertBell />
+              <AdminBellSlot />
               <LanguageSelector compact />
               <SignOutButton />
               <UniversalMenu variant="inline" />
@@ -463,7 +483,7 @@ export default function AdminTopBar() {
               <AddCustomerButton />
               <CreditsBudgetChip />
               <SettingsSprocket />
-              <AlertBell />
+              <AdminBellSlot />
               <LanguageSelector />
               <SignOutButton />
               <UniversalMenu variant="inline" />
