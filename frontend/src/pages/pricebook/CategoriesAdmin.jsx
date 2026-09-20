@@ -31,7 +31,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Archive, ArchiveRestore, Plus, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Plus, Pencil, GripVertical } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -42,6 +42,15 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  DndContext, closestCenter, PointerSensor, KeyboardSensor,
+  useSensor, useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext, verticalListSortingStrategy, useSortable,
+  arrayMove, sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 
 const AXIS = {
@@ -231,6 +240,110 @@ function ArchiveWarnDialog({
 }
 
 
+// ─── Sortable row (F1.5 · Feb-2026 — drag-drop reorder wiring) ──
+function SortableCategoryRow({
+  category, axis, onEdit, onArchive, onRestore, busyId,
+}) {
+  const c = category;
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: c.id });
+  const isSeed = c.created_by_user_id === "system:seed";
+  const rowStyle = {
+    borderTop: `1px solid ${colors.border}`,
+    opacity: c.is_archived ? 0.55 : 1,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    background: isDragging ? colors.surfaceSecondary : "transparent",
+  };
+  return (
+    <tr ref={setNodeRef} style={rowStyle}
+        data-testid={`${axis}-category-row-${c.id}`}>
+      <td className="px-2 py-2 w-6">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-1"
+          style={{ color: colors.muted }}
+          data-testid={`${axis}-category-drag-${c.id}`}
+          aria-label="Drag to reorder"
+        ><GripVertical size={14} /></button>
+      </td>
+      <td className="px-3 py-2">
+        <span className="inline-block w-5 h-5 rounded"
+              style={{ background: c.color || "#94A3B8" }} />
+      </td>
+      <td className="px-3 py-2 font-semibold"
+          style={{ color: colors.onSurface }}>
+        <span>{c.name}</span>
+        {isSeed ? (
+          <span
+            className="ml-2 inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase align-middle"
+            style={{ background: "#E0F2FE", color: "#075985",
+                      border: "1px solid #7DD3FC" }}
+            data-testid={`${axis}-category-seed-badge-${c.id}`}
+            title="Seeded default — created automatically"
+          >Default</span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2" style={{ color: colors.muted }}>
+        {c.description || "—"}
+      </td>
+      <td className="px-3 py-2 text-right font-mono text-xs">
+        {c.sort_order || 0}
+      </td>
+      <td className="px-3 py-2 text-center text-xs">
+        <button
+          onClick={() => c.is_archived ? onRestore(c) : onArchive(c)}
+          disabled={busyId === c.id}
+          className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+          style={{
+            background: c.is_archived ? "#FEE2E2" : "#DCFCE7",
+            color: c.is_archived ? "#7F1D1D" : "#166534",
+            cursor: "pointer",
+          }}
+          data-testid={`category-active-toggle-${c.id}`}
+          data-axis={axis}
+          data-archived={c.is_archived ? "true" : "false"}
+        >
+          {c.is_archived ? "Archived" : "Active"}
+        </button>
+      </td>
+      <td className="px-3 py-2 text-right whitespace-nowrap">
+        <button
+          onClick={() => onEdit(c)}
+          disabled={busyId === c.id}
+          className="p-1 mr-1"
+          style={{ color: colors.brand }}
+          data-testid={`${axis}-category-edit-${c.id}`}
+          title="Edit"
+        ><Pencil size={13} /></button>
+        {c.is_archived ? (
+          <button
+            onClick={() => onRestore(c)}
+            disabled={busyId === c.id}
+            className="p-1"
+            style={{ color: "#0891B2" }}
+            data-testid={`${axis}-category-restore-${c.id}`}
+            title="Restore"
+          ><ArchiveRestore size={13} /></button>
+        ) : (
+          <button
+            onClick={() => onArchive(c)}
+            disabled={busyId === c.id}
+            className="p-1"
+            style={{ color: "#DC2626" }}
+            data-testid={`${axis}-category-archive-${c.id}`}
+            title="Archive"
+          ><Archive size={13} /></button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+
 // ─── Table per axis ──────────────────────────────────────────────
 function CategoriesTable({ axis }) {
   const [items, setItems]        = useState(null);
@@ -276,6 +389,32 @@ function CategoriesTable({ axis }) {
   const createTestid = `${axis === "income" ? "income" : "service"}-category-create-btn`;
   const tableTestid  = `${axis === "income" ? "income" : "service"}-categories-table`;
 
+  // F1.5 · Feb-2026 — drag-drop reorder wiring.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = async (ev) => {
+    const { active, over } = ev;
+    if (!over || active.id === over.id || !items) return;
+    const oldIdx = items.findIndex((it) => it.id === active.id);
+    const newIdx = items.findIndex((it) => it.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const next = arrayMove(items, oldIdx, newIdx);
+    const orderedIds = next.map((it) => it.id);
+    // Optimistic update.
+    setItems(next);
+    try {
+      await api.post(`/${AXIS[axis].path}/reorder`,
+                       { ordered_ids: orderedIds });
+    } catch (e) {
+      // Revert on failure.
+      setItems(items);
+      toast.error(e?.message || "Reorder failed");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -295,98 +434,52 @@ function CategoriesTable({ axis }) {
       <div className="rounded-2xl overflow-hidden"
             style={{ background: colors.surface,
                       border: `1px solid ${colors.border}` }}>
-        <table className="w-full text-sm" data-testid={tableTestid}>
-          <thead style={{ background: colors.surfaceSecondary }}>
-            <tr>
-              <th className="text-left px-3 py-2 font-semibold">Color</th>
-              <th className="text-left px-3 py-2 font-semibold">Name</th>
-              <th className="text-left px-3 py-2 font-semibold">Description</th>
-              <th className="text-right px-3 py-2 font-semibold">Sort</th>
-              <th className="text-center px-3 py-2 font-semibold">Status</th>
-              <th className="w-32 px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items === null ? (
-              <tr><td colSpan="6" className="px-3 py-4 text-center"
-                        style={{ color: colors.muted }}>Loading…</td></tr>
-            ) : items.length === 0 ? (
-              <tr><td colSpan="6" className="px-3 py-4 text-center"
-                        style={{ color: colors.muted }}
-                        data-testid={`${axis}-categories-empty`}>
-                No categories yet — create your first one.
-              </td></tr>
-            ) : items.map((c) => (
-              <tr key={c.id}
-                  style={{ borderTop: `1px solid ${colors.border}`,
-                            opacity: c.is_archived ? 0.55 : 1 }}
-                  data-testid={`${axis}-category-row-${c.id}`}>
-                <td className="px-3 py-2">
-                  <span className="inline-block w-5 h-5 rounded"
-                        style={{ background: c.color || "#94A3B8" }} />
-                </td>
-                <td className="px-3 py-2 font-semibold"
-                    style={{ color: colors.onSurface }}>{c.name}</td>
-                <td className="px-3 py-2" style={{ color: colors.muted }}>
-                  {c.description || "—"}
-                </td>
-                <td className="px-3 py-2 text-right font-mono text-xs">
-                  {c.sort_order || 0}
-                </td>
-                <td className="px-3 py-2 text-center text-xs">
-                  {/* Phase 1 required testid — a single toggle button.
-                      "Active" ↔ "Archived" flip = archive/restore. */}
-                  <button
-                    onClick={() => c.is_archived
-                      ? restore(c)
-                      : setArchive(c)}
-                    disabled={busyId === c.id}
-                    className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
-                    style={{
-                      background: c.is_archived ? "#FEE2E2" : "#DCFCE7",
-                      color: c.is_archived ? "#7F1D1D" : "#166534",
-                      cursor: "pointer",
-                    }}
-                    data-testid={`category-active-toggle-${c.id}`}
-                    data-axis={axis}
-                    data-archived={c.is_archived ? "true" : "false"}
-                  >
-                    {c.is_archived ? "Archived" : "Active"}
-                  </button>
-                </td>
-                <td className="px-3 py-2 text-right whitespace-nowrap">
-                  <button
-                    onClick={() => setEditing(c)}
-                    disabled={busyId === c.id}
-                    className="p-1 mr-1"
-                    style={{ color: colors.brand }}
-                    data-testid={`${axis}-category-edit-${c.id}`}
-                    title="Edit"
-                  ><Pencil size={13} /></button>
-                  {c.is_archived ? (
-                    <button
-                      onClick={() => restore(c)}
-                      disabled={busyId === c.id}
-                      className="p-1"
-                      style={{ color: "#0891B2" }}
-                      data-testid={`${axis}-category-restore-${c.id}`}
-                      title="Restore"
-                    ><ArchiveRestore size={13} /></button>
-                  ) : (
-                    <button
-                      onClick={() => setArchive(c)}
-                      disabled={busyId === c.id}
-                      className="p-1"
-                      style={{ color: "#DC2626" }}
-                      data-testid={`${axis}-category-archive-${c.id}`}
-                      title="Archive"
-                    ><Archive size={13} /></button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={(items || []).map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <table className="w-full text-sm" data-testid={tableTestid}>
+              <thead style={{ background: colors.surfaceSecondary }}>
+                <tr>
+                  <th className="w-6"></th>
+                  <th className="text-left px-3 py-2 font-semibold">Color</th>
+                  <th className="text-left px-3 py-2 font-semibold">Name</th>
+                  <th className="text-left px-3 py-2 font-semibold">Description</th>
+                  <th className="text-right px-3 py-2 font-semibold">Sort</th>
+                  <th className="text-center px-3 py-2 font-semibold">Status</th>
+                  <th className="w-32 px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody data-testid={`${axis}-categories-tbody`}>
+                {items === null ? (
+                  <tr><td colSpan="7" className="px-3 py-4 text-center"
+                            style={{ color: colors.muted }}>Loading…</td></tr>
+                ) : items.length === 0 ? (
+                  <tr><td colSpan="7" className="px-3 py-4 text-center"
+                            style={{ color: colors.muted }}
+                            data-testid={`${axis}-categories-empty`}>
+                    No categories yet — create your first one.
+                  </td></tr>
+                ) : items.map((c) => (
+                  <SortableCategoryRow
+                    key={c.id}
+                    category={c}
+                    axis={axis}
+                    onEdit={setEditing}
+                    onArchive={setArchive}
+                    onRestore={restore}
+                    busyId={busyId}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </SortableContext>
+        </DndContext>
       </div>
 
       <CategoryFormDialog

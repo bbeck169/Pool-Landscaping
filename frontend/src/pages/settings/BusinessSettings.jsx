@@ -567,6 +567,9 @@ export default function BusinessSettings() {
             )}
           </section>
 
+          {/* F1.1 · Feb-2026 — tenant currency picker. */}
+          <CurrencyCard />
+
           {/* ── Save bar ────────────────────────────────────── */}
           <PaymentProvidersCard />
 
@@ -657,5 +660,111 @@ function ColorField({ label, testidPrefix, value, onChange, err, placeholder }) 
               data-testid={`${testidPrefix}-error`}>{err}</div>
       ) : null}
     </div>
+  );
+}
+
+
+
+/**
+ * F1.1 · Feb-2026 — tenant currency card.
+ *
+ * Standalone card wired to the new PATCH
+ * ``/api/tenants/mine/settings/business`` endpoint (kept separate
+ * from the existing ``/tenants/me/business-settings`` surface so
+ * we don't have to reshape that route to accept currency mid-cycle).
+ *
+ * Renders a dropdown of every ISO code the backend whitelist
+ * exposes with a native symbol preview next to it. Save is
+ * immediate on selection change — no dirty tracker.
+ */
+export function CurrencyCard() {
+  const [state, setState] = React.useState("loading"); // loading | ready | saving | error
+  const [current, setCurrent] = React.useState("USD");
+  const [supported, setSupported] = React.useState([]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get("/tenants/mine/settings/business");
+        if (cancelled) return;
+        setCurrent(r?.currency || "USD");
+        setSupported(r?.supported_currencies || []);
+        setState("ready");
+      } catch (e) {
+        if (cancelled) return;
+        setState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const onChange = async (e) => {
+    const code = e.target.value;
+    setState("saving");
+    try {
+      const r = await api.patch("/tenants/mine/settings/business",
+                                    { currency: code });
+      setCurrent(r?.currency || code);
+      toast.success(`Currency set to ${code}`);
+      setState("ready");
+    } catch (err) {
+      toast.error(err?.data?.detail?.error === "unsupported_currency"
+        ? "Unsupported currency"
+        : (err?.message || "Save failed"));
+      setState("ready");
+    }
+  };
+
+  return (
+    <section
+      className="lg:col-span-3 rounded-lg border p-4"
+      style={{ borderColor: colors.border, background: "#FFFFFF" }}
+      data-testid="bs-currency-card"
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-base font-bold"
+              style={{ color: colors.onSurface }}>Currency</h2>
+          <p className="text-xs" style={{ color: colors.muted }}>
+            Applied to the sales pipeline, reports, and every customer-facing
+            proposal / renewal email.
+          </p>
+        </div>
+        {state === "saving" ? (
+          <span className="text-xs" style={{ color: colors.muted }}
+                 data-testid="bs-currency-saving">Saving…</span>
+        ) : null}
+      </div>
+      {state === "loading" ? (
+        <div className="text-xs" style={{ color: colors.muted }}
+              data-testid="bs-currency-loading">Loading…</div>
+      ) : state === "error" ? (
+        <div className="text-xs" style={{ color: "#DC2626" }}
+              data-testid="bs-currency-error">Failed to load currency setting.</div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <select
+            value={current}
+            onChange={onChange}
+            disabled={state === "saving"}
+            className="px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ border: `1px solid ${colors.border}`, background: "#FFF",
+                      minWidth: 220 }}
+            data-testid="bs-currency-select"
+          >
+            {supported.map((c) => (
+              <option key={c.code} value={c.code}
+                        data-testid={`bs-currency-option-${c.code}`}>
+                {c.code} — {c.symbol}
+              </option>
+            ))}
+          </select>
+          <span className="text-2xl" data-testid="bs-currency-symbol">
+            {(supported.find((c) => c.code === current) || {}).symbol || "$"}
+          </span>
+        </div>
+      )}
+    </section>
   );
 }

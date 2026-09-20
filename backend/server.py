@@ -1091,6 +1091,10 @@ api_router.include_router(_fb_pp_settings.router)
 from routers import tenant_org_settings as _fb_org_settings  # noqa: E402
 api_router.include_router(_fb_org_settings.router)
 
+# Phase F1.2 · Feb-2026 — Customer-portal agreement renewal.
+from routers import portal_agreements as _f1_portal_agreements  # noqa: E402
+api_router.include_router(_f1_portal_agreements.router)
+
 # Sprint 3b · Feb-2026 · Chemistry Configuration + Sandboxed Dosing.
 from routers import tenant_chemistry_settings as _fb_chem_settings  # noqa: E402
 api_router.include_router(_fb_chem_settings.router)

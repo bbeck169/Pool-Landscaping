@@ -18,6 +18,7 @@ import Login from "@/pages/Login";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import PortalReviewSubmit from "@/pages/portal/PortalReviewSubmit";
+import PortalAgreementRenew from "@/pages/portal/PortalAgreementRenew";
 import Signup from "@/pages/Signup";
 // Feb-2026 · Business Signup SP2 — new public + wizard surface.
 import BusinessSignup from "@/pages/BusinessSignup";
@@ -671,6 +672,11 @@ export default function App() {
               Token-authed (no bearer). Consumes the existing gating
               endpoint at /api/public/r/{token}/rating. */}
           <Route path="/portal/review/submit" element={<PortalReviewSubmit />} />
+          {/* Phase F1.2 · Feb-2026 — public customer-portal
+              agreement renewal page. Token-authed via ?token= from
+              the A4-produced renewal proposal email. */}
+          <Route path="/customer-portal/agreements/:agreement_id/renew"
+                  element={<PortalAgreementRenew />} />
           <Route path="/signup" element={<Signup />} />
           {/* Feb-2026 · Business Signup SP2 — public self-serve
               tenant signup + email-verify landing + wizard. */}

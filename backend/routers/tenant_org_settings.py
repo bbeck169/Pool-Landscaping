@@ -173,3 +173,78 @@ async def patch_ai_settings(
     )
     fresh = await db.tenants.find_one({"id": tenant["id"]}) or tenant
     return _read_ai(fresh)
+
+
+# ── Business schemas (F1.1 · Feb-2026 — tenant currency) ─────────
+# Whitelist of ISO 4217 codes the frontend Business tab exposes as a
+# dropdown. Kept intentionally short until we bring in a proper
+# ``pycountry`` dep — every one of these was verified against
+# https://en.wikipedia.org/wiki/ISO_4217 at ship-time. Adding a new
+# code is a symmetric edit here + in the frontend dropdown.
+SUPPORTED_CURRENCIES = ("USD", "EUR", "GBP", "CAD", "AUD")
+CURRENCY_SYMBOLS = {
+    "USD": "$", "EUR": "€", "GBP": "£", "CAD": "$", "AUD": "$",
+}
+
+
+class BusinessSettingsIn(BaseModel):
+    """Partial PATCH for tenant business-level fields.
+
+    Currently just ``currency`` — the wider set of business fields
+    (name / phone / brand hex / logo) already lives on the pre-F1
+    ``/tenants/me/business-settings`` surface. This new endpoint
+    keeps the currency writer isolated so the Kanban / Reports /
+    Portal readers can adopt a single source of truth.
+    """
+    model_config = ConfigDict(extra="forbid")
+    currency: Optional[str] = None
+
+
+def _read_business(tenant: Dict[str, Any]) -> Dict[str, Any]:
+    settings = tenant.get("settings") or {}
+    currency = (settings.get("currency")
+                  or (tenant.get("business") or {}).get("currency")
+                  or "USD").upper()
+    return {
+        "currency": currency,
+        "currency_symbol": CURRENCY_SYMBOLS.get(currency, currency),
+        "supported_currencies": [
+            {"code": c, "symbol": CURRENCY_SYMBOLS[c]}
+            for c in SUPPORTED_CURRENCIES
+        ],
+    }
+
+
+@router.get("/settings/business")
+async def get_business_settings(
+    _user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    return _read_business(tenant)
+
+
+@router.patch("/settings/business")
+async def patch_business_settings(
+    body: BusinessSettingsIn,
+    _user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    updates: Dict[str, Any] = {}
+    if body.currency is not None:
+        code = body.currency.strip().upper()
+        if code not in SUPPORTED_CURRENCIES:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unsupported_currency",
+                    "attempted": code,
+                    "allowed": list(SUPPORTED_CURRENCIES),
+                },
+            )
+        updates["settings.currency"] = code
+    if not updates:
+        return _read_business(tenant)
+    await db.tenants.update_one(
+        {"id": tenant["id"]}, {"$set": updates})
+    fresh = await db.tenants.find_one({"id": tenant["id"]}) or tenant
+    return _read_business(fresh)

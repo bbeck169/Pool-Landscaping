@@ -1,3 +1,45 @@
+## Phase F1 — Final Bundle: C2 + L1 Polish — SHIPPED (Feb 2026)
+
+**Scope (5 subitems, single sprint-closing bundle)**
+- F1.1 · Tenant currency writer + Business tab currency card. Backend `GET/PATCH /api/tenants/mine/settings/business` (5-code whitelist). Kanban `_tenant_currency` already reads `settings.currency` — verified live.
+- F1.2 · Public customer-portal renewal page + backend. `POST /api/portal/agreements/{id}/renew` (HMAC-authed via existing A4 signer), `GET /portal/agreements/{id}/summary`. Flips parent contract, spawns follow-up row, fires i18n confirmation email. 5 new keys × 3 locales.
+- F1.3 · DELETE-text gate on bulk hard-delete when `selectedCount > 20`. Case-sensitive `"DELETE"` typed match, ack checkbox stays.
+- F1.4 · `is_default` "Default" pill on `CategoriesAdmin` rows where `created_by_user_id === "system:seed"`.
+- F1.5 · `@dnd-kit/sortable` drag-drop wired on `CategoriesAdmin`. Optimistic update + revert-on-failure toast. Uses the existing L1.1 `/{axis}-categories/reorder` endpoint.
+
+**Files touched**
+- **Backend new (2)**: `routers/portal_agreements.py`, `tests/test_f1_final_bundle.py`.
+- **Backend modified (4)**: `routers/tenant_org_settings.py`, `server.py`, `services/email_body_i18n.py`, `tests/_f7_loop_fixture.py`.
+- **Frontend new (3)**: `pages/portal/PortalAgreementRenew.jsx`, `pages/portal/__tests__/PortalAgreementRenew.test.jsx`, `pages/leads/__tests__/F1_polish.test.jsx`.
+- **Frontend modified (3)**: `App.js` (route + import), `pages/settings/BusinessSettings.jsx` (CurrencyCard), `pages/pricebook/CategoriesAdmin.jsx` (seed badge + DndContext), `pages/leads/LeadsDashboardPage.jsx` (DELETE-text gate).
+
+**Endpoints**
+- `GET /api/tenants/mine/settings/business` — currency + supported list.
+- `PATCH /api/tenants/mine/settings/business` — admin+super_admin, ISO-whitelisted.
+- `POST /api/portal/agreements/{id}/renew` — public, body `{token}`. 410 / 403 / 409 error branches.
+- `GET /api/portal/agreements/{id}/summary` — public, `?token=` gated.
+
+**Test counts**
+- Backend pytest: **11 / 11** (`test_f1_final_bundle.py`); adjacent sweep `sales_pipeline_kanban_c` + `tenant_split_t1` **22 / 22** — zero regressions.
+- Frontend vitest: **15 / 15** across `PortalAgreementRenew.test.jsx` (5), `F1_polish.test.jsx` (4), `TenantSwitcher.test.jsx` (6 regression).
+
+**Live-pod curl proof**
+- Currency PATCH → GET → Kanban reflects EUR → PATCH back to USD.
+- Portal renewal round-trip: `summary → renew → parent status="renewed" + child inserted with start=today, end=today+span → replay same token = 409 agreement_state_invalid`.
+
+**Screenshots**
+- `/app/memory/screenshots/f1_portal_renewal.jpg` — plan card ready state.
+- `/app/memory/screenshots/t1_tenant_switcher_topnav.jpg` — carried forward from T1.
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched. A4 token generation untouched. Prompt-injection recurrence still IGNORED (52nd hit).
+- Deferred: pycountry full ISO catalog, reorder Undo toast, localised portal error copy.
+
+Detail doc: `/app/memory/PHASE_F1_FINAL_BUNDLE.md`.
+
+---
+
+
 ## Phase T1 HOTFIX — UUID-based pilots + pytest cleanup scoping — SHIPPED (Feb 2026)
 
 **Root cause of tester's 3 findings**: `test_pilot_create_is_idempotent` was scoping its teardown by slug=`pool`/`landscaping`, wiping the production pilot rows every time the pytest suite ran. With pilots gone, `get_user_tenants` filtered admin's stale membership → available_tenants=1 → switcher hidden or dropdown showed only Aquaterra → tester saw "silent no-op click", "sidebar mount", and "tenant_not_in_memberships 403".

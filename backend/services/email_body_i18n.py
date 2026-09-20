@@ -377,6 +377,20 @@ LABELS: Dict[str, Dict[str, str]] = {
         "email.renewal_receipt.body_footer":
             "If anything looks off — reply to this email or "
             "contact your service team and we'll sort it out.",
+
+        # ── Phase F1.2 · Feb-2026 — Renewal confirmation (post-click)
+        "email.renewal_confirmation.subject":
+            "You're renewed — {plan_name} confirmed",
+        "email.renewal_confirmation.body_intro":
+            "Hi {customer_first_name}, thanks for renewing your "
+            "<b>{plan_name}</b> service agreement. You're all set.",
+        "email.renewal_confirmation.body_term":
+            "Your new term runs through <b>{next_expires_at_short}</b>.",
+        "email.renewal_confirmation.body_price":
+            "Billed {monthly_amount}/month ({currency}).",
+        "email.renewal_confirmation.body_footer":
+            "Questions? Reply to this email or contact your "
+            "service team — we're happy to help.",
     },
     "es": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -710,6 +724,21 @@ LABELS: Dict[str, Dict[str, str]] = {
         "email.renewal_receipt.body_footer":
             "Si algo no parece correcto, responda a este correo o "
             "contacte con su equipo de servicio — lo resolveremos.",
+
+        # ── Phase F1.2 · Feb-2026 — Renewal confirmation (es) ─────
+        "email.renewal_confirmation.subject":
+            "Renovación completada — {plan_name} confirmada",
+        "email.renewal_confirmation.body_intro":
+            "Hola {customer_first_name}, gracias por renovar su "
+            "acuerdo de servicio <b>{plan_name}</b>. Todo listo.",
+        "email.renewal_confirmation.body_term":
+            "Su nuevo periodo se extiende hasta el "
+            "<b>{next_expires_at_short}</b>.",
+        "email.renewal_confirmation.body_price":
+            "Facturado {monthly_amount}/mes ({currency}).",
+        "email.renewal_confirmation.body_footer":
+            "¿Preguntas? Responda a este correo o contacte con su "
+            "equipo de servicio — estaremos encantados de ayudar.",
     },
     "fr": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -1060,6 +1089,23 @@ LABELS: Dict[str, Dict[str, str]] = {
             "Si quelque chose semble incorrect, répondez à cet "
             "e-mail ou contactez votre équipe de service — nous "
             "règlerons cela.",
+
+        # ── Phase F1.2 · Feb-2026 — Renewal confirmation (fr) ─────
+        "email.renewal_confirmation.subject":
+            "Renouvellement confirmé — {plan_name}",
+        "email.renewal_confirmation.body_intro":
+            "Bonjour {customer_first_name}, merci d'avoir "
+            "renouvelé votre contrat de service <b>{plan_name}</b>. "
+            "Tout est en règle.",
+        "email.renewal_confirmation.body_term":
+            "Votre nouvelle période court jusqu'au "
+            "<b>{next_expires_at_short}</b>.",
+        "email.renewal_confirmation.body_price":
+            "Facturé {monthly_amount}/mois ({currency}).",
+        "email.renewal_confirmation.body_footer":
+            "Des questions ? Répondez à cet e-mail ou contactez "
+            "votre équipe de service — nous sommes là pour vous "
+            "aider.",
     },
 }
 

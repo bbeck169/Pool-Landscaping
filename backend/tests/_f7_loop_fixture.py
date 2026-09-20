@@ -78,6 +78,7 @@ _REBOUND_MODULES = (
     "routers.category_references",
     "routers.leads",
     "routers.tenant_memberships",
+    "routers.portal_agreements",
     "routers.auth",
     "services.user_tenants",
     "server",

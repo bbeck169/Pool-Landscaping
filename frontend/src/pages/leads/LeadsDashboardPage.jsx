@@ -85,6 +85,10 @@ export default function LeadsDashboardPage() {
   // Phase LD1 · Feb 2026 — hard-delete confirmation acknowledge gate.
   const [hardConfirmOpen, setHardConfirmOpen] = useState(false);
   const [hardAcknowledged, setHardAcknowledged] = useState(false);
+  // F1.3 · Feb-2026 — additional DELETE-text gate for large batches
+  // (>20 selected). Case-sensitive exact match required before the
+  // destructive button becomes enabled.
+  const [hardDeleteText, setHardDeleteText] = useState("");
   // Phase LD1 · density toggle persisted to localStorage.
   const [density, setDensity] = useState(() => {
     try {
@@ -179,6 +183,8 @@ export default function LeadsDashboardPage() {
   // ``{ results:[{id, ok, reason?, status_code?}], summary }``.
   const doBulkHardDelete = async () => {
     if (!hardAcknowledged) return;
+    // F1.3 · Feb-2026 — DELETE-text gate for large batches.
+    if (selectedCount > 20 && hardDeleteText !== "DELETE") return;
     setBusy(true);
     try {
       const res = await api.post("/leads/bulk-hard-delete", {
@@ -192,6 +198,7 @@ export default function LeadsDashboardPage() {
       clearSelection();
       setHardConfirmOpen(false);
       setHardAcknowledged(false);
+      setHardDeleteText("");
       if (failCount === 0) toast.success(`${ok} lead${ok === 1 ? "" : "s"} permanently deleted`);
       else toast(`${ok} deleted · ${failCount} locked`, {
         description: results
@@ -633,7 +640,7 @@ export default function LeadsDashboardPage() {
                     data-testid="bulk-delete-button">
             <Trash2 size={12} /> Archive selected
           </button>
-          <button type="button" onClick={() => { setHardConfirmOpen(true); setHardAcknowledged(false); }} disabled={busy}
+          <button type="button" onClick={() => { setHardConfirmOpen(true); setHardAcknowledged(false); setHardDeleteText(""); }} disabled={busy}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
                     style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
                     data-testid="bulk-hard-delete-button">
@@ -741,7 +748,7 @@ export default function LeadsDashboardPage() {
               style={{ background: "rgba(15,23,42,0.65)" }}
               onMouseDown={(e) => {
                 if (e.target === e.currentTarget) {
-                  setHardConfirmOpen(false); setHardAcknowledged(false);
+                  setHardConfirmOpen(false); setHardAcknowledged(false); setHardDeleteText("");
                 }
               }}
               data-testid="bulk-hard-delete-confirm">
@@ -761,7 +768,7 @@ export default function LeadsDashboardPage() {
                 </p>
               </div>
               <button type="button"
-                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); }}
+                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); setHardDeleteText(""); }}
                         className="p-1" style={{ color: colors.muted }} aria-label="Close">
                 <X size={18} />
               </button>
@@ -780,16 +787,42 @@ export default function LeadsDashboardPage() {
                 I understand this is permanent and cannot be recovered.
               </span>
             </label>
+            {/* F1.3 · Feb-2026 — extra DELETE-text gate when the
+                selection exceeds 20 rows. Backend also rate-limits
+                but this gives the operator a physical typing beat
+                they can't accidentally skip. */}
+            {selectedCount > 20 ? (
+              <div className="mt-4" data-testid="bulk-hard-delete-text-gate">
+                <label className="block text-[10px] font-bold uppercase mb-1"
+                          style={{ color: colors.muted }}>
+                  Type <span className="font-mono" style={{ color: "#DC2626" }}>DELETE</span> to confirm
+                </label>
+                <input
+                  type="text"
+                  value={hardDeleteText}
+                  onChange={(e) => setHardDeleteText(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="DELETE"
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none font-mono"
+                  style={{ border: `1px solid ${colors.border}`,
+                            background: "#FFF" }}
+                  data-testid="bulk-hard-delete-text-input"
+                />
+              </div>
+            ) : null}
             <div className="mt-5 flex items-center justify-end gap-2">
               <button type="button"
-                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); }}
+                        onClick={() => { setHardConfirmOpen(false); setHardAcknowledged(false); setHardDeleteText(""); }}
                         className="px-4 py-2 rounded-xl text-sm font-semibold"
                         style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
                         data-testid="bulk-hard-delete-cancel">
                 Cancel
               </button>
               <button type="button" onClick={doBulkHardDelete}
-                        disabled={busy || !hardAcknowledged}
+                        disabled={busy
+                          || !hardAcknowledged
+                          || (selectedCount > 20 && hardDeleteText !== "DELETE")}
                         className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{ backgroundColor: "#DC2626" }}
                         data-testid="bulk-hard-delete-confirm-btn">
