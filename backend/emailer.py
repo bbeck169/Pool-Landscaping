@@ -35,39 +35,104 @@ def _thumbs_html(job: dict) -> str:
     )
 
 
-def _completion_html(job: dict, customer_name: str) -> str:
+def _completion_html(job: dict, customer_name: str,
+                       *, locale: str = "en") -> str:
+    """Feb-2026 · Phase D6 — subject + body copy resolved via
+    :func:`services.email_body_i18n.t_email_body`.
+
+    The HTML skeleton (branded shell, table cells, CTA button
+    styling) stays hardcoded — only the customer-facing sentences
+    are catalogued. Callers pass an already-resolved locale (via
+    :func:`services.i18n.email_locale.resolve_email_locale`).
+    """
+    from services.email_body_i18n import t_email_body
     report_url = f"{APP_PUBLIC_URL}/job/{job['id']}"
     service = job.get("service_type", "service")
     when = (job.get("scheduled_date") or "")[:10]
+    heading = t_email_body(locale, "email.job_completed.heading")
+    if when:
+        body_line = t_email_body(
+            locale, "email.job_completed.body_with_date",
+            customer_name=customer_name, service_type=service, when=when,
+        )
+    else:
+        body_line = t_email_body(
+            locale, "email.job_completed.body_no_date",
+            customer_name=customer_name, service_type=service,
+        )
+    cta_label = t_email_body(
+        locale, "email.job_completed.cta_view_report",
+    )
+    support_line = t_email_body(
+        locale, "email.job_completed.support_line",
+    )
+    # Photos block heading is threaded into ``_thumbs_html`` via a
+    # locale-aware pre-render so the caption localises alongside the
+    # rest of the body.
+    photos_heading = t_email_body(
+        locale, "email.job_completed.photos_heading",
+    )
+    thumbs = _thumbs_html_with_heading(job, photos_heading)
     return f"""
     <div style="max-width:560px;margin:0 auto;font-family:Arial,sans-serif;color:#1A2B3C;">
       <div style="background:#003C5F;padding:24px;border-radius:12px 12px 0 0;">
         <h1 style="color:#fff;margin:0;font-size:20px;">Pool &amp; Landscaping of Vistancia</h1>
       </div>
       <div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
-        <h2 style="font-size:18px;margin:0 0 8px;">Your service is complete ✅</h2>
+        <h2 style="font-size:18px;margin:0 0 8px;">{heading} ✅</h2>
         <p style="font-size:14px;color:#334155;line-height:20px;margin:0 0 4px;">
-          Hi {customer_name}, we've finished your <strong>{service}</strong>{f' on {when}' if when else ''}.
-          Your full service report — checklist, water readings and chemicals added — is ready to view.
+          {body_line}
         </p>
-        {_thumbs_html(job)}
+        {thumbs}
         <div style="text-align:center;margin:28px 0 8px;">
           <a href="{report_url}"
              style="background:#0EA5B7;color:#fff;text-decoration:none;font-size:15px;font-weight:bold;
                     padding:14px 28px;border-radius:10px;display:inline-block;">
-            View Your Service Report
+            {cta_label}
           </a>
         </div>
         <p style="font-size:12px;color:#94A3B8;text-align:center;margin:12px 0 0;">
-          Questions? Just reply in the app and our team (and Marina, our assistant) will help.
+          {support_line}
         </p>
       </div>
     </div>
     """
 
 
+def _thumbs_html_with_heading(job: dict, heading: str) -> str:
+    """Same as :func:`_thumbs_html` but with a locale-injected
+    heading. Kept as a separate function so
+    :func:`send_completion_email`'s locale plumbing doesn't force
+    every other caller of ``_thumbs_html`` (none today, but
+    future-proofing) to thread a locale kwarg they don't need."""
+    photos = job.get("photos") or []
+    if not photos:
+        return ""
+    base = APP_PUBLIC_URL
+    cells = ""
+    for p in photos[:6]:
+        src = f"{base}/api/public/job-photo/{job['id']}/{p['id']}"
+        cells += (
+            f'<td style="padding:4px;">'
+            f'<img src="{src}" width="96" height="96" alt="Service photo" '
+            f'style="border-radius:10px;display:block;object-fit:cover;border:1px solid #E2E8F0;" />'
+            f"</td>"
+        )
+    return (
+        '<p style="margin:20px 0 8px;font-family:Arial,sans-serif;font-size:14px;color:#334155;">'
+        f"{heading}</p>"
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0"><tr>'
+        f"{cells}</tr></table>"
+    )
+
+
 async def send_completion_email(job: dict) -> bool:
-    """Email the customer that their job is complete, with photo thumbnails + a report link."""
+    """Email the customer that their job is complete, with photo thumbnails + a report link.
+
+    Feb-2026 · Phase D6 — subject + body copy resolved through the
+    D6 i18n catalog. Locale is derived from the customer doc, then
+    tenant default, then falls back to ``en``.
+    """
     if not RESEND_API_KEY:
         logger.info("Resend not configured — skipping completion email.")
         return False
@@ -93,13 +158,30 @@ async def send_completion_email(job: dict) -> bool:
             to_email, job.get("id"),
         )
         return False
+    # Phase D6 · Feb-2026 — resolve recipient locale for subject +
+    # body i18n. Tenant default is optional (best-effort lookup).
+    try:
+        _tenant = await db.tenants.find_one(
+            {"id": job.get("tenant_id")},
+            {"_id": 0, "default_locale": 1},
+        ) if job.get("tenant_id") else None
+    except Exception:  # noqa: BLE001
+        _tenant = None
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=cust, tenant=_tenant)
     try:
         resend.api_key = RESEND_API_KEY
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
-            "subject": f"Your {job.get('service_type', 'service')} is complete",
-            "html": _completion_html(job, cust.get("name", "there")),
+            "subject": t_email_body(
+                _locale, "email.job_completed.subject",
+                service_type=job.get("service_type", "service"),
+            ),
+            "html": _completion_html(
+                job, cust.get("name", "there"), locale=_locale,
+            ),
         })
         return True
     except Exception as e:
@@ -160,13 +242,21 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
         f'{cta_label}</a></p>'
     ) if pay_link else ""
     # Phase B1 · Feb 2026 — F2b attachment-count copy.
+    # Phase D6 · Feb 2026 — pluralised via the i18n catalog so the
+    # ``1 attachment / N attachments`` singular/plural split is
+    # translator-controlled per locale.
     n = max(0, int(attachment_count or 0))
     attach_html = ""
     if n > 0:
-        noun = "attachment" if n == 1 else "attachments"
+        from services.email_body_i18n import t_email_body as _t
+        line_key = (
+            "email.invoice_reminder.attachments_one" if n == 1
+            else "email.invoice_reminder.attachments_many"
+        )
+        attach_line = _t(locale, line_key, count=n)
         attach_html = (
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
-            f'{n} {noun} included</p>'
+            f'{attach_line}</p>'
         )
     # Feb-2026 · P0 template bug fix — substitute the invoice's
     # customer-facing number instead of the (legacy) title field,
@@ -174,12 +264,30 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
     # rows and produced "invoice Estimate has an outstanding
     # balance…". Full RCA in DIAG_ESTIMATE_INVOICE_REMINDER_BUG.md.
     doc_number = _invoice_display_number(inv)
+    # Phase D6 · Feb 2026 — the customer-facing sentences (heading,
+    # greeting, body, thanks) are catalogued via ``t_email_body``.
+    # Only the HTML skeleton stays hardcoded.
+    from services.email_body_i18n import t_email_body
+    heading = t_email_body(locale, "email.invoice_reminder.heading")
+    greeting = t_email_body(
+        locale, "email.invoice_reminder.greeting",
+        customer_name=name,
+    )
+    body_line = t_email_body(
+        locale, "email.invoice_reminder.body",
+        invoice_number=doc_number,
+        balance=f"{balance:,.2f}",
+        due_date=due,
+    )
+    thanks = t_email_body(
+        locale, "email.invoice_reminder.thanks",
+        company="Pool &amp; Landscaping of Vistancia",
+    )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
-        f"<h2>Payment reminder</h2><p>Hi {name},</p>"
-        f"<p>This is a friendly reminder that invoice <b>{doc_number}</b> has an outstanding balance of "
-        f"<b>${balance:,.2f}</b> (was due {due}).</p>{attach_html}{link_html}"
-        f"<p>Thank you,<br/>Pool &amp; Landscaping of Vistancia</p></div>"
+        f"<h2>{heading}</h2><p>{greeting}</p>"
+        f"<p>{body_line}</p>{attach_html}{link_html}"
+        f"<p>{thanks}</p></div>"
     )
 
 
@@ -200,6 +308,7 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
                                 attachment_count: int = 0,
                                 attachments: Optional[list] = None,
                                 magic_token: str = "",
+                                *, locale: str = "en",
                                 ) -> str:
     """Feb-2026 · P0 fix — Estimate/Quote reminder template.
 
@@ -212,8 +321,19 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
       * The doc-type label ("estimate" vs "quote") is derived from
         ``inv.doc_type`` so the sender-shipped copy matches the
         header the customer sees on the portal page.
+
+    Phase D6 · Feb-2026 — subject + body copy resolved via
+    :func:`services.email_body_i18n.t_email_body`. The doc-type
+    label is also catalogued so ``estimate`` → ``presupuesto`` /
+    ``devis`` (etc.) renders correctly on the ``<h2>`` and the CTA
+    button.
     """
-    doc_type_label = "quote" if inv.get("doc_type") == "quote" else "estimate"
+    from services.email_body_i18n import t_email_body
+    is_quote = inv.get("doc_type") == "quote"
+    doc_type_key = ("email.estimate_reminder.doc_type.quote"
+                     if is_quote
+                     else "email.estimate_reminder.doc_type.estimate")
+    doc_type_label = t_email_body(locale, doc_type_key)
     doc_number = _invoice_display_number(inv)
     company = (tenant or {}).get("company_name") or "your service provider"
     # Feb-2026 · Public Quote Attachments — prefer a clickable list
@@ -249,28 +369,37 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
                 f'({_size_str})</span></li>'
             )
         if _rows_html:
+            _attach_heading = t_email_body(
+                locale, "email.estimate_reminder.attachments_heading",
+            )
             attach_html = (
                 '<div style="margin-top:14px;padding:12px 16px;'
                 'background:#F8FAFC;border:1px solid #E2E8F0;'
                 'border-radius:10px;">'
                 '<div style="font-weight:700;color:#0F172A;'
-                'font-size:13px;margin-bottom:4px;">Attachments</div>'
+                f'font-size:13px;margin-bottom:4px;">{_attach_heading}</div>'
                 f'<ul style="margin:0;padding-left:18px;">{_rows_html}</ul>'
                 '</div>'
             )
     elif n > 0:
-        noun = "attachment" if n == 1 else "attachments"
+        _line_key = ("email.estimate_reminder.attachments_one" if n == 1
+                     else "email.estimate_reminder.attachments_many")
+        _attach_line = t_email_body(locale, _line_key, count=n)
         attach_html = (
             f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
-            f'{n} {noun} included</p>'
+            f'{_attach_line}</p>'
         )
     cta = ""
     if review_url:
+        cta_label = t_email_body(
+            locale, "email.estimate_reminder.cta_review",
+            doc_type_label_titled=doc_type_label.title(),
+        )
         cta = (
             f'<p><a href="{review_url}" '
             f'style="background:#0891b2;color:#fff;padding:12px 20px;'
             f'border-radius:8px;text-decoration:none;display:inline-block">'
-            f'Review {doc_type_label.title()}</a></p>'
+            f'{cta_label}</a></p>'
         )
     # Feb-2026 · Task 6 — Terms & Conditions block on estimate/quote
     # reminders only (invoices excluded per lock). Rendered as a
@@ -285,23 +414,39 @@ def _estimate_reminder_html(inv: dict, name: str, tenant: dict,
             .replace(">", "&gt;")
             .replace("\n", "<br/>")
         )
+        _terms_heading = t_email_body(
+            locale, "email.estimate_reminder.terms_heading",
+        )
         terms_html = (
             '<div style="margin-top:24px;padding:14px 16px;background:#F9FAFB;'
             'border:1px solid #E5E7EB;border-radius:10px;font-size:12px;'
             'line-height:1.6;color:#475569;">'
             '<div style="font-weight:700;color:#0F172A;margin-bottom:6px;">'
-            'Terms &amp; Conditions</div>'
+            f'{_terms_heading}</div>'
             f'<div>{_safe_terms}</div></div>'
         )
+    heading = t_email_body(
+        locale, "email.estimate_reminder.heading",
+        doc_type_label=doc_type_label,
+    )
+    greeting = t_email_body(
+        locale, "email.estimate_reminder.greeting", customer_name=name,
+    )
+    body_line = t_email_body(
+        locale, "email.estimate_reminder.body",
+        doc_type_label=doc_type_label,
+        doc_number=doc_number, company=company,
+    )
+    thanks = t_email_body(
+        locale, "email.estimate_reminder.thanks", company=company,
+    )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
-        f"<h2>Reminder: your {doc_type_label}</h2>"
-        f"<p>Hi {name},</p>"
-        f"<p>This is a friendly reminder that {doc_type_label} "
-        f"<b>{doc_number}</b> from {company} is awaiting your review. "
-        f"Please take a moment to approve, request changes, or decline.</p>"
+        f"<h2>{heading}</h2>"
+        f"<p>{greeting}</p>"
+        f"<p>{body_line}</p>"
         f"{attach_html}{cta}{terms_html}"
-        f"<p>Thank you,<br/>{company}</p></div>"
+        f"<p>{thanks}</p></div>"
     )
 
 
@@ -362,16 +507,18 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
     # Feb 2026 · Invoice Email CTA Label — resolve the recipient
     # locale so the "View Invoice" CTA renders in the customer's
     # language (customer.locale → tenant.default_locale → "en").
+    # Phase D6 · Feb-2026 — route through the D6 shared resolver so
+    # the subject line + body sentences use the same locale as the
+    # CTA button.
     try:
         _tenant = await db.tenants.find_one(
             {"id": inv.get("tenant_id")}, {"_id": 0, "default_locale": 1},
         ) if inv.get("tenant_id") else None
     except Exception:                                                # noqa: BLE001
         _tenant = None
-    from services.i18n_notifications import resolve_recipient_locale
-    _locale = resolve_recipient_locale(
-        customer=cust, tenant=_tenant, audience="customer",
-    )
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=cust, tenant=_tenant)
     # Feb-2026 · P0 Pay-link routing fix — do NOT mint the portal
     # auto-login URL for the Pay Now CTA any more. The public
     # pay-sheet URL from ``build_pay_now_url`` is now the sole
@@ -408,7 +555,10 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
-            "subject": f"Payment reminder — invoice {subject_num}",
+            "subject": t_email_body(
+                _locale, "email.invoice_reminder.subject",
+                invoice_number=subject_num,
+            ),
             "html": themed_html,
         })
         return True
@@ -506,6 +656,15 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
         attachment_count = 0
     doc_type_label = "quote" if doc_type == "quote" else "estimate"
     company = (tenant or {}).get("company_name") or "your service provider"
+    # Phase D6 · Feb-2026 — resolve locale for subject + body i18n.
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=cust, tenant=tenant)
+    _localized_dt_label = t_email_body(
+        _locale,
+        ("email.estimate_reminder.doc_type.quote" if doc_type == "quote"
+         else "email.estimate_reminder.doc_type.estimate"),
+    )
     try:
         resend.api_key = RESEND_API_KEY
         # Feb-2026 · Email Base Template Theming — wrap in shared shell.
@@ -524,13 +683,17 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
                 attachment_count=attachment_count,
                 attachments=_attachments,
                 magic_token=magic_token,
+                locale=_locale,
             ),
             branding,
         )
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
-            "subject": f"Reminder: your {doc_type_label} from {company}",
+            "subject": t_email_body(
+                _locale, "email.estimate_reminder.subject",
+                doc_type_label=_localized_dt_label, company=company,
+            ),
             "html": themed_html,
         })
         return True

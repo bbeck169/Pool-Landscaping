@@ -253,6 +253,17 @@ _DUNNING_SINGLE_BRACE = re.compile(
     r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_.]*)\}(?!\})"
 )
 
+# Phase D6 · Feb-2026 — Stock stage_ids whose subject/body/sms
+# copy is catalogued in ``services.email_body_i18n``. A stage
+# whose ``id`` is in this set gets its subject/body/sms rendered
+# from the i18n catalog for the resolved locale; any other
+# ``stage.id`` (tenant-customised stages) keeps rendering from
+# the stage's own ``*_template`` fields.
+_STOCK_STAGE_IDS = frozenset({
+    "pre_due_3d", "on_due_day",
+    "past_due_7d", "past_due_14d", "past_due_30d", "past_due_60d",
+})
+
 
 def _render(template: str, ctx: Dict[str, Any]) -> str:
     if not template:
@@ -268,6 +279,45 @@ def _render(template: str, ctx: Dict[str, Any]) -> str:
         # fall through with the original template so the operator can
         # see the raw payload in logs.
         return template
+
+
+def _localised_stage_copy(
+    stage: Dict[str, Any], ctx: Dict[str, Any], locale: str,
+) -> Dict[str, str]:
+    """Phase D6 · Feb-2026 — return ``{"subject", "body", "sms"}``
+    for ``stage`` rendered in ``locale``.
+
+    * For stock stages (``id`` ∈ :data:`_STOCK_STAGE_IDS`), the
+      subject / body / sms copy is loaded from the i18n catalog
+      under ``dunning.<stage_id>.<field>`` and rendered directly
+      with :func:`str.format`-style substitution.
+    * For tenant-customised stages (any other ``id``), the fields
+      fall through to ``stage.<field>_template`` and go through
+      the existing :func:`_render` merge-tag pipeline so mid-flight
+      customisations continue to work exactly as before.
+    """
+    stage_id = str(stage.get("id") or "")
+    if stage_id in _STOCK_STAGE_IDS:
+        from services.email_body_i18n import t_email_body
+        return {
+            "subject": t_email_body(
+                locale, f"dunning.{stage_id}.subject", **ctx,
+            ),
+            "body": t_email_body(
+                locale, f"dunning.{stage_id}.body", **ctx,
+            ),
+            "sms": t_email_body(
+                locale, f"dunning.{stage_id}.sms", **ctx,
+            ),
+        }
+    return {
+        "subject": _render(stage.get("subject_template") or "", ctx),
+        "body": _render(stage.get("body_template") or "", ctx),
+        "sms": _render(
+            stage.get("sms_template") or stage.get("body_template") or "",
+            ctx,
+        ),
+    }
 
 
 async def _payment_link_for(invoice: Dict[str, Any],
@@ -387,18 +437,50 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
                             custom_message: Optional[str] = None,
                             triggered_by: str = "auto") -> List[Dict[str, Any]]:
     """Send a reminder on the given stage. Returns list of persisted
-    `dunning_reminders` docs (one per channel actually attempted)."""
+    `dunning_reminders` docs (one per channel actually attempted).
+
+    Phase D6 · Feb-2026 — subject / body / sms copy is resolved
+    through :func:`_localised_stage_copy` using the recipient's
+    locale (customer → tenant default → ``en``). Tenant-customised
+    stages fall through to the legacy render path so any UI-driven
+    customisation keeps working exactly as before. A caller-supplied
+    ``custom_message`` overrides the body but the subject + SMS
+    still localise.
+    """
     # Phase K47 · Feb-2026 — build per-channel contexts so the
     # ``payment_link`` embedded in the email vs SMS body carries
     # the correct ``?src=`` tag; the receiving magic-link viewer
     # uses this to stamp source on ``invoice_views``.
     ctx_email = await _build_context(invoice, tenant, settings, src="email")
     ctx_sms = await _build_context(invoice, tenant, settings, src="sms")
+    # Phase D6 · Feb-2026 — resolve recipient locale for
+    # subject/body/sms i18n. The customer doc lives on the ctx so
+    # we look it up once here (best-effort, tenant default is the
+    # fallback).
+    customer = None
+    if invoice.get("customer_id"):
+        try:
+            customer = await db.customers.find_one(
+                {"id": invoice["customer_id"],
+                 "tenant_id": tenant["id"]},
+                {"_id": 0, "locale": 1},
+            )
+        except Exception:  # noqa: BLE001
+            customer = None
+    from services.i18n.email_locale import resolve_email_locale
+    locale = resolve_email_locale(recipient=customer, tenant=tenant)
+    copy_email = _localised_stage_copy(stage, ctx_email, locale)
+    copy_sms = _localised_stage_copy(stage, ctx_sms, locale)
     chans = channels or stage["channels"]
-    subject = _render(stage.get("subject_template") or "", ctx_email)
-    body_text = _render(custom_message or stage.get("body_template") or "", ctx_email)
-    sms_text = _render(stage.get("sms_template") or stage.get("body_template")
-                        or "", ctx_sms)
+    subject = copy_email["subject"]
+    if custom_message:
+        # Admin override — respect it verbatim but still substitute
+        # merge tags via the legacy renderer so ``{customer_name}``
+        # etc. behave the same as before.
+        body_text = _render(custom_message, ctx_email)
+    else:
+        body_text = copy_email["body"]
+    sms_text = copy_sms["sms"]
     persisted: List[Dict[str, Any]] = []
 
     for ch in chans:
