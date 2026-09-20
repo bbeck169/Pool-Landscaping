@@ -18,11 +18,20 @@ import { ChevronsUpDown, Check, Building2, Loader2 } from "lucide-react";
 
 import { api, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { colors } from "@/theme";
 
 
 export default function TenantSwitcher() {
   const auth = useAuth();
+  // Phase S1.3 · Feb-2026 — super_admin lockdown. The switcher is now
+  // an operations-team surface only; every other role gets ``null``
+  // (fail-closed, no half-render, no placeholder). Loading auth state
+  // also returns null so no admin ever sees a flash of the switcher.
+  const perms = usePermissions();
+  const effectiveRole = String(
+    perms?.effectiveRole || auth?.user?.role || "",
+  ).toLowerCase();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   // Feb-2026 fix — the wide topbar wrap has ``overflow-x-auto`` which
@@ -70,6 +79,11 @@ export default function TenantSwitcher() {
     };
   }, [open]);
 
+  // Phase S1.3 · super_admin lockdown — fail-closed. Runs BEFORE the
+  // single-tenant bail so a non-super with 2+ memberships still gets
+  // nothing.
+  if (auth?.loading) return null;
+  if (effectiveRole !== "super_admin") return null;
   // Single-tenant users get nothing.
   if (!memberships || memberships.length < 2) return null;
 

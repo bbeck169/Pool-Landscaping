@@ -666,7 +666,18 @@ async def promote_user(
         demoted (would lock the tenant out of super-admin-only
         surfaces).
       * Role must be one of the codebase's recognized roles.
+      * Phase S1.4 · Feb-2026 — non-super_admin actors that somehow
+        reach this route with a ``super_admin`` payload get the
+        specific ``super_admin_role_not_assignable`` detail so the
+        frontend can render a targeted toast.
     """
+    new_role = (body.role or "").strip().lower()
+    if new_role == "super_admin" \
+       and (user.get("role") or "").lower() != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="super_admin_role_not_assignable",
+        )
     _require_super_admin(user)
     new_role = (body.role or "").strip().lower()
     if new_role not in _ASSIGNABLE_ROLE_SET:

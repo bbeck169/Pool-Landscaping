@@ -1692,6 +1692,26 @@ export function TechAutoClockinToggle({ user, editable, onChange }) {
 
 
 function AddTeamMemberModal({ open, onClose, onCreated, onError }) {
+  // Phase S1.4 · Feb-2026 — super_admin option is dynamically added
+  // only when the current actor is super_admin. Regular admins never
+  // see it; the belt-and-braces server guard rejects the payload if
+  // someone crafts it via DevTools.
+  const perms = usePermissions();
+  const authCtx = useAuth();
+  const isSuperAdmin = (
+    String(perms?.effectiveRole || authCtx?.user?.role || "")
+      .toLowerCase() === "super_admin"
+  );
+  const roleOptions = React.useMemo(() => {
+    if (!isSuperAdmin) return ROLE_OPTIONS;
+    return [
+      ...ROLE_OPTIONS,
+      { value: "super_admin", label: "Super Admin",
+        role: "super_admin", department: null,
+        badgeBg: "#FEE2E2", badgeFg: "#7F1D1D",
+        filterColor: "#7F1D1D" },
+    ];
+  }, [isSuperAdmin]);
   const [form, setForm] = useState({
     first_name: "", last_name: "", email: "", phone: "",
     role_option: "pool_tech", send_invite_email: true,
@@ -1724,7 +1744,7 @@ function AddTeamMemberModal({ open, onClose, onCreated, onError }) {
       onError?.("A valid email is required");
       return;
     }
-    const opt = ROLE_OPTIONS.find((o) => o.value === form.role_option);
+    const opt = roleOptions.find((o) => o.value === form.role_option);
     if (!opt) {
       onError?.("Pick a role");
       return;
@@ -1788,8 +1808,11 @@ function AddTeamMemberModal({ open, onClose, onCreated, onError }) {
             }}
             data-testid="team-add-role"
           >
-            {ROLE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {roleOptions.map((o) => (
+              <option key={o.value} value={o.value}
+                        data-testid={`team-add-role-option-${o.value}`}>
+                {o.label}
+              </option>
             ))}
           </select>
           <div className="text-xs mt-1" style={{ color: colors.muted }}>

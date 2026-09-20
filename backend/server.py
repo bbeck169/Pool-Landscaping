@@ -2809,6 +2809,20 @@ async def startup():
         logger.info("MongoDB ping OK")
     except Exception as e:
         logger.error(f"MongoDB ping FAILED at startup: {e}")
+    # Phase S1.1 · Feb-2026 — founder auto-promotion boot migration.
+    # Idempotent: promotes only when the DB row exists and is not
+    # already super_admin. Never demotes anyone. Warn (don't crash)
+    # when ``FOUNDER_SUPER_ADMIN_EMAIL`` is unset.
+    try:
+        from routers.auth import promote_founder_on_boot
+        _s1_promoted = await promote_founder_on_boot()
+        if _s1_promoted:
+            logger.info(
+                "[s1] founder boot migration — promoted %d row(s)",
+                _s1_promoted,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[s1] founder boot migration failed: {e}")
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.

@@ -36,6 +36,15 @@ vi.mock("@/auth", () => ({
   useAuth: () => useAuthMock(),
 }));
 
+// Phase S1.3 · Feb-2026 — the switcher now consults usePermissions
+// to fail-closed for non-super_admin roles. Default the mock to
+// super_admin so the pre-existing T1 visibility tests keep asserting
+// "renders when 2+ memberships". The lockdown suite
+// (``TenantSwitcher.lockdown.test.jsx``) overrides this per role.
+vi.mock("@/hooks/usePermissions", () => ({
+  usePermissions: () => ({ effectiveRole: "super_admin" }),
+}));
+
 vi.mock("@/theme", () => ({
   colors: {
     surface: "#fff",  surfaceSecondary: "#F4F4F5",

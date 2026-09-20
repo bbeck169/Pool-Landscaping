@@ -78,6 +78,7 @@ _REBOUND_MODULES = (
     "routers.category_references",
     "routers.leads",
     "routers.tenant_memberships",
+    "routers.admin_users",
     "routers.portal_agreements",
     "routers.messages_unread",
     "routers.reference_currencies",

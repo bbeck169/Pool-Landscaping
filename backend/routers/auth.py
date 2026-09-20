@@ -291,6 +291,86 @@ async def _stamp_first_access(user: dict, ip: str) -> None:
             )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase S1.1 · Feb-2026 — founder auto-promotion helper.
+# ─────────────────────────────────────────────────────────────────────
+FOUNDER_SUPER_ADMIN_EMAIL = (
+    (os.environ.get("FOUNDER_SUPER_ADMIN_EMAIL") or "").strip().lower()
+)
+
+
+async def _maybe_promote_founder(user: dict, ip: str) -> None:
+    """If ``user.email`` matches ``FOUNDER_SUPER_ADMIN_EMAIL`` and the
+    stored role is not ``super_admin``, promote them. Idempotent —
+    already-super founders are no-ops. Writes a single audit row per
+    real promotion so ops can trace one-time role escalation.
+    """
+    if not FOUNDER_SUPER_ADMIN_EMAIL:
+        return
+    email = (user.get("email") or "").lower().strip()
+    if email != FOUNDER_SUPER_ADMIN_EMAIL:
+        return
+    if (user.get("role") or "").lower() == "super_admin":
+        return
+    old_role = user.get("role")
+    now = now_iso()
+    try:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "role":                       "super_admin",
+                "role_changed_at":            now,
+                "role_changed_by_user_id":    "system:founder_pin",
+            }},
+        )
+        # In-place bump on the mutable dict so the token minted
+        # downstream carries the new role without re-reading Mongo.
+        user["role"] = "super_admin"
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id":       user.get("tenant_id"),
+            "actor_user_id":   "system:founder_pin",
+            "actor_email":     "system",
+            "action":          "user.role_change",
+            "target_user_id":  user["id"],
+            "changes":         {"role": {"old": old_role, "new": "super_admin"}},
+            "notes":           "founder auto-promotion (FOUNDER_SUPER_ADMIN_EMAIL match)",
+            "at":              now,
+            "ip_address":      ip,
+        })
+        logger.info(
+            "[s1] founder promoted → user_id=%s email=%s old_role=%s",
+            user["id"], "<redacted>", old_role,
+        )
+    except Exception as exc:  # noqa: BLE001 — never break login on audit
+        logger.warning(f"[s1] founder promotion failed: {exc}")
+
+
+async def promote_founder_on_boot() -> int:
+    """Boot-time migration. Promotes any existing user whose email
+    matches ``FOUNDER_SUPER_ADMIN_EMAIL`` to ``super_admin``. Does NOT
+    demote existing super_admins. Returns 1 when a promotion landed,
+    0 when the founder is missing OR already super_admin. Idempotent.
+    """
+    if not FOUNDER_SUPER_ADMIN_EMAIL:
+        logger.warning(
+            "[s1] FOUNDER_SUPER_ADMIN_EMAIL unset — skipping boot migration",
+        )
+        return 0
+    row = await db.users.find_one(
+        {"email": FOUNDER_SUPER_ADMIN_EMAIL}, {"_id": 0})
+    if not row:
+        # Founder hasn't signed up yet — the login-side hook will
+        # promote them on first sign-in.
+        return 0
+    if (row.get("role") or "").lower() == "super_admin":
+        return 0
+    # Reuse the login-time helper for the actual write + audit row so
+    # the two paths never drift.
+    await _maybe_promote_founder(dict(row), ip="boot")
+    return 1
+
+
 @router.post("/auth/login")
 async def login(request: Request, body: LoginRequest):
     email = body.email.lower()
@@ -520,6 +600,12 @@ async def login(request: Request, body: LoginRequest):
             await _audit_suspicious_forced_reset_flag(user, ip)
         # Non-customer roles simply fall through — the flag has no
         # meaning outside the customer temp-password flow.
+    # Phase S1.1 · Feb-2026 — founder auto-promotion. If the login
+    # email matches ``FOUNDER_SUPER_ADMIN_EMAIL`` and the DB row is
+    # not already ``super_admin``, promote it in-place before minting
+    # the token. Idempotent — repeated logins by an already-super
+    # founder are no-ops (one-time promotion + audit row).
+    await _maybe_promote_founder(user, ip)
     await _audit_auth("login", email, ip, "success")
     # Feb-2026 Portal Access ship — stamp the customer doc with the
     # last portal login timestamp/IP + write a dedicated ``portal_login``
@@ -772,6 +858,12 @@ async def switch_tenant(
 ):
     """Swap the caller's active tenant.
 
+    Phase S1.2 · Feb-2026 — super_admin only. Multi-tenant switching
+    is now an operations-team feature; every other role stays pinned
+    to their default tenant even when their JWT carries multiple
+    memberships. Non-super_admin → 403
+    ``insufficient_role_for_tenant_switch``.
+
     *   Validates ``tenant_id`` is one of the user's
         ``tenant_memberships`` (legacy single-tenant users
         synthesise a membership from ``tenant_id``).
@@ -781,6 +873,11 @@ async def switch_tenant(
         frontend replaces the token in localStorage + hard-refreshes
         the page so every mounted component re-fetches its data.
     """
+    if (user.get("role") or "").lower() != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="insufficient_role_for_tenant_switch",
+        )
     from services.user_tenants import user_has_membership
     tid = (body.tenant_id or "").strip()
     if not tid or not user_has_membership(user, tid):

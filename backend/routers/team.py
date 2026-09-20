@@ -58,6 +58,9 @@ _VALID_DEPTS_BY_ROLE = {
     # timeclock gate today (audit Feb-2026).
     "technician": {"pool", "landscaping", "both", None},
     "admin":      {"both", None},
+    # Phase S1.4 · Feb-2026 — super_admin lockdown. Assignable only by
+    # existing super_admin actors (gated in ``create_team_user``).
+    "super_admin": {None},
 }
 
 
@@ -99,8 +102,19 @@ async def create_team_user(body: NewUserIn,
     email = (body.email or "").strip().lower()
 
     role = (body.role or "").strip().lower()
-    if role not in _ASSIGNABLE_ROLES:
-        raise HTTPException(400, f"role must be one of: {sorted(_ASSIGNABLE_ROLES)}")
+    # Phase S1.4 · Feb-2026 — super_admin lockdown. Only super_admin
+    # actors may create super_admin rows. Regular admins get 403
+    # ``super_admin_role_not_assignable`` even if they hand-craft the
+    # payload; this is the belt-and-braces guard behind the UI filter.
+    if role == "super_admin" and \
+       (actor.get("role") or "").lower() != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="super_admin_role_not_assignable",
+        )
+    _ALLOWED = _ASSIGNABLE_ROLES | {"super_admin"}
+    if role not in _ALLOWED:
+        raise HTTPException(400, f"role must be one of: {sorted(_ALLOWED)}")
 
     # Normalize department per role.
     dept_raw = body.department

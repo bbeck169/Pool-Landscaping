@@ -101,7 +101,17 @@ def t1_seed():
             {"id": super_uid,
               "email": f"super-{super_uid}@ex.test",
               "role": "super_admin", "tenant_id": tid_a,
-              "name": "Sam Super"},
+              "name": "Sam Super",
+              # Phase S1.2 · Feb-2026 — super_admin owns the switch
+              # flow now. Give the fixture super_admin explicit
+              # memberships in both A and B so switch-tenant tests
+              # can exercise the happy path without extra plumbing.
+              "tenant_memberships": [
+                  {"tenant_id": tid_a, "role": "super_admin",
+                    "joined_at": "2025-01-01T00:00:00+00:00"},
+                  {"tenant_id": tid_b, "role": "super_admin",
+                    "joined_at": "2025-06-01T00:00:00+00:00"},
+              ]},
         ])
         # Tenant-B has one job we can spot after switching.
         await _db.jobs.insert_one({
@@ -245,15 +255,16 @@ def test_switch_tenant_happy(t1_seed):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport,
                                         base_url="http://test") as c:
+            # Phase S1.2 · Feb-2026 — switch is super_admin only.
             r = await c.post(
                 f"{API}/auth/switch-tenant",
                 json={"tenant_id": S["tid_b"]},
-                headers={"Authorization": f"Bearer {S['admin_token']}"})
+                headers={"Authorization": f"Bearer {S['super_token']}"})
             result["status"] = r.status_code
             result["body"] = r.json()
         # Verify user.active_tenant_id was persisted.
         fresh = await _db.users.find_one(
-            {"id": S["admin_uid"]}, {"_id": 0, "active_tenant_id": 1})
+            {"id": S["super_uid"]}, {"_id": 0, "active_tenant_id": 1})
         result["persisted"] = fresh.get("active_tenant_id")
 
     run_test(_go)
@@ -265,6 +276,30 @@ def test_switch_tenant_happy(t1_seed):
         result["body"]["access_token"], JWT_SECRET,
         algorithms=["HS256"])
     assert payload["active_tenant_id"] == S["tid_b"]
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 3.b · Admin trying to switch tenant → 403 insufficient_role.
+# ═════════════════════════════════════════════════════════════════════
+def test_switch_tenant_admin_forbidden(t1_seed):
+    S = t1_seed
+    app = _get_app()
+    result: Dict[str, Any] = {}
+
+    async def _go(_db):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport,
+                                        base_url="http://test") as c:
+            r = await c.post(
+                f"{API}/auth/switch-tenant",
+                json={"tenant_id": S["tid_b"]},
+                headers={"Authorization": f"Bearer {S['admin_token']}"})
+            result["status"] = r.status_code
+            result["detail"] = r.json().get("detail")
+
+    run_test(_go)
+    assert result["status"] == 403
+    assert result["detail"] == "insufficient_role_for_tenant_switch"
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -282,7 +317,7 @@ def test_switch_tenant_stranger_403(t1_seed):
             r = await c.post(
                 f"{API}/auth/switch-tenant",
                 json={"tenant_id": S["tid_c"]},
-                headers={"Authorization": f"Bearer {S['admin_token']}"})
+                headers={"Authorization": f"Bearer {S['super_token']}"})
             result["status"] = r.status_code
             result["detail"] = r.json().get("detail")
 

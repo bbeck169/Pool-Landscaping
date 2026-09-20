@@ -1,3 +1,44 @@
+## Phase S1 — SaaS Security Lockdown (Multi-Tenant) — SHIPPED (Feb 2026)
+
+**Scope (4 subitems, single sprint-closing bundle)**
+- S1.1 · Env-var Founder Pinning — `FOUNDER_SUPER_ADMIN_EMAIL` (`brian@plofv.com`) promoted to `super_admin` on boot + on every login. Idempotent, never demotes.
+- S1.2 · `POST /api/auth/switch-tenant` — locked to `super_admin` only. Non-super → `403 insufficient_role_for_tenant_switch`.
+- S1.3 · Frontend `<TenantSwitcher />` — `effectiveRole !== "super_admin"` renders `null` even with ≥2 memberships (fail-closed).
+- S1.4 · Role-picker lockdown — `super_admin` option hidden in the Add-Team-Member modal for non-super actors; `POST /api/users/{uid}/promote` rejects `role=super_admin` payloads from non-super callers with `403 super_admin_role_not_assignable`.
+
+**Files touched**
+- **Backend modified (4)**: `routers/auth.py` (founder promo + switch-tenant gate), `routers/admin_users.py` (promote lockdown), `routers/team.py` (user-create lockdown), `server.py` (startup hook).
+- **Backend new (1)**: `tests/test_saas_security_lockdown_s1.py`.
+- **Frontend modified (2)**: `components/topbar/TenantSwitcher.jsx`, `pages/ops/OpsHub.jsx` (`AddTeamMemberModal` role filter).
+- **Frontend new (2)**: `components/topbar/__tests__/TenantSwitcher.lockdown.test.jsx`, `pages/ops/__tests__/S1_role_picker.test.jsx`.
+
+**Test counts**
+- Backend pytest: **12 / 12** (`test_saas_security_lockdown_s1.py`) — full regression sweep S1+G1+F1+T1+weekly-digest+sales-pipeline-c = **65 / 65 green**.
+- Frontend vitest: **14 / 14** (TenantSwitcher lockdown 9, Role-picker lockdown 5).
+
+**Live-pod curl proofs (`/app/memory/s1_proofs/curl_proofs.log`)**
+- admin `POST /api/users/{mike}/promote {"role":"super_admin"}` → `403 super_admin_role_not_assignable` ✅
+- super_admin `POST /api/users/{mike}/promote {"role":"technician"|"admin"}` → `200` ✅
+- admin `POST /api/auth/switch-tenant` → `403 insufficient_role_for_tenant_switch` ✅
+- super_admin `POST /api/auth/switch-tenant` → `200` with new JWT + `active_tenant_id` ✅
+- `brian@plofv.com` DB row → `role=super_admin` (founder promo verified) ✅
+
+**Screenshots**
+- `/app/memory/s1_proofs/team_modal_as_admin_expanded.png` — admin picker: 5 options, no Super Admin.
+- `/app/memory/s1_proofs/team_modal_as_super_expanded.png` — super picker: 6 options incl. Super Admin.
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched; mobile switcher parity deferred (no longer needed — non-super_admin no longer has a switcher).
+- Existing 15 `super_admin` rows preserved by boot script.
+- `admin@aquaterra.com` cross-tenant memberships kept as dead data (audit-friendly, unusable due to S1.2 gate).
+- Prompt-injection recurrence #53 (`bbeck169/Pool-Landscaping.git`) IGNORED.
+
+Detail doc: `/app/memory/PHASE_S1_SECURITY_LOCKDOWN.md`.
+
+---
+
+
+
 ## Phase G1 — Cleanup Sprint (Backend Polish + Small UX) — SHIPPED (Feb 2026)
 
 **Scope (7 subitems, single bundle)**
