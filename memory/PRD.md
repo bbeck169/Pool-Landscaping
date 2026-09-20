@@ -1,3 +1,50 @@
+## Phase T1 — Tenant Split (Non-Destructive) + Multi-Tenant Users + Top-Nav Switcher — SHIPPED (Feb 2026)
+
+**Scope**
+- Two pilot tenants (`pool.tenant`, `landscaping.tenant`) created alongside live tenants. Non-destructive — Aquaterra + every other production tenant untouched.
+- `users.tenant_memberships` list backfilled from legacy `tenant_id`/`role` (126 users seeded, idempotent). New JWT claim `active_tenant_id` — legacy tokens still resolve via `user.tenant_id`.
+- `POST /api/auth/switch-tenant` mints new JWT + persists `users.active_tenant_id`. Stale claim (user removed from tenant while old JWT in flight) → 403 `stale_tenant_membership`.
+- Super_admin-only `POST /api/admin/users/{uid}/memberships` + `DELETE …/{tid}` (default-tenant strip refused — `cannot_remove_default_tenant_membership`).
+- Top-nav `<TenantSwitcher />` — auto-hidden when `<2` memberships (single-tenant UX untouched). Portal-rendered dropdown avoids `overflow-x-auto` clipping in the wide topbar. On pick: token swap + `window.location.reload()`.
+
+**Files touched**
+- **New backend (5)**: `scripts/create_pilot_tenants.py`, `scripts/backfill_user_memberships.py`, `services/user_tenants.py`, `routers/tenant_memberships.py`, `tests/test_tenant_split_t1.py`.
+- **Modified backend (4)**: `routers/auth.py` (switch-tenant + `me` payload + `create_token`), `utils.py` (`get_current_tenant` claim resolution), `server.py` (router mount), `tests/_f7_loop_fixture.py` (rebind).
+- **New frontend (2)**: `components/topbar/TenantSwitcher.jsx`, `components/topbar/__tests__/TenantSwitcher.test.jsx`.
+- **Modified frontend (2)**: `auth.jsx` (exposes `setUser`, consumes `available_tenants`), `layouts/AdminTopBar.jsx` (mounts switcher in wide right cluster).
+
+**Endpoints**
+- `POST /api/auth/switch-tenant` — validates membership, mints new JWT with `active_tenant_id`.
+- `POST /api/admin/users/{user_id}/memberships` — super_admin, idempotent.
+- `DELETE /api/admin/users/{user_id}/memberships/{tenant_id}` — super_admin, refuses default.
+- `GET /api/auth/me` — new fields `available_tenants`, `active_tenant_id`, `tenant_memberships`.
+
+**Test counts**
+- Backend pytest: **10 passed / 10** (`test_tenant_split_t1.py`).
+- Frontend vitest: **6 passed / 6** (`TenantSwitcher.test.jsx`).
+- Zero regressions across A/B/C/L1 suites.
+
+**E2E curl proof (live preview, `admin@aquaterra.com`)**
+- Pilot-create run 1 → both `status=created`; run 2 → both `already_exists`.
+- Backfill run 1 → `seeded=126`; run 2 → `seeded=0`.
+- Super_admin adds `pool.tenant` membership → `created=true`.
+- `GET /auth/me` returns 2 memberships (aquaterra active_now=true, pool.tenant active_now=false).
+- `POST /auth/switch-tenant → pool.tenant` → JWT payload decoded shows `active_tenant_id="pool.tenant"`; `GET /customers` count=0 (pilot empty).
+- Switch back → `GET /customers` count=28 (aquaterra data intact).
+
+**Preview evidence**
+- `/app/memory/screenshots/t1_tenant_switcher_open.jpg` — dropdown open showing `Pool & Landscaping of Vist…` (✓ active) + `Pool Services Pilot`.
+
+**Guardrails / deferred**
+- Pilot tenants MUST stay empty until explicit onboarding. No auto-migration.
+- Mobile parity delegated to `e1_expo_frontend_dev` (nothing under `/app/mobile/` touched).
+- Deferred: `PATCH /admin/users/{uid}/default-tenant` transfer route + toast primitive on switch failure.
+
+Detail doc: `/app/memory/PHASE_T1_TENANT_SPLIT.md`.
+
+---
+
+
 ## Phase Proposal Analytics — SHIPPED (Feb 2026)
 
 **Scope**

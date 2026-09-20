@@ -2439,3 +2439,27 @@
   - 404 (`job_not_found`) → hidden
 - **Screenshot verified**: Job detail as mike@aquaterra.com shows customer header, recent visits with dates, accordion chevrons. Card renders above existing job body.
 
+
+
+## Iteration 111 — E3: Mobile Bottom Navigation (5-Tab Persistent Bar)
+- **Commit**: e0f69addaf6a5938542beb637165f58398b70f5a
+- **Date**: 2026-09-20
+- **Changes**:
+  - Unhid the bottom tab bar (removed `display: "none"` from `tabBarStyle`)
+  - Configured 5 persistent visible tabs in order: Schedule, Customers, Messages, Jobs/Pipeline, More/Profile
+  - Role-gated slot 4: Techs see "Jobs" (`jobs` screen), Admins see "Pipeline" (`quotes` screen)
+  - Role-gated slot 5 label: Techs see "Profile", Admins see "More"
+  - Registered ALL 70 route files as `<Tabs.Screen>` — previously only 47 were registered, causing auto-generated phantom tabs
+  - Fixed `name="assets"` → `name="assets/index"` to prevent extra tab leakage from directory-based routes
+  - Fixed `name="onboarding"` (dead registration for non-existent file) → `name="onboarding/mine"` (actual file)
+  - Added 22 previously-unregistered route files with `href: null` (before-after, chat, cfo/index, checks/register, directories, dunning/queue, handbook/*, inventory/*, landscape-time-clock, onboarding-checklist/index, profile, property-lookup, schedule/JobTrackerTiles, service-report/[id], settings/offline-diagnostics, tests/*, instaquote, instaschedule, assets/[id])
+  - Added `tabBarTestID` to all 5 visible tabs: tab-schedule, tab-customers, tab-messages, tab-jobs/tab-pipeline, tab-more
+  - Added `tabBarHideOnKeyboard: true` for better UX when keyboard is open
+  - Added subtle shadow/elevation to tab bar for depth
+  - Moved AI Dock FAB above the tab bar (dynamic `TAB_BAR_HEIGHT` constant)
+  - GlobalMenu hamburger preserved — no changes to overflow navigation
+- **Files modified**:
+  - `/app/mobile/app/(app)/_layout.tsx` (full restructure: 329→208 lines, all tabs reordered + 22 new registrations)
+- **Admin tab bar**: Schedule | Customers | Messages | Pipeline | More
+- **Tech tab bar**: Schedule | Customers | Messages | Jobs | Profile
+- **Screenshot verified**: Both admin (admin@aquaterra.com) and tech (mike@aquaterra.com) show correct 5-tab bars. Navigation to Schedule, Customers, Messages, Jobs tabs all confirmed working.

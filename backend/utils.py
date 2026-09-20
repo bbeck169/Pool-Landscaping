@@ -79,7 +79,8 @@ def assert_account_can_authenticate(user: dict) -> None:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
 
-def create_token(user: dict, impersonator_id: str = None) -> str:
+def create_token(user: dict, impersonator_id: str = None,
+                    active_tenant_id: str = None) -> str:
     # Impersonation tokens carry an `act` (actor) claim (RFC 8693) identifying the
     # admin behind the session and use a shorter expiry.
     assert_account_can_authenticate(user)
@@ -92,6 +93,15 @@ def create_token(user: dict, impersonator_id: str = None) -> str:
     }
     if impersonator_id:
         payload["act"] = {"sub": impersonator_id}
+    # Phase T1.2 · Feb-2026 — optional ``active_tenant_id`` claim
+    # for multi-tenant users. When present + validated against the
+    # user's ``tenant_memberships``, it overrides ``user.tenant_id``
+    # for the request's tenant scope (see
+    # ``routers/tenants.get_current_tenant``).  Legacy tokens
+    # without the claim keep their existing single-tenant behavior.
+    _atid = active_tenant_id or user.get("active_tenant_id")
+    if _atid:
+        payload["active_tenant_id"] = _atid
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 
@@ -133,6 +143,24 @@ async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(securit
     if act.get("sub"):
         user["is_impersonated"] = True
         user["impersonator_id"] = act["sub"]
+    # Phase T1.2 · Feb-2026 — surface the ``active_tenant_id`` claim
+    # to downstream tenant resolvers.  The value is only trusted
+    # because it came from a JWT signed with ``JWT_SECRET`` — never
+    # from a client header.  ``routers.tenants.get_current_tenant``
+    # validates the claim against the user's memberships and
+    # falls back to ``user.tenant_id`` when the claim is absent.
+    _atid = payload.get("active_tenant_id")
+    if _atid:
+        user["_active_tenant_id_claim"] = _atid
+        # Defense-in-depth — reject STALE tokens whose claim
+        # references a tenant the user no longer belongs to.  Any
+        # authenticated endpoint (not just tenant-scoped ones)
+        # will 403 with ``stale_tenant_membership`` so the FE can
+        # bounce the user back to /login and force a fresh JWT.
+        from services.user_tenants import user_has_membership
+        if not user_has_membership(user, _atid):
+            raise HTTPException(
+                status_code=403, detail="stale_tenant_membership")
     return user
 
 
@@ -454,10 +482,23 @@ def auth_response(user: dict, impersonator_id: str = None, impersonator_name: st
             "must_accept_tos": compute_must_accept_tos(user),
             "tos_version_accepted": user.get("tos_version_accepted"),
             "tos_accepted_at": user.get("tos_accepted_at"),
+            # Phase T1.2 · Feb-2026 — persisted default so a fresh
+            # login on a new device remembers the last active tenant.
+            "active_tenant_id": user.get("active_tenant_id")
+                                    or user.get("tenant_id"),
+            # Phase T1.2 · Feb-2026 — multi-tenant memberships list
+            # so the FE can render the switcher immediately.
+            "tenant_memberships": user.get("tenant_memberships") or [],
         },
     }
     if impersonator_id:
         resp["impersonating"] = True
         resp["impersonator_name"] = impersonator_name or "Admin"
+    # Phase T1.2 · Feb-2026 — ``available_tenants`` is served from
+    # ``/auth/me`` (async) instead of being computed here.
+    # ``auth_response`` is a sync helper used by both async and
+    # sync callers; async DB lookups don't compose safely from
+    # this path.  The frontend hits ``/auth/me`` on boot anyway,
+    # so the switcher renders on the first paint post-login.
     return resp
 

@@ -60,6 +60,10 @@ import { Settings as SettingsIcon } from "lucide-react";
 // create entrypoints). Slots between AddCustomer/AddJob and the
 // CreditsBudgetChip so it doesn't disturb the K76 shell order.
 import QuickAddButton from "@/components/topbar/QuickAddButton";
+// Phase T1.5 · Feb-2026 — multi-tenant switcher (auto-hidden for
+// single-tenant users). Sits next to QuickAdd so the "your world"
+// controls cluster in one place.
+import TenantSwitcher from "@/components/topbar/TenantSwitcher";
 // Phase A1 · Feb-2026 — Proactive Intelligence alert bell. The
 // component itself is self-gated to admin/super_admin (fail-closed
 // on loading auth state); ``AdminBellSlot`` below adds a second
@@ -491,6 +495,10 @@ export default function AdminTopBar() {
                   managers finally have a one-click create
                   affordance in the wide topbar. */}
               <QuickAddButton />
+              {/* Phase T1.5 · Feb-2026 — tenant switcher.
+                  Auto-hidden when the user has <2 memberships,
+                  so single-tenant users never see this control. */}
+              <TenantSwitcher />
               <CreditsBudgetChip />
               <SettingsSprocket />
               <AdminBellSlot />

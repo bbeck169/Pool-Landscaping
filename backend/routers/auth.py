@@ -747,7 +747,64 @@ async def me(user: dict = Depends(get_current_user)):
     # authoritative flag. Defaults: True for tech, False otherwise.
     if "auto_clockin_enabled" not in payload:
         payload["auto_clockin_enabled"] = (user.get("role") == "technician")
+    # Phase T1.2 · Feb-2026 — attach ``available_tenants`` + the
+    # persisted ``active_tenant_id`` so the top-nav switcher can
+    # render immediately after boot without an extra roundtrip.
+    from services.user_tenants import get_user_tenants
+    payload["available_tenants"] = await get_user_tenants(user)
+    payload["active_tenant_id"] = (user.get("active_tenant_id")
+                                    or user.get("tenant_id"))
+    payload["tenant_memberships"] = user.get("tenant_memberships") or []
     return payload
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase T1.3 · Feb-2026 — POST /api/auth/switch-tenant.
+# ═════════════════════════════════════════════════════════════════════
+class _SwitchTenantBody(BaseModel):
+    tenant_id: str
+
+
+@router.post("/auth/switch-tenant")
+async def switch_tenant(
+    body: _SwitchTenantBody,
+    user: dict = Depends(get_current_user),
+):
+    """Swap the caller's active tenant.
+
+    *   Validates ``tenant_id`` is one of the user's
+        ``tenant_memberships`` (legacy single-tenant users
+        synthesise a membership from ``tenant_id``).
+    *   Persists ``users.active_tenant_id`` so a fresh login on a
+        new device remembers the choice (strong UX win, low risk).
+    *   Mints a NEW JWT carrying ``active_tenant_id`` — the
+        frontend replaces the token in localStorage + hard-refreshes
+        the page so every mounted component re-fetches its data.
+    """
+    from services.user_tenants import user_has_membership
+    tid = (body.tenant_id or "").strip()
+    if not tid or not user_has_membership(user, tid):
+        raise HTTPException(
+            status_code=403, detail="tenant_not_in_memberships")
+    tenant = await db.tenants.find_one(
+        {"id": tid, "active": True},
+        {"_id": 0, "id": 1, "name": 1, "slug": 1})
+    if not tenant:
+        raise HTTPException(
+            status_code=403, detail="tenant_not_in_memberships")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"active_tenant_id": tid}})
+    token = create_token(user, active_tenant_id=tid)
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "active_tenant": {
+            "id":   tenant["id"],
+            "name": tenant.get("name"),
+            "slug": tenant.get("slug"),
+        },
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════

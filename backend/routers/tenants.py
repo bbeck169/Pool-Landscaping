@@ -109,8 +109,19 @@ async def get_current_tenant(
     keys.
     """
     tenant = None
+    # Phase T1.2 · Feb-2026 — JWT-signed ``active_tenant_id`` claim
+    # for multi-tenant users takes precedence over ``user.tenant_id``.
+    # ``services.user_tenants.token_active_tenant_id`` raises 403
+    # ``stale_tenant_membership`` when the claim references a tenant
+    # the user is no longer in (defensive posture requested by user).
+    from services.user_tenants import token_active_tenant_id
+    _atid = token_active_tenant_id(
+        user, claim=user.get("_active_tenant_id_claim"))
+    if _atid:
+        tenant = await db.tenants.find_one(
+            {"id": _atid, "active": True}, {"_id": 0})
     # 1. Super admin explicit cross-tenant override.
-    if x_tenant_slug and user.get("role") == "super_admin":
+    if not tenant and x_tenant_slug and user.get("role") == "super_admin":
         tenant = await _find_tenant_by_slug_or_alias(x_tenant_slug, active_only=True)
     # 2. User's own tenant.
     if not tenant and user.get("tenant_id"):

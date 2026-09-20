@@ -472,6 +472,11 @@ api_router.include_router(_phase_c1_health_payments.router)
 from routers import dashboard_action_cards as _phase_l1_action_cards  # noqa: E402
 api_router.include_router(_phase_l1_action_cards.router)
 
+# Phase T1.4 · Feb-2026 — multi-tenant membership admin.
+# ``POST/DELETE /api/admin/users/{uid}/memberships*``.  Super_admin only.
+from routers import tenant_memberships as _phase_t1_memberships  # noqa: E402
+api_router.include_router(_phase_t1_memberships.router)
+
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402
