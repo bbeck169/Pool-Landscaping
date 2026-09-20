@@ -17,6 +17,10 @@ import { CustomerLink, AddressLink } from "@/components/customer";
 import JobNew from "@/pages/jobs/JobNew";
 // Feb-2026 · Slice 6 — 24h post-completion edit window UI.
 import JobEditPanel from "@/pages/jobs/JobEditPanel";
+// Phase C1 · Feb-2026 — admin follow-up controls (Sales Pipeline
+// Follow-up column feeder). Rendered only for admin / super_admin /
+// manager; techs never see it. Backend PATCH gate enforces the same.
+import FollowUpEditor from "@/pages/jobs/FollowUpEditor";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -609,6 +613,19 @@ export default function JobDetail() {
       {/* Slice M5 · Timeline of workstream events for this job. */}
       {!isCustomer && detail?.timeline ? (
         <TimelineSection events={detail.timeline.events || []} />
+      ) : null}
+
+      {/* Phase C1 · Feb-2026 — admin follow-up controls. Renders
+          only for admin / super_admin / manager; techs and portal
+          customers never see it. Backend PATCH gate returns 403 for
+          non-admin/manager roles so the client + server stay in
+          lock-step. */}
+      {(isAdmin || user?.role === "manager") && job ? (
+        <FollowUpEditor
+          job={job}
+          onSaved={load}
+          onToast={setToast}
+        />
       ) : null}
 
       {/* Lightbox */}

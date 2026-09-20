@@ -460,6 +460,12 @@ api_router.include_router(_a5_tech_brief.router)
 from routers import sales_pipeline as _phase_c_sales_pipeline  # noqa: E402
 api_router.include_router(_phase_c_sales_pipeline.router)
 
+# Phase C1 · Feb-2026 — public Stripe key health probe.
+# ``GET /api/health/payments`` — no auth; used for post-rotation
+# verification. Never leaks the key value.
+from routers import health_payments as _phase_c1_health_payments  # noqa: E402
+api_router.include_router(_phase_c1_health_payments.router)
+
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402

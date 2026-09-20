@@ -1641,6 +1641,19 @@ async def update_job(jid: str, body: JobUpdate,
     else:
         raise HTTPException(403, "Not permitted to edit jobs")
     update = {k: v for k, v in body.dict().items() if v is not None}
+    # Phase C1 · Feb-2026 — follow-up controls are admin-only.
+    # ``follow_up_at`` / ``needs_follow_up`` are surfaced on the
+    # jobs update model so the JobDetail admin panel can PATCH
+    # them, but technicians must never write them (they still
+    # PATCH status/notes/etc. on their own jobs). Silent-strip
+    # from the update dict would leave the caller confused, so
+    # raise a 403 with a specific detail instead.
+    if ("follow_up_at" in update or "needs_follow_up" in update) \
+            and role not in ADMIN_ROLES:
+        raise HTTPException(
+            403,
+            "Only admin-equivalent roles can set follow-up fields",
+        )
     # Mobile Phase 2 · Feb-2026 — tech-wins conflict audit. The
     # ``client_updated_at`` marker (if present) is stripped from
     # the persisted payload and used only to decide whether the
@@ -1768,6 +1781,15 @@ async def update_job(jid: str, body: JobUpdate,
             assert_core_readings_present(
                 gather_readings_for_job(job, rep),
             )
+    # Phase C1 · Feb-2026 — stamp ``completed_at`` + ``follow_up_at``
+    # on the ``→ completed`` transition (idempotent; respects
+    # admin-supplied overrides in either field). Runs BEFORE the
+    # DB write so both new fields land in the same $set. Details:
+    # :mod:`services.job_completion`.
+    from services.job_completion import stamp_completion_fields
+    await stamp_completion_fields(
+        db, tenant_id=tenant["id"], job=job, update=update,
+    )
     if update:
         await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
 

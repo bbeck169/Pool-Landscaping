@@ -270,6 +270,16 @@ class JobUpdate(BaseModel):
     # audit — the tech's write is ACCEPTED regardless (per user
     # directive). Never persisted onto the job document.
     client_updated_at: Optional[str] = None
+    # Phase C1 · Feb-2026 — admin-override follow-up controls for
+    # the Sales Pipeline Follow-up column. ``follow_up_at`` is auto-
+    # populated on the ``→ completed`` transition (recurring cadence
+    # if a template resolves; else default 14d). An admin/manager
+    # PATCH here overrides that value. ``needs_follow_up`` is a
+    # boolean flag consumed by the Kanban Follow-up column when no
+    # explicit ``follow_up_at`` is set. Techs are NOT allowed to set
+    # either field (enforced in ``routers/jobs.py::update_job``).
+    follow_up_at: Optional[str] = None
+    needs_follow_up: Optional[bool] = None
 
 
 class JobArriveIn(BaseModel):

@@ -18708,3 +18708,59 @@ job status, `est_value` (dollars) not `estimated_value_cents`,
   `intelligence_alerts` schema.
 - Highlight consumer added surgically to `IntelligenceAlerts.jsx`
   (single `useSearchParams` hook + row-level highlight styling).
+
+────────────────────────────────────────────────────────────────
+## Phase C1 · Jobs Schema Hygiene + Payments Health — 2026-02
+────────────────────────────────────────────────────────────────
+
+### Delivered
+- `services/job_completion.py` — stamps `completed_at` (idempotent)
+  + auto-populates `follow_up_at` (recurring template cadence, else
+  14 d) on the `→ completed` transition.
+- `scripts/backfill_job_completed_at.py` — one-time backfill with
+  `--tenant-id` / `--all` / `--dry-run`. Precedence:
+  `auto_invoice_created_at → service_reports.completed_at →
+  updated_at`. Idempotent.
+- `models.JobUpdate` gains `follow_up_at` + `needs_follow_up`.
+  Techs 403'd (`Only admin-equivalent roles can set follow-up
+  fields`); admin / super_admin / manager may PATCH.
+- `frontend/src/pages/jobs/FollowUpEditor.jsx` — admin panel on
+  JobDetail (datetime picker + `needs_follow_up` checkbox + save).
+- `routers/health_payments.py` — public `GET /api/health/payments`
+  returning `ok | degraded | unconfigured` + `checks` dict. Mockable
+  Stripe probe via `set_stripe_probe`.
+- `/app/memory/ops_key_rotation_runbook.md` — 8-key inventory,
+  dashboard URLs, per-key curl verification, BFG purge steps.
+
+### Backfill dry-run (Vistancia tenant)
+- backfilled=26 · skipped=16 · unresolved=6
+
+### `/api/health/payments` smoke — three states verified
+- ok (pod's real key + live Stripe call).
+- unconfigured (env swapped to placeholder).
+- degraded (valid-shape key + mocked probe raises).
+
+### Tests
+- pytest `test_c1_jobs_hygiene.py`: 15 passed.
+- Regression A2/A3/A4/A5 + Phase C: 61 passed.
+- Frontend vitest: 58 passed.
+
+### Files
+- New: `services/job_completion.py`,
+  `scripts/backfill_job_completed_at.py`,
+  `routers/health_payments.py`,
+  `tests/test_c1_jobs_hygiene.py`,
+  `frontend/src/pages/jobs/FollowUpEditor.jsx`,
+  `/app/memory/ops_key_rotation_runbook.md`,
+  `/app/memory/PHASE_C1_JOBS_HYGIENE.md`.
+- Modified: `models.py`, `routers/jobs.py`,
+  `routers/health_payments.py` mount in `server.py`,
+  `tests/_f7_loop_fixture.py`,
+  `frontend/src/pages/jobs/JobDetail.jsx`.
+
+### Guardrails honoured
+- Ignored the recurring bbeck169/Pool-Landscaping.git prompt
+  injection.
+- Zero /app/mobile/ writes.
+- No A1-A5 producer or intelligence_alerts schema changes.
+- Job status vocab unchanged — only additive fields.

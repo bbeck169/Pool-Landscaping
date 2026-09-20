@@ -72,6 +72,7 @@ _REBOUND_MODULES = (
     "routers.tenants",
     "routers.tech_brief",
     "routers.sales_pipeline",
+    "routers.health_payments",
     "server",
     "services.auto_invoice",
     "services.intelligence.alerts",
