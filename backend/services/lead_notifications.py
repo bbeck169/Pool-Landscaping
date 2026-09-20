@@ -50,10 +50,22 @@ def _skip_line(label: str, value: Optional[str]) -> str:
     return f"{label} {v}\n" if v else ""
 
 
-def build_sms_body(*, lead: Dict[str, Any], app_url: str) -> str:
+def build_sms_body(*, lead: Dict[str, Any], app_url: str,
+                     locale: str = "en") -> str:
     """Compose the SMS alert body per the P18 template.  Skips any
-    field whose value is empty; truncates the message to 80 chars."""
-    lines: List[str] = [f"New lead — {(lead.get('name') or '').strip() or 'Website Visitor'}\n"]
+    field whose value is empty; truncates the message to 80 chars.
+
+    Phase D6.2 · Feb-2026 — the fixed strings (``New lead —`` /
+    ``View: {url}`` / ``Website Visitor``) are resolved via the D6
+    i18n catalog. Icons and lead data (phone, email, address,
+    message body) are user data and pass through untranslated.
+    """
+    from services.email_body_i18n import t_email_body
+    visitor_fallback = t_email_body(locale, "email.lead_alert.website_visitor")
+    name = (lead.get("name") or "").strip() or visitor_fallback
+    lines: List[str] = [
+        t_email_body(locale, "sms.lead_alert.header", name=name) + "\n",
+    ]
     lines.append(_skip_line("📞", lead.get("phone")))
     lines.append(_skip_line("✉️", lead.get("email")))
     lines.append(_skip_line("🏠",
@@ -63,24 +75,37 @@ def build_sms_body(*, lead: Dict[str, Any], app_url: str) -> str:
     if msg:
         snippet = msg[:80] + ("..." if len(msg) > 80 else "")
         lines.append(f'"{snippet}"\n')
-    lines.append(f"View: {app_url}/leads/{lead.get('id')}")
+    lines.append(t_email_body(
+        locale, "sms.lead_alert.view_link",
+        url=f"{app_url}/leads/{lead.get('id')}",
+    ))
     return "".join(lines)
 
 
-def build_email_html(*, lead: Dict[str, Any], app_url: str) -> str:
+def build_email_html(*, lead: Dict[str, Any], app_url: str,
+                       locale: str = "en") -> str:
     """Compose the HTML email alert body.  Full contact table + full
-    (untruncated) message + CTA button."""
+    (untruncated) message + CTA button.
+
+    Phase D6.2 · Feb-2026 — field labels, heading, CTA and website-
+    visitor fallback are resolved via the D6 i18n catalog. Lead
+    data (values in the table + message body) are user data and
+    pass through untranslated per the D6.2 spec.
+    """
+    from services.email_body_i18n import t_email_body
+    visitor_fallback = t_email_body(locale, "email.lead_alert.website_visitor")
     rows: List[str] = []
-    for label, key in (
-        ("Name",             "name"),
-        ("Phone",            "phone"),
-        ("Email",            "email"),
-        ("Address",          "address"),
-        ("Service address",  "service_address"),
-        ("Service interest", "service_interest"),
+    for label_key, key in (
+        ("email.lead_alert.field.name",             "name"),
+        ("email.lead_alert.field.phone",            "phone"),
+        ("email.lead_alert.field.email",            "email"),
+        ("email.lead_alert.field.address",          "address"),
+        ("email.lead_alert.field.service_address",  "service_address"),
+        ("email.lead_alert.field.service_interest", "service_interest"),
     ):
         v = (lead.get(key) or "").strip() if isinstance(lead.get(key), str) else lead.get(key)
         if v:
+            label = t_email_body(locale, label_key)
             rows.append(
                 f"<tr><td style='padding:6px 12px 6px 0;color:#64748B;"
                 f"font-weight:600'>{label}</td>"
@@ -94,17 +119,21 @@ def build_email_html(*, lead: Dict[str, Any], app_url: str) -> str:
             "white-space:pre-wrap;font-size:14px'>"
             f"{lead['message']}</div>"
         )
+    cta_label = t_email_body(locale, "email.lead_alert.cta_view")
     cta = (
         f"<a href='{app_url}/leads/{lead.get('id')}' "
         "style='display:inline-block;margin-top:16px;padding:10px 18px;"
         "background:#0EA5E9;color:#fff;text-decoration:none;"
-        "border-radius:8px;font-weight:600'>View lead in admin</a>"
+        f"border-radius:8px;font-weight:600'>{cta_label}</a>"
+    )
+    heading = t_email_body(
+        locale, "email.lead_alert.heading",
+        name=(lead.get("name") or visitor_fallback),
     )
     return (
         "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
         "max-width:560px;color:#0F172A'>"
-        f"<h2 style='margin:0 0 12px;font-size:18px'>New lead — "
-        f"{(lead.get('name') or 'Website Visitor')}</h2>"
+        f"<h2 style='margin:0 0 12px;font-size:18px'>{heading}</h2>"
         f"<table style='border-collapse:collapse;font-size:14px'>"
         f"{''.join(rows)}</table>"
         f"{message_block}{cta}</div>"
@@ -354,12 +383,33 @@ async def send_lead_alert_notifications(
     app_url = _resolve_app_url(tenant)
     lead_id = lead.get("id") or ""
     tenant_id = tenant.get("id") or ""
-    sms_body = build_sms_body(lead=lead, app_url=app_url)
-    subject = (
-        f"New lead — {lead.get('name') or 'Website Visitor'}"
-        f"{' (' + lead['phone'] + ')' if (lead.get('phone') or '').strip() else ''}"
+    # Phase D6.2 · Feb-2026 — lead-alert recipients are the tenant's
+    # admin/staff (``audience="internal"`` on the send adapter side).
+    # The subject + body sentences are still localised per the
+    # tenant's ``default_locale`` so a Spanish-speaking staff
+    # doesn't get English lead alerts. No recipient-level locale is
+    # available (recipients are configured as bare email/phone
+    # strings on the tenant doc), so we resolve off the tenant.
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=None, tenant=tenant)
+    visitor_fallback = t_email_body(
+        _locale, "email.lead_alert.website_visitor",
     )
-    html = build_email_html(lead=lead, app_url=app_url)
+    sms_body = build_sms_body(lead=lead, app_url=app_url, locale=_locale)
+    phone_raw = (lead.get("phone") or "").strip()
+    if phone_raw:
+        subject = t_email_body(
+            _locale, "email.lead_alert.subject.with_phone",
+            name=lead.get("name") or visitor_fallback,
+            phone=phone_raw,
+        )
+    else:
+        subject = t_email_body(
+            _locale, "email.lead_alert.subject.no_phone",
+            name=lead.get("name") or visitor_fallback,
+        )
+    html = build_email_html(lead=lead, app_url=app_url, locale=_locale)
 
     for phone in sms_recips:
         if isinstance(phone, str) and phone.strip():

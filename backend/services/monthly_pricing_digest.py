@@ -25,22 +25,41 @@ def _fmt_money(cents: int) -> str:
 
 
 def _compose_html(tenant_name: str, month: str, services: List[Dict[str, Any]],
-                    suggestions: List[Dict[str, Any]]) -> str:
+                    suggestions: List[Dict[str, Any]],
+                    *, locale: str = "en") -> str:
+    """Phase D6.2 · Feb-2026 — sentence + column labels resolved via
+    the D6 i18n catalog. Data rows (service_type strings, dollar
+    amounts, margin percentages, rationale text) pass through
+    untranslated per the D6.2 spec — those are user data /
+    LLM-generated content, not composer copy."""
+    from services.email_body_i18n import t_email_body
     rows_html = ""
     by_type = {s.get("service_type"): s for s in suggestions}
+    _t_current_avg = t_email_body(
+        locale, "email.monthly_pricing_digest.current_avg")
+    _t_recommend = t_email_body(
+        locale, "email.monthly_pricing_digest.recommend")
     for svc in services:
         sug = by_type.get(svc["service_type"]) or {}
         tps = "".join(f"<li>{p}</li>" for p in (sug.get("customer_talking_points") or []))
+        jobs_line = t_email_body(
+            locale, "email.monthly_pricing_digest.jobs_and_margin",
+            count=svc['job_count'], margin_pct=f"{svc['margin_pct']:.1f}",
+        )
+        margin_lift = t_email_body(
+            locale, "email.monthly_pricing_digest.margin_lift",
+            pct=sug.get('expected_margin_lift_pct', 0),
+        )
         rows_html += f"""
         <tr>
           <td style='padding:10px 12px;border-bottom:1px solid #E2E8F0;vertical-align:top;'>
             <div style='font-weight:600;color:#0F172A;'>{svc['service_type']}</div>
-            <div style='font-size:12px;color:#64748B;'>{svc['job_count']} jobs · margin {svc['margin_pct']:.1f}%</div>
+            <div style='font-size:12px;color:#64748B;'>{jobs_line}</div>
           </td>
           <td style='padding:10px 12px;border-bottom:1px solid #E2E8F0;vertical-align:top;font-size:13px;'>
-            <div>Current avg: <b>{_fmt_money(sug.get('current_avg_price_cents', 0))}</b></div>
-            <div style='color:#0EA5E9;'>Recommend: <b>{_fmt_money(sug.get('recommended_price_cents', 0))}</b></div>
-            <div style='color:#166534;font-size:12px;'>+{sug.get('expected_margin_lift_pct', 0)}% margin lift</div>
+            <div>{_t_current_avg} <b>{_fmt_money(sug.get('current_avg_price_cents', 0))}</b></div>
+            <div style='color:#0EA5E9;'>{_t_recommend} <b>{_fmt_money(sug.get('recommended_price_cents', 0))}</b></div>
+            <div style='color:#166534;font-size:12px;'>{margin_lift}</div>
           </td>
           <td style='padding:10px 12px;border-bottom:1px solid #E2E8F0;vertical-align:top;font-size:12px;color:#334155;'>
             {sug.get('rationale', '—')}
@@ -49,24 +68,37 @@ def _compose_html(tenant_name: str, month: str, services: List[Dict[str, Any]],
         </tr>
         """
     if not rows_html:
+        _empty = t_email_body(
+            locale, "email.monthly_pricing_digest.empty_state")
         rows_html = ("<tr><td colspan='3' style='padding:16px;text-align:center;"
-                      "color:#64748B;font-size:13px;'>No completed jobs with cost data "
-                      "in this month.</td></tr>")
+                      f"color:#64748B;font-size:13px;'>{_empty}</td></tr>")
+    _title = t_email_body(
+        locale, "email.monthly_pricing_digest.title", tenant_name=tenant_name)
+    _subtitle = t_email_body(
+        locale, "email.monthly_pricing_digest.subtitle", month=month)
+    _col_service = t_email_body(
+        locale, "email.monthly_pricing_digest.col.service")
+    _col_pricing = t_email_body(
+        locale, "email.monthly_pricing_digest.col.pricing")
+    _col_rationale = t_email_body(
+        locale, "email.monthly_pricing_digest.col.rationale")
+    _cta_open = t_email_body(
+        locale, "email.monthly_pricing_digest.cta_open_app")
     return f"""
     <div style="max-width:640px;margin:0 auto;font-family:Arial,sans-serif;">
       <div style="background:#0F172A;padding:20px;border-radius:10px 10px 0 0;color:#fff;">
-        <h1 style="margin:0;font-size:20px;">{tenant_name} · Monthly Pricing Insights</h1>
+        <h1 style="margin:0;font-size:20px;">{_title}</h1>
         <div style="font-size:12px;opacity:0.85;margin-top:4px;">
-          {month} · least-profitable service types + AI-drafted price increases
+          {_subtitle}
         </div>
       </div>
       <div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 10px 10px;padding:0;background:#fff;">
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
             <tr style="background:#F1F5F9;">
-              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Service</th>
-              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Pricing</th>
-              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Rationale · Talking Points</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">{_col_service}</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">{_col_pricing}</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">{_col_rationale}</th>
             </tr>
           </thead>
           <tbody>{rows_html}</tbody>
@@ -74,7 +106,7 @@ def _compose_html(tenant_name: str, month: str, services: List[Dict[str, Any]],
         <div style="padding:12px 16px;font-size:12px;color:#64748B;border-top:1px solid #E2E8F0;">
           <a href="{APP_PUBLIC_URL or ''}/admin/reports/pricing-insights"
              style="color:#0EA5E9;text-decoration:underline;">
-            Open in the app →
+            {_cta_open}
           </a>
         </div>
       </div>
@@ -154,8 +186,22 @@ async def run_monthly_pricing_digest() -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"pricing digest LLM failed for {tid}: {e}")
         recipients = await _get_tenant_admin_emails(tid)
-        html = _compose_html(tenant_name, month_key, services, suggestions)
-        subject = f"{tenant_name} · Monthly Pricing Insights · {month_key}"
+        # Phase D6.2 · Feb-2026 — resolve locale off the tenant
+        # default (admin recipients are configured as bare email
+        # strings, no per-recipient locale field on this send
+        # path). Falls back to English.
+        from services.i18n.email_locale import resolve_email_locale
+        from services.email_body_i18n import t_email_body
+        _tenant_doc = await db.tenants.find_one(
+            {"id": tid}, {"_id": 0, "default_locale": 1},
+        ) or {}
+        _locale = resolve_email_locale(recipient=None, tenant=_tenant_doc)
+        html = _compose_html(tenant_name, month_key, services,
+                              suggestions, locale=_locale)
+        subject = t_email_body(
+            _locale, "email.monthly_pricing_digest.subject",
+            tenant_name=tenant_name, month=month_key,
+        )
         result = await _send_via_resend(subject, html, recipients)
         doc = {
             "id": new_id(), "tenant_id": tid,

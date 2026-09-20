@@ -49,27 +49,31 @@ def test_trial_reminder_helper_defines_expected_public_function():
 
 
 def test_plan_amount_fallback_returns_generic_string_when_no_subscription(monkeypatch):
-    """When Stripe subscription id is missing, the helper returns the
-    generic ``"your plan pricing"`` fallback string — never invent a
-    dollar figure."""
+    """Phase D6.2 · Feb-2026 — when Stripe subscription id is
+    missing, the helper returns ``None`` and the caller substitutes
+    the localised fallback string (from the D6 catalog under
+    ``email.trial_reminder.fallback.plan_amount``). This preserves
+    the original ``never invent a dollar figure`` guarantee while
+    letting the surrounding sentence localise per-locale."""
     monkeypatch.delenv("STRIPE_SECRET_KEY_LIVE", raising=False)
     monkeypatch.delenv("STRIPE_SECRET_KEY_TEST", raising=False)
     from services.tenant_billing_reminders import _resolve_plan_amount_display
     tenant = {"id": "t-fb", "stripe_subscription_id": None}
     r = _run(_resolve_plan_amount_display(tenant))
-    assert r == "your plan pricing"
+    assert r is None
 
 
 def test_plan_amount_fallback_when_stripe_lookup_raises(monkeypatch):
-    """A Stripe API error during retrieve → fallback string.
-    Never crash the cron job on a transient network issue."""
+    """A Stripe API error during retrieve → ``None`` (D6.2
+    contract). Never crash the cron job on a transient network
+    issue, never invent a dollar figure."""
     from services.tenant_billing_reminders import _resolve_plan_amount_display
     tenant = {"id": "t-boom", "stripe_subscription_id": "sub_doesnt_exist"}
     monkeypatch.setenv("STRIPE_SECRET_KEY_TEST", "sk_test_dummy_invalid")
     r = _run(_resolve_plan_amount_display(tenant))
-    # Any Stripe failure lands the generic fallback — we don't care
-    # whether the failure is auth or 404, both must fall through.
-    assert r == "your plan pricing"
+    # Any Stripe failure lands the None sentinel — caller
+    # substitutes the localised fallback.
+    assert r is None
 
 
 def test_reminder_query_selector_picks_only_24h_window_trials():

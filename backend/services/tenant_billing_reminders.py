@@ -31,11 +31,18 @@ def _base_url() -> str:
     ).rstrip("/")
 
 
-async def _resolve_plan_amount_display(tenant: Dict[str, Any]) -> str:
+async def _resolve_plan_amount_display(
+    tenant: Dict[str, Any],
+) -> Optional[str]:
     """Return a customer-facing dollar string for the tenant's
-    subscription plan. Falls back to the generic "your plan pricing"
-    string on ANY error — never invent a specific dollar figure
-    that could mislead a customer."""
+    subscription plan.
+
+    Phase D6.2 · Feb-2026 — returns ``None`` on ANY failure (missing
+    subscription, Stripe outage, malformed price). The caller
+    substitutes the locale-appropriate fallback string from the D6
+    catalog (``email.trial_reminder.fallback.plan_amount``) so the
+    surrounding sentence stays coherent in every locale.
+    """
     sub_id = tenant.get("stripe_subscription_id")
     if not sub_id:
         logger.warning(
@@ -43,7 +50,7 @@ async def _resolve_plan_amount_display(tenant: Dict[str, Any]) -> str:
             "using generic plan-amount fallback",
             tenant.get("id"),
         )
-        return "your plan pricing"
+        return None
     try:
         from services.payments.stripe_charge import (
             _asdict, _init_api_key, _stripe, _to_thread,
@@ -75,7 +82,7 @@ async def _resolve_plan_amount_display(tenant: Dict[str, Any]) -> str:
             "%s — using generic fallback",
             tenant.get("id"), exc,
         )
-        return "your plan pricing"
+        return None
 
 
 def _format_trial_end_local(iso: str, tenant: Dict[str, Any]) -> str:
@@ -114,22 +121,38 @@ async def run_trial_ending_reminders(
             if not admin:
                 skipped += 1
                 continue
-            plan_amount = await _resolve_plan_amount_display(tenant)
+            # Phase D6.2 · Feb-2026 — the D5 ``trial_ending_reminder``
+            # template body is already localised per admin locale;
+            # the fallback strings interpolated INTO the template
+            # (plan-amount when Stripe lookup fails, admin-name /
+            # business-name defaults) live in the D6 catalog so the
+            # surrounding sentence stays coherent in every locale.
+            from services.i18n_notifications import (
+                resolve_notification_body, resolve_recipient_locale,
+            )
+            from services.email_body_i18n import t_email_body
+            locale = resolve_recipient_locale(
+                tenant=tenant, user=admin, audience="customer",
+            )
+            plan_amount_raw = await _resolve_plan_amount_display(tenant)
+            plan_amount = plan_amount_raw or t_email_body(
+                locale, "email.trial_reminder.fallback.plan_amount",
+            )
+            admin_name = admin.get("name") or t_email_body(
+                locale, "email.trial_reminder.fallback.admin_name",
+            )
+            business_name = tenant.get("name") or t_email_body(
+                locale, "email.trial_reminder.fallback.business_name",
+            )
             trial_end_local = _format_trial_end_local(
                 tenant.get("trial_end_utc") or "", tenant,
             )
             cancel_url = f"{_base_url()}/settings/billing"
-            from services.i18n_notifications import (
-                resolve_notification_body, resolve_recipient_locale,
-            )
-            locale = resolve_recipient_locale(
-                tenant=tenant, user=admin, audience="customer",
-            )
             body = resolve_notification_body(
                 "trial_ending_reminder", locale,
                 context={
-                    "admin_name":      admin.get("name") or "there",
-                    "business_name":   tenant.get("name") or "your business",
+                    "admin_name":      admin_name,
+                    "business_name":   business_name,
                     "trial_end_local": trial_end_local,
                     "plan_amount":     plan_amount,
                     "cancel_url":      cancel_url,

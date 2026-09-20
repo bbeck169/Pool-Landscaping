@@ -184,75 +184,93 @@ async def _aggregate_tenant_week(tenant: dict, as_of: Optional[datetime] = None)
     }
 
 
-def render_html(payload: Dict[str, Any], dashboard_url: str = "#") -> str:
+def render_html(payload: Dict[str, Any], dashboard_url: str = "#",
+                  *, locale: str = "en") -> str:
+    """Phase D6.2 · Feb-2026 — section headings, row labels, empty-
+    state text, CTA, and footer note are resolved via the D6 i18n
+    catalog. Data (dollar amounts, counts, tech names, template
+    codes) passes through untranslated."""
+    from services.email_body_i18n import t_email_body
     r = payload["revenue"]; ops = payload["operations"]; c = payload["customers"]
     t = payload["team"]; tr = payload["training"]
+    _t_unassigned = t_email_body(
+        locale, "email.weekly_digest.team.techrow_unassigned")
     tech_rows = "".join(
-        f"<li>{row.get('_id') or 'Unassigned'} — {row['jobs']} jobs</li>"
+        f"<li>{row.get('_id') or _t_unassigned} — {row['jobs']} jobs</li>"
         for row in t.get("top_techs", []))
     behind = t.get("onboarding_behind") or []
-    behind_html = (
-        f"<div style='background:#FEF3C7;padding:8px;border-radius:6px;margin-top:8px'>"
-        f"<b>Onboarding attention:</b> {len(behind)} tech(s) below 50% after 14 days: "
-        f"{', '.join(behind[:5])}</div>"
-    ) if behind else ""
+    behind_html = ""
+    if behind:
+        _hd = t_email_body(locale, "email.weekly_digest.onboarding.heading")
+        _bd = t_email_body(
+            locale, "email.weekly_digest.onboarding.body",
+            count=len(behind), names=", ".join(behind[:5]),
+        )
+        behind_html = (
+            f"<div style='background:#FEF3C7;padding:8px;border-radius:6px;margin-top:8px'>"
+            f"<b>{_hd}</b> {_bd}</div>"
+        )
     tpl_rows = "".join(
         f"<li>{row.get('_id')} — {row['n']}</li>"
         for row in payload.get("templates_finalized_top", []))
     cfo_rows = "".join(
         f"<li>{h if isinstance(h, str) else (h.get('title') or h.get('text') or '')}</li>"
         for h in payload.get("cfo_highlights", []))
-    growth = payload.get("growth_summary") or "<i>No growth playbook snapshot this week.</i>"
+    _growth_empty = t_email_body(locale, "email.weekly_digest.growth.empty")
+    growth = payload.get("growth_summary") or f"<i>{_growth_empty}</i>"
 
+    # Resolve every localised label once so the giant f-string stays
+    # readable — full sentences per key, no fragment concatenation.
+    L = lambda key, **kw: t_email_body(locale, key, **kw)
     return f"""<!doctype html>
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;max-width:600px;margin:0 auto;padding:16px">
   <h1 style="font-size:22px;margin:0 0 4px 0">{payload['tenant_name']}</h1>
-  <div style="color:#666;font-size:13px;margin-bottom:16px">Weekly Digest · Week of {payload['week_of']}</div>
+  <div style="color:#666;font-size:13px;margin-bottom:16px">{L("email.weekly_digest.subtitle", week_of=payload['week_of'])}</div>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Revenue &amp; Billing</h2>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.revenue")}</h2>
   <ul>
-    <li>New invoices: <b>{r['invoices_new']}</b></li>
-    <li>Invoiced total: <b>${r['invoiced_total']:,.2f}</b></li>
-    <li>Payments received: <b>${r['payments_total']:,.2f}</b></li>
-    <li>Overdue: <b>{r['overdue']}</b></li>
+    <li>{L("email.weekly_digest.revenue.new_invoices", value=r['invoices_new'])}</li>
+    <li>{L("email.weekly_digest.revenue.invoiced_total", value=f"{r['invoiced_total']:,.2f}")}</li>
+    <li>{L("email.weekly_digest.revenue.payments_received", value=f"{r['payments_total']:,.2f}")}</li>
+    <li>{L("email.weekly_digest.revenue.overdue", value=r['overdue'])}</li>
   </ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Field Operations</h2>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.operations")}</h2>
   <ul>
-    <li>Jobs completed: <b>{ops['jobs_completed']}</b></li>
-    <li>Jobs pending: <b>{ops['jobs_pending']}</b></li>
-    <li>New job requests: <b>{ops['job_requests_new']}</b></li>
+    <li>{L("email.weekly_digest.operations.jobs_completed", value=ops['jobs_completed'])}</li>
+    <li>{L("email.weekly_digest.operations.jobs_pending", value=ops['jobs_pending'])}</li>
+    <li>{L("email.weekly_digest.operations.new_requests", value=ops['job_requests_new'])}</li>
   </ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Customer Activity</h2>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.customers")}</h2>
   <ul>
-    <li>New customers: <b>{c['new']}</b></li>
-    <li>Portal document downloads/uploads: <b>{c['portal_downloads']}</b></li>
+    <li>{L("email.weekly_digest.customers.new", value=c['new'])}</li>
+    <li>{L("email.weekly_digest.customers.portal_downloads", value=c['portal_downloads'])}</li>
   </ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Team</h2>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.team")}</h2>
   <ul>
-    <li>New employees onboarded: <b>{t['new_employees']}</b></li>
-    <li>Top techs by completed jobs:<ul>{tech_rows or '<li><i>No completions this week</i></li>'}</ul></li>
+    <li>{L("email.weekly_digest.team.new_employees", value=t['new_employees'])}</li>
+    <li>{L("email.weekly_digest.team.top_techs_label")}<ul>{tech_rows or f"<li><i>{L('email.weekly_digest.team.no_completions')}</i></li>"}</ul></li>
   </ul>
   {behind_html}
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Training</h2>
-  <ul><li>Modules completed: <b>{tr['completions']}</b></li></ul>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.training")}</h2>
+  <ul><li>{L("email.weekly_digest.training.modules_completed", value=tr['completions'])}</li></ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Templates Library</h2>
-  <ul>{tpl_rows or '<li><i>No finalizations this week</i></li>'}</ul>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.templates")}</h2>
+  <ul>{tpl_rows or f"<li><i>{L('email.weekly_digest.templates.empty')}</i></li>"}</ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">AI CFO Highlights</h2>
-  <ul>{cfo_rows or '<li><i>No highlights this week</i></li>'}</ul>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.cfo")}</h2>
+  <ul>{cfo_rows or f"<li><i>{L('email.weekly_digest.cfo.empty')}</i></li>"}</ul>
 
-  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">Growth Playbook</h2>
+  <h2 style="font-size:16px;border-bottom:1px solid #eee;padding-bottom:4px">{L("email.weekly_digest.section.growth")}</h2>
   <div>{growth}</div>
 
   <div style="margin-top:24px">
-    <a href="{dashboard_url}" style="background:#0EA5E9;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:700">View Full Dashboard</a>
+    <a href="{dashboard_url}" style="background:#0EA5E9;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;font-weight:700">{L("email.weekly_digest.cta_dashboard")}</a>
   </div>
-  <div style="color:#999;font-size:11px;margin-top:24px">Sent automatically each Monday morning.</div>
+  <div style="color:#999;font-size:11px;margin-top:24px">{L("email.weekly_digest.footer_note")}</div>
 </body></html>"""
 
 
@@ -297,8 +315,22 @@ async def send_weekly_digest_for_tenant(tenant: dict, as_of: Optional[datetime] 
                                           kind: str = "weekly_digest",
                                           override_to: Optional[str] = None) -> Dict[str, Any]:
     payload = await _aggregate_tenant_week(tenant, as_of=as_of)
-    html = render_html(payload)
-    subject = f"[{payload['tenant_name']}] Weekly Digest · Week of {payload['week_of']}"
+    # Phase D6.2 · Feb-2026 — resolve locale for subject + section
+    # headings. Weekly-digest recipients are the tenant's admin
+    # users; the D5 audience rule labels admin messaging as ops
+    # and locks it to English, BUT we route through the tenant's
+    # ``default_locale`` here so a Spanish-owned tenant's admin
+    # gets a Spanish digest. The K72 ``audience="internal"`` label
+    # only affects the customer-comms kill switch, not the copy
+    # locale.
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=None, tenant=tenant)
+    html = render_html(payload, locale=_locale)
+    subject = t_email_body(
+        _locale, "email.weekly_digest.subject",
+        tenant_name=payload['tenant_name'], week_of=payload['week_of'],
+    )
     iso_week = payload["iso_week"]
 
     recipients = ([{"id": "manual", "email": override_to, "name": "Manual"}]

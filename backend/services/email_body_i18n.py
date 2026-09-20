@@ -202,6 +202,148 @@ LABELS: Dict[str, Dict[str, str]] = {
             "{tenant_name}: your account is flagged for "
             "collections. Invoice {invoice_number} 60d+ past due. "
             "Call {tenant_phone}.",
+
+        # ── D6.2 · Password reset (routers/admin_users.py) ───────
+        "email.password_reset.subject":
+            "Your {company_name} password was reset",
+        "email.password_reset.heading": "Password reset by admin",
+        "email.password_reset.body_intro":
+            "Hi {target_name}, {actor_name} reset your "
+            "{company_name} password. Sign in with the temporary "
+            "password below — you'll be asked to choose a new "
+            "password immediately on first login.",
+        "email.password_reset.temp_password_label":
+            "Temporary password",
+        "email.password_reset.cta_sign_in": "Sign in",
+        "email.password_reset.footer_security":
+            "If this wasn't you, contact your administrator "
+            "immediately.",
+
+        # ── D6.2 · Trial-billing fallback strings (services/tenant_billing_reminders.py) ──
+        # These get substituted into the D5-localised
+        # ``trial_ending_reminder`` template when the Stripe lookup
+        # or admin doc doesn't provide a value. Localising them
+        # keeps the surrounding sentence coherent per-locale.
+        "email.trial_reminder.fallback.plan_amount": "your plan pricing",
+        "email.trial_reminder.fallback.admin_name": "there",
+        "email.trial_reminder.fallback.business_name": "your business",
+
+        # ── D6.2 · Lead alert (services/lead_notifications.py) ───
+        "email.lead_alert.subject.with_phone":
+            "New lead — {name} ({phone})",
+        "email.lead_alert.subject.no_phone":
+            "New lead — {name}",
+        "email.lead_alert.heading":
+            "New lead — {name}",
+        "email.lead_alert.field.name":             "Name",
+        "email.lead_alert.field.phone":            "Phone",
+        "email.lead_alert.field.email":            "Email",
+        "email.lead_alert.field.address":          "Address",
+        "email.lead_alert.field.service_address":  "Service address",
+        "email.lead_alert.field.service_interest": "Service interest",
+        "email.lead_alert.cta_view": "View lead in admin",
+        "email.lead_alert.website_visitor": "Website Visitor",
+        "sms.lead_alert.header": "New lead — {name}",
+        "sms.lead_alert.view_link": "View: {url}",
+
+        # ── D6.2 · Monthly pricing digest (services/monthly_pricing_digest.py) ──
+        "email.monthly_pricing_digest.subject":
+            "{tenant_name} · Monthly Pricing Insights · {month}",
+        "email.monthly_pricing_digest.title":
+            "{tenant_name} · Monthly Pricing Insights",
+        "email.monthly_pricing_digest.subtitle":
+            "{month} · least-profitable service types + "
+            "AI-drafted price increases",
+        "email.monthly_pricing_digest.col.service":   "Service",
+        "email.monthly_pricing_digest.col.pricing":   "Pricing",
+        "email.monthly_pricing_digest.col.rationale":
+            "Rationale · Talking Points",
+        "email.monthly_pricing_digest.jobs_and_margin":
+            "{count} jobs · margin {margin_pct}%",
+        "email.monthly_pricing_digest.current_avg": "Current avg:",
+        "email.monthly_pricing_digest.recommend":   "Recommend:",
+        "email.monthly_pricing_digest.margin_lift":
+            "+{pct}% margin lift",
+        "email.monthly_pricing_digest.empty_state":
+            "No completed jobs with cost data in this month.",
+        "email.monthly_pricing_digest.cta_open_app":
+            "Open in the app →",
+
+        # ── D6.2 · Weekly digest (services/weekly_digest.py) ─────
+        "email.weekly_digest.subject":
+            "[{tenant_name}] Weekly Digest · Week of {week_of}",
+        "email.weekly_digest.subtitle":
+            "Weekly Digest · Week of {week_of}",
+        "email.weekly_digest.section.revenue":   "Revenue &amp; Billing",
+        "email.weekly_digest.section.operations": "Field Operations",
+        "email.weekly_digest.section.customers": "Customer Activity",
+        "email.weekly_digest.section.team":      "Team",
+        "email.weekly_digest.section.training":  "Training",
+        "email.weekly_digest.section.templates": "Templates Library",
+        "email.weekly_digest.section.cfo":       "AI CFO Highlights",
+        "email.weekly_digest.section.growth":    "Growth Playbook",
+        "email.weekly_digest.revenue.new_invoices":
+            "New invoices: <b>{value}</b>",
+        "email.weekly_digest.revenue.invoiced_total":
+            "Invoiced total: <b>${value}</b>",
+        "email.weekly_digest.revenue.payments_received":
+            "Payments received: <b>${value}</b>",
+        "email.weekly_digest.revenue.overdue":
+            "Overdue: <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_completed":
+            "Jobs completed: <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_pending":
+            "Jobs pending: <b>{value}</b>",
+        "email.weekly_digest.operations.new_requests":
+            "New job requests: <b>{value}</b>",
+        "email.weekly_digest.customers.new":
+            "New customers: <b>{value}</b>",
+        "email.weekly_digest.customers.portal_downloads":
+            "Portal document downloads/uploads: <b>{value}</b>",
+        "email.weekly_digest.team.new_employees":
+            "New employees onboarded: <b>{value}</b>",
+        "email.weekly_digest.team.top_techs_label":
+            "Top techs by completed jobs:",
+        "email.weekly_digest.team.no_completions":
+            "No completions this week",
+        "email.weekly_digest.team.techrow_unassigned":
+            "Unassigned",
+        "email.weekly_digest.onboarding.heading":
+            "Onboarding attention:",
+        "email.weekly_digest.onboarding.body":
+            "{count} tech(s) below 50% after 14 days: {names}",
+        "email.weekly_digest.training.modules_completed":
+            "Modules completed: <b>{value}</b>",
+        "email.weekly_digest.templates.empty":
+            "No finalizations this week",
+        "email.weekly_digest.cfo.empty":
+            "No highlights this week",
+        "email.weekly_digest.growth.empty":
+            "No growth playbook snapshot this week.",
+        "email.weekly_digest.cta_dashboard":
+            "View Full Dashboard",
+        "email.weekly_digest.footer_note":
+            "Sent automatically each Monday morning.",
+
+        # ── D6.2 · AEO digest email (services/aeo_digest.py) ─────
+        # NOTE: The PDF body itself stays English — ReportLab's
+        # default Helvetica font can't render every UTF-8 character
+        # our es/fr copy needs, and swapping fonts is out of D6
+        # scope. The email that carries the PDF still localises.
+        "email.aeo_digest.subject":
+            "Weekly AEO Digest · {tenant_name} · "
+            "Week of {period_start}",
+        "email.aeo_digest.heading":
+            "Weekly AEO Digest · {tenant_name}",
+        "email.aeo_digest.aeo_score_line":
+            "AEO score: {score} / 100",
+        "email.aeo_digest.visibility_line":
+            "AI visibility avg: {avg} · mention rate: {rate}%",
+        "email.aeo_digest.new_mentions_line":
+            "New mentions: {count}",
+        "email.aeo_digest.action_items_line":
+            "Pending fixes: {fixes} · drafts: {drafts}",
+        "email.aeo_digest.pdf_attached": "PDF attached.",
     },
     "es": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -355,6 +497,156 @@ LABELS: Dict[str, Dict[str, str]] = {
             "{tenant_name}: su cuenta se ha marcado para "
             "cobranza. Factura {invoice_number} lleva más de 60d "
             "vencida. Llame al {tenant_phone}.",
+
+        # ── D6.2 · Password reset ────────────────────────────────
+        "email.password_reset.subject":
+            "Se restableció su contraseña de {company_name}",
+        "email.password_reset.heading":
+            "Restablecimiento de contraseña por el administrador",
+        "email.password_reset.body_intro":
+            "Hola {target_name}, {actor_name} restableció su "
+            "contraseña de {company_name}. Inicie sesión con la "
+            "contraseña temporal a continuación — se le pedirá que "
+            "elija una nueva contraseña inmediatamente al iniciar "
+            "sesión.",
+        "email.password_reset.temp_password_label":
+            "Contraseña temporal",
+        "email.password_reset.cta_sign_in": "Iniciar sesión",
+        "email.password_reset.footer_security":
+            "Si no fue usted, comuníquese con su administrador "
+            "de inmediato.",
+
+        # ── D6.2 · Trial-billing fallback strings ────────────────
+        "email.trial_reminder.fallback.plan_amount":
+            "el precio de su plan",
+        "email.trial_reminder.fallback.admin_name": "hola",
+        "email.trial_reminder.fallback.business_name":
+            "su negocio",
+
+        # ── D6.2 · Lead alert ────────────────────────────────────
+        "email.lead_alert.subject.with_phone":
+            "Nuevo cliente potencial — {name} ({phone})",
+        "email.lead_alert.subject.no_phone":
+            "Nuevo cliente potencial — {name}",
+        "email.lead_alert.heading":
+            "Nuevo cliente potencial — {name}",
+        "email.lead_alert.field.name":             "Nombre",
+        "email.lead_alert.field.phone":            "Teléfono",
+        "email.lead_alert.field.email":            "Correo electrónico",
+        "email.lead_alert.field.address":          "Dirección",
+        "email.lead_alert.field.service_address":  "Dirección de servicio",
+        "email.lead_alert.field.service_interest": "Servicio de interés",
+        "email.lead_alert.cta_view":
+            "Ver cliente potencial en admin",
+        "email.lead_alert.website_visitor":
+            "Visitante del sitio web",
+        "sms.lead_alert.header":
+            "Nuevo cliente potencial — {name}",
+        "sms.lead_alert.view_link": "Ver: {url}",
+
+        # ── D6.2 · Monthly pricing digest ────────────────────────
+        "email.monthly_pricing_digest.subject":
+            "{tenant_name} · Informe mensual de precios · {month}",
+        "email.monthly_pricing_digest.title":
+            "{tenant_name} · Informe mensual de precios",
+        "email.monthly_pricing_digest.subtitle":
+            "{month} · tipos de servicio menos rentables + "
+            "aumentos de precio propuestos por la IA",
+        "email.monthly_pricing_digest.col.service":   "Servicio",
+        "email.monthly_pricing_digest.col.pricing":   "Precios",
+        "email.monthly_pricing_digest.col.rationale":
+            "Justificación · Puntos de conversación",
+        "email.monthly_pricing_digest.jobs_and_margin":
+            "{count} trabajos · margen {margin_pct}%",
+        "email.monthly_pricing_digest.current_avg":
+            "Promedio actual:",
+        "email.monthly_pricing_digest.recommend":
+            "Recomendado:",
+        "email.monthly_pricing_digest.margin_lift":
+            "+{pct}% de aumento de margen",
+        "email.monthly_pricing_digest.empty_state":
+            "No hay trabajos completados con datos de costos este mes.",
+        "email.monthly_pricing_digest.cta_open_app":
+            "Abrir en la aplicación →",
+
+        # ── D6.2 · Weekly digest ─────────────────────────────────
+        "email.weekly_digest.subject":
+            "[{tenant_name}] Resumen semanal · Semana del {week_of}",
+        "email.weekly_digest.subtitle":
+            "Resumen semanal · Semana del {week_of}",
+        "email.weekly_digest.section.revenue":
+            "Ingresos y facturación",
+        "email.weekly_digest.section.operations":
+            "Operaciones de campo",
+        "email.weekly_digest.section.customers":
+            "Actividad del cliente",
+        "email.weekly_digest.section.team":      "Equipo",
+        "email.weekly_digest.section.training":  "Capacitación",
+        "email.weekly_digest.section.templates": "Biblioteca de plantillas",
+        "email.weekly_digest.section.cfo":
+            "Puntos destacados del CFO IA",
+        "email.weekly_digest.section.growth":
+            "Manual de crecimiento",
+        "email.weekly_digest.revenue.new_invoices":
+            "Nuevas facturas: <b>{value}</b>",
+        "email.weekly_digest.revenue.invoiced_total":
+            "Total facturado: <b>${value}</b>",
+        "email.weekly_digest.revenue.payments_received":
+            "Pagos recibidos: <b>${value}</b>",
+        "email.weekly_digest.revenue.overdue":
+            "Vencidas: <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_completed":
+            "Trabajos completados: <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_pending":
+            "Trabajos pendientes: <b>{value}</b>",
+        "email.weekly_digest.operations.new_requests":
+            "Nuevas solicitudes de trabajo: <b>{value}</b>",
+        "email.weekly_digest.customers.new":
+            "Nuevos clientes: <b>{value}</b>",
+        "email.weekly_digest.customers.portal_downloads":
+            "Descargas/subidas de documentos del portal: <b>{value}</b>",
+        "email.weekly_digest.team.new_employees":
+            "Nuevos empleados incorporados: <b>{value}</b>",
+        "email.weekly_digest.team.top_techs_label":
+            "Mejores técnicos por trabajos completados:",
+        "email.weekly_digest.team.no_completions":
+            "Sin trabajos completados esta semana",
+        "email.weekly_digest.team.techrow_unassigned":
+            "Sin asignar",
+        "email.weekly_digest.onboarding.heading":
+            "Atención al onboarding:",
+        "email.weekly_digest.onboarding.body":
+            "{count} técnico(s) por debajo del 50% después de "
+            "14 días: {names}",
+        "email.weekly_digest.training.modules_completed":
+            "Módulos completados: <b>{value}</b>",
+        "email.weekly_digest.templates.empty":
+            "Sin plantillas finalizadas esta semana",
+        "email.weekly_digest.cfo.empty":
+            "Sin puntos destacados esta semana",
+        "email.weekly_digest.growth.empty":
+            "Sin instantánea del manual de crecimiento esta semana.",
+        "email.weekly_digest.cta_dashboard":
+            "Ver panel completo",
+        "email.weekly_digest.footer_note":
+            "Enviado automáticamente cada lunes por la mañana.",
+
+        # ── D6.2 · AEO digest email ──────────────────────────────
+        "email.aeo_digest.subject":
+            "Resumen semanal de AEO · {tenant_name} · "
+            "Semana del {period_start}",
+        "email.aeo_digest.heading":
+            "Resumen semanal de AEO · {tenant_name}",
+        "email.aeo_digest.aeo_score_line":
+            "Puntaje de AEO: {score} / 100",
+        "email.aeo_digest.visibility_line":
+            "Promedio de visibilidad de IA: {avg} · "
+            "tasa de mención: {rate}%",
+        "email.aeo_digest.new_mentions_line":
+            "Nuevas menciones: {count}",
+        "email.aeo_digest.action_items_line":
+            "Correcciones pendientes: {fixes} · borradores: {drafts}",
+        "email.aeo_digest.pdf_attached": "PDF adjunto.",
     },
     "fr": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -516,6 +808,160 @@ LABELS: Dict[str, Dict[str, str]] = {
             "{tenant_name} : votre compte est signalé pour "
             "recouvrement. Facture {invoice_number} en retard "
             "de plus de 60j. Appelez le {tenant_phone}.",
+
+        # ── D6.2 · Password reset ────────────────────────────────
+        "email.password_reset.subject":
+            "Votre mot de passe {company_name} a été réinitialisé",
+        "email.password_reset.heading":
+            "Mot de passe réinitialisé par un administrateur",
+        "email.password_reset.body_intro":
+            "Bonjour {target_name}, {actor_name} a réinitialisé "
+            "votre mot de passe {company_name}. Connectez-vous "
+            "avec le mot de passe temporaire ci-dessous — vous "
+            "devrez choisir un nouveau mot de passe immédiatement "
+            "lors de votre première connexion.",
+        "email.password_reset.temp_password_label":
+            "Mot de passe temporaire",
+        "email.password_reset.cta_sign_in": "Se connecter",
+        "email.password_reset.footer_security":
+            "Si ce n'était pas vous, contactez immédiatement votre "
+            "administrateur.",
+
+        # ── D6.2 · Trial-billing fallback strings ────────────────
+        "email.trial_reminder.fallback.plan_amount":
+            "le tarif de votre forfait",
+        "email.trial_reminder.fallback.admin_name": "bonjour",
+        "email.trial_reminder.fallback.business_name":
+            "votre entreprise",
+
+        # ── D6.2 · Lead alert ────────────────────────────────────
+        "email.lead_alert.subject.with_phone":
+            "Nouveau prospect — {name} ({phone})",
+        "email.lead_alert.subject.no_phone":
+            "Nouveau prospect — {name}",
+        "email.lead_alert.heading":
+            "Nouveau prospect — {name}",
+        "email.lead_alert.field.name":             "Nom",
+        "email.lead_alert.field.phone":            "Téléphone",
+        "email.lead_alert.field.email":            "Courriel",
+        "email.lead_alert.field.address":          "Adresse",
+        "email.lead_alert.field.service_address":  "Adresse du service",
+        "email.lead_alert.field.service_interest":
+            "Service demandé",
+        "email.lead_alert.cta_view":
+            "Voir le prospect dans l'admin",
+        "email.lead_alert.website_visitor":
+            "Visiteur du site web",
+        "sms.lead_alert.header":
+            "Nouveau prospect — {name}",
+        "sms.lead_alert.view_link": "Voir : {url}",
+
+        # ── D6.2 · Monthly pricing digest ────────────────────────
+        "email.monthly_pricing_digest.subject":
+            "{tenant_name} · Analyse mensuelle des prix · {month}",
+        "email.monthly_pricing_digest.title":
+            "{tenant_name} · Analyse mensuelle des prix",
+        "email.monthly_pricing_digest.subtitle":
+            "{month} · types de services les moins rentables + "
+            "augmentations de prix suggérées par l'IA",
+        "email.monthly_pricing_digest.col.service":   "Service",
+        "email.monthly_pricing_digest.col.pricing":   "Tarification",
+        "email.monthly_pricing_digest.col.rationale":
+            "Justification · Points de discussion",
+        "email.monthly_pricing_digest.jobs_and_margin":
+            "{count} interventions · marge {margin_pct}%",
+        "email.monthly_pricing_digest.current_avg":
+            "Moyenne actuelle :",
+        "email.monthly_pricing_digest.recommend":
+            "Recommandé :",
+        "email.monthly_pricing_digest.margin_lift":
+            "+{pct}% d'augmentation de marge",
+        "email.monthly_pricing_digest.empty_state":
+            "Aucune intervention terminée avec des données de "
+            "coût ce mois-ci.",
+        "email.monthly_pricing_digest.cta_open_app":
+            "Ouvrir dans l'application →",
+
+        # ── D6.2 · Weekly digest ─────────────────────────────────
+        "email.weekly_digest.subject":
+            "[{tenant_name}] Résumé hebdomadaire · Semaine du {week_of}",
+        "email.weekly_digest.subtitle":
+            "Résumé hebdomadaire · Semaine du {week_of}",
+        "email.weekly_digest.section.revenue":
+            "Revenus et facturation",
+        "email.weekly_digest.section.operations":
+            "Opérations sur le terrain",
+        "email.weekly_digest.section.customers":
+            "Activité des clients",
+        "email.weekly_digest.section.team":      "Équipe",
+        "email.weekly_digest.section.training":  "Formation",
+        "email.weekly_digest.section.templates":
+            "Bibliothèque de modèles",
+        "email.weekly_digest.section.cfo":
+            "Faits saillants du CFO IA",
+        "email.weekly_digest.section.growth":
+            "Plan de croissance",
+        "email.weekly_digest.revenue.new_invoices":
+            "Nouvelles factures : <b>{value}</b>",
+        "email.weekly_digest.revenue.invoiced_total":
+            "Total facturé : <b>${value}</b>",
+        "email.weekly_digest.revenue.payments_received":
+            "Paiements reçus : <b>${value}</b>",
+        "email.weekly_digest.revenue.overdue":
+            "En retard : <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_completed":
+            "Interventions terminées : <b>{value}</b>",
+        "email.weekly_digest.operations.jobs_pending":
+            "Interventions en attente : <b>{value}</b>",
+        "email.weekly_digest.operations.new_requests":
+            "Nouvelles demandes d'intervention : <b>{value}</b>",
+        "email.weekly_digest.customers.new":
+            "Nouveaux clients : <b>{value}</b>",
+        "email.weekly_digest.customers.portal_downloads":
+            "Téléchargements/envois de documents du portail : "
+            "<b>{value}</b>",
+        "email.weekly_digest.team.new_employees":
+            "Nouveaux employés intégrés : <b>{value}</b>",
+        "email.weekly_digest.team.top_techs_label":
+            "Meilleurs techniciens par interventions terminées :",
+        "email.weekly_digest.team.no_completions":
+            "Aucune intervention terminée cette semaine",
+        "email.weekly_digest.team.techrow_unassigned":
+            "Non attribué",
+        "email.weekly_digest.onboarding.heading":
+            "Attention à l'onboarding :",
+        "email.weekly_digest.onboarding.body":
+            "{count} technicien(s) en dessous de 50% après "
+            "14 jours : {names}",
+        "email.weekly_digest.training.modules_completed":
+            "Modules terminés : <b>{value}</b>",
+        "email.weekly_digest.templates.empty":
+            "Aucune finalisation de modèle cette semaine",
+        "email.weekly_digest.cfo.empty":
+            "Aucun fait saillant cette semaine",
+        "email.weekly_digest.growth.empty":
+            "Aucun instantané du plan de croissance cette semaine.",
+        "email.weekly_digest.cta_dashboard":
+            "Voir le tableau de bord complet",
+        "email.weekly_digest.footer_note":
+            "Envoyé automatiquement chaque lundi matin.",
+
+        # ── D6.2 · AEO digest email ──────────────────────────────
+        "email.aeo_digest.subject":
+            "Résumé AEO hebdomadaire · {tenant_name} · "
+            "Semaine du {period_start}",
+        "email.aeo_digest.heading":
+            "Résumé AEO hebdomadaire · {tenant_name}",
+        "email.aeo_digest.aeo_score_line":
+            "Score AEO : {score} / 100",
+        "email.aeo_digest.visibility_line":
+            "Moyenne de visibilité IA : {avg} · "
+            "taux de mention : {rate}%",
+        "email.aeo_digest.new_mentions_line":
+            "Nouvelles mentions : {count}",
+        "email.aeo_digest.action_items_line":
+            "Corrections en attente : {fixes} · brouillons : {drafts}",
+        "email.aeo_digest.pdf_attached": "PDF joint.",
     },
 }
 

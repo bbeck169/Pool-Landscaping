@@ -290,25 +290,51 @@ async def save_settings(tenant_id: str, patch: Dict[str, Any]) -> Dict[str, Any]
 # ── Delivery (Resend attachment) ─────────────────────────────────
 async def deliver_email(*, tenant_name: str, snapshot: Dict[str, Any],
                            pdf_bytes: bytes, recipients: List[str],
-                           resend_send=None) -> Dict[str, Any]:
+                           resend_send=None,
+                           locale: str = "en") -> Dict[str, Any]:
+    """Phase D6.2 · Feb-2026 — email subject + body sentences are
+    resolved via the D6 i18n catalog. The PDF content itself stays
+    English (ReportLab's default Helvetica font can't render all
+    UTF-8 characters our es/fr copy needs; PDF font-swap is out of
+    D6 scope). Data (scores, counts, tenant name) passes through
+    untranslated."""
+    from services.email_body_i18n import t_email_body
     if not recipients:
         return {"sent": False, "error": "no_recipients"}
-    subject = f"Weekly AEO Digest · {tenant_name} · Week of {snapshot['period_start']}"
+    subject = t_email_body(
+        locale, "email.aeo_digest.subject",
+        tenant_name=tenant_name, period_start=snapshot['period_start'],
+    )
+    heading = t_email_body(
+        locale, "email.aeo_digest.heading", tenant_name=tenant_name)
+    aeo_line = t_email_body(
+        locale, "email.aeo_digest.aeo_score_line",
+        score=snapshot['aeo_score']['current'])
+    vis_line = t_email_body(
+        locale, "email.aeo_digest.visibility_line",
+        avg=snapshot['ai_visibility']['avg_score'],
+        rate=snapshot['ai_visibility']['brand_mention_rate'])
+    mentions_line = t_email_body(
+        locale, "email.aeo_digest.new_mentions_line",
+        count=snapshot['brand_mentions']['total_new'])
+    action_line = t_email_body(
+        locale, "email.aeo_digest.action_items_line",
+        fixes=snapshot['action_items']['pending_fixes'],
+        drafts=snapshot['action_items']['pending_drafts'])
+    pdf_line = t_email_body(locale, "email.aeo_digest.pdf_attached")
     html = (
-        f"<h2>Weekly AEO Digest · {tenant_name}</h2>"
+        f"<h2>{heading}</h2>"
         f"<p>{snapshot['period_start']} – {snapshot['period_end']}</p>"
         f"<ul>"
-        f"<li>AEO score: {snapshot['aeo_score']['current']} / 100</li>"
-        f"<li>AI visibility avg: {snapshot['ai_visibility']['avg_score']} · "
-        f"mention rate: {snapshot['ai_visibility']['brand_mention_rate']}%</li>"
-        f"<li>New mentions: {snapshot['brand_mentions']['total_new']}</li>"
-        f"<li>Pending fixes: {snapshot['action_items']['pending_fixes']} · "
-        f"drafts: {snapshot['action_items']['pending_drafts']}</li>"
-        f"</ul><p>PDF attached.</p>")
-    text = (f"Weekly AEO Digest\n{tenant_name}\n"
+        f"<li>{aeo_line}</li>"
+        f"<li>{vis_line}</li>"
+        f"<li>{mentions_line}</li>"
+        f"<li>{action_line}</li>"
+        f"</ul><p>{pdf_line}</p>")
+    text = (f"{heading}\n"
             f"{snapshot['period_start']} – {snapshot['period_end']}\n"
-            f"AEO: {snapshot['aeo_score']['current']}/100\n"
-            f"Mentions: {snapshot['brand_mentions']['total_new']}\n")
+            f"{aeo_line}\n"
+            f"{mentions_line}\n")
     attachment = {"filename": f"aeo-digest-{snapshot['period_start']}.pdf",
                   "content_b64": b64encode(pdf_bytes).decode("ascii")}
     if resend_send is None:
@@ -353,11 +379,18 @@ async def run_digest(tenant: Dict[str, Any], *, period_end: Optional[date] = Non
         await _store_pdf(tenant["id"], digest_id, pdf_bytes)
     delivery = {"email": {"sent": False}}
     if deliver:
+        # Phase D6.2 · Feb-2026 — AEO digest email carries the PDF
+        # attachment. Email copy localises off the tenant's
+        # ``default_locale``; the PDF body itself stays English
+        # (font-encoding limitation — see the deliver_email
+        # docstring).
+        from services.i18n.email_locale import resolve_email_locale
+        _locale = resolve_email_locale(recipient=None, tenant=tenant)
         delivery["email"] = await deliver_email(
             tenant_name=snapshot["tenant_name"],
             snapshot=snapshot, pdf_bytes=pdf_bytes,
             recipients=settings.get("recipient_emails") or [],
-            resend_send=resend_send)
+            resend_send=resend_send, locale=_locale)
     if persist:
         run_doc = {"tenant_id": tenant["id"], "digest_id": digest_id,
                     "period_start": snapshot["period_start"],

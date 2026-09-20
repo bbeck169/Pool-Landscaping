@@ -121,7 +121,7 @@ def _require_admin(user: Dict[str, Any]) -> None:
 
 def _password_reset_html(
     *, target_name: str, actor_name: str, company_name: str,
-    temp_password: str, login_url: str,
+    temp_password: str, login_url: str, locale: str = "en",
 ) -> str:
     """Body-fragment HTML for the admin-driven password reset email.
 
@@ -132,23 +132,40 @@ def _password_reset_html(
     the doctype / html / head / body scaffolding. Returning a full
     document here produced a double-``<html>`` structural defect —
     clients tolerated it but the markup was invalid.
+
+    Phase D6.2 · Feb-2026 — customer-facing sentences resolved via
+    the i18n catalog. Only HTML skeleton / brand colors stay
+    hardcoded. TTL semantics of the password reset are unchanged
+    (this composer never handled TTLs — those live in the caller).
     """
+    from services.email_body_i18n import t_email_body
+    heading = t_email_body(locale, "email.password_reset.heading")
+    body_intro = t_email_body(
+        locale, "email.password_reset.body_intro",
+        target_name=target_name, actor_name=actor_name,
+        company_name=company_name,
+    )
+    temp_pw_label = t_email_body(
+        locale, "email.password_reset.temp_password_label",
+    )
+    cta_label = t_email_body(locale, "email.password_reset.cta_sign_in")
+    security_line = t_email_body(
+        locale, "email.password_reset.footer_security",
+    )
     return f"""<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px 30px;box-shadow:0 1px 3px rgba(0,0,0,.06);color:#111827;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-  <h1 style="margin:0 0 12px 0;font-size:20px">Password reset by admin</h1>
+  <h1 style="margin:0 0 12px 0;font-size:20px">{heading}</h1>
   <p style="margin:0 0 16px 0;line-height:1.55">
-    Hi {target_name}, {actor_name} reset your {company_name} password.
-    Sign in with the temporary password below — you'll be asked to
-    choose a new password immediately on first login.
+    {body_intro}
   </p>
   <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin:0 0 20px 0">
-    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Temporary password</div>
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">{temp_pw_label}</div>
     <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;font-weight:600">{temp_password}</div>
   </div>
   <p style="text-align:center;margin:0 0 22px 0">
-    <a href="{login_url}" style="background:#0f766e;color:#ffffff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Sign in</a>
+    <a href="{login_url}" style="background:#0f766e;color:#ffffff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">{cta_label}</a>
   </p>
   <p style="font-size:12px;color:#6b7280;margin:0">
-    If this wasn't you, contact your administrator immediately.
+    {security_line}
   </p>
 </div>"""
 
@@ -169,13 +186,24 @@ async def _send_password_reset_email(
     company_display = card.get("company_name") or tenant.get("name") or "AquaTerra"
     origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.aquaterra.com"
     login_url = urljoin(origin.rstrip("/") + "/", "login")
-    subject = f"Your {company_display} password was reset"
+    # Phase D6.2 · Feb-2026 — recipient locale resolution for the
+    # subject line + body copy. Target user's ``locale`` wins over
+    # the tenant default; falls back to ``en``. Token generation +
+    # TTL are untouched — this migration is copy-only.
+    from services.i18n.email_locale import resolve_email_locale
+    from services.email_body_i18n import t_email_body
+    _locale = resolve_email_locale(recipient=target, tenant=tenant)
+    subject = t_email_body(
+        _locale, "email.password_reset.subject",
+        company_name=company_display,
+    )
     inner_html = _password_reset_html(
         target_name=target.get("first_name") or target.get("name") or "there",
         actor_name=actor.get("name") or actor.get("email") or "An admin",
         company_name=company_display,
         temp_password=temp_password,
         login_url=login_url,
+        locale=_locale,
     )
     # Feb-2026 · Email Base Template Theming + Housekeeping Batch A —
     # ``_password_reset_html`` now returns a body fragment; the shell
