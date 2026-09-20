@@ -56,6 +56,10 @@ import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 // self-gates via ``canPreview`` so it's a no-op for non-super_admin.
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { Settings as SettingsIcon } from "lucide-react";
+// Phase L1.4 · Feb-2026 — QuickAdd dropdown (unified "+" with 4
+// create entrypoints). Slots between AddCustomer/AddJob and the
+// CreditsBudgetChip so it doesn't disturb the K76 shell order.
+import QuickAddButton from "@/components/topbar/QuickAddButton";
 // Phase A1 · Feb-2026 — Proactive Intelligence alert bell. The
 // component itself is self-gated to admin/super_admin (fail-closed
 // on loading auth state); ``AdminBellSlot`` below adds a second
@@ -481,6 +485,12 @@ export default function AdminTopBar() {
                   branch. Order + styling match the narrow branch. */}
               <AddJobButton />
               <AddCustomerButton />
+              {/* Phase L1.4 · Feb-2026 — unified QuickAdd
+                  dropdown (Lead · Job · Estimate · Customer).
+                  Self-gates to admin/super_admin/manager so
+                  managers finally have a one-click create
+                  affordance in the wide topbar. */}
+              <QuickAddButton />
               <CreditsBudgetChip />
               <SettingsSprocket />
               <AdminBellSlot />

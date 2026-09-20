@@ -37,6 +37,12 @@ import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import EbitTile from "@/components/dashboard/EbitTile";
 import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
+// Phase L1.5 · Feb-2026 — 7-card action row (Today's Routes · Approve
+// Check-ins · Unpaid · Overdue · New Leads · Alerts · Missed Services).
+// Batched via `GET /api/dashboard/action-cards`; auto-hides cards
+// with count 0 (except Open Intelligence Alerts). Manager/admin/
+// super_admin only — parent handles the role gate.
+import DashboardActionCards from "@/components/dashboard/DashboardActionCards";
 import DataIntegrityTile from "@/components/admin/DataIntegrityTile";
 import BulkOpsAuditTile from "@/components/admin/BulkOpsAuditTile";
 // Phase F3 · Feb-2026 — Soshie Publishing Dashboard Tile.
@@ -479,6 +485,18 @@ export default function AdminDashboard() {
           customers / jobs / invoices / leads. Reuses the shared
           /api/search endpoint (admin | super_admin | manager). */}
       <GlobalSearchBar />
+
+      {/* Phase L1.5 · Feb-2026 — action-cards row (batched
+          summary). Sits directly under the search bar so
+          operators see actionable counts before any tile
+          breakdown. Auto-collapses to nothing when the tenant
+          is empty; the Intelligence Alerts card is pinned so
+          the operator always has a deep-link into the alerts
+          surface. Manager+ only. */}
+      {(user?.role === "admin" || user?.role === "super_admin"
+         || user?.role === "manager") ? (
+        <DashboardActionCards />
+      ) : null}
 
       {error ? (
         <div

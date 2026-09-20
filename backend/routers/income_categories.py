@@ -58,8 +58,11 @@ _DEFAULTS = [
 
 
 def _require_admin(user: dict) -> None:
+    # Phase L1.1 · Feb-2026 — detail rename for consistency with the
+    # A/B/C cluster convention ("insufficient_role_for_*").
+    # Frontend + tests updated in the same pass.
     if (user or {}).get("role") not in ("admin", "super_admin"):
-        raise HTTPException(403, "admin_only")
+        raise HTTPException(403, "insufficient_role_for_categories")
 
 
 def _now() -> datetime:
@@ -1316,3 +1319,41 @@ def _first_of_next_month(d: date) -> date:
 def _first_of_month_offset(d: date, months: int) -> date:
     total = (d.year * 12 + (d.month - 1)) + months
     return date(total // 12, (total % 12) + 1, 1)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase L1.1 · Feb-2026 — batch reorder for drag-and-drop UI.
+# Mirrors ``routers.service_categories.reorder_categories``.
+# ═══════════════════════════════════════════════════════════════════
+class _ReorderIn(BaseModel):
+    ordered_ids: List[str]
+
+
+@router.post("/income-categories/reorder")
+async def reorder_categories(
+    body: _ReorderIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin(user)
+    tid = tenant["id"]
+    ids = [i for i in (body.ordered_ids or []) if i]
+    if not ids:
+        return {"ok": True, "updated": 0}
+    rows = await db.income_categories.find(
+        {"tenant_id": tid, "id": {"$in": ids}}, {"_id": 0, "id": 1},
+    ).to_list(len(ids) + 1)
+    tenant_ids = {r["id"] for r in rows}
+    stray = [i for i in ids if i not in tenant_ids]
+    if stray:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "unknown_ids", "ids": stray},
+        )
+    now = _now()
+    for idx, cid in enumerate(ids):
+        await db.income_categories.update_one(
+            {"id": cid, "tenant_id": tid},
+            {"$set": {"sort_order": idx, "updated_at": now}})
+    return {"ok": True, "updated": len(ids)}
+

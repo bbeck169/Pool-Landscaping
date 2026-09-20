@@ -35,6 +35,12 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/payment-handles",  label: "Payment Handles",    icon: CreditCard, feature: "settings",  subsection: "Invoicing" },
     { to: "/settings/income-categories", label: "Income Categories",  icon: Tag,        feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/service-categories",label: "Service Categories", icon: Layers,     feature: "settings",  subsection: "Invoicing" },
+    // Phase L1.1 · Feb-2026 — umbrella "Categories Management"
+    // entry that lands on the consolidated CategoriesAdmin page.
+    // Sits alongside the two axis-specific entries above so any
+    // bookmarked deep-links keep working — the umbrella becomes
+    // the recommended admin entry point.
+    { to: "/pricebook/categories",       label: "Categories Management", icon: Layers,  feature: "settings",  subsection: "Invoicing" },
     // Checks & payroll
     { to: "/admin/checks",              label: "Check Writer",       icon: FileEdit,   feature: "invoices",  subsection: "Checks & Payroll" },
     { to: "/admin/checks/bank-accounts",label: "Bank Accounts",      icon: Building2,  feature: "invoices",  subsection: "Checks & Payroll" },

@@ -43,8 +43,10 @@ router = APIRouter()
 
 
 def _require_admin(user: dict) -> None:
+    # Phase L1.1 · Feb-2026 — detail rename for consistency with the
+    # A/B/C cluster convention ("insufficient_role_for_*").
     if (user or {}).get("role") not in ("admin", "super_admin"):
-        raise HTTPException(403, "admin_only")
+        raise HTTPException(403, "insufficient_role_for_categories")
 
 
 async def _count_references(

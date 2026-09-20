@@ -466,6 +466,12 @@ api_router.include_router(_phase_c_sales_pipeline.router)
 from routers import health_payments as _phase_c1_health_payments  # noqa: E402
 api_router.include_router(_phase_c1_health_payments.router)
 
+# Phase L1.5 · Feb-2026 — admin-dashboard action-cards.
+# ``GET /api/dashboard/action-cards`` — admin/super_admin/manager
+# only; batched summary powering the top-of-dashboard action row.
+from routers import dashboard_action_cards as _phase_l1_action_cards  # noqa: E402
+api_router.include_router(_phase_l1_action_cards.router)
+
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402

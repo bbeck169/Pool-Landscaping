@@ -209,14 +209,52 @@ def rate_reading(value: float, mn: float, mx: float) -> str:
 
 
 def classify_job(service_type: Optional[str]) -> str:
+    # Phase L1.2 · Feb-2026 — legacy 2-way keyword classifier.
+    # Preserved as a safety-net fallback (see
+    # ``services.industry_derivation.derive_industry_for_job``).
+    # ``derive_industry_for_job`` is now the canonical entry point;
+    # callers that want tenant-aware resolution should use it
+    # directly.  This shim only runs when the derivation returns
+    # ``None`` AND the caller has no other signal.
     return "landscaping" if "landscap" in (service_type or "").lower() else "pool"
 
 
-def with_field_report(doc: dict) -> dict:
+def with_field_report(doc: dict, tenant: Optional[Dict[str, Any]] = None) -> dict:
     """Attach job_type + default checklist/reading template so technicians always
     get the correct field report (pool vs landscaping). Also attaches customer-friendly
-    qualitative ratings for any recorded chemical readings."""
-    jt = classify_job(doc.get("service_type"))
+    qualitative ratings for any recorded chemical readings.
+
+    Phase L1.2 · Feb-2026 — tenant-aware derivation.  Accepts an
+    optional ``tenant`` doc; if supplied, prefers
+    ``derive_industry_for_job(job, tenant)`` and only falls back to
+    the legacy ``classify_job`` keyword match when the derivation
+    returns ``None``.  A debug metric fires on every fallback so we
+    can track adoption of tenant-configured defaults.
+    """
+    # Lazy import to avoid a circular between routers/jobs and the
+    # newly-added service module.
+    from services.industry_derivation import derive_industry_for_job
+
+    derived = derive_industry_for_job(doc, tenant)
+    if derived is None:
+        # Legacy safety-net.  ``classify_job`` always returns one of
+        # ``"pool"`` / ``"landscaping"`` so downstream template
+        # picks still work.  Log a debug metric so we can measure
+        # how often the fallback fires post-migration.
+        try:
+            from config import logger as _logger
+            _logger.debug(
+                "[industry_derivation] fallback fired tenant=%s job=%s "
+                "service_type=%s",
+                (tenant or {}).get("id"),
+                doc.get("id"),
+                doc.get("service_type"),
+            )
+        except Exception:                                   # noqa: BLE001
+            pass
+        derived = classify_job(doc.get("service_type"))
+
+    jt = derived
     doc["job_type"] = jt
     if not doc.get("checklist"):
         template = LANDSCAPING_CHECKLIST if jt == "landscaping" else POOL_CHECKLIST

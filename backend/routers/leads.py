@@ -975,16 +975,21 @@ async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, 
     Returns a per-row result dict (``{id, ok, reason?, status_code?}``)
     so the bulk caller can build a partial-failure response without
     juggling exception types.
+
+    Phase L1.6 · Feb-2026 — enhanced audit trail.  Before we
+    delete, we read the FULL lead doc for snapshot; on success the
+    snapshot is persisted on the ``audit_log`` entry so manual
+    recovery is possible for at least ``LEAD_HARD_DELETE_TTL_DAYS``.
     """
-    doc = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant_id},
-        {"_id": 0, "id": 1, "status": 1,
-         "converted_customer_id": 1, "converted_job_id": 1,
-         "converted_quote_id": 1, "open_task_ids": 1},
+    # Fetch the FULL doc first so we can snapshot it into the audit
+    # trail.  Cheap — one indexed read per lead.
+    full_doc = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant_id}, {"_id": 0},
     )
-    if not doc:
+    if not full_doc:
         return {"id": lid, "ok": False,
                  "reason": "Lead not found", "status_code": 404}
+    doc = full_doc
     if (doc.get("converted_customer_id")
         or doc.get("converted_job_id")
         or doc.get("converted_quote_id")
@@ -1012,7 +1017,14 @@ async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, 
             "actor_user_id": (actor or {}).get("id"),
             "actor_email": (actor or {}).get("email"),
             "action": "lead.hard_delete",
+            # Phase L1.6 · Feb-2026 — extended schema so the same
+            # audit row supports manual recovery.  ``resource_type``
+            # + ``deleted_ids`` + ``snapshot`` keep the shape
+            # consistent with any future bulk-audit read UI.
+            "resource_type": "lead",
             "target_id": lid,
+            "deleted_ids": [lid],
+            "snapshot": [full_doc],
             "at": deleted_at,
         })
     except Exception as e:

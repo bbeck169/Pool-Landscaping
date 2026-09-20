@@ -11,6 +11,9 @@ import { ArrowLeft, Plus, Printer, Ban, CheckCircle2, RotateCcw, FileText, Landm
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Gate } from "@/hooks/usePermissions";
+// Phase L1.7 · Feb-2026 — smart-link primitive for clickable
+// customer phone numbers in the check-payee table.
+import { PhoneLink } from "@/components/customer";
 
 /* ─── helpers ────────────────────────────────────────────────────────── */
 const STATUS_COLORS = {
@@ -1131,7 +1134,9 @@ export function CheckPayees() {
                     {p.email || "—"}
                   </td>
                   <td className="p-2 text-xs" style={{ color: colors.muted }}>
-                    {p.phone || "—"}
+                    {/* Phase L1.7 · Feb-2026 — smart-link sweep: raw
+                        phone renders now wrapped in <PhoneLink>. */}
+                    {p.phone ? <PhoneLink phone={p.phone} /> : "—"}
                   </td>
                   <td className="p-2 text-right">
                     <Gate perm="Settings" action="write">

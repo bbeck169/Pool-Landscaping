@@ -897,7 +897,12 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
 
           <div className="mb-4 text-sm" data-testid="lead-contact-block">
             {lead.email && <div><b>Email:</b> {lead.email}</div>}
-            {lead.phone && <div><b>Phone:</b> {lead.phone}</div>}
+            {/* Phase L1.7 · Feb-2026 — smart-link sweep: wrap the
+                lead's phone in <PhoneLink> so tapping opens the
+                dialer / SMS composer per operator role. */}
+            {lead.phone && (
+              <div><b>Phone:</b> <PhoneLink phone={lead.phone} /></div>
+            )}
             {/* Feb-2026 · Lead detail display fix — surface the
                 street address on its own labeled row above the
                 City/State/Zip line. Falls back through

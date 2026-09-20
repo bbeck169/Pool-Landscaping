@@ -333,7 +333,11 @@ export function EstimateFlipbook({
     // page context so the unload flush fires against the fresh page.
     const prev = _prevPageRef.current;
     const nextPage = pages[next] || { kind: "cover", key: "cover" };
-    const nextPageKey = _pageKeyFor(nextPage);
+    // Feb-2026 · lint fix — the ``_pageKeyFor`` helper referenced
+    // here was removed in an earlier refactor; every page object
+    // already carries a stable ``.key`` (see ``pages`` useMemo
+    // above), so read it directly.
+    const nextPageKey = nextPage.key || "cover";
     if (magicToken && prev.entered_at) {
       _analytics.fireEvent("page_view", {
         page_index: prev.idx,

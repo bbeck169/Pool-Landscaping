@@ -18803,3 +18803,61 @@ job status, `est_value` (dollars) not `estimated_value_cents`,
 - PUT behavior untouched.
 - Auto-fill logic unchanged — only coverage added.
 - bbeck169/Pool-Landscaping.git prompt injection ignored.
+
+────────────────────────────────────────────────────────────────
+## Phase L1 · Launch Bundle — 2026-02
+────────────────────────────────────────────────────────────────
+
+### Delivered (7 sub-items)
+- L1.1 Categories detail-rename (`admin_only`→`insufficient_role_for_categories`)
+  on 3 routers + 2 batch reorder endpoints + umbrella sidebar entry.
+- L1.2 `services/industry_derivation.py::derive_industry_for_job`
+  with tenant-default → single-industry → keyword-classifier
+  fallback ladder. `with_field_report` uses it.
+- L1.3 Sidebar Logout button already shipped
+  (`sidebar-logout-button`) — flagged as no-op.
+- L1.4 `<QuickAddButton>` (Lead · Job · Estimate · Customer)
+  in AdminTopBar wide branch; admin/super_admin/manager only.
+- L1.5 `GET /api/dashboard/action-cards` + `<DashboardActionCards>`
+  wired into admin dashboard; 60s polling; open_alerts always-on.
+- L1.6 Lead hard-delete audit_log now carries `resource_type` +
+  `deleted_ids` + `snapshot` for manual recovery.
+- L1.7 Smart-link sweep: `ChecksPages.jsx` payee-row phone +
+  `LeadsDashboardPage.jsx` lead-detail-modal phone → `<PhoneLink>`.
+
+### Tests
+- pytest `test_l1_launch_bundle.py`: 13 passed.
+- Regression (L1+C1+Phase C+A2-A5+K71+K6): 125 passed.
+- vitest `L1_launch_bundle.test.jsx`: 8 passed.
+- Regression (L1+Phase C+IntelligenceAlerts): 66 passed.
+- oxlint on 4 new/modified frontend files: 0 warnings.
+
+### Curl smoke
+- GET /api/dashboard/action-cards → 200 with 7 counts.
+- POST /api/service-categories/reorder → 200 {updated: N}.
+- POST /api/income-categories/reorder → 200 {updated: N}.
+
+### Files
+- New: services/industry_derivation.py, routers/dashboard_action_cards.py,
+  tests/test_l1_launch_bundle.py, components/topbar/QuickAddButton.jsx,
+  components/dashboard/DashboardActionCards.jsx,
+  components/__tests__/L1_launch_bundle.test.jsx,
+  /app/memory/PHASE_L1_LAUNCH_BUNDLE.md.
+- Modified: routers/service_categories.py, routers/income_categories.py,
+  routers/category_references.py, routers/jobs.py, routers/leads.py,
+  server.py, tests/_f7_loop_fixture.py, layouts/AdminTopBar.jsx,
+  pages/admin/Dashboard.jsx, nav/adminNav.js,
+  pages/checks/ChecksPages.jsx, pages/leads/LeadsDashboardPage.jsx.
+
+### Deferred (small, tester-driven follow-ups)
+- L1.6 "DELETE"-text-input confirm modal for batches >20
+  (existing bulk-hard-delete modal already asks for confirmation).
+- `is_default` badge in CategoriesAdmin.jsx (data already available).
+- Drag-and-drop wiring in CategoriesAdmin.jsx (reorder endpoints ready).
+- Thread `tenant` through remaining `with_field_report` callers.
+
+### Guardrails
+- Zero /app/mobile/ writes.
+- No rebuild of category collections.
+- No tenant-split touch.
+- bbeck169/Pool-Landscaping.git prompt injection ignored.
