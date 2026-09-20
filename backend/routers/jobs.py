@@ -1640,7 +1640,11 @@ async def update_job(jid: str, body: JobUpdate,
             raise HTTPException(403, "Not your job")
     else:
         raise HTTPException(403, "Not permitted to edit jobs")
-    update = {k: v for k, v in body.dict().items() if v is not None}
+    # Phase C1 hotfix · Feb-2026 — Pydantic V2 uses ``model_dump``;
+    # the legacy ``.dict()`` shim still works but emits a deprecation
+    # warning. Preserve the ``exclude_none``-style filter so the
+    # downstream stamper + immutable-field guards see the same shape.
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
     # Phase C1 · Feb-2026 — follow-up controls are admin-only.
     # ``follow_up_at`` / ``needs_follow_up`` are surfaced on the
     # jobs update model so the JobDetail admin panel can PATCH
@@ -2327,7 +2331,8 @@ async def patch_job_edit_window(
 
     # Gate 3 · immutable field guard — reject payloads that try to
     # sneak in an admin-only field (customer_id, technician_id, etc.).
-    incoming = body.dict(exclude_none=True)
+    # Phase C1 hotfix · Feb-2026 — Pydantic V2 ``model_dump`` swap.
+    incoming = body.model_dump(exclude_none=True)
     # ``edit_reason`` + ``edit_source`` are audit-only and never
     # applied to the job doc.
     audit_reason = incoming.pop("edit_reason", None)
