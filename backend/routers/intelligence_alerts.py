@@ -232,3 +232,23 @@ async def run_missed_service_scan_now(
     )
     result = await run_missed_service_scan(tenant_id=tenant["id"])
     return result
+
+
+@router.post("/intelligence/scans/chemistry-upsell/run-now")
+async def run_chemistry_upsell_scan_now(
+    user:   Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase A2 · Feb-2026 — manual trigger for the chemistry-upsell
+    scan against the caller's own tenant.  Admin+super_admin only.
+
+    Response shape mirrors the missed-service scan:
+    ``{"tenant_id", "scanned_customers", "alerts_emitted",
+    "alerts_deduped", "by_tenant"}``.
+    """
+    _require_admin(user)
+    from services.intelligence.chemistry_upsell_scan import (
+        run_chemistry_upsell_scan,
+    )
+    result = await run_chemistry_upsell_scan(tenant_id=tenant["id"])
+    return result

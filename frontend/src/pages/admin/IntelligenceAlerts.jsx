@@ -21,7 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, CheckCheck, X as XIcon, ExternalLink,
-          Info as InfoIcon, Loader2 } from "lucide-react";
+          Info as InfoIcon, Loader2, ArrowRight, Sparkles } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -60,6 +60,56 @@ function _relative(iso) {
   if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
   if (d < 604_800_000) return `${Math.floor(d / 86_400_000)}d ago`;
   return new Date(iso).toLocaleDateString();
+}
+
+
+// Phase A2 · Feb-2026 — chemistry-upsell inline "reading sequence"
+// summary. Renders ``"4200 → 4400 → 4600 ppm (target 2700-3400 ppm)"``
+// straight from ``actor_context``. Everything is best-effort text
+// formatting; if any field is missing we render null and let the
+// generic ``body`` copy speak for the row.
+function _fmtNum(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v !== "number") return String(v);
+  return Number.isInteger(v) ? String(v) : String(+v.toFixed(2));
+}
+function ChemistryReadingSequence({ ctx }) {
+  if (!ctx || !Array.isArray(ctx.readings) || ctx.readings.length !== 3) {
+    return null;
+  }
+  const unit = ctx.unit ? ` ${ctx.unit}` : "";
+  const tmin = _fmtNum(ctx.target_min);
+  const tmax = _fmtNum(ctx.target_max);
+  // Server writes ``readings`` newest → oldest; render oldest →
+  // newest so operators read the trend left-to-right.
+  const seq = [...ctx.readings].reverse();
+  return (
+    <div
+      className="mt-2 text-[11px] font-mono inline-flex items-center gap-1 rounded px-2 py-1"
+      style={{ background: colors.surfaceSecondary,
+                color: colors.onSurface }}
+      data-testid="chemistry-reading-sequence"
+    >
+      <span data-testid="chemistry-reading-seq-oldest">
+        {_fmtNum(seq[0])}
+      </span>
+      <ArrowRight size={10} className="opacity-60" />
+      <span>{_fmtNum(seq[1])}</span>
+      <ArrowRight size={10} className="opacity-60" />
+      <span data-testid="chemistry-reading-seq-newest">
+        {_fmtNum(seq[2])}
+      </span>
+      <span className="ml-1 opacity-80">
+        {unit ? unit.trim() : ""}
+      </span>
+      {tmin && tmax ? (
+        <span className="ml-2 opacity-70"
+              data-testid="chemistry-reading-target-band">
+          (target {tmin}-{tmax}{unit})
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 
@@ -236,6 +286,19 @@ export default function IntelligenceAlerts() {
           {items.map((a, i) => {
             const meta = _SEV_META[a.severity] || _SEV_META.info;
             const SevIcon = meta.icon;
+            const isChem = a.category === "chemistry_upsell";
+            const ctx    = a.actor_context || {};
+            const upsellHref = isChem && a.customer_id ? (() => {
+              const qs = new URLSearchParams({
+                customer_id: a.customer_id,
+                source:      "intelligence_alert",
+                alert_id:    a.id || "",
+              });
+              if (ctx.suggested_service_type) {
+                qs.set("service_type", ctx.suggested_service_type);
+              }
+              return `/quotes/new?${qs.toString()}`;
+            })() : null;
             return (
               <li
                 key={a.id}
@@ -243,6 +306,7 @@ export default function IntelligenceAlerts() {
                 style={{ background: colors.surface,
                           border: `1px solid ${colors.border}` }}
                 data-testid={`intelligence-alerts-row-${i}`}
+                data-category={a.category}
               >
                 <div className="flex items-start gap-2">
                   <SevIcon size={18} color={meta.color}
@@ -263,6 +327,24 @@ export default function IntelligenceAlerts() {
                           style={{ color: colors.muted }}>
                       {a.body}
                     </div>
+                    {isChem ? (
+                      <ChemistryReadingSequence ctx={ctx} />
+                    ) : null}
+                    {isChem && upsellHref ? (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => navigate(upsellHref)}
+                          className="text-[11px] font-semibold rounded-lg px-2 py-1 inline-flex items-center gap-1"
+                          style={{ background: colors.brand || colors.onSurface,
+                                    color: colors.onBrandPrimary || "#FFFFFF" }}
+                          data-testid={`intelligence-alerts-upsell-${i}`}
+                        >
+                          <Sparkles size={10} />
+                          Create upsell quote
+                        </button>
+                      </div>
+                    ) : null}
                     <div className="text-[10px] mt-1"
                           style={{ color: colors.muted }}>
                       {_relative(a.created_at)}

@@ -12,6 +12,35 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const preselect = params.get("customer_id") || "";
+  // Phase A2 · Feb-2026 · Proactive Intelligence — chemistry-upsell
+  // deep-link prefill. When ``source=intelligence_alert`` the alerts
+  // page has passed the recommended action slug via ``service_type``
+  // and the originating alert id via ``alert_id``. We seed a
+  // human-friendly title + note so the operator sees the context on
+  // arrival; the description + line-items remain empty for the
+  // operator to shape. No server-side "quote-from-alert" endpoint
+  // exists yet — this is a pure client prefill (see Phase A2 spec).
+  const preServiceType = params.get("service_type") || "";
+  const preAlertId     = params.get("alert_id") || "";
+  const preSource      = params.get("source") || "";
+  const _presetTitle = () => {
+    if (preSource === "intelligence_alert" && preServiceType) {
+      const human = preServiceType.replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+      return `${human} — upsell quote`;
+    }
+    return docType === "invoice" ? "Invoice" : "Estimate";
+  };
+  const _presetNote = () => {
+    if (preSource === "intelligence_alert" && preServiceType) {
+      const human = preServiceType.replace(/_/g, " ");
+      const src = preAlertId
+        ? `intelligence alert ${preAlertId}`
+        : "an intelligence alert";
+      return `Recommended after ${src}: ${human}.`;
+    }
+    return "";
+  };
   const [customers, setCustomers] = useState([]);
   const [items, setItems] = useState([]);
   const [toast, setToast] = useState(null);
@@ -23,10 +52,10 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
 
   const [form, setForm] = useState({
     customer_id: preselect,
-    title: docType === "invoice" ? "Invoice" : "Estimate",
+    title: _presetTitle(),
     doc_type: docType,
     tax_rate: 0,
-    notes: "",
+    notes: _presetNote(),
     terms: "",
     due_date: "",
     // Feb-2026 · Invoice inline edit sprint — category field on new

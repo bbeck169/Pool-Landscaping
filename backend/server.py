@@ -2114,6 +2114,30 @@ async def _background_seed():
                 "[A1] missed-service scan schedule failed: %s",
                 _a1_exc,
             )
+        # Phase A2 · Feb-2026 · Proactive Intelligence — daily
+        # chemistry-upsell scan at 07:15 UTC (staggered 15 min
+        # after the A1 missed-service cron so the two producers
+        # don't compete for the pymongo pool). Detects customers
+        # whose last three completed visits have chemistry readings
+        # out of the tenant's target band on the SAME side (all
+        # three high or all three low). Idempotent via the unique
+        # dedup index on ``(tenant_id, alert_key)`` — re-runs on
+        # the same trio are a no-op.
+        try:
+            from services.intelligence.chemistry_upsell_scan import (
+                run_chemistry_upsell_scan_all_tenants as
+                _a2_chem_upsell_cron,
+            )
+            scheduler.add_job(
+                _a2_chem_upsell_cron, "cron", hour=7, minute=15,
+                id="intelligence_chemistry_upsell_scan",
+                replace_existing=True,
+            )
+        except Exception as _a2_exc:  # noqa: BLE001
+            logger.warning(
+                "[A2] chemistry-upsell scan schedule failed: %s",
+                _a2_exc,
+            )
         # Feb 2026 · Customer Merge Phase 3 — daily auto-merge sweep
         # of HIGH-confidence duplicate clusters (exact email OR exact
         # phone). Runs at 09:15 UTC, 10 minutes after the marketing
