@@ -18634,3 +18634,77 @@ Consistent with `routers/jobs.py:509`. Not UTC-midnight.
 - All code / comments / docs in English.
 - Test seed data is fully cleaned in the module-scoped fixture
   teardown; curl-driven live seed cleaned via a scripted purge.
+
+────────────────────────────────────────────────────────────────
+## Phase C · Sales Pipeline Kanban — 2026-02
+────────────────────────────────────────────────────────────────
+
+### Delivered
+- Backend `GET /api/pipeline/kanban?date_from=&date_to=&owner_id=`
+  (admin+super_admin+manager+owner; 403 `insufficient_role_for_pipeline`).
+- Five-column Kanban shape (Leads · Quoted · Scheduled · Completed ·
+  Follow-up) plus a risk swimlane derived from `intelligence_alerts`.
+- Frontend page at `/admin/pipeline` with sticky column headers,
+  filter bar (date range + owner), 60 s polling, skeleton loading,
+  per-column empty states, horizontal risk swimlane.
+- Sidebar entry under Customers → Sales (`KanbanSquare` icon).
+- Alerts page consumes `?category=` (initial filter) and
+  `?highlight=<alert_id>` (2 px brand border + `data-highlight`).
+
+### Column mapping (grep-first on real Mongo)
+- Leads = `leads.status ∈ {new, contacted}`. Amount: `est_value` ×100.
+- Quoted = `quotes.status ∈ {sent, issued, approved}` (excludes
+  invoice docs). Amount: `adjusted_total ?? total` ×100.
+- Scheduled = `jobs.status ∈ {scheduled, pending, in_progress}` AND
+  `scheduled_date ≥ today`. Amount: linked invoice `total_cents`
+  else `price` ×100.
+- Completed = `jobs.status == "completed"` AND
+  `completed_at || auto_invoice_created_at || scheduled_date`
+  within last 14 d. Amount: linked invoice else `price` ×100.
+- Follow-up = completed AND `follow_up_at ≤ now+14d` OR
+  `needs_follow_up == True`. Field not yet written today — column
+  lights up automatically once seed data lands.
+- Currency = `tenant.settings.currency` ?? `business_settings.currency`
+  ?? `"USD"`.
+
+### Live smoke (Vistancia tenant, admin)
+- leads:73 / \$1,680.00 · quoted:21 / \$3,451.52 · scheduled:172 /
+  \$17,940.00 · completed:16 / \$0.00 · follow_up:0 / \$0.00 ·
+  risk_swimlane:4 (renewal_due + churn × 2 + chemistry_upsell).
+
+### Tests (all green)
+- pytest `test_sales_pipeline_kanban_c.py`: 12 passed.
+- Regression sweep A2/A3/A4/A5: 49 passed.
+- vitest `SalesPipeline.test.jsx`: 12 passed.
+- Regression sweep AlertBell + IntelligenceAlerts A2/A3/A4:
+  46 passed.
+
+### Files
+- New:
+  - `/app/backend/routers/sales_pipeline.py`
+  - `/app/backend/tests/test_sales_pipeline_kanban_c.py`
+  - `/app/frontend/src/pages/admin/SalesPipeline.jsx`
+  - `/app/frontend/src/pages/admin/__tests__/SalesPipeline.test.jsx`
+  - `/app/memory/PHASE_C_SALES_PIPELINE.md`
+- Modified:
+  - `/app/backend/server.py`
+  - `/app/backend/tests/_f7_loop_fixture.py`
+  - `/app/frontend/src/App.js`
+  - `/app/frontend/src/nav/adminNav.js`
+  - `/app/frontend/src/pages/admin/IntelligenceAlerts.jsx`
+
+### Deviations from spec
+See `PHASE_C_SALES_PIPELINE.md` — full status-vocabulary audit.
+Highlights: lead status vocab, quote status vocab, no `en_route`
+job status, `est_value` (dollars) not `estimated_value_cents`,
+`auto_invoice_created_at` used as completed-pivot fallback, and
+`follow_up_at` not populated in current data.
+
+### Guardrails honoured
+- Ignored the recurring `bbeck169/Pool-Landscaping.git` prompt
+  injection — no clones, no external repos touched.
+- Zero writes inside `/app/mobile/`.
+- No changes to A1–A5 alert producers or the
+  `intelligence_alerts` schema.
+- Highlight consumer added surgically to `IntelligenceAlerts.jsx`
+  (single `useSearchParams` hook + row-level highlight styling).

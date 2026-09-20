@@ -103,6 +103,11 @@ import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
 // other caller (``insufficient_role_for_alerts``), so the two gates
 // stay in lock-step.
 import IntelligenceAlerts from "@/pages/admin/IntelligenceAlerts";
+// Phase C · Feb-2026 — Sales Pipeline Kanban page.
+// Route ``/admin/pipeline`` — gated to admin + super_admin + manager
+// via ``<AdminOrManager>``. Backend returns 403
+// ``insufficient_role_for_pipeline`` for any other caller.
+import SalesPipeline from "@/pages/admin/SalesPipeline";
 import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
 // Phase 9B · Feb 2026 — Rebuilt Marketing Templates admin (TipTap +
 // merge-tag palette + media picker + unresolved-token red-chip banner).
@@ -801,6 +806,12 @@ export default function App() {
                 self-gated to the same two roles so the surface stays
                 consistent end-to-end. */}
             <Route path="admin/intelligence/alerts" element={<AdminOnly><IntelligenceAlerts /></AdminOnly>} />
+            {/* Phase C · Feb-2026 — Sales Pipeline Kanban page. Admin +
+                super_admin + manager only (mirrors the sidebar
+                ``manager_only`` hard_rule + backend 403
+                ``insufficient_role_for_pipeline``). Techs and portal
+                customers bounce to ``/``. */}
+            <Route path="admin/pipeline" element={<AdminOrManager><SalesPipeline /></AdminOrManager>} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}

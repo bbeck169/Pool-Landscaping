@@ -19,7 +19,7 @@
  *   next click.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCheck, X as XIcon, ExternalLink,
           Info as InfoIcon, Loader2, ArrowRight, Sparkles,
           Receipt, MessageSquare, RefreshCw, Send } from "lucide-react";
@@ -235,8 +235,16 @@ function RenewalDueSummary({ ctx }) {
 
 export default function IntelligenceAlerts() {
   const navigate = useNavigate();
+  // Phase C · Feb-2026 — consume deep-link params from the Sales
+  // Pipeline risk-swimlane. ``?category=`` seeds the category chip
+  // filter; ``?highlight=<alert_id>`` marks the target row with a
+  // ``data-highlight="true"`` attribute so operators can spot it
+  // after the click-through.
+  const [searchParams] = useSearchParams();
+  const initialCategory = searchParams.get("category") || "all";
+  const highlightAlertId = searchParams.get("highlight") || "";
   const [tab, setTab]                     = useState("unread");
-  const [activeCategory, setActiveCategory] = useState("all");
+  const [activeCategory, setActiveCategory] = useState(initialCategory);
   const [items, setItems]                 = useState([]);
   const [loading, setLoading]             = useState(true);
   const [before, setBefore]               = useState(null);
@@ -481,10 +489,16 @@ export default function IntelligenceAlerts() {
                 key={a.id}
                 className="rounded-xl p-3"
                 style={{ background: colors.surface,
-                          border: `1px solid ${colors.border}` }}
+                          border: (highlightAlertId && a.id === highlightAlertId)
+                                    ? `2px solid ${colors.brand}`
+                                    : `1px solid ${colors.border}` }}
                 data-testid={`intelligence-alerts-row-${i}`}
                 data-category={a.category}
                 data-signal={ctx.signal || ""}
+                data-highlight={
+                  (highlightAlertId && a.id === highlightAlertId)
+                    ? "true" : "false"
+                }
               >
                 <div className="flex items-start gap-2">
                   <SevIcon size={18} color={meta.color}

@@ -453,6 +453,13 @@ api_router.include_router(intelligence_alerts.router)
 from routers import tech_brief as _a5_tech_brief  # noqa: E402
 api_router.include_router(_a5_tech_brief.router)
 
+# Phase C · Feb-2026 — Sales Pipeline Kanban.
+# ``GET /api/pipeline/kanban`` — admin/super_admin/manager only;
+# five-column Kanban across leads/quotes/jobs plus an
+# intelligence-alerts risk swimlane. Owner + date-range filters.
+from routers import sales_pipeline as _phase_c_sales_pipeline  # noqa: E402
+api_router.include_router(_phase_c_sales_pipeline.router)
+
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
 from routers import admin_s3_health as _feb2026_s3_health  # noqa: E402

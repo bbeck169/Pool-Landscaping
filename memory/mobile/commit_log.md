@@ -2420,3 +2420,22 @@
   - `checklist.tsx` line 893: canEditServiceType ownership check
   - `auth.tsx` logout: cache invalidation
 
+
+## Iteration 110 — A5: Smart Brief Card on job detail
+- **Commit**: 7c9b1a883
+- **Date**: 2026-09-20
+- **Changes**:
+  - Created `src/components/job/SmartBriefCard.tsx`: Fetches `GET /api/jobs/{id}/smart-brief`, renders customer header (name + PhoneLink + AddressLink), special access chips (gate code, key, dog 🐕), last 3 visits (accordion with chemistry + notes), intelligence alerts (top 3, severity dot). Loading skeleton, error banner with retry, 403/404 gracefully hides card.
+  - Wired into `app/job/[id].tsx` at the top of the body (above property card, below hero).
+  - 11 Jest tests, all passing.
+- **Files created**:
+  - `/app/mobile/src/components/job/SmartBriefCard.tsx` (295 lines)
+  - `/app/mobile/__tests__/SmartBriefCard.test.tsx` (11 tests)
+- **Files modified**:
+  - `/app/mobile/app/job/[id].tsx` (+2 lines: import + render)
+- **API contract consumed**:
+  - `GET /api/jobs/{job_id}/smart-brief` — all documented fields consumed: customer, special_access, last_visits (chemistry_snapshot + notes), open_intelligence_alerts
+  - 403 (`insufficient_role_for_brief`) → hidden
+  - 404 (`job_not_found`) → hidden
+- **Screenshot verified**: Job detail as mike@aquaterra.com shows customer header, recent visits with dates, accordion chevrons. Card renders above existing job body.
+
