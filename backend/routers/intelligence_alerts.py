@@ -252,3 +252,24 @@ async def run_chemistry_upsell_scan_now(
     )
     result = await run_chemistry_upsell_scan(tenant_id=tenant["id"])
     return result
+
+
+@router.post("/intelligence/scans/churn-risk/run-now")
+async def run_churn_risk_scan_now(
+    user:   Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase A3 · Feb-2026 — manual trigger for the churn-risk scan
+    against the caller's own tenant.  Admin+super_admin only.
+
+    Response adds ``by_signal`` on top of the standard shape:
+    ``{"tenant_id", "scanned_customers", "alerts_emitted",
+    "alerts_deduped", "by_signal": {"missed_payments", "recurring_cancelled"},
+    "by_tenant"}``.
+    """
+    _require_admin(user)
+    from services.intelligence.churn_risk_scan import (
+        run_churn_risk_scan,
+    )
+    result = await run_churn_risk_scan(tenant_id=tenant["id"])
+    return result

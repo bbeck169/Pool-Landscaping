@@ -74,6 +74,7 @@ _REBOUND_MODULES = (
     "services.auto_invoice",
     "services.intelligence.alerts",
     "services.intelligence.chemistry_upsell_scan",
+    "services.intelligence.churn_risk_scan",
     "services.intelligence.missed_service_scan",
     "services.drift_alerting",
     "services.payments.stripe_charge",

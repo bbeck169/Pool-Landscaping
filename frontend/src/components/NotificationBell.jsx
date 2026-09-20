@@ -110,6 +110,7 @@ export default function NotificationBell({ variant = "inline" }) {
         style={variant === "floating" ? { borderColor: colors.border } : {}}
         data-testid="notification-bell"
         aria-label="Notifications"
+        title="Team & job notifications"
       >
         <Bell size={variant === "floating" ? 18 : 16} style={{ color: colors.onSurface }} />
         {count > 0 ? (

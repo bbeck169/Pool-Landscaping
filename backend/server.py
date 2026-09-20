@@ -2138,6 +2138,29 @@ async def _background_seed():
                 "[A2] chemistry-upsell scan schedule failed: %s",
                 _a2_exc,
             )
+        # Phase A3 · Feb-2026 · Proactive Intelligence — daily
+        # churn-risk scan at 07:30 UTC (staggered 30 min behind the
+        # A1 missed-service cron and 15 min behind the A2
+        # chemistry-upsell cron). Detects two independent signals:
+        # (a) ≥ 2 unpaid invoices per customer, and (b) recurring
+        # jobs cancelled by the customer. Idempotent via the unique
+        # dedup index on ``(tenant_id, alert_key)`` — re-runs on the
+        # same signal state are a no-op.
+        try:
+            from services.intelligence.churn_risk_scan import (
+                run_churn_risk_scan_all_tenants as
+                _a3_churn_risk_cron,
+            )
+            scheduler.add_job(
+                _a3_churn_risk_cron, "cron", hour=7, minute=30,
+                id="intelligence_churn_risk_scan",
+                replace_existing=True,
+            )
+        except Exception as _a3_exc:  # noqa: BLE001
+            logger.warning(
+                "[A3] churn-risk scan schedule failed: %s",
+                _a3_exc,
+            )
         # Feb 2026 · Customer Merge Phase 3 — daily auto-merge sweep
         # of HIGH-confidence duplicate clusters (exact email OR exact
         # phone). Runs at 09:15 UTC, 10 minutes after the marketing

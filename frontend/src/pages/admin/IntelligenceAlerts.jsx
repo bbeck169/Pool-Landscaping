@@ -21,7 +21,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, CheckCheck, X as XIcon, ExternalLink,
-          Info as InfoIcon, Loader2, ArrowRight, Sparkles } from "lucide-react";
+          Info as InfoIcon, Loader2, ArrowRight, Sparkles,
+          Receipt, MessageSquare } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -110,6 +111,73 @@ function ChemistryReadingSequence({ ctx }) {
       ) : null}
     </div>
   );
+}
+
+
+// Phase A3 · Feb-2026 — churn-risk inline summary chip. Two shapes
+// depending on ``actor_context.signal``:
+//   * missed_payments      →  "$350.00 across 2 invoices • oldest 30d overdue"
+//   * recurring_cancelled  →  "Weekly Pool Cleaning • cancelled 2026-02-14"
+// Everything is best-effort; if a field is missing the chip either
+// omits the sub-clause or renders null.
+function _fmtDollars(cents) {
+  if (cents === null || cents === undefined) return "";
+  const dollars = Number(cents) / 100;
+  return `$${dollars.toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function ChurnRiskSummary({ ctx }) {
+  if (!ctx || !ctx.signal) return null;
+  if (ctx.signal === "missed_payments") {
+    const total = _fmtDollars(ctx.total_amount_cents);
+    const cnt = ctx.invoice_count;
+    const oldest = ctx.oldest_days_overdue;
+    if (!cnt) return null;
+    return (
+      <div
+        className="mt-2 text-[11px] font-mono inline-flex items-center gap-2 rounded px-2 py-1"
+        style={{ background: colors.surfaceSecondary,
+                  color: colors.onSurface }}
+        data-testid="churn-risk-summary-missed-payments"
+      >
+        <span data-testid="churn-risk-total">{total}</span>
+        <span className="opacity-60">·</span>
+        <span data-testid="churn-risk-count">
+          {cnt} invoice{cnt === 1 ? "" : "s"}
+        </span>
+        {oldest ? (
+          <>
+            <span className="opacity-60">·</span>
+            <span data-testid="churn-risk-oldest">
+              oldest {oldest}d overdue
+            </span>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+  if (ctx.signal === "recurring_cancelled") {
+    const service = ctx.service_type || "recurring service";
+    const when = ctx.cancelled_at_short
+                 || String(ctx.cancelled_at || "").slice(0, 10);
+    return (
+      <div
+        className="mt-2 text-[11px] font-mono inline-flex items-center gap-2 rounded px-2 py-1"
+        style={{ background: colors.surfaceSecondary,
+                  color: colors.onSurface }}
+        data-testid="churn-risk-summary-recurring-cancelled"
+      >
+        <span data-testid="churn-risk-service">{service}</span>
+        {when ? (
+          <>
+            <span className="opacity-60">·</span>
+            <span data-testid="churn-risk-when">cancelled {when}</span>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+  return null;
 }
 
 
@@ -287,6 +355,7 @@ export default function IntelligenceAlerts() {
             const meta = _SEV_META[a.severity] || _SEV_META.info;
             const SevIcon = meta.icon;
             const isChem = a.category === "chemistry_upsell";
+            const isChurn = a.category === "churn_risk";
             const ctx    = a.actor_context || {};
             const upsellHref = isChem && a.customer_id ? (() => {
               const qs = new URLSearchParams({
@@ -299,6 +368,45 @@ export default function IntelligenceAlerts() {
               }
               return `/quotes/new?${qs.toString()}`;
             })() : null;
+            // Phase A3 · Feb-2026 — churn-risk deep-links.
+            //   missed_payments      → invoices tab on customer detail
+            //                          with ``status=past_due,overdue``
+            //   recurring_cancelled  → customer detail with compose
+            //                          modal pre-hint via query
+            const churnHref = (() => {
+              if (!isChurn || !a.customer_id) return null;
+              if (ctx.signal === "missed_payments") {
+                const qs = new URLSearchParams({
+                  tab:            "invoices",
+                  status:         "past_due,overdue",
+                  source:         "intelligence_alert",
+                  alert_id:       a.id || "",
+                });
+                return `/customers/${a.customer_id}?${qs.toString()}`;
+              }
+              if (ctx.signal === "recurring_cancelled") {
+                const qs = new URLSearchParams({
+                  compose:  "email",
+                  subject:  "We noticed you cancelled — how can we help?",
+                  source:   "intelligence_alert",
+                  alert_id: a.id || "",
+                });
+                return `/customers/${a.customer_id}?${qs.toString()}`;
+              }
+              return null;
+            })();
+            const churnCtaLabel = (() => {
+              if (!isChurn) return null;
+              if (ctx.signal === "missed_payments")     return "View invoices";
+              if (ctx.signal === "recurring_cancelled") return "Contact customer";
+              return null;
+            })();
+            const churnCtaIcon = (() => {
+              if (!isChurn) return null;
+              if (ctx.signal === "missed_payments")     return Receipt;
+              if (ctx.signal === "recurring_cancelled") return MessageSquare;
+              return null;
+            })();
             return (
               <li
                 key={a.id}
@@ -307,6 +415,7 @@ export default function IntelligenceAlerts() {
                           border: `1px solid ${colors.border}` }}
                 data-testid={`intelligence-alerts-row-${i}`}
                 data-category={a.category}
+                data-signal={ctx.signal || ""}
               >
                 <div className="flex items-start gap-2">
                   <SevIcon size={18} color={meta.color}
@@ -330,6 +439,9 @@ export default function IntelligenceAlerts() {
                     {isChem ? (
                       <ChemistryReadingSequence ctx={ctx} />
                     ) : null}
+                    {isChurn ? (
+                      <ChurnRiskSummary ctx={ctx} />
+                    ) : null}
                     {isChem && upsellHref ? (
                       <div className="mt-2">
                         <button
@@ -342,6 +454,24 @@ export default function IntelligenceAlerts() {
                         >
                           <Sparkles size={10} />
                           Create upsell quote
+                        </button>
+                      </div>
+                    ) : null}
+                    {isChurn && churnHref && churnCtaLabel ? (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => navigate(churnHref)}
+                          className="text-[11px] font-semibold rounded-lg px-2 py-1 inline-flex items-center gap-1"
+                          style={{ background: colors.brand || colors.onSurface,
+                                    color: colors.onBrandPrimary || "#FFFFFF" }}
+                          data-testid={`intelligence-alerts-churn-cta-${i}`}
+                          data-signal={ctx.signal}
+                        >
+                          {churnCtaIcon
+                            ? React.createElement(churnCtaIcon, { size: 10 })
+                            : null}
+                          {churnCtaLabel}
                         </button>
                       </div>
                     ) : null}

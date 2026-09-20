@@ -167,6 +167,7 @@ export default function AlertBell() {
         style={{ background: "transparent" }}
         aria-label={`Notifications: ${unreadCount} unread`}
         data-testid="alert-bell-btn"
+        title="Proactive intelligence"
       >
         <Bell size={18} color="#FFFFFF" />
         {badge != null ? (
