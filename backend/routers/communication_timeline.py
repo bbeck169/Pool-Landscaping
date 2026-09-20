@@ -382,10 +382,15 @@ async def communication_timeline(
 # ``customer_id`` (strict).
 # ═══════════════════════════════════════════════════════════════════════
 
-_TIMELINE_ALLOWED_KINDS = {"email", "sms", "invoice", "estimate"}
+_TIMELINE_ALLOWED_KINDS = {"email", "sms", "invoice", "estimate",
+                             "call", "note"}
 _TIMELINE_DEFAULT_PAGE_SIZE = 20
 _TIMELINE_MAX_PAGE_SIZE = 100
 _TIMELINE_HARD_CAP = 500
+# Phase B · Feb-2026 — Super Timeline. The extra two sources (call
+# logs + internal job notes) are gated to admin/super_admin only.
+# Manager sessions keep the pre-B 4-source view — no regression.
+_FULL_TIMELINE_ROLES = {"admin", "super_admin"}
 
 
 def _parse_kinds(csv: Optional[str]) -> Optional[set]:
@@ -541,6 +546,349 @@ async def _quotes_to_items(
     return items
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase B · Feb-2026 — Super Timeline aggregator additions
+# (call_logs + internal job notes). Every new pull returns items in
+# the D5-shape (kind, created_at, ref_type/ref_id, url, subject...)
+# so the merge helper doesn't care whether an item came from the
+# legacy pulls or the new ones. Callers then normalise the merged
+# list via ``_normalise_existing_item`` which adds the B-required
+# ``source_type / occurred_at / summary / detail / actor / id``
+# fields WITHOUT renaming the legacy ones (backwards-compat).
+# ═════════════════════════════════════════════════════════════════════
+
+
+def _coerce_utc_iso(raw: Any) -> str:
+    """Normalise any timestamp shape → ISO-8601 UTC string.
+
+    Accepts:
+      * ``str`` — already ISO-ish; coerce to UTC via
+        ``datetime.fromisoformat`` (add ``+00:00`` when no offset
+        present).
+      * ``datetime`` — attach UTC when naive; convert to UTC when
+        aware.
+      * ``None`` / anything else → ``""``.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    if raw is None:
+        return ""
+    if isinstance(raw, _dt):
+        if raw.tzinfo is None:
+            return raw.replace(tzinfo=_tz.utc).isoformat()
+        return raw.astimezone(_tz.utc).isoformat()
+    s = str(raw).strip()
+    if not s:
+        return ""
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        parsed = _dt.fromisoformat(s)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_tz.utc)
+        return parsed.astimezone(_tz.utc).isoformat()
+    except Exception:  # noqa: BLE001
+        return s
+
+
+def _format_duration(seconds: Any) -> str:
+    """``123`` → ``"2m 3s"``; ``59`` → ``"59s"``; ``0`` → ``"0s"``."""
+    try:
+        n = int(seconds or 0)
+    except Exception:  # noqa: BLE001
+        return ""
+    if n < 0:
+        n = 0
+    if n < 60:
+        return f"{n}s"
+    m, s = divmod(n, 60)
+    return f"{m}m {s}s" if s else f"{m}m"
+
+
+async def _resolve_display_name(
+    user_id: Optional[str], tenant_id: str,
+) -> Tuple[str, str]:
+    """Return ``(display_name, role)`` for a user id.  Empty strings
+    when the id doesn't resolve. Used by note-actor mapping."""
+    if not user_id:
+        return "", ""
+    u = await db.users.find_one(
+        {"id": user_id, "tenant_id": tenant_id},
+        {"_id": 0, "name": 1, "first_name": 1, "last_name": 1, "role": 1},
+    )
+    if not u:
+        return "", ""
+    name = (
+        u.get("name")
+        or " ".join([u.get("first_name") or "",
+                       u.get("last_name") or ""]).strip()
+        or ""
+    )
+    return name, (u.get("role") or "").lower()
+
+
+async def _call_logs_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Pull the customer's ``call_logs`` rows (read-only)."""
+    if wanted_kinds is not None and "call" not in wanted_kinds:
+        return []
+    # Tenant hygiene — every call_log carries a tenant_id; the
+    # filter excludes cross-tenant rows even when the customer id
+    # happens to collide across tenants.
+    query: Dict[str, Any] = {
+        "tenant_id":   tenant_id,
+        "customer_id": customer["id"],
+    }
+    if from_iso or to_iso:
+        _range: Dict[str, Any] = {}
+        if from_iso:
+            _range["$gte"] = from_iso
+        if to_iso:
+            _range["$lte"] = to_iso
+        query["started_at"] = _range
+
+    items: List[Dict[str, Any]] = []
+    async for r in db.call_logs.find(query, {"_id": 0}) \
+            .sort("started_at", -1).limit(_TIMELINE_HARD_CAP):
+        direction = (r.get("direction") or "").lower()
+        other_party = (r.get("from_number") if direction == "inbound"
+                        else r.get("to_number"))
+        summary_parts = ["Inbound call" if direction == "inbound"
+                          else "Outbound call"]
+        if other_party:
+            summary_parts.append(f"with {other_party}")
+        dur_str = _format_duration(r.get("duration"))
+        if dur_str and dur_str != "0s":
+            summary_parts.append(f"· {dur_str}")
+        occurred = _coerce_utc_iso(
+            r.get("started_at") or r.get("created_at"))
+        items.append({
+            "id":          r.get("id") or r.get("session_id") or "",
+            "source_type": "call",
+            "occurred_at": occurred,
+            "summary":     " ".join(summary_parts),
+            "detail": {
+                "direction":     direction or "unknown",
+                "from_number":   r.get("from_number") or "",
+                "to_number":     r.get("to_number") or "",
+                "other_party":   other_party or "",
+                "duration_sec":  r.get("duration") or 0,
+                "duration":      dur_str,
+                "recording_url": r.get("recording_url") or "",
+                "disposition":   r.get("disposition") or "",
+                "session_id":    r.get("session_id") or "",
+                "customer_name": r.get("customer_name") or "",
+            },
+            "actor": None,
+            # Legacy shape (backwards-compat).
+            "kind":       "call",
+            "subject":    " ".join(summary_parts),
+            "created_at": occurred,
+            "ref_type":   "call_log",
+            "ref_id":     r.get("id") or "",
+            "url":        "",
+            "recipient":  other_party or "",
+        })
+    return items
+
+
+def _note_item(
+    *, note_id: str, occurred_at: str, body: str, job_id: str,
+    service_type: str, actor: Optional[Dict[str, str]],
+    note_kind: str,
+) -> Dict[str, Any]:
+    """Build a normalised ``source_type=note`` timeline item."""
+    preview = _preview(body, n=140)
+    label = "Internal note" if note_kind == "internal" else "Job note"
+    if service_type:
+        label = f"{label} · {service_type}"
+    return {
+        "id":          note_id,
+        "source_type": "note",
+        "occurred_at": occurred_at,
+        "summary":     f"{label}: {preview}"
+                          + ("…" if len(body) > 140 else ""),
+        "detail": {
+            "note_body":    body,
+            "note_kind":    note_kind,
+            "job_id":       job_id,
+            "service_type": service_type,
+        },
+        "actor": actor,
+        "kind":       "note",
+        "subject":    label,
+        "created_at": occurred_at,
+        "ref_type":   "job_note",
+        "ref_id":     note_id,
+        "url":        f"/jobs/{job_id}" if job_id else "",
+        "recipient":  "",
+    }
+
+
+async def _job_notes_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Pull internal notes attached to the customer's jobs.
+
+    Handles both shapes:
+      * Structured array — ``job.notes = [{id, body, author_id,
+        created_at, ...}, ...]``.
+      * Legacy string — ``job.notes = "one-liner"`` (production
+        shape per ``seed.py``). Treated as ONE note authored at
+        ``job.created_at`` by ``job.created_by``.
+      * ``job.internal_notes`` (admin-only string) — a SECOND note
+        item per job when non-empty (kind=``internal``).
+    """
+    if wanted_kinds is not None and "note" not in wanted_kinds:
+        return []
+    query: Dict[str, Any] = {
+        "tenant_id":   tenant_id,
+        "customer_id": customer["id"],
+    }
+    items: List[Dict[str, Any]] = []
+    _author_cache: Dict[str, Tuple[str, str]] = {}
+
+    async def _actor(uid: Optional[str]) -> Optional[Dict[str, str]]:
+        if not uid:
+            return None
+        if uid not in _author_cache:
+            _author_cache[uid] = await _resolve_display_name(uid, tenant_id)
+        name, role = _author_cache[uid]
+        if not name:
+            return None
+        return {"id": uid, "display_name": name, "role": role}
+
+    def _in_range(ts_iso: str) -> bool:
+        if not (from_iso or to_iso):
+            return True
+        if from_iso and ts_iso and ts_iso < from_iso:
+            return False
+        if to_iso and ts_iso and ts_iso > to_iso:
+            return False
+        return True
+
+    async for job in db.jobs.find(query, {
+        "_id": 0, "id": 1, "notes": 1, "internal_notes": 1,
+        "created_at": 1, "created_by": 1, "assigned_technician_id": 1,
+        "service_type": 1,
+    }):
+        job_id = job.get("id") or ""
+        job_created = _coerce_utc_iso(job.get("created_at"))
+        default_author = job.get("created_by") or \
+            job.get("assigned_technician_id")
+
+        # ── (a) structured note array ────────────────────────────
+        notes_field = job.get("notes")
+        if isinstance(notes_field, list):
+            for n in notes_field:
+                if not isinstance(n, dict):
+                    body = str(n or "").strip()
+                    if not body:
+                        continue
+                    occurred = job_created
+                    if not _in_range(occurred):
+                        continue
+                    items.append(_note_item(
+                        note_id=f"{job_id}-note-{len(items)}",
+                        occurred_at=occurred, body=body,
+                        job_id=job_id,
+                        service_type=job.get("service_type") or "",
+                        actor=await _actor(default_author),
+                        note_kind="visit",
+                    ))
+                    continue
+                body = str(
+                    n.get("body") or n.get("note_body")
+                    or n.get("note") or n.get("text") or ""
+                ).strip()
+                if not body:
+                    continue
+                occurred = _coerce_utc_iso(
+                    n.get("created_at") or n.get("timestamp")
+                    or job_created
+                )
+                if not _in_range(occurred):
+                    continue
+                items.append(_note_item(
+                    note_id=str(n.get("id")
+                                  or f"{job_id}-note-{len(items)}"),
+                    occurred_at=occurred, body=body,
+                    job_id=job_id,
+                    service_type=job.get("service_type") or "",
+                    actor=await _actor(
+                        n.get("author_id") or default_author),
+                    note_kind=str(n.get("kind") or "visit"),
+                ))
+        elif isinstance(notes_field, str) and notes_field.strip():
+            occurred = job_created
+            if _in_range(occurred):
+                items.append(_note_item(
+                    note_id=f"{job_id}-note-body",
+                    occurred_at=occurred,
+                    body=notes_field.strip(),
+                    job_id=job_id,
+                    service_type=job.get("service_type") or "",
+                    actor=await _actor(default_author),
+                    note_kind="visit",
+                ))
+
+        # ── (b) job.internal_notes admin-only string ─────────────
+        internal = job.get("internal_notes")
+        if isinstance(internal, str) and internal.strip():
+            occurred = job_created
+            if _in_range(occurred):
+                items.append(_note_item(
+                    note_id=f"{job_id}-note-internal",
+                    occurred_at=occurred,
+                    body=internal.strip(),
+                    job_id=job_id,
+                    service_type=job.get("service_type") or "",
+                    actor=await _actor(default_author),
+                    note_kind="internal",
+                ))
+
+    return items
+
+
+def _normalise_existing_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill the B-required fields onto items produced by the
+    pre-B pulls. Existing fields stay put — this only ADDS
+    ``id / source_type / occurred_at / summary / detail / actor``
+    when they aren't already set."""
+    if "source_type" in item and "occurred_at" in item:
+        return item
+    kind = (item.get("kind") or "").lower()
+    src = {"email": "email", "sms": "sms",
+           "invoice": "invoice", "estimate": "quote",
+           "call": "call", "note": "note"}.get(kind, kind or "unknown")
+    occurred = _coerce_utc_iso(item.get("created_at"))
+    subj = item.get("subject") or ""
+    stat = item.get("delivery_status") or item.get("payment_status") or ""
+    summary_bits = [p for p in (subj, stat) if p]
+    detail = {
+        "recipient":       item.get("recipient") or "",
+        "template_name":   item.get("template_name") or "",
+        "delivery_status": item.get("delivery_status") or "",
+        "payment_status":  item.get("payment_status") or "",
+        "total":           item.get("total") or 0,
+        "trigger_kind":    item.get("trigger_kind") or "",
+        "related_ref":     item.get("related_ref") or None,
+        "url":             item.get("url") or "",
+    }
+    item.setdefault("id", item.get("ref_id") or "")
+    item["source_type"] = src
+    item["occurred_at"] = occurred
+    item.setdefault("summary", " · ".join(summary_bits))
+    item.setdefault("detail", detail)
+    item.setdefault("actor", None)
+    return item
+
+
+
 def _dedupe_by_ref(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Dedup by ``(ref_type, ref_id)`` — first occurrence wins.
     Additionally suppresses a raw invoice/estimate row when a
@@ -575,7 +923,14 @@ async def _build_full_timeline(
     from_: Optional[str], to_: Optional[str],
     role: str,
 ) -> List[Dict[str, Any]]:
-    """Shared merge helper for the admin + portal endpoints."""
+    """Shared merge helper for the admin + portal endpoints.
+
+    Phase B · Feb-2026 — admins + super_admins additionally see the
+    ``call`` and ``note`` sources merged in. Managers and portal
+    (customer) sessions keep the pre-B 4-source view — the two new
+    pulls are only invoked when the caller is in
+    :data:`_FULL_TIMELINE_ROLES`.
+    """
     from_iso, to_iso = _iso_bounds(from_, to_)
     marketing = await _marketing_deliveries_to_items(
         customer, tenant_id, wanted_kinds, from_iso, to_iso,
@@ -584,7 +939,27 @@ async def _build_full_timeline(
         customer, tenant_id, wanted_kinds, from_iso, to_iso, role,
     )
     merged = marketing + quote_items
-    merged.sort(key=lambda i: i.get("created_at") or "", reverse=True)
+    # Phase B — call_logs + job internal notes, admin/super_admin only.
+    if role in _FULL_TIMELINE_ROLES:
+        merged += await _call_logs_to_items(
+            customer, tenant_id, wanted_kinds, from_iso, to_iso,
+        )
+        merged += await _job_notes_to_items(
+            customer, tenant_id, wanted_kinds, from_iso, to_iso,
+        )
+    # Backfill the B-required fields on legacy items (marketing /
+    # quotes) so every entry ships ``source_type / occurred_at /
+    # summary / detail / actor / id`` — call + note items already
+    # include them.
+    for it in merged:
+        _normalise_existing_item(it)
+    # DESC sort — prefer ``occurred_at`` (UTC-normalised) with
+    # ``created_at`` fallback for callers that only threaded the
+    # legacy field.
+    merged.sort(
+        key=lambda i: i.get("occurred_at") or i.get("created_at") or "",
+        reverse=True,
+    )
     return _dedupe_by_ref(merged)
 
 
@@ -594,23 +969,50 @@ async def _paginated_timeline_response(
     from_: Optional[str], to_: Optional[str],
     page: int, page_size: int,
     role: str,
+    limit: Optional[int] = None,
+    before: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Paginated envelope. When ``before`` is supplied, cursor mode
+    kicks in: items strictly earlier than ``before`` (compared as
+    UTC ISO strings via :func:`_coerce_utc_iso`) are returned, up
+    to ``limit`` (default 50, max 200). Legacy ``page/page_size``
+    mode is untouched when ``before`` is absent."""
     wanted = _parse_kinds(kind)
     all_items = await _build_full_timeline(
         customer, tenant_id, wanted, from_, to_, role,
     )
+    if before:
+        # Cursor pagination — items strictly earlier than the cursor.
+        cursor_iso = _coerce_utc_iso(before)
+        _limit = max(1, min(int(limit or 50), 200))
+        subset = [i for i in all_items
+                    if (i.get("occurred_at") or i.get("created_at") or "")
+                       < cursor_iso][:_limit]
+        next_cursor = (subset[-1].get("occurred_at")
+                        or subset[-1].get("created_at")) if subset else None
+        return {
+            "items":       subset,
+            "page":        1,
+            "page_size":   len(subset),
+            "total":       len(all_items),
+            "total_pages": 0,
+            "next_before": next_cursor,
+        }
     total = len(all_items)
     page_size = max(1, min(page_size, _TIMELINE_MAX_PAGE_SIZE))
     page = max(1, page)
     total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
     start = (page - 1) * page_size
     slice_ = all_items[start:start + page_size]
+    next_before = (slice_[-1].get("occurred_at")
+                    or slice_[-1].get("created_at")) if slice_ else None
     return {
         "items":       slice_,
         "page":        page,
         "page_size":   page_size,
         "total":       total,
         "total_pages": total_pages,
+        "next_before": next_before,
     }
 
 
@@ -648,23 +1050,42 @@ async def admin_customer_timeline(
     page: int = Query(1, ge=1),
     page_size: int = Query(_TIMELINE_DEFAULT_PAGE_SIZE, ge=1,
                              le=_TIMELINE_MAX_PAGE_SIZE),
-    kind: Optional[str] = Query(None,
-                                     description="csv: email,sms,invoice,estimate"),
+    kind: Optional[str] = Query(
+        None,
+        description="csv: email,sms,invoice,estimate,call,note",
+    ),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=200,
+                                     description="cursor-mode page size"),
+    before: Optional[str] = Query(
+        None, description="ISO cursor — return items strictly earlier"),
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
     """Full customer communication history — admin/manager only.
 
-    Merges marketing_deliveries + invoices + estimates into a single
-    chronological feed. Response shape:
-    ``{items, page, page_size, total, total_pages}``.
+    Phase B · Feb-2026 · Super Timeline —  ``admin`` and
+    ``super_admin`` sessions additionally see ``call`` (call_logs)
+    and ``note`` (internal job notes) sources. Manager sessions
+    keep the pre-B 4-source view (no regression). All other roles
+    → 403 with ``detail=insufficient_role_for_full_timeline``.
+
+    Response shape adds per-item ``id / source_type / occurred_at /
+    summary / detail / actor`` without renaming the legacy
+    ``kind / created_at / ref_type / ref_id`` fields.
+
+    Cursor pagination — pass ``before=<ISO>`` (+ optional
+    ``limit``) to page by ``occurred_at``. Absent both → the
+    legacy ``page / page_size`` envelope is returned unchanged.
     """
     role = (user.get("role") or "").lower()
     if role not in _ADMIN_ROLES:
-        raise HTTPException(403, "Admin timeline only")
+        raise HTTPException(
+            403, "insufficient_role_for_full_timeline",
+        )
     customer = await _load_customer(customer_id, tenant["id"])
     return await _paginated_timeline_response(
         customer, tenant["id"], kind, from_, to, page, page_size, role,
+        limit=limit, before=before,
     )
