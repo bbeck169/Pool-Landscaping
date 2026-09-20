@@ -273,3 +273,44 @@ async def run_churn_risk_scan_now(
     )
     result = await run_churn_risk_scan(tenant_id=tenant["id"])
     return result
+
+
+@router.post("/intelligence/scans/renewal/run-now")
+async def run_renewal_scan_now(
+    user:   Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase A4 · Feb-2026 — manual trigger for the 30-day renewal
+    scan against the caller's own tenant.  Admin+super_admin only.
+
+    Response shape:
+    ``{"tenant_id", "scanned_agreements", "alerts_emitted",
+    "alerts_deduped", "emails_sent", "auto_renew_receipts_sent",
+    "by_tenant"}``.
+    """
+    _require_admin(user)
+    from services.intelligence.renewal_scan import run_renewal_scan
+    result = await run_renewal_scan(tenant_id=tenant["id"])
+    return result
+
+
+@router.post("/agreements/{agreement_id}/resend-renewal-email")
+async def resend_agreement_renewal_email(
+    agreement_id: str,
+    user:   Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Phase A4 · Feb-2026 — admin "Resend renewal email" row
+    action on the intelligence alerts page. Admin+super_admin
+    only; tech gets 403 ``insufficient_role_for_alerts``.
+
+    ``agreement_id`` refers to a ``warranty_contracts.id``.
+    """
+    _require_admin(user)
+    from services.intelligence.renewal_scan import (
+        resend_renewal_email_for_contract,
+    )
+    result = await resend_renewal_email_for_contract(
+        tenant["id"], agreement_id,
+    )
+    return result

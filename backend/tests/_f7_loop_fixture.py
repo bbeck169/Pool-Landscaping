@@ -76,6 +76,7 @@ _REBOUND_MODULES = (
     "services.intelligence.chemistry_upsell_scan",
     "services.intelligence.churn_risk_scan",
     "services.intelligence.missed_service_scan",
+    "services.intelligence.renewal_scan",
     "services.drift_alerting",
     "services.payments.stripe_charge",
     "services.pricebook.writeback",

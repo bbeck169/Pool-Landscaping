@@ -22,10 +22,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, CheckCheck, X as XIcon, ExternalLink,
           Info as InfoIcon, Loader2, ArrowRight, Sparkles,
-          Receipt, MessageSquare } from "lucide-react";
+          Receipt, MessageSquare, RefreshCw, Send } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { toast } from "sonner";
 
 
 const _CATEGORY_META = {
@@ -178,6 +179,57 @@ function ChurnRiskSummary({ ctx }) {
     );
   }
   return null;
+}
+
+
+// Phase A4 · Feb-2026 — renewal_due inline summary chip.
+// Two visual variants driven by ``actor_context.auto_renew``:
+//   * manual → "{plan_name} · $89.00/mo · expires 2026-03-14"
+//   * auto   → "{plan_name} · $79.00/mo · AUTO-RENEW 2026-03-14"
+function RenewalDueSummary({ ctx }) {
+  if (!ctx || !ctx.plan_name) return null;
+  const monthly = _fmtDollars(ctx.monthly_amount_cents);
+  const when = ctx.expires_at_short
+               || String(ctx.expires_at || "").slice(0, 10);
+  return (
+    <div
+      className="mt-2 text-[11px] font-mono inline-flex items-center gap-2 rounded px-2 py-1"
+      style={{ background: colors.surfaceSecondary,
+                color: colors.onSurface }}
+      data-testid="renewal-due-summary"
+    >
+      <span data-testid="renewal-plan">{ctx.plan_name}</span>
+      {monthly ? (
+        <>
+          <span className="opacity-60">·</span>
+          <span data-testid="renewal-price">{monthly}/mo</span>
+        </>
+      ) : null}
+      {ctx.auto_renew ? (
+        <>
+          <span className="opacity-60">·</span>
+          <span
+            data-testid="renewal-auto-badge"
+            className="rounded px-1 font-bold uppercase"
+            style={{ background: colors.brand || "#0284C7",
+                      color: colors.onBrandPrimary || "#FFFFFF" }}
+          >
+            AUTO-RENEW
+          </span>
+          {when ? (
+            <span data-testid="renewal-when">{when}</span>
+          ) : null}
+        </>
+      ) : (
+        when ? (
+          <>
+            <span className="opacity-60">·</span>
+            <span data-testid="renewal-when">expires {when}</span>
+          </>
+        ) : null
+      )}
+    </div>
+  );
 }
 
 
@@ -407,6 +459,23 @@ export default function IntelligenceAlerts() {
               if (ctx.signal === "recurring_cancelled") return MessageSquare;
               return null;
             })();
+            // Phase A4 · Feb-2026 — renewal_due deep-links.
+            //   View agreement       → customer detail warranties tab
+            //   Resend renewal email → POST to admin endpoint, toast
+            const isRenewal = a.category === "renewal_due";
+            const renewalAgreementId = isRenewal
+              ? (ctx.agreement_id || "")
+              : "";
+            const renewalViewHref = (isRenewal && a.customer_id
+                                       && renewalAgreementId) ? (() => {
+              const qs = new URLSearchParams({
+                tab:       "warranties",
+                highlight: renewalAgreementId,
+                source:    "intelligence_alert",
+                alert_id:  a.id || "",
+              });
+              return `/customers/${a.customer_id}?${qs.toString()}`;
+            })() : null;
             return (
               <li
                 key={a.id}
@@ -442,6 +511,9 @@ export default function IntelligenceAlerts() {
                     {isChurn ? (
                       <ChurnRiskSummary ctx={ctx} />
                     ) : null}
+                    {isRenewal ? (
+                      <RenewalDueSummary ctx={ctx} />
+                    ) : null}
                     {isChem && upsellHref ? (
                       <div className="mt-2">
                         <button
@@ -472,6 +544,54 @@ export default function IntelligenceAlerts() {
                             ? React.createElement(churnCtaIcon, { size: 10 })
                             : null}
                           {churnCtaLabel}
+                        </button>
+                      </div>
+                    ) : null}
+                    {isRenewal && renewalAgreementId ? (
+                      <div className="mt-2 flex items-center gap-2">
+                        {renewalViewHref ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate(renewalViewHref)}
+                            className="text-[11px] font-semibold rounded-lg px-2 py-1 inline-flex items-center gap-1"
+                            style={{ background: colors.brand || colors.onSurface,
+                                      color: colors.onBrandPrimary || "#FFFFFF" }}
+                            data-testid={`intelligence-alerts-renewal-view-${i}`}
+                          >
+                            <ExternalLink size={10} />
+                            View agreement
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const r = await api.post(
+                                `/agreements/${renewalAgreementId}/resend-renewal-email`,
+                              );
+                              if (r && r.ok) {
+                                toast.success(
+                                  r.sent_to
+                                    ? `Renewal email sent to ${r.sent_to}`
+                                    : "Renewal email sent",
+                                );
+                              } else {
+                                toast.error(
+                                  (r && r.reason) || "Send failed",
+                                );
+                              }
+                            } catch (e) {
+                              toast.error("Send failed");
+                            }
+                          }}
+                          className="text-[11px] font-semibold rounded-lg px-2 py-1 inline-flex items-center gap-1"
+                          style={{ background: colors.surfaceSecondary,
+                                    color: colors.onSurface,
+                                    border: `1px solid ${colors.border}` }}
+                          data-testid={`intelligence-alerts-renewal-resend-${i}`}
+                        >
+                          <Send size={10} />
+                          Resend renewal email
                         </button>
                       </div>
                     ) : null}

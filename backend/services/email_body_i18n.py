@@ -344,6 +344,39 @@ LABELS: Dict[str, Dict[str, str]] = {
         "email.aeo_digest.action_items_line":
             "Pending fixes: {fixes} · drafts: {drafts}",
         "email.aeo_digest.pdf_attached": "PDF attached.",
+
+        # ── Phase A4 · Feb-2026 — Renewal proposal (manual-renew
+        # contracts) & renewal receipt (auto-renew contracts). Each
+        # composer is FIVE full-sentence keys: subject, body_intro,
+        # body_price, body_cta, body_footer — matching the exact
+        # slot layout of ``services.intelligence.renewal_scan``.
+        "email.renewal_proposal.subject":
+            "Your {plan_name} renews in {days_left} days",
+        "email.renewal_proposal.body_intro":
+            "Hi {customer_first_name}, your <b>{plan_name}</b> "
+            "service agreement expires on {expires_at_short}. "
+            "Renew today to keep your service uninterrupted.",
+        "email.renewal_proposal.body_price":
+            "Renewal price: {monthly_amount}/month ({currency}).",
+        "email.renewal_proposal.body_cta": "Renew now",
+        "email.renewal_proposal.body_footer":
+            "Questions? Reply to this email or contact your "
+            "service team — we're happy to help.",
+
+        "email.renewal_receipt.subject":
+            "Your {plan_name} auto-renews in {days_left} days",
+        "email.renewal_receipt.body_intro":
+            "Hi {customer_first_name}, your <b>{plan_name}</b> "
+            "service agreement will automatically renew on "
+            "{expires_at_short}. No action needed on your part.",
+        "email.renewal_receipt.body_price":
+            "You'll be billed {monthly_amount}/month ({currency}) "
+            "at renewal.",
+        "email.renewal_receipt.body_cta":
+            "View or manage renewal",
+        "email.renewal_receipt.body_footer":
+            "If anything looks off — reply to this email or "
+            "contact your service team and we'll sort it out.",
     },
     "es": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -647,6 +680,36 @@ LABELS: Dict[str, Dict[str, str]] = {
         "email.aeo_digest.action_items_line":
             "Correcciones pendientes: {fixes} · borradores: {drafts}",
         "email.aeo_digest.pdf_attached": "PDF adjunto.",
+
+        # ── Phase A4 · Feb-2026 — Renewal proposal / receipt (es) ──
+        "email.renewal_proposal.subject":
+            "Su {plan_name} se renueva en {days_left} días",
+        "email.renewal_proposal.body_intro":
+            "Hola {customer_first_name}, su acuerdo de servicio "
+            "<b>{plan_name}</b> vence el {expires_at_short}. "
+            "Renueve hoy para mantener su servicio sin "
+            "interrupciones.",
+        "email.renewal_proposal.body_price":
+            "Precio de renovación: {monthly_amount}/mes ({currency}).",
+        "email.renewal_proposal.body_cta": "Renovar ahora",
+        "email.renewal_proposal.body_footer":
+            "¿Preguntas? Responda a este correo o contacte con su "
+            "equipo de servicio — estaremos encantados de ayudar.",
+
+        "email.renewal_receipt.subject":
+            "Su {plan_name} se renueva automáticamente en {days_left} días",
+        "email.renewal_receipt.body_intro":
+            "Hola {customer_first_name}, su acuerdo de servicio "
+            "<b>{plan_name}</b> se renovará automáticamente el "
+            "{expires_at_short}. No es necesario que haga nada.",
+        "email.renewal_receipt.body_price":
+            "Se le facturará {monthly_amount}/mes ({currency}) "
+            "en la renovación.",
+        "email.renewal_receipt.body_cta":
+            "Ver o gestionar la renovación",
+        "email.renewal_receipt.body_footer":
+            "Si algo no parece correcto, responda a este correo o "
+            "contacte con su equipo de servicio — lo resolveremos.",
     },
     "fr": {
         # ── Invoice reminder ─────────────────────────────────────
@@ -962,6 +1025,41 @@ LABELS: Dict[str, Dict[str, str]] = {
         "email.aeo_digest.action_items_line":
             "Corrections en attente : {fixes} · brouillons : {drafts}",
         "email.aeo_digest.pdf_attached": "PDF joint.",
+
+        # ── Phase A4 · Feb-2026 — Renewal proposal / receipt (fr) ──
+        "email.renewal_proposal.subject":
+            "Votre {plan_name} se renouvelle dans {days_left} jours",
+        "email.renewal_proposal.body_intro":
+            "Bonjour {customer_first_name}, votre contrat de "
+            "service <b>{plan_name}</b> expire le "
+            "{expires_at_short}. Renouvelez dès aujourd'hui pour "
+            "conserver un service ininterrompu.",
+        "email.renewal_proposal.body_price":
+            "Prix de renouvellement : {monthly_amount}/mois "
+            "({currency}).",
+        "email.renewal_proposal.body_cta": "Renouveler maintenant",
+        "email.renewal_proposal.body_footer":
+            "Des questions ? Répondez à cet e-mail ou contactez "
+            "votre équipe de service — nous sommes là pour vous "
+            "aider.",
+
+        "email.renewal_receipt.subject":
+            "Votre {plan_name} se renouvelle automatiquement "
+            "dans {days_left} jours",
+        "email.renewal_receipt.body_intro":
+            "Bonjour {customer_first_name}, votre contrat de "
+            "service <b>{plan_name}</b> sera automatiquement "
+            "renouvelé le {expires_at_short}. Aucune action "
+            "requise de votre part.",
+        "email.renewal_receipt.body_price":
+            "Vous serez facturé {monthly_amount}/mois "
+            "({currency}) au renouvellement.",
+        "email.renewal_receipt.body_cta":
+            "Voir ou gérer le renouvellement",
+        "email.renewal_receipt.body_footer":
+            "Si quelque chose semble incorrect, répondez à cet "
+            "e-mail ou contactez votre équipe de service — nous "
+            "règlerons cela.",
     },
 }
 

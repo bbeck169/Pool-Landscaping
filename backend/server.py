@@ -2161,6 +2161,27 @@ async def _background_seed():
                 "[A3] churn-risk scan schedule failed: %s",
                 _a3_exc,
             )
+        # Phase A4 · Feb-2026 · Proactive Intelligence — daily
+        # renewal scan at 07:45 UTC (staggered 45 min behind A1,
+        # 30 min behind A2, 15 min behind A3). Detects warranty
+        # contracts expiring in exactly 30 days, emits one
+        # ``renewal_due`` alert per contract, and sends either a
+        # proposal email (manual renewal) or a receipt email (auto
+        # renewal) via the shared Resend pipeline with D6 i18n copy.
+        try:
+            from services.intelligence.renewal_scan import (
+                run_renewal_scan_all_tenants as _a4_renewal_cron,
+            )
+            scheduler.add_job(
+                _a4_renewal_cron, "cron", hour=7, minute=45,
+                id="intelligence_renewal_scan",
+                replace_existing=True,
+            )
+        except Exception as _a4_exc:  # noqa: BLE001
+            logger.warning(
+                "[A4] renewal scan schedule failed: %s",
+                _a4_exc,
+            )
         # Feb 2026 · Customer Merge Phase 3 — daily auto-merge sweep
         # of HIGH-confidence duplicate clusters (exact email OR exact
         # phone). Runs at 09:15 UTC, 10 minutes after the marketing
