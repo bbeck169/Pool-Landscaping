@@ -404,39 +404,66 @@ async def test_get_full_returns_flipbook_fields():
     # HMAC download URL for each background so anonymous customer
     # ``<img>`` tags can load the asset without an ``Authorization``
     # header (same trust model as the SMS attachment surface).
-    from routers.marketing_media import _sign_media, _verify_media_sig
-    expected_urls = [
-        f"/api/marketing/media/m-1/download?tid=t-flip&sig={_sign_media('t-flip', 'm-1')}",
-        f"/api/marketing/media/m-2/download?tid=t-flip&sig={_sign_media('t-flip', 'm-2')}",
-    ]
-    assert body["flipbook_background_urls"] == expected_urls
-    # Each signed URL round-trips through ``_verify_media_sig`` OK
-    # — locks the flipbook payload to the same HMAC contract the
-    # SMS attachment surface uses.
+    #
+    # Phase P1.2 · Feb 2026 — every signed URL now embeds an ``exp``
+    # claim. We can't hard-compare the URLs (``exp`` is time-based)
+    # so we parse each one and round-trip it through the verifier.
+    from routers.marketing_media import _verify_media_sig
     from urllib.parse import urlparse, parse_qs
-    for url, mid in zip(body["flipbook_background_urls"], ["m-1", "m-2"]):
-        q = parse_qs(urlparse(url).query)
-        assert q["tid"] == ["t-flip"]
-        assert _verify_media_sig("t-flip", mid, q["sig"][0]) is True
+    urls = body["flipbook_background_urls"]
+    assert len(urls) == 2
+    for url, mid in zip(urls, ["m-1", "m-2"]):
+        parsed = urlparse(url)
+        assert parsed.path == f"/api/marketing/media/{mid}/download"
+        q = parse_qs(parsed.query)
+        assert "exp" in q and "sig" in q, (
+            f"missing exp/sig on {url!r}"
+        )
+        assert "tid" not in q, (
+            "P1.2 dropped ``tid=`` from the URL shape — carrying "
+            "it would leak the tenant id on the wire"
+        )
+        exp_i = int(q["exp"][0])
+        assert _verify_media_sig(
+            "t-flip", mid, exp_i, q["sig"][0],
+        ) is None
 
 
 async def test_signed_url_matches_hmac_verifier():
-    """Round-trip guard on the shared HMAC helper. If ``_sign_media``
-    or ``_verify_media_sig`` drift, this test breaks the flipbook
-    payload contract along with the SMS attachment path — surfacing
-    the shared-helper regression before it ships."""
+    """Round-trip guard on the shared HMAC helper. If the signer or
+    verifier drift, this test breaks the flipbook payload contract
+    along with the SMS attachment path — surfacing the shared-helper
+    regression before it ships.
+
+    Phase P1.2 · Feb 2026 — verifier returns an error slug (or None
+    on success) and both signer + verifier require an ``exp`` epoch
+    baked into the HMAC input.
+    """
     from routers.marketing_media import (
         _signed_download_url, _verify_media_sig,
     )
     from urllib.parse import urlparse, parse_qs
     url = _signed_download_url("t-flip", "m-99")
-    q = parse_qs(urlparse(url).query)
-    assert q["tid"] == ["t-flip"]
-    assert _verify_media_sig("t-flip", "m-99", q["sig"][0]) is True
-    # Cross-tenant guess fails.
-    assert _verify_media_sig("t-other", "m-99", q["sig"][0]) is False
-    # Cross-mid guess fails.
-    assert _verify_media_sig("t-flip", "m-other", q["sig"][0]) is False
+    parsed = urlparse(url)
+    q = parse_qs(parsed.query)
+    assert "tid" not in q      # P1.2 dropped tenant leak from URL
+    assert "exp" in q and "sig" in q
+    exp_i = int(q["exp"][0])
+    sig = q["sig"][0]
+    # Happy path — None means "OK".
+    assert _verify_media_sig("t-flip", "m-99", exp_i, sig) is None
+    # Cross-tenant guess → signature_invalid.
+    assert _verify_media_sig("t-other", "m-99", exp_i, sig) == "signature_invalid"
+    # Cross-mid guess → signature_invalid.
+    assert _verify_media_sig("t-flip", "m-other", exp_i, sig) == "signature_invalid"
+    # Tampered exp → signature_invalid.
+    assert _verify_media_sig("t-flip", "m-99", exp_i + 60, sig) == "signature_invalid"
+    # Missing sig → signature_missing.
+    assert _verify_media_sig("t-flip", "m-99", exp_i, None) == "signature_missing"
+    # Past exp → signature_expired (fake ``now`` well past exp).
+    assert _verify_media_sig(
+        "t-flip", "m-99", exp_i, sig, now_epoch=exp_i + 1,
+    ) == "signature_expired"
 
 
 async def test_get_full_returns_defaults_when_fields_missing():

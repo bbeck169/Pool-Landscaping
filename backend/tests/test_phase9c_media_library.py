@@ -233,20 +233,33 @@ def test_download_proxy_returns_bytes():
 
 
 def test_download_proxy_rejects_missing_signature():
-    """A URL without ?tid= / ?sig= returns 401, not the file bytes."""
+    """A URL without ?exp= / ?sig= returns 400 signature_missing.
+
+    Phase P1.2 · Feb 2026 — status changed from 401 → 400 because
+    the miss is a client-shape error (no auth surface exists on
+    this route; it's a cryptographic capability URL). 401 would
+    prompt the browser to send credentials, which won't help.
+    """
     tok = _login("admin@aquaterra.com")
     up = _upload(tok, filename="dl2.png", data=_png_bytes(512)).json()
     r = requests.get(f"{API}/marketing/media/{up['id']}/download",
                       headers=_hdr(tok), timeout=15)
-    assert r.status_code == 401
+    assert r.status_code == 400
+    assert "signature_missing" in r.text
 
 
 def test_download_proxy_rejects_tampered_signature():
-    """A URL with a bogus sig returns 401."""
+    """A URL with a bogus sig returns 403 signature_invalid.
+
+    Phase P1.2 · Feb 2026 — 403 (not 401): the client's identity is
+    fine, the capability token they presented just doesn't verify.
+    """
     tok = _login("admin@aquaterra.com")
     up = _upload(tok, filename="dl3.png", data=_png_bytes(512)).json()
     r = requests.get(
-        f"{API}/marketing/media/{up['id']}/download?tid=any&sig=deadbeef",
+        f"{API}/marketing/media/{up['id']}/download"
+         f"?exp={int(__import__('time').time()) + 300}&sig=deadbeef",
         timeout=15,
     )
-    assert r.status_code == 401
+    assert r.status_code == 403
+    assert "signature_invalid" in r.text

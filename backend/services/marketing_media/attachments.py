@@ -130,20 +130,42 @@ async def resolve_email_attachments(
 
 async def resolve_sms_public_urls(
     tenant_id: str, file_ids: List[str], *,
-    sign_media: callable,
+    sign_media: callable = None,
+    build_signed_url: callable = None,
+    ttl_seconds: int | None = None,
 ) -> List[Tuple[str, str]]:
     """For each file_id, return ``(file_name, absolute_signed_url)``.
 
-    ``sign_media`` is injected from the marketing_media router so we
-    don't recreate the HMAC helper here — this preserves the "one
-    signing implementation, one place to audit" property. Cross-
-    tenant guard is enforced in ``_fetch_row``.
+    Phase P1.2 · Feb 2026 — signed URLs now embed an ``exp`` claim,
+    so this helper needs the URL BUILDER (``build_signed_url``) rather
+    than a raw sign function. ``sign_media`` is retained for
+    backwards-compat with any legacy caller that still passes it —
+    a legacy call is a NO-OP that yields the same empty output as
+    calling with an empty file_ids list, so a mistaken caller can't
+    accidentally emit unexpiring URLs.
+
+    Caller pattern (new)::
+
+        from routers.marketing_media import (
+            _signed_download_url, MEDIA_URL_TTL_SMS_SECONDS,
+        )
+        urls = await resolve_sms_public_urls(
+            tid, ids,
+            build_signed_url=_signed_download_url,
+            ttl_seconds=MEDIA_URL_TTL_SMS_SECONDS,
+        )
     """
+    if build_signed_url is None:
+        # Legacy call path — refuse to emit URLs. A caller stuck on
+        # the pre-P1.2 shape gets an empty list instead of a
+        # never-expiring URL leak.
+        return []
     out: List[Tuple[str, str]] = []
     for fid in file_ids:
         row = await _fetch_row(tenant_id, fid)
-        sig = sign_media(tenant_id, fid)
-        relative = f"/api/marketing/media/{fid}/download?tid={tenant_id}&sig={sig}"
+        relative = build_signed_url(
+            tenant_id, fid, ttl_seconds=ttl_seconds,
+        )
         absolute = resolve_absolute_url(relative) or relative
         out.append((row.get("file_name") or fid, absolute))
     return out

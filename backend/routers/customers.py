@@ -3438,14 +3438,21 @@ async def customer_send_sms(cid: str, body: _SendSmsBody,
     sms_body = body.body
     attachment_ids = body.attachments or []
     if attachment_ids:
-        from routers.marketing_media import _sign_media
+        # Phase P1.2 · Feb 2026 — signed URLs now embed an ``exp``
+        # claim. SMS gets the shorter 72-hour TTL since it's a
+        # more replay-prone surface (forwarded texts / screenshots).
+        from routers.marketing_media import (
+            _signed_download_url, MEDIA_URL_TTL_SMS_SECONDS,
+        )
         from services.marketing_media.attachments import (
             MediaFileNotFound, format_sms_attachments_suffix,
             resolve_sms_public_urls,
         )
         try:
             urls = await resolve_sms_public_urls(
-                tenant["id"], attachment_ids, sign_media=_sign_media,
+                tenant["id"], attachment_ids,
+                build_signed_url=_signed_download_url,
+                ttl_seconds=MEDIA_URL_TTL_SMS_SECONDS,
             )
         except MediaFileNotFound as exc:
             raise HTTPException(

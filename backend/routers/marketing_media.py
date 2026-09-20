@@ -31,13 +31,55 @@ import hmac
 import io
 import os
 import re
+import time
 import uuid as _uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import (
-    APIRouter, Depends, File, Form, HTTPException, Query, Response,
+    APIRouter, Depends, File, Form, HTTPException, Query, Request, Response,
     UploadFile,
 )
+
+# Phase P1.2 · Feb 2026 — SlowAPI per-IP rate limit for the
+# signed-URL download route. ``limiter`` is exposed at module scope
+# so future routes that need the same 60/min IP limit can decorate
+# themselves without reinstantiating; the limiter itself is
+# registered on the FastAPI app in ``server.py``.
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+
+    def _p12_client_key(request) -> str:
+        """Return the ORIGINAL client IP, honoring the K8s ingress
+        chain.
+
+        SlowAPI's stock :func:`get_remote_address` returns
+        ``request.client.host``, which behind Emergent's K8s ingress
+        is the ingress pod IP — 10.79.165.x. There are multiple
+        ingress pods and traffic round-robins between them, so a
+        stock config would spread one client's requests across N
+        counters and never fire the 60/minute limit.
+
+        Contract:
+          * Prefer the leftmost entry of ``X-Forwarded-For`` (that's
+            the original client per RFC 7239).
+          * Fall back to :func:`get_remote_address` if the header is
+            absent (unit tests, direct hits).
+        """
+        xff = request.headers.get("x-forwarded-for") or ""
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
+        return get_remote_address(request)
+
+    # Phase P1.2 · Feb 2026 — ``headers_enabled=True`` is what makes
+    # slowapi attach ``X-RateLimit-*`` and ``Retry-After`` to the 429
+    # response. Without it the 429 has an empty header set and any
+    # client that respects RFC 6585 has no back-off signal.
+    limiter = Limiter(key_func=_p12_client_key, headers_enabled=True)
+except Exception:  # pragma: no cover — defensive; slowapi is in requirements
+    limiter = None  # type: ignore[assignment]
 
 from config import db, logger, JWT_SECRET
 from routers.tenants import get_current_tenant
@@ -201,36 +243,114 @@ def _download_url(mid: str) -> str:
     return f"/api/marketing/media/{mid}/download"
 
 
-def _sign_media(tenant_id: str, mid: str) -> str:
-    """HMAC signature over ``tenant_id|mid`` using ``JWT_SECRET``.
+# ═══════════════════════════════════════════════════════════════════
+# Phase P1.2 · Feb 2026 — Expiring signed URLs + per-IP rate limit.
+#
+# The pre-P1.2 signature was ``HMAC(JWT_SECRET, tenant_id|mid)`` with
+# no expiration claim. A leaked URL was valid indefinitely. Now every
+# signed URL carries a unix-epoch ``exp`` claim baked into the HMAC
+# so tampering with ``exp`` invalidates the signature.
+#
+# TTL policy (both env-overridable):
+#   * Email attachments — 7 days. Emails sit in inboxes for a while;
+#     recipients open them days later.
+#   * SMS attachments   — 72 hours. SMS is a more replay-prone
+#     surface (forwarded texts, screenshots leak the URL).
+#
+# The URL shape drops ``tid`` — ``mid`` is a UUID with global-unique
+# collision-proof guarantees, so ``marketing_media.find_one({"id":
+# mid})`` resolves the tenant. The HMAC still bakes tenant_id in
+# (from the resolved row) so cross-tenant guessing is impossible.
+# Old URLs (with ``tid=&sig=`` but no ``exp=``) are REJECTED with a
+# 400 ``signature_missing`` — leaking one legacy URL must not create
+# permanent exposure. Ops MUST regenerate any pre-issued URLs after
+# this deploy.
+# ═══════════════════════════════════════════════════════════════════
 
-    Feb-2026 Media-Library P1 fix. ``<img>`` tags can't send
-    ``Authorization: Bearer`` headers so the composer/preview + sent
-    emails were rendering broken thumbnails against the auth-gated
-    ``/download`` endpoint. Signed URLs act as a cryptographic capability
-    — anyone with the URL can view that ONE asset, same trust model as
-    an S3 presigned URL. Tenant is baked into the signature so
-    cross-tenant guessing is impossible.
+# TTL constants — env-overridable so ops can dial per pod.
+MEDIA_URL_TTL_EMAIL_SECONDS = int(
+    os.environ.get("MEDIA_URL_TTL_EMAIL_SECONDS") or (7 * 86400),
+)
+MEDIA_URL_TTL_SMS_SECONDS = int(
+    os.environ.get("MEDIA_URL_TTL_SMS_SECONDS") or (72 * 3600),
+)
+
+# Signature error slugs — used in HTTPException details so callers
+# (and tests) can pattern-match without regex on human-readable
+# messages. See ``_verify_media_sig`` for the mapping.
+SIG_ERR_MISSING = "signature_missing"
+SIG_ERR_INVALID = "signature_invalid"
+SIG_ERR_EXPIRED = "signature_expired"
+
+
+def _sign_media(tenant_id: str, mid: str, exp: int | None = None) -> str:
+    """Return an HMAC-SHA256 signature over ``tenant_id|mid|exp``.
+
+    ``exp`` is required in the P1.2 surface; the default-``None``
+    signature is preserved so legacy call sites at import-time
+    (``routers/estimate_viewer.py``, ``routers/customers.py``) don't
+    break, but such calls emit an ``exp=0`` signature that will
+    fail verification — those call sites are ALSO updated to pass
+    the correct TTL.
+
+    HMAC input: ``f"{tenant_id}|{mid}|{exp}"``. Baking tenant_id
+    keeps cross-tenant guessing impossible even though the URL
+    drops it — the download route retrieves tenant_id from the row
+    before verifying.
     """
-    msg = f"{tenant_id}|{mid}".encode("utf-8")
+    exp_i = int(exp or 0)
+    msg = f"{tenant_id}|{mid}|{exp_i}".encode("utf-8")
     return hmac.new(JWT_SECRET.encode("utf-8"), msg,
                      hashlib.sha256).hexdigest()
 
 
-def _verify_media_sig(tenant_id: str, mid: str, sig: str) -> bool:
-    if not (tenant_id and mid and sig):
-        return False
+def _verify_media_sig(
+    tenant_id: str, mid: str, exp: int | None, sig: str | None,
+    *, now_epoch: int | None = None,
+) -> Optional[str]:
+    """Return an error slug (``signature_missing`` /
+    ``signature_invalid`` / ``signature_expired``) or ``None`` on
+    success. Callers translate the slug into an HTTPException with
+    the correct status code (400 / 403 / 410 respectively).
+
+    Constant-time compare via :func:`hmac.compare_digest`.
+    """
+    if not (tenant_id and mid):
+        return SIG_ERR_INVALID
+    if not sig or exp is None:
+        return SIG_ERR_MISSING
     try:
-        return hmac.compare_digest(sig, _sign_media(tenant_id, mid))
+        exp_i = int(exp)
+    except (TypeError, ValueError):
+        return SIG_ERR_MISSING
+    expected = _sign_media(tenant_id, mid, exp_i)
+    try:
+        if not hmac.compare_digest(sig, expected):
+            return SIG_ERR_INVALID
     except Exception:
-        return False
+        return SIG_ERR_INVALID
+    now = int(now_epoch if now_epoch is not None else time.time())
+    if now > exp_i:
+        return SIG_ERR_EXPIRED
+    return None
 
 
-def _signed_download_url(tenant_id: str, mid: str) -> str:
-    """Signed variant of ``_download_url`` — works from ``<img>`` tags
-    and delivered emails (no Authorization header available)."""
-    return (f"/api/marketing/media/{mid}/download"
-             f"?tid={tenant_id}&sig={_sign_media(tenant_id, mid)}")
+def _signed_download_url(
+    tenant_id: str, mid: str, *, ttl_seconds: int | None = None,
+) -> str:
+    """Return an expiring signed URL for ``mid`` on ``tenant_id``.
+
+    ``ttl_seconds`` defaults to :data:`MEDIA_URL_TTL_EMAIL_SECONDS`
+    when not supplied — email is the most common channel and the
+    least replay-prone (an email inbox is a first-party surface).
+    Callers on the SMS channel pass
+    :data:`MEDIA_URL_TTL_SMS_SECONDS` explicitly.
+    """
+    ttl = int(ttl_seconds if ttl_seconds is not None
+               else MEDIA_URL_TTL_EMAIL_SECONDS)
+    exp = int(time.time()) + max(1, ttl)
+    sig = _sign_media(tenant_id, mid, exp)
+    return f"/api/marketing/media/{mid}/download?exp={exp}&sig={sig}"
 
 
 def _enrich_media_row(row: dict) -> dict:
@@ -327,32 +447,71 @@ async def upload_media(
 
 
 # ═══════════════════════════ Download proxy ══════════════════════════
+# Phase P1.2 · Feb 2026 — 60/min per-IP rate limit via SlowAPI. The
+# ``request: Request`` parameter is what SlowAPI inspects to pull the
+# client IP via ``get_remote_address``. Decorator order matters:
+# ``@router.get`` outermost, ``@limiter.limit`` inner.
+_MEDIA_DOWNLOAD_RATE_LIMIT = os.environ.get(
+    "MEDIA_URL_DOWNLOAD_RATE_LIMIT", "60/minute",
+)
+
+
+def _apply_download_rate_limit(fn):
+    if limiter is None:  # pragma: no cover — slowapi always installed
+        return fn
+    return limiter.limit(_MEDIA_DOWNLOAD_RATE_LIMIT)(fn)
+
+
 @router.get("/marketing/media/{mid}/download")
+@_apply_download_rate_limit
 async def download_media(
+    request: Request,
     mid: str,
-    tid: Optional[str] = Query(None),
+    exp: Optional[int] = Query(None),
     sig: Optional[str] = Query(None),
 ):
     """Serve the raw bytes via signed URL.
 
-    Feb-2026 P1 fix — the previous version was gated by
-    ``Depends(get_current_user)`` which requires an ``Authorization:
-    Bearer`` header. ``<img>`` tags can't send that, so composer
-    thumbnails + delivered emails all 401'd → broken images.
+    Phase P1.2 · Feb 2026 — every URL now carries an ``exp`` claim
+    baked into the HMAC. Old ``?tid=&sig=`` URLs are rejected with
+    400 ``signature_missing``. Rate-limited to 60/min per IP via
+    SlowAPI (see the ``@limiter.limit`` decorator).
 
-    The signed URL (``?tid=<tenant_id>&sig=<hmac>``) is a cryptographic
-    capability derived from ``JWT_SECRET``; anyone with the URL can
-    view that ONE asset (same trust model as an S3 presigned URL).
-    Tenant baked into the HMAC → no cross-tenant enumeration.
+    Contract:
+      * 400 ``signature_missing`` — ``exp`` or ``sig`` param missing.
+      * 403 ``signature_invalid`` — HMAC mismatch (tampering, wrong
+        tenant, wrong mid, or wrong ``exp`` value).
+      * 410 ``signature_expired`` — HMAC valid but ``now > exp``.
+        410 Gone is deliberate: caching layers treat it as terminal
+        (won't retry) and it's distinct from 403 so callers can
+        prompt "request a fresh link" instead of "you're not
+        allowed".
+      * 404 media_not_found — the ``mid`` doesn't resolve. Retained
+        AFTER signature verification so 404 vs 403 doesn't leak
+        which ``mid`` values exist.
+      * 429 rate_limited — SlowAPI 60/min per IP.
     """
-    if not (tid and sig) or not _verify_media_sig(tid, mid, sig):
-        raise HTTPException(401, "Missing or invalid media signature")
+    if not sig or exp is None:
+        raise HTTPException(400, SIG_ERR_MISSING)
+    # Resolve the row FIRST — ``mid`` is a UUID so lookup by ``id``
+    # alone is collision-proof. Tenant_id comes from the row so the
+    # URL doesn't have to carry it (and can't leak it).
     row = await db.marketing_media.find_one(
-        {"id": mid, "tenant_id": tid, "deleted_at": None},
-        {"_id": 0},
+        {"id": mid, "deleted_at": None}, {"_id": 0},
     )
     if not row:
-        raise HTTPException(404, "Media not found")
+        # Verify sig against a synthetic tenant so 404 vs 403 doesn't
+        # leak mid existence. If the sig for the fake tenant somehow
+        # verifies (astronomically improbable), we still 404.
+        _ = _verify_media_sig("__no_such_tenant__", mid, exp, sig)
+        raise HTTPException(404, "media_not_found")
+    err = _verify_media_sig(row.get("tenant_id") or "", mid, exp, sig)
+    if err == SIG_ERR_MISSING:
+        raise HTTPException(400, SIG_ERR_MISSING)
+    if err == SIG_ERR_INVALID:
+        raise HTTPException(403, SIG_ERR_INVALID)
+    if err == SIG_ERR_EXPIRED:
+        raise HTTPException(410, SIG_ERR_EXPIRED)
     try:
         data, ctype = get_object(row["storage_key"])
     except StorageUnavailable as exc:

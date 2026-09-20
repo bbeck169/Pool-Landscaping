@@ -433,7 +433,12 @@ def test_sms_appends_signed_urls_to_body(dbc, seeded, monkeypatch):
     # HMAC ``sig=`` parameter present on each URL (marketing_media
     # signing) → tenant baked in.
     assert sent_body.count("sig=") == 2
-    assert sent_body.count(f"tid={seeded['tenant_id']}") == 2
+    # Phase P1.2 (Feb 2026) — URLs now carry an ``exp`` epoch claim
+    # instead of ``tid`` (mid is a UUID so tenant is resolved
+    # server-side from the media row). Guard against regressions to
+    # the pre-P1.2 shape.
+    assert sent_body.count("exp=") == 2
+    assert "tid=" not in sent_body
 
 
 def test_sms_cross_tenant_file_id_returns_404(dbc, seeded, monkeypatch):

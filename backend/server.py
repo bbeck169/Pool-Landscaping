@@ -364,6 +364,29 @@ async def _k8s_health_ready():
 api_router = APIRouter(prefix="/api")
 
 
+# Phase P1.2 · Feb 2026 — SlowAPI wiring. The ``limiter`` instance
+# lives in ``routers/marketing_media`` (module-level singleton). We
+# attach it to the app + register the 429 handler here so the
+# decorator on the download route + any future route that reuses
+# the limiter actually enforces its cap. ``key_func=get_remote_address``
+# uses ``X-Forwarded-For``/``request.client.host`` — behind the K8s
+# ingress the left-most XFF entry is the original client IP.
+try:
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from routers.marketing_media import limiter as _p12_media_limiter
+    if _p12_media_limiter is not None:
+        app.state.limiter = _p12_media_limiter
+        app.add_exception_handler(
+            RateLimitExceeded, _rate_limit_exceeded_handler,
+        )
+except Exception as _p12_exc:  # pragma: no cover — defensive
+    import logging as _p12_log
+    _p12_log.getLogger("pool_crm").warning(
+        "[P1.2] SlowAPI wire-up skipped: %s", _p12_exc,
+    )
+
+
 @api_router.get("/health", include_in_schema=False)
 async def _api_health_probe():
     # ``/api/health`` mirror — some Emergent ingress rules and the

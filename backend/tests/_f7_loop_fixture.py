@@ -47,6 +47,7 @@ _REBOUND_MODULES = (
     "routers.income_categories",
     "routers.job_timers",
     "routers.jobs",
+    "routers.marketing_media",
     "routers.portal_admin",
     "routers.recurring_jobs",
     "routers.schedule_reorder",
