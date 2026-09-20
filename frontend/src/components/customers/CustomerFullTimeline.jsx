@@ -66,7 +66,7 @@ const _KIND_META = {
   // ``source_type: "quote"`` for estimates (backward-compat map);
   // treat it as ``estimate`` visually.
   quote:    { label: "Estimate",       icon: FileText,      bg: "#FEF3C7", fg: "#92400E" },
-  call:     { label: "Call",           icon: Phone,         bg: "#EDE9FE", fg: "#5B21B6" },
+  call:     { label: "Calls",          icon: Phone,         bg: "#EDE9FE", fg: "#5B21B6" },
   note:     { label: "Internal Notes", icon: StickyNote,    bg: "#FEF9C3", fg: "#854D0E" },
 };
 

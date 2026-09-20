@@ -54,6 +54,7 @@ from routers import (
     budgets,
     chemical_costs,
     recurring_jobs,
+    intelligence_alerts,
     pricebook_manual_pricing,
     zillow_admin,
     ringcentral,
@@ -440,6 +441,9 @@ api_router.include_router(_feb2026_job_timers.router)
 from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
 api_router.include_router(_feb2026_chem_costs.router)
 api_router.include_router(_p37d_gps_audit_report.router)
+
+# Phase A1 · Feb-2026 · Proactive Intelligence — alert bell store.
+api_router.include_router(intelligence_alerts.router)
 
 # Feb-2026 · Photos-in-S3 Phase 1 — admin health-check endpoint.
 # ``GET /api/admin/s3/health`` reports config + tiny self-test.
@@ -1794,6 +1798,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"data_repair ensure_indexes crashed: {e}")
 
+    # Phase A1 · Feb-2026 · Proactive Intelligence — alert store
+    # indexes (dedup unique + per-tenant listing + unread stream +
+    # category filter). Idempotent.
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.intelligence.alerts import (
+            ensure_indexes as _a1_alerts_indexes,
+        )
+        await _a1_alerts_indexes()
+    except Exception as e:
+        logger.warning(f"intelligence_alerts ensure_indexes crashed: {e}")
+
     # Phase B Perf Triad · Feb-2026 — sentinel-gated ``(tenant_id, 1)``
     # index sweep across every tenant-scoped collection. Idempotent;
     # second boot after ship is a no-op via ``migration_status``.
@@ -2076,6 +2093,27 @@ async def _background_seed():
         scheduler.add_job(dunning.run_dunning_scan, "interval",
                             minutes=60, id="dunning_scan",
                             replace_existing=True)
+        # Phase A1 · Feb-2026 · Proactive Intelligence — daily
+        # missed-service scan at 07:00 UTC. Every recurring-job
+        # occurrence scheduled for yesterday whose status is not
+        # ``completed``/``skipped_by_customer``/``cancelled_by_customer``
+        # becomes an ``urgent`` alert. Idempotent via the unique
+        # dedup index on ``(tenant_id, alert_key)``.
+        try:
+            from services.intelligence.missed_service_scan import (
+                run_missed_service_scan_all_tenants as
+                _a1_missed_service_cron,
+            )
+            scheduler.add_job(
+                _a1_missed_service_cron, "cron", hour=7, minute=0,
+                id="intelligence_missed_service_scan",
+                replace_existing=True,
+            )
+        except Exception as _a1_exc:  # noqa: BLE001
+            logger.warning(
+                "[A1] missed-service scan schedule failed: %s",
+                _a1_exc,
+            )
         # Feb 2026 · Customer Merge Phase 3 — daily auto-merge sweep
         # of HIGH-confidence duplicate clusters (exact email OR exact
         # phone). Runs at 09:15 UTC, 10 minutes after the marketing

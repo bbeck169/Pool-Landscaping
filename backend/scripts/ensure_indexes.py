@@ -148,6 +148,8 @@ async def main() -> int:
         # notifications_sent_log so a concurrent PATCH race cannot
         # double-write the same transition + TTL is separate op.
         ("notifications_pipeline", "services.notifications_pipeline.service_notifications", "ensure_indexes"),
+        # Phase A1 · Feb-2026 · Proactive Intelligence — alert store.
+        ("intelligence_alerts", "services.intelligence.alerts", "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:

@@ -97,6 +97,12 @@ import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalReviews from "@/pages/portal/PortalReviews";
 import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
+// Phase A1 · Feb-2026 — Proactive Intelligence full-list page.
+// Route ``/admin/intelligence/alerts`` — gated to admin + super_admin
+// via <AdminOrSuperAdminOnly>; the backend router returns 403 for any
+// other caller (``insufficient_role_for_alerts``), so the two gates
+// stay in lock-step.
+import IntelligenceAlerts from "@/pages/admin/IntelligenceAlerts";
 import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
 // Phase 9B · Feb 2026 — Rebuilt Marketing Templates admin (TipTap +
 // merge-tag palette + media picker + unresolved-token red-chip banner).
@@ -787,6 +793,14 @@ export default function App() {
             {/* Task RR/SS Phase 2 · Feb 2026 */}
             <Route path="admin/ai-personas-scope" element={<AdminOnly><AiPersonasScopePage /></AdminOnly>} />
             <Route path="admin/ai-tool-audit" element={<AdminOnly><AiToolAuditPage /></AdminOnly>} />
+            {/* Phase A1 · Feb-2026 — Proactive Intelligence full-list
+                page. ``AdminOnly`` already resolves to admin +
+                super_admin (see line 493 wrapper), which matches the
+                backend contract exactly. Manager/technician/customer
+                bounce to ``/`` — the AlertBell in AdminTopBar is
+                self-gated to the same two roles so the surface stays
+                consistent end-to-end. */}
+            <Route path="admin/intelligence/alerts" element={<AdminOnly><IntelligenceAlerts /></AdminOnly>} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}

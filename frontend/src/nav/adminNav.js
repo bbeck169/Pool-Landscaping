@@ -370,6 +370,18 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/reviews/widget",     label: "Widget",    icon: Globe,          feature: "marketing", hard_rule: "admin_only" },
   ]},
 
+  // Phase A1 · Feb-2026 — Proactive Intelligence.
+  // Bell + full-list page for missed-service (A1), chemistry upsell
+  // (A2), churn risk (A3), and renewal-due (A4) alerts. The single
+  // Alerts entry here lives at the same admin surface as the top-nav
+  // <AlertBell/>; A2/A3/A4 will add sub-entries later. ``hard_rule``
+  // is ``admin_or_super_admin`` — mirrors the backend contract
+  // (``insufficient_role_for_alerts`` 403) so no other role sees the
+  // link, even though the full-list page also role-gates itself.
+  { key: "intelligence", label: "Intelligence", icon: BellIcon, entries: [
+    { to: "/admin/intelligence/alerts", label: "Alerts", icon: BellIcon, feature: "settings", hard_rule: "admin_or_super_admin" },
+  ]},
+
 ];
 
 // Flatten for the command palette page-search.

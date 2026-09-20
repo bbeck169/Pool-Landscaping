@@ -56,6 +56,11 @@ import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 // self-gates via ``canPreview`` so it's a no-op for non-super_admin.
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { Settings as SettingsIcon } from "lucide-react";
+// Phase A1 · Feb-2026 — Proactive Intelligence alert bell. Self-gates
+// to admin/super_admin via its internal role check; renders null for
+// every other role so this import is a no-op for tech/customer
+// branches.
+import AlertBell from "@/components/nav/AlertBell";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -93,6 +98,12 @@ function useVisibleGroups() {
         entries: filterNavByIndustries(g.entries, industries).filter((e) => {
           if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
           if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
+          // Phase A1 · Feb-2026 — Proactive Intelligence.
+          // Mirrors the backend ``insufficient_role_for_alerts`` gate
+          // exactly (admin + super_admin, no manager, no technician).
+          if (e.hard_rule === "admin_or_super_admin") {
+            return ["admin", "super_admin"].includes(effectiveRole);
+          }
           if (e.hard_rule === "manager_only") {
             return ["super_admin", "admin", "manager"].includes(effectiveRole);
           }
@@ -431,6 +442,7 @@ export default function AdminTopBar() {
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
               <SettingsSprocket />
+              <AlertBell />
               <LanguageSelector compact />
               <SignOutButton />
               <UniversalMenu variant="inline" />
@@ -451,6 +463,7 @@ export default function AdminTopBar() {
               <AddCustomerButton />
               <CreditsBudgetChip />
               <SettingsSprocket />
+              <AlertBell />
               <LanguageSelector />
               <SignOutButton />
               <UniversalMenu variant="inline" />

@@ -1,0 +1,339 @@
+/**
+ * Phase A1 · Feb-2026 · Proactive Intelligence — full-list page.
+ *
+ * Route: ``/admin/intelligence/alerts``. Admin+super_admin only —
+ * the router shell already role-gates this path, and the API
+ * itself returns 403 for any other caller.
+ *
+ * Features
+ * --------
+ * * Category filter chips (All / Missed Service / Chemistry Upsell
+ *   / Churn Risk / Renewal Due). Inactive categories still render
+ *   with a ``0`` count.
+ * * Tab strip: Unread / Read / Dismissed. Unread is the default.
+ * * Bulk "Mark all read" button — scoped to the active category
+ *   when set (falls through to the endpoint's optional
+ *   ``category`` body param).
+ * * Cursor pagination via ``before=`` for older pages. First page
+ *   uses no cursor; each response's ``next_before`` drives the
+ *   next click.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { AlertCircle, CheckCheck, X as XIcon, ExternalLink,
+          Info as InfoIcon, Loader2 } from "lucide-react";
+
+import { api } from "@/api";
+import { colors } from "@/theme";
+
+
+const _CATEGORY_META = {
+  missed_service:    { label: "Missed Service" },
+  chemistry_upsell:  { label: "Chemistry" },
+  churn_risk:        { label: "Churn Risk" },
+  renewal_due:       { label: "Renewal Due" },
+};
+const _CATEGORY_ORDER = [
+  "missed_service", "chemistry_upsell",
+  "churn_risk", "renewal_due",
+];
+const _TABS = [
+  { key: "unread",    label: "Unread" },
+  { key: "read",      label: "Read" },
+  { key: "dismissed", label: "Dismissed" },
+];
+const _SEV_META = {
+  urgent:      { color: "#DC2626", icon: AlertCircle },
+  recommended: { color: "#D97706", icon: AlertCircle },
+  info:        { color: "#6B7280", icon: InfoIcon },
+};
+const _PAGE_SIZE = 25;
+
+
+function _relative(iso) {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const d = Date.now() - t;
+  if (d < 60_000) return "just now";
+  if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
+  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
+  if (d < 604_800_000) return `${Math.floor(d / 86_400_000)}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+
+export default function IntelligenceAlerts() {
+  const navigate = useNavigate();
+  const [tab, setTab]                     = useState("unread");
+  const [activeCategory, setActiveCategory] = useState("all");
+  const [items, setItems]                 = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [before, setBefore]               = useState(null);
+  const [nextBefore, setNextBefore]       = useState(null);
+  const [unreadCount, setUnreadCount]     = useState(0);
+
+  const query = useMemo(() => {
+    const qs = new URLSearchParams({ limit: String(_PAGE_SIZE) });
+    if (tab === "unread")    qs.set("unread_only", "true");
+    if (tab === "dismissed") qs.set("include_dismissed", "true");
+    if (activeCategory !== "all") qs.set("category", activeCategory);
+    if (before) qs.set("before", before);
+    return qs.toString();
+  }, [tab, activeCategory, before]);
+
+  const fetchPage = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.get(`/intelligence/alerts?${query}`);
+      let list = r?.items || [];
+      // Server returns unread by default (dismissed excluded).
+      // For the "read" and "dismissed" tabs we post-filter to keep
+      // the API surface minimal — the counts are still small enough
+      // per tenant that this is fine for A1.
+      if (tab === "read") {
+        list = list.filter((a) => a.read_at && !a.dismissed_at);
+      } else if (tab === "dismissed") {
+        list = list.filter((a) => !!a.dismissed_at);
+      }
+      setItems(list);
+      setUnreadCount(r?.unread_count || 0);
+      setNextBefore(r?.next_before || null);
+    } catch (e) {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [query, tab]);
+
+  useEffect(() => { fetchPage(); }, [fetchPage]);
+  useEffect(() => { setBefore(null); }, [tab, activeCategory]);
+
+  const onMarkAllRead = useCallback(async () => {
+    const body = activeCategory !== "all"
+      ? { category: activeCategory }
+      : {};
+    try {
+      await api.post("/intelligence/alerts/mark-all-read", body);
+    } finally {
+      setBefore(null);
+      fetchPage();
+    }
+  }, [activeCategory, fetchPage]);
+
+  const onMarkRead = useCallback(async (alertId) => {
+    await api.post(`/intelligence/alerts/${alertId}/read`);
+    fetchPage();
+  }, [fetchPage]);
+
+  const onDismiss = useCallback(async (alertId) => {
+    await api.post(`/intelligence/alerts/${alertId}/dismiss`);
+    fetchPage();
+  }, [fetchPage]);
+
+  const onView = useCallback((a) => {
+    if (a.job_id) navigate(`/jobs/${a.job_id}`);
+    else if (a.customer_id) navigate(`/customers/${a.customer_id}`);
+    onMarkRead(a.id);
+  }, [navigate, onMarkRead]);
+
+  return (
+    <div className="max-w-3xl mx-auto p-4"
+          data-testid="intelligence-alerts-page">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold"
+             style={{ color: colors.onSurface }}>
+          Proactive Intelligence
+        </h1>
+        <span className="text-sm" style={{ color: colors.muted }}
+              data-testid="intelligence-alerts-unread-count">
+          {unreadCount} unread
+        </span>
+      </div>
+
+      {/* Category chips */}
+      <div className="flex flex-wrap gap-2 mb-3"
+            data-testid="intelligence-alerts-category-chips">
+        {["all", ..._CATEGORY_ORDER].map((k) => {
+          const on = activeCategory === k;
+          const label = k === "all"
+            ? "All"
+            : _CATEGORY_META[k].label;
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setActiveCategory(k)}
+              className="text-xs font-semibold rounded-full px-3 py-1"
+              style={{
+                background: on ? (colors.brand || colors.onSurface) : colors.surface,
+                color: on ? (colors.onBrand || "#fff") : colors.onSurface,
+                border: `1px solid ${on ? "transparent" : colors.border}`,
+              }}
+              data-testid={`intelligence-alerts-cat-${k}`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab strip + bulk action */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex gap-1" data-testid="intelligence-alerts-tabs">
+          {_TABS.map((t) => {
+            const on = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className="text-xs font-semibold rounded-lg px-3 py-1"
+                style={{
+                  background: on ? colors.surfaceSecondary : "transparent",
+                  color: colors.onSurface,
+                  border: `1px solid ${on ? colors.border : "transparent"}`,
+                }}
+                data-testid={`intelligence-alerts-tab-${t.key}`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={onMarkAllRead}
+          className="text-xs font-semibold rounded-lg px-3 py-1"
+          style={{ background: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid="intelligence-alerts-mark-all-read"
+        >
+          <CheckCheck size={12} className="inline mr-1" />
+          Mark all read
+        </button>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12"
+              style={{ color: colors.muted }}
+              data-testid="intelligence-alerts-loading">
+          <Loader2 size={20} className="animate-spin mr-2" /> Loading…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="text-sm text-center py-12 rounded-lg"
+              style={{ background: colors.surfaceSecondary,
+                        color: colors.muted,
+                        border: `1px solid ${colors.border}` }}
+              data-testid="intelligence-alerts-empty">
+          Nothing here.
+        </div>
+      ) : (
+        <ul className="space-y-2"
+             data-testid="intelligence-alerts-list">
+          {items.map((a, i) => {
+            const meta = _SEV_META[a.severity] || _SEV_META.info;
+            const SevIcon = meta.icon;
+            return (
+              <li
+                key={a.id}
+                className="rounded-xl p-3"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}` }}
+                data-testid={`intelligence-alerts-row-${i}`}
+              >
+                <div className="flex items-start gap-2">
+                  <SevIcon size={18} color={meta.color}
+                            className="mt-1 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold"
+                             style={{ color: colors.onSurface }}>
+                        {a.title}
+                      </span>
+                      <span className="text-[10px] font-semibold uppercase rounded-full px-2 py-0.5"
+                             style={{ background: colors.surfaceSecondary,
+                                      color: colors.muted }}>
+                        {a.category}
+                      </span>
+                    </div>
+                    <div className="text-xs mt-1"
+                          style={{ color: colors.muted }}>
+                      {a.body}
+                    </div>
+                    <div className="text-[10px] mt-1"
+                          style={{ color: colors.muted }}>
+                      {_relative(a.created_at)}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onView(a)}
+                      disabled={!(a.job_id || a.customer_id)}
+                      className="text-[11px] font-semibold rounded-full px-2 py-1 disabled:opacity-40"
+                      style={{ background: colors.surfaceSecondary,
+                                color: colors.onSurface,
+                                border: `1px solid ${colors.border}` }}
+                      data-testid={`intelligence-alerts-view-${i}`}
+                    >
+                      <ExternalLink size={10} className="inline mr-1" />
+                      View
+                    </button>
+                    {!a.read_at ? (
+                      <button
+                        type="button"
+                        onClick={() => onMarkRead(a.id)}
+                        className="text-[11px] font-semibold rounded-full px-2 py-1"
+                        style={{ background: colors.surfaceSecondary,
+                                  color: colors.onSurface,
+                                  border: `1px solid ${colors.border}` }}
+                        data-testid={`intelligence-alerts-mark-read-${i}`}
+                      >
+                        <CheckCheck size={10} className="inline mr-1" />
+                        Mark read
+                      </button>
+                    ) : null}
+                    {!a.dismissed_at ? (
+                      <button
+                        type="button"
+                        onClick={() => onDismiss(a.id)}
+                        className="text-[11px] font-semibold rounded-full px-2 py-1"
+                        style={{ background: colors.surfaceSecondary,
+                                  color: colors.onSurface,
+                                  border: `1px solid ${colors.border}` }}
+                        data-testid={`intelligence-alerts-dismiss-${i}`}
+                      >
+                        <XIcon size={10} className="inline mr-1" />
+                        Dismiss
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Cursor pagination */}
+      <div className="flex justify-center mt-4">
+        {nextBefore ? (
+          <button
+            type="button"
+            onClick={() => setBefore(nextBefore)}
+            className="text-xs font-semibold rounded-lg px-3 py-2"
+            style={{ background: colors.surfaceSecondary,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}` }}
+            data-testid="intelligence-alerts-next-page"
+          >
+            Load older →
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}

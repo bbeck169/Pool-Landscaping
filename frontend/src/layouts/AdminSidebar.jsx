@@ -131,6 +131,12 @@ export default function AdminSidebar() {
     entries: filterNavByIndustries(g.entries, industries).filter((e) => {
       if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
       if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
+      // Phase A1 · Feb-2026 — Proactive Intelligence.
+      // Mirrors the backend ``insufficient_role_for_alerts`` gate
+      // exactly (admin + super_admin, no manager, no technician).
+      if (e.hard_rule === "admin_or_super_admin") {
+        return ["admin", "super_admin"].includes(effectiveRole);
+      }
       // Feb 2026 · Task A hotfix — ``manager_only`` is authoritative.
       // Backend permission matrix (see ``routers/rbac.py::_DEFAULT_MATRIX``)
       // seeds ONLY super_admin, admin, technician, customer, marketer,
