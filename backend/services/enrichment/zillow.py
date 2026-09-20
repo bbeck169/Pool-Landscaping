@@ -35,6 +35,20 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
+# Phase P1.1 · Feb 2026 — canonical import surface for the adapter.
+# Kept at module-top so an accidental drift on the export side of
+# the contract fails fast at BOOT (the router refuses to import the
+# whole module) instead of masking itself as a 502 at first call.
+from services.property_data.zillow_adapter import (
+    get_zillow_client,
+    ZillowError,
+    REASON_KEYS_NOT_CONFIGURED,
+    REASON_QUOTA_EXHAUSTED,
+    REASON_NOT_FOUND,
+    REASON_PROVIDER_ERROR,
+    REASON_TEST_SCOPE_REFUSED,
+)
+
 
 # ── Constants ────────────────────────────────────────────────────
 CACHE_COLLECTION = "zillow_cache"              # existing collection
@@ -311,15 +325,66 @@ async def fetch_zillow_property(
     if mock_mode:
         prop = _mock_property(address)
     else:
-        # Reuse the mature adapter — no duplicate provider surface.
-        from services.property_data.zillow_adapter import (
-            get_zillow_client, ZillowError,
-        )
-        client = get_zillow_client()
+        # Reuse the mature adapter — the singleton factory in
+        # ``zillow_adapter`` raises ``ZillowError(503,
+        # "zillow_not_configured")`` when the provider key is
+        # missing. We translate that to the historical
+        # ``ZillowNotConfigured`` exception the router already
+        # catches, so downstream contracts stay unchanged.
         try:
-            raw = await client.search_by_address(address)
-        except ZillowError:
+            client = get_zillow_client()
+        except ZillowError as ze:
+            if ze.status_code == 503 and ze.detail == "zillow_not_configured":
+                raise ZillowNotConfigured(str(ze))
+            # Any other structured error surfaces as-is — the router
+            # catch-branch maps ``.status_code`` to HTTPException.
             raise
+        # ``ZillowClient._call`` returns
+        #   { unavailable: False, data: {...}, cached: bool }   OR
+        #   { unavailable: True,  reason: "<REASON_*>" }
+        # so we bridge the dict-return contract into the same
+        # structured exception surface the rest of enrichment uses.
+        result = await client.search_by_address(
+            address, tenant_id=tenant_id,
+        )
+        if result.get("unavailable"):
+            reason = result.get("reason") or REASON_PROVIDER_ERROR
+            if reason == REASON_KEYS_NOT_CONFIGURED:
+                raise ZillowNotConfigured(
+                    "Zillow adapter reported keys_not_configured at call time."
+                )
+            if reason == REASON_QUOTA_EXHAUSTED:
+                raise ZillowRateLimited(
+                    "Zillow provider is in cool-down (429 quota memo).",
+                )
+            if reason == REASON_NOT_FOUND:
+                raise ZillowError(
+                    status_code=404,
+                    detail="zillow_address_not_found",
+                    message=f"Zillow has no record for address {address!r}.",
+                )
+            if reason == REASON_TEST_SCOPE_REFUSED:
+                # Preview-pod hitting a real address that isn't in
+                # the allow-list — surface as 403 so ops can spot
+                # misconfigured preview env vs a real provider
+                # outage in the logs.
+                raise ZillowError(
+                    status_code=403,
+                    detail="zillow_test_scope_refused",
+                    message=(
+                        "Live Zillow calls are refused for this "
+                        "address on non-production pods."
+                    ),
+                )
+            # Genuine upstream failure — network timeout, non-JSON
+            # response, 5xx status. THIS is the only path that
+            # should ever surface as a 502 upstream.
+            raise ZillowError(
+                status_code=502,
+                detail="zillow_upstream_error",
+                message="Upstream Zillow provider failed the request.",
+            )
+        raw = result.get("data") or {}
         prop = _map_provider_response(address, raw)
 
     await _write_cache(prop, address, db=db)

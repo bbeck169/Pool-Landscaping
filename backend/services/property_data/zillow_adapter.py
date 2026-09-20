@@ -78,6 +78,100 @@ REASON_TEST_SCOPE_REFUSED = "test_scope_refused"
 REASON_PROVIDER_ERROR = "provider_error"
 REASON_NOT_FOUND = "not_found"
 
+
+# ─── Structured error surface (Phase P1.1 · Feb 2026) ───────────────
+#
+# Contract-drift repair — ``services.enrichment.zillow`` imports
+# ``get_zillow_client`` and ``ZillowError`` from this module; those
+# symbols did not previously exist here, so an ImportError bubbled
+# up as a generic 502 at every non-mock, non-cached lookup. Callers
+# that need to distinguish "adapter not configured" (503) from
+# "genuine upstream 5xx" (502) from "address not on file" (404)
+# from "provider rate-limited" (429) now catch ``ZillowError`` and
+# switch on ``.status_code``.
+#
+# The client's per-call ``{unavailable, reason}`` return contract is
+# preserved — the wrapper in ``services.enrichment.zillow`` bridges
+# the two surfaces so existing callers of ``ZillowClient`` don't
+# need to change. Callers that WANT the exception surface use
+# ``get_zillow_client()`` + catch ``ZillowError``.
+class ZillowError(Exception):
+    """Structured provider-layer error.
+
+    Attributes
+    ----------
+    status_code
+        HTTP status the upstream caller should map this to. One of
+        ``401``, ``404``, ``429``, ``502``, ``503``. Chosen so a
+        thin router catch-branch (``except ZillowError as e:
+        raise HTTPException(e.status_code, e.detail)``) surfaces
+        the right code to the browser.
+    detail
+        Machine-readable slug — ``zillow_not_configured``,
+        ``zillow_upstream_error``, ``zillow_address_not_found``,
+        ``zillow_rate_limited``, ``zillow_unauthorized``. Frontend
+        pattern-matches on this.
+    """
+
+    def __init__(self, status_code: int, detail: str, message: str = ""):
+        self.status_code = int(status_code)
+        self.detail = str(detail)
+        super().__init__(message or f"{detail} (status={status_code})")
+
+
+# ─── Lazy singleton factory (Phase P1.1 · Feb 2026) ─────────────────
+#
+# ``get_zillow_client()`` returns a shared :class:`ZillowClient`
+# instance so callers don't spin up per-request wrappers. The key
+# check runs at factory-invocation time so a missing key surfaces as
+# a structured ``ZillowError(503, "zillow_not_configured")`` instead
+# of a per-call ``{unavailable, reason}`` return the caller might
+# forget to inspect.
+#
+# The singleton is intentionally test-resettable via
+# :func:`_reset_singleton_for_tests` — production code never has to
+# reach into module state, but pytest fixtures do.
+_client_singleton: Optional["ZillowClient"] = None
+
+
+def get_zillow_client() -> "ZillowClient":
+    """Return the shared :class:`ZillowClient` instance.
+
+    Raises
+    ------
+    ZillowError
+        With ``status_code=503`` and ``detail="zillow_not_configured"``
+        when neither ``OPENWEB_NINJA_ZILLOW_API_KEY`` nor
+        ``OPENWEB_NINJA_API_KEY`` is set (or the value looks like a
+        ``REPLACE_ME_`` escape-hatch placeholder). Callers should map
+        this to a 503 with a "come back once ops rotates the key"
+        message — NOT a 502, which is reserved for genuine upstream
+        outages.
+    """
+    global _client_singleton
+    if not keys_configured():
+        raise ZillowError(
+            status_code=503,
+            detail="zillow_not_configured",
+            message=(
+                "Zillow adapter is not configured — set "
+                "OPENWEB_NINJA_API_KEY / OPENWEB_NINJA_ZILLOW_API_KEY "
+                "in the process env and restart."
+            ),
+        )
+    if _client_singleton is None:
+        _client_singleton = ZillowClient()
+    return _client_singleton
+
+
+def _reset_singleton_for_tests() -> None:
+    """Test helper — resets the cached singleton so a fresh
+    :func:`get_zillow_client` call re-reads env + rebuilds the
+    client. No production code should call this."""
+    global _client_singleton
+    _client_singleton = None
+
+
 # ─── module-level throttle state ─────────────────────────────────────
 _throttle_until: Dict[str, float] = {}
 _throttle_lock = asyncio.Lock()

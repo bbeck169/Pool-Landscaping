@@ -423,6 +423,12 @@ from services.enrichment.zillow import (
     ZillowNotConfigured, ZillowRateLimited,
     fetch_zillow_property, get_rate_limit_state,
 )
+# Phase P1.1 · Feb 2026 — structured provider-layer errors. Caught
+# in ``d2d_zillow_lookup`` / ``d2d_prospect_enrich_zillow`` so a
+# 404-shaped miss (``zillow_address_not_found``) or upstream 5xx
+# (``zillow_upstream_error``) surfaces as the correct HTTP status
+# instead of collapsing into the generic-exception 502 branch.
+from services.property_data.zillow_adapter import ZillowError
 
 
 def _require_admin_or_super(user: dict) -> None:
@@ -505,6 +511,23 @@ async def d2d_zillow_lookup(
                        "message": str(e),
                        "used": state["used"], "cap": state["cap"]},
         )
+    except ZillowError as ze:
+        # Phase P1.1 · Feb 2026 — structured provider-layer errors.
+        # Maps ``ZillowError.status_code`` straight through so a
+        # ``zillow_address_not_found`` surfaces as HTTP 404, a
+        # genuine upstream 5xx as HTTP 502, an unauthorized key as
+        # 401, etc. Only path that ever renders a 502 is the
+        # ``zillow_upstream_error`` reason from the adapter.
+        import logging
+        logging.getLogger("d2d.zillow_lookup").info(
+            "[zillow-lookup] provider structured error address=%s "
+            "tenant=%s status=%s detail=%s",
+            address, tenant.get("id"), ze.status_code, ze.detail,
+        )
+        return JSONResponse(
+            status_code=ze.status_code,
+            content={"error": ze.detail, "message": str(ze)},
+        )
     except HTTPException:
         raise
     except Exception as exc:                                        # noqa: BLE001
@@ -579,6 +602,21 @@ async def d2d_prospect_enrich_zillow(
             content={"error": "zillow_rate_limited",
                        "message": str(e),
                        "used": state["used"], "cap": state["cap"]},
+        )
+    except ZillowError as ze:
+        # Phase P1.1 · Feb 2026 — mirror ``d2d_zillow_lookup``'s
+        # structured-error catch. ``.status_code`` propagates
+        # straight through so 404-shaped misses / 401 unauthorized
+        # keys don't collapse into the generic-502 branch.
+        import logging
+        logging.getLogger("d2d.zillow_enrich").info(
+            "[zillow-enrich] provider structured error prospect=%s "
+            "tenant=%s status=%s detail=%s",
+            prospect_id, tenant.get("id"), ze.status_code, ze.detail,
+        )
+        return JSONResponse(
+            status_code=ze.status_code,
+            content={"error": ze.detail, "message": str(ze)},
         )
     except HTTPException:
         raise
