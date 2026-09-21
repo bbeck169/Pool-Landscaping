@@ -21,12 +21,21 @@ const SRC = fs.readFileSync(
 );
 
 describe("K42 · Schedule tech-filter dropdown", () => {
-  it("emits t.id (technicians.id) as the option value — NEVER t.user_id", () => {
-    // Locate the dropdown block and assert on the specific line.
-    // Pre-K42 shape (bug): value={t.user_id || t.id}
-    // Post-K42 shape:      value={t.id}
+  it("emits the authoritative technician id as the option value — NEVER t.user_id", () => {
+    // Pre-K42 shape (bug):        value={t.user_id || t.id}
+    // Post-K42 shape:              value={t.id}
+    // Post-P5 shape (Feb-2026):    value={_tid}   where
+    //   _tid = _canonicalTechId(t) = t.technician_id || t.id
+    // Whichever generation ships, ``t.user_id`` MUST NEVER be
+    // the option value.
     expect(SRC).not.toMatch(/value=\{t\.user_id \|\| t\.id\}/);
-    expect(SRC).toMatch(/value=\{t\.id\}>\{t\.name \|\| t\.email\}<\/option>/);
+    // Either the K42 or the P5 shape is acceptable — this test
+    // only asserts the user_id shape is gone.
+    const hasK42 = /value=\{t\.id\}>\{t\.name \|\| t\.email\}<\/option>/
+      .test(SRC);
+    const hasP5 = /value=\{_tid\}>\{t\.name \|\| t\.email\}<\/option>/
+      .test(SRC);
+    expect(hasK42 || hasP5).toBe(true);
   });
 
   it("hydrates the dropdown from /technicians (authoritative source)", () => {
@@ -41,7 +50,12 @@ describe("K42 · Schedule tech-filter dropdown", () => {
   });
 
   it("preserves the K42 rationale comment so a future refactor can't accidentally undo the fix", () => {
-    expect(SRC).toMatch(/Phase K42[\s\S]{0,320}authoritative[\s\S]{0,200}technicians\.id/i);
+    // K42 rationale OR its P5 successor (which pins the same
+    // "authoritative technicians.id" invariant via
+    // ``_canonicalTechId``) must remain in-source.
+    const k42 = /Phase K42[\s\S]{0,320}authoritative[\s\S]{0,200}technicians\.id/i.test(SRC);
+    const p5 = /Phase P5[\s\S]{0,600}canonical[\s\S]{0,200}technician_id/i.test(SRC);
+    expect(k42 || p5).toBe(true);
   });
 });
 

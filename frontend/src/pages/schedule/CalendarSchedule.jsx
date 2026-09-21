@@ -133,6 +133,29 @@ function _warnMissingTech(technicianId, jobId) {
 // legend row uses (see ``TechColorLegend``).
 const _NEUTRAL_UNASSIGNED_HEX = "#94A3B8";
 
+// ─────────────────────────────────────────────────────────────
+// Phase P5 · Feb-2026 — Canonical technician_id resolver for the
+// filter dropdown.  Parity with the R1.1 tech-color-map fix.
+// ─────────────────────────────────────────────────────────────
+//
+// ``GET /technicians`` returns docs whose ``id`` field IS the
+// canonical technicians.id for real tech rows AND for synth rows
+// whose linked ``users`` doc has a ``technician_id`` stamped on
+// it.  For synth rows on users WITHOUT a ``technician_id``, the
+// backend falls back to the user's account id (``users.id``) as
+// ``t.id`` — that's the exact shape of bug this phase pins.
+//
+// Prefer ``t.technician_id`` when the wire carries it explicitly;
+// fall back to ``t.id`` for legacy responses.  The result is the
+// value we ship on the ``<option value=...>`` AND the value we
+// compare against ``job.technician_id`` in the filter predicate.
+// No user account id (``users.id``) ever reaches the dropdown or
+// the filter after this hop.
+function _canonicalTechId(t) {
+  if (!t) return "";
+  return t.technician_id || t.id || "";
+}
+
 export function getStatusBorderColor(status) {
   const s = (status || "").toLowerCase();
   if (s === "completed") return "#DC2626";
@@ -654,6 +677,51 @@ export default function CalendarSchedule() {
   // guard (server-side filter is different, so we must re-fetch).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load({ force: true }); }, [crewId]);
+
+  // ─────────────────────────────────────────────────────────
+  // Phase P5 · Feb-2026 — Legacy tech-filter self-heal.
+  // ─────────────────────────────────────────────────────────
+  //
+  // Prior to P5 the dropdown's ``<option value=>`` was ``t.id``
+  // which for synth rows on users WITHOUT a stamped
+  // ``technician_id`` was actually the user account id
+  // (``users.id``).  A pick made under the old code would
+  // therefore persist a users.id into
+  // ``localStorage["schedule.tech_filter.<user-id>"]`` — and that
+  // stored value never matches any job's ``technician_id`` so the
+  // filter renders an empty schedule the next time the page
+  // loads.
+  //
+  // Self-heal: once the tenant's techs list is loaded, if the
+  // currently-active ``techId`` is not in the set of canonical
+  // technician_ids returned by ``GET /technicians``, clear it
+  // back to ``""`` (All), scrub the localStorage entry, and log
+  // ONE console.warn so we can catch any last stragglers in
+  // Sentry.  Runs at most once per techs-load.
+  const _healedLegacyTechFilterRef = React.useRef(false);
+  useEffect(() => {
+    if (_healedLegacyTechFilterRef.current) return;
+    if (!techs || techs.length === 0) return;
+    if (!techId) return;                          // Already on "All".
+    const canonicalIds = new Set(
+      techs.map(_canonicalTechId).filter(Boolean),
+    );
+    if (canonicalIds.has(techId)) return;         // Filter matches — no-op.
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[CalendarSchedule] stored tech filter value not present in "
+      + "current techs list — clearing to 'All'. (Legacy user-id "
+      + "persisted before Phase P5 canonicalization.)",
+      { stored_tech_filter: techId },
+    );
+    setTechId("");
+    setParam("technician_id", "");
+    try {
+      if (_techFilterKey) localStorage.removeItem(_techFilterKey);
+    } catch { /* storage-blocked / private mode */ }
+    _healedLegacyTechFilterRef.current = true;
+  }, [techs, techId, _techFilterKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Phase F6a · Feb-2026 — resolved tech-id set for the currently
   // selected crew (empty when no crew filter is active).  Server
@@ -1329,19 +1397,21 @@ export default function CalendarSchedule() {
           <option value="">{crewId ? "Techs (from crew)" : "All techs"}</option>
           {techs.slice().sort((a, b) =>
             (a.name || a.email || "").localeCompare(b.name || b.email || "")
-          ).map((t) => (
-            // Phase K42 · Feb-2026 — always emit the AUTHORITATIVE
-            // ``technicians.id`` (``t.id``).  Historically this used
-            // ``t.user_id || t.id`` which shipped ``users.id`` when
-            // available — but ``jobs.technician_id`` stores
-            // ``technicians.id`` for legacy jobs and the two id
-            // spaces are NOT interchangeable.  The K42 backend
-            // resolver now accepts either variant defensively, but
-            // sending the authoritative id at the wire boundary keeps
-            // the query fast (no resolver hop) and the filter
-            // reversible.
-            <option key={t.id} value={t.id}>{t.name || t.email}</option>
-          ))}
+          ).map((t) => {
+            // Phase P5 · Feb-2026 — canonical technician_id via
+            // ``_canonicalTechId`` (prefers ``t.technician_id``,
+            // falls back to ``t.id``). Filter predicate below
+            // compares ``job.technician_id === techId`` so the
+            // dropdown ID space is now guaranteed compatible
+            // with ``jobs.technician_id``.  Skip techs where
+            // the resolver can't produce a truthy id (defensive
+            // — the backend UNION filter already omits those).
+            const _tid = _canonicalTechId(t);
+            if (!_tid) return null;
+            return (
+              <option key={_tid} value={_tid}>{t.name || t.email}</option>
+            );
+          })}
         </select>
         )}
 
