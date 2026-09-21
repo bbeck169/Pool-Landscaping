@@ -643,7 +643,7 @@ function FilterBar({
           />
           <Search
             size={14}
-            style={{ position: "absolute", left: 8, top: 10, color: colors.muted }}
+            style={{ position: "absolute", left: 8, top: 10, color: colors.searchIcon }}
           />
         </div>
 

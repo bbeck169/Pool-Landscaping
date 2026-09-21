@@ -131,7 +131,7 @@ function SliceShell({
         <div className="flex flex-wrap items-center justify-between gap-2 p-4"
              style={{ borderBottom: `1px solid ${colors.border}` }}>
           <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-            <Search size={14} style={{ color: colors.muted }} />
+            <Search size={14} style={{ color: colors.searchIcon }} />
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}

@@ -278,7 +278,7 @@ export default function AdminSidebar() {
           style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
           data-testid="nav-palette-trigger"
         >
-          <SearchIcon size={14} />
+          <SearchIcon size={14} style={{ color: colors.searchIcon }} />
           <span className="flex-1 text-left">Search or jump to…</span>
           <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: "#fff", border: `1px solid ${colors.border}` }}>⌘K</span>
         </button>
@@ -454,7 +454,7 @@ function Palette({ flat, recent, onClose }) {
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={onClose} data-testid="nav-palette">
       <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()} style={{ border: `1px solid ${colors.border}` }}>
         <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: colors.border }}>
-          <SearchIcon size={16} style={{ color: colors.onSurfaceSecondary }} />
+          <SearchIcon size={16} style={{ color: colors.searchIcon }} />
           <input
             ref={inputRef}
             value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey}

@@ -492,7 +492,7 @@ export function ReviewsRequestsPage() {
           {OUTCOMES.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
         </select>
         <div className="flex items-center gap-2 flex-1 max-w-md">
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input value={q} onChange={(e) => setQ(e.target.value)}
                   placeholder="Search customer name or email…"
                   className="w-full rounded-lg px-3 py-2 text-sm"

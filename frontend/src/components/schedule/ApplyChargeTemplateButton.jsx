@@ -117,7 +117,7 @@ export default function ApplyChargeTemplateButton({
               style={{ background: colors.surfaceSecondary,
                        border: `1px solid ${colors.border}` }}
             >
-              <Search size={12} style={{ color: colors.muted }} />
+              <Search size={12} style={{ color: colors.searchIcon }} />
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}

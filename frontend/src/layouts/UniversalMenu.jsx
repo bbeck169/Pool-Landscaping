@@ -232,7 +232,7 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
           className="flex items-center gap-2 border-b px-3 h-11"
           style={{ borderColor: colors.border }}
         >
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input
             type="text"
             value={query}

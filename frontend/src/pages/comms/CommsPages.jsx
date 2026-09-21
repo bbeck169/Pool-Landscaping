@@ -244,7 +244,7 @@ export function CommsTemplatesLibrary() {
           <span className="inline-flex items-center gap-1.5"><MessageSquare size={13} /> SMS</span>
         </button>
         <div className="ml-4 flex items-center gap-2 flex-1 max-w-md">
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input value={q} onChange={(e) => setQ(e.target.value)}
                  placeholder="Search templates…"
                  className="w-full text-sm px-2 py-1.5 rounded outline-none"

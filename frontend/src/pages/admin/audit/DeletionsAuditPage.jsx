@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 import { api } from "@/api";
+import { colors } from "@/theme";
 
 
 const RESOURCE_TYPES = [
@@ -174,7 +175,7 @@ export default function DeletionsAuditPage() {
             style={{ backgroundColor: "#0F172A" }}
             data-testid="deletions-audit-refresh"
           >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <SearchIcon size={14} />}
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <SearchIcon size={14} style={{ color: colors.searchIcon }} />}
             Refresh
           </button>
           <div className="text-xs font-semibold text-slate-500 ml-auto"

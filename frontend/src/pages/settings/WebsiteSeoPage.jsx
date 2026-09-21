@@ -52,7 +52,7 @@ export default function WebsiteSeoPage() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight"
               style={{ color: colors.onSurface }}>
-            <Search size={20} className="inline mr-2 -mt-0.5" style={{ color: colors.brand }} />
+            <Search size={20} className="inline mr-2 -mt-0.5" style={{ color: colors.searchIcon }} />
             Website SEO
           </h1>
           <p className="text-sm" style={{ color: colors.muted }}>

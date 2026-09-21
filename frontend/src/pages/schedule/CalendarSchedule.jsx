@@ -1224,17 +1224,17 @@ export default function CalendarSchedule() {
          * as a colored container around the white input card.
          */}
         <div className="flex items-center gap-1 flex-1 min-w-[180px] bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-colors">
-          <Search size={14} style={{ color: "#000080" }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input
             data-testid="calendar-search"
             value={q}
             onChange={(e) => { setQ(e.target.value); setParam("q", e.target.value); }}
             placeholder="Search customer, service, address…"
-            className="flex-1 bg-white outline-none text-sm text-[#000080] placeholder:text-[#000080]/55"
+            className="flex-1 bg-white outline-none text-sm text-[#0284C7] placeholder:text-[#0284C7]/55"
           />
           {q ? (
             <button onClick={() => { setQ(""); setParam("q", ""); }} data-testid="calendar-search-clear">
-              <XIcon size={12} style={{ color: "#000080" }} />
+              <XIcon size={12} style={{ color: "#0284C7" }} />
             </button>
           ) : null}
         </div>

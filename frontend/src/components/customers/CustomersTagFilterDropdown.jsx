@@ -136,7 +136,7 @@ export default function CustomersTagFilterDropdown({
             <Search
               size={12}
               className="absolute left-5 top-1/2 -translate-y-1/2"
-              style={{ color: colors.muted, transform: "translateY(-50%)" }}
+              style={{ color: colors.searchIcon, transform: "translateY(-50%)" }}
             />
             <input
               type="text"

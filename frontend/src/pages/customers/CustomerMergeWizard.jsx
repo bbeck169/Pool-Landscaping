@@ -288,7 +288,7 @@ function _StepSearch({
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <Search size={14} style={{ color: colors.muted }} />
+        <Search size={14} style={{ color: colors.searchIcon }} />
         <input
           type="text"
           autoFocus

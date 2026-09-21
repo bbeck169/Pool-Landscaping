@@ -169,7 +169,7 @@ export default function DealsKanbanPage() {
             </SelectContent>
           </Select>
           <div className="relative">
-            <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Search className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-[#0284C7]" />
             <Input
               className="pl-8 w-52"
               placeholder="Search deals…"

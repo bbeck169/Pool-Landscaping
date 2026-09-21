@@ -432,7 +432,7 @@ export default function InvoicesList() {
         data-k52-navy-strip="true"
       >
         <div className="relative flex-1 min-w-[220px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.nav.fgMuted }} />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.searchIcon }} />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}

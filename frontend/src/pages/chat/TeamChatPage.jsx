@@ -147,7 +147,7 @@ export default function TeamChatPage() {
                   data-testid="chat-search" />
           <button onClick={doSearch} className="p-2 rounded border"
                    style={{ borderColor: colors.border }}>
-            <Search className="w-4 h-4" />
+            <Search className="w-4 h-4" style={{ color: colors.searchIcon }} />
           </button>
         </div>
         <div className="p-2 flex items-center justify-between">

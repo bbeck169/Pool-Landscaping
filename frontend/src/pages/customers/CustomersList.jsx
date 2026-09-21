@@ -1441,13 +1441,13 @@ export default function CustomersList() {
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: "#000080" }}
+            style={{ color: colors.searchIcon }}
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, phone, address…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm bg-white text-[#000080] placeholder:text-[#000080]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm bg-white text-[#0284C7] placeholder:text-[#0284C7]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             data-testid="customers-search"
           />
         </div>

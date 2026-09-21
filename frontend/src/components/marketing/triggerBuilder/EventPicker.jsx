@@ -88,7 +88,7 @@ export function EventPicker({ value, catalog = [], onChange, disabled = false, t
                 borderBottom: `1px solid ${colors.divider}`,
               }}
             >
-              <Search size={14} style={{ color: colors.muted }} />
+              <Search size={14} style={{ color: colors.searchIcon }} />
               <input
                 type="text"
                 value={query}

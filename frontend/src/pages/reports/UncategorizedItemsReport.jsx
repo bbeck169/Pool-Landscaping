@@ -487,7 +487,7 @@ export default function UncategorizedItemsReport() {
           </button>
         ))}
         <div className="flex-1 min-w-[180px] relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: colors.muted }} />
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: colors.searchIcon }} />
           <input
             type="text"
             value={customerFilter}

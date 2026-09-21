@@ -33,6 +33,21 @@ export const colors = {
   divider: "#E4E4E7",
   muted: "#71717A",
 
+  /*
+   * ─────────────────────────────────────────────────────────────
+   * Phase N2 · Feb-2026 — Universal Input Restyle Refinement.
+   *
+   * Sitewide search-icon color token.  Every ``<Search>`` /
+   * ``<SearchIcon>`` in the app resolves its color via this key
+   * (grep target: ``colors.searchIcon``) so a future palette
+   * change is a one-line edit.  Locked to the app brand blue
+   * (``#0284C7``) so the icon reads as the same brand blue as
+   * the text painted by the Phase N1 ``@layer base`` block on
+   * every text-shaped ``<input>``.
+   * ─────────────────────────────────────────────────────────────
+   */
+  searchIcon: "#0284C7",
+
   // ═══════════════════════════════════════════════════════════════
   // Feb 2026 · Service-line palettes (additive).
   //

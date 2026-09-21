@@ -125,7 +125,7 @@ export function MergeTagPalette({ open, onOpenChange, onInsert }) {
         </DialogHeader>
         <div className="px-5">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0284C7]" />
             <input
               ref={inputRef}
               value={q}

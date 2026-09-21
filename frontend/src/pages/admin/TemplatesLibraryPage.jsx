@@ -174,7 +174,7 @@ export default function TemplatesLibraryPage() {
             ))}
             <div className="flex-1 min-w-[220px]">
               <div className="flex items-center gap-2 px-3 py-2 rounded-xl" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-                <Search size={14} style={{ color: colors.muted }} />
+                <Search size={14} style={{ color: colors.searchIcon }} />
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}

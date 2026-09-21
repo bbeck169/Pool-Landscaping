@@ -53,7 +53,7 @@ export default function TokenPickerModal({ open, onClose, onInsert }) {
         </div>
         <div className="px-4 py-2 flex items-center gap-2"
              style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input
             autoFocus
             value={q}

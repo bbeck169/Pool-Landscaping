@@ -96,7 +96,7 @@ export default function HandbookPage() {
           Policies, procedures, and expectations. Reading a section for at least 30 seconds automatically completes the matching onboarding task.
         </p>
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search sections…"
                  className="flex-1 outline-none text-sm bg-transparent"
                  data-testid="handbook-search" />

@@ -168,7 +168,7 @@ export default function ToolsHub() {
           height: 44,
         }}
       >
-        <SearchIcon size={16} style={{ color: colors.muted }} />
+        <SearchIcon size={16} style={{ color: colors.searchIcon }} />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

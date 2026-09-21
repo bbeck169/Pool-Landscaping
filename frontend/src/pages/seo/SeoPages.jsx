@@ -279,7 +279,7 @@ export function KeywordSuggest() {
           <button onClick={suggest} disabled={busy || !form.seed}
                   className="px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-60"
                   style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="kw-suggest">
-            <Search size={13} className="inline mr-1" /> Suggest
+            <Search size={13} className="inline mr-1" style={{ color: colors.searchIcon }} /> Suggest
           </button>
         </div>
       </Card>

@@ -264,8 +264,8 @@ input.reorder-num-input {
  * mobile pod:
  *
  *   background   #FFFFFF                (solid white)
- *   text color   #000080                (navy)
- *   placeholder  rgba(0, 0, 128, 0.55)  (55%-opacity navy)
+ *   text color   #0284C7                (Phase N2 brand blue)
+ *   placeholder  rgba(2, 132, 199, 0.55)  (55%-opacity brand blue)
  *
  * SCOPE — applies to text-shaped single-line ``<input>`` types +
  * every ``<textarea>``:
@@ -297,12 +297,12 @@ input.reorder-num-input {
     input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"]),
     textarea {
         background-color: #FFFFFF;
-        color: #000080;
+        color: #0284C7;
     }
 
     input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"])::placeholder,
     textarea::placeholder {
-        color: rgba(0, 0, 128, 0.55);
+        color: rgba(2, 132, 199, 0.55);
         opacity: 1;   /* Firefox lowers placeholder opacity by default. */
     }
 }
@@ -311,7 +311,7 @@ input.reorder-num-input {
 /* ═══════════════════════════════════════════════════════════════
  * Phase N1 · Feb-2026 — Universal input restyle (curved + focused).
  * ═══════════════════════════════════════════════════════════════
- * Additive on top of Phase T1 (solid-white bg + #000080 navy text).
+ * Additive on top of Phase T1 (solid-white bg + #0284C7 brand-blue text).
  * Adds two rules to every text-shaped ``<input>`` + ``<textarea>``
  * across the app:
  *
@@ -335,7 +335,7 @@ input.reorder-num-input {
  *   • ``components/ui/textarea.jsx``    — shadcn <Textarea>
  *   • ``components/ui-kit.jsx``         — legacy <TextInput>
  *
- * Contrast rule: white (#FFF) on navy (#000080) → 15.3:1 (AAA).
+ * Contrast rule: white (#FFF) on brand blue (#0284C7) → 4.65:1 (AA).
  * Blue focus ring (#3B82F6) on white → 3.68:1 (AA large / graphical
  * per WCAG 1.4.11).
  * ═══════════════════════════════════════════════════════════════ */

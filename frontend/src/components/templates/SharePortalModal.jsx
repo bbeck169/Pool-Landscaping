@@ -103,7 +103,7 @@ export default function SharePortalModal({ open, onClose, instanceId, onShared }
           className="flex items-center gap-2 px-3 py-2 rounded-xl mb-3"
           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
         >
-          <Search size={14} style={{ color: colors.muted }} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}

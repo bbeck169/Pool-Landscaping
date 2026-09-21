@@ -383,7 +383,7 @@ export function MediaLibraryPicker({
           <div className="flex-1 flex flex-col border-r border-zinc-100">
             <div className="px-6 py-3 flex items-center gap-2 border-b border-zinc-100">
               <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0284C7]" />
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}

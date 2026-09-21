@@ -107,7 +107,7 @@ export default function PropertyLookupPage() {
                 className="px-4 py-2 font-bold rounded-xl flex items-center gap-1"
                 style={{ backgroundColor: colors.brand, color: "#fff" }}
                 data-testid="prop-search-btn">
-          <Search size={14} /> Search
+          <Search size={14} style={{ color: colors.searchIcon }} /> Search
         </button>
       </div>
 

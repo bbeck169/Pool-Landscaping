@@ -670,7 +670,7 @@ export default function ProspectsKanbanPage() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 px-3 py-1.5 border border-zinc-200 rounded bg-white">
-            <Search size={14} className="text-zinc-400" />
+            <Search size={14} className="text-[#0284C7]" />
             <input type="text" placeholder="Search…"
                    value={search}
                    onChange={(e) => setSearch(e.target.value)}

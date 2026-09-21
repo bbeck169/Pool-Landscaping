@@ -223,7 +223,7 @@ export function PaymentsLedger() {
         <div className="flex items-center justify-between p-4 gap-2 flex-wrap"
              style={{ borderBottom: `1px solid ${colors.border}` }}>
           <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-            <Search size={14} style={{ color: colors.muted }} />
+            <Search size={14} style={{ color: colors.searchIcon }} />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customer or invoice…"
                    className="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
                    style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}

@@ -105,11 +105,11 @@ describe("Phase N1 · B · shadcn <Input> class contract", () => {
     const cls = el.className;
     // Solid-white + navy + border + rounded-lg on idle.
     expect(cls).toMatch(/bg-white/);
-    expect(cls).toMatch(/text-\[#000080\]/);
+    expect(cls).toMatch(/text-\[#0284C7\]/);
     expect(cls).toMatch(/border-slate-200/);
     expect(cls).toMatch(/rounded-lg/);
     // Placeholder navy at 55% opacity.
-    expect(cls).toMatch(/placeholder:text-\[#000080\]\/55/);
+    expect(cls).toMatch(/placeholder:text-\[#0284C7\]\/55/);
     // Focus ring 2px + blue-500 + border blue-500.
     expect(cls).toMatch(/focus-visible:ring-2/);
     expect(cls).toMatch(/focus-visible:ring-blue-500/);
@@ -127,10 +127,10 @@ describe("Phase N1 · C · shadcn <Textarea> class contract", () => {
     expect(el).toBeTruthy();
     const cls = el.className;
     expect(cls).toMatch(/bg-white/);
-    expect(cls).toMatch(/text-\[#000080\]/);
+    expect(cls).toMatch(/text-\[#0284C7\]/);
     expect(cls).toMatch(/border-slate-200/);
     expect(cls).toMatch(/rounded-lg/);
-    expect(cls).toMatch(/placeholder:text-\[#000080\]\/55/);
+    expect(cls).toMatch(/placeholder:text-\[#0284C7\]\/55/);
     expect(cls).toMatch(/focus-visible:ring-2/);
     expect(cls).toMatch(/focus-visible:ring-blue-500/);
     expect(cls).toMatch(/focus-visible:border-blue-500/);
@@ -150,10 +150,10 @@ describe("Phase N1 · D · legacy <TextInput> (ui-kit) class contract", () => {
     expect(el).toBeTruthy();
     const cls = el.className;
     expect(cls).toMatch(/bg-white/);
-    expect(cls).toMatch(/text-\[#000080\]/);
+    expect(cls).toMatch(/text-\[#0284C7\]/);
     expect(cls).toMatch(/border-slate-200/);
     expect(cls).toMatch(/rounded-lg/);
-    expect(cls).toMatch(/placeholder:text-\[#000080\]\/55/);
+    expect(cls).toMatch(/placeholder:text-\[#0284C7\]\/55/);
     expect(cls).toMatch(/focus:ring-2/);
     expect(cls).toMatch(/focus:ring-blue-500/);
     expect(cls).toMatch(/focus:border-blue-500/);

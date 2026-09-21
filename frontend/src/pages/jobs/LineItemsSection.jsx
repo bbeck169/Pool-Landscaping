@@ -102,7 +102,7 @@ function PricebookPickerModal({ open, onClose, onPick, isAdmin }) {
             <Search
               size={14}
               className="absolute left-2 top-1/2 -translate-y-1/2"
-              color={colors.muted}
+              color={colors.searchIcon}
             />
             <input
               autoFocus

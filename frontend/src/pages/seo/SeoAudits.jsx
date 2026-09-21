@@ -51,7 +51,7 @@ export default function SeoAudits() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Search size={22} style={{ color: colors.brand }}/>
+            <Search size={22} style={{ color: colors.searchIcon }}/>
             <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
               Site Auditor
             </h1>
@@ -84,7 +84,7 @@ export default function SeoAudits() {
       ) : rows.length === 0 ? (
         <div className="text-center py-16 rounded-2xl"
              style={{ backgroundColor: colors.surface, border: `1px dashed ${colors.border}` }}>
-          <Search size={40} className="mx-auto mb-3" style={{ color: colors.muted }}/>
+          <Search size={40} className="mx-auto mb-3" style={{ color: colors.searchIcon }}/>
           <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
             No audits yet
           </div>

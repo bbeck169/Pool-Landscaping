@@ -167,7 +167,7 @@ export default function GlobalSearchBar() {
           border: `1px solid ${colors.border}`,
         }}
       >
-        <Search size={16} color={colors.muted} />
+        <Search size={16} color={colors.searchIcon} />
         <input
           ref={inputRef}
           type="text"

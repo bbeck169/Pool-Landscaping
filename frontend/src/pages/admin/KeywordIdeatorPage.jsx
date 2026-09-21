@@ -278,7 +278,7 @@ export default function KeywordIdeatorPage() {
       {/* Search bar */}
       <div className="bg-white border border-zinc-200 rounded-lg p-3 shadow-sm flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 px-3 py-2 border border-zinc-200 rounded flex-1 min-w-[240px]">
-          <Search size={14} className="text-zinc-400" />
+          <Search size={14} className="text-[#0284C7]" />
           <input type="text" placeholder="Seed keyword (e.g. pool service phoenix)"
                  value={seed}
                  onChange={(e) => setSeed(e.target.value)}

@@ -138,13 +138,14 @@ export function TextInput({ label, id, testid, wrapperClass = "", ...rest }) {
        * Phase N1 · Feb-2026 — Universal input restyle. Legacy
        * ``TextInput`` now paints solid-white bg (Phase T1 already
        * applied via the base layer, this keeps the intent explicit)
-       * with #000080 navy text, ``rounded-lg`` curve, and a blue-500
-       * focus ring. Border is slate-200 for a subtle idle state.
+       * with #0284C7 brand-blue text (Phase N2), ``rounded-lg`` curve,
+       * and a blue-500 focus ring. Border is slate-200 for a subtle
+       * idle state.
        */}
       <input
         id={id}
         {...rest}
-        className={`w-full px-3.5 py-2.5 rounded-lg outline-none text-sm bg-white text-[#000080] placeholder:text-[#000080]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${rest.className || ""}`}
+        className={`w-full px-3.5 py-2.5 rounded-lg outline-none text-sm bg-white text-[#0284C7] placeholder:text-[#0284C7]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${rest.className || ""}`}
         data-testid={testid}
       />
     </div>

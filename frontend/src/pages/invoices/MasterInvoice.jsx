@@ -208,7 +208,7 @@ function CustomerMultiSelect({ customers, selected, onToggle, onClearAll, onSele
           data-testid="master-payer-dropdown"
         >
           <div className="flex items-center gap-2 px-2 py-2 border-b" style={{ borderColor: colors.border }}>
-            <Search size={14} style={{ color: colors.muted }} />
+            <Search size={14} style={{ color: colors.searchIcon }} />
             <input
               ref={inputRef}
               value={search}

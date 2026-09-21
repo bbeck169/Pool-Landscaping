@@ -10,12 +10,16 @@
  * pseudo-elements.  Instead we lock the shipped CSS text against a
  * grep-shaped contract so a regression is loud and instant.
  *
+ * Phase N2 · Feb-2026 refinement — text color flipped from navy
+ * ``#000080`` to brand blue ``#0284C7``; placeholder RGB flipped
+ * accordingly.  Selector chain and exclusion list are unchanged.
+ *
  * Coverage:
  *  1. Solid-white background rule is present on the text-shaped
  *     ``<input>`` / ``<textarea>`` selector.
- *  2. Navy (``#000080``) text color is present on the same rule.
+ *  2. Brand-blue (``#0284C7``) text color is present on the same rule.
  *  3. Placeholder rule targets the same excluded set and paints
- *     ``rgba(0, 0, 128, 0.55)``.
+ *     ``rgba(2, 132, 199, 0.55)``.
  *  4. Excluded types (checkbox, radio, file, color, date family,
  *     range, submit/reset/button/image/hidden) are ALL listed in
  *     the selector — regression guard against a stray commit
@@ -39,18 +43,18 @@ describe("Phase T1 · sitewide text-input theme (index.css)", () => {
     expect(indexCss).toContain(T1_HEADER);
   });
 
-  it("paints solid-white bg + navy text on the text-shaped selector", () => {
+  it("paints solid-white bg + brand-blue text on the text-shaped selector", () => {
     // Extract the Phase-T1 section so failures in unrelated rules
     // don't false-positive here.
     const section = indexCss.split(T1_HEADER)[1] || "";
     expect(section).toMatch(/background-color:\s*#FFFFFF/i);
-    expect(section).toMatch(/color:\s*#000080/i);
+    expect(section).toMatch(/color:\s*#0284C7/i);
   });
 
-  it("declares a placeholder rule at 55%-opacity navy", () => {
+  it("declares a placeholder rule at 55%-opacity brand blue", () => {
     const section = indexCss.split(T1_HEADER)[1] || "";
     expect(section).toMatch(/::placeholder/);
-    expect(section).toMatch(/rgba\(\s*0\s*,\s*0\s*,\s*128\s*,\s*0\.55\s*\)/);
+    expect(section).toMatch(/rgba\(\s*2\s*,\s*132\s*,\s*199\s*,\s*0\.55\s*\)/);
     // Firefox regression guard — ensure ``opacity: 1`` is set,
     // otherwise Firefox will over-fade the placeholder to ~54%
     // of our own 55% and it becomes illegible.
