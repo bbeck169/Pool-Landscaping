@@ -1430,21 +1430,24 @@ export default function CustomersList() {
         data-k52-navy-strip="true"
       >
         <div className="relative flex-1 min-w-[220px]">
+          {/*
+           * Phase N1 · Feb-2026 — Universal input restyle.
+           * Search icon + input paint the sitewide navy-on-white
+           * theme even inside the K52.1 navy chrome strip so the
+           * app-wide input styling stays coherent. The strip
+           * container keeps its navy accent — the input reads as a
+           * white card resting on it.
+           */}
           <Search
             size={16}
             className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: colors.nav.fgMuted }}
+            style={{ color: "#000080" }}
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search name, email, phone, address…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-white/70"
-            style={{
-              backgroundColor: "rgba(255,255,255,0.10)",
-              border: `1px solid ${colors.nav.border}`,
-              color: colors.nav.fg,
-            }}
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm bg-white text-[#000080] placeholder:text-[#000080]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             data-testid="customers-search"
           />
         </div>

@@ -262,14 +262,20 @@ export default function LeadsDashboardPage() {
         data-testid="leads-filters"
         data-k52-navy-strip="true"
       >
-        <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg"
-             style={{ border: `1px solid ${colors.nav.border}`, background: "rgba(255,255,255,0.10)" }}>
-          <Search size={14} color={colors.nav.fgMuted} />
+        {/*
+         * Phase N1 · Feb-2026 — Universal input restyle. Search box
+         * paints solid-white bg + #000080 navy text + blue-500 focus
+         * ring, matching the app-wide theme. Icon adopts the same
+         * navy. Wrapping div drops its translucent-white overlay so
+         * the input renders as a clean white card on the K52.1 navy
+         * strip.
+         */}
+        <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-colors">
+          <Search size={14} color="#000080" />
           <input value={filters.search}
                  onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
                  placeholder="Search name, email, phone"
-                 className="outline-none text-sm bg-transparent w-56 placeholder:text-white/70"
-                 style={{ color: colors.nav.fg }}
+                 className="outline-none text-sm bg-white w-56 text-[#000080] placeholder:text-[#000080]/55"
                  data-testid="lead-search-input" />
         </div>
         <select value={filters.source}

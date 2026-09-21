@@ -1216,25 +1216,25 @@ export default function CalendarSchedule() {
         data-testid="calendar-filters"
         data-k52-navy-strip="true"
       >
-        <div className="flex items-center gap-1 flex-1 min-w-[180px]"
-             style={{
-               background: "rgba(255,255,255,0.10)",
-               borderRadius: 8,
-               padding: "6px 10px",
-               border: `1px solid ${colors.nav.border}`,
-             }}>
-          <Search size={14} style={{ color: colors.nav.fgMuted }} />
+        {/*
+         * Phase N1 · Feb-2026 — Universal input restyle. Search box
+         * paints solid-white bg + navy text + blue focus ring so the
+         * calendar search matches the sitewide input theme. Icon
+         * adopts the same navy. The K52.1 navy chrome strip stays
+         * as a colored container around the white input card.
+         */}
+        <div className="flex items-center gap-1 flex-1 min-w-[180px] bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-colors">
+          <Search size={14} style={{ color: "#000080" }} />
           <input
             data-testid="calendar-search"
             value={q}
             onChange={(e) => { setQ(e.target.value); setParam("q", e.target.value); }}
             placeholder="Search customer, service, address…"
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-white/70"
-            style={{ color: colors.nav.fg }}
+            className="flex-1 bg-white outline-none text-sm text-[#000080] placeholder:text-[#000080]/55"
           />
           {q ? (
             <button onClick={() => { setQ(""); setParam("q", ""); }} data-testid="calendar-search-clear">
-              <XIcon size={12} style={{ color: colors.nav.fgMuted }} />
+              <XIcon size={12} style={{ color: "#000080" }} />
             </button>
           ) : null}
         </div>

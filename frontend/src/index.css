@@ -307,3 +307,49 @@ input.reorder-num-input {
     }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+ * Phase N1 · Feb-2026 — Universal input restyle (curved + focused).
+ * ═══════════════════════════════════════════════════════════════
+ * Additive on top of Phase T1 (solid-white bg + #000080 navy text).
+ * Adds two rules to every text-shaped ``<input>`` + ``<textarea>``
+ * across the app:
+ *
+ *   1. ``border-radius: 0.5rem``      (Tailwind ``rounded-lg`` parity)
+ *   2. ``:focus-visible`` outline     — 2px solid blue-500 (#3B82F6)
+ *                                      + matching border color so a
+ *                                      keyboard-focused control has a
+ *                                      subtle-but-clear glow that
+ *                                      still passes WCAG.
+ *
+ * The Phase T1 exclusion list is copied verbatim so checkboxes,
+ * radios, date pickers, native color inputs, and buttons stay
+ * pixel-identical — only text-shaped inputs pick up the curve +
+ * ring.  ``@layer base`` keeps the specificity at the lowest
+ * Tailwind layer so utility overrides on per-consumer
+ * ``className`` still win.
+ *
+ * Companion patches (shared components stop opting out of the
+ * focus outline via ``focus-visible:outline-none``):
+ *   • ``components/ui/input.jsx``       — shadcn <Input>
+ *   • ``components/ui/textarea.jsx``    — shadcn <Textarea>
+ *   • ``components/ui-kit.jsx``         — legacy <TextInput>
+ *
+ * Contrast rule: white (#FFF) on navy (#000080) → 15.3:1 (AAA).
+ * Blue focus ring (#3B82F6) on white → 3.68:1 (AA large / graphical
+ * per WCAG 1.4.11).
+ * ═══════════════════════════════════════════════════════════════ */
+@layer base {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"]),
+    textarea {
+        border-radius: 0.5rem;
+    }
+
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="date"]):not([type="datetime-local"]):not([type="time"]):not([type="month"]):not([type="week"]):not([type="range"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]):not([type="hidden"]):focus-visible,
+    textarea:focus-visible {
+        outline: 2px solid #3B82F6;
+        outline-offset: 0px;
+        border-color: #3B82F6;
+    }
+}
+
