@@ -91,6 +91,18 @@ export default function RecurringJobs() {
   // running the mutating backfill first.
   const [orphanPreview, setOrphanPreview] = useState(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
+  // Phase P14 · Feb-2026 · Item 2 — orphan-PURGE state (distinct
+  // from the orphan-backfill above). ``purgePreview`` populated
+  // by the ``/recurring-jobs/purge-orphans-preview`` scan; > 0
+  // means there are ``recurring_job_templates`` rows whose
+  // ``customer_id`` no longer resolves. ``purgeConfirmOpen``
+  // gates the DELETE-typing confirm dialog; ``purgeInput`` is
+  // the user's typed string that must match ``DELETE`` before
+  // the POST fires. ``purgeBusy`` shows the button spinner.
+  const [purgePreview, setPurgePreview] = useState(null);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purgeInput, setPurgeInput] = useState("");
+  const [purgeBusy, setPurgeBusy] = useState(false);
   // Phase P4 · Feb-2026 — Category taxonomy dropdowns on the
   // Edit Recurring Job modal.
   //   ``serviceCats`` / ``incomeCats``: tenant-scoped active
@@ -158,6 +170,45 @@ export default function RecurringJobs() {
       setOrphanPreview(preview);
     } catch (_e) {
       setOrphanPreview(null);
+    }
+    // Phase P14 · Feb-2026 · Item 2 — parallel purge-preview scan.
+    // Same shape as the backfill preview above: best-effort, a
+    // failure leaves the purge button hidden.
+    try {
+      const p14 = await api.get("/recurring-jobs/purge-orphans-preview");
+      setPurgePreview(p14);
+    } catch (_e) {
+      setPurgePreview(null);
+    }
+  };
+
+  // Phase P14 · Feb-2026 · Item 2 — purge orphans. Fires only after
+  // the operator types ``DELETE`` in the confirm dialog (client
+  // gate) AND the backend re-checks the same string as its own
+  // gate on the POST. On success we refresh both the main table
+  // and the two preview scans so the banner disappears cleanly.
+  const runPurgeOrphans = async () => {
+    if ((purgeInput || "").trim() !== "DELETE") return;
+    setPurgeBusy(true);
+    try {
+      const res = await api.post(
+        "/recurring-jobs/purge-orphans",
+        { confirm: "DELETE" },
+      );
+      setPurgeConfirmOpen(false);
+      setPurgeInput("");
+      // Refresh the whole surface — banner recomputes off fresh
+      // preview scans, table drops the deleted rows.
+      await load();
+      // eslint-disable-next-line no-alert
+      window.alert(
+        `Purged ${res?.deleted_count ?? 0} orphaned recurring `
+        + `job${(res?.deleted_count ?? 0) === 1 ? "" : "s"}.`
+      );
+    } catch (e) {
+      setError(e?.message || "Purge failed");
+    } finally {
+      setPurgeBusy(false);
     }
   };
 
@@ -656,8 +707,16 @@ export default function RecurringJobs() {
       {/* Feb-2026 P0 · Orphan cluster banner. Renders only when the
           orphan-preview scan found at least one cluster missing a
           matching template. Operator can click "Backfill now" to
-          mint them; idempotent so re-running is safe. */}
-      {orphanPreview && orphanPreview.orphan_count > 0 ? (
+          mint them; idempotent so re-running is safe.
+
+          Phase P14 · Feb-2026 · Item 2 — same yellow banner
+          container now ALSO carries a red "Delete all orphans
+          permanently" button when the purge-preview scan found
+          templates whose ``customer_id`` doesn't resolve. Banner
+          renders when EITHER preview is non-zero so the operator
+          sees whichever remediation applies. */}
+      {(orphanPreview && orphanPreview.orphan_count > 0)
+       || (purgePreview && purgePreview.count > 0) ? (
         <div
           className="rounded-2xl p-4 mb-4 text-sm flex items-start justify-between gap-3"
           style={{ background: "#FEF3C7", border: "1px solid #FCD34D",
@@ -665,27 +724,135 @@ export default function RecurringJobs() {
           data-testid="recurring-jobs-orphan-banner"
         >
           <div>
-            <div className="font-bold">
-              {orphanPreview.orphan_count} recurring customer
-              {orphanPreview.orphan_count === 1 ? "" : "s"} missing from this list.
-            </div>
-            <div className="mt-0.5 text-xs">
-              Detected {orphanPreview.total_occurrences} pre-scheduled visits from
-              the Schedule page that have no matching recurring template. Click
-              &ldquo;Backfill now&rdquo; to add them here — existing entries won&rsquo;t be touched.
+            {orphanPreview && orphanPreview.orphan_count > 0 ? (
+              <>
+                <div className="font-bold">
+                  {orphanPreview.orphan_count} recurring customer
+                  {orphanPreview.orphan_count === 1 ? "" : "s"} missing from this list.
+                </div>
+                <div className="mt-0.5 text-xs">
+                  Detected {orphanPreview.total_occurrences} pre-scheduled visits from
+                  the Schedule page that have no matching recurring template. Click
+                  &ldquo;Backfill now&rdquo; to add them here — existing entries won&rsquo;t be touched.
+                </div>
+              </>
+            ) : null}
+            {purgePreview && purgePreview.count > 0 ? (
+              <div
+                className={orphanPreview && orphanPreview.orphan_count > 0 ? "mt-2" : ""}
+                data-testid="recurring-jobs-purge-summary"
+              >
+                <div className="font-bold">
+                  {purgePreview.count} orphaned recurring
+                  job{purgePreview.count === 1 ? "" : "s"} with a deleted customer.
+                </div>
+                <div className="mt-0.5 text-xs">
+                  These templates point at a ``customer_id`` that no longer
+                  resolves in this tenant — safe to delete permanently.
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-2 shrink-0">
+            {orphanPreview && orphanPreview.orphan_count > 0 ? (
+              <button
+                type="button"
+                onClick={runBackfill}
+                disabled={orphanBusy}
+                className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md whitespace-nowrap"
+                style={{ background: "#B45309", color: "#FFFFFF", border: 0,
+                          opacity: orphanBusy ? 0.5 : 1 }}
+                data-testid="recurring-jobs-backfill-btn"
+              >
+                {orphanBusy ? "Backfilling…" : "Backfill now"}
+              </button>
+            ) : null}
+            {purgePreview && purgePreview.count > 0 ? (
+              <button
+                type="button"
+                onClick={() => { setPurgeInput(""); setPurgeConfirmOpen(true); }}
+                disabled={purgeBusy}
+                className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md whitespace-nowrap"
+                style={{ background: "#B91C1C", color: "#FFFFFF", border: 0,
+                          opacity: purgeBusy ? 0.5 : 1 }}
+                data-testid="recurring-jobs-purge-btn"
+              >
+                {purgeBusy
+                  ? "Deleting…"
+                  : `Delete all orphans permanently (${purgePreview.count})`}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase P14 · Feb-2026 · Item 2 — purge confirm dialog.
+          Requires the operator to type ``DELETE`` verbatim. Same
+          shadcn ``Dialog`` primitive the rest of the page's
+          destructive flows use, kept intentionally minimal so it
+          fits inside the existing dialog stack without z-index
+          fights. */}
+      {purgeConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          data-testid="recurring-jobs-purge-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-5 space-y-3"
+            style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+          >
+            <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+              Delete orphaned recurring jobs?
+            </h2>
+            <p className="text-sm" style={{ color: colors.muted }}>
+              This will permanently delete{" "}
+              <b>{purgePreview?.count || 0}</b>{" "}
+              orphaned recurring job{(purgePreview?.count || 0) === 1 ? "" : "s"}.
+              This cannot be undone.
+            </p>
+            <label className="text-xs font-semibold block" style={{ color: colors.muted }}>
+              Type DELETE to confirm
+              <input
+                type="text"
+                value={purgeInput}
+                onChange={(e) => setPurgeInput(e.target.value)}
+                className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  background: colors.surface,
+                  color: colors.onSurface,
+                }}
+                data-testid="recurring-jobs-purge-input"
+                autoFocus
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setPurgeConfirmOpen(false); setPurgeInput(""); }}
+                disabled={purgeBusy}
+                className="px-3 py-1.5 rounded-md text-sm"
+                style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
+                data-testid="recurring-jobs-purge-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={runPurgeOrphans}
+                disabled={purgeBusy || (purgeInput || "").trim() !== "DELETE"}
+                className="px-3 py-1.5 rounded-md text-sm font-bold"
+                style={{
+                  background: "#B91C1C", color: "#FFFFFF", border: 0,
+                  opacity: (purgeBusy || (purgeInput || "").trim() !== "DELETE") ? 0.5 : 1,
+                }}
+                data-testid="recurring-jobs-purge-commit"
+              >
+                {purgeBusy ? "Deleting…" : "Delete permanently"}
+              </button>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={runBackfill}
-            disabled={orphanBusy}
-            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md whitespace-nowrap"
-            style={{ background: "#B45309", color: "#FFFFFF", border: 0,
-                      opacity: orphanBusy ? 0.5 : 1 }}
-            data-testid="recurring-jobs-backfill-btn"
-          >
-            {orphanBusy ? "Backfilling…" : "Backfill now"}
-          </button>
         </div>
       ) : null}
 

@@ -1,7 +1,7 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request, BackgroundTasks
-from pydantic import BaseModel, ConfigDict
-from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 import re
 
@@ -112,6 +112,27 @@ class JobListItem(BaseModel):
     last_activity_at: Optional[str] = None
     service_report_submitted_at: Optional[str] = None
     chemicals_added: Optional[List[Any]] = None
+
+    # Phase P14 · Feb-2026 · Item 1 — address serialization safety
+    # net. If a stored value slipped past the write-side gate + the
+    # ``_coerce_job_address_for_read`` mutation (e.g. a bare-dict
+    # value coming through a code path that doesn't call the
+    # mutator), coerce here at pydantic serialization time so the
+    # model NEVER emits a non-string address field.
+    # ``mode="before"`` runs BEFORE type-validation, so a dict input
+    # is normalised to a string before pydantic complains about it.
+    @field_validator(
+        "address", "property_address",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_address_fields(cls, v):
+        if v is None or isinstance(v, str):
+            return v
+        # Late-bound import to avoid a self-referential import at
+        # module load time; the coercer lives further down the
+        # same file.
+        return _coerce_address_to_str(v)
 
 
 def _timer_seconds(start_iso: str, stop_iso: str) -> int:
@@ -569,6 +590,72 @@ def _stringify_property_address(prop: Dict[str, Any]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Phase P14 · Feb-2026 · Item 1 — Address-string coercion helper.
+# ─────────────────────────────────────────────────────────────────
+#
+# Root-cause helper for the "``address`` shipped as a dict crashes
+# GET /api/jobs" symptom. Never raises. Returns ``""`` on any
+# unknown / falsy input.
+#
+#   * ``None`` / non-string / non-dict           → ``""``
+#   * ``str``                                    → stripped as-is
+#   * ``dict`` with ``formatted`` / ``full`` /
+#     ``line1`` (having a comma)                 → prefer that
+#   * otherwise concat ``street``/``line1``,
+#     ``city``, ``state`` ``zip`` in that order  → comma-joined
+#
+# Deliberately NOT a general-purpose formatter — i18n / non-US
+# postal shapes / country codes are not handled. Extending the
+# concat order is the only thing that should ever change here.
+def _coerce_address_to_str(value: Any) -> str:
+    """Coerce any address-shaped value to a display string."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+
+    def _prefer(keys):
+        for k in keys:
+            v = value.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+
+    preformatted = _prefer(("formatted", "full", "line1"))
+    if preformatted and "," in preformatted:
+        return preformatted
+
+    street = preformatted or _prefer(
+        ("street", "line1", "address", "address1", "line_1")
+    )
+    city   = _prefer(("city", "town", "municipality", "locality"))
+    state  = _prefer(("state", "province", "region", "state_code"))
+    zip_   = _prefer(("zip", "postal_code", "postcode", "zipcode", "zip_code"))
+
+    parts: List[str] = []
+    if street: parts.append(street)
+    if city:   parts.append(city)
+    state_zip = " ".join(x for x in (state, zip_) if x).strip()
+    if state_zip: parts.append(state_zip)
+    joined = ", ".join(parts)
+    return " ".join(joined.split()).strip()
+
+
+# Address-shaped fields on the read wire — every one gets coerced
+# to a string per ``_coerce_address_to_str``. ``property_address``
+# and ``address`` are typed on ``JobListItem``; the rest are
+# ``extra="allow"`` passthroughs (still coerced defensively).
+_ADDRESS_SHAPED_FIELDS: Tuple[str, ...] = (
+    "address",
+    "property_address",
+    "service_address",
+    "billing_address",
+)
+
+
+# ─────────────────────────────────────────────────────────────────
 # Phase P2 · Feb-2026 — read-path safety net for legacy dict
 # ``jobs.address`` values.
 # ─────────────────────────────────────────────────────────────────
@@ -584,38 +671,40 @@ def _stringify_property_address(prop: Dict[str, Any]) -> str:
 # Fix: coerce on the way OUT to the client only.  Never write back
 # to Mongo from a read path (Step A of the P0 triage handled the
 # one bad doc surgically; ongoing writes are already covered by
-# P1).  Reuses ``_stringify_property_address`` — the exact same
-# helper the write path uses, so we don't drift between the two.
+# P1).
 #
-# A WARN is logged at most once per (request, job_id) tuple so
-# operators can find and repair any remaining latent bad docs
+# Phase P14 · Feb-2026 — the coercion now runs through
+# ``_coerce_address_to_str`` (above) so all address-shaped fields
+# — ``address``, ``property_address``, ``service_address``,
+# ``billing_address`` — share the same output contract.
+#
+# A WARN is logged at most once per (request, job_id, field) tuple
+# so operators can find and repair any remaining latent bad docs
 # without spamming the log on a large schedule fetch.
 def _coerce_job_address_for_read(
     doc: Dict[str, Any],
     tenant_id: str,
     warned_ids: set,
 ) -> None:
-    """Mutates ``doc["address"]`` in-place so it is guaranteed to
-    be a string on the wire.  No-op when it already is."""
+    """Mutates every address-shaped field on ``doc`` so it is
+    guaranteed to be a string on the wire.  No-op when they
+    already are."""
     if doc is None:
         return
-    raw = doc.get("address")
-    if isinstance(raw, str):
-        return
-    # ``None`` on ``jobs.address`` is legal upstream (schedule read
-    # coerces to empty for display).  Coerce to empty string here so
-    # the frontend never has to handle a null-vs-empty branch.
-    coerced = _stringify_property_address({"address": raw}) if raw is not None else ""
-    doc["address"] = coerced or ""
-    # Only WARN once per job id per request.
-    jid = doc.get("id")
-    if jid and jid not in warned_ids:
-        warned_ids.add(jid)
-        logger.warning(
-            "jobs.read.address_coerced job_id=%s tenant_id=%s "
-            "offending_type=%s",
-            jid, tenant_id, type(raw).__name__,
-        )
+    for field in _ADDRESS_SHAPED_FIELDS:
+        raw = doc.get(field)
+        if raw is None or isinstance(raw, str):
+            continue
+        doc[field] = _coerce_address_to_str(raw)
+        jid = doc.get("id")
+        _wid = f"{jid}::{field}" if jid else None
+        if _wid and _wid not in warned_ids:
+            warned_ids.add(_wid)
+            logger.warning(
+                "jobs.read.address_coerced job_id=%s tenant_id=%s "
+                "field=%s offending_type=%s",
+                jid, tenant_id, field, type(raw).__name__,
+            )
 
 
 async def _resolve_property_for_job(

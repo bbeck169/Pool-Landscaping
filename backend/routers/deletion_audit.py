@@ -89,9 +89,11 @@ async def write_deletion_audit_entry(
     into the audit doc so downstream analytics (the super-admin
     deletion viewer, forensic reconstruction) can filter.
     """
-    if resource_type not in ("invoice", "payment", "customer", "lead"):
+    if resource_type not in ("invoice", "payment", "customer", "lead",
+                              "recurring_job"):
         raise ValueError(
-            f"resource_type must be invoice|payment|customer|lead, got {resource_type!r}"
+            f"resource_type must be invoice|payment|customer|lead|"
+            f"recurring_job, got {resource_type!r}"
         )
     doc = {
         "id": new_id(),

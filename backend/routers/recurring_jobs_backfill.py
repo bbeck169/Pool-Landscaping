@@ -441,3 +441,170 @@ async def backfill_orphans(
         "skipped_existing": skipped_existing,
         "orphan_count_scanned": len(orphans),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase P14 · Feb-2026 · Item 2 — Recurring-jobs orphan PURGE.
+# ═══════════════════════════════════════════════════════════════════
+#
+# Distinct from the backfill endpoints above (which mint templates
+# for legacy pre-K4 clusters). This class of orphan is a
+# ``recurring_job_templates`` row whose ``customer_id`` no longer
+# resolves to an existing customer within the tenant — the
+# customer was hard-deleted but the template lingered, so the
+# Recurring Visits page renders a ghost row that clicks through
+# to a 404 detail page.
+#
+# ``GET  /api/recurring-jobs/purge-orphans-preview``
+#     Dry-run scan. Returns ``{ count, ids }`` so the operator can
+#     eyeball the size before firing the purge.
+#
+# ``POST /api/recurring-jobs/purge-orphans``
+#     Hard-deletes every row surfaced by the preview scan AND
+#     writes a ``deletion_audit`` snapshot for each. Idempotent —
+#     re-running when nothing is orphaned returns
+#     ``{ deleted_count: 0, purged_ids: [] }``.
+#
+# Both endpoints require ``admin`` — same guard the destructive
+# ``bulk-hard-delete`` endpoints use across the codebase. Manager
+# is intentionally NOT allowed to purge; it's a one-way delete.
+async def _scan_purge_orphans(tenant_id: str) -> List[Dict[str, Any]]:
+    """Return every ``recurring_job_templates`` row whose
+    ``customer_id`` doesn't resolve to a live customer in the
+    tenant. Reads only — no writes. Uses ``tenant_scoped_filter``
+    so the tenant scope and the soft-delete gate never collide.
+    """
+    from services.query_scope import tenant_scoped_filter as _tsf
+    # 1) Pull every non-deleted template for the tenant. No
+    #    ``$or`` disjunction needed here — the soft-delete gate
+    #    is the only one — but running through ``_tsf`` keeps
+    #    the shape consistent with the P10/P12 posture (never
+    #    dict-spread ``$or``).
+    q = _tsf(tenant_id)
+    templates = await db.recurring_job_templates.find(
+        q, {"_id": 0}
+    ).to_list(length=5000)
+    if not templates:
+        return []
+
+    # 2) Deduplicate the customer ids we need to check, then batch
+    #    the ``customers.find`` call to a single query.
+    ref_ids = {
+        str(t.get("customer_id")) for t in templates if t.get("customer_id")
+    }
+    if not ref_ids:
+        # No customer refs at all — every row is an orphan by
+        # definition (dangling template with no owner).
+        return list(templates)
+
+    live_q = _tsf(tenant_id, id={"$in": list(ref_ids)})
+    live_ids: set = set()
+    async for row in db.customers.find(live_q, {"_id": 0, "id": 1}):
+        cid = row.get("id")
+        if cid: live_ids.add(cid)
+
+    # 3) Rows whose ``customer_id`` is missing OR unresolved →
+    #    orphans. Missing ``customer_id`` (rare but possible via a
+    #    legacy write path) is always orphan.
+    orphans: List[Dict[str, Any]] = []
+    for t in templates:
+        cid = t.get("customer_id")
+        if not cid or cid not in live_ids:
+            orphans.append(t)
+    return orphans
+
+
+from pydantic import BaseModel as _P14BM
+
+
+class _PurgeOrphansConfirm(_P14BM):
+    """Tiny gate payload so an accidental POST can't fire.
+    Frontend types ``DELETE`` in the confirm dialog and we mirror
+    that exact string here."""
+    confirm: str
+
+
+@router.get("/recurring-jobs/purge-orphans-preview")
+async def purge_orphans_preview(
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Dry-run — returns ``{count, ids}`` for the yellow-banner
+    button copy. Read-only. Admin OR manager can preview; only
+    admin can commit."""
+    orphans = await _scan_purge_orphans(tenant["id"])
+    return {
+        "count": len(orphans),
+        "ids": [o.get("id") for o in orphans if o.get("id")],
+    }
+
+
+@router.post("/recurring-jobs/purge-orphans")
+async def purge_orphans(
+    body: _PurgeOrphansConfirm,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Hard-delete every template whose ``customer_id`` doesn't
+    resolve to a live customer in the tenant. Writes an audit
+    snapshot per row. Admin-only — the ``require_admin_or_manager``
+    guard admits both but we secondary-check for ``admin`` here so
+    manager callers get a clean 403 instead of a silent partial-
+    ability surface.
+    """
+    if (user.get("role") or "").lower() not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail={
+            "code": "admin_required",
+            "message": "Only admins can purge orphaned recurring jobs.",
+        })
+    if (body.confirm or "").strip() != "DELETE":
+        raise HTTPException(status_code=422, detail={
+            "code": "confirm_required",
+            "message": "Type DELETE in the confirm dialog to proceed.",
+        })
+
+    orphans = await _scan_purge_orphans(tenant["id"])
+    if not orphans:
+        return {"deleted_count": 0, "purged_ids": []}
+
+    # Write audit rows FIRST — never delete without an audit
+    # snapshot. Batch under a single ``bulk_op_id`` so a forensic
+    # query can pull the whole group.
+    from routers.deletion_audit import write_deletion_audit_entry
+    bulk_op_id = new_id()
+    purged_ids: List[str] = []
+    for tpl in orphans:
+        tid = tpl.get("id")
+        if not tid:
+            continue
+        try:
+            await write_deletion_audit_entry(
+                tenant_id=tenant["id"],
+                resource_type="recurring_job",
+                resource_id=tid,
+                user=user,
+                snapshot=tpl,
+                deletion_reason="purge_orphaned_customer_ref",
+                bulk_op_id=bulk_op_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[recurring_jobs.purge] audit write failed for %s: %s",
+                tid, exc,
+            )
+        try:
+            r = await db.recurring_job_templates.delete_one(
+                {"id": tid, "tenant_id": tenant["id"]},
+            )
+            if getattr(r, "deleted_count", 0):
+                purged_ids.append(tid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[recurring_jobs.purge] delete failed for %s: %s",
+                tid, exc,
+            )
+    return {
+        "deleted_count": len(purged_ids),
+        "purged_ids": purged_ids,
+        "bulk_op_id": bulk_op_id,
+    }

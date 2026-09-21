@@ -654,8 +654,27 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
             try:
                 import resend  # type: ignore
                 resend.api_key = resend_key
+                # Phase P14 · Feb-2026 · Item 3 — include the tenant's
+                # company name in the ``From`` display name so a
+                # recipient's inbox shows "Aquaterra Pool Service
+                # <onboarding@resend.dev>" instead of the bare
+                # address. Resend accepts the RFC 5322 ``Display Name
+                # <address>`` shape natively. Any character that
+                # would break the header (``,`` / ``;`` / ``<`` / ``"``
+                # / control chars) is stripped BEFORE the concat so
+                # a tenant with a funky name can't spoof extra
+                # headers.
+                _bare_from = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
+                _company = tenant.get("name") or "Pool & Landscaping"
+                _safe_name = "".join(
+                    ch for ch in _company
+                    if ch not in "<>,;\"\r\n" and ord(ch) >= 0x20
+                ).strip()
+                _from_header = (
+                    f"{_safe_name} <{_bare_from}>" if _safe_name else _bare_from
+                )
                 resp = resend.Emails.send({
-                    "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
+                    "from": _from_header,
                     "to": [to_email],
                     "subject": rendered["subject"],
                     "html": rendered["html"],
