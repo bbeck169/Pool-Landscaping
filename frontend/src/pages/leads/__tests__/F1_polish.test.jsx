@@ -164,3 +164,135 @@ describe("LeadsDashboardPage · F1.3 DELETE-text gate", () => {
       .not.toBeDisabled();
   });
 });
+
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase P6 · Feb-2026 — grouped-skip toast on the new response
+// shape.  The endpoint returns
+// ``{requested, deleted, skipped:[{lead_id, code}], bulk_op_id}``
+// and the UI groups the skip codes into a single human-readable
+// description line — e.g.
+// ``"12 skipped · 8 converted, 3 open tasks, 1 not accessible"``.
+// ═══════════════════════════════════════════════════════════════════
+describe("LeadsDashboardPage · P6 grouped-skip toast", () => {
+  // Preserve the ``toast`` mock reference outside beforeEach so the
+  // ``toast(primary, {description})`` call is easy to assert on.
+  let toastMock;
+  beforeEach(async () => {
+    const sonner = await import("sonner");
+    toastMock = sonner.toast;
+    // Reset the exported callable + its ``success``/``error`` sub-
+    // spies so each test observes a clean call list.
+    if (toastMock && typeof toastMock.mockReset === "function") {
+      toastMock.mockReset();
+    }
+    if (toastMock?.success?.mockReset) toastMock.success.mockReset();
+    if (toastMock?.error?.mockReset)   toastMock.error.mockReset();
+  });
+
+  it("groups every skip code into a single description line", async () => {
+    // 25 selected (needed to exercise the DELETE-text gate path
+    // consistent w/ the F1.3 test above).  Server response:
+    // 13 deleted / 12 skipped (8 converted + 3 open + 1 not-found).
+    getMock.mockResolvedValue({ rows: _mkLeads(25) });
+    postMock.mockResolvedValueOnce({
+      requested: 25,
+      deleted: 13,
+      skipped: [
+        // 8 × converted_lock
+        ...Array.from({ length: 8 }, (_, i) => ({
+          lead_id: `l${i + 13}`, code: "converted_lock",
+        })),
+        // 3 × open_tasks_lock
+        ...Array.from({ length: 3 }, (_, i) => ({
+          lead_id: `l${i + 21}`, code: "open_tasks_lock",
+        })),
+        // 1 × not_found_or_cross_tenant
+        { lead_id: "l24", code: "not_found_or_cross_tenant" },
+      ],
+      bulk_op_id: "test-bulk-op-id",
+    });
+    _renderLeads();
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-select-all")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-select-all"));
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-hard-delete-text-gate"))
+        .toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-ack"));
+    fireEvent.change(screen.getByTestId("bulk-hard-delete-text-input"),
+                       { target: { value: "DELETE" } });
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-confirm-btn"));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/leads/bulk-hard-delete",
+        expect.objectContaining({ lead_ids: expect.any(Array) }),
+      ));
+
+    // Toast was called with (primary, { description: grouped }).
+    await waitFor(() => expect(toastMock).toHaveBeenCalled());
+    const args = toastMock.mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].startsWith("Deleted "),
+    );
+    expect(args).toBeTruthy();
+    expect(args[0]).toBe("Deleted 13 of 25 leads");
+    expect(args[1].description).toBe(
+      "12 skipped · 8 converted, 3 open tasks, 1 not accessible",
+    );
+  });
+
+  it("plain success toast (no description) when nothing was skipped", async () => {
+    getMock.mockResolvedValue({ rows: _mkLeads(3) });
+    postMock.mockResolvedValueOnce({
+      requested: 3, deleted: 3, skipped: [],
+      bulk_op_id: "test-bulk-op-id-2",
+    });
+    _renderLeads();
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-select-all")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-select-all"));
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-hard-delete-confirm"))
+        .toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-ack"));
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-confirm-btn"));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toastMock.success).toHaveBeenCalledWith("Deleted 3 leads"),
+    );
+  });
+
+  it("surfaces the 422 bulk_cap_exceeded targeted toast", async () => {
+    getMock.mockResolvedValue({ rows: _mkLeads(25) });
+    postMock.mockRejectedValueOnce(Object.assign(new Error("Unprocessable"), {
+      status: 422,
+      body: {
+        detail: {
+          code: "bulk_cap_exceeded", cap: 100, attempted: 250,
+        },
+      },
+    }));
+    _renderLeads();
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-select-all")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-select-all"));
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("bulk-hard-delete-text-gate"))
+        .toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-ack"));
+    fireEvent.change(screen.getByTestId("bulk-hard-delete-text-input"),
+                       { target: { value: "DELETE" } });
+    fireEvent.click(screen.getByTestId("bulk-hard-delete-confirm-btn"));
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "You can delete at most 100 leads at once.",
+      ),
+    );
+  });
+});

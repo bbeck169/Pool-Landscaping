@@ -177,10 +177,53 @@ export default function LeadsDashboardPage() {
     } finally { setBusy(false); }
   };
 
-  // Phase LD1 · Feb 2026 — bulk HARD delete (irreversible).
-  // Uses the dedicated `/leads/bulk-hard-delete` endpoint so the
-  // soft-delete path stays untouched. Response shape is
-  // ``{ results:[{id, ok, reason?, status_code?}], summary }``.
+  // Phase P6 · Feb-2026 — bulk HARD delete (irreversible).
+  //
+  // Endpoint: ``POST /api/leads/bulk-hard-delete``. Response shape
+  // (Option B reconciled — see backend/routers/leads.py):
+  //
+  //   { requested, deleted, skipped:[{lead_id, code}], bulk_op_id }
+  //
+  // Skip codes on the wire are the whitelist:
+  //   * ``not_found_or_cross_tenant`` — collapses 404 + cross-
+  //     tenant + internal infra failures into one ambiguous code
+  //     so the response can't be used to enumerate cross-tenant
+  //     existence.
+  //   * ``converted_lock``  — Closed-Won w/ linked customer/job/quote.
+  //   * ``open_tasks_lock`` — non-empty open_task_ids.
+  //
+  // If ``skipped[]`` is non-empty we group the codes and surface a
+  // secondary toast like:
+  //   "12 skipped · 8 converted, 3 open tasks, 1 not accessible"
+  //
+  // 422 responses are surfaced through the axios/error wrapper's
+  // ``err.body`` / ``err.response.data`` shape.  ``bulk_cap_exceeded``
+  // (paranoia — the button is disabled at N > 100) gets its own
+  // targeted toast so ops know why it bounced.
+  const _p6_skipCopy = (code) => (
+    code === "converted_lock"    ? "converted"
+    : code === "open_tasks_lock" ? "open tasks"
+    : /* not_found_or_cross_tenant + defensive default */ "not accessible"
+  );
+
+  const _p6_groupedSkipDescription = (skipped) => {
+    if (!Array.isArray(skipped) || skipped.length === 0) return "";
+    const counts = { converted_lock: 0, open_tasks_lock: 0,
+                       not_found_or_cross_tenant: 0 };
+    for (const s of skipped) {
+      const c = s && s.code;
+      counts[c] = (counts[c] || 0) + 1;
+    }
+    // Preserve a stable, human-readable order: converted → open
+    // tasks → not accessible.  Zero-count buckets are dropped.
+    const order = ["converted_lock", "open_tasks_lock",
+                    "not_found_or_cross_tenant"];
+    return order
+      .filter((c) => counts[c] > 0)
+      .map((c) => `${counts[c]} ${_p6_skipCopy(c)}`)
+      .join(", ");
+  };
+
   const doBulkHardDelete = async () => {
     if (!hardAcknowledged) return;
     // F1.3 · Feb-2026 — DELETE-text gate for large batches.
@@ -190,25 +233,51 @@ export default function LeadsDashboardPage() {
       const res = await api.post("/leads/bulk-hard-delete", {
         lead_ids: Array.from(selectedIds),
       });
-      const results = res.results || [];
-      const ok = res.summary?.succeeded ?? 0;
-      const failCount = res.summary?.failed ?? 0;
-      const okIds = results.filter((r) => r.ok).map((r) => r.id);
-      setRows((prev) => prev.filter((r) => !okIds.includes(r.id)));
+      const requested = res.requested ?? 0;
+      const deleted   = res.deleted   ?? 0;
+      const skipped   = Array.isArray(res.skipped) ? res.skipped : [];
+
+      // Optimistic row purge — only the ids the server confirms
+      // it deleted.  Anything in ``skipped[]`` stays in the list
+      // so the user sees WHY the safety lock fired.
+      const skippedIdSet = new Set(skipped.map((s) => s.lead_id));
+      const requestedIds = Array.from(selectedIds);
+      const deletedIds = requestedIds.filter(
+        (id) => !skippedIdSet.has(id),
+      );
+      setRows((prev) => prev.filter((r) => !deletedIds.includes(r.id)));
       clearSelection();
       setHardConfirmOpen(false);
       setHardAcknowledged(false);
       setHardDeleteText("");
-      if (failCount === 0) toast.success(`${ok} lead${ok === 1 ? "" : "s"} permanently deleted`);
-      else toast(`${ok} deleted · ${failCount} locked`, {
-        description: results
-          .filter((r) => !r.ok)
-          .slice(0, 3)
-          .map((f) => f.reason)
-          .join(" · "),
-      });
+
+      // Primary toast — matches the P6 brief's success wording.
+      const primary = deleted === requested
+        ? `Deleted ${deleted} lead${deleted === 1 ? "" : "s"}`
+        : `Deleted ${deleted} of ${requested} leads`;
+      // Grouped skip toast (secondary line under the primary).
+      const description = skipped.length > 0
+        ? `${skipped.length} skipped · ${_p6_groupedSkipDescription(skipped)}`
+        : undefined;
+      if (skipped.length === 0) {
+        toast.success(primary);
+      } else {
+        toast(primary, { description });
+      }
     } catch (e) {
-      toast.error(e?.message || "Bulk hard delete failed");
+      // Surface the P6 422 codes distinctly so the user sees WHY
+      // the request bounced.  The axios/api wrapper stashes the
+      // response body on ``e.body`` (or ``.response.data``).
+      const raw = (e && (e.body || e.response?.data)) || {};
+      const detail = raw.detail || raw;
+      const status = e && (e.status || e.response?.status);
+      if (status === 422 && detail && detail.code === "bulk_cap_exceeded") {
+        toast.error("You can delete at most 100 leads at once.");
+      } else if (status === 403) {
+        toast.error("You do not have permission.");
+      } else {
+        toast.error("Bulk delete failed. Nothing was deleted.");
+      }
     } finally { setBusy(false); }
   };
 

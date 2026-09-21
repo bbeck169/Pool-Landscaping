@@ -873,154 +873,6 @@ async def delete_lead(lid: str,
 
 
 # ═════════════════════════════════════════════════════════════════════════
-# Phase P6 · Feb-2026 · Leads · Bulk Hard Delete on Selection Bar
-# ═════════════════════════════════════════════════════════════════════════
-#
-# ``POST /api/leads/bulk-hard-delete``
-#
-# Permanently deletes up to 100 leads in one call, snapshotted 1:1 into
-# ``deletion_audit`` (resource_type="lead") with a shared ``bulk_op_id``
-# so the whole batch is queryable as a group.  Reuses:
-#   * ``require_admin`` — same gate the single-row DELETE uses;
-#     both ``admin`` and ``super_admin`` pass.
-#   * ``write_deletion_audit_entry`` — canonical hard-delete snapshot
-#     helper.  Extended to accept ``resource_type="lead"`` in P6.
-#
-# Per-id loop (NOT ``delete_many``) so:
-#   1. Every delete has a paired snapshot row on the same
-#      ``bulk_op_id`` — 1:1 forensic reconstruction.
-#   2. Partial failures don't take down the batch.
-#   3. Cross-tenant / already-deleted ids surface in ``skipped``
-#      with a single ambiguous code so a caller can never
-#      enumerate cross-tenant existence.
-# ═════════════════════════════════════════════════════════════════════════
-from uuid import uuid4 as _p6_uuid4
-
-
-class _LeadBulkHardDeleteIn(_LeadBulkBase):
-    lead_ids: List[str]
-    deletion_reason: Optional[str] = None
-
-
-_LEAD_BULK_HARD_DELETE_CAP = 100
-
-
-@router.post("/leads/bulk-hard-delete")
-async def bulk_hard_delete_leads(
-    body: _LeadBulkHardDeleteIn,
-    user: dict = Depends(require_admin),
-    tenant: dict = Depends(get_current_tenant),
-):
-    from routers.deletion_audit import write_deletion_audit_entry
-
-    ids = list(body.lead_ids or [])
-    if not ids:
-        raise HTTPException(422, {"code": "empty_ids",
-                                    "message": "lead_ids is required"})
-    if len(ids) > _LEAD_BULK_HARD_DELETE_CAP:
-        raise HTTPException(
-            422,
-            {"code": "bulk_cap_exceeded",
-              "message": f"lead_ids cap is {_LEAD_BULK_HARD_DELETE_CAP}",
-              "attempted": len(ids), "cap": _LEAD_BULK_HARD_DELETE_CAP},
-        )
-
-    bulk_op_id = str(_p6_uuid4())
-    deleted = 0
-    skipped: List[Dict[str, str]] = []
-
-    # De-dupe while preserving order so a caller that accidentally
-    # passes the same id twice doesn't double-audit or hit the
-    # unique-id counter twice.
-    seen: set = set()
-    for lid in ids:
-        if lid in seen:
-            continue
-        seen.add(lid)
-
-        # Tenant-scoped fetch — the same ``{id, tenant_id}`` shape
-        # every other write on this router uses.  Never widen this
-        # filter.
-        lead = await db.leads.find_one(
-            {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
-        )
-        if not lead:
-            # Ambiguous code — "not found in this tenant" AND
-            # "exists in another tenant" collapse to the same
-            # response.  Never distinguish them.
-            skipped.append(
-                {"lead_id": lid, "code": "not_found_or_cross_tenant"},
-            )
-            continue
-
-        # 1) Audit snapshot FIRST — if this fails we do NOT delete.
-        audit_id = await write_deletion_audit_entry(
-            tenant_id=tenant["id"],
-            resource_type="lead",
-            resource_id=lid,
-            user=user,
-            snapshot=lead,
-            cascade_deleted_ids=[],
-            deletion_reason=body.deletion_reason,
-            bulk_op_id=bulk_op_id,
-        )
-        if not audit_id:
-            # Helper logged the reason; skip this row so the delete
-            # doesn't happen without an audit row.  Distinct code
-            # so ops can grep — never leaks cross-tenant existence.
-            skipped.append(
-                {"lead_id": lid, "code": "audit_write_failed"},
-            )
-            continue
-
-        # 2) Delete SECOND.  Same tenant scope as the fetch above.
-        try:
-            res = await db.leads.delete_one(
-                {"id": lid, "tenant_id": tenant["id"]},
-            )
-        except Exception as exc:                      # noqa: BLE001
-            # Best-effort audit rollback so a stray audit doesn't
-            # imply a delete that never happened.
-            try:
-                await db.deletion_audit.delete_one({"id": audit_id})
-            except Exception as rb_exc:                # noqa: BLE001
-                logger.error(
-                    "bulk_hard_delete_leads: audit rollback failed "
-                    "audit_id=%s lead_id=%s: %s",
-                    audit_id, lid, rb_exc,
-                )
-            skipped.append(
-                {"lead_id": lid, "code": "delete_failed"},
-            )
-            continue
-
-        if res.deleted_count:
-            deleted += 1
-        else:
-            # Race — the lead was already gone between our
-            # ``find_one`` and ``delete_one``.  Roll back the audit
-            # row we just wrote so we don't imply a delete that
-            # didn't happen.
-            try:
-                await db.deletion_audit.delete_one({"id": audit_id})
-            except Exception as rb_exc:                # noqa: BLE001
-                logger.error(
-                    "bulk_hard_delete_leads: audit rollback (race) "
-                    "failed audit_id=%s lead_id=%s: %s",
-                    audit_id, lid, rb_exc,
-                )
-            skipped.append(
-                {"lead_id": lid, "code": "not_found_or_cross_tenant"},
-            )
-
-    return {
-        "requested": len(ids),
-        "deleted": deleted,
-        "skipped": skipped,
-        "bulk_op_id": bulk_op_id,
-    }
-
-# ═════════════════════════════════════════════════════════════════════════
 # Phase 34 · Task BB · Feb 2026 — Leads bulk-select soft-delete.
 # Mirrors the shared pattern in routers/quotes.py + routers/estimates.py.
 # Guardrails:
@@ -1162,51 +1014,145 @@ async def bulk_delete_leads(body: _LeadBulkDeleteIn,
 class _LeadBulkHardDeleteIn(_LeadBulkBase):
     """Phase LD1 · new distinct payload shape (``lead_ids``) so the
     endpoint contract can't be confused with the soft-delete's
-    ``ids`` selector shape."""
-    lead_ids: List[str]
+    ``ids`` selector shape.
 
-
-async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, Any]:
-    """Phase LD1 · single-row hard delete with converted-lead guard.
-
-    Returns a per-row result dict (``{id, ok, reason?, status_code?}``)
-    so the bulk caller can build a partial-failure response without
-    juggling exception types.
-
-    Phase L1.6 · Feb-2026 — enhanced audit trail.  Before we
-    delete, we read the FULL lead doc for snapshot; on success the
-    snapshot is persisted on the ``audit_log`` entry so manual
-    recovery is possible for at least ``LEAD_HARD_DELETE_TTL_DAYS``.
+    Phase P6 · Feb-2026 — additional optional ``deletion_reason``
+    passed through to the ``deletion_audit`` snapshot so admins
+    can annotate WHY a batch was purged.  Legacy callers may omit
+    it.
     """
-    # Fetch the FULL doc first so we can snapshot it into the audit
-    # trail.  Cheap — one indexed read per lead.
+    lead_ids: List[str]
+    deletion_reason: Optional[str] = None
+
+
+# Phase P6 · Feb-2026 — bulk-hard-delete cap tightened from the
+# soft-delete's 400 down to 100. The pair is intentionally
+# asymmetric: a permanent purge deserves a smaller blast radius
+# per call.
+_LEAD_BULK_HARD_DELETE_CAP = 100
+
+
+async def _hard_delete_lead(
+    lid: str, actor: dict, tenant_id: str,
+    bulk_op_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Single-row hard delete with converted-lead / open-tasks
+    guardrails, tenant-scoped, audit-first, delete-second.
+
+    Phase P6 · Feb-2026 — response shape aligned to the bulk
+    endpoint's ``skipped[]`` codes so partial-failure batches can
+    build their response without translating strings.  Also
+    switched from the legacy ``audit_log`` collection to the
+    canonical ``deletion_audit`` collection via
+    ``write_deletion_audit_entry`` — same one the invoice /
+    payment / customer hard-deletes use — so every hard-delete
+    in the app funnels through one audit pipeline.  The legacy
+    ``audit_log`` write is kept as a best-effort side channel so
+    downstream analytics jobs that read from it don't silently
+    lose the "lead.hard_delete" action.
+
+    Returns exactly ONE of these two shapes:
+      * ``{"lead_id", "ok": True, "deleted_at", "audit_id"}``
+      * ``{"lead_id", "ok": False, "code": <c>}`` where ``<c>``
+        is one of the P6 whitelist:
+          - ``"not_found_or_cross_tenant"``  (also swallows
+            audit-write / delete-race internal failures — the
+            server-side ``logger.error`` keeps them observable
+            without leaking the failure mode to the caller).
+          - ``"converted_lock"``
+          - ``"open_tasks_lock"``
+
+    Never raises; always returns a dict.
+    """
+    from routers.deletion_audit import write_deletion_audit_entry
+
+    # ── Step 1: tenant + not-found check.
     full_doc = await db.leads.find_one(
         {"id": lid, "tenant_id": tenant_id}, {"_id": 0},
     )
     if not full_doc:
-        return {"id": lid, "ok": False,
-                 "reason": "Lead not found", "status_code": 404}
-    doc = full_doc
-    if (doc.get("converted_customer_id")
-        or doc.get("converted_job_id")
-        or doc.get("converted_quote_id")
-        or (doc.get("status") or "").lower() == "closed_won"):
-        return {"id": lid, "ok": False,
-                 "reason": "Closed–Won leads with linked jobs/customers cannot be hard-deleted",
-                 "status_code": 409}
-    open_tasks = doc.get("open_task_ids") or []
+        return {"lead_id": lid, "ok": False,
+                 "code": "not_found_or_cross_tenant"}
+
+    # ── Step 2: converted-lock (Closed-Won w/ downstream state).
+    if (full_doc.get("converted_customer_id")
+        or full_doc.get("converted_job_id")
+        or full_doc.get("converted_quote_id")
+        or (full_doc.get("status") or "").lower() == "closed_won"):
+        return {"lead_id": lid, "ok": False, "code": "converted_lock"}
+
+    # ── Step 3: open-tasks-lock.
+    open_tasks = full_doc.get("open_task_ids") or []
     if isinstance(open_tasks, list) and open_tasks:
-        return {"id": lid, "ok": False,
-                 "reason": f"Lead has {len(open_tasks)} open follow-up task(s)",
-                 "status_code": 409}
-    deleted_at = now_iso()
-    res = await db.leads.delete_one(
-        {"id": lid, "tenant_id": tenant_id},
+        return {"lead_id": lid, "ok": False,
+                 "code": "open_tasks_lock"}
+
+    # ── Step 4: audit write FIRST (order-of-operations from the
+    #    P6 brief — if this fails we do NOT delete).
+    audit_id = await write_deletion_audit_entry(
+        tenant_id=tenant_id,
+        resource_type="lead",
+        resource_id=lid,
+        user=actor or {},
+        snapshot=full_doc,
+        cascade_deleted_ids=[],
+        bulk_op_id=bulk_op_id,
     )
+    if not audit_id:
+        # Helper already logged the exception.  Block the delete
+        # rather than lose the audit trail.  Surface as the
+        # ambiguous whitelisted code — the failure mode is a
+        # server-side infra problem, not a client-observable
+        # distinction.
+        logger.error(
+            "_hard_delete_lead: audit write failed lead_id=%s "
+            "tenant_id=%s bulk_op_id=%s — treating as "
+            "not_found_or_cross_tenant on the wire",
+            lid, tenant_id, bulk_op_id,
+        )
+        return {"lead_id": lid, "ok": False,
+                 "code": "not_found_or_cross_tenant"}
+
+    # ── Step 5: delete SECOND.
+    deleted_at = now_iso()
+    try:
+        res = await db.leads.delete_one(
+            {"id": lid, "tenant_id": tenant_id},
+        )
+    except Exception as exc:                          # noqa: BLE001
+        # Best-effort rollback of the audit row so a stray audit
+        # doesn't imply a delete that never happened.
+        try:
+            await db.deletion_audit.delete_one({"id": audit_id})
+        except Exception as rb_exc:                    # noqa: BLE001
+            logger.error(
+                "_hard_delete_lead: audit rollback failed "
+                "audit_id=%s lead_id=%s: %s", audit_id, lid, rb_exc,
+            )
+        logger.error(
+            "_hard_delete_lead: delete_one raised lead_id=%s: %s",
+            lid, exc,
+        )
+        return {"lead_id": lid, "ok": False,
+                 "code": "not_found_or_cross_tenant"}
+
     if res.deleted_count == 0:
-        # Rare: doc disappeared between the read and the delete.
-        return {"id": lid, "ok": False,
-                 "reason": "Lead not found", "status_code": 404}
+        # Race — doc disappeared between our find_one and delete_one.
+        # Roll back the audit row so it stays 1:1 with reality.
+        try:
+            await db.deletion_audit.delete_one({"id": audit_id})
+        except Exception as rb_exc:                    # noqa: BLE001
+            logger.error(
+                "_hard_delete_lead: audit rollback (race) failed "
+                "audit_id=%s lead_id=%s: %s", audit_id, lid, rb_exc,
+            )
+        return {"lead_id": lid, "ok": False,
+                 "code": "not_found_or_cross_tenant"}
+
+    # ── Step 6: best-effort side channel to the legacy
+    #    ``audit_log`` collection so pre-existing analytics jobs
+    #    that grep for ``action="lead.hard_delete"`` don't silently
+    #    lose the row.  Never blocks the delete on failure.
     try:
         await db.audit_log.insert_one({
             "id": new_id(),
@@ -1214,19 +1160,18 @@ async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, 
             "actor_user_id": (actor or {}).get("id"),
             "actor_email": (actor or {}).get("email"),
             "action": "lead.hard_delete",
-            # Phase L1.6 · Feb-2026 — extended schema so the same
-            # audit row supports manual recovery.  ``resource_type``
-            # + ``deleted_ids`` + ``snapshot`` keep the shape
-            # consistent with any future bulk-audit read UI.
             "resource_type": "lead",
             "target_id": lid,
             "deleted_ids": [lid],
             "snapshot": [full_doc],
+            "bulk_op_id": bulk_op_id,
             "at": deleted_at,
         })
-    except Exception as e:
-        logger.warning(f"lead.hard_delete audit failed: {e}")
-    return {"id": lid, "ok": True, "deleted_at": deleted_at}
+    except Exception as e:                            # noqa: BLE001
+        logger.warning(f"lead.hard_delete legacy audit failed: {e}")
+
+    return {"lead_id": lid, "ok": True,
+             "deleted_at": deleted_at, "audit_id": audit_id}
 
 
 @router.post("/leads/bulk-hard-delete",
@@ -1234,45 +1179,96 @@ async def _hard_delete_lead(lid: str, actor: dict, tenant_id: str) -> Dict[str, 
 async def bulk_hard_delete_leads(body: _LeadBulkHardDeleteIn,
                                     user: dict = Depends(require_admin),
                                     tenant: dict = Depends(get_current_tenant)):
-    """Phase LD1 · irreversibly remove many leads in one call.
+    """Phase P6 · Feb-2026 — Leads bulk hard delete on the selection bar.
 
     Response shape:
         {
-            "results": [{id, ok, reason?, status_code?, deleted_at?}, ...],
-            "summary": {"succeeded": N, "failed": M, "total": N + M},
+            "requested": <int>,
+            "deleted":   <int>,
+            "skipped":   [{"lead_id": "...",
+                            "code":
+                              "not_found_or_cross_tenant" |
+                              "converted_lock" |
+                              "open_tasks_lock"}, ...],
+            "bulk_op_id": "<uuid4>",
         }
 
-    HTTP 200 is returned even when some rows fail — the caller
-    inspects ``results[]`` to render per-row error toasts. HTTP 400
-    is reserved for empty / oversized payloads. Cap identical to
-    the soft-delete endpoint (``_LEAD_BULK_DELETE_CAP``).
+    Cap: 100 rows per call.  HTTP **422** with
+    ``code=empty_ids`` on an empty list, ``code=bulk_cap_exceeded``
+    on > 100.  Every successful delete pairs 1:1 with a
+    ``deletion_audit`` row stamped with the same ``bulk_op_id`` —
+    the batch is queryable as a group.
+
+    The three skip codes are the ONLY values a caller can see on
+    the wire.  Internal failures (audit-write failed, delete
+    race) fold into ``not_found_or_cross_tenant`` — the
+    server-side ``logger.error`` in ``_hard_delete_lead`` keeps
+    them observable without leaking the failure mode to the
+    caller.
     """
+    from uuid import uuid4 as _p6_uuid4
+
     ids = list(body.lead_ids or [])
     if not ids:
-        raise HTTPException(400, "lead_ids is empty")
-    if len(ids) > _LEAD_BULK_DELETE_CAP:
         raise HTTPException(
-            400,
-            f"bulk-hard-delete capped at {_LEAD_BULK_DELETE_CAP} rows per call",
+            422, {"code": "empty_ids",
+                    "detail": "lead_ids is required"},
         )
-    results: List[Dict[str, Any]] = []
-    succeeded = 0
-    failed = 0
+    if len(ids) > _LEAD_BULK_HARD_DELETE_CAP:
+        raise HTTPException(
+            422,
+            {"code": "bulk_cap_exceeded",
+              "detail": f"lead_ids cap is {_LEAD_BULK_HARD_DELETE_CAP}",
+              "attempted": len(ids),
+              "cap": _LEAD_BULK_HARD_DELETE_CAP},
+        )
+
+    bulk_op_id = str(_p6_uuid4())
+    deleted = 0
+    skipped: List[Dict[str, str]] = []
+
+    # De-dupe while preserving order so an accidental duplicate id
+    # in the payload doesn't produce two audit rows.
+    seen: set = set()
     for lid in ids:
+        if lid in seen:
+            continue
+        seen.add(lid)
+
         try:
-            r = await _hard_delete_lead(lid, user, tenant["id"])
-        except Exception as e:                                # noqa: BLE001
-            r = {"id": lid, "ok": False,
-                  "reason": str(e), "status_code": 500}
-        results.append(r)
+            r = await _hard_delete_lead(
+                lid, user, tenant["id"], bulk_op_id=bulk_op_id,
+            )
+        except Exception as e:                        # noqa: BLE001
+            # ``_hard_delete_lead`` is documented "never raises",
+            # but defense-in-depth: any escape gets folded into the
+            # ambiguous whitelisted code so the batch keeps moving.
+            # The audit-first / delete-second order guarantees no
+            # lead was mutated on this path.
+            logger.error(
+                "bulk_hard_delete_leads: unexpected error lead_id=%s: %s",
+                lid, e,
+            )
+            skipped.append(
+                {"lead_id": lid,
+                  "code": "not_found_or_cross_tenant"},
+            )
+            continue
+
         if r.get("ok"):
-            succeeded += 1
+            deleted += 1
         else:
-            failed += 1
+            skipped.append(
+                {"lead_id": lid,
+                  "code": r.get("code")
+                            or "not_found_or_cross_tenant"},
+            )
+
     return {
-        "results": results,
-        "summary": {"succeeded": succeeded, "failed": failed,
-                     "total": succeeded + failed},
+        "requested": len(ids),
+        "deleted": deleted,
+        "skipped": skipped,
+        "bulk_op_id": bulk_op_id,
     }
 
 
