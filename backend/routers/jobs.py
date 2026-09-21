@@ -523,6 +523,56 @@ def _stringify_property_address(prop: Dict[str, Any]) -> str:
     return ""
 
 
+# ─────────────────────────────────────────────────────────────────
+# Phase P2 · Feb-2026 — read-path safety net for legacy dict
+# ``jobs.address`` values.
+# ─────────────────────────────────────────────────────────────────
+#
+# Phase P1 locked ``jobs.address``-is-a-string on the WRITE path
+# (POST / PUT / property-retag). Latent legacy docs — created before
+# P1 landed OR through one of the still-unfixed write paths audited
+# in ``/app/memory/PHASE_P1_ADDRESS_LEAK_AUDIT.md`` — may still
+# carry a dict.  When the schedule read handlers ship such a doc to
+# the frontend, ``String.split`` / ``includes`` on the client
+# crashes and the whole screen is locked out.
+#
+# Fix: coerce on the way OUT to the client only.  Never write back
+# to Mongo from a read path (Step A of the P0 triage handled the
+# one bad doc surgically; ongoing writes are already covered by
+# P1).  Reuses ``_stringify_property_address`` — the exact same
+# helper the write path uses, so we don't drift between the two.
+#
+# A WARN is logged at most once per (request, job_id) tuple so
+# operators can find and repair any remaining latent bad docs
+# without spamming the log on a large schedule fetch.
+def _coerce_job_address_for_read(
+    doc: Dict[str, Any],
+    tenant_id: str,
+    warned_ids: set,
+) -> None:
+    """Mutates ``doc["address"]`` in-place so it is guaranteed to
+    be a string on the wire.  No-op when it already is."""
+    if doc is None:
+        return
+    raw = doc.get("address")
+    if isinstance(raw, str):
+        return
+    # ``None`` on ``jobs.address`` is legal upstream (schedule read
+    # coerces to empty for display).  Coerce to empty string here so
+    # the frontend never has to handle a null-vs-empty branch.
+    coerced = _stringify_property_address({"address": raw}) if raw is not None else ""
+    doc["address"] = coerced or ""
+    # Only WARN once per job id per request.
+    jid = doc.get("id")
+    if jid and jid not in warned_ids:
+        warned_ids.add(jid)
+        logger.warning(
+            "jobs.read.address_coerced job_id=%s tenant_id=%s "
+            "offending_type=%s",
+            jid, tenant_id, type(raw).__name__,
+        )
+
+
 async def _resolve_property_for_job(
     tenant_id: str,
     customer_id: str,
@@ -1105,6 +1155,13 @@ async def list_jobs(
     # same shape without duplicating the loop.
     from services.jobs_slim_photos import slim_photos_on_rows
     slim_photos_on_rows(docs, include_photos=bool(include_photos))
+    # Phase P2 · Feb-2026 — read-path safety net.  Coerce any legacy
+    # dict-address rows to strings BEFORE ship so the schedule /
+    # jobs list never lands a dict on the client.  See
+    # ``_coerce_job_address_for_read`` above.
+    _warned: set = set()
+    for _d in docs:
+        _coerce_job_address_for_read(_d, tenant["id"], _warned)
     return docs
 
 
@@ -1707,6 +1764,12 @@ async def get_job(jid: str,
                   "revenue", "invoice_total", "quote_total", "margin",
                   "labor_cost", "materials_cost", "gross_margin"):
             doc.pop(k, None)
+    # Phase P2 · Feb-2026 — read-path safety net for legacy dict
+    # ``jobs.address`` on the single-job DETAIL handler.  Same
+    # invariant as ``list_jobs`` above; coerces on the way out so
+    # the client never has to defensively type-check ``address``.
+    _warned_single: set = set()
+    _coerce_job_address_for_read(doc, tenant["id"], _warned_single)
     return doc
 
 

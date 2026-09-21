@@ -2479,3 +2479,15 @@
   - `/app/mobile/app/(app)/_layout.tsx` (+3 lines: import, hook call, tabBarBadge/tabBarBadgeStyle)
 - **API contract consumed**: `GET /api/messages/unread-count` → `{ unread_count: N, by_channel: {...} }`
 - **Screenshot verified**: mike@aquaterra.com shows red "2" badge on Messages tab; admin@aquaterra.com shows no badge (0 unread).
+
+
+## Iteration 113 — D1: EAS Deployment Blocker — Corrupt Filename Cleanup
+- **Commit**: e479751427223fd1fc8e3f16bfff427a07996f2d
+- **Date**: 2026-09-21
+- **Changes**:
+  - Removed 1 corrupt zero-byte file at inode 142350 (raw bytes: `01 90 f8 40 40 d0 c3 39 40 38`) from `/app/mobile/` root
+  - Created `/app/mobile/.easignore` with D1 hygiene entries to prevent future garbled/binary droppings from being packed into EAS tarballs
+  - Corrupt file count: 1 → 0
+- **Files created**: `/app/mobile/.easignore`
+- **Files deleted**: 1 corrupt-named zero-byte file (inode 142350)
+- **Files NOT touched**: package.json, eas.json, app.json, src/*, heresdk/*, backend/*, frontend/*

@@ -7,11 +7,12 @@
  *   DELETE /api/recurring-jobs/{id}
  *   POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
  */
-import React, { useEffect, useState, useMemo } from "react";
-import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search } from "lucide-react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
+import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search, MoreVertical, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   MonthlyNthWeekdaySelector,
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
@@ -38,6 +39,12 @@ function addDaysIso(iso, days) {
 }
 
 export default function RecurringJobs() {
+  // Phase P3 · Feb-2026 — Destructive-action gate for the 3-dot
+  // Actions menu (Edit / Pause-Resume / Delete permanently).
+  // Delete permanently is admin-only; the rest of the menu is
+  // available to every role the page already renders for.
+  const { role } = usePermissions();
+  const canHardDelete = role === "admin" || role === "super_admin";
   const [items, setItems] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
@@ -162,6 +169,35 @@ export default function RecurringJobs() {
 
   useEffect(() => { load(); }, []);
 
+  // Phase P3 · Feb-2026 — Escape closes the Edit / Create modal.
+  // Attached only while ``modalOpen`` is true so we don't fight
+  // other keyboard consumers on the page (e.g. the bulk-delete
+  // modal's own dismiss button).
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setModalOpen(false);
+        setEditing(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [modalOpen]);
+
+  // Phase P3 · Feb-2026 — `stopThen` wraps existing per-row
+  // action buttons so their onClick doesn't bubble up to the
+  // <tr>'s row-click handler and open the Edit modal too. The
+  // wrapped function is called AFTER the event's propagation
+  // is stopped, preserving the original semantics.
+  const stopThen = (fn) => (e) => {
+    if (e && typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+    }
+    return fn();
+  };
+
   const openCreate = () => {
     setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, is_active: false, notes: "", recurrence_never_ends: true, end_date: null });
     setPriceStr("120.00");
@@ -268,6 +304,13 @@ export default function RecurringJobs() {
     setBusy(row.id);
     try {
       await api.del(`/recurring-jobs/${row.id}?hard=true`);
+      // Phase P3 · Feb-2026 — if the row being deleted is
+      // currently open in the Edit modal, close it gracefully
+      // so the modal never renders against a stale `editing`.
+      if (editing && editing.id === row.id) {
+        setModalOpen(false);
+        setEditing(null);
+      }
       setHardDeleteTarget(null);
       await load();
     } finally { setBusy(null); }
@@ -593,7 +636,7 @@ export default function RecurringJobs() {
             </button>
           ) : null}
         </div>
-        <div className="rounded-2xl overflow-hidden"
+        <div className="rounded-2xl overflow-x-auto"
              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
           <table className="w-full text-sm" data-testid="recurring-jobs-table">
             <thead>
@@ -639,7 +682,11 @@ export default function RecurringJobs() {
                 </th>
                 <th className="text-right px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Price</th>
                 <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Status</th>
-                <th className="px-3 py-2.5" />
+                <th className="text-left px-3 py-2.5 uppercase text-[11px] font-semibold"
+                     style={{ color: colors.muted }}
+                     data-testid="recurring-th-actions">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -652,15 +699,59 @@ export default function RecurringJobs() {
                 </td></tr>
               ) : filteredItems.map((r) => (
                 <tr key={r.id} data-testid={`recurring-job-row-${r.id}`}
+                    tabIndex={0}
+                    onClick={() => openEdit(r)}
+                    onKeyDown={(e) => {
+                      // Phase P3 · Feb-2026 — Enter (and Space, per
+                      // WAI-ARIA button pattern) on a focused row
+                      // opens the Edit modal. Anywhere-else key
+                      // events bubble normally (e.g. Tab, arrow
+                      // keys) so the row stays keyboard-navigable.
+                      if (e.key === "Enter" || e.key === " ") {
+                        // Only act when the event target is the
+                        // <tr> itself — not a nested input /
+                        // button / checkbox — so typing space in a
+                        // future editable cell doesn't accidentally
+                        // fire.
+                        if (e.currentTarget === e.target) {
+                          e.preventDefault();
+                          openEdit(r);
+                        }
+                      }
+                    }}
                     style={{ borderBottom: `1px solid ${colors.border}`,
                               backgroundColor: selectedIds.has(r.id)
-                                ? "#EFF6FF" : "transparent" }}>
-                  {/* Phase R1 · Feb-2026 — bulk-select row checkbox. */}
-                  <td className="px-3 py-2.5" style={{ width: "36px" }}>
+                                ? "#EFF6FF" : "transparent",
+                              cursor: "pointer" }}
+                    onMouseEnter={(e) => {
+                      // Hover state — reuses the Brand Blue tint
+                      // token already declared in theme.js. Skip
+                      // if the row is already in the selected
+                      // (blue-tinted) state so the two visual
+                      // signals don't fight each other.
+                      if (!selectedIds.has(r.id)) {
+                        e.currentTarget.style.backgroundColor = colors.brandTertiary;
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!selectedIds.has(r.id)) {
+                        e.currentTarget.style.backgroundColor = "transparent";
+                      }
+                    }}>
+                  {/* Phase R1 · Feb-2026 — bulk-select row checkbox.
+                       Phase P3 · Feb-2026 — the wrapping <td> AND
+                       the <input> both stop click / mousedown
+                       propagation so ticking the box doesn't
+                       ALSO fire the row-click handler above. */}
+                  <td className="px-3 py-2.5" style={{ width: "36px" }}
+                       onClick={(e) => e.stopPropagation()}
+                       onMouseDown={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(r.id)}
                       onChange={() => _toggleOne(r.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
                       aria-label={`Select ${r.customer_name || r.id}`}
                       data-testid={`recurring-row-checkbox-${r.id}`}
                       className="cursor-pointer"
@@ -741,33 +832,50 @@ export default function RecurringJobs() {
                     ) : null}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <button type="button" onClick={() => generateNow(r)} disabled={busy === r.id || !r.active}
+                    {/* Phase P3 · Feb-2026 — 3-dot Actions menu.
+                         Sits at the LEFT of the existing inline
+                         button strip so the primary affordances
+                         (Edit / Pause-Resume / Delete permanently)
+                         are one click away without hunting through
+                         the row. Existing inline buttons stay
+                         behind it — they satisfy pre-P3 vitests
+                         that assert those specific testids.  The
+                         menu's own click handler stops the
+                         propagation up to the <tr> row-click. */}
+                    <RecurringRowActionsMenu
+                      row={r}
+                      canHardDelete={canHardDelete}
+                      onEdit={() => openEdit(r)}
+                      onTogglePause={() => togglePause(r)}
+                      onHardDelete={() => setHardDeleteTarget(r)}
+                    />
+                    <button type="button" onClick={stopThen(() => generateNow(r))} disabled={busy === r.id || !r.active}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                             style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                             data-testid={`recurring-job-generate-${r.id}`}>
                       <RefreshCw size={11} /> Gen 14d
                     </button>
-                    <button type="button" onClick={() => openEdit(r)}
+                    <button type="button" onClick={stopThen(() => openEdit(r))}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                             style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                             data-testid={`recurring-job-edit-${r.id}`}>
                       Edit
                     </button>
-                    <button type="button" onClick={() => togglePause(r)}
+                    <button type="button" onClick={stopThen(() => togglePause(r))}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                             style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                             data-testid={`recurring-job-toggle-${r.id}`}>
                       {r.active ? <Pause size={11} /> : <Play size={11} />}{r.active ? "Pause" : "Resume"}
                     </button>
                     {r.active ? (
-                      <button type="button" onClick={() => stopRecurrence(r)} disabled={busy === r.id}
+                      <button type="button" onClick={stopThen(() => stopRecurrence(r))} disabled={busy === r.id}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                               style={{ border: `1px solid #FCD34D`, background: colors.surface, color: "#B45309" }}
                               data-testid={`recurring-job-stop-${r.id}`}>
                         <Ban size={11} /> Stop
                       </button>
                     ) : null}
-                    <button type="button" onClick={() => softDelete(r)}
+                    <button type="button" onClick={stopThen(() => softDelete(r))}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold mr-1"
                             style={{ border: `1px solid #FECACA`, background: colors.surface, color: "#B91C1C" }}
                             data-testid={`recurring-job-soft-delete-btn-${r.id}`}>
@@ -780,7 +888,7 @@ export default function RecurringJobs() {
                         modal — never a browser ``confirm()`` — so
                         the destructive action is a two-tap flow. */}
                     <button type="button"
-                            onClick={() => setHardDeleteTarget(r)}
+                            onClick={stopThen(() => setHardDeleteTarget(r))}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
                             style={{ border: `1px solid #B91C1C`, background: "#B91C1C", color: "#FFFFFF" }}
                             data-testid={`recurring-job-hard-delete-btn-${r.id}`}>
@@ -1231,3 +1339,136 @@ export default function RecurringJobs() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase P3 · Feb-2026 — Recurring Row 3-dot Actions Menu
+// ─────────────────────────────────────────────────────────────────
+//
+// Inline React component (kept in-file so the top-level page stays
+// self-contained — matches the OpsHub team-row kebab pattern which
+// is the canonical inline-menu convention already in this codebase).
+//
+// Props:
+//   row             — the recurring-job row this menu acts on. Used
+//                     only for the ``active`` flag (Pause vs Resume
+//                     label) and the row id (per-item testid suffix).
+//   canHardDelete   — gates the "Delete permanently" item. Passed in
+//                     from the parent so it stays consistent with
+//                     the page-level ``usePermissions`` check.
+//   onEdit          — opens the Edit modal for this row.
+//   onTogglePause   — flips ``active`` via PATCH /recurring-jobs/{id}.
+//   onHardDelete    — opens the row-scoped hard-delete confirmation
+//                     modal (the actual DELETE is fired from that
+//                     modal's confirm button, not directly here).
+//
+// Accessibility:
+//   • ``aria-label`` on the trigger button and ``aria-haspopup="menu"``.
+//   • ``role="menu"`` on the popover.
+//   • ``role="menuitem"`` on each action.
+//   • Outside-click / Escape dismissers.
+//   • Every element with a click handler has a stable testid.
+//
+// The trigger button and every menuitem call ``stopPropagation`` so
+// interacting with the menu never bubbles up to the <tr>'s row-
+// click open-modal handler.
+function RecurringRowActionsMenu({
+  row,
+  canHardDelete,
+  onEdit,
+  onTogglePause,
+  onHardDelete,
+}) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (menuRef.current?.contains(e.target)) return;
+      if (btnRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const fire = (fn) => (e) => {
+    e.stopPropagation();
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <span className="relative inline-block align-middle mr-1"
+           onClick={(e) => e.stopPropagation()}
+           onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={`Actions for ${row.customer_name || row.id}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        className="inline-flex w-8 h-8 rounded-full items-center justify-center hover:bg-black/5"
+        style={{ color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                  background: colors.surface }}
+        data-testid={`recurring-row-actions-btn-${row.id}`}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-0 top-9 z-30 min-w-[220px] rounded-lg shadow-lg py-1 text-left"
+          style={{ backgroundColor: "#FFFFFF",
+                    border: `1px solid ${colors.border}` }}
+          data-testid={`recurring-row-actions-menu-${row.id}`}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={fire(onEdit)}
+            className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-black/5"
+            style={{ color: colors.onSurface }}
+            data-testid={`recurring-row-actions-edit-${row.id}`}
+          >
+            <Pencil size={13} /> Edit
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={fire(onTogglePause)}
+            className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-black/5"
+            style={{ color: colors.onSurface }}
+            data-testid={`recurring-row-actions-pause-resume-${row.id}`}
+          >
+            {row.active ? <Pause size={13} /> : <Play size={13} />}
+            {row.active ? "Pause" : "Resume"}
+          </button>
+          {canHardDelete ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={fire(onHardDelete)}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-red-50"
+              style={{ color: "#B91C1C" }}
+              data-testid={`recurring-row-actions-hard-delete-${row.id}`}
+            >
+              <Trash2 size={13} /> Delete permanently
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </span>
+  );
+}
+

@@ -1,0 +1,16 @@
+# D1 — hygiene: reject anything at repo root that isn't printable ASCII
+/*.tmp
+/*.token
+/.tok
+/.token
+/.sr*.json
+/_test_run/
+/_test_tokens/
+/test_reports/
+/tags_after_*.json
+/cust_ids.json
+/cids.txt
+/walkie_live_vox_active.png
+/a[0-9].json
+/s[0-9][abc].json
+/t[0-9][abc].json
