@@ -53,6 +53,111 @@ def _cache_key(from_lat, from_lng, to_lat, to_lng):
     return f"{round(from_lat, 4)},{round(from_lng, 4)}|{round(to_lat, 4)},{round(to_lng, 4)}"
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Phase R1.1 · Feb-2026 — Schedule 500 · technician_id mismatch hotfix.
+# ═══════════════════════════════════════════════════════════════════
+# Some tenants carry ``jobs.technician_id`` values keyed in either the
+# ``technicians.id`` space (canonical) OR the legacy ``users.id`` space
+# (pre-K42 seed) OR a "ghost" id that no longer resolves in either
+# collection (tech deleted / re-provisioned).  Any caller that assumed
+# a single id space + a live technician doc could 500 with
+# ``AttributeError`` on a subsequent ``.get(...)`` off ``None``.
+#
+# This helper resolves BOTH id spaces AND returns an empty set when
+# nothing is live for the tenant.  Callers use ``in`` for the Safe
+# Check (``if tid and tid not in live: skip + WARN``) so a bogus ref
+# never crashes the endpoint.
+# ═══════════════════════════════════════════════════════════════════
+async def _live_technician_id_space(tenant_id: str) -> set:
+    """Return the union of every live technician identifier for
+    ``tenant_id`` across BOTH id spaces:
+
+    * ``technicians.id``  — canonical (K42+ writes)
+    * ``technicians.user_id`` — back-ref shape (legacy seed)
+    * ``users.id`` where ``role`` in {technician, tech, owner, admin,
+      manager, super_admin}  — legacy jobs that stamped
+      ``technician_id = user.id``
+    * ``users.technician_id``   — the JWT claim shape
+
+    Deleted / soft-deleted rows are excluded on both collections so
+    a Safe Check on this set catches stale assignments cleanly.
+    """
+    ids: set = set()
+    async for row in db.technicians.find(
+        {"tenant_id": tenant_id, "$or": [
+            {"deleted_at": None},
+            {"deleted_at": {"$exists": False}},
+        ]},
+        {"_id": 0, "id": 1, "user_id": 1},
+    ):
+        if row.get("id"):
+            ids.add(row["id"])
+        if row.get("user_id"):
+            ids.add(row["user_id"])
+    async for row in db.users.find(
+        {"tenant_id": tenant_id, "role": {"$in": [
+            "technician", "tech", "owner", "admin", "manager", "super_admin",
+        ]}, "$or": [
+            {"deleted_at": None},
+            {"deleted_at": {"$exists": False}},
+        ]},
+        {"_id": 0, "id": 1, "technician_id": 1},
+    ):
+        if row.get("id"):
+            ids.add(row["id"])
+        if row.get("technician_id"):
+            ids.add(row["technician_id"])
+    return ids
+
+
+async def _resolve_tech_display(tenant_id: str,
+                                 tid: Optional[str]) -> Optional[str]:
+    """Resolve ``tid`` to a display name across BOTH id spaces.
+    Returns ``None`` (never raises) when the id is null or does not
+    match any live tech / user in the tenant. Callers that received
+    ``None`` should render "Unassigned" and NEVER crash.
+    """
+    if not tid:
+        return None
+    # 1 · users.id (legacy jobs stamped technician_id = user.id).
+    u = await db.users.find_one(
+        {"tenant_id": tenant_id, "id": tid},
+        {"_id": 0, "name": 1, "first_name": 1, "last_name": 1},
+    )
+    if u:
+        nm = (u.get("name") or "").strip()
+        if not nm:
+            nm = f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+        if nm:
+            return nm
+    # 2 · users.technician_id (JWT claim shape).
+    u = await db.users.find_one(
+        {"tenant_id": tenant_id, "technician_id": tid},
+        {"_id": 0, "name": 1, "first_name": 1, "last_name": 1},
+    )
+    if u:
+        nm = (u.get("name") or "").strip()
+        if not nm:
+            nm = f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+        if nm:
+            return nm
+    # 3 · technicians.id (canonical K42+ write).
+    t = await db.technicians.find_one(
+        {"tenant_id": tenant_id, "id": tid},
+        {"_id": 0, "name": 1},
+    )
+    if t and (t.get("name") or "").strip():
+        return t["name"].strip()
+    # 4 · technicians.user_id (back-ref shape).
+    t = await db.technicians.find_one(
+        {"tenant_id": tenant_id, "user_id": tid},
+        {"_id": 0, "name": 1},
+    )
+    if t and (t.get("name") or "").strip():
+        return t["name"].strip()
+    return None
+
+
 @router.get("/schedule/today")
 async def schedule_today(request: Request,
                          date: Optional[str] = None,
@@ -193,7 +298,30 @@ async def schedule_today(request: Request,
     _timings.append(f"entries;dur={(_t.perf_counter()-_t_entries)*1000:.1f}")
 
     items: list = []
+    # Phase R1.1 · Feb-2026 — Safe Check.  Build the tenant's live
+    # technician id-space ONCE (both technicians + users id spaces)
+    # so a bogus ``jobs.technician_id`` never crashes the projection.
+    # ``None`` / missing ``technician_id`` is FINE — those jobs
+    # matched the visibility filter via ``assigned_technician_id``,
+    # ``assigned_to``, or crew membership and represent unassigned
+    # work that the caller still needs to see.  We only skip when a
+    # ``technician_id`` IS set but doesn't resolve.
+    _live_tech_space = await _live_technician_id_space(tid)
+    _skipped_bad_tech: int = 0
     for j in jobs:
+        # Phase R1.1 · Safe Check — skip jobs whose ``technician_id``
+        # points at a ghost identity in this tenant.  WARN once per
+        # skipped row with enough context that the F2 data-repair
+        # scan can find + heal them.
+        _job_tid = j.get("technician_id")
+        if _job_tid and _job_tid not in _live_tech_space:
+            _skipped_bad_tech += 1
+            logger.warning(
+                "[schedule/today] skipped job with dangling technician_id "
+                "job_id=%s tenant_id=%s technician_id=%s",
+                j.get("id"), tid, _job_tid,
+            )
+            continue
         cust = cust_map.get(j.get("customer_id")) or {}
         job_notes_raw = "\n".join(filter(None, [j.get("notes"), j.get("internal_notes")]))
         # Feb-2026 service-notes ship + tester fix — inject the note
@@ -522,10 +650,28 @@ async def reschedule_job(body: RescheduleRequest,
         "tech_name": None,
     }
     tech_id = body.new_tech_user_id or old_tech
+    # Phase R1.1 · Feb-2026 — Safe Check.  Resolve the tech display
+    # name across BOTH id spaces (users AND technicians) and within
+    # the tenant scope so a legacy ``users.id``-shaped ``tech_id``,
+    # a canonical ``technicians.id``, or a JWT-claim
+    # ``users.technician_id`` all render correctly.  A ghost id
+    # simply leaves ``preview["tech_name"]`` as ``None`` — the
+    # reschedule still proceeds, we just log a WARN so the F2 data-
+    # repair scan surfaces the corrupt row.  Previous code did
+    # ``db.users.find_one({"id": tech_id})`` (no tenant filter, one
+    # id space) which either 500-ed on ``AttributeError`` further
+    # down OR silently rendered the wrong tenant's tech name.
     if tech_id:
-        t = await db.users.find_one({"id": tech_id}, {"_id": 0, "name": 1})
-        if t:
-            preview["tech_name"] = t.get("name") or tech_id
+        display = await _resolve_tech_display(tenant["id"], tech_id)
+        if display:
+            preview["tech_name"] = display
+        else:
+            logger.warning(
+                "[schedule/reschedule] tech_id did not resolve in tenant "
+                "tech_id=%s tenant_id=%s job_id=%s",
+                tech_id, tenant["id"], job["id"],
+            )
+            preview["tech_name"] = None
 
     if body.dry_run:
         return {"ok": True, "dry_run": True, "preview": preview}

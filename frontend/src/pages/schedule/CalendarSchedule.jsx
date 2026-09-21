@@ -107,6 +107,32 @@ import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 // palette shifts keep the two in sync; this helper is intentionally
 // narrower — a big colored bar is a coarser affordance than the
 // existing status pill.
+// Phase R1.1 · Feb-2026 — Schedule 500 · technician_id mismatch hotfix.
+//
+// Warn ONCE per session per bogus ``technician_id`` referenced by a
+// job.  A module-level ``Set`` dedups the console noise so a
+// tenant with N stale refs logs N warnings, not N × M renders.
+// Reset only via a hard page reload — the "session" scope matches
+// the mounted CalendarSchedule instance's lifetime.
+const _WARNED_MISSING_TECH_IDS = new Set();
+function _warnMissingTech(technicianId, jobId) {
+  if (!technicianId) return;
+  if (_WARNED_MISSING_TECH_IDS.has(technicianId)) return;
+  _WARNED_MISSING_TECH_IDS.add(technicianId);
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[CalendarSchedule] job has technician_id not present in techColorMap — "
+    + "rendering with neutral (unassigned) styling",
+    { technician_id: technicianId, first_job_id: jobId },
+  );
+}
+// Phase R1.1 · Feb-2026 — Neutral fallback color for jobs whose
+// ``technician_id`` doesn't resolve to any technician in the tenant
+// palette. Rendered as a muted slate so the pill is visible without
+// implying a specific tech identity.  Same hex the "unassigned"
+// legend row uses (see ``TechColorLegend``).
+const _NEUTRAL_UNASSIGNED_HEX = "#94A3B8";
+
 export function getStatusBorderColor(status) {
   const s = (status || "").toLowerCase();
   if (s === "completed") return "#DC2626";
@@ -196,9 +222,26 @@ function jobToEvent(job, techColorMap) {
   // Phase 21 · Feb 2026 · Addition B — resolve the assigned tech's
   // display color. Falls through to the deterministic hashed fallback
   // when the tech has no ``display_color_hex`` set (or is unassigned).
-  const techColor = techColorMap && job.technician_id
-    ? (techColorMap.get(job.technician_id) || hashedTechColor(job.technician_id))
-    : (job.technician_id ? hashedTechColor(job.technician_id) : null);
+  //
+  // Phase R1.1 · Feb-2026 — Safe Check.  ``techColorMap`` is now
+  // strictly keyed by ``technicians.id`` (see the ``useMemo`` below).
+  // If a job's ``technician_id`` isn't in the map:
+  //   * ``null`` / undefined → job is unassigned → ``techColor: null``
+  //     (existing behavior preserved).
+  //   * set-but-not-in-map → dangling ref → render with a NEUTRAL
+  //     unassigned color AND WARN once per session (dedup via
+  //     ``_WARNED_MISSING_TECH_IDS``).  Previous code fell through to
+  //     ``hashedTechColor`` which invented a color per bogus id and
+  //     poisoned the legend.
+  let techColor = null;
+  if (job.technician_id) {
+    if (techColorMap && techColorMap.has(job.technician_id)) {
+      techColor = techColorMap.get(job.technician_id);
+    } else {
+      _warnMissingTech(job.technician_id, job.id);
+      techColor = _NEUTRAL_UNASSIGNED_HEX;
+    }
+  }
   return {
     id: job.id,
     title: `${vipPrefix}${job.customer_name || "Job"}${job.service_type ? ` · ${job.service_type}` : ""}`,
@@ -656,16 +699,25 @@ export default function CalendarSchedule() {
   // crew-hued palette (crew hue + individual saturation). Falls
   // back to the flat ``hashedTechColor`` for callers/tests that
   // don't provide crews.
+  //
+  // Phase R1.1 · Feb-2026 — STRICT keying on the canonical
+  // ``technicians.id`` (per Phase K42 the wire always ships this
+  // id).  Previously fell back to ``t.user_id`` when ``t.id`` was
+  // absent — that entry never got looked up (because
+  // ``jobs.technician_id`` stores ``technicians.id``) AND
+  // shadowed a legit ``user_id``-keyed job lookup at
+  // ``techColorMap.get(job.technician_id)`` if the two spaces
+  // ever crossed.  Skip techs without a canonical ``id``; the
+  // Safe Check in ``jobToEvent`` renders those jobs neutral and
+  // warns once.
   const techColorMap = useMemo(() => {
     const m = new Map();
-    // First: build tech_id → crew_id index so the palette gets
-    // the crew context per tech.
     const crewByTechId = new Map();
     for (const c of crews) {
       for (const tid of c.tech_ids || []) crewByTechId.set(tid, c.id);
     }
     for (const t of techs) {
-      const id = t.id || t.user_id;
+      const id = t.id;
       if (!id) continue;
       m.set(id, crewHuedColorFromTech(t, crewByTechId.get(id) || null));
     }
