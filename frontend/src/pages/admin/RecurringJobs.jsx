@@ -999,8 +999,15 @@ export default function RecurringJobs() {
 
       {modalOpen && editing ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.55)" }}>
-          <div className="w-full max-w-lg rounded-2xl" style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
-            <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+          {/* Phase P4.1 · Feb-2026 — three-section flex column with
+              a 90 vh cap so Save stays reachable on short viewports.
+              Header + Footer are ``shrink-0``; only the body scrolls
+              internally (``overflow-y-auto flex-1 min-h-0`` — the
+              ``min-h-0`` closes the flex-overflow gotcha where the
+              scroll won't kick in inside a flex parent).  Every
+              other modal in this file is untouched. */}
+          <div className="w-full max-w-lg rounded-2xl max-h-[90vh] flex flex-col" style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: `1px solid ${colors.border}` }}>
               <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
                 {editing.id ? "Edit Recurring Job" : "New Recurring Job"}
               </h2>
@@ -1009,7 +1016,7 @@ export default function RecurringJobs() {
                 <X size={18} />
               </button>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5 space-y-3 overflow-y-auto flex-1 min-h-0">
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Customer
                 <div className="mt-1">
                   <CustomerCombobox
@@ -1367,7 +1374,7 @@ export default function RecurringJobs() {
                 Allow Sunday
               </label>
             </div>
-            <div className="px-5 py-3 flex items-center justify-end gap-2" style={{ borderTop: `1px solid ${colors.border}` }}>
+            <div className="px-5 py-3 flex items-center justify-end gap-2 shrink-0" style={{ borderTop: `1px solid ${colors.border}` }}>
               <button type="button" onClick={() => { setModalOpen(false); setEditing(null); }}
                       className="text-sm font-semibold px-3 py-1.5 rounded"
                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
