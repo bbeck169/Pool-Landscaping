@@ -810,18 +810,31 @@ async def auto_clock_in(body: AutoClockInReq,
                 + timedelta(days=1)).isoformat()
     window_start = (now_dt - timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
     window_end = (now_dt + timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
-    query = {
-        "tenant_id": tenant["id"],
-        "$or": [
+    # Phase P12.2 · Feb-2026 · SAFETY-CRITICAL — replace the pre-P12
+    # dict-spread merge of ``not_deleted_filter`` over the tech-lane
+    # ``$or`` (P10 flag row 813-824). ``_nd()`` returns
+    # ``{"$or": [<soft-delete clauses>]}`` and gets spread LAST, so
+    # the tech-lane ``$or`` was silently dropped every request.
+    # Failure mode: the query degraded to "any non-deleted tenant
+    # job today matching the exact-match kwargs (tenant / status /
+    # scheduled_start-in-day)" — a tech near a coworker's job site
+    # (same tenant, same day, same ±2h window) auto-clocked into
+    # the coworker's job. Nest both disjunctions under ``$and`` via
+    # the shared ``tenant_scoped_filter`` helper — the identical
+    # fix P12 applied to ``/api/schedule/optimize-route`` and P10
+    # applied to ``/api/jobs/reorder``.
+    from services.query_scope import tenant_scoped_filter as _tsf
+    query = _tsf(
+        tenant["id"],
+        [
             {"technician_id": uid},
             {"technician_id": user.get("technician_id")},
             {"assigned_technician_id": uid},
         ],
-        "status": {"$nin": ["completed", "cancelled"]},
-        "scheduled_start": {"$gte": day_start, "$lt": day_end},
-    }
-    from utils import not_deleted_filter as _nd
-    jobs_today = await db.jobs.find({**query, **_nd()}, {"_id": 0, "photos.data": 0}).to_list(50)
+        status={"$nin": ["completed", "cancelled"]},
+        scheduled_start={"$gte": day_start, "$lt": day_end},
+    )
+    jobs_today = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(50)
 
     # Split by geofence first.
     in_geofence: list = []
