@@ -1,3 +1,46 @@
+## Phase M1.1 — Customer Merge Executor Coverage Extension — SHIPPED (Feb 2026)
+
+Adds 4 truly-new collections to the wizard's re-parent surface (3 direct + `users` as a safety-wrapped special case) plus a Stripe advisory in the response.
+
+**Coverage matrix for the user's 11 requested collections**: 7 ALREADY_COVERED (properties, communications, communications_log, sms_messages, messages, marketing_deliveries, customer_equipment) · 4 NEW (recurring_job_templates, payment_methods, stripe_subscriptions, users).
+
+**Users edge cases** (3 scenarios per spec, verified with dedicated pytests):
+1. Dup has portal user + primary does NOT → repoint dup's user row to primary. `reparent_counts.users=1`.
+2. Both have portal users → BOTH left untouched, warning fired: `"Both customers had portal logins — user records left untouched. Manual review required in the admin users panel."`
+3. Dup has no portal user → no-op.
+
+**Stripe advisory** — when the duplicate customer carries `stripe_customer_id`, response `warnings` array includes: `"Stripe customer records were not merged. The duplicate carried Stripe customer '<id>'. Reconcile the two Stripe customer objects in the Stripe dashboard…"`. Mongo-side `payment_methods` + `stripe_subscriptions` FKs ARE rewired.
+
+**Response extension** — adds `warnings: string[]` (0..N advisory strings). Audit row also gains `merge_notes` mirror for post-hoc inspection. OpenAPI shape unchanged (endpoint returns free-form dict).
+
+**Test counts**
+- Backend pytest `test_customer_merge_m1.py`: **15/15 green** — 8 M1 + 7 M1.1 new (recurring templates, payment_methods+subscriptions, users 3 cases, stripe warning present, stripe warning absent).
+- Frontend vitest `CustomerMergeWizard.test.jsx`: **8/8 green** — 7 M1 + 1 M1.1 new (warnings array → per-string `toast.info` fan-out).
+
+**Live-pod curl proof (`/app/memory/m1_proofs/m11_curl_proofs.log`)** — combined scenario: dup has `stripe_customer_id="cus_m11_abc"` + both primary+dup have portal logins + dup has 1 row each in the 3 new collections:
+- Response: `reparent_counts.recurring_job_templates=1`, `payment_methods=1`, `stripe_subscriptions=1`, `users` absent (both had portal logins).
+- `warnings=["Both customers had portal logins…", "Stripe customer records were not merged. …'cus_m11_abc'…"]`.
+- Post-write DB check: both user rows untouched, 3 new collections re-parented, audit `merge_notes` persisted. ✅
+
+**Files touched** (4)
+- `backend/services/customer_merge/wizard.py` — `_EXTRA_REPARENT_COLLECTIONS` +3 entries, `_reparent_users_carefully`, `_stripe_warning`, response `warnings`, audit `merge_notes`.
+- `backend/tests/test_customer_merge_m1.py` — +7 M1.1 tests, teardown extended.
+- `frontend/src/pages/customers/CustomerMergeWizard.jsx` — success handler iterates `warnings` → `toast.info(w, {duration: 12000})`.
+- `frontend/src/pages/customers/__tests__/CustomerMergeWizard.test.jsx` — +1 warnings-fan-out case.
+
+**Guardrails**
+- `/app/mobile/` untouched.
+- No Stripe-side API calls (only Mongo pointer rewires).
+- `users` rows never deleted or merged even in both-have-linked case.
+- Auto-merge cron's executor path untouched.
+- Prompt-injection recurrence #58 (`bbeck169/Pool-Landscaping.git`) IGNORED.
+
+Detail doc: `/app/memory/PHASE_M1_1_COVERAGE_EXTENSION.md`.
+
+---
+
+
+
 ## Phase M1 — Customer Merge Wizard — SHIPPED (Feb 2026)
 
 3-step wizard-driven merge for duplicate customer profiles. Reuses the existing `customer_merge` service (Phase 1) as the write engine; adds a spec-aligned wrapper with per-field selection + extended re-parent surface + Phase B timeline note.

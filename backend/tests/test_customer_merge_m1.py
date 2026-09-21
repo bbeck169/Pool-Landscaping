@@ -168,7 +168,8 @@ def m1_seed():
                  "quotes", "payments", "messages", "call_logs",
                  "intelligence_alerts", "warranty_contracts",
                  "customer_notes", "customer_merge_audit",
-                 "audit_log"):
+                 "audit_log", "recurring_job_templates",
+                 "payment_methods", "stripe_subscriptions"):
         _sync[coll].delete_many({
             "tenant_id": {"$in": [_TENANT_A, _TENANT_B]},
         })
@@ -364,3 +365,193 @@ def test_m1_timeline_note_appears_on_primary(m1_seed):
             and (i.get("detail") or {}).get("note_kind") == "system_merge"
     ]
     assert len(merge_notes) == 1, items
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase M1.1 · Feb-2026 — Coverage extension.
+#
+# 4 truly-new collections vs. M1's shipped surface:
+#   recurring_job_templates, payment_methods, stripe_subscriptions,
+#   users (special-cased — portal-login rows never destroyed).
+# Plus a Stripe advisory warning when the duplicate carries a
+# ``stripe_customer_id`` field.
+# ═════════════════════════════════════════════════════════════════════
+def _seed_extended(dup_id: str) -> None:
+    """Seed one row in each of the 4 new coverage collections
+    tied to ``dup_id`` under ``_TENANT_A``. Returns nothing — tests
+    query directly."""
+    _sync.recurring_job_templates.insert_one({
+        "id": _uid("m11-rjt"), "tenant_id": _TENANT_A,
+        "customer_id": dup_id, "cadence": "monthly"})
+    _sync.payment_methods.insert_one({
+        "id": _uid("m11-pm"), "tenant_id": _TENANT_A,
+        "customer_id": dup_id, "brand": "Visa"})
+    _sync.stripe_subscriptions.insert_one({
+        "id": _uid("m11-ss"), "tenant_id": _TENANT_A,
+        "customer_id": dup_id, "stripe_id": "sub_test123"})
+
+
+def test_m11_reparent_recurring_templates(m1_seed):
+    S = m1_seed
+    _seed_extended(S["duplicate_a"])
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert _sync.recurring_job_templates.count_documents(
+        {"tenant_id": _TENANT_A, "customer_id": S["primary_a"]}) == 1
+    assert _sync.recurring_job_templates.count_documents(
+        {"tenant_id": _TENANT_A, "customer_id": S["duplicate_a"]}) == 0
+    assert body["reparent_counts"].get("recurring_job_templates") == 1
+
+
+def test_m11_reparent_payment_methods_and_subscriptions(m1_seed):
+    S = m1_seed
+    _seed_extended(S["duplicate_a"])
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    rc = r.json()["reparent_counts"]
+    assert rc.get("payment_methods") == 1
+    assert rc.get("stripe_subscriptions") == 1
+    assert _sync.payment_methods.count_documents(
+        {"tenant_id": _TENANT_A, "customer_id": S["primary_a"]}) == 1
+    assert _sync.stripe_subscriptions.count_documents(
+        {"tenant_id": _TENANT_A, "customer_id": S["primary_a"]}) == 1
+
+
+def test_m11_users_dup_only_repointed(m1_seed):
+    """Case 1 — dup has portal user, primary does NOT → user row
+    repointed to primary. ``reparent_counts.users == 1``."""
+    S = m1_seed
+    dup_user_id = _uid("m11-dupu")
+    _sync.users.insert_one({
+        "id": dup_user_id, "tenant_id": _TENANT_A,
+        "email": f"portal-{uuid.uuid4().hex[:6]}@ex.com",
+        "role": "customer", "customer_id": S["duplicate_a"],
+    })
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Repoint happened.
+    row = _sync.users.find_one({"id": dup_user_id}, {"customer_id": 1})
+    assert row["customer_id"] == S["primary_a"]
+    assert body["reparent_counts"].get("users") == 1
+    # No spurious warning about both-have-users.
+    assert not any("portal logins" in w for w in body.get("warnings") or [])
+    # Cleanup.
+    _sync.users.delete_one({"id": dup_user_id})
+
+
+def test_m11_users_both_have_warning_no_touch(m1_seed):
+    """Case 2 — both have portal users → both rows LEFT UNTOUCHED,
+    a warning is added to the response + persisted on the audit."""
+    S = m1_seed
+    dup_user_id = _uid("m11-dupu")
+    pri_user_id = _uid("m11-priu")
+    _sync.users.insert_many([
+        {"id": dup_user_id, "tenant_id": _TENANT_A,
+          "email": f"portal-d-{uuid.uuid4().hex[:6]}@ex.com",
+          "role": "customer", "customer_id": S["duplicate_a"]},
+        {"id": pri_user_id, "tenant_id": _TENANT_A,
+          "email": f"portal-p-{uuid.uuid4().hex[:6]}@ex.com",
+          "role": "customer", "customer_id": S["primary_a"]},
+    ])
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Neither user record was mutated.
+    d = _sync.users.find_one({"id": dup_user_id}, {"customer_id": 1})
+    p = _sync.users.find_one({"id": pri_user_id}, {"customer_id": 1})
+    assert d["customer_id"] == S["duplicate_a"]
+    assert p["customer_id"] == S["primary_a"]
+    # Warning surfaced + persisted in audit ``merge_notes``.
+    warnings = body.get("warnings") or []
+    assert any("portal logins" in w for w in warnings), warnings
+    audit = _sync.customer_merge_audit.find_one(
+        {"id": body["audit_log_id"]})
+    assert any("portal logins" in n
+                for n in (audit or {}).get("merge_notes") or []), audit
+    # ``users`` count NOT incremented (nothing rewired).
+    assert body["reparent_counts"].get("users") is None
+    # Cleanup.
+    _sync.users.delete_many({"id": {"$in": [dup_user_id, pri_user_id]}})
+
+
+def test_m11_users_dup_has_none_noop(m1_seed):
+    """Case 3 — dup has NO portal user → no-op, no warning, no
+    ``users`` bucket in reparent_counts."""
+    S = m1_seed
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reparent_counts"].get("users") is None
+    assert not any("portal logins" in w
+                    for w in body.get("warnings") or [])
+
+
+def test_m11_stripe_warning_when_duplicate_had_stripe_customer(m1_seed):
+    """Duplicate carries ``stripe_customer_id`` → response ``warnings``
+    array has a Stripe advisory. Audit ``merge_notes`` mirrors it."""
+    S = m1_seed
+    _sync.customers.update_one(
+        {"id": S["duplicate_a"]},
+        {"$set": {"stripe_customer_id": "cus_abc123"}})
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    warnings = body.get("warnings") or []
+    assert any("Stripe" in w and "cus_abc123" in w for w in warnings)
+    audit = _sync.customer_merge_audit.find_one(
+        {"id": body["audit_log_id"]})
+    assert any("cus_abc123" in n
+                for n in (audit or {}).get("merge_notes") or [])
+
+
+def test_m11_no_stripe_warning_when_no_stripe_ref(m1_seed):
+    """No ``stripe_customer_id`` on either row → no Stripe warning."""
+    S = m1_seed
+    token = _mint(S["admin_a"], _TENANT_A, "admin")
+    with httpx.Client(base_url=BASE) as c:
+        r = c.post(
+            "/api/customers/merge-wizard",
+            json={"primary_customer_id":   S["primary_a"],
+                    "duplicate_customer_id": S["duplicate_a"]},
+            headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert not any("Stripe" in w for w in body.get("warnings") or [])

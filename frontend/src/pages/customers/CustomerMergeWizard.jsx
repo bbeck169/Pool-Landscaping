@@ -112,6 +112,18 @@ export default function CustomerMergeWizard({
         `Merged ${duplicate.name || duplicate.id} into ${primary.name}. `
         + `${total} related record${total === 1 ? "" : "s"} re-parented.`,
       );
+      // Phase M1.1 — surface any advisory warnings from the backend
+      // (Stripe records not merged, portal-login conflict, etc.) as
+      // separate info toasts so the operator sees each one clearly.
+      const warnings = Array.isArray(resp?.data?.warnings)
+        ? resp.data.warnings : [];
+      warnings.forEach((w) => {
+        // ``sonner``'s info-level toast surfaces the string without
+        // the destructive-red styling of ``toast.error``.
+        (toast.info || toast.message || toast)(w, {
+          duration: 12000,
+        });
+      });
       onMerged?.();
       onClose?.();
     } catch (err) {

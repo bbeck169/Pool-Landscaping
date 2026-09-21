@@ -80,6 +80,16 @@ _EXTRA_REPARENT_COLLECTIONS = (
     # rewired so the primary's timeline shows historical events).
     "activity_log",
     "documents",
+    # ─── Phase M1.1 · Feb-2026 — extended coverage ───────────
+    # Scheduled/service infrastructure — recurring templates
+    # follow the customer.
+    "recurring_job_templates",
+    # Billing — Mongo-side pointer only. The Stripe-side customer
+    # object is NOT merged; we surface a ``warnings`` entry when the
+    # duplicate carried a Stripe customer ref so ops can reconcile
+    # in the Stripe dashboard.
+    "payment_methods",
+    "stripe_subscriptions",
 )
 
 
@@ -100,6 +110,74 @@ async def _reparent_extras(
         )
         counts[coll] = n
     return counts
+
+
+# ─── Phase M1.1 · Feb-2026 — ``users`` collection special case ──
+#
+# The ``users`` collection carries a ``customer_id`` field on
+# customer-portal login rows (see ``routers/portal_admin.py``
+# where those rows are created). Because portal logins map
+# 1-to-1 to a customer, a naive ``update_many`` would silently
+# duplicate the primary's portal-login link OR — worse —
+# collapse two distinct portal logins onto the same customer.
+#
+# Rules (single-source spec):
+#   1. Dup has portal user + primary does NOT → repoint dup's
+#      user row to primary. Safe re-link.
+#   2. Both have portal users → NO-OP on either row. Emit an
+#      audit ``merge_notes`` entry so ops can reconcile.
+#   3. Dup has no portal user → no-op.
+#
+# Never delete or merge user rows. Portal logins are the
+# customer's credential surface.
+async def _reparent_users_carefully(
+    tenant_id: str, primary_id: str, duplicate_id: str,
+) -> tuple[int, list[str]]:
+    """Returns ``(n_rewired, warnings)``. ``n_rewired`` is 1 iff a
+    dup-only portal user was re-linked, else 0."""
+    q_dup = {
+        "tenant_id":  tenant_id, "customer_id": duplicate_id,
+        "role":       "customer",
+    }
+    q_pri = {
+        "tenant_id":  tenant_id, "customer_id": primary_id,
+        "role":       "customer",
+    }
+    dup_users = await db.users.count_documents(q_dup)
+    pri_users = await db.users.count_documents(q_pri)
+    warnings: list[str] = []
+    if dup_users == 0:
+        return 0, warnings
+    if pri_users > 0:
+        warnings.append(
+            "Both customers had portal logins — user records left "
+            "untouched. Manual review required in the admin users "
+            "panel."
+        )
+        return 0, warnings
+    # Safe re-link.
+    result = await db.users.update_many(
+        q_dup, {"$set": {"customer_id": primary_id}},
+    )
+    return int(result.modified_count or 0), warnings
+
+
+async def _stripe_warning(
+    duplicate: Dict[str, Any],
+) -> list[str]:
+    """Emit a warning when the duplicate carried a Stripe-side
+    customer reference. The Stripe API records are NOT merged —
+    only the Mongo-side FKs on ``payment_methods`` and
+    ``stripe_subscriptions`` are rewired."""
+    stripe_cid = (duplicate.get("stripe_customer_id") or "").strip()
+    if not stripe_cid:
+        return []
+    return [(
+        f"Stripe customer records were not merged. The duplicate "
+        f"carried Stripe customer '{stripe_cid}'. Reconcile the "
+        f"two Stripe customer objects in the Stripe dashboard if "
+        f"you need a single billing surface."
+    )]
 
 
 async def _write_timeline_note(
@@ -267,6 +345,15 @@ async def execute_wizard_merge(
         tenant_id, primary_id, duplicate_id,
     )
 
+    # ─── Phase M1.1 — ``users`` (portal login) + Stripe safety ─
+    users_rewired, users_warnings = await _reparent_users_carefully(
+        tenant_id, primary_id, duplicate_id,
+    )
+    if users_rewired:
+        extra_counts["users"] = users_rewired
+    stripe_warnings = await _stripe_warning(duplicate)
+    warnings = list(users_warnings) + list(stripe_warnings)
+
     # ─── Timeline note on primary (Phase B ``note`` source) ────
     note_id = await _write_timeline_note(
         tenant_id, primary_id,
@@ -292,6 +379,13 @@ async def execute_wizard_merge(
         field_choices=choices,
         merge_source="wizard",
     )
+    # Extended: attach the warnings to the wizard's audit row so
+    # ops can retro-inspect them via ``GET /customers/merge-audit``.
+    if warnings:
+        await db.customer_merge_audit.update_one(
+            {"id": audit_id},
+            {"$set": {"merge_notes": warnings}},
+        )
 
     # Belt-and-braces: ensure the duplicate carries the M1-named
     # legacy field alias so downstream tooling that queries
@@ -311,6 +405,8 @@ async def execute_wizard_merge(
         "merged_at": now,
         "audit_log_id": audit_id,
         "timeline_note_id": note_id,
+        # Phase M1.1 — advisory warnings surfaced in the UI toast.
+        "warnings": warnings,
     }
 
 
