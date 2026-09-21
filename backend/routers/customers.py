@@ -3198,6 +3198,66 @@ async def patch_service_notes(cid: str, body: _ServiceNotesPatch,
     return {"customer_id": cid, "service_notes": current}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase P7 · Feb-2026 · Send-email attachment hardening (Option B).
+# ═══════════════════════════════════════════════════════════════════════════
+# Applies email-only tighter caps on top of Option D. The library-side
+# upload endpoint (``POST /api/marketing/media/upload``) keeps its more
+# permissive per-type caps (image 5 MB / PDF 15 MB / doc 10 MB / SVG
+# 200 KB) — those are for library storage, not send-time. This gate is
+# strictly additive: every 422 code introduced here fires BEFORE the
+# resolver's own 404/413/502 branches, so pre-P7 client contracts on
+# ``file_not_found`` / ``attachment_too_large_*`` / ``storage_unavailable``
+# remain intact for any other consumer.
+_EMAIL_ATTACHMENTS_MAX_COUNT = 5                       # per-send cap
+_EMAIL_ATTACHMENT_MAX_BYTES  = 10 * 1024 * 1024        # 10 MB per file
+
+# Content-type whitelist (email side). Anything else → 422
+# ``attachment_type_disallowed``.
+_EMAIL_ATTACHMENT_TYPE_WHITELIST = frozenset({
+    # Images
+    "image/jpeg", "image/png", "image/webp",
+    "image/heic", "image/heif",
+    # PDF
+    "application/pdf",
+    # Office docs
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv",
+})
+
+# Extension → MIME fallback used when the media row's ``mime_type`` is
+# ``application/octet-stream`` (i.e. the upload path couldn't sniff it
+# and python-magic isn't installed in this pod).
+_EMAIL_ATTACHMENT_EXT_TO_MIME = {
+    ".jpg":  "image/jpeg", ".jpeg": "image/jpeg",
+    ".png":  "image/png",  ".webp": "image/webp",
+    ".heic": "image/heic", ".heif": "image/heif",
+    ".pdf":  "application/pdf",
+    ".doc":  "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls":  "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv":  "text/csv",
+}
+
+
+def _mime_from_filename(filename: Optional[str]) -> str:
+    """Best-effort MIME fallback keyed off the filename extension.
+    Returns ``""`` when the extension isn't in the whitelist map so
+    the caller's ``not in _EMAIL_ATTACHMENT_TYPE_WHITELIST`` check
+    fires deterministically. Never raises."""
+    if not filename:
+        return ""
+    lower = filename.lower()
+    dot = lower.rfind(".")
+    if dot < 0:
+        return ""
+    return _EMAIL_ATTACHMENT_EXT_TO_MIME.get(lower[dot:], "")
+
+
 @router.post("/customers/{cid}/send-email")
 async def customer_send_email(cid: str, body: _SendEmailBody,
                                user: dict = Depends(require_admin),
@@ -3236,6 +3296,82 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
     attachment_ids = body.attachments or []
     email_attachments: List[Dict[str, Any]] = []
     if attachment_ids:
+        # ── Phase P7 · Feb-2026 · Send-email email-only hardening ──
+        # 1. Per-send cap of 5 attachments. Pre-check on the payload
+        #    BEFORE any Mongo I/O so a bad client can't force us into
+        #    an expensive resolver batch. 422 (not 4xx via resolver)
+        #    with a stable error code the UI can key off.
+        # 2. Content-type whitelist (email-specific). Option D's
+        #    resolver accepts any type the media library persisted;
+        #    tighter caller here rejects everything outside the
+        #    whitelisted image/PDF/office/CSV set. Falls back to the
+        #    filename extension when the row's ``mime_type`` is
+        #    ``application/octet-stream`` (unknown) because
+        #    python-magic isn't a dep in this pod — flagged in the
+        #    wrap-up. See ``_EMAIL_ATTACHMENT_TYPE_WHITELIST`` /
+        #    ``_EMAIL_ATTACHMENT_EXT_TO_MIME`` below.
+        # 3. Per-file 10 MB cap enforced on the row's stored
+        #    ``size_bytes`` at the email gate. The library's own
+        #    per-type caps (5 MB img / 15 MB PDF / 10 MB doc / 200
+        #    KB SVG) stay intact for other consumers; the resolver's
+        #    413 ``file_too_large`` is now unreachable for the email
+        #    path (this gate fires first at 10 MB, matching what the
+        #    resolver would enforce anyway) but stays as a defensive
+        #    net for any bytes-drift edge case.
+        # 4. Tenant scoping continues to happen inside the resolver
+        #    (``_fetch_row`` filters by ``tenant_id``), so a
+        #    cross-tenant id still surfaces as 404 file_not_found.
+        if len(attachment_ids) > _EMAIL_ATTACHMENTS_MAX_COUNT:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "attachments_cap_exceeded",
+                    "count": len(attachment_ids),
+                    "limit": _EMAIL_ATTACHMENTS_MAX_COUNT,
+                },
+            )
+        # Single Mongo find covers the whole batch — cheaper than N
+        # sequential ``_fetch_row`` calls the resolver would make.
+        _rows = await db.marketing_media.find(
+            {"id":         {"$in": attachment_ids},
+             "tenant_id":  tenant["id"],
+             "deleted_at": None},
+            {"_id": 0, "id": 1, "file_name": 1,
+             "mime_type": 1, "size_bytes": 1},
+        ).to_list(length=len(attachment_ids) + 1)
+        _rows_by_id = {r["id"]: r for r in _rows}
+        for fid in attachment_ids:
+            row = _rows_by_id.get(fid)
+            if row is None:
+                # Let the resolver's 404 branch handle unknown ids
+                # for a consistent error shape with the pre-P7 path.
+                continue
+            _fn = row.get("file_name") or fid
+            _size = int(row.get("size_bytes") or 0)
+            if _size > _EMAIL_ATTACHMENT_MAX_BYTES:
+                raise HTTPException(
+                    422,
+                    detail={
+                        "code":        "attachment_too_large",
+                        "filename":    _fn,
+                        "size_bytes":  _size,
+                        "limit_bytes": _EMAIL_ATTACHMENT_MAX_BYTES,
+                    },
+                )
+            _mime = (row.get("mime_type") or "").lower().strip()
+            if _mime and _mime != "application/octet-stream":
+                _resolved = _mime
+            else:
+                _resolved = _mime_from_filename(_fn)
+            if _resolved not in _EMAIL_ATTACHMENT_TYPE_WHITELIST:
+                raise HTTPException(
+                    422,
+                    detail={
+                        "code":         "attachment_type_disallowed",
+                        "filename":     _fn,
+                        "content_type": _resolved or "unknown",
+                    },
+                )
         from services.marketing_media.attachments import (
             AttachmentTooLarge, MediaFileNotFound,
             resolve_email_attachments,

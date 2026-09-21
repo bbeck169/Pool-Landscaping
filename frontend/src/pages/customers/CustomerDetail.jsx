@@ -1938,6 +1938,35 @@ function VipNoteModal({ open, onClose, customer, onSave }) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+// Phase P7 · Feb-2026 — Send-email inline "Upload from computer".
+// ═══════════════════════════════════════════════════════════════════
+// Constants shared between the modal and the vitest suite.
+//
+// * ``P7_EMAIL_ATTACH_ACCEPT`` — mirrors the backend whitelist. Used
+//   directly on the hidden ``<input type="file" accept=…>`` so the
+//   OS-native picker filters non-whitelisted types before they even
+//   reach client-side validation. A duplicate JS-side whitelist runs
+//   below because ``accept`` is a hint, not a hard gate.
+// * ``P7_EMAIL_ATTACH_TYPES`` — the JS-side hard whitelist.
+// * ``P7_EMAIL_ATTACH_MAX_BYTES`` — 10 MB per file (matches backend).
+// * ``P7_EMAIL_ATTACH_MAX_COUNT`` — 5 attachments per send (matches
+//   backend).
+const P7_EMAIL_ATTACH_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp",
+  "image/heic", "image/heif",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+]);
+const P7_EMAIL_ATTACH_ACCEPT = Array.from(P7_EMAIL_ATTACH_TYPES).join(",");
+const P7_EMAIL_ATTACH_MAX_BYTES = 10 * 1024 * 1024;   // 10 MB
+const P7_EMAIL_ATTACH_MAX_COUNT = 5;                   // per-send cap
+
+
 function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
@@ -1960,6 +1989,22 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   // signed-URL-suffixed body (SMS).
   const [attachOpen, setAttachOpen] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  // ── Phase P7 · Feb-2026 — "Upload from computer" inline picker
+  //    (email only). Reuses ``POST /api/marketing/media/upload`` so
+  //    the resulting rows land in the same Option D pipeline as any
+  //    media-library pick. State shapes:
+  //      * ``uploading``   — Map<tempId, {name, size, progress, xhr}>
+  //      * ``uploadError`` — inline error string when client-side
+  //                         validation (size/type/count) rejects a
+  //                         selection BEFORE any upload fires.
+  //      * ``waitingUploads`` — flash notice shown when the operator
+  //                         clicks Send while any upload is still in
+  //                         flight. Cleared as soon as they interact
+  //                         again or all uploads complete.
+  const [uploading, setUploading] = useState(() => new Map());
+  const [uploadError, setUploadError] = useState("");
+  const [waitingUploads, setWaitingUploads] = useState(false);
+  const uploadInputRef = React.useRef(null);
   const isEmail = payload?.channel === "email";
   useEffect(() => {
     if (payload) {
@@ -1968,6 +2013,14 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       setPickedId("");
       setPreview(null);
       setAttachments([]);   // reset per-open
+      // ── P7 · reset uploads too so a re-open doesn't leak
+      //    an in-flight XHR from a prior compose session.
+      setUploading((prev) => {
+        prev.forEach((r) => { try { r.xhr && r.xhr.abort(); } catch { /* noop */ } });
+        return new Map();
+      });
+      setUploadError("");
+      setWaitingUploads(false);
       setTemplatesLoading(true);
       api.get(`/marketing/templates?channel=${isEmail ? "email" : "sms"}&active=true`)
         .then((r) => setTemplates(r?.templates || []))
@@ -1975,6 +2028,14 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
         .finally(() => setTemplatesLoading(false));
     }
   }, [payload, isEmail]);
+  // ── Phase P7 · Feb-2026 — auto-clear the waiting-uploads flash
+  //    notice once every upload has settled (success OR abort). The
+  //    operator can now click Send without re-mounting the modal.
+  useEffect(() => {
+    if (waitingUploads && uploading.size === 0) {
+      setWaitingUploads(false);
+    }
+  }, [uploading, waitingUploads]);
   const pickTemplate = (t) => {
     setPickedId(t?.id || "");
     if (!t) {
@@ -2004,9 +2065,160 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
     } finally { setPreviewing(false); }
   };
   if (!payload) return null;
+
+  // ── Phase P7 · Feb-2026 — inline uploader helpers ────────────
+  // Kick a hidden ``<input type=file>``. The button reuses the same
+  // accept whitelist the backend enforces, so the native picker
+  // hides most non-whitelisted types up-front; the JS whitelist
+  // below is the actual gate.
+  const _openNativePicker = () => {
+    setUploadError("");
+    setWaitingUploads(false);
+    uploadInputRef.current?.click();
+  };
+
+  // XHR upload against the existing ``POST /api/marketing/media/upload``
+  // endpoint (multipart). Progress tracking + cancel are baked in so
+  // the modal can drop an in-flight upload cleanly.
+  const _uploadOne = (file, tempId) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("alt_text", "");
+    const base = process.env.REACT_APP_BACKEND_URL || "";
+    const url = `${base}/api/marketing/media/upload`;
+    const token = (typeof window !== "undefined")
+      ? window.localStorage.getItem("token") : "";
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const pct = (e.loaded / e.total) * 100;
+      setUploading((prev) => {
+        const next = new Map(prev);
+        const row = next.get(tempId);
+        if (row) { next.set(tempId, { ...row, progress: pct }); }
+        return next;
+      });
+    };
+    xhr.onload = () => {
+      // Drop the row from ``uploading`` regardless of outcome — a
+      // failure just leaves nothing attached; success promotes the
+      // upload into ``attachments``.
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const created = JSON.parse(xhr.responseText);
+          setAttachments((prev) => {
+            const byId = new Map(prev.map((a) => [a.id, a]));
+            byId.set(created.id, {
+              id:         created.id,
+              file_name:  created.file_name || file.name,
+              mime_type:  created.mime_type || file.type,
+              size_bytes: created.size_bytes || file.size,
+            });
+            return Array.from(byId.values());
+          });
+        } catch {
+          onError && onError("Upload response was malformed");
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          onError && onError(
+            body?.detail?.message || body?.detail || `Upload failed (${xhr.status})`,
+          );
+        } catch {
+          onError && onError(`Upload failed (${xhr.status})`);
+        }
+      }
+      setUploading((prev) => {
+        const next = new Map(prev);
+        next.delete(tempId);
+        return next;
+      });
+    };
+    xhr.onerror = () => {
+      onError && onError("Network error uploading file");
+      setUploading((prev) => {
+        const next = new Map(prev);
+        next.delete(tempId);
+        return next;
+      });
+    };
+    xhr.send(fd);
+    return xhr;
+  };
+
+  const _handleFilesSelected = (files) => {
+    setUploadError("");
+    setWaitingUploads(false);
+    if (!files || files.length === 0) return;
+    const picked = Array.from(files);
+    // 1. Type gate. ``accept=`` isn't authoritative — a user can
+    //    change the OS picker's filter to "All files" so we re-check.
+    const badType = picked.find((f) => !P7_EMAIL_ATTACH_TYPES.has(f.type));
+    if (badType) {
+      setUploadError(
+        `File type not allowed for email attachments: ${badType.name}. ` +
+        `Images, PDFs, and Office/CSV docs only.`,
+      );
+      return;
+    }
+    // 2. Size gate — client-side, BEFORE upload. Matches server 10 MB.
+    const tooBig = picked.find((f) => f.size > P7_EMAIL_ATTACH_MAX_BYTES);
+    if (tooBig) {
+      setUploadError(
+        `File too large — 10 MB max for email attachments (${tooBig.name}).`,
+      );
+      return;
+    }
+    // 3. Per-send cap (already-uploaded + in-flight + new picks).
+    const inFlight = uploading.size;
+    const existing = attachments.length;
+    if (existing + inFlight + picked.length > P7_EMAIL_ATTACH_MAX_COUNT) {
+      setUploadError(
+        `Maximum ${P7_EMAIL_ATTACH_MAX_COUNT} attachments per email.`,
+      );
+      return;
+    }
+    // Stamp a client-side tempId + kick each upload in parallel.
+    setUploading((prev) => {
+      const next = new Map(prev);
+      picked.forEach((f) => {
+        const tempId = `up-${Math.random().toString(36).slice(2, 10)}`;
+        const xhr = _uploadOne(f, tempId);
+        next.set(tempId, {
+          name: f.name, size: f.size, progress: 0, xhr,
+        });
+      });
+      return next;
+    });
+  };
+
+  const _cancelUpload = (tempId) => {
+    setUploading((prev) => {
+      const next = new Map(prev);
+      const row = next.get(tempId);
+      if (row?.xhr) {
+        try { row.xhr.abort(); } catch { /* noop */ }
+      }
+      next.delete(tempId);
+      return next;
+    });
+  };
+
   const submit = async () => {
     if (!message.trim()) {
       onError("Message body required");
+      return;
+    }
+    // ── Phase P7 · Feb-2026 — block send while uploads are in-flight.
+    //    Better UX than a disabled button because the operator can
+    //    see a plain-language explanation ("Wait for uploads to
+    //    finish…") next to the Send control. The click is a no-op
+    //    so we don't lose the composed subject/body/attachments.
+    if (isEmail && uploading.size > 0) {
+      setWaitingUploads(true);
       return;
     }
     setBusy(true);
@@ -2172,6 +2384,43 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
                 <Paperclip className="w-3.5 h-3.5" />
                 Attach files
               </button>
+              {/* Phase P7 · Feb-2026 — inline "Upload from computer"
+                  button + hidden native file input. Email only —
+                  ``!isEmail`` short-circuits so the SMS branch renders
+                  exactly like it did pre-P7. */}
+              {isEmail ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={_openNativePicker}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+                    style={{
+                      borderColor: colors.border,
+                      color: colors.onSurface,
+                      background: colors.surface,
+                    }}
+                    data-testid="cd-send-attach-upload-btn"
+                    aria-label="Upload files from your computer"
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                    Upload from computer
+                  </button>
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    multiple
+                    accept={P7_EMAIL_ATTACH_ACCEPT}
+                    onChange={(e) => {
+                      _handleFilesSelected(e.target.files);
+                      // Reset so re-picking the same filename fires
+                      // ``onChange`` a second time.
+                      e.target.value = "";
+                    }}
+                    style={{ display: "none" }}
+                    data-testid="cd-send-attach-upload-input"
+                  />
+                </>
+              ) : null}
               {attachments.length === 0 ? (
                 <span
                   className="text-xs"
@@ -2181,6 +2430,45 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
                   No files attached
                 </span>
               ) : null}
+              {/* Phase P7 · Feb-2026 — in-flight upload progress rows.
+                  Each row shows the filename + a small progress % and
+                  an X to cancel the underlying XHR. Rendered inline
+                  with the completed chips so the user sees them as
+                  part of the attachment list. */}
+              {Array.from(uploading.entries()).map(([tempId, row]) => (
+                <span
+                  key={tempId}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
+                  style={{
+                    background: colors.surface,
+                    color: colors.onSurface,
+                    border: `1px dashed ${colors.border}`,
+                  }}
+                  data-testid={`cd-send-attach-uploading-${tempId}`}
+                  title={row.name}
+                >
+                  <FileText className="w-3 h-3" />
+                  <span className="max-w-[160px] truncate">
+                    {row.name}
+                  </span>
+                  <span
+                    className="text-[10px]"
+                    style={{ color: colors.muted }}
+                    data-testid={`cd-send-attach-uploading-progress-${tempId}`}
+                  >
+                    {Math.round(row.progress || 0)}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => _cancelUpload(tempId)}
+                    className="ml-0.5 text-zinc-400 hover:text-zinc-900"
+                    aria-label={`Cancel upload of ${row.name}`}
+                    data-testid={`cd-send-attach-upload-cancel-${tempId}`}
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
               {attachments.map((a) => (
                 <span
                   key={a.id}
@@ -2221,6 +2509,34 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
               >
                 SMS can't carry files — download links will be appended
                 to the message body.
+              </div>
+            ) : null}
+            {/* Phase P7 · Feb-2026 — inline error surfaces when the
+                client-side gate rejects a selection (type / size /
+                count). Doesn't block subsequent uploads; picking a
+                valid file clears it. */}
+            {isEmail && uploadError ? (
+              <div
+                className="text-[11px] mt-1.5"
+                style={{ color: "#B91C1C" }}
+                data-testid="cd-send-attach-error"
+                role="alert"
+              >
+                {uploadError}
+              </div>
+            ) : null}
+            {/* Phase P7 · Feb-2026 — waiting-uploads flash notice.
+                Fires only when the operator clicks Send while any
+                upload is still in flight. Auto-cleared once uploads
+                complete (see the ``uploading.size === 0`` effect). */}
+            {isEmail && waitingUploads ? (
+              <div
+                className="text-[11px] mt-1.5"
+                style={{ color: "#B45309" }}
+                data-testid="cd-send-attach-waiting-uploads"
+                role="status"
+              >
+                Wait for attachments to finish uploading…
               </div>
             ) : null}
           </div>
