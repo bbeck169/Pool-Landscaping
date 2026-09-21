@@ -98,6 +98,18 @@ import {
 // ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
 // codes here — extend the helper map if a new status is added.
 import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
+// Phase P12 · Feb-2026 — Optimize Route error dialog uses the shared
+// shadcn ``Dialog`` primitive so the modal inherits the app's a11y +
+// focus-trap behavior. Do NOT bespoke this — matches the pattern
+// used by every other confirm/error surface on the schedule page.
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -405,6 +417,15 @@ export default function CalendarSchedule() {
   // modal close so the next open reverts to route_index seed.
   const [optimizePayload, setOptimizePayload] = useState(null);
   const [optimizing, setOptimizing] = useState(false);
+  // Phase P12 · Feb-2026 — Optimize Route error dialog. Historically
+  // any 4xx/5xx from ``POST /api/schedule/optimize-route`` was
+  // swallowed into an ephemeral 3.2s toast (see ``toast_``) — user
+  // saw the button do nothing and had no way to copy the code for
+  // support. This state powers the shared ``<Dialog>`` render below
+  // the page and surfaces ``err.data.detail.code`` + ``.message``
+  // in a monospace tag so ops can escalate cleanly. Set on failure,
+  // cleared on Close.
+  const [optimizeError, setOptimizeError] = useState(null);
   // Phase 31 · Step 2b — tap-job opens the checklist modal in place of
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
@@ -1147,9 +1168,45 @@ export default function CalendarSchedule() {
         summary,
         warnings: Array.isArray(r?.warnings) ? r.warnings : [],
       });
+      // Phase P12 · non-blocking success toast when the backend
+      // surfaced orphaned tech ids or unassigned jobs. These are
+      // operator-actionable (run Data Repair · Orphaned Technician
+      // sweep or assign the ghost job) but must NOT block the
+      // Reorder modal from opening.
+      const _orphans = Array.isArray(r?.orphaned_tech_ids) ? r.orphaned_tech_ids : [];
+      const _skipped = Array.isArray(r?.skipped_unassigned) ? r.skipped_unassigned : [];
+      if (_orphans.length || _skipped.length) {
+        const _opt = Array.isArray(r?.ordered_job_ids) ? r.ordered_job_ids.length : 0;
+        const _skipTotal = _orphans.length + _skipped.length;
+        toast_(
+          `Optimized ${_opt} jobs; ${_skipTotal} skipped `
+          + `(unassigned or orphaned)`,
+          "info",
+        );
+      }
       setBulkReorderOpen(true);
     } catch (e) {
-      toast_(String(e?.message || "Route optimization failed"), "err");
+      // Phase P12 · Feb-2026 — surface the real error in a modal
+      // instead of the ephemeral red toast. Ladder walks every
+      // error shape our ``api.js`` wrapper might attach the FastAPI
+      // detail under, matching the P10 fix for reorder errors.
+      const _msg =
+        e?.data?.detail?.message
+        || e?.data?.detail?.code
+        || (typeof e?.data?.detail === "string" ? e.data.detail : null)
+        || e?.body?.detail?.message
+        || e?.body?.detail?.code
+        || e?.message
+        || "Optimization failed";
+      const _code =
+        e?.data?.detail?.code
+        || e?.body?.detail?.code
+        || (typeof e?.message === "string" ? e.message : "")
+        || "";
+      const _warns = Array.isArray(e?.data?.warnings)
+        ? e.data.warnings
+        : (Array.isArray(e?.body?.warnings) ? e.body.warnings : []);
+      setOptimizeError({ message: String(_msg), code: String(_code), warnings: _warns });
     } finally {
       setOptimizing(false);
     }
@@ -1895,6 +1952,55 @@ export default function CalendarSchedule() {
 
       {/* Phase 56.3 follow-up — clock-in gate dialog for landscape techs. */}
       <ClockInGateDialog gate={clockGate} />
+
+      {/* Phase P12 · Feb-2026 — Optimize Route error dialog.
+          Fires when ``POST /api/schedule/optimize-route`` throws.
+          Uses the shared shadcn ``Dialog`` primitive so it inherits
+          the app's focus-trap + a11y semantics; kept scoped to
+          error state so a null ``optimizeError`` renders nothing. */}
+      <Dialog
+        open={!!optimizeError}
+        onOpenChange={(o) => { if (!o) setOptimizeError(null); }}
+      >
+        <DialogContent data-testid="optimize-error-dialog">
+          <DialogHeader>
+            <DialogTitle>Couldn&apos;t optimize route</DialogTitle>
+            <DialogDescription>
+              {optimizeError?.message || "Optimization failed."}
+            </DialogDescription>
+          </DialogHeader>
+          {optimizeError?.code ? (
+            <div className="text-sm text-muted-foreground">
+              Support reference code:{" "}
+              <code
+                data-testid="optimize-error-code"
+                className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+              >
+                {optimizeError.code}
+              </code>
+            </div>
+          ) : null}
+          {Array.isArray(optimizeError?.warnings) && optimizeError.warnings.length ? (
+            <ul
+              data-testid="optimize-error-warnings"
+              className="mt-2 list-disc pl-6 text-sm text-muted-foreground"
+            >
+              {optimizeError.warnings.map((w, i) => (
+                <li key={i}>{String(w)}</li>
+              ))}
+            </ul>
+          ) : null}
+          <DialogFooter>
+            <button
+              data-testid="optimize-error-close"
+              className="rounded-md border px-3 py-1.5 text-sm"
+              onClick={() => setOptimizeError(null)}
+            >
+              Close
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Feb-2026 · Enhancement 1 — Reschedule confirmation modal. */}
       {rescheduleDraft ? (

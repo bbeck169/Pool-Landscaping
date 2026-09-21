@@ -11,7 +11,7 @@ the property's coords + address instead of the customer default. See
 """
 import hashlib
 from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -167,31 +167,106 @@ async def optimize_route(
     target_user = await db.users.find_one({"id": target_uid, "tenant_id": tenant["id"]},
                                           {"_id": 0})
     tech_id = (target_user or {}).get("technician_id") or target_uid
-    query = {
-        "tenant_id": tenant["id"],
-        "$or": [
+    # Phase P12 · Feb-2026 — replace the pre-P12 dict-spread clobber
+    # of ``not_deleted_filter`` over the tech-lane ``$or``
+    # Every disjunction lands under its own ``$and`` entry so the
+    # tech-lane ``$or`` is no longer silently dropped when merging
+    # soft-delete. Preserves the dual ``scheduled_start``/``scheduled_date``
+    # match — mirror of ``get_route_stops`` below.
+    from services.query_scope import tenant_scoped_filter as _tsf
+    query = _tsf(
+        tenant["id"],
+        [
             {"technician_id": target_uid},
             {"technician_id": tech_id},
             {"assigned_technician_id": target_uid},
         ],
-        "status": {"$nin": ["completed", "cancelled"]},
-        # Feb-2026 · Schedule optimize-route day-filter fix — match
-        # jobs stored with EITHER a ``scheduled_start`` datetime
-        # (post-optimizer / drag-drop writes) OR the flat
-        # ``scheduled_date`` ISO string (legacy seeds + recurring-
-        # generator writes). Mirrors ``get_route_stops`` verbatim so
-        # both endpoints stay in sync — without this, jobs never
-        # touched by the optimizer were silently dropped, which is
-        # most of them.
-        "$and": [{
-            "$or": [
-                {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
-                {"scheduled_date": date_str},
-            ],
-        }],
-    }
-    query = {**query, **_nd()}
+        [
+            {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
+            {"scheduled_date": date_str},
+        ],
+        status={"$nin": ["completed", "cancelled"]},
+    )
     jobs = await db.jobs.find(query, {"_id": 0, "photos.data": 0}).to_list(100)
+
+    # Phase P12 · Feb-2026 — orphan-tolerant soft guard.
+    # Two failure classes historically 4xx'd the whole batch:
+    #   1) A job with NO ``technician_id`` (matched the query via
+    #      ``assigned_technician_id`` alone) — ambiguous ownership.
+    #   2) A job whose ``technician_id`` doesn't resolve to a live
+    #      ``users`` (or ``technicians``) row for this tenant.
+    # Both are non-blocking:
+    #   * (1) → drop from the optimizer input, surface as
+    #     ``skipped_unassigned: [job_id, ...]``.
+    #   * (2) → include in the optimizer input (route math only needs
+    #     the id for grouping), surface as
+    #     ``orphaned_tech_ids: [tech_id, ...]`` at the top level AND
+    #     one human-readable line in ``warnings``.
+    # No user-facing 4xx for either.
+    skipped_unassigned: list[str] = []
+    _keep: list[Dict[str, Any]] = []
+    _seen_tech_ids: set[str] = set()
+    for _j in jobs:
+        _tid = _j.get("technician_id")
+        if not _tid:
+            skipped_unassigned.append(_j.get("id"))
+            continue
+        _seen_tech_ids.add(_tid)
+        _keep.append(_j)
+    jobs = _keep
+
+    # Resolve ``technician_id`` references against ``users`` + fall
+    # back to ``technicians`` (same resolution ladder the target-tech
+    # guard uses above). Anything unresolved is an orphaned ref.
+    orphaned_tech_ids: list[str] = []
+    if _seen_tech_ids:
+        _live_user_ids: set[str] = set()
+        async for _u in db.users.find(
+            {"id": {"$in": list(_seen_tech_ids)},
+             "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1},
+        ):
+            _live_user_ids.add(_u["id"])
+        _unresolved = _seen_tech_ids - _live_user_ids
+        if _unresolved:
+            _live_tech_ids: set[str] = set()
+            async for _t in db.technicians.find(
+                {"id": {"$in": list(_unresolved)},
+                 "tenant_id": tenant["id"]},
+                {"_id": 0, "id": 1},
+            ):
+                _live_tech_ids.add(_t["id"])
+            _unresolved -= _live_tech_ids
+        orphaned_tech_ids = sorted(_unresolved)
+    # Phase P12 · surface orphan / unassigned soft-guard results on
+    # every response path. A single formatted warning line keeps the
+    # existing ``warnings: list[str]`` contract intact (client ORION
+    # banner keeps rendering) AND the top-level ids let the client
+    # branch on structured data (P12 toast + P13 cleanup UI). Cache is
+    # bypassed on any non-empty orphan/skip case so freshly-mutated
+    # jobs surface their new warnings on the next call.
+    _warn_lines: list[str] = []
+    if orphaned_tech_ids:
+        _warn_lines.append(
+            f"{len(orphaned_tech_ids)} job(s) reference orphaned "
+            f"technician id(s): {', '.join(orphaned_tech_ids)}. "
+            f"Route was optimized as-is; assign a live technician or "
+            f"run the Data Repair · Orphaned Technician sweep to clean up."
+        )
+    if skipped_unassigned:
+        _warn_lines.append(
+            f"{len(skipped_unassigned)} job(s) with no technician_id "
+            f"were skipped."
+        )
+
+    def _stamp_soft_guard(payload: dict) -> dict:
+        """Attach P12 soft-guard fields + prepend orphan/skip warnings."""
+        payload.setdefault("warnings", [])
+        payload["warnings"] = list(_warn_lines) + list(payload["warnings"])
+        payload["orphaned_tech_ids"] = list(orphaned_tech_ids)
+        payload["skipped_unassigned"] = list(skipped_unassigned)
+        return payload
+
     # Feb-2026 · Slice 4 (MP1.6) — resolve every stop through the
     # shared stop-geo resolver so a job with ``property_id`` set uses
     # the property's coords (lazy-geocoding the property once when
@@ -214,12 +289,12 @@ async def optimize_route(
         and (j.get("site_lng") is not None or j.get("lng") is not None)
     ]
     if len(jobs_with_geo) < 2:
-        return {
+        return _stamp_soft_guard({
             "ordered_job_ids": [j["id"] for j in jobs_with_geo],
             "total_distance_m": 0, "total_duration_s": 0,
             "legs": [], "cached": False, "algorithm": "trivial",
             "warnings": ["Need at least 2 stops to optimize."],
-        }
+        })
 
     # Feb-2026 · Google Routes API v2 hard cap. Beyond 25 intermediates
     # the modern Routes API rejects the request; per spec we return a
@@ -242,14 +317,20 @@ async def optimize_route(
 
     job_ids = [j["id"] for j in jobs_with_geo]
     whash = _waypoints_hash(job_ids, body.start_lat, body.start_lng)
-    cached = await db.route_optimizations.find_one(
-        {"tenant_id": tenant["id"], "user_id": target_uid,
-         "date": date_str, "waypoints_hash": whash},
-        {"_id": 0},
-    )
+    # Phase P12 · bypass cache when soft-guard flags are active so the
+    # freshly-computed warnings / ids always ride the response. The
+    # canonical shape stays cached; the transient guard state does not.
+    _has_soft_guard = bool(orphaned_tech_ids or skipped_unassigned)
+    cached = None
+    if not _has_soft_guard:
+        cached = await db.route_optimizations.find_one(
+            {"tenant_id": tenant["id"], "user_id": target_uid,
+             "date": date_str, "waypoints_hash": whash},
+            {"_id": 0},
+        )
     if cached:
         cached["cached"] = True
-        return cached
+        return _stamp_soft_guard(cached)
 
     # Feb-2026 · Try Google Routes API v2 first. Returns None on any
     # failure (network / quota / missing key / >25 waypoints already
@@ -373,7 +454,12 @@ async def optimize_route(
                 "user_id": target_uid,
                 "computed_at": now_iso(),
             }
+            # Phase P12 · never persist the transient soft-guard fields
+            # in the ``route_optimizations`` cache — recomputed per
+            # request. The written doc stays canonical (safe to
+            # rehydrate a future clean call).
             await db.route_optimizations.insert_one(dict(out))
+            _stamp_soft_guard(out)
             try:
                 from routers.realtime import bus
                 await bus.broadcast(target_uid, {
@@ -448,6 +534,10 @@ async def optimize_route(
         "computed_at": now_iso(),
     }
     await db.route_optimizations.insert_one(dict(out))
+    # Phase P12 · attach the transient soft-guard fields after the
+    # canonical doc has already been persisted, so the cache stays lean
+    # while the response carries the operator-actionable warnings.
+    _stamp_soft_guard(out)
     # WS notify — best-effort.
     try:
         from routers.realtime import bus
@@ -528,30 +618,30 @@ async def get_route_stops(
     # ``technicians`` — jobs seeded against either id must match.
     user_side_id = tech_user.get("id") or tech_id
 
-    q = {
-        "tenant_id": tenant["id"],
-        "$or": [
+    # Phase P12 · Feb-2026 — replace the pre-P12 dict-spread clobber
+    # of ``not_deleted_filter`` over the tech-lane ``$or``
+    # Tech-lane ``$or`` and date-shape ``$or`` each land under their
+    # own ``$and`` entry so neither is silently dropped by the
+    # soft-delete merge. Response semantics are unchanged — this
+    # endpoint is a route-stops READ, not the optimizer, so P12's
+    # orphan / unassigned soft-guard stays scoped to ``optimize_route``
+    # (adding it here would change a read-only enrichment contract).
+    from services.query_scope import tenant_scoped_filter as _tsf
+    q = _tsf(
+        tenant["id"],
+        [
             {"technician_id": tech_id},
             {"technician_id": tid},
             {"technician_id": user_side_id},
             {"assigned_technician_id": tech_id},
             {"assigned_technician_id": user_side_id},
         ],
-        "status": {"$nin": ["completed", "cancelled"]},
-        # Feb-2026 · Routes enrichment · match jobs stored with
-        # either the ``scheduled_start`` datetime (post-optimizer)
-        # or the flat ``scheduled_date`` ISO string (legacy seeds +
-        # recurring-generator writes). Without this the enrichment
-        # endpoint silently drops any job that never hit the
-        # optimizer, which is most of them.
-        "$and": [{
-            "$or": [
-                {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
-                {"scheduled_date": date_str},
-            ],
-        }],
-    }
-    q = {**q, **_nd()}
+        [
+            {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
+            {"scheduled_date": date_str},
+        ],
+        status={"$nin": ["completed", "cancelled"]},
+    )
     jobs = await db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort(
         [("route_order", 1), ("scheduled_start", 1)]
     ).to_list(200)
