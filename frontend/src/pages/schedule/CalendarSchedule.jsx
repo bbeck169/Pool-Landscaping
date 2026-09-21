@@ -1418,7 +1418,15 @@ export default function CalendarSchedule() {
         {/* Phase F6a · Feb-2026 — "All crews" filter (WEB only). Populates
             from GET /api/crews and adds a `crew_id` param to the schedule
             query. When set, the tech dropdown above is disabled and the
-            crew's members render as chips (see block below). */}
+            crew's members render as chips (see block below).
+
+            Phase P9-B · Feb-2026 — Technician Visibility Jail.
+            The crew filter is hidden for the ``technician`` role — techs
+            must never be able to widen or re-scope beyond their own
+            jobs. Backend jails the query regardless; hiding the picker
+            keeps the UI honest so a tech never sees an option that would
+            silently no-op. */}
+        {_isTech ? null : (
         <select
           value={crewId}
           onChange={(e) => { setCrewId(e.target.value); setParam("crew", e.target.value); }}
@@ -1435,6 +1443,7 @@ export default function CalendarSchedule() {
             <option key={c.id} value={c.id}>{c.name || "Unnamed crew"}</option>
           ))}
         </select>
+        )}
 
         <select
           value={service}

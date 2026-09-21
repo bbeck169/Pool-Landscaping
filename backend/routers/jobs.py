@@ -293,46 +293,91 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
 
     Async because the crew lookup requires a Motor call. The single
     call site (``list_jobs``) is already async.
+
+    Phase P9-A · Feb-2026 — Technician Visibility Jail (Option B).
+      • Identity-resolution: build ``tech_ids`` = ordered dedup of
+        ``[user.technician_id, user.id]`` (both variants — this
+        codebase carries both shapes; see K42 module docstring).
+        Scoping over the full union preserves R1.1 crew-visibility
+        for legacy techs stamped under ``users.id`` while also
+        matching modern jobs stamped under ``technicians.id``.
+      • Fail-closed: only when BOTH ids are missing (truly
+        identity-less session). Returns an impossible-id sentinel
+        query so Mongo yields 0 rows without touching the covered
+        index plan. Silent 200 + WARN — never 403 (leak-avoidance:
+        we don't reveal that the caller is a technician in a
+        broken state).
+      • Un-bypassable: the ``elif technician_id`` admin filter is
+        unreachable for a technician caller — the tech branch
+        always returns (either fail-closed or full-union scope),
+        so a tech passing ``?technician_id=<other>`` can never hop
+        onto the admin lane. The incoming param is silently
+        ignored (pinned to the tech's own ``tech_ids`` union).
     """
     tid = tenant["id"]
     q: dict = {"tenant_id": tid}
-    if user.get("role") == "technician" and user.get("technician_id"):
-        tech_pk = user["technician_id"]
-        # Find every crew the tech is a member of. ``tech_ids`` on
-        # crews is the same key space as ``technicians.id``.
+    _role = (user.get("role") or "").lower()
+    if _role == "technician":
+        # ── Phase P9-A · Build the full identity union for scoping ──
+        tech_ids: list = []
+        for _candidate in (user.get("technician_id"), user.get("id")):
+            if _candidate and _candidate not in tech_ids:
+                tech_ids.append(_candidate)
+        if not tech_ids:
+            # Truly identity-less session → fail-closed empty.
+            logger.warning(
+                "[p9.jail] technician with no resolvable identity — "
+                "fail-closed. tenant_id=%s endpoint=list_jobs",
+                tid,
+            )
+            q["id"] = "__p9_jail_no_technician_id__"
+            if status and status != "all":
+                q["status"] = status
+            return q
+        tech_pk = tech_ids[0]  # kept for the crew lookup below
+        # Find every crew the tech is a member of.  ``tech_ids`` on
+        # crews may carry either ``technicians.id`` (modern) or
+        # ``users.id`` (legacy fixture / older seeds), so match via
+        # ``$in`` over the full identity union — otherwise a legacy
+        # crew keyed on ``user.id`` would be invisible to a modern
+        # tech resolved by ``technician_id``, and vice versa.
         crew_ids: list = []
         try:
             async for row in db.crews.find(
-                {"tenant_id": tid, "tech_ids": tech_pk},
+                {"tenant_id": tid, "tech_ids": {"$in": tech_ids}},
                 {"_id": 0, "id": 1},
             ):
                 if row.get("id"):
                     crew_ids.append(row["id"])
         except Exception:  # noqa: BLE001 — never block on membership lookup
             crew_ids = []
-        # Phase K42 · Feb-2026 — the tech's OWN jobs may be persisted
-        # under either variant (technicians.id or users.id) across
-        # any of :data:`JOB_TECH_FIELDS`.  Merge the resolver-built
-        # ``$or`` with the existing crew branch.
-        from services.tech_id_resolver import (
-            resolve_and_build_filter,
-        )
-        _v, _tech_or = await resolve_and_build_filter(
-            tech_pk, tenant_id=tenant.get("id"),
-        )
+        # Phase K42 / Phase P9-A · Feb-2026 — the tech's OWN jobs may
+        # be persisted under either variant (technicians.id or
+        # users.id) across any of :data:`JOB_TECH_FIELDS`.  Build a
+        # single ``$or`` over EVERY field × EVERY id in ``tech_ids``
+        # so both legacy and modern write shapes are matched.
+        from services.tech_id_resolver import build_tech_field_or_clause
+        _tech_or = build_tech_field_or_clause(tech_ids)
         tech_or_clauses: list = []
         if _tech_or:
             tech_or_clauses.extend(_tech_or["$or"])
-        else:
-            tech_or_clauses.append({"technician_id": tech_pk})
         if crew_ids:
             tech_or_clauses.append({"crew_id": {"$in": crew_ids}})
         # Preserve the single-key shape when possible so downstream
         # $and merges stay clean.
         if len(tech_or_clauses) == 1:
             q.update(tech_or_clauses[0])
-        else:
+        elif tech_or_clauses:
             q["$or"] = tech_or_clauses
+        else:
+            # Defensive — should never reach here (tech_ids is
+            # non-empty at this point) but keep the sentinel so a
+            # future refactor can't silently widen to tenant-scope.
+            q["id"] = "__p9_jail_no_scope__"
+        # NOTE: any incoming ``?technician_id=<other>`` param is
+        # silently ignored — the tech branch always returns above,
+        # so the ``elif technician_id`` admin lane below is
+        # unreachable for a technician caller.
     elif user.get("role") == "customer":
         q["customer_id"] = user.get("customer_id")
     elif technician_id:
@@ -1731,10 +1776,14 @@ async def get_job(jid: str,
             )
         raise HTTPException(404, "Job not found")
     # F1 · crew-aware tech gate — see services/authz.py.
+    # Phase P9-A · Feb-2026 — leak-avoidance: return 404 (not 403) so
+    # the mere existence of a foreign-tech job is not revealed to a
+    # technician caller. Matches the ``list_jobs`` silent-empty
+    # posture: never confirm whether the ID exists at all.
     if user.get("role") == "technician" and not await is_tech_authorized_on_job(
         user, doc, db, tenant["id"],
     ):
-        raise HTTPException(403, "Not your job")
+        raise HTTPException(404, "Job not found")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
     doc = with_field_report(doc)

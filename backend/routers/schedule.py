@@ -219,7 +219,38 @@ async def schedule_today(request: Request,
     # would see a partial or empty schedule. Union BOTH ids so we
     # don't hide legitimate jobs. Same defensive posture as
     # ``service_reports.py::_authorize_report``.
+    #
+    # Phase P9-A · Feb-2026 — Technician Visibility Jail (Option B).
+    # Fail-closed ONLY when the technician session carries NO
+    # resolvable identity (both ``user.id`` and ``user.technician_id``
+    # empty). Otherwise scope over the FULL union so legacy shapes
+    # (jobs stamped ``technician_id = user.id``) still surface for
+    # R1.1 crew visibility. Silent 200 + WARN — never 403 (never
+    # reveal that the caller is a tech in a broken state).
     _tech_ids = list(filter(None, [user.get("id"), user.get("technician_id")]))
+    _role = (user.get("role") or "").lower()
+    if _role == "technician" and not _tech_ids:
+        logger.warning(
+            "[p9.jail] technician with no resolvable identity — "
+            "fail-closed. tenant_id=%s endpoint=schedule_today",
+            tid,
+        )
+        return {
+            "date": today_yyyymmdd,
+            "tz": tz_name,
+            "items": [],
+            "route_legs": [],
+            "summary": {
+                "job_count": 0,
+                "job_count_repair": 0,
+                "job_count_service": 0,
+                "scheduled_hours": 0.0,
+                "hours_logged_today": 0.0,
+                "miles_logged_today": 0.0,
+                "clocked_in": False,
+                "open_entry_id": None,
+            },
+        }
     tech_or_clauses: list = [
         {"assigned_technician_id": {"$in": _tech_ids}},
         {"technician_id": {"$in": _tech_ids}},

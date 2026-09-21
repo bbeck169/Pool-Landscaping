@@ -8,8 +8,9 @@
  * - Provides a manual `syncNow()` trigger
  * - Downloads a fresh bundle after a successful flush
  */
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from "react";
 import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
+import { useAuth } from "@/src/auth";
 import {
   downloadBundle,
   flushOutbox,
@@ -42,11 +43,21 @@ export function useSyncManager() {
 }
 
 export function SyncManagerProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [isOnline, setIsOnline] = useState(true);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [outboxCount, setOutboxCount] = useState(0);
   const [lastBundleTs, setLastBundleTs] = useState<string | null>(null);
   const wasOffline = useRef(false);
+
+  // P9-C: tech scope for defense-in-depth cache filtering.
+  const techScope = useMemo(() => {
+    const role = (user?.role as string) || "";
+    if (role === "technician" || role === "tech") {
+      return { role, technicianId: user?.technician_id ?? null };
+    }
+    return undefined;
+  }, [user?.role, user?.technician_id]);
 
   // Poll outbox count
   const updateOutboxCount = useCallback(async () => {
@@ -64,7 +75,7 @@ export function SyncManagerProvider({ children }: { children: React.ReactNode })
       console.log(`[Sync] Flushed outbox: ${synced} synced, ${failed} failed`);
       await updateOutboxCount();
       // Download fresh bundle after flush
-      await downloadBundle();
+      await downloadBundle(techScope);
       const ts = await getBundleTimestamp();
       setLastBundleTs(ts);
       setSyncStatus(failed > 0 ? "error" : "idle");
@@ -72,21 +83,21 @@ export function SyncManagerProvider({ children }: { children: React.ReactNode })
       console.warn("[Sync] syncNow failed:", e);
       setSyncStatus("error");
     }
-  }, [isOnline, updateOutboxCount]);
+  }, [isOnline, updateOutboxCount, techScope]);
 
   // Download bundle only
   const refreshBundle = useCallback(async () => {
     if (!isOnline) return;
     setSyncStatus("syncing");
     try {
-      await downloadBundle();
+      await downloadBundle(techScope);
       const ts = await getBundleTimestamp();
       setLastBundleTs(ts);
       setSyncStatus("idle");
     } catch {
       setSyncStatus("error");
     }
-  }, [isOnline]);
+  }, [isOnline, techScope]);
 
   // NetInfo listener
   useEffect(() => {

@@ -67,7 +67,9 @@ export default function OfflineDiagnosticsScreen() {
       return;
     }
     setRefreshing(true);
-    await hydrateToday(user.id);
+    const isTechRole = user.role === "technician" || (user.role as string) === "tech";
+    const techScope = isTechRole ? { role: user.role, technicianId: user.technician_id ?? null } : undefined;
+    await hydrateToday(user.id, techScope);
     await refresh();
     setRefreshing(false);
     showToast("Cache rebuilt from server.");

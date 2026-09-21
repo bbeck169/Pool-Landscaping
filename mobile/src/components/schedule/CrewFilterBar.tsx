@@ -22,10 +22,12 @@ type Props = {
   selectedCrewId: string;
   onSelect: (crewId: string) => void;
   memberNames: string[];
+  /** P9-C: defense-in-depth — hide the "All crews" option for techs. */
+  hideAllOption?: boolean;
 };
 
 export default function CrewFilterBar({
-  crews, selectedCrewId, onSelect, memberNames,
+  crews, selectedCrewId, onSelect, memberNames, hideAllOption,
 }: Props) {
   const [open, setOpen] = useState(false);
   const selectedCrew = crews.find((c) => c.id === selectedCrewId);
@@ -86,7 +88,8 @@ export default function CrewFilterBar({
           <View style={s.sheet} testID="crew-filter-picker">
             <Text style={s.sheetTitle}>Select crew</Text>
             <ScrollView style={{ maxHeight: 350 }}>
-              {/* "All crews" option */}
+              {/* "All crews" option — P9-C: hidden for technicians */}
+              {!hideAllOption && (
               <Pressable
                 onPress={() => { onSelect(""); setOpen(false); }}
                 style={[s.option, !selectedCrewId && s.optionActive]}
@@ -102,6 +105,7 @@ export default function CrewFilterBar({
                   <Ionicons name="checkmark" size={16} color={colors.brand} />
                 ) : null}
               </Pressable>
+              )}
               {crews.map((c) => (
                 <Pressable
                   key={c.id}

@@ -85,7 +85,16 @@ async function _safeFetch(url: string, signal?: AbortSignal): Promise<any | null
  *
  * Returns the final HydrationMeta.
  */
-export async function hydrateToday(userId: string): Promise<HydrationMeta> {
+/** P9-C: optional tech scope for defense-in-depth filtering. */
+export type HydrationTechScope = {
+  role: string;
+  technicianId: string | null;
+};
+
+export async function hydrateToday(
+  userId: string,
+  techScope?: HydrationTechScope,
+): Promise<HydrationMeta> {
   if (!userId || !isOnlineNow()) return _meta;
   if (_meta.inProgress) return _meta; // debounce
 
@@ -116,7 +125,16 @@ export async function hydrateToday(userId: string): Promise<HydrationMeta> {
       return _meta;
     }
 
-    const jobList: any[] = bundle.jobs || [];
+    let jobList: any[] = bundle.jobs || [];
+    // P9-C: belt-and-suspenders — tech caches only own + unassigned jobs.
+    if (techScope?.role === "technician" || techScope?.role === "tech") {
+      if (techScope.technicianId) {
+        jobList = jobList.filter((j: any) => j.technician_id === techScope.technicianId || !j.technician_id);
+      } else {
+        console.warn("[P9-C] Tech missing technician_id — hydrating empty list (fail closed)");
+        jobList = [];
+      }
+    }
     const reports: any[] = bundle.service_reports_in_progress || [];
     const totalFromServer: number = bundle.job_count ?? jobList.length;
 

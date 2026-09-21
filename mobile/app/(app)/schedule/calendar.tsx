@@ -273,7 +273,10 @@ function ScheduleCalendarInner() {
   const [allTechs, setAllTechs] = useState<any[]>([]);
 
   // Phase S1 — Per-tech schedule filter (admin dropdown, tech auto-scope).
-  const [techFilter, setTechFilter] = useState<string>("all");
+  // P9-C: techs initialize to own technician_id, never "all".
+  const [techFilter, setTechFilter] = useState<string>(
+    isTech ? (user?.technician_id || "all") : "all",
+  );
   const [techPickerOpen, setTechPickerOpen] = useState(false);
 
   // K43 — Resolved technician_id: when user.technician_id is null
@@ -379,10 +382,17 @@ function ScheduleCalendarInner() {
 
   // Phase S1 — Client-side tech filter. "all" shows everything; a
   // specific tech_id keeps that tech's jobs + unassigned jobs.
+  // P9-C: defense-in-depth — techs always scoped to own jobs, even if
+  // "all" leaks into state (fail closed).
   const filteredJobs = useMemo(() => {
+    if (isTech) {
+      const tid = techFilter !== "all" ? techFilter : resolvedTechId;
+      if (!tid) return []; // fail closed: no id → empty
+      return jobs.filter((j) => j.technician_id === tid || !j.technician_id);
+    }
     if (techFilter === "all") return jobs;
     return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id);
-  }, [jobs, techFilter]);
+  }, [jobs, techFilter, isTech, resolvedTechId]);
 
   // K15 · per-request AbortController — abort stale loads on new ones.
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -437,7 +447,7 @@ function ScheduleCalendarInner() {
       );
       const data = await Promise.race([
         cachedGet<any>(jobsUrl, {
-          writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d); },
+          writeThrough: crewFiltered ? undefined : async (d) => { await writeThroughJobs(techUserId, d, isTech ? { role: "technician", technicianId: resolvedTechId ?? null } : undefined); },
           readCache:    async ()  => { return techUserId ? await readCachedWeekJobs(techUserId) : []; },
           signal: ac.signal,
         }),
@@ -1007,6 +1017,8 @@ function ScheduleCalendarInner() {
           <View style={techPickerStyles.sheet}>
             <Text style={techPickerStyles.title}>Filter by technician</Text>
             <ScrollView style={{ maxHeight: 350 }}>
+              {/* P9-C: techs must never see "All techs" — defense in depth */}
+              {!isTech && (
               <Pressable
                 onPress={() => { handleTechFilterChange("all"); setTechPickerOpen(false); }}
                 style={[techPickerStyles.row, techFilter === "all" && techPickerStyles.rowActive]}
@@ -1018,6 +1030,7 @@ function ScheduleCalendarInner() {
                 </Text>
                 {techFilter === "all" && <Ionicons name="checkmark" size={16} color={colors.brand} />}
               </Pressable>
+              )}
               {sortedTechs.map((t: any) => (
                 <Pressable
                   key={t.id}
@@ -1124,6 +1137,7 @@ function GridView(props: any) {
               selectedCrewId={crewFilter}
               onSelect={onCrewSelect}
               memberNames={crewMembers}
+              hideAllOption={isTech}
             />
           ) : null}
         </View>

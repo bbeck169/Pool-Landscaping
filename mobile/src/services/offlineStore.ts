@@ -32,10 +32,27 @@ export type OfflineBundle = {
   ts?: string;
 };
 
+/** P9-C: optional tech scope for defense-in-depth filtering. */
+export type BundleTechScope = {
+  role: string;
+  technicianId: string | null;
+};
+
 /** Download the offline bundle from the server and cache it locally. */
-export async function downloadBundle(): Promise<OfflineBundle | null> {
+export async function downloadBundle(
+  techScope?: BundleTechScope,
+): Promise<OfflineBundle | null> {
   try {
     const data = await api.get("/mobile/offline-bundle");
+    // P9-C: belt-and-suspenders — tech caches only own + unassigned jobs.
+    if ((techScope?.role === "technician" || techScope?.role === "tech") && Array.isArray(data?.jobs)) {
+      if (techScope.technicianId) {
+        data.jobs = data.jobs.filter((j: any) => j.technician_id === techScope.technicianId || !j.technician_id);
+      } else {
+        console.warn("[P9-C] Tech missing technician_id — bundle jobs wiped (fail closed)");
+        data.jobs = [];
+      }
+    }
     const ts = new Date().toISOString();
     await AsyncStorage.setItem(BUNDLE_KEY, JSON.stringify(data));
     await AsyncStorage.setItem(BUNDLE_TS_KEY, ts);

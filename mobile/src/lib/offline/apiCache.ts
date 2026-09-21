@@ -45,11 +45,27 @@ function _unwrapJobs(payload: any): any[] {
 }
 
 
+/** P9-C: optional tech scope for defense-in-depth filtering. */
+export type TechScope = {
+  role: string;
+  technicianId: string | null;
+};
+
 export async function writeThroughJobs(
   techUserId: string,
   payload: any,
+  techScope?: TechScope,
 ): Promise<void> {
-  const jobs = _unwrapJobs(payload);
+  let jobs = _unwrapJobs(payload);
+  // P9-C: belt-and-suspenders — tech caches only own + unassigned jobs.
+  if (techScope?.role === "technician" || techScope?.role === "tech") {
+    if (techScope.technicianId) {
+      jobs = jobs.filter((j: any) => j.technician_id === techScope.technicianId || !j.technician_id);
+    } else {
+      console.warn("[P9-C] Tech missing technician_id — caching empty list (fail closed)");
+      jobs = [];
+    }
+  }
   if (!techUserId || !jobs.length) return;
   await cacheWeekJobs(techUserId, jobs);
   markApiSuccess();

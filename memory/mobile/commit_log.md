@@ -2491,3 +2491,37 @@
 - **Files created**: `/app/mobile/.easignore`
 - **Files deleted**: 1 corrupt-named zero-byte file (inode 142350)
 - **Files NOT touched**: package.json, eas.json, app.json, src/*, heresdk/*, backend/*, frontend/*
+
+
+## Iteration 114 — P9-C: Technician Visibility Jail (Mobile)
+- **Commit**: 5b132a1ee481841c48509ea48d13d0ac54e1da9e
+- **Date**: 2026-09-21
+- **Changes**:
+  ### A) UI — Defense-in-depth guards
+  - `calendar.tsx`: "All techs" option in picker modal wrapped in `{!isTech && (...)}` (was already unreachable since trigger button was hidden, now also guarded inside modal)
+  - `calendar.tsx`: `techFilter` initial state for techs now defaults to `user.technician_id` instead of `"all"` (eliminates brief "all" window)
+  - `calendar.tsx`: `filteredJobs` fail-closed guard: if `isTech && techFilter === "all"`, scopes to `resolvedTechId` instead of showing all
+  - `CrewFilterBar.tsx`: Added `hideAllOption` prop; "All crews" row wrapped in `{!hideAllOption && (...)}`; passed from calendar
+  ### B) Offline cache — belt-and-suspenders filter
+  - `apiCache.ts`: `writeThroughJobs` gains optional `TechScope` param; when tech, filters jobs to `technician_id === self || !technician_id`; null tech_id → empty list (fail closed)
+  - `routeHydrator.ts`: `hydrateToday` gains optional `HydrationTechScope`; filters job list before caching
+  - `offlineStore.ts`: `downloadBundle` gains optional `BundleTechScope`; filters `data.jobs` before storing
+  - `SyncManager.tsx`: now imports `useAuth`, computes `techScope`, passes to `downloadBundle`
+  - `useRouteHydration.ts`: computes `techScope`, passes to `hydrateToday`
+  - `calendar.tsx`: passes `isTech` scope to `writeThroughJobs` in load() callback
+  - `offline-diagnostics.tsx`: passes tech scope to `hydrateToday` call
+  ### C) One-shot purge migration
+  - NEW: `src/lib/offline/p9cPurge.ts`: on first boot after deploy, iterates SQLite cached jobs for tech user, deletes any where `job.technician_id !== user.technician_id`; guards with `p9c_purged_v1` AsyncStorage flag
+  - Wired in `useRouteHydration.ts` → runs on mount for tech users
+- **Files created**:
+  - `src/lib/offline/p9cPurge.ts`
+  - `__tests__/p9cVisibilityJail.test.tsx` (10 tests, all passing)
+- **Files modified**:
+  - `app/(app)/schedule/calendar.tsx`
+  - `src/components/schedule/CrewFilterBar.tsx`
+  - `src/lib/offline/apiCache.ts`
+  - `src/services/routeHydrator.ts`
+  - `src/services/offlineStore.ts`
+  - `src/services/SyncManager.tsx`
+  - `src/hooks/useRouteHydration.ts`
+  - `app/(app)/settings/offline-diagnostics.tsx`
