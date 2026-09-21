@@ -468,6 +468,105 @@ async def _enrich_jobs_dept_and_kind(docs: list, tenant_id: str) -> None:
         d["assignee_photo_url"] = photo_map.get(tid) if tid else None
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Phase P1 · Feb-2026 — Multi-Property Support on Job Create / Edit.
+# ═══════════════════════════════════════════════════════════════════
+# Two invariants this block locks:
+#
+#   1. ``jobs.address`` is ALWAYS persisted as a plain string.  A
+#      previous ship let the ``property_id`` retag path in
+#      ``update_job`` copy ``prop["address"]`` (a dict — see
+#      ``routers/properties.py :: _AddressIn``) verbatim onto the
+#      job document.  Downstream Schedule readers dereferenced
+#      ``.split()`` on that dict and 500-ed.  Every write path now
+#      routes through ``_stringify_property_address`` before
+#      touching ``update["address"]`` / ``doc["address"]``.
+#
+#   2. ``property_id`` — when provided on create/update — MUST
+#      belong to the SAME tenant AND the SAME customer.  Mismatch
+#      returns 422 with a machine-parseable code
+#      (``property_customer_mismatch`` or
+#      ``property_tenant_mismatch``).  The tenant-mismatch case
+#      returns the SAME 422 code + message as an unknown property
+#      id so a caller can NEVER discover that a property exists
+#      under another tenant.  R1 posture — cross-tenant reads /
+#      writes are architecturally impossible.
+# ═══════════════════════════════════════════════════════════════════
+def _stringify_property_address(prop: Dict[str, Any]) -> str:
+    """Canonical property-address → string formatter.
+
+    Mirrors the pattern already used at
+    ``routers/on_my_way.py:108-110`` — join ``line1``, ``city``,
+    ``state`` with commas so the string reads as a human address
+    on the schedule card.  Returns an empty string when every
+    field is empty (caller decides whether to write it or not).
+
+    Accepts either the canonical embedded shape
+    (``{"line1": ..., "city": ..., "state": ...}``) OR a legacy
+    flat string (which some tenants still carry on the customer
+    doc).  ``None`` / non-dict / non-str inputs coerce safely to
+    an empty string.
+    """
+    if prop is None:
+        return ""
+    addr = prop.get("address") if isinstance(prop, dict) else None
+    if isinstance(addr, str):
+        return addr.strip()
+    if isinstance(addr, dict):
+        parts = [
+            addr.get(k) for k in ("line1", "city", "state")
+            if addr.get(k)
+        ]
+        return ", ".join(str(p).strip() for p in parts if p)
+    # Prop had no ``address`` field — fall through so caller can
+    # decide (typically preserves the existing job address).
+    return ""
+
+
+async def _resolve_property_for_job(
+    tenant_id: str,
+    customer_id: str,
+    property_id: str,
+) -> Dict[str, Any]:
+    """Fetch + validate a ``property_id`` in a single place.
+
+    Returns the property doc on success.  On failure raises an
+    HTTPException 422 with a machine-parseable code:
+
+      * ``property_tenant_mismatch``   — property does not exist
+        under ``tenant_id``.  Also fires when the property does
+        NOT exist at all (defense in depth — a caller cannot
+        distinguish "wrong tenant" from "unknown id" and thus
+        cannot enumerate cross-tenant property ids).
+      * ``property_customer_mismatch`` — property exists in this
+        tenant but belongs to a DIFFERENT customer.
+    """
+    prop = await db.properties.find_one(
+        {"id": property_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "customer_id": 1, "address": 1,
+          "site_lat": 1, "site_lng": 1, "latitude": 1,
+          "longitude": 1, "lat": 1, "lng": 1, "label": 1},
+    )
+    if not prop:
+        # Do NOT reveal whether the id exists under another
+        # tenant — we return the same 422 as unknown-id so a
+        # caller cannot enumerate.
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "property_tenant_mismatch",
+                     "message": "property_id does not resolve to a "
+                                 "property in this tenant"},
+        )
+    if prop.get("customer_id") != customer_id:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "property_customer_mismatch",
+                     "message": "property_id belongs to a different "
+                                 "customer"},
+        )
+    return prop
+
+
 
 
 @router.get("/jobs",
@@ -1029,8 +1128,19 @@ async def create_job(body: JobIn,
     if not customer:
         raise HTTPException(400, "Customer not found")
     doc["customer_name"] = customer["name"]
+    # Phase P1 · Feb-2026 — ``jobs.address`` MUST be a plain string.
+    # ``JobIn.address`` is ``Optional[str]``, so Pydantic v2 already
+    # rejects dict / list inputs with a 422 before we reach here.
+    # This defense-in-depth block coerces the customer-fallback +
+    # empties any accidental non-string that survived (belt +
+    # suspenders — a subclass of BaseModel with ``model_config``
+    # extra="allow" could otherwise land a raw dict).
+    inbound_addr = doc.get("address")
+    if inbound_addr is None or not isinstance(inbound_addr, str):
+        doc["address"] = ""
     if not doc.get("address"):
-        doc["address"] = customer.get("address", "")
+        cust_addr = customer.get("address", "")
+        doc["address"] = cust_addr if isinstance(cust_addr, str) else ""
     # Feb-2026 MP1 — property_id validation. If the customer has ≥2
     # active properties, the caller MUST specify which property this
     # job is for. If the customer has exactly 1 active property, we
@@ -1050,6 +1160,33 @@ async def create_job(body: JobIn,
             ))
         if len(active_props) == 1:
             doc["property_id"] = active_props[0]["id"]
+    # Phase P1 · Feb-2026 — if a property_id is on the doc (either
+    # user-supplied or auto-assigned), validate ownership + re-
+    # snapshot its address as a STRING so the schedule read path
+    # never sees a dict on ``jobs.address``.
+    if doc.get("property_id"):
+        prop = await _resolve_property_for_job(
+            tenant["id"], body.customer_id, doc["property_id"],
+        )
+        formatted = _stringify_property_address(prop)
+        if formatted:
+            doc["address"] = formatted
+        # Snapshot coords with the same "only overwrite when non-
+        # empty" contract the update path uses (line 1768-71).
+        site_lat = prop.get("site_lat")
+        if site_lat is None:
+            site_lat = prop.get("latitude")
+        if site_lat is None:
+            site_lat = prop.get("lat")
+        site_lng = prop.get("site_lng")
+        if site_lng is None:
+            site_lng = prop.get("longitude")
+        if site_lng is None:
+            site_lng = prop.get("lng")
+        if site_lat is not None:
+            doc["site_lat"] = site_lat
+        if site_lng is not None:
+            doc["site_lng"] = site_lng
     # Feb-2026 · P0 hotfix — tech-assignment write-side denorm.
     # Historic behaviour did a single ``db.technicians`` lookup and
     # stamped ``technician_name = None`` when the id was a synth-from-
@@ -1731,34 +1868,30 @@ async def update_job(jid: str, body: JobUpdate,
     # caller sends a ``property_id`` that differs from the job's
     # current one, we (1) verify the property exists in the SAME
     # tenant AND belongs to the SAME customer as the job (cross-
-    # customer references → 400), and (2) snapshot the property's
+    # customer references → 422), and (2) snapshot the property's
     # ``address`` + ``site_lat`` / ``site_lng`` onto the job so
     # historical accuracy is preserved even if the property record
     # is later edited or deleted.
+    #
+    # Phase P1 · Feb-2026 — the address snapshot now runs through
+    # ``_stringify_property_address`` so a dict-shaped ``address``
+    # on the property doc NEVER lands on the job.  Prior ship
+    # copied ``prop["address"]`` verbatim (a dict) which crashed
+    # the schedule read path on ``.split()`` downstream.  422
+    # error codes replace the plain-string 400s so the frontend
+    # can machine-parse the failure reason.
     if "property_id" in update and update["property_id"] != job.get("property_id"):
         new_pid = update["property_id"]
         if new_pid:
-            prop = await db.properties.find_one(
-                {"id": new_pid, "tenant_id": tenant["id"]},
-                {"_id": 0, "id": 1, "customer_id": 1, "address": 1,
-                  "site_lat": 1, "site_lng": 1,
-                  "latitude": 1, "longitude": 1, "label": 1},
+            prop = await _resolve_property_for_job(
+                tenant["id"], job.get("customer_id"), new_pid,
             )
-            if not prop:
-                raise HTTPException(
-                    400,
-                    "property_id does not resolve to a property in this tenant",
-                )
-            if prop.get("customer_id") != job.get("customer_id"):
-                raise HTTPException(
-                    400,
-                    "property_id belongs to a different customer",
-                )
-            # Re-snapshot address + coordinates. Only overwrite when
-            # the property carries a non-empty value so we never
-            # accidentally blank out a job's coords.
-            if prop.get("address"):
-                update["address"] = prop["address"]
+            # Re-snapshot address as a STRING only.  Empty string
+            # from the formatter means the prop has no addressable
+            # fields — leave the job's existing address alone.
+            formatted = _stringify_property_address(prop)
+            if formatted:
+                update["address"] = formatted
             site_lat = prop.get("site_lat")
             if site_lat is None:
                 site_lat = prop.get("latitude")

@@ -141,7 +141,26 @@ export default function JobNew({
   }, []);
 
   // Refresh property list whenever the picked customer changes.
+  //
+  // Phase P1 · Feb-2026 — customer-switch invalidates the previously
+  // picked property.  Previous ship's ``if (f.property_id) return f``
+  // "preserve user pick" clause LEAKED the outgoing customer's
+  // ``property_id`` into the new customer's payload, which then
+  // 422-ed on the backend (``property_customer_mismatch``) or —
+  // worse — silently paired the new customer with a stale
+  // property.  We now clear ``property_id`` before every fetch so
+  // the 0/1/2+ auto-select rules re-run cleanly against the new
+  // customer's property set.
+  const previousCustomerRef = React.useRef(preselectedCustomer);
   useEffect(() => {
+    // If the customer_id actually CHANGED (vs. initial mount for
+    // an edit-mode pre-fill), null the previous customer's
+    // property before we refetch.
+    if (previousCustomerRef.current && previousCustomerRef.current !== form.customer_id) {
+      setForm((f) => ({ ...f, property_id: "" }));
+    }
+    previousCustomerRef.current = form.customer_id;
+
     if (!form.customer_id) { setProperties([]); return; }
     setPropsLoading(true);
     api.get(`/customers/${form.customer_id}/properties`)
@@ -152,13 +171,18 @@ export default function JobNew({
         // caller doesn't have to click. Pre-select sort_order=0 for
         // customers with several properties.
         setForm((f) => {
-          if (f.property_id) return f;  // preserve user pick
+          // Preserve a user pick ONLY when the new customer actually
+          // owns that property; otherwise the auto-select below
+          // takes over.
+          if (f.property_id && active.some((p) => p.id === f.property_id)) {
+            return f;
+          }
           if (active.length === 1) return { ...f, property_id: active[0].id };
           if (active.length >= 2) {
             const primary = active.find((p) => (p.sort_order ?? 99) === 0) || active[0];
             return { ...f, property_id: primary.id };
           }
-          return f;
+          return { ...f, property_id: "" };
         });
       })
       .catch(() => setProperties([]))
@@ -430,14 +454,17 @@ export default function JobNew({
               testid="jf-customer"
             />
           </div>
-          {/* Feb-2026 MP2 UI — property picker. Required when the
-              customer has ≥2 active properties; hidden entirely when
-              the customer has zero (legacy). Auto-fills with the
-              sole active property for single-property customers. */}
-          {form.customer_id && properties.length > 0 ? (
+          {/* Feb-2026 MP2 UI — property picker.
+              Phase P1 · Feb-2026 — dropdown is ONLY rendered when the
+              customer has ≥2 active properties.  Single-property
+              customers get the property auto-selected silently via
+              the ``useEffect`` above (no UI noise on the common
+              case).  Zero-property (legacy) customers fall through
+              to the customer's default address on the server side. */}
+          {form.customer_id && properties.length >= 2 ? (
             <div>
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
-                PROPERTY {properties.length >= 2 ? "*" : ""}
+                SELECT PROPERTY *
               </label>
               <select
                 value={form.property_id}
@@ -450,16 +477,14 @@ export default function JobNew({
                 }}
                 data-testid="jf-property"
               >
-                {properties.length >= 2 ? (
-                  <option value="">Choose a property…</option>
-                ) : null}
+                <option value="">Choose a property…</option>
                 {properties.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label} — {p.address?.line1 || ""}
                   </option>
                 ))}
               </select>
-              {properties.length >= 2 && !form.property_id ? (
+              {!form.property_id ? (
                 <div className="text-xs mt-1" style={{ color: colors.danger }} data-testid="jf-property-required">
                   This customer has {properties.length} properties — pick one.
                 </div>

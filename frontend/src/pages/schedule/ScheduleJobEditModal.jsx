@@ -281,7 +281,19 @@ export default function ScheduleJobEditModal({
               data-testid="schedule-job-edit-property"
             >
               {properties.map((p) => {
-                const label = p.label ? `${p.label} — ${p.address || ""}` : (p.address || p.id);
+                // Phase P1 · Feb-2026 — the property doc's ``address``
+                // is a canonical dict shape (``line1`` / ``city`` /
+                // ``state`` / …) per ``routers/properties.py::_AddressIn``.
+                // Prior render used ``p.address || ""`` which stringified
+                // an object as ``"[object Object]"`` in the dropdown
+                // option label. Format inline so the option reads as
+                // "Main — 123 Main St, Peoria, AZ".
+                const addrObj = p.address || {};
+                const flat = typeof addrObj === "string"
+                  ? addrObj
+                  : [addrObj.line1, addrObj.city, addrObj.state]
+                      .filter(Boolean).join(", ");
+                const label = p.label ? `${p.label} — ${flat}` : (flat || p.id);
                 return (
                   <option
                     key={p.id}

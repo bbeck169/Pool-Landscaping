@@ -1,3 +1,35 @@
+## Phase P1 — Multi-Property Support on Job Create / Edit — SHIPPED (Feb 2026)
+
+Customers can carry multiple physical service properties. The Job Create + Edit surfaces now let the user pick which property the job is for; the server persists a `property_id` alongside the job, snapshots the property's address + coords onto the job, and guarantees `jobs.address` is always stored as a plain string so the schedule read path never 500s on a `.split()`.
+
+**Two invariants locked (see `backend/routers/jobs.py::_stringify_property_address` / `_resolve_property_for_job`)**
+1. `jobs.address` is ALWAYS a plain string on write via `POST /api/jobs` and `PUT /api/jobs/{jid}`. Dict `line1/city/state` shapes on the property doc are joined inline; `Optional[str]` on `JobIn.address` rejects raw dicts pre-router at 422.
+2. `property_id` — when provided — MUST belong to the SAME tenant AND SAME customer.
+   * Cross-customer → 422 `property_customer_mismatch`.
+   * Cross-tenant OR unknown id → 422 `property_tenant_mismatch` (same code + message on both so a caller cannot enumerate cross-tenant property ids).
+
+**Test counts**
+- Backend pytest `tests/test_p1_multi_property_job_writes.py`: **8/8 green** — dict-address 422 rejection, property-address stringification on create, cross-customer 422, cross-tenant 422 no-leak, retag stringification on PUT, cross-customer PUT 422, cross-tenant PUT 422 no-leak, legacy zero-property customer falls through to customer address.
+- Frontend vitest `frontend/src/test/p1-multi-property-job-edit.test.jsx`: **15/15 green** — 0/1/2+ properties branches, auto-fill on pick, sort_order=0 preselect, customer-change clears stale `property_id`, address label formatting (`Main — line1, city, state`, never `[object Object]`), diff loop includes `property_id`, PUT (not PATCH — 24h post-completion PATCH endpoint deliberately does NOT accept `property_id`).
+
+**Live-pod curl proof (against `https://poolscape-audit.preview.emergentagent.com`, tenant Aquaterra, admin@aquaterra.com)**
+- `POST /api/customers/{cid}/properties` → 201 property with dict-shape `address: {line1:"8100 W Bell Rd", city:"Peoria", state:"AZ", postal_code:"85383"}`.
+- `POST /api/jobs {customer_id, property_id, ...}` → 200 job row where:
+  * `property_id` = the created property id ✓
+  * `address` = `"8100 W Bell Rd, Peoria, AZ"` (Python `type()` reports `str`) ✓
+- Repro cleaned up: job DELETE 200, property DELETE via `/api/properties/{pid}` 200 (soft-delete).
+
+**Backlog spun out (`/app/memory/PHASE_P1_ADDRESS_LEAK_AUDIT.md`)**
+Eight OTHER write paths still stamp `jobs.address` directly from `customer.get("address")` without running through a canonical formatter (recurring materialization, customer service-request, portal appointment intake, portal service-request, lead → job convert, maintenance auto-jobs, job-request accept, instaschedule intake). Flag-only per P1 scope lock — recommended follow-up: extract `_stringify_property_address` into `services/address_stringify.py` + a Mongo JSON-schema validator on `jobs.address`.
+
+**Files touched** (5)
+- `backend/routers/jobs.py` — `_stringify_property_address`, `_resolve_property_for_job`, create + PUT paths route through both.
+- `backend/tests/test_p1_multi_property_job_writes.py` — 8 pytests, sync pymongo fixtures + module-scoped `TestClient` context-manager fixture (avoids Motor `io_loop` cross-thread contamination that caused "Event loop is closed" during earlier iterations).
+- `frontend/src/pages/jobs/JobNew.jsx` — property picker (≥2 branch), customer-change clears `property_id`, submit-gate blocks empty picker.
+- `frontend/src/pages/schedule/ScheduleJobEditModal.jsx` — property picker + address formatter in option label, `property_id` in PUT diff loop.
+- `frontend/src/test/p1-multi-property-job-edit.test.jsx` — 15 vitests (source-string convention, matches `job-new-customer-picker.test.jsx`).
+
+
 ## Phase M1.1 — Customer Merge Executor Coverage Extension — SHIPPED (Feb 2026)
 
 Adds 4 truly-new collections to the wizard's re-parent surface (3 direct + `users` as a safety-wrapped special case) plus a Stripe advisory in the response.
