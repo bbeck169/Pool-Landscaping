@@ -28,11 +28,16 @@ from tests.test_data_repair_dry_run import _DB, _run
 
 def _bson_naive_scan(**overrides):
     """Return a scan record whose ``expires_at`` is offset-naive UTC
-    — the shape Motor returns after a BSON round-trip."""
+    — the shape Motor returns after a BSON round-trip.
+
+    Phase R1 · Feb-2026 — includes ``tenant_id`` so ``_load_scan``
+    passes the tenant-scope gate.
+    """
     naive_utc_now = datetime.utcnow()   # naive by construction
     scan = {
         "confirm_token": "bson-naive-token",
         "scan_timestamp": "2026-08-01T00:00:00+00:00",
+        "tenant_id": "t1",
         "created_at": naive_utc_now - timedelta(minutes=1),
         "expires_at": naive_utc_now + timedelta(minutes=14),
         "actor_user_id": "sa-1",
@@ -54,7 +59,7 @@ def test_load_scan_accepts_naive_expires_at(monkeypatch):
     _run(fake.data_integrity_scans.insert_one(scan_doc))
 
     result = _run(dr._load_scan(
-        scan_doc["confirm_token"], scan_doc["scan_timestamp"],
+        scan_doc["confirm_token"], scan_doc["scan_timestamp"], "t1",
     ))
     assert result["confirm_token"] == scan_doc["confirm_token"]
 
@@ -73,7 +78,7 @@ def test_load_scan_rejects_expired_naive_expires_at(monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         _run(dr._load_scan(
-            scan_doc["confirm_token"], scan_doc["scan_timestamp"],
+            scan_doc["confirm_token"], scan_doc["scan_timestamp"], "t1",
         ))
     assert exc.value.status_code == 400
     assert "expired" in str(exc.value.detail).lower()
@@ -94,7 +99,8 @@ def test_apply_endpoint_survives_bson_naive_roundtrip(monkeypatch):
         dry_run_scan_timestamp=scan_doc["scan_timestamp"],
     )
     result = _run(dr.data_repair_apply(
-        body, user={"id": "sa-1", "role": "super_admin"},
+        body, user={"id": "sa-1", "role": "super_admin",
+                    "tenant_id": "t1"},
     ))
     # Scan captured 0 classes, so apply is a no-op — but critically
     # it did NOT 500 on the naive-datetime comparison.

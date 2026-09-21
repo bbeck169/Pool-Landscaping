@@ -53,10 +53,9 @@ def _seed_and_scan(monkeypatch):
     ]
     fake = _DB(jobs=jobs, customers=customers, technicians=techs, users=users)
     monkeypatch.setattr(dr, "db", fake)
-    monkeypatch.setattr(dr, "_dry_run_cache",
-                        {"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(dr, "_dry_run_cache", {})
 
-    user = {"id": "sa-1", "role": "super_admin"}
+    user = {"id": "sa-1", "role": "super_admin", "tenant_id": "t1"}
     payload = _run(dr.data_repair_dry_run(user=user))
     return fake, payload, user
 
@@ -141,10 +140,9 @@ def test_apply_no_op_when_scan_had_only_flags(monkeypatch):
         customers=[{"id": "c1", "tenant_id": "t1"}],
     )
     monkeypatch.setattr(dr, "db", fake)
-    monkeypatch.setattr(dr, "_dry_run_cache",
-                        {"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(dr, "_dry_run_cache", {})
 
-    user = {"id": "sa-1", "role": "super_admin"}
+    user = {"id": "sa-1", "role": "super_admin", "tenant_id": "t1"}
     payload = _run(dr.data_repair_dry_run(user=user))
     assert payload["summary"]["total_would_change"] == 0
     assert payload["summary"]["total_flagged_no_action"] == 1

@@ -159,7 +159,7 @@ def test_scan_classifies_all_three_buckets(monkeypatch):
     fake = _DB(jobs=jobs, customers=customers, technicians=techs, users=users)
     monkeypatch.setattr(dr, "db", fake)
 
-    classes = _run(dr._scan_dangling_refs())
+    classes = _run(dr._scan_dangling_refs("t1"))
 
     assert [row["job_id"] for row in classes["orphaned_customer_refs"]] == \
         ["j-orphan-cust"]
@@ -186,7 +186,7 @@ def test_scan_is_readonly(monkeypatch):
     fake = _DB(jobs=jobs, customers=customers)
     monkeypatch.setattr(dr, "db", fake)
 
-    _run(dr._scan_dangling_refs())
+    _run(dr._scan_dangling_refs("t1"))
 
     assert fake.jobs.updates == []
     assert fake.jobs.inserts == []
@@ -203,10 +203,9 @@ def test_dry_run_endpoint_mints_confirm_token_and_persists(monkeypatch):
     monkeypatch.setattr(dr, "db", fake)
     # Reset the in-memory cache so this test isn't hit by leftover
     # state from earlier tests in the same process.
-    monkeypatch.setattr(dr, "_dry_run_cache",
-                        {"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(dr, "_dry_run_cache", {})
 
-    user = {"id": "sa-1", "role": "super_admin"}
+    user = {"id": "sa-1", "role": "super_admin", "tenant_id": "t1"}
     payload = _run(dr.data_repair_dry_run(user=user))
 
     assert payload["confirm_token"]

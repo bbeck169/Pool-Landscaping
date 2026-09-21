@@ -26,10 +26,9 @@ def test_apply_twice_is_idempotent(monkeypatch):
     ]
     fake = _DB(jobs=jobs, customers=customers, technicians=techs)
     monkeypatch.setattr(dr, "db", fake)
-    monkeypatch.setattr(dr, "_dry_run_cache",
-                        {"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(dr, "_dry_run_cache", {})
 
-    user = {"id": "sa-1", "role": "super_admin"}
+    user = {"id": "sa-1", "role": "super_admin", "tenant_id": "t1"}
     payload = _run(dr.data_repair_dry_run(user=user))
     body = dr.ApplyIn(
         confirm_token=payload["confirm_token"],

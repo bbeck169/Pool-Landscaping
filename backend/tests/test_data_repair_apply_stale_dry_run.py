@@ -28,7 +28,8 @@ def test_apply_rejects_unknown_confirm_token(monkeypatch):
     )
     with pytest.raises(HTTPException) as exc:
         _run(dr.data_repair_apply(body, user={"id": "sa-1",
-                                              "role": "super_admin"}))
+                                              "role": "super_admin",
+                                              "tenant_id": "t1"}))
     assert exc.value.status_code == 400
     assert "confirm_token" in str(exc.value.detail).lower()
 
@@ -36,11 +37,10 @@ def test_apply_rejects_unknown_confirm_token(monkeypatch):
 def test_apply_rejects_mismatched_scan_timestamp(monkeypatch):
     fake = _DB(jobs=[], customers=[])
     monkeypatch.setattr(dr, "db", fake)
-    monkeypatch.setattr(dr, "_dry_run_cache",
-                        {"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(dr, "_dry_run_cache", {})
 
     # Seed a valid scan.
-    user = {"id": "sa-1", "role": "super_admin"}
+    user = {"id": "sa-1", "role": "super_admin", "tenant_id": "t1"}
     payload = _run(dr.data_repair_dry_run(user=user))
 
     body = dr.ApplyIn(
@@ -62,10 +62,13 @@ def test_apply_rejects_stale_scan(monkeypatch):
     fake = _DB(jobs=[], customers=[])
     monkeypatch.setattr(dr, "db", fake)
 
-    # Directly insert an expired scan record.
+    # Directly insert an expired scan record — with a tenant_id so
+    # ``_load_scan`` gets past the R1 tenant-scope gate and can
+    # exercise the freshness rejection.
     expired = {
         "confirm_token": "stale-token",
         "scan_timestamp": "2026-08-01T00:00:00Z",
+        "tenant_id": "t1",
         "created_at": datetime.now(timezone.utc) - timedelta(hours=1),
         "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1),
         "actor_user_id": "sa-1",
@@ -82,6 +85,7 @@ def test_apply_rejects_stale_scan(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         _run(dr.data_repair_apply(body,
                                     user={"id": "sa-1",
-                                          "role": "super_admin"}))
+                                          "role": "super_admin",
+                                          "tenant_id": "t1"}))
     assert exc.value.status_code == 400
     assert "expired" in str(exc.value.detail).lower()

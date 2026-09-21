@@ -42,9 +42,18 @@ Repair strategy:
 Cross-cutting rules:
 
 * super_admin only — enforced by ``require_super_admin``.
-* Tenant scope: the scan and apply both run globally (across every
-  tenant). Cross-tenant repair is inherent to this cleanup, and
-  the super_admin role is the only surface with that authority.
+* Tenant scope: STRICTLY scoped to the requester's tenant. Every
+  scan and apply operation is filtered by the requester's
+  ``tenant_id`` (resolved from the JWT via
+  ``_resolve_requester_tenant`` — prefers
+  ``_active_tenant_id_claim`` over ``active_tenant_id`` over the
+  primary ``tenant_id``). Super_admins in tenant A can NEVER
+  mutate tenant B's data through this surface — cross-tenant
+  repair is architecturally impossible.
+* Defense in depth: the ``update_one`` filter in each apply
+  helper pins ``tenant_id`` to the REQUESTER's tenant, not to
+  the value captured on the scan row. Even a hand-crafted scan
+  row claiming a different tenant matches zero documents.
 * No transaction. Each repair is idempotent on its own via the
   unique index on ``data_integrity_repairs.(run_id, target_id)``.
   A crash mid-apply leaves a partial audit trail — re-running is
@@ -75,10 +84,36 @@ SCAN_TTL_SECONDS = 15 * 60           # 15-minute expiry on scan reports
 DRY_RUN_CACHE_TTL_SECONDS = 60       # 60-second in-memory cache
 _UNASSIGNED_STATUSES = {"requested", "pending", "scheduled", "active"}
 
-# In-memory dry-run cache — per-process. Not a security control (the
-# scan is idempotent by design); just prevents dashboard hammering.
-_dry_run_cache: Dict[str, Any] = {"expires_at": 0.0, "payload": None}
+# In-memory dry-run cache — per-process, keyed by tenant_id under
+# Phase R1 (previously a single global slot which would leak one
+# tenant's scan to any other tenant that hit the endpoint within
+# the 60-s window). Not a security control (the scan is idempotent
+# by design AND every downstream apply re-verifies tenant scope);
+# just prevents dashboard hammering per tenant.
+_dry_run_cache: Dict[str, Dict[str, Any]] = {}
 _dry_run_cache_lock = asyncio.Lock()
+
+
+def _resolve_requester_tenant(user: Dict[str, Any]) -> str:
+    """Return the tenant the requester is currently operating in.
+
+    Prefers ``_active_tenant_id_claim`` (populated by the JWT
+    tenant-switch middleware) over ``active_tenant_id`` over the
+    primary ``tenant_id`` claim.  A super_admin without ANY
+    tenant scope in the token is rejected — repairs must always
+    be attributable to a tenant.
+    """
+    tenant_id = (
+        user.get("_active_tenant_id_claim")
+        or user.get("active_tenant_id")
+        or user.get("tenant_id")
+    )
+    if not tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="requester token carries no tenant scope",
+        )
+    return tenant_id
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -123,10 +158,17 @@ async def ensure_indexes() -> None:
 # ═══════════════════════════════════════════════════════════════════
 # Scan primitives — plain awaits, easy to unit-test.
 # ═══════════════════════════════════════════════════════════════════
-async def _live_customer_ids() -> set:
+async def _live_customer_ids(tenant_id: str) -> set:
+    """Set of *live* customer ids inside ``tenant_id``.
+
+    Phase R1 · Feb-2026 — tenant-scoped.  Previously walked
+    ``db.customers`` globally which under multi-tenant SaaS made
+    tenant A's super_admin able to "keep alive" tenant B's
+    customer ids on paper.  Now every scan is strictly scoped.
+    """
     ids: set = set()
     async for row in db.customers.find(
-        {"$or": [
+        {"tenant_id": tenant_id, "$or": [
             {"deleted_at": None},
             {"deleted_at": {"$exists": False}},
         ]},
@@ -138,13 +180,18 @@ async def _live_customer_ids() -> set:
     return ids
 
 
-async def _live_technician_ids() -> set:
+async def _live_technician_ids(tenant_id: str) -> set:
     """Union of ``technicians.id`` and the user_id space used by
     older seeds — the same id-space accepted by
-    ``services/authz.is_tech_authorized_on_job``."""
+    ``services/authz.is_tech_authorized_on_job``.
+
+    Phase R1 · Feb-2026 — tenant-scoped.  Both underlying reads
+    filter by ``tenant_id``; the users collection filter combines
+    ``role: technician`` AND ``tenant_id``.
+    """
     tech_ids: set = set()
     async for row in db.technicians.find(
-        {"$or": [
+        {"tenant_id": tenant_id, "$or": [
             {"deleted_at": None},
             {"deleted_at": {"$exists": False}},
         ]},
@@ -154,7 +201,8 @@ async def _live_technician_ids() -> set:
         if tid:
             tech_ids.add(tid)
     async for row in db.users.find(
-        {"role": "technician"}, {"_id": 0, "id": 1},
+        {"tenant_id": tenant_id, "role": "technician"},
+        {"_id": 0, "id": 1},
     ):
         uid = row.get("id")
         if uid:
@@ -169,20 +217,26 @@ def _active_job_filter() -> Dict[str, Any]:
     ]}
 
 
-async def _scan_dangling_refs() -> Dict[str, List[Dict[str, Any]]]:
-    """Walk every active job, classify by dangling-ref class.
+async def _scan_dangling_refs(tenant_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Walk every active job **inside ``tenant_id``**, classify by
+    dangling-ref class.
 
     Returns three lists (orphan customer, orphan tech, unassigned).
+
+    Phase R1 · Feb-2026 — tenant-scoped.  Combined filter is
+    ``{"tenant_id": tenant_id, **_active_job_filter()}``; every
+    dangling-row payload still records the row's tenant_id (for
+    audit continuity) but the SCAN itself never crosses tenants.
     """
-    live_customers = await _live_customer_ids()
-    live_techs = await _live_technician_ids()
+    live_customers = await _live_customer_ids(tenant_id)
+    live_techs = await _live_technician_ids(tenant_id)
 
     orphaned_customer: List[Dict[str, Any]] = []
     orphaned_technician: List[Dict[str, Any]] = []
     unassigned: List[Dict[str, Any]] = []
 
     cursor = db.jobs.find(
-        _active_job_filter(),
+        {"tenant_id": tenant_id, **_active_job_filter()},
         {
             "_id": 0, "id": 1, "tenant_id": 1, "customer_id": 1,
             "customer_name": 1, "technician_id": 1, "technician_name": 1,
@@ -249,10 +303,19 @@ async def _scan_dangling_refs() -> Dict[str, List[Dict[str, Any]]]:
 async def data_repair_dry_run(
     user: Dict[str, Any] = Depends(require_super_admin),
 ) -> Dict[str, Any]:
-    """Scan every active job for dangling refs. READ-ONLY."""
+    """Scan every active job for dangling refs. READ-ONLY.
+
+    Phase R1 · Feb-2026 — the scan (and every downstream apply)
+    is scoped to the requester's tenant.  The persisted
+    ``data_integrity_scans`` document carries ``tenant_id`` so a
+    stale token minted for tenant A cannot be replayed by
+    tenant B.  The in-memory cache is keyed by tenant_id.
+    """
+    tenant_id = _resolve_requester_tenant(user)
     now = time.monotonic()
     async with _dry_run_cache_lock:
-        if _dry_run_cache["payload"] and _dry_run_cache["expires_at"] > now:
+        slot = _dry_run_cache.get(tenant_id)
+        if slot and slot.get("expires_at", 0.0) > now and slot.get("payload"):
             # Serve the cached payload verbatim (same ``confirm_token``
             # + ``scan_timestamp``). The 60-s in-memory cache is only
             # about avoiding a re-scan; it deliberately keeps the
@@ -261,9 +324,9 @@ async def data_repair_dry_run(
             # scan record's own 15-min ``expires_at`` (see
             # ``_load_scan``) — plenty of runway relative to a 60-s
             # cache window.
-            return _dry_run_cache["payload"]
+            return slot["payload"]
 
-        classes = await _scan_dangling_refs()
+        classes = await _scan_dangling_refs(tenant_id)
 
     total_would_change = (
         len(classes["orphaned_customer_refs"])
@@ -276,6 +339,7 @@ async def data_repair_dry_run(
     scan_doc = {
         "confirm_token": confirm_token,
         "scan_timestamp": scan_timestamp,
+        "tenant_id": tenant_id,
         "created_at": datetime.now(timezone.utc),
         "expires_at": datetime.now(timezone.utc) + timedelta(
             seconds=SCAN_TTL_SECONDS,
@@ -295,12 +359,15 @@ async def data_repair_dry_run(
     payload = {
         "scan_timestamp": scan_timestamp,
         "confirm_token": confirm_token,
+        "tenant_id": tenant_id,
         **classes,
         "summary": scan_doc["summary"],
         "ttl_seconds": SCAN_TTL_SECONDS,
     }
-    _dry_run_cache["payload"] = payload
-    _dry_run_cache["expires_at"] = time.monotonic() + DRY_RUN_CACHE_TTL_SECONDS
+    _dry_run_cache[tenant_id] = {
+        "payload": payload,
+        "expires_at": time.monotonic() + DRY_RUN_CACHE_TTL_SECONDS,
+    }
     return payload
 
 
@@ -313,12 +380,29 @@ class ApplyIn(BaseModel):
 
 
 async def _load_scan(confirm_token: str,
-                      scan_timestamp: str) -> Dict[str, Any]:
+                      scan_timestamp: str,
+                      tenant_id: str) -> Dict[str, Any]:
+    """Fetch a persisted scan doc and verify it belongs to
+    ``tenant_id``.
+
+    Phase R1 · Feb-2026 — cross-tenant scope check.  If the scan
+    was minted for a different tenant we return the same
+    ``stale_tenant_scope`` 403 as any other tenant-scope
+    mismatch — we deliberately do NOT reveal that the token
+    exists under another tenant.
+    """
     scan = await db.data_integrity_scans.find_one(
         {"confirm_token": confirm_token}, {"_id": 0},
     )
     if not scan:
         raise HTTPException(400, "unknown or expired confirm_token")
+    # Defense-in-depth — refuse to load a scan minted for a
+    # different tenant.  Older scan docs written before R1 have
+    # no ``tenant_id`` at all; treat those as "unknown scope" and
+    # reject rather than defaulting to the requester's tenant.
+    scan_tenant = scan.get("tenant_id")
+    if scan_tenant != tenant_id:
+        raise HTTPException(403, "stale_tenant_scope")
     if scan.get("scan_timestamp") != scan_timestamp:
         raise HTTPException(400, "scan_timestamp mismatch")
     expires_at = scan.get("expires_at")
@@ -335,13 +419,19 @@ async def _load_scan(confirm_token: str,
 
 async def _apply_orphan_customer(
     job_row: Dict[str, Any],
+    tenant_id: str,
     run_id: str,
     actor_user_id: Optional[str],
 ) -> Optional[Dict[str, Any]]:
     """Soft-delete an orphaned-customer job. Idempotent — a repair
-    audit row already present short-circuits."""
+    audit row already present short-circuits.
+
+    Phase R1 · Feb-2026 — the ``find_one`` / ``update_one`` filter
+    pins ``tenant_id`` to the REQUESTER's tenant, NOT the scan
+    row's ``tenant_id``.  Even if a hand-crafted scan row claims
+    another tenant, the update matches zero documents.
+    """
     jid = job_row["job_id"]
-    tid = job_row.get("tenant_id")
     existing = await db.data_integrity_repairs.find_one(
         {"run_id": run_id, "target_id": jid}, {"_id": 0, "id": 1},
     )
@@ -349,7 +439,7 @@ async def _apply_orphan_customer(
         return None
 
     before = await db.jobs.find_one(
-        {"id": jid, "tenant_id": tid},
+        {"id": jid, "tenant_id": tenant_id},
         {"_id": 0, "id": 1, "tenant_id": 1, "customer_id": 1,
          "customer_name": 1, "status": 1, "deleted_at": 1},
     )
@@ -362,7 +452,7 @@ async def _apply_orphan_customer(
     else:
         deleted_at = now_iso()
         await db.jobs.update_one(
-            {"id": jid, "tenant_id": tid},
+            {"id": jid, "tenant_id": tenant_id},
             {"$set": {
                 "status": "deleted",
                 "deleted_at": deleted_at,
@@ -389,7 +479,7 @@ async def _apply_orphan_customer(
         "actor_user_id": actor_user_id,
         "target_collection": "jobs",
         "target_id": jid,
-        "tenant_id": tid,
+        "tenant_id": tenant_id,
         "class": "orphaned_customer_ref",
         "action": "soft_delete",
         "before": before,
@@ -405,13 +495,18 @@ async def _apply_orphan_customer(
 
 async def _apply_orphan_technician(
     job_row: Dict[str, Any],
+    tenant_id: str,
     run_id: str,
     actor_user_id: Optional[str],
 ) -> Optional[Dict[str, Any]]:
     """Null out ``technician_id`` on an orphan-tech job. Preserves
-    the ``technician_name`` denorm for historical display."""
+    the ``technician_name`` denorm for historical display.
+
+    Phase R1 · Feb-2026 — tenant_id in the ``find_one`` /
+    ``update_one`` filter comes from the REQUESTER, not the scan
+    row.  Same defense-in-depth as ``_apply_orphan_customer``.
+    """
     jid = job_row["job_id"]
-    tid = job_row.get("tenant_id")
     existing = await db.data_integrity_repairs.find_one(
         {"run_id": run_id, "target_id": jid}, {"_id": 0, "id": 1},
     )
@@ -419,7 +514,7 @@ async def _apply_orphan_technician(
         return None
 
     before = await db.jobs.find_one(
-        {"id": jid, "tenant_id": tid},
+        {"id": jid, "tenant_id": tenant_id},
         {"_id": 0, "id": 1, "tenant_id": 1, "technician_id": 1,
          "technician_name": 1, "status": 1},
     )
@@ -429,7 +524,7 @@ async def _apply_orphan_technician(
         after = before
     else:
         await db.jobs.update_one(
-            {"id": jid, "tenant_id": tid},
+            {"id": jid, "tenant_id": tenant_id},
             {"$set": {"technician_id": None,
                        "updated_at": now_iso()}},
         )
@@ -443,7 +538,7 @@ async def _apply_orphan_technician(
         "actor_user_id": actor_user_id,
         "target_collection": "jobs",
         "target_id": jid,
-        "tenant_id": tid,
+        "tenant_id": tenant_id,
         "class": "orphaned_technician_ref",
         "action": "null_technician_id",
         "before": before,
@@ -462,8 +557,17 @@ async def data_repair_apply(
     body: ApplyIn,
     user: Dict[str, Any] = Depends(require_super_admin),
 ) -> Dict[str, Any]:
-    """Apply the repairs captured by a previous dry-run scan."""
-    scan = await _load_scan(body.confirm_token, body.dry_run_scan_timestamp)
+    """Apply the repairs captured by a previous dry-run scan.
+
+    Phase R1 · Feb-2026 — the scan lookup is tenant-scoped
+    (``_load_scan`` rejects with 403 ``stale_tenant_scope`` if the
+    scan belongs to another tenant) and every apply helper filter
+    is pinned to the REQUESTER's tenant.
+    """
+    tenant_id = _resolve_requester_tenant(user)
+    scan = await _load_scan(
+        body.confirm_token, body.dry_run_scan_timestamp, tenant_id,
+    )
     run_id = body.confirm_token   # confirm_token doubles as the run_id
     actor = user.get("id")
 
@@ -473,23 +577,23 @@ async def data_repair_apply(
 
     applied: List[Dict[str, Any]] = []
     for row in orphan_customers:
-        result = await _apply_orphan_customer(row, run_id, actor)
+        result = await _apply_orphan_customer(row, tenant_id, run_id, actor)
         if result:
             applied.append(result)
     for row in orphan_techs:
-        result = await _apply_orphan_technician(row, run_id, actor)
+        result = await _apply_orphan_technician(row, tenant_id, run_id, actor)
         if result:
             applied.append(result)
 
-    # Invalidate the in-memory dry-run cache so a subsequent GET
-    # returns a fresh (post-repair) scan.
+    # Invalidate the tenant's slot in the dry-run cache so a
+    # subsequent GET returns a fresh (post-repair) scan.
     async with _dry_run_cache_lock:
-        _dry_run_cache["payload"] = None
-        _dry_run_cache["expires_at"] = 0.0
+        _dry_run_cache.pop(tenant_id, None)
 
     return {
         "run_id": run_id,
         "run_timestamp": now_iso(),
+        "tenant_id": tenant_id,
         "changes_applied": len(applied),
         "audit_log_ids": [row["id"] for row in applied],
         "no_op": len(applied) == 0,
