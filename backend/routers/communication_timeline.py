@@ -854,6 +854,71 @@ async def _job_notes_to_items(
     return items
 
 
+# ─── Phase M1 · Feb-2026 — customer-scoped ``notes`` timeline source
+async def _customer_notes_to_items(
+    customer: Dict[str, Any], tenant_id: str,
+    wanted_kinds: Optional[set],
+    from_iso: Optional[str], to_iso: Optional[str],
+) -> List[Dict[str, Any]]:
+    """Pull system + admin notes attached directly to the customer
+    (as opposed to job-attached notes handled by
+    :func:`_job_notes_to_items`). Currently populated by the merge
+    wizard (``services.customer_merge.wizard``); the collection is
+    intentionally generic so future admin-note surfaces can reuse
+    it.
+    """
+    if wanted_kinds is not None and "note" not in wanted_kinds:
+        return []
+    query: Dict[str, Any] = {
+        "tenant_id":   tenant_id,
+        "customer_id": customer["id"],
+    }
+    items: List[Dict[str, Any]] = []
+    async for n in db.customer_notes.find(query, {"_id": 0}):
+        occurred = _coerce_utc_iso(
+            n.get("occurred_at") or n.get("created_at"))
+        if from_iso and occurred and occurred < from_iso:
+            continue
+        if to_iso and occurred and occurred > to_iso:
+            continue
+        author_id = n.get("author_id") or ""
+        actor = None
+        if author_id and author_id != "unknown":
+            name, role = await _resolve_display_name(author_id, tenant_id)
+            if name:
+                actor = {"id": author_id, "display_name": name,
+                            "role": role}
+        body = str(n.get("body") or "").strip()
+        if not body:
+            continue
+        note_kind = str(n.get("note_kind") or "admin")
+        label = ("System · Customer merged"
+                 if note_kind == "system_merge"
+                 else "Customer note")
+        preview = _preview(body, n=140)
+        items.append({
+            "id":          n.get("id") or f"cn-{len(items)}",
+            "source_type": "note",
+            "occurred_at": occurred,
+            "summary":     f"{label}: {preview}"
+                              + ("…" if len(body) > 140 else ""),
+            "detail": {
+                "note_body":    body,
+                "note_kind":    note_kind,
+                "customer_id":  customer["id"],
+            },
+            "actor":      actor,
+            "kind":       "note",
+            "subject":    label,
+            "created_at": occurred,
+            "ref_type":   "customer_note",
+            "ref_id":     n.get("id") or "",
+            "url":        "",
+            "recipient":  "",
+        })
+    return items
+
+
 def _normalise_existing_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Backfill the B-required fields onto items produced by the
     pre-B pulls. Existing fields stay put — this only ADDS
@@ -945,6 +1010,10 @@ async def _build_full_timeline(
             customer, tenant_id, wanted_kinds, from_iso, to_iso,
         )
         merged += await _job_notes_to_items(
+            customer, tenant_id, wanted_kinds, from_iso, to_iso,
+        )
+        # Phase M1 · Feb-2026 — customer-scoped admin/system notes.
+        merged += await _customer_notes_to_items(
             customer, tenant_id, wanted_kinds, from_iso, to_iso,
         )
     # Backfill the B-required fields on legacy items (marketing /

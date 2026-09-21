@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from '@/theme';
@@ -127,6 +127,8 @@ function PortalInviteQuickAction({ customer, onToast }) {
 import CardOnFileControl from "@/components/customers/CardOnFileControl";
 import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
 import CustomerDeleteModal from "@/components/customers/CustomerDeleteModal";
+// Phase M1 · Feb-2026 — Customer Merge Wizard (admin-only 3-step).
+import CustomerMergeWizard from "@/pages/customers/CustomerMergeWizard";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
 // Phase B4 · Feb-2026 — Stripe subscription CRUD panel.
@@ -215,6 +217,8 @@ export default function CustomerDetail() {
   };
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Phase M1 · Feb-2026 — Merge Wizard modal open/close.
+  const [mergeOpen, setMergeOpen] = useState(false);
   // Feb-2026 · Customer Delete UX overhaul — which mode is currently
   // in flight from the modal. null = idle, "soft" | "hard" = busy.
   const [deleteBusyMode, setDeleteBusyMode] = useState(null);
@@ -610,6 +614,20 @@ export default function CustomerDetail() {
             <Button variant="danger" className="px-2.5 py-1 text-xs" onClick={() => setConfirmDelete(true)} testid="cd-delete">
               <Trash2 size={14} /> Delete
             </Button>
+            {/* Phase M1 · Feb-2026 — Customer Merge Wizard trigger.
+                 Admin + super_admin only; the wizard modal handles
+                 role errors gracefully if the backend 403s. */}
+            {["admin", "super_admin", "owner"].includes(
+                (meRole || "").toLowerCase()) ? (
+              <Button
+                variant="ghost"
+                className="px-2.5 py-1 text-xs"
+                onClick={() => setMergeOpen(true)}
+                testid="cd-merge-btn"
+              >
+                <GitMerge size={14} /> Merge
+              </Button>
+            ) : null}
             {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
                 cleanup — action bar consolidated to a single row, so we
                 suppress the ClickToCallButton's stacked ``Dial from this
@@ -1047,6 +1065,17 @@ export default function CustomerDetail() {
         onCancel={() => setConfirmDelete(false)}
         onSoftDelete={() => doDelete("soft")}
         onHardDelete={() => doDelete("hard")}
+      />
+
+      {/* Phase M1 · Feb-2026 — Customer Merge Wizard. Admin-only —
+           the trigger button is already role-gated. This modal renders
+           unconditionally when open; server enforces the role a second
+           time on POST. */}
+      <CustomerMergeWizard
+        open={mergeOpen}
+        primary={customer}
+        onClose={() => setMergeOpen(false)}
+        onMerged={() => { setMergeOpen(false); load(); }}
       />
 
       {/* Feb-2026 Customer Detail Additions — VIP note modal (double-click star). */}

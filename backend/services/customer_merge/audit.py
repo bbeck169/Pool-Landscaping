@@ -26,6 +26,13 @@ async def write_merge_audit(
     fields_reconciled: Dict[str, Any],
     empty_fields_filled: Dict[str, Any],
     related_records_rewired: Dict[str, int],
+    # Phase M1 · Feb-2026 — extended snapshot fields for the manual
+    # merge-wizard endpoint. Auto-merge callers still pass None and
+    # the columns stay off the audit doc so the audit-viewer UI
+    # continues to work unchanged.
+    duplicate_snapshots: Optional[List[Dict[str, Any]]] = None,
+    field_choices: Optional[Dict[str, str]] = None,
+    merge_source: Optional[str] = None,
 ) -> str:
     """Insert one audit row. Returns the audit id."""
     aid = f"audit_{new_id()}"
@@ -44,6 +51,12 @@ async def write_merge_audit(
         "reversed_at": None,
         "reversed_by": None,
     }
+    if duplicate_snapshots is not None:
+        doc["duplicate_snapshots"] = duplicate_snapshots
+    if field_choices is not None:
+        doc["field_choices"] = dict(field_choices or {})
+    if merge_source is not None:
+        doc["merge_source"] = merge_source
     await db[AUDIT_COLLECTION].insert_one(doc)
     return aid
 

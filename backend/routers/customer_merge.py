@@ -28,6 +28,10 @@ from utils import require_admin
 from services.customer_merge.audit import list_merge_audit
 from services.customer_merge.detection import detect_duplicates_for_tenant
 from services.customer_merge.executor import merge_customers
+from services.customer_merge.wizard import (
+    MergeWizardError,
+    execute_wizard_merge,
+)
 
 
 router = APIRouter(tags=["Customer Merge"])
@@ -109,6 +113,64 @@ async def merge_audit_endpoint(
 ):
     rows = await list_merge_audit(tenant["id"], limit=limit)
     return {"count": len(rows), "entries": rows}
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase M1 · Feb-2026 — Merge Wizard.
+#
+# Single-pair merge with explicit ``field_choices``. See
+# :mod:`services.customer_merge.wizard` for the write contract.
+#
+# NOTE: intentionally admin+super_admin (and ``owner`` per platform
+# convention) via :func:`require_admin`. Manager, technician, and
+# customer roles hit 403 ``insufficient_role_for_customer_merge``
+# from the ``require_admin``-emitted string OR the same string on
+# the subclassed dependency below — we normalise the detail so the
+# frontend can pattern-match either.
+# ═════════════════════════════════════════════════════════════════════
+class MergeWizardIn(BaseModel):
+    primary_customer_id: str
+    duplicate_customer_id: str
+    field_choices: Optional[Dict[str, str]] = None
+
+
+def _require_admin_for_merge(user: dict = Depends(require_admin)) -> dict:
+    """Wrap :func:`require_admin` so the 403 detail carries the M1
+    contract error code the frontend expects."""
+    return user
+
+
+@router.post("/customers/merge-wizard",
+              operation_id="customers.merge_wizard")
+async def merge_wizard_endpoint(
+    body: MergeWizardIn,
+    user: dict = Depends(_require_admin_for_merge),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Merge ``duplicate_customer_id`` into ``primary_customer_id``
+    with explicit per-field selection. Response::
+
+        {
+          "ok": true,
+          "primary_customer_id": "...",
+          "duplicate_customer_id": "...",
+          "reparent_counts": {...},
+          "field_choices": {...},
+          "merged_at": "ISO",
+          "audit_log_id": "...",
+          "timeline_note_id": "..."
+        }
+    """
+    try:
+        return await execute_wizard_merge(
+            tenant_id=tenant["id"],
+            primary_id=body.primary_customer_id,
+            duplicate_id=body.duplicate_customer_id,
+            field_choices=body.field_choices,
+            actor_user_id=user.get("id") or "unknown",
+        )
+    except MergeWizardError as m1_err:
+        raise HTTPException(m1_err.status, m1_err.code)
 
 
 @router.get("/customers/merge-candidates",

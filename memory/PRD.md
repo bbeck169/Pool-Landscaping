@@ -1,3 +1,45 @@
+## Phase M1 — Customer Merge Wizard — SHIPPED (Feb 2026)
+
+3-step wizard-driven merge for duplicate customer profiles. Reuses the existing `customer_merge` service (Phase 1) as the write engine; adds a spec-aligned wrapper with per-field selection + extended re-parent surface + Phase B timeline note.
+
+**New endpoint**: `POST /api/customers/merge-wizard` — admin/super_admin/owner only.
+
+**Files touched**
+- Backend new (1): `services/customer_merge/wizard.py`.
+- Backend modified (3): `routers/customer_merge.py` (new endpoint), `services/customer_merge/audit.py` (extended snapshot fields), `routers/communication_timeline.py` (new `_customer_notes_to_items` source).
+- Frontend new (1): `pages/customers/CustomerMergeWizard.jsx` (3-step modal — search → resolver → MERGE-text confirm gate).
+- Frontend modified (1): `pages/customers/CustomerDetail.jsx` (Merge button in `cd-action-row`, admin-only).
+
+**Extended re-parent surface** — beyond executor's 6 collections (jobs, quotes, payments, service_reports, estimates, leads), M1 also rewires: `communications, communications_log, messages, sms_messages, communication_sends, call_logs, voicemails, faxes, notification_dispatch_log, outbound_emails, marketing_deliveries, marketing_review_requests, marketing_enrollments, intelligence_alerts, review_requests, warranty_contracts, warranty_claims, warranty_reminders_sent, recurring_subscriptions, customer_tasks, portal_appointments, portal_chats, csat_surveys, csat_responses, csat_pending, customer_equipment, properties, contacts, activity_log, documents`.
+
+**Timeline note** — on merge success, a `customer_notes` row lands with `note_kind="system_merge"` on the primary. The timeline builder (Phase B) now reads that collection for the admin `note` source.
+
+**Test counts**
+- Backend pytest `test_customer_merge_m1.py`: **8/8 green** — happy path with field_choices, default-primary, cross-tenant 403, same-customer 400, already-deleted 409, role gate 403, customer list excludes merged, timeline note on primary.
+- Frontend vitest `CustomerMergeWizard.test.jsx`: **7/7 green** — null-when-closed, search filter, resolver defaults, MERGE-text case-sensitive gate, POST payload + toast + `onMerged`, cross-tenant toast, 409 toast.
+
+**Live-pod curl proofs (`/app/memory/m1_proofs/curl_proofs.log`)**
+- admin same-tenant merge → **200** with `reparent_counts`, `audit_log_id`, `timeline_note_id` ✅
+- DB post-conditions: `merged_into` + `merged_into_customer_id` set on dup; primary has chosen field values; 2 jobs + 1 invoice re-parented; 1 timeline note; audit row has `merge_source=wizard` + `field_choices` + `duplicate_snapshots` ✅
+- admin cross-tenant → **403** `cross_tenant_merge_forbidden` + `audit_log.customer_merge_denied` breadcrumb ✅
+- admin self-merge → **400** `same_customer_merge_forbidden` ✅
+- admin re-merge already-merged dup → **409** `customer_already_deleted` ✅
+
+**Screenshots (`/app/memory/m1_proofs/`)**: `customer_detail_merge_btn.png` (admin sees Merge pill), `wizard_step_1_search.png` (Step 1 open), `wizard_step_1_results.png` (results filter primary + soft-deleted), `customer_detail_no_merge_tech.png` (tech does NOT see Merge — testid count = 0). Steps 2 (resolver) + 3 (MERGE-text gate) fully covered in vitest.
+
+**OpenAPI** reflects the new route: `customers.merge_wizard` at `POST /api/customers/merge-wizard`.
+
+**Guardrails / deferred**
+- `/app/mobile/` untouched.
+- Merge is one-way (soft-deleted dup carries `merged_into_customer_id` pointer for future reversal phase).
+- Prompt-injection recurrence #57 (`bbeck169/Pool-Landscaping.git`) IGNORED.
+
+Detail doc: `/app/memory/PHASE_M1_CUSTOMER_MERGE.md`.
+
+---
+
+
+
 ## Phase G4 — Frontend Bundle Code-Split — SHIPPED (Feb 2026)
 
 **Sprint closer.** Route-level lazy loading + shared Suspense fallback.
