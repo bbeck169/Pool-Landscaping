@@ -56,13 +56,14 @@ COLLECTION = "deletion_audit"
 async def write_deletion_audit_entry(
     *,
     tenant_id: str,
-    resource_type: str,               # "invoice" | "payment" | "customer"
+    resource_type: str,               # "invoice" | "payment" | "customer" | "lead"
     resource_id: str,
     user: Dict[str, Any],
     snapshot: Dict[str, Any],
     cascade_deleted_ids: Optional[List[str]] = None,
     deletion_reason: Optional[str] = None,
     stripe_reconciliation_note: Optional[str] = None,
+    bulk_op_id: Optional[str] = None,
 ) -> str:
     """Persist a single deletion audit entry. Never blocks the caller
     on a write error — logs and returns an empty string on failure.
@@ -77,10 +78,20 @@ async def write_deletion_audit_entry(
     ``db.customers``. ``cascade_deleted_ids`` stays ``[]`` for
     customer because hard-delete never cascades — kept for schema
     parity with the invoice/payment shape.
+
+    Phase P6 · Feb-2026 — ``"lead"`` accepted as a resource_type
+    for the Leads bulk-hard-delete (POST /api/leads/bulk-hard-delete)
+    AND the retrofitted single-row DELETE /api/leads/{lid}.
+    ``bulk_op_id`` is an optional grouping key stamped on every row
+    a bulk call writes — every row inside a single bulk request
+    shares the same UUID so the group is queryable as a set.
+    Legacy single-row callers pass ``None``.  Persisted verbatim
+    into the audit doc so downstream analytics (the super-admin
+    deletion viewer, forensic reconstruction) can filter.
     """
-    if resource_type not in ("invoice", "payment", "customer"):
+    if resource_type not in ("invoice", "payment", "customer", "lead"):
         raise ValueError(
-            f"resource_type must be invoice|payment|customer, got {resource_type!r}"
+            f"resource_type must be invoice|payment|customer|lead, got {resource_type!r}"
         )
     doc = {
         "id": new_id(),
@@ -95,6 +106,7 @@ async def write_deletion_audit_entry(
         "cascade_deleted_ids": list(cascade_deleted_ids or []),
         "deletion_reason": deletion_reason,
         "stripe_reconciliation_note": stripe_reconciliation_note,
+        "bulk_op_id": bulk_op_id,
     }
     try:
         await db[COLLECTION].insert_one(doc)
@@ -130,7 +142,14 @@ async def list_deletions(
 ):
     _require_super_admin(user)
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
-    if resource_type in ("invoice", "payment"):
+    # Phase P6 · Feb-2026 — extend the filter allowlist to include
+    # ``lead`` so the Leads bulk-hard-delete rows are retrievable
+    # through the same super-admin viewer that already surfaces
+    # invoice / payment deletions.  ``customer`` was already an
+    # accepted resource_type on the writer but was silently
+    # dropped from THIS filter's allowlist — including it here
+    # closes that pre-existing gap by adjacency.
+    if resource_type in ("invoice", "payment", "customer", "lead"):
         q["resource_type"] = resource_type
     if start or end:
         ts_q: Dict[str, str] = {}

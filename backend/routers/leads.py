@@ -818,10 +818,207 @@ async def convert_lead_to_quote(lid: str, body: ConvertQuoteIn,
 async def delete_lead(lid: str,
                         user: dict = Depends(require_admin),
                         tenant: dict = Depends(get_current_tenant)):
-    res = await db.leads.delete_one(
-        {"id": lid, "tenant_id": tenant["id"]},
+    # Phase P6 · Feb-2026 — retrofit the pre-P6 hard-delete so
+    # every lead removal — single OR bulk — leaves a full snapshot
+    # in ``deletion_audit`` (parity with the invoice / payment /
+    # customer flows).  Order is snapshot-then-delete so a failed
+    # audit write blocks the destructive op.  ``bulk_op_id=None``
+    # for single-row calls; the bulk endpoint below stamps a shared
+    # UUID on every row it audits.
+    from routers.deletion_audit import write_deletion_audit_entry
+
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
+    if not lead:
+        # Idempotent 200 (matches the pre-P6 shape: 200 w/ deleted:0
+        # when the id was already gone).  No audit row on a no-op.
+        return {"ok": True, "deleted": 0}
+
+    audit_id = await write_deletion_audit_entry(
+        tenant_id=tenant["id"],
+        resource_type="lead",
+        resource_id=lid,
+        user=user,
+        snapshot=lead,
+        cascade_deleted_ids=[],
+        bulk_op_id=None,
+    )
+    if not audit_id:
+        # ``write_deletion_audit_entry`` returns "" on write failure
+        # and logs the exception.  The P6 order-of-operations rule
+        # says "audit first, then delete" — abort the delete rather
+        # than lose the audit trail.
+        raise HTTPException(500, "audit_write_failed")
+
+    try:
+        res = await db.leads.delete_one(
+            {"id": lid, "tenant_id": tenant["id"]},
+        )
+    except Exception as exc:                          # noqa: BLE001
+        # Best-effort audit rollback so a stray audit row doesn't
+        # imply a delete that never happened.  If the rollback
+        # itself fails we log and let the caller retry — the audit
+        # row is still safer than a phantom delete.
+        try:
+            await db.deletion_audit.delete_one({"id": audit_id})
+        except Exception as rb_exc:                    # noqa: BLE001
+            logger.error(
+                "delete_lead: audit rollback failed for audit_id=%s: %s",
+                audit_id, rb_exc,
+            )
+        raise HTTPException(500, f"delete_failed: {exc}")
+
     return {"ok": True, "deleted": res.deleted_count}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase P6 · Feb-2026 · Leads · Bulk Hard Delete on Selection Bar
+# ═════════════════════════════════════════════════════════════════════════
+#
+# ``POST /api/leads/bulk-hard-delete``
+#
+# Permanently deletes up to 100 leads in one call, snapshotted 1:1 into
+# ``deletion_audit`` (resource_type="lead") with a shared ``bulk_op_id``
+# so the whole batch is queryable as a group.  Reuses:
+#   * ``require_admin`` — same gate the single-row DELETE uses;
+#     both ``admin`` and ``super_admin`` pass.
+#   * ``write_deletion_audit_entry`` — canonical hard-delete snapshot
+#     helper.  Extended to accept ``resource_type="lead"`` in P6.
+#
+# Per-id loop (NOT ``delete_many``) so:
+#   1. Every delete has a paired snapshot row on the same
+#      ``bulk_op_id`` — 1:1 forensic reconstruction.
+#   2. Partial failures don't take down the batch.
+#   3. Cross-tenant / already-deleted ids surface in ``skipped``
+#      with a single ambiguous code so a caller can never
+#      enumerate cross-tenant existence.
+# ═════════════════════════════════════════════════════════════════════════
+from uuid import uuid4 as _p6_uuid4
+
+
+class _LeadBulkHardDeleteIn(_LeadBulkBase):
+    lead_ids: List[str]
+    deletion_reason: Optional[str] = None
+
+
+_LEAD_BULK_HARD_DELETE_CAP = 100
+
+
+@router.post("/leads/bulk-hard-delete")
+async def bulk_hard_delete_leads(
+    body: _LeadBulkHardDeleteIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    from routers.deletion_audit import write_deletion_audit_entry
+
+    ids = list(body.lead_ids or [])
+    if not ids:
+        raise HTTPException(422, {"code": "empty_ids",
+                                    "message": "lead_ids is required"})
+    if len(ids) > _LEAD_BULK_HARD_DELETE_CAP:
+        raise HTTPException(
+            422,
+            {"code": "bulk_cap_exceeded",
+              "message": f"lead_ids cap is {_LEAD_BULK_HARD_DELETE_CAP}",
+              "attempted": len(ids), "cap": _LEAD_BULK_HARD_DELETE_CAP},
+        )
+
+    bulk_op_id = str(_p6_uuid4())
+    deleted = 0
+    skipped: List[Dict[str, str]] = []
+
+    # De-dupe while preserving order so a caller that accidentally
+    # passes the same id twice doesn't double-audit or hit the
+    # unique-id counter twice.
+    seen: set = set()
+    for lid in ids:
+        if lid in seen:
+            continue
+        seen.add(lid)
+
+        # Tenant-scoped fetch — the same ``{id, tenant_id}`` shape
+        # every other write on this router uses.  Never widen this
+        # filter.
+        lead = await db.leads.find_one(
+            {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not lead:
+            # Ambiguous code — "not found in this tenant" AND
+            # "exists in another tenant" collapse to the same
+            # response.  Never distinguish them.
+            skipped.append(
+                {"lead_id": lid, "code": "not_found_or_cross_tenant"},
+            )
+            continue
+
+        # 1) Audit snapshot FIRST — if this fails we do NOT delete.
+        audit_id = await write_deletion_audit_entry(
+            tenant_id=tenant["id"],
+            resource_type="lead",
+            resource_id=lid,
+            user=user,
+            snapshot=lead,
+            cascade_deleted_ids=[],
+            deletion_reason=body.deletion_reason,
+            bulk_op_id=bulk_op_id,
+        )
+        if not audit_id:
+            # Helper logged the reason; skip this row so the delete
+            # doesn't happen without an audit row.  Distinct code
+            # so ops can grep — never leaks cross-tenant existence.
+            skipped.append(
+                {"lead_id": lid, "code": "audit_write_failed"},
+            )
+            continue
+
+        # 2) Delete SECOND.  Same tenant scope as the fetch above.
+        try:
+            res = await db.leads.delete_one(
+                {"id": lid, "tenant_id": tenant["id"]},
+            )
+        except Exception as exc:                      # noqa: BLE001
+            # Best-effort audit rollback so a stray audit doesn't
+            # imply a delete that never happened.
+            try:
+                await db.deletion_audit.delete_one({"id": audit_id})
+            except Exception as rb_exc:                # noqa: BLE001
+                logger.error(
+                    "bulk_hard_delete_leads: audit rollback failed "
+                    "audit_id=%s lead_id=%s: %s",
+                    audit_id, lid, rb_exc,
+                )
+            skipped.append(
+                {"lead_id": lid, "code": "delete_failed"},
+            )
+            continue
+
+        if res.deleted_count:
+            deleted += 1
+        else:
+            # Race — the lead was already gone between our
+            # ``find_one`` and ``delete_one``.  Roll back the audit
+            # row we just wrote so we don't imply a delete that
+            # didn't happen.
+            try:
+                await db.deletion_audit.delete_one({"id": audit_id})
+            except Exception as rb_exc:                # noqa: BLE001
+                logger.error(
+                    "bulk_hard_delete_leads: audit rollback (race) "
+                    "failed audit_id=%s lead_id=%s: %s",
+                    audit_id, lid, rb_exc,
+                )
+            skipped.append(
+                {"lead_id": lid, "code": "not_found_or_cross_tenant"},
+            )
+
+    return {
+        "requested": len(ids),
+        "deleted": deleted,
+        "skipped": skipped,
+        "bulk_op_id": bulk_op_id,
+    }
 
 # ═════════════════════════════════════════════════════════════════════════
 # Phase 34 · Task BB · Feb 2026 — Leads bulk-select soft-delete.
