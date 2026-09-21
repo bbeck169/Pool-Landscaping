@@ -1088,12 +1088,31 @@ export default function CalendarSchedule() {
   // job list. Matches the TodaySchedule fix pattern.
   const focusISO = getTenantISODate(date, tenantTz);
   const dayJobs = useMemo(() => {
-    const list = filteredJobs.filter((j) => (j.scheduled_date || "").slice(0, 10) === focusISO);
+    // Phase P13 · Feb-2026 · P0 HOTFIX — tenant-local "today". The
+    // pre-P13 filter compared ``(j.scheduled_date || "").slice(0,10)``
+    // to ``focusISO`` — that worked ONLY if the wire's
+    // ``scheduled_date`` string was itself derived in the tenant's
+    // local tz at write time. Older write paths derived it from the
+    // UTC datetime, so a job at 8pm Phoenix (03:00 UTC next day) got
+    // stamped with tomorrow's date and disappeared from today's view
+    // (the observed production symptom). Fix: also accept jobs whose
+    // ``scheduled_start`` datetime bucketed through
+    // ``getTenantISODate`` lands on the same tenant-local day.
+    // Union-shape is defensive — jobs with a correct
+    // ``scheduled_date`` still match via the fast string branch.
+    const list = filteredJobs.filter((j) => {
+      const sdISO = (j.scheduled_date || "").slice(0, 10);
+      if (sdISO && sdISO === focusISO) return true;
+      // Fallback: tenant-local ISO derived from ``scheduled_start``.
+      const ss = j.scheduled_start;
+      if (!ss) return false;
+      return getTenantISODate(ss, tenantTz) === focusISO;
+    });
     // Phase 30X · date-only surface. Order by route position only — no
     // time-of-day tiebreaker (schedule is per-day, not hourly).
     list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     return list;
-  }, [filteredJobs, focusISO]);
+  }, [filteredJobs, focusISO, tenantTz]);
   // Feb-2026 · Keep ``selectAllInView`` in sync with the derived
   // day list without stashing it in state.
   React.useEffect(() => { dayJobsRef.current = dayJobs; }, [dayJobs]);
@@ -1101,15 +1120,25 @@ export default function CalendarSchedule() {
   // {iso: count} across every currently-visible job (post-filter).
   // Purely derived — no extra fetch, no backend touch. Recalculates
   // whenever the filtered job list changes.
+  //
+  // Phase P13 · Feb-2026 · P0 HOTFIX — same tenant-local bucketing as
+  // ``dayJobs``: a job whose ``scheduled_date`` string was mis-stamped
+  // in UTC (Phoenix 8pm → UTC next day) should count under the tenant
+  // local day derived from ``scheduled_start``, not the misfiled
+  // wire field.
   const weekCounts = useMemo(() => {
     const m = {};
     for (const j of filteredJobs) {
-      const iso = (j.scheduled_date || "").slice(0, 10);
+      const sdISO = (j.scheduled_date || "").slice(0, 10);
+      let iso = sdISO;
+      if (!iso && j.scheduled_start) {
+        iso = getTenantISODate(j.scheduled_start, tenantTz);
+      }
       if (!iso) continue;
       m[iso] = (m[iso] || 0) + 1;
     }
     return m;
-  }, [filteredJobs]);
+  }, [filteredJobs, tenantTz]);
   useEffect(() => {}, [dayJobs]);
   const gridList = dayJobs;
 

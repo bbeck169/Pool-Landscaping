@@ -729,16 +729,83 @@ async def list_jobs(
     # Phase 30 · optional inclusive date-range filter so the new calendar
     # can ask the backend for a bounded window instead of pulling all 1000
     # jobs and filtering client-side. Both ends are optional.
+    #
+    # Phase P13 · Feb-2026 · P0 HOTFIX — tenant-local "today". The
+    # ``scheduled_date`` field on the wire is a ``YYYY-MM-DD`` string
+    # whose value was historically derived at WRITE-TIME. A job
+    # scheduled for 8pm Phoenix (UTC-7) has ``scheduled_start =
+    # …T03:00:00+00:00`` — old write paths derived
+    # ``scheduled_date`` from the UTC datetime, stamping it as the
+    # NEXT day. Reading with a tenant-local date filter then missed
+    # that job entirely. Fix reads the union: match rows whose
+    # ``scheduled_date`` string is in-window OR whose
+    # ``scheduled_start`` datetime falls in the tenant-local day's
+    # UTC boundaries. Uses ``tenant_scoped_filter`` so the extra
+    # disjunction lands under ``$and`` — no dict-spread ``$or``
+    # clobber (P10/P12/P12.2 audit posture preserved).
+    from services.tenant_helpers import get_tenant_timezone
+    from services.query_scope import tenant_scoped_filter as _tsf
+    _tz = get_tenant_timezone(tenant)
+
+    def _tenant_day_utc_bounds(date_str: str):
+        """Return ``[utc_start_iso, utc_end_iso)`` for a ``YYYY-MM-DD``
+        interpreted in the tenant's local timezone."""
+        local_midnight = datetime.strptime(date_str, "%Y-%m-%d").replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=_tz,
+        )
+        utc_start = local_midnight.astimezone(timezone.utc).isoformat()
+        utc_end = (local_midnight + timedelta(days=1)).astimezone(
+            timezone.utc
+        ).isoformat()
+        return utc_start, utc_end
+
     if start or end:
         rng: Dict[str, str] = {}
         if start: rng["$gte"] = start
         if end:   rng["$lte"] = end
-        q["scheduled_date"] = rng
+        # Phase P13 — union with the ``scheduled_start`` datetime window.
+        # ``start`` / ``end`` are inclusive dates (YYYY-MM-DD) — take the
+        # tenant-local midnight of ``start`` and the exclusive tenant-
+        # local midnight of ``end + 1 day``, converted to UTC.
+        try:
+            utc_start_iso, _ = _tenant_day_utc_bounds(start) if start else (None, None)
+            _, utc_end_iso = _tenant_day_utc_bounds(end) if end else (None, None)
+        except Exception:
+            utc_start_iso, utc_end_iso = None, None
+        ss_range: Dict[str, str] = {}
+        if utc_start_iso: ss_range["$gte"] = utc_start_iso
+        if utc_end_iso:   ss_range["$lt"]  = utc_end_iso
+        # Fold into the query via ``tenant_scoped_filter`` — the
+        # existing tenant/tech-scope kwargs from ``scope_jobs_query``
+        # already live on ``q``, so we only need to add ONE more
+        # disjunction under ``$and``. Pull existing ``$and`` (if
+        # present from the soft-delete gate) and re-append.
+        _date_or = [{"scheduled_date": rng}]
+        if ss_range:
+            _date_or.append({"scheduled_start": ss_range})
+        q.setdefault("$and", []).append({"$or": _date_or})
     # Phase 51.0 fix — exact scheduled_date match. Some jobs store the
     # value as bare `YYYY-MM-DD`, others as full ISO datetime — regex
     # covers both. Overrides the range filter above when explicitly set.
+    #
+    # Phase P13 · Feb-2026 — same tenant-local ``scheduled_start``
+    # window union as the range branch above so a single-day fetch
+    # never misses a job whose ``scheduled_date`` was mis-stamped at
+    # write time.
     if scheduled_date:
-        q["scheduled_date"] = {"$regex": f"^{scheduled_date}"}
+        try:
+            utc_start_iso, utc_end_iso = _tenant_day_utc_bounds(scheduled_date)
+        except Exception:
+            utc_start_iso, utc_end_iso = None, None
+        _date_or = [{"scheduled_date": {"$regex": f"^{scheduled_date}"}}]
+        if utc_start_iso and utc_end_iso:
+            _date_or.append({"scheduled_start": {
+                "$gte": utc_start_iso, "$lt": utc_end_iso,
+            }})
+        # Drop any prior ``scheduled_date`` range on ``q`` — the exact
+        # match branch always wins per the pre-P13 contract.
+        q.pop("scheduled_date", None)
+        q.setdefault("$and", []).append({"$or": _date_or})
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
