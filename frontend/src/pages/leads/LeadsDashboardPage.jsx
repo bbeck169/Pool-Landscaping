@@ -271,7 +271,7 @@ export default function LeadsDashboardPage() {
          * strip.
          */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500 transition-colors">
-          <Search size={14} color={colors.searchIcon} />
+          <Search size={14} style={{ color: colors.searchIcon }} />
           <input value={filters.search}
                  onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
                  placeholder="Search name, email, phone"

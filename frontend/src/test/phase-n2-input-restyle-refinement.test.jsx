@@ -229,4 +229,37 @@ describe("Phase N2 · E · K52.1 navy strip pages match sitewide theme", () => {
     expect(region).not.toMatch(/placeholder:text-white\/70/);
     expect(region).not.toMatch(/color:\s*colors\.nav\.fg\b/);
   });
+
+  /*
+   * N2-hotfix · Feb-2026 — Leads dashboard shipped with
+   * ``<Search ... color={colors.searchIcon} />`` (prop form).
+   * lucide-react 0.507 renders the ``color`` prop as an
+   * SVG-invalid ``color`` attribute on the root ``<svg>`` element
+   * so it was ignored, and the icon fell back to its default
+   * near-black stroke.  Every K52 icon must therefore use the
+   * ``style={{ color }}`` form, which lucide translates into
+   * ``currentColor`` on the stroke via inline CSS.  This
+   * assertion guards against a stray commit dropping ``style=``
+   * in favour of the naked ``color=`` prop on any of the 3 K52
+   * surfaces.
+   */
+  it.each(K52_FILES)("E2 · %s <Search> uses style={{ color: colors.searchIcon }} (not the bare color= prop)", (rel, testId) => {
+    const src = readIfExists(rel);
+    const lines = src.split("\n");
+    let idIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(`data-testid="${testId}"`)) { idIdx = i; break; }
+    }
+    // The <Search> for the row lives in the 15 lines *before* the
+    // input's data-testid.
+    const region = lines.slice(Math.max(0, idIdx - 15), idIdx).join("\n");
+    // The Search icon must be present.
+    expect(region).toMatch(/<Search\b/);
+    // It must resolve color via inline style (which lucide turns
+    // into ``stroke: currentColor`` and picks up from ``color``).
+    expect(region).toMatch(/style=\{\{[^}]*color:\s*colors\.searchIcon/);
+    // It must NOT use the naked ``color={...}`` prop — that broke
+    // rendering under lucide-react 0.507 on this specific page.
+    expect(region).not.toMatch(/<Search[^/>]*\bcolor=\{colors\.searchIcon\}/);
+  });
 });
