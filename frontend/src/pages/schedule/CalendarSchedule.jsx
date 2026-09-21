@@ -168,6 +168,43 @@ function _canonicalTechId(t) {
   return t.technician_id || t.id || "";
 }
 
+// Phase P11 · Feb-2026 — K42-parity lane-match predicate.
+// ─────────────────────────────────────────────────────────────
+//
+// The tech-filter dropdown ships a single canonical id (per
+// ``_canonicalTechId`` above), but jobs on the wire can carry
+// that id under any of FIVE assignment fields depending on which
+// write path stamped them:
+//
+//   * ``technician_id``           — canonical primary key.
+//   * ``assigned_technician_id``  — R1.1 fallback (server P9 jail).
+//   * ``assigned_to``             — legacy dispatch flow.
+//   * ``tech_user_id``            — reorder-day-route + a few
+//                                    older mobile write paths.
+//   * ``crew_id``                 — a crew lane (multi-tech dispatch).
+//
+// The P9 backend jail and P10 lane-scope helper both do the multi-
+// field ``$or`` union server-side; the client MUST mirror the same
+// disjunction defensively so a stale in-flight response after a
+// filter change (or a cache-window hit) doesn't render blanks for
+// jobs that legitimately belong to the selected lane. Exported so
+// neighbor files (the reorder scope memo in the same page, plus
+// any future tech-scoped list page) can reuse the exact idiom.
+//
+// ``laneId`` acts as an "All" pseudo-value when falsy — every job
+// passes. That matches the ``techId === ""`` "All techs" convention.
+export function jobMatchesLane(job, laneId) {
+  if (!laneId) return true;               // "All" pseudo-value.
+  if (!job) return false;
+  return (
+    job.technician_id === laneId
+    || job.assigned_technician_id === laneId
+    || job.assigned_to === laneId
+    || job.tech_user_id === laneId
+    || job.crew_id === laneId
+  );
+}
+
 export function getStatusBorderColor(status) {
   const s = (status || "").toLowerCase();
   if (s === "completed") return "#DC2626";
@@ -658,9 +695,27 @@ export default function CalendarSchedule() {
       const focus = date;
       const start = format(addDays(focus, -30), "yyyy-MM-dd");
       const end   = format(addDays(focus,  60), "yyyy-MM-dd");
+      // Phase P11 · Feb-2026 — push tech-scope to the server. When a
+      // specific tech is selected, ship it as ``?technician_id=…``
+      // so the backend jail (P9) does the multi-field ``$or`` union
+      // server-side. That means:
+      //   * tech-scoped views transfer O(day)tech instead of
+      //     O(day)tenant. A 50-tech tenant used to bring back every
+      //     job every fetch just to filter one lane locally.
+      //   * jobs assigned via ``assigned_to`` / ``tech_user_id`` /
+      //     ``assigned_technician_id`` / ``crew_id`` (not just
+      //     ``technician_id``) now show up correctly — the P9 jail
+      //     already knows about all five shapes.
+      // "All" (admin only per P9-B) skips the param and gets the
+      // full-tenant view. Kept the ``jobMatchesLane`` client-side
+      // predicate below as a defensive fallback for in-flight
+      // response races after a filter change.
+      const _techScope = (techId && techId !== "all")
+        ? `&technician_id=${encodeURIComponent(techId)}`
+        : "";
       const [j, t, cr] = await Promise.all([
         api.get(
-          `/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}`,
+          `/jobs?start=${start}&end=${end}${crewId ? `&crew_id=${encodeURIComponent(crewId)}` : ""}${_techScope}`,
           SCHEDULE_LOAD_TIMEOUT_MS,
         ),
         api.get("/technicians", SCHEDULE_LOAD_TIMEOUT_MS).catch(() => []),
@@ -698,6 +753,11 @@ export default function CalendarSchedule() {
   // guard (server-side filter is different, so we must re-fetch).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load({ force: true }); }, [crewId]);
+  // Phase P11 · Feb-2026 — tech-scope is now server-side, so any
+  // change to the ``techId`` selection must invalidate the cached
+  // range and refetch. Same shape as the crew-change hook above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load({ force: true }); }, [techId]);
 
   // ─────────────────────────────────────────────────────────
   // Phase P5 · Feb-2026 — Legacy tech-filter self-heal.
@@ -718,15 +778,32 @@ export default function CalendarSchedule() {
   // technician_ids returned by ``GET /technicians``, clear it
   // back to ``""`` (All), scrub the localStorage entry, and log
   // ONE console.warn so we can catch any last stragglers in
-  // Sentry.  Runs at most once per techs-load.
-  const _healedLegacyTechFilterRef = React.useRef(false);
+  // Sentry.
+  //
+  // Phase P11 · Feb-2026 — loosen the once-per-mount ref guard.
+  // The pre-P11 shape hard-locked the effect after ONE firing, so
+  // if the techs list later reloaded (e.g. a tech was renamed /
+  // added / removed by another dispatcher) the heal could never
+  // re-evaluate.  Re-key the guard on the techs-list identity
+  // instead — the effect fires at most once per fresh techs load
+  // AND crucially, a crewless tech whose canonical id IS in the
+  // fresh set is never cleared (the predicate is a plain
+  // ``canonicalIds.has(techId)`` — no crew-anchor secondary check).
+  const _healedLegacyTechFilterRef = React.useRef(null);
   useEffect(() => {
-    if (_healedLegacyTechFilterRef.current) return;
     if (!techs || techs.length === 0) return;
+    // Same list ref? — heal already evaluated for this load event.
+    if (_healedLegacyTechFilterRef.current === techs) return;
+    _healedLegacyTechFilterRef.current = techs;
     if (!techId) return;                          // Already on "All".
     const canonicalIds = new Set(
       techs.map(_canonicalTechId).filter(Boolean),
     );
+    // Phase P11 · loosened predicate — the only reason to clear is
+    // "id absent from the canonical set".  A tech with no crew,
+    // no jobs, no anchor of any kind is still a legit tech; if
+    // ``_canonicalTechId`` returned an id for it, that id lives in
+    // ``canonicalIds`` and the stored filter value is kept as-is.
     if (canonicalIds.has(techId)) return;         // Filter matches — no-op.
     // eslint-disable-next-line no-console
     console.warn(
@@ -740,7 +817,6 @@ export default function CalendarSchedule() {
     try {
       if (_techFilterKey) localStorage.removeItem(_techFilterKey);
     } catch { /* storage-blocked / private mode */ }
-    _healedLegacyTechFilterRef.current = true;
   }, [techs, techId, _techFilterKey]);   // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -767,12 +843,23 @@ export default function CalendarSchedule() {
           j.crew_id === crewId ||
           crewMemberIds.includes(j.technician_id);
         if (!jobBelongsToCrew) return false;
-      } else if (techId && j.technician_id !== techId
-                    && !!j.technician_id) {
-        // Phase S1 · Feb-2026 — a specific tech is selected. Show
-        // jobs assigned to that tech PLUS unassigned jobs (an empty
-        // ``technician_id`` — "open" work that techs may pick up).
-        return false;
+      } else if (techId) {
+        // Phase P11 · Feb-2026 — K42-parity lane match. The pre-P11
+        // shape was ``j.technician_id !== techId && !!j.technician_id``
+        // which:
+        //   * ignored the FOUR other assignment fields the P9 jail
+        //     unions server-side (``assigned_technician_id`` /
+        //     ``assigned_to`` / ``tech_user_id`` / ``crew_id``);
+        //   * silently kept "unassigned" jobs (empty
+        //     ``technician_id``) alongside the tech-scoped set,
+        //     mixing lanes in the tech's view.
+        // ``jobMatchesLane`` mirrors the backend disjunction. This
+        // is defensive: the server already filtered when the page
+        // fired ``GET /jobs?technician_id=…`` — this predicate only
+        // has to do work if a stale in-flight response arrived
+        // AFTER the filter changed OR if the fetch fell back to
+        // the cache-window (mostly-empty range hits).
+        if (!jobMatchesLane(j, techId)) return false;
       }
       if (status && j.status !== status) return false;
       if (service && (j.service_type || "").toLowerCase() !== service.toLowerCase()) return false;

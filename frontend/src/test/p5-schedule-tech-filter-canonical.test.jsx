@@ -60,22 +60,35 @@ describe("Phase P5 · CalendarSchedule tech filter — source shape", () => {
     expect(SRC).not.toMatch(/value=\{t\.user_id/);
   });
 
-  it("filter predicate compares job.technician_id against techId (not any user-id shape)", () => {
-    // The filter branch that hides non-matching jobs must key
-    // on ``j.technician_id`` — the R1.1 Safe Check
-    // (``!!j.technician_id`` guard) MUST remain so unassigned
-    // jobs stay visible under a specific-tech filter.
-    expect(SRC).toMatch(
-      /techId && j\.technician_id !== techId[\s\S]{0,200}!!j\.technician_id/,
-    );
-    // Nowhere in the filter memo does a ``user_id`` comparison
-    // creep in.
+  it("filter predicate compares job against techId through jobMatchesLane (K42-parity disjunction)", () => {
+    // Phase P11 · Feb-2026 — the P5 single-idiom predicate was
+    // ``j.technician_id !== techId && !!j.technician_id`` which
+    // silently missed jobs assigned via ``assigned_to`` /
+    // ``tech_user_id`` / ``assigned_technician_id`` / ``crew_id``.
+    // P11 replaces it with ``jobMatchesLane`` (K42-parity — five-
+    // field disjunction) so the client mirrors the P9 backend jail.
+    expect(SRC).toMatch(/jobMatchesLane\(j,\s*techId\)/);
+    // Nowhere in the ACTUAL CODE PATHS of the filter memo does a
+    // ``user_id`` comparison creep in. Strip block + line comments
+    // first — the P11 docstring inside the memo mentions
+    // ``tech_user_id`` (a substring of ``/user_id/``) as one of the
+    // five assignment fields ``jobMatchesLane`` unions across, so
+    // the raw-string scan would false-positive without comment
+    // stripping.
     const memoStart = SRC.indexOf("const filteredJobs = useMemo");
     const memoEnd = SRC.indexOf("}, [rawJobs, q, techId, status");
     expect(memoStart).toBeGreaterThan(-1);
     expect(memoEnd).toBeGreaterThan(memoStart);
     const memoBlock = SRC.slice(memoStart, memoEnd);
-    expect(memoBlock).not.toMatch(/user_id/);
+    const codeOnly = memoBlock
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((ln) => !/^\s*\/\//.test(ln))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/user_id/);
+    // Anti-regression: the pre-P11 bare shape must be gone from
+    // the actual code paths.
+    expect(codeOnly).not.toMatch(/j\.technician_id\s*!==\s*techId\s*&&/);
   });
 
   it("declares a self-heal effect that clears legacy user-id filter values", () => {
