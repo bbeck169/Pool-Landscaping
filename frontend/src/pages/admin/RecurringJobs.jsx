@@ -91,6 +91,26 @@ export default function RecurringJobs() {
   // running the mutating backfill first.
   const [orphanPreview, setOrphanPreview] = useState(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
+  // Phase P4 · Feb-2026 — Category taxonomy dropdowns on the
+  // Edit Recurring Job modal.
+  //   ``serviceCats`` / ``incomeCats``: tenant-scoped active
+  //       rows fetched on modal open. Empty array is the natural
+  //       "no rows in this tenant" signal → disabled dropdown.
+  //   ``catLoadErr``: per-endpoint fetch failure so one broken
+  //       list doesn't hide the other dropdown. Values are
+  //       ``"service" | "income"`` mapped to a boolean.
+  //   ``catSaveErr``: per-field 422 shape from PATCH so the user
+  //       gets an inline error next to the offending dropdown
+  //       and the modal stays open.
+  const [serviceCats, setServiceCats] = useState([]);
+  const [incomeCats, setIncomeCats] = useState([]);
+  const [catLoadErr, setCatLoadErr] = useState({
+    service: false, income: false,
+  });
+  const [catSaveErr, setCatSaveErr] = useState({
+    service: "", income: "",
+  });
+  const [catLoading, setCatLoading] = useState(false);
   // Phase R2 · Feb-2026 — customer search.  Client-side filter.
   //   ``searchInput``: what the user is typing (unthrottled).
   //   ``searchQuery``: debounced value (250ms) used for filtering.
@@ -186,6 +206,43 @@ export default function RecurringJobs() {
     return () => document.removeEventListener("keydown", onKey);
   }, [modalOpen]);
 
+  // Phase P4 · Feb-2026 — Category taxonomy fetch. Runs whenever
+  // the Edit modal opens.  ``Promise.allSettled`` so a failure on
+  // one endpoint doesn't hide the other dropdown — the user still
+  // gets to edit the field that DID load.
+  const _loadCategories = React.useCallback(async () => {
+    setCatLoading(true);
+    setCatLoadErr({ service: false, income: false });
+    const [svcRes, incRes] = await Promise.allSettled([
+      api.get("/service-categories"),
+      api.get("/income-categories"),
+    ]);
+    if (svcRes.status === "fulfilled") {
+      setServiceCats(
+        (svcRes.value?.items || []).filter((c) => !c.is_archived),
+      );
+    } else {
+      setServiceCats([]);
+      setCatLoadErr((x) => ({ ...x, service: true }));
+    }
+    if (incRes.status === "fulfilled") {
+      setIncomeCats(
+        (incRes.value?.items || []).filter((c) => !c.is_archived),
+      );
+    } else {
+      setIncomeCats([]);
+      setCatLoadErr((x) => ({ ...x, income: true }));
+    }
+    setCatLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    setCatSaveErr({ service: "", income: "" });
+    _loadCategories();
+  }, [modalOpen, _loadCategories]);
+
+
   // Phase P3 · Feb-2026 — `stopThen` wraps existing per-row
   // action buttons so their onClick doesn't bubble up to the
   // <tr>'s row-click handler and open the Edit modal too. The
@@ -249,6 +306,21 @@ export default function RecurringJobs() {
       // the payload doesn't fight the backend override.
       const payload = { ...editing, price_cents: priceCents };
       if (payload.recurrence_never_ends) payload.end_date = null;
+      // Phase P4 · Feb-2026 — Category taxonomy on save.
+      // The two ids are pulled straight off ``editing`` so an
+      // "— None —" pick (which sets the field to "") gets
+      // sent as explicit ``null`` for a server-side clear.
+      // A key that is absent → no change, exactly per the P4
+      // brief.  We compare to the string "" to distinguish an
+      // explicit clear from an untouched field.
+      if (Object.prototype.hasOwnProperty.call(editing, "service_category_id")) {
+        payload.service_category_id = editing.service_category_id === "" ?
+          null : editing.service_category_id;
+      }
+      if (Object.prototype.hasOwnProperty.call(editing, "income_category_id")) {
+        payload.income_category_id = editing.income_category_id === "" ?
+          null : editing.income_category_id;
+      }
       if (editing.id) {
         await api.patch(`/recurring-jobs/${editing.id}`, payload);
       } else {
@@ -281,6 +353,28 @@ export default function RecurringJobs() {
       setModalOpen(false); setEditing(null);
       await load();
     } catch (e) {
+      // Phase P4 · Feb-2026 — 422 with the category-invalid code
+      // renders a per-field error next to the offending dropdown
+      // and keeps the modal open so the user can fix it without
+      // re-entering every other field.
+      //
+      // The api client throws with the response body stashed on
+      // ``e.body`` (or ``e.response.data``).  We accept either
+      // ``detail.code`` OR a naked ``code`` at the top level to
+      // keep this resilient to future adapter tweaks.
+      const raw = (e && (e.body || e.response?.data)) || {};
+      const detail = raw.detail || raw;
+      const status = e && (e.status || e.response?.status);
+      if (status === 422 && detail && detail.code) {
+        if (detail.code === "service_category_invalid") {
+          setCatSaveErr((x) => ({ ...x, service: "Invalid — pick another" }));
+          return;
+        }
+        if (detail.code === "income_category_invalid") {
+          setCatSaveErr((x) => ({ ...x, income: "Invalid — pick another" }));
+          return;
+        }
+      }
       setError(e?.message || "Save failed");
     }
   };
@@ -933,6 +1027,100 @@ export default function RecurringJobs() {
                        style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                        data-testid="recurring-jobs-service" placeholder="Weekly Pool Service" />
               </label>
+              {/* Phase P4 · Feb-2026 — Category taxonomy row.
+                   Two dropdowns side-by-side. Blank first option
+                   is "— None —" (clears the field on save). Empty
+                   list → disabled placeholder. Per-endpoint
+                   failure → inline retry link. 422 write error →
+                   inline red hint next to the offending
+                   dropdown. */}
+              <div className="grid grid-cols-2 gap-3"
+                     data-testid="recurring-jobs-category-row">
+                <label className="text-xs font-semibold" style={{ color: colors.muted }}>Service Category
+                  {catLoadErr.service ? (
+                    <div className="mt-1 text-xs" style={{ color: "#B91C1C" }}
+                          data-testid="recurring-jobs-service-category-error">
+                      Failed to load categories —{" "}
+                      <button type="button" className="underline"
+                                 onClick={_loadCategories}
+                                 data-testid="recurring-jobs-service-category-retry">
+                        retry
+                      </button>
+                    </div>
+                  ) : serviceCats.length === 0 ? (
+                    <select disabled
+                              className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                              style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.muted, opacity: 0.6 }}
+                              data-testid="recurring-jobs-service-category">
+                      <option>{catLoading ? "Loading…" : "No categories defined — ask an admin"}</option>
+                    </select>
+                  ) : (
+                    <select
+                        value={editing.service_category_id == null ? "" : editing.service_category_id}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setCatSaveErr((x) => ({ ...x, service: "" }));
+                          setEditing((x) => ({ ...x, service_category_id: v }));
+                        }}
+                        className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                        style={{ border: `1px solid ${catSaveErr.service ? "#B91C1C" : colors.border}`, background: colors.surface, color: colors.onSurface }}
+                        data-testid="recurring-jobs-service-category">
+                      <option value="">— None —</option>
+                      {serviceCats.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {catSaveErr.service ? (
+                    <div className="mt-1 text-xs" style={{ color: "#B91C1C" }}
+                          data-testid="recurring-jobs-service-category-save-error">
+                      {catSaveErr.service}
+                    </div>
+                  ) : null}
+                </label>
+                <label className="text-xs font-semibold" style={{ color: colors.muted }}>Income Category
+                  {catLoadErr.income ? (
+                    <div className="mt-1 text-xs" style={{ color: "#B91C1C" }}
+                          data-testid="recurring-jobs-income-category-error">
+                      Failed to load categories —{" "}
+                      <button type="button" className="underline"
+                                 onClick={_loadCategories}
+                                 data-testid="recurring-jobs-income-category-retry">
+                        retry
+                      </button>
+                    </div>
+                  ) : incomeCats.length === 0 ? (
+                    <select disabled
+                              className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                              style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.muted, opacity: 0.6 }}
+                              data-testid="recurring-jobs-income-category">
+                      <option>{catLoading ? "Loading…" : "No categories defined — ask an admin"}</option>
+                    </select>
+                  ) : (
+                    <select
+                        value={editing.income_category_id == null ? "" : editing.income_category_id}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setCatSaveErr((x) => ({ ...x, income: "" }));
+                          setEditing((x) => ({ ...x, income_category_id: v }));
+                        }}
+                        className="w-full mt-1 px-2 py-1.5 rounded text-sm"
+                        style={{ border: `1px solid ${catSaveErr.income ? "#B91C1C" : colors.border}`, background: colors.surface, color: colors.onSurface }}
+                        data-testid="recurring-jobs-income-category">
+                      <option value="">— None —</option>
+                      {incomeCats.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {catSaveErr.income ? (
+                    <div className="mt-1 text-xs" style={{ color: "#B91C1C" }}
+                          data-testid="recurring-jobs-income-category-save-error">
+                      {catSaveErr.income}
+                    </div>
+                  ) : null}
+                </label>
+              </div>
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Frequency
                 <select value={editing.frequency || "weekly"} onChange={(e) => setEditing((x) => ({ ...x, frequency: e.target.value }))}
                         className="w-full mt-1 px-2 py-1.5 rounded text-sm"

@@ -725,9 +725,21 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
             {"_id": 0, "id": 1, "name": 1},
         )
         if not _cat:
+            # Phase P4 · Feb-2026 — align to the P4 brief:
+            # HTTP 422 with ``code`` (not ``error``) and a
+            # ``<field>_invalid`` shape so the frontend can key
+            # on it deterministically. The response body keeps
+            # ``attempted`` + ``collection`` so ops can trace
+            # the offending id in a Sentry event.
+            _code = ("service_category_invalid"
+                      if _field == "service_category_id"
+                      else "income_category_invalid")
             raise HTTPException(
-                404, {"error": f"{_field}_not_found_or_archived",
-                        "attempted": _val, "collection": _coll},
+                422,
+                {"code": _code,
+                  "field": _field,
+                  "attempted": _val,
+                  "collection": _coll},
             )
         raw[_field] = _cat["id"]
         _category_resolved[_field] = _cat
