@@ -53,6 +53,15 @@ import { ReorderRouteModal as _ReorderRouteModal } from "@/pages/schedule/Reorde
  */
 export const MAX_ORDER_VALUE = 50;
 
+// ── Phase P10 · Feb-2026 — canonical lane-error copy ──
+// Kept as a module-scope constant so the vitest suite can assert
+// on the exact string surfaced by <ReorderErrorBanner /> without
+// duplicating the sentence in the test file.
+export const REORDER_LANE_ERROR_TEXT =
+  "Assign a technician or crew before reordering.";
+export const REORDER_MIXED_LANE_ERROR_TEXT =
+  "Reorder within a single technician or crew.";
+
 
 /** Return the initial draft number map keyed by job id.
  *
@@ -149,6 +158,12 @@ export function useNumberedOrder(jobs, opts = {}) {
   const [drafts, setDrafts] = useState(() => _initialDrafts(jobs, initialOrder));
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null); // {kind, text}
+  // ── Phase P10 · Feb-2026 — dedicated lane-scope banner ──
+  // Distinct from the generic ``banner`` state so a stale "Route
+  // saved" toast doesn't hide the more actionable "Assign a
+  // technician or crew before reordering" call-to-action.
+  // ``null`` = hidden; ``{text, code}`` renders <ReorderErrorBanner/>.
+  const [laneBanner, setLaneBanner] = useState(null);
 
   // Keep the draft map in sync when the day's jobs change (e.g., a
   // new job gets scheduled).  Preserve any edits the user has made
@@ -202,9 +217,32 @@ export function useNumberedOrder(jobs, opts = {}) {
         kind: "info",
         text: `Route saved · ${r?.updated ?? orderedIds.length}/${r?.expected ?? orderedIds.length} jobs.`,
       });
+      // Phase P10 · Feb-2026 — clear the lane banner on success.
+      setLaneBanner(null);
       onSaved?.(r);
       return { ok: true, response: r };
     } catch (e) {
+      // Phase P10 · Feb-2026 — the widened backend now returns
+      // 409 with a structured detail for lane-scope failures.
+      // Surface those via the dedicated lane banner (actionable)
+      // rather than the generic red toast (usually dismissed).
+      // ``api.js`` attaches the parsed body under ``err.data``;
+      // legacy call sites read ``err.body``; ``err.message`` is
+      // set to ``detail.code`` when the FastAPI detail is a
+      // bare-code object. Check all three shapes so the branch
+      // fires regardless of which wrapper produced the error.
+      const _code =
+        e?.data?.detail?.code
+        || e?.body?.detail?.code
+        || e?.detail?.code
+        || (typeof e?.message === "string" ? e.message : null);
+      if (_code === "reorder_lane_mismatch"
+          || _code === "reorder_unassigned_job") {
+        setLaneBanner({ code: _code, text: REORDER_LANE_ERROR_TEXT });
+        setBanner(null);
+        onError?.(e);
+        return { ok: false, reason: "api", error: e };
+      }
       const msg = e?.message || "Reorder failed.";
       setBanner({ kind: "err", text: msg });
       onError?.(e);
@@ -245,6 +283,17 @@ export function useNumberedOrder(jobs, opts = {}) {
       (job?.scheduled_date ? String(job.scheduled_date).slice(0, 10) : "")
       || date;
     if (!resolvedTech || !resolvedDate) {
+      // Phase P10 · Feb-2026 — was previously a silent drop
+      // ("swallowed unresolvable-tech situations"). Surface via
+      // the dedicated lane-scope banner so the operator sees the
+      // reason and can assign a technician or crew from the
+      // row's assign flow. Also clear any stale info banner so
+      // the two banners don't stack awkwardly.
+      setLaneBanner({
+        code: "no_lane_resolvable",
+        text: REORDER_LANE_ERROR_TEXT,
+      });
+      setBanner(null);
       return { ok: false, reason: "missing_tech_or_date" };
     }
     const posInt = parseInt(newPosition, 10);
@@ -269,6 +318,21 @@ export function useNumberedOrder(jobs, opts = {}) {
       onSaved?.(r);
       return { ok: true, response: r };
     } catch (e) {
+      // Phase P10 · Feb-2026 — parity with ``save()`` for the
+      // single-input insert-shift path. Check every error shape
+      // the api wrapper might expose the code under.
+      const _code =
+        e?.data?.detail?.code
+        || e?.body?.detail?.code
+        || e?.detail?.code
+        || (typeof e?.message === "string" ? e.message : null);
+      if (_code === "reorder_lane_mismatch"
+          || _code === "reorder_unassigned_job") {
+        setLaneBanner({ code: _code, text: REORDER_LANE_ERROR_TEXT });
+        setBanner(null);
+        onError?.(e);
+        return { ok: false, reason: "api", error: e };
+      }
       const msg = e?.body?.detail || e?.message || "Reorder failed.";
       setBanner({ kind: "err", text: String(msg) });
       onError?.(e);
@@ -316,8 +380,54 @@ export function useNumberedOrder(jobs, opts = {}) {
 
   return {
     drafts, setInput, validation, saving, banner, setBanner,
+    // Phase P10 · Feb-2026 — dedicated lane-scope banner + a
+    // setter so consumers can programmatically raise it (e.g.,
+    // CalendarSchedule when the day spans multiple lanes and the
+    // user tries to open the Reorder modal anyway).
+    laneBanner, setLaneBanner,
     save, blurSave, reset, buildOrderedIds, insertShift,
   };
+}
+
+
+// ── Phase P10 · Feb-2026 — Lane-scope error banner. ────────────
+// Renders when the hook's ``laneBanner`` is non-null OR the
+// consumer forces a message via a ``value`` prop (used by
+// CalendarSchedule for the "day spans multiple lanes" gesture-
+// layer notice). Kept separate from the pre-existing generic
+// ``ReorderBanner`` so the sticky call-to-action doesn't get
+// overwritten by a stale success toast.
+export function ReorderErrorBanner({ controller, value = null, onDismiss }) {
+  const raised = value || controller?.laneBanner || null;
+  if (!raised) return null;
+  const handleDismiss = () => {
+    controller?.setLaneBanner?.(null);
+    onDismiss?.();
+  };
+  return (
+    <div
+      className="rounded-lg px-3 py-2 mb-3 text-xs font-semibold flex items-center justify-between gap-2"
+      style={{
+        background: "#FEF3C7",
+        color:      "#92400E",
+        border:     "1px solid #FDE68A",
+      }}
+      data-testid="reorder-error-banner"
+      role="alert"
+    >
+      <span>{raised.text || REORDER_LANE_ERROR_TEXT}</span>
+      <button
+        type="button"
+        onClick={handleDismiss}
+        aria-label="Dismiss reorder error"
+        className="rounded p-0.5 hover:bg-black/5"
+        style={{ color: "#92400E", lineHeight: 1 }}
+        data-testid="reorder-error-banner-dismiss"
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 

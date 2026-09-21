@@ -114,33 +114,72 @@ async def reorder_jobs(
     tech_user_id = body.tech_user_id
     date = body.date
 
+    # ── Phase P10 · Feb-2026 — Technician pin-to-self ──
+    # Defensive: the outer admin gate above already rejects
+    # technician callers with 403, but if a future scope widening
+    # opens this endpoint to techs, the P9 jail contract requires
+    # a silent lane-pin (never let a technician reorder another
+    # lane's jobs). Kept as an early-return no-op today.
+    if (user.get("role") or "").lower() == "technician":
+        pinned = user.get("technician_id") or user.get("id")
+        if pinned:
+            tech_user_id = pinned
+
     # Legacy payload — infer tech + date from the first job.
     if not tech_user_id or not date:
         first = await db.jobs.find_one(
             {"id": ids[0], "tenant_id": tenant_id},
             {"_id": 0, "tech_user_id": 1, "technician_id": 1,
-             "assigned_to": 1, "scheduled_date": 1},
+             "assigned_technician_id": 1, "assigned_to": 1,
+             "crew_id": 1, "scheduled_date": 1},
         )
         if not first:
             raise HTTPException(400, "cannot infer tech/date — first job not found")
+        # Phase P10 · Feb-2026 — the "lane" a job belongs to can be
+        # any of the 4 tech-assignment fields OR ``crew_id`` when
+        # the job is assigned by crew alone. Prefer the tech
+        # fields (existing behaviour) but fall through to crew so
+        # crew-only jobs no longer 400 with "tech_user_id required".
         tech_user_id = tech_user_id or (
             first.get("tech_user_id") or first.get("assigned_to")
-            or first.get("technician_id"))
+            or first.get("technician_id")
+            or first.get("assigned_technician_id")
+            or first.get("crew_id"))
         if not date:
             sd = first.get("scheduled_date") or ""
             date = sd[:10]
         if not tech_user_id or not date:
             raise HTTPException(400, "tech_user_id and date required")
 
-    tech_match = {"$or": [
+    # ── Phase P10 · Feb-2026 — widen the lane filter ──
+    # Pre-P10 shape was ``$or: [tech_user_id, assigned_to,
+    # technician_id]`` — silently dropped every crew-only job.
+    # Widen the disjunction to match the P9 jail's helper
+    # (``build_tech_field_or_clause``) PLUS ``crew_id`` so a lane
+    # id can resolve as either a technician identifier or a crew
+    # identifier without server-side disambiguation.
+    #
+    # Phase P10 · Feb-2026 — soft-delete + tech-match $and merge.
+    # Both the tech-lane disjunction and ``not_deleted_filter``
+    # return ``$or``; a naive dict spread would silently drop one
+    # of them (the second key wins) — that regression collapsed
+    # the filter to "any non-deleted job on this date for the
+    # tenant" and matched Carlos's jobs on Mike's lane. Nest both
+    # under ``$and`` — same shape the day-route endpoint uses.
+    tech_or = [
         {"tech_user_id": tech_user_id},
         {"assigned_to": tech_user_id},
         {"technician_id": tech_user_id},
-    ]}
+        {"assigned_technician_id": tech_user_id},
+        {"crew_id": tech_user_id},
+    ]
     day_filter = {
         "tenant_id": tenant_id,
         "scheduled_date": _date_regex(date),
-        **tech_match,
+        "$and": [
+            {"$or": tech_or},
+            _nd(),
+        ],
     }
 
     # ── Defense-in-depth · set completeness ─────────────────────
@@ -151,7 +190,6 @@ async def reorder_jobs(
     # visual order after the next reload) and cross-day/cross-tech
     # ids (which the per-job update filter would silently drop).
     day_jobs: List[Dict[str, Any]] = []
-    day_filter = {**day_filter, **_nd()}
     async for j in db.jobs.find(day_filter, {"_id": 0, "id": 1, "status": 1}):
         if (j.get("status") or "").lower() in _TERMINAL_STATUSES:
             continue
@@ -159,20 +197,50 @@ async def reorder_jobs(
     day_ids = {j["id"] for j in day_jobs}
     submitted = set(ids)
     if submitted != day_ids:
-        missing = sorted(day_ids - submitted)
-        extra = sorted(submitted - day_ids)
-        reason_bits = []
-        if missing:
-            reason_bits.append(f"missing {len(missing)} job(s)")
-        if extra:
-            reason_bits.append(
-                f"{len(extra)} job(s) not on this tech's {date}",
-            )
-        reason = "; ".join(reason_bits) or "set mismatch"
+        # ── Phase P10 · Feb-2026 — 409 lane-mismatch semantics ──
+        # Pre-P10 shape was a flat 422 with a text reason. Split
+        # into two structured 409 codes so the client can render a
+        # specific banner ("Assign a technician or crew…" vs
+        # "Reorder within a single lane"). The 409 still returns
+        # ``missing_job_ids`` (submitted ids that aren't on the
+        # requested lane) — those are the outsiders that were
+        # dragged across a lane boundary. Cross-tenant ids surface
+        # through this branch too (they can't match the lane
+        # filter). Also inspect the tenant-wide set to distinguish
+        # "unassigned job in this tenant" from "wrong lane".
+        outsiders = sorted(submitted - day_ids)
+        if outsiders:
+            # Check whether any outsider is an unassigned job in
+            # THIS tenant — surface as a distinct code so the UI
+            # can nudge the operator to assign a tech/crew first.
+            unassigned: List[str] = []
+            async for j in db.jobs.find(
+                {"id": {"$in": outsiders}, "tenant_id": tenant_id},
+                {"_id": 0, "id": 1, "technician_id": 1,
+                 "assigned_technician_id": 1, "assigned_to": 1,
+                 "tech_user_id": 1, "crew_id": 1},
+            ):
+                if not any(j.get(k) for k in (
+                    "technician_id", "assigned_technician_id",
+                    "assigned_to", "tech_user_id", "crew_id",
+                )):
+                    unassigned.append(j["id"])
+            if unassigned:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code":     "reorder_unassigned_job",
+                        "job_ids":  sorted(unassigned),
+                        "lane_id":  tech_user_id,
+                    },
+                )
         raise HTTPException(
-            422,
-            f"ordered_job_ids must be the exact set of non-terminal jobs "
-            f"on this tech's day — {reason}",
+            status_code=409,
+            detail={
+                "code":            "reorder_lane_mismatch",
+                "missing_job_ids": outsiders,
+                "lane_id":         tech_user_id,
+            },
         )
 
     updated = 0
@@ -310,10 +378,16 @@ async def reorder_day_route(
     # same ``$or`` key at the top level, so we must nest them under
     # ``$and`` — a plain dict merge would silently drop the tech
     # filter and match every tech on the day.
+    #
+    # Phase P10 · Feb-2026 — widen the lane filter to match the
+    # bulk endpoint's disjunction (matches P9 jail's assignment
+    # field set plus ``crew_id`` for crew-assigned jobs).
     tech_or = [
-        {"tech_user_id":  technician_id},
-        {"assigned_to":   technician_id},
-        {"technician_id": technician_id},
+        {"tech_user_id":            technician_id},
+        {"assigned_to":             technician_id},
+        {"technician_id":           technician_id},
+        {"assigned_technician_id":  technician_id},
+        {"crew_id":                 technician_id},
     ]
     day_filter = {
         "tenant_id":      tenant_id,

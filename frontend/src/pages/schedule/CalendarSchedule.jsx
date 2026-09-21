@@ -66,7 +66,7 @@ import WeekStrip from "@/components/schedule/WeekStrip";
 // still used elsewhere (customer profile, dispatch board).
 // Intentionally not imported here.
 import ScheduleJobEditModal from "@/pages/schedule/ScheduleJobEditModal";
-import { useNumberedOrder, NumberOrderInput, ReorderBanner, BulkReorderModal } from "@/pages/schedule/NumberedReorder";
+import { useNumberedOrder, NumberOrderInput, ReorderBanner, ReorderErrorBanner, BulkReorderModal, REORDER_LANE_ERROR_TEXT, REORDER_MIXED_LANE_ERROR_TEXT } from "@/pages/schedule/NumberedReorder";
 // Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh
 // button used by every schedule surface (month/agenda/grid + Today).
 import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
@@ -1018,13 +1018,66 @@ export default function CalendarSchedule() {
     () => dayJobs.filter((j) => !_TERMINAL_STATUSES.has((j.status || "").toLowerCase())),
     [dayJobs, _TERMINAL_STATUSES],
   );
+  // ── Phase P10 · Feb-2026 — Lane scoping for reorder ──
+  // A job's "lane" is the id the reorder resolver will scope on:
+  // its ``technician_id`` when present, else its ``crew_id``,
+  // else ``null`` (fully unassigned). Reorder gestures must be
+  // scoped to a single non-null lane — mixed-lane batches would
+  // race the backend's set-completeness check (the widened P10
+  // filter still needs a single lane_id per request).
+  const _laneOf = React.useCallback((j) => {
+    if (!j) return null;
+    return j.technician_id
+      || j.assigned_technician_id
+      || j.tech_user_id
+      || j.assigned_to
+      || j.crew_id
+      || null;
+  }, []);
+  const _reorderLaneSet = React.useMemo(() => {
+    const s = new Set();
+    for (const j of reorderableJobs) {
+      const lane = _laneOf(j);
+      if (lane) s.add(lane);
+    }
+    return s;
+  }, [reorderableJobs, _laneOf]);
+  const _reorderHasUnassigned = React.useMemo(
+    () => reorderableJobs.some((j) => !_laneOf(j)),
+    [reorderableJobs, _laneOf],
+  );
+  // ``reorderLaneStatus``: what should the Reorder button do?
+  //   * ``ready``          — single non-null lane, ≥2 jobs, no unassigned.
+  //   * ``mixed_lanes``    — >1 distinct non-null lanes present.
+  //   * ``has_unassigned`` — at least one job has no tech + no crew.
+  //   * ``empty``          — <2 reorderable jobs (existing tooltip covers this).
+  const reorderLaneStatus = React.useMemo(() => {
+    if ((reorderableJobs || []).length < 2) return "empty";
+    if (_reorderHasUnassigned && _reorderLaneSet.size === 0) {
+      return "has_unassigned";
+    }
+    if (_reorderLaneSet.size > 1) return "mixed_lanes";
+    if (_reorderLaneSet.size === 1 && _reorderHasUnassigned) {
+      return "has_unassigned";
+    }
+    return _reorderLaneSet.size === 1 ? "ready" : "empty";
+  }, [reorderableJobs, _reorderLaneSet, _reorderHasUnassigned]);
+  // Lane-scoped subset that actually flows into the reorder modal
+  // + hook. When the day mixes lanes we intentionally hand the
+  // hook an empty list so it can't accidentally construct a
+  // cross-lane payload — the Reorder button is disabled above
+  // and the ``ReorderErrorBanner`` explains why.
+  const _reorderScopedJobs = React.useMemo(() => {
+    if (reorderLaneStatus !== "ready") return [];
+    const [onlyLane] = Array.from(_reorderLaneSet);
+    return reorderableJobs.filter((j) => _laneOf(j) === onlyLane);
+  }, [reorderLaneStatus, _reorderLaneSet, reorderableJobs, _laneOf]);
   const _dayTechHint = React.useMemo(() => {
-    const first = reorderableJobs[0];
-    return first
-      ? (first.tech_user_id || first.assigned_to || first.technician_id || null)
-      : null;
-  }, [reorderableJobs]);
-  const orderController = useNumberedOrder(reorderableJobs, {
+    const first = _reorderScopedJobs[0] || reorderableJobs[0];
+    if (!first) return null;
+    return _laneOf(first);
+  }, [_reorderScopedJobs, reorderableJobs, _laneOf]);
+  const orderController = useNumberedOrder(_reorderScopedJobs, {
     autoSave: isAdminRole,
     techUserId: _dayTechHint,
     date: focusISO,
@@ -1758,10 +1811,33 @@ export default function CalendarSchedule() {
           onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
           isAdminForCard={isAdminRole}
           orderController={orderController}
-          onOpenBulkReorder={() => { setOptimizePayload(null); setBulkReorderOpen(true); }}
+          onOpenBulkReorder={() => {
+            // Phase P10 · Feb-2026 — the button below is disabled
+            // for mixed_lanes / has_unassigned, but a keyboard
+            // shortcut or programmatic call could still hit this
+            // handler. Guard by raising the banner instead of
+            // opening a modal that would 409 on Save.
+            if (reorderLaneStatus === "mixed_lanes") {
+              orderController.setLaneBanner?.({
+                code: "mixed_lanes_client",
+                text: REORDER_MIXED_LANE_ERROR_TEXT,
+              });
+              return;
+            }
+            if (reorderLaneStatus === "has_unassigned") {
+              orderController.setLaneBanner?.({
+                code: "no_lane_resolvable",
+                text: REORDER_LANE_ERROR_TEXT,
+              });
+              return;
+            }
+            setOptimizePayload(null);
+            setBulkReorderOpen(true);
+          }}
           onOptimizeRoute={optimizeRoute}
           optimizing={optimizing}
-          reorderableJobIds={reorderableJobs.map((j) => j.id)}
+          reorderableJobIds={_reorderScopedJobs.map((j) => j.id)}
+          reorderLaneStatus={reorderLaneStatus}
           tenantTz={tenantTz}
         />
       )}
@@ -1771,7 +1847,7 @@ export default function CalendarSchedule() {
           techs never see either. */}
       {bulkReorderOpen && isAdminRole ? (
         <BulkReorderModal
-          jobs={reorderableJobs}
+          jobs={_reorderScopedJobs}
           techUserId={_dayTechHint}
           date={focusISO}
           initialOrder={optimizePayload?.orderedIds || null}
@@ -1972,6 +2048,9 @@ export function GridPanel({
   // controller (drives inline inputs) + bulk-modal opener + the id
   // set that is actually reorderable (non-terminal only).
   orderController, onOpenBulkReorder, reorderableJobIds,
+  // Phase P10 · Feb-2026 — lane-scope status for the Reorder button
+  // (``ready`` | ``mixed_lanes`` | ``has_unassigned`` | ``empty``).
+  reorderLaneStatus = "ready",
   onOptimizeRoute, optimizing,
   // Feb 2026 · P0 Timezone Fix (Section C follow-up) — tenant IANA
   // tz passed by the parent CalendarSchedule.  When present, the
@@ -2058,6 +2137,15 @@ export function GridPanel({
           (they self-disable via the ``checked.size === 0`` prop). */}
       {canWrite && isAdminForCard ? (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="grid-bulk-pills">
+          {/* Phase P10 · Feb-2026 — lane-scope error banner. Renders
+              when reorder can't proceed (mixed lanes / unassigned
+              jobs). Dismissable via the × button so the operator
+              can hide it once they've read the guidance. */}
+          {orderController ? (
+            <div className="w-full">
+              <ReorderErrorBanner controller={orderController} />
+            </div>
+          ) : null}
           <button
             onClick={onBulkComplete}
             disabled={busy || checked.size === 0}
@@ -2080,20 +2168,28 @@ export function GridPanel({
           </button>
           <button
             onClick={onOpenBulkReorder}
-            disabled={busy || !isAdminForCard || (reorderableJobIds || []).length < 2}
+            disabled={busy || !isAdminForCard || (reorderableJobIds || []).length < 2
+                       || reorderLaneStatus === "mixed_lanes"
+                       || reorderLaneStatus === "has_unassigned"}
             className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
             style={{
               background: "#7C3AED", color: "#fff",
-              opacity: (!isAdminForCard || (reorderableJobIds || []).length < 2)
+              opacity: (!isAdminForCard || (reorderableJobIds || []).length < 2
+                          || reorderLaneStatus === "mixed_lanes"
+                          || reorderLaneStatus === "has_unassigned")
                 ? 0.4 : 1,
             }}
             data-testid="grid-bulk-reorder"
             title={
               !isAdminForCard
                 ? "Reorder is admin/manager only."
-                : (reorderableJobIds || []).length < 2
-                  ? "Need at least 2 non-terminal jobs to reorder."
-                  : "Open the bulk reorder modal"
+                : reorderLaneStatus === "mixed_lanes"
+                  ? REORDER_MIXED_LANE_ERROR_TEXT
+                  : reorderLaneStatus === "has_unassigned"
+                    ? REORDER_LANE_ERROR_TEXT
+                    : (reorderableJobIds || []).length < 2
+                      ? "Need at least 2 non-terminal jobs to reorder."
+                      : "Open the bulk reorder modal"
             }
           >
             <ArrowUp size={12} /> Reorder…
