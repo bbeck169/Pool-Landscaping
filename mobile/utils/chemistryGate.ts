@@ -1,23 +1,44 @@
 // Feb-2026 · Mobile mirror of backend `services/chemistry_gate.py`.
 // Kept in exact lockstep with the web mirror
 // (`frontend/src/utils/chemistryGate.js`) so all three surfaces
-// (backend, web, mobile) enforce the same "5 core readings" contract.
+// (backend, web, mobile) enforce the same "Required Four core
+// readings" contract.
 //
 //   * `null` / `undefined` / `""` / whitespace-only → MISSING
-//   * `0` and negative floats → VALID (real chemistry readings)
-//   * Numeric strings must parse; unparseable → MISSING
+//   * literal `"null"` / `"None"` (case-insensitive) → MISSING
+//   * `0` is MISSING for ph / alkalinity / cyanuric_acid (P17
+//     zero-carve-out); `0` remains VALID for free_chlorine
+//     (fully-consumed pools can legitimately read 0 ppm).
+//   * Negative floats + numeric strings that parse → VALID
+//   * Unparseable strings → MISSING
+//
+// Phase P17 · Feb-2026 · P0 HOTFIX — Chemistry Gate Key Unification.
+// Also drops the historical `total_chlorine` entry that CHEM1
+// removed on the backend but was never cleaned up here — the
+// mobile helper now matches CORE_READINGS on the backend
+// (free_chlorine, alkalinity, ph, cyanuric_acid) so the gate no
+// longer flags a "total_chlorine missing" that the API doesn't
+// require.
+//
+// Keep in sync with:
+//   * backend/services/chemistry_gate.py  :: ALIAS_MAP
+//   * frontend/src/utils/chemistryGate.js :: ALIAS_MAP
 
-export const CORE_KEYS = [
+export type CanonicalKey =
+  | "ph"
+  | "free_chlorine"
+  | "alkalinity"
+  | "cyanuric_acid";
+
+export const CORE_KEYS: readonly CanonicalKey[] = [
   "free_chlorine",
-  "total_chlorine",
   "alkalinity",
   "ph",
   "cyanuric_acid",
 ] as const;
 
-const LABEL: Record<string, string> = {
+const LABEL: Record<CanonicalKey, string> = {
   free_chlorine: "Free Cl",
-  total_chlorine: "Total Cl",
   alkalinity: "Alkalinity",
   ph: "pH",
   cyanuric_acid: "CYA",
@@ -27,70 +48,170 @@ const LABEL: Record<string, string> = {
 // ``services/chemistry_gate.py :: DISPLAY_LABELS``.
 export const DISPLAY_LABELS = LABEL;
 
-const ALIASES: Record<string, string> = {
+// Phase P17 · Feb-2026 — single source of truth for alias resolution.
+export const ALIAS_MAP: Record<string, CanonicalKey> = {
+  // ── ph ────────────────────────────────────────────────────
+  ph: "ph",
+  p_h: "ph",
+  ph_balance: "ph",              // legacy — preserved
+  // ── free_chlorine ─────────────────────────────────────────
+  free_chlorine: "free_chlorine",
+  chlorine: "free_chlorine",
   free_cl: "free_chlorine",
   freecl: "free_chlorine",
-  "free chlorine": "free_chlorine",
-  total_cl: "total_chlorine",
-  totalcl: "total_chlorine",
-  "total chlorine": "total_chlorine",
-  cya: "cyanuric_acid",
-  cyanuric: "cyanuric_acid",
-  "cyanuric acid": "cyanuric_acid",
-  ph_balance: "ph",
-  "ph balance": "ph",
-  alk: "alkalinity",
+  fc: "free_chlorine",
+  // ── alkalinity ────────────────────────────────────────────
+  alkalinity: "alkalinity",
   total_alkalinity: "alkalinity",
+  ta: "alkalinity",
+  alk: "alkalinity",              // legacy — preserved
+  // ── cyanuric_acid ─────────────────────────────────────────
+  cyanuric_acid: "cyanuric_acid",
+  cyanuric: "cyanuric_acid",
+  cya: "cyanuric_acid",
 };
 
-function canonicalKey(k: any): string | null {
-  if (typeof k !== "string") return null;
-  const norm = k.trim().toLowerCase().replace(/-/g, "_");
-  if ((CORE_KEYS as readonly string[]).includes(norm)) return norm;
-  return ALIASES[norm] || ALIASES[norm.replace(/_/g, " ")] || null;
+const ZERO_IS_EMPTY_KEYS: ReadonlySet<CanonicalKey> = new Set([
+  "ph",
+  "alkalinity",
+  "cyanuric_acid",
+]);
+
+function normKey(k: unknown): string {
+  if (typeof k !== "string") return "";
+  return k.trim().toLowerCase().replace(/ /g, "_").replace(/-/g, "_");
 }
 
-function isValidReading(v: any): boolean {
+function canonicalKey(k: unknown): CanonicalKey | null {
+  const norm = normKey(k);
+  if (!norm) return null;
+  return ALIAS_MAP[norm] ?? null;
+}
+
+function numericValue(v: unknown): number | null {
+  if (v === null || v === undefined || typeof v === "boolean") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function isEffectivelyEmpty(ck: CanonicalKey | null, v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "boolean") return true;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return true;
+    const low = s.toLowerCase();
+    if (low === "null" || low === "none") return true;
+  }
+  if (ck && ZERO_IS_EMPTY_KEYS.has(ck)) {
+    const num = numericValue(v);
+    if (num !== null && num === 0) return true;
+  }
+  return false;
+}
+
+function isValidReading(v: unknown): boolean {
   if (v === null || v === undefined) return false;
   if (typeof v === "boolean") return false;
   if (typeof v === "number") return Number.isFinite(v);
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return false;
+    const low = s.toLowerCase();
+    if (low === "null" || low === "none") return false;
     const n = Number(s);
     return Number.isFinite(n);
   }
   return false;
 }
 
-export function normalizeReadings(source: any): Record<string, any> {
-  const out: Record<string, any> = {};
-  if (!source) return out;
+function isGateValid(ck: CanonicalKey, v: unknown): boolean {
+  if (isEffectivelyEmpty(ck, v)) return false;
+  return isValidReading(v);
+}
+
+/** Accepts either the service_report list-of-dicts shape or a flat
+ *  dict.  Phase P17 two-pass dedupe — see backend/JS mirrors.
+ */
+export function normalizeReadings(
+  source: unknown,
+): Partial<Record<CanonicalKey, unknown>> {
+  const buckets = new Map<CanonicalKey, Array<[unknown, unknown]>>();
+  if (!source) return {};
+
+  const items: Array<[unknown, unknown]> = [];
   if (Array.isArray(source)) {
-    for (const row of source) {
+    for (const row of source as any[]) {
       if (!row || typeof row !== "object") continue;
-      const ck = canonicalKey(row.key || row.name);
-      if (!ck || out[ck] !== undefined) continue;
-      out[ck] = row.value;
+      items.push([row.key ?? row.name, row.value]);
     }
-    return out;
+  } else if (typeof source === "object") {
+    for (const [k, v] of Object.entries(source as Record<string, unknown>)) {
+      items.push([k, v]);
+    }
+  } else {
+    return {};
   }
-  if (typeof source === "object") {
-    for (const [k, v] of Object.entries(source)) {
-      const ck = canonicalKey(k);
-      if (ck && out[ck] === undefined) out[ck] = v;
+
+  for (const [rawKey, val] of items) {
+    const ck = canonicalKey(rawKey);
+    if (!ck) continue;
+    if (!buckets.has(ck)) buckets.set(ck, []);
+    buckets.get(ck)!.push([rawKey, val]);
+  }
+
+  const out: Partial<Record<CanonicalKey, unknown>> = {};
+  for (const [ck, candidates] of buckets.entries()) {
+    const nonEmpty = candidates.filter(
+      ([, v]) => !isEffectivelyEmpty(ck, v),
+    );
+    if (nonEmpty.length === 0) {
+      out[ck] = candidates[0][1];
+      continue;
     }
+    if (nonEmpty.length === 1) {
+      out[ck] = nonEmpty[0][1];
+      continue;
+    }
+    const canonicalHits = nonEmpty.filter(
+      ([rk]) => normKey(rk) === ck,
+    );
+    let winnerRaw: unknown;
+    let winnerVal: unknown;
+    if (canonicalHits.length > 0) {
+      [winnerRaw, winnerVal] = canonicalHits[0];
+    } else {
+      const sorted = [...nonEmpty].sort(
+        (a, b) => normKey(a[0]).localeCompare(normKey(b[0])),
+      );
+      [winnerRaw, winnerVal] = sorted[0];
+    }
+    const dropped = nonEmpty
+      .filter(([rk]) => rk !== winnerRaw)
+      .map(([rk]) => rk);
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[chem-normalize] " + ck + " alias collision — keeping "
+      + String(winnerRaw) + ", dropped " + JSON.stringify(dropped),
+    );
+    out[ck] = winnerVal;
   }
   return out;
 }
 
-export function missingCoreReadings(source: any): string[] {
+export function missingCoreReadings(source: unknown): string[] {
   const norm = normalizeReadings(source);
-  return CORE_KEYS
-    .filter((k) => !isValidReading(norm[k]))
-    .map((k) => LABEL[k]);
+  return CORE_KEYS.filter((k) => !isGateValid(k, norm[k])).map(
+    (k) => LABEL[k],
+  );
 }
 
-export function isChemistryGateSatisfied(source: any): boolean {
+export function isChemistryGateSatisfied(source: unknown): boolean {
   return missingCoreReadings(source).length === 0;
 }

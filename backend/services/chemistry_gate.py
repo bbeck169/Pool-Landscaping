@@ -1,15 +1,15 @@
 """Feb-2026 · Chemistry required-readings gate.
 
-Single source of truth for the "5 core readings needed to close a
-job" business rule.  Used by every backend path that can transition
-a job to ``completed``:
+Single source of truth for the "Required Four core readings needed
+to close a job" business rule.  Used by every backend path that can
+transition a job to ``completed``:
 
   * ``POST /api/jobs/{jid}/service-report/submit`` (tech submit)
   * ``PUT  /api/jobs/{jid}`` when the payload flips ``status`` to
     ``completed`` (admin edit)
   * ``mobile_sync._handle_job_close`` (offline replay)
 
-The five required keys map to the canonical service-report field
+The four required keys map to the canonical service-report field
 names.  ``chemical_readings`` on either the ``service_reports`` doc
 (list-of-dicts shape) OR the legacy ``jobs.chemical_readings`` dict
 are both accepted — the helper normalises to a flat dict before the
@@ -18,24 +18,60 @@ check.
 "Could Not Service" transitions and any other non-``completed``
 status change are NOT gated.  See :func:`assert_core_readings_present`
 for the raise contract.
+
+Phase P17 · Feb-2026 · P0 HOTFIX — Chemistry Gate Key Unification
+=================================================================
+Production had techs seeing "Chemistry required readings missing"
+even though every field was filled.  Root causes:
+
+  1. Case / space aliases (``"pH"``, ``"Total Alkalinity"``,
+     ``"Cyanuric Acid"``) failed to resolve because the alias-lookup
+     path only tried ``.replace("-", "_")`` on the incoming key —
+     ``"Total Alkalinity"`` normalised to ``"total alkalinity"``
+     (space preserved) which did not match the snake-case alias
+     ``"total_alkalinity"``.
+  2. Zero-value collisions.  A payload carrying BOTH ``{"ph": 0}``
+     (auto-persisted blank) and ``{"pH": 7.4}`` (real reading) let
+     the ``0`` win under the "blank means None/empty-string only"
+     rule.  0 is not a physically-meaningful pH / alkalinity / CYA
+     reading — treat it as empty for those three fields (chlorine
+     ``0`` remains a real reading).
+  3. Dupe merge order-dependence.  Previous merge decided the
+     winner while walking the input dict; dict iteration order
+     leaked into the outcome for ambiguous payloads.
+
+The fix consolidates every alias into a single :data:`ALIAS_MAP`,
+normalises incoming keys with ``strip().lower().replace(" ", "_")
+.replace("-", "_")`` before lookup, and rewrites
+:func:`normalize_readings` as a two-pass loop (pass 1 buckets every
+candidate value per canonical key, pass 2 picks the winner using
+the "real beats empty; canonical spelling wins; else alphabetically
+first" rules).  A WARN log fires on every legitimate alias
+collision so ops can spot future dupes.
+
+The 422 wire contract (``missing_fields`` / ``missing_labels`` /
+``bodies``) is intentionally NOT changed by P17 — a canonical
+rename (e.g. ``free_chlorine`` → ``chlorine``) is queued as a
+separate P17.1 phase that touches every consumer end-to-end.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 
-# Canonical field names — the "Required Four" per Phase CHEM1 (Feb-2026).
-# Aliases (``free_cl`` / ``cya`` / ``alk``) fold onto these keys during
-# normalisation.
+# ═════════════════════════════════════════════════════════════════════
+# Canonical field names — the "Required Four" per Phase CHEM1
+# (Feb-2026).  Every alias in :data:`ALIAS_MAP` folds onto one of
+# these four keys.
 #
-# Phase CHEM1 · Feb-2026 — ``total_chlorine`` was removed from the
-# Required set. It is neither a required reading nor a persisted field
-# any more; a one-shot ``$unset`` migration lives at
-# ``services/migrations/chemistry_remove_total_chlorine_v1.py``.
+# NOTE — the ``free_chlorine`` canonical stays as-is under P17. A
+# separate P17.1 phase queues the ``free_chlorine`` → ``chlorine``
+# rename (touches wire contract + every downstream consumer).
+# ═════════════════════════════════════════════════════════════════════
 CORE_READINGS: List[str] = [
     "free_chlorine",
     "alkalinity",
@@ -62,43 +98,81 @@ DISPLAY_LABELS: Dict[str, str] = {
     "cyanuric_acid":  "CYA",
 }
 
-_ALIASES: Dict[str, str] = {
-    "free_cl":            "free_chlorine",
-    "freecl":             "free_chlorine",
-    "free chlorine":      "free_chlorine",
-    # Feb-2026 · P12B — the pre-refactor default pool template used
-    # a BARE ``"chlorine"`` key for the Free-Chlorine field.  The
-    # template has since been renamed to ``"free_chlorine"``, but
-    # any tenant that persisted the old key via
-    # ``PUT /settings/service-templates`` before the fix still
-    # writes ``chemical_readings[].key = "chlorine"``.  Fold onto
-    # ``free_chlorine`` so those tenants stop hitting a phantom
-    # ``chemistry_core_readings_missing`` on submit.
-    "chlorine":           "free_chlorine",
-    "cya":                "cyanuric_acid",
-    "cyanuric":           "cyanuric_acid",
-    "cyanuric acid":      "cyanuric_acid",
-    "ph_balance":         "ph",
-    "ph balance":         "ph",
-    "alk":                "alkalinity",
-    "total_alkalinity":   "alkalinity",
+# ═════════════════════════════════════════════════════════════════════
+# Phase P17 · Feb-2026 — single source of truth for alias resolution.
+#
+# Incoming keys are normalised via
+#     _norm_key(k) = k.strip().lower().replace(" ", "_").replace("-", "_")
+# BEFORE lookup so ``"pH"`` → ``"ph"``, ``"Total Alkalinity"`` →
+# ``"total_alkalinity"``, ``"Cyanuric Acid"`` → ``"cyanuric_acid"``,
+# ``"CYA"`` → ``"cya"``, etc.
+#
+# Every canonical key is included as an identity entry so the same
+# lookup handles both "already-canonical" and "aliased" input keys
+# without a branching read path.
+#
+# Keep in sync with:
+#   * frontend/src/utils/chemistryGate.js  :: ALIAS_MAP
+#   * mobile/utils/chemistryGate.ts        :: ALIAS_MAP
+# ═════════════════════════════════════════════════════════════════════
+ALIAS_MAP: Dict[str, str] = {
+    # ── ph ────────────────────────────────────────────────────
+    "ph":               "ph",
+    "p_h":              "ph",
+    "ph_balance":       "ph",       # legacy — preserved
+    # ── free_chlorine ─────────────────────────────────────────
+    "free_chlorine":    "free_chlorine",
+    "chlorine":         "free_chlorine",
+    "free_cl":          "free_chlorine",
+    "freecl":           "free_chlorine",
+    "fc":               "free_chlorine",
+    # ── alkalinity ────────────────────────────────────────────
+    "alkalinity":       "alkalinity",
+    "total_alkalinity": "alkalinity",
+    "ta":               "alkalinity",
+    "alk":              "alkalinity",  # legacy — preserved
+    # ── cyanuric_acid ─────────────────────────────────────────
+    "cyanuric_acid":    "cyanuric_acid",
+    "cyanuric":         "cyanuric_acid",
+    "cya":              "cyanuric_acid",
 }
+
+# Zero-carve-out: 0 is a physically meaningful reading ONLY for
+# free_chlorine (a fully-consumed pool CAN read 0.0 ppm free
+# chlorine).  For pH / alkalinity / CYA, 0 is a sentinel for
+# "not entered" and MUST be treated as empty for both dedupe and
+# gate purposes.
+_ZERO_IS_EMPTY_KEYS = frozenset({"ph", "alkalinity", "cyanuric_acid"})
+
+
+def _norm_key(k: Any) -> str:
+    """Uniform key normalization used across ALIAS_MAP lookup and
+    the "raw key equals canonical" check inside :func:`normalize_readings`.
+    """
+    if not isinstance(k, str):
+        return ""
+    return k.strip().lower().replace(" ", "_").replace("-", "_")
 
 
 def _canonical_key(k: Any) -> Optional[str]:
-    if not isinstance(k, str):
+    """Resolve an incoming payload key to its canonical
+    :data:`CORE_READINGS` entry, or ``None`` when the key is not
+    tracked.  Case- and whitespace-insensitive.
+    """
+    norm = _norm_key(k)
+    if not norm:
         return None
-    norm = k.strip().lower().replace("-", "_")
-    if norm in CORE_READINGS:
-        return norm
-    return _ALIASES.get(norm) or _ALIASES.get(norm.replace("_", " "))
+    return ALIAS_MAP.get(norm)
 
 
 def _is_valid_reading(v: Any) -> bool:
     """A reading is VALID when it parses as a real (finite) float.
     ``None`` / empty / whitespace / unparseable strings are MISSING.
-    ``0`` and negative floats are treated as valid readings — real
-    chemistry values, not sentinels."""
+    Booleans NEVER count as readings.
+
+    Does NOT know about the zero-carve-out — that is the caller's
+    responsibility (see :func:`_is_gate_valid`).
+    """
     if v is None:
         return False
     if isinstance(v, bool):
@@ -116,6 +190,11 @@ def _is_valid_reading(v: Any) -> bool:
         s = v.strip()
         if not s:
             return False
+        # Phase P17 · Feb-2026 — treat literal "null" / "None" as
+        # empty (older mobile builds serialised missing readings
+        # as the string ``"null"`` when hitting the /submit route).
+        if s.lower() in ("null", "none"):
+            return False
         try:
             f = float(s)
         except (TypeError, ValueError):
@@ -124,21 +203,75 @@ def _is_valid_reading(v: Any) -> bool:
     return False
 
 
-def _is_blank_reading(v: Any) -> bool:
-    """Phase CHEM2 · Feb-2026 — "blank" means the tech never entered
-    anything: ``None`` OR whitespace-only string. Every other value
-    (including unparseable strings like ``"abc"`` or literal ``0``)
-    is treated as a real, tech-entered value for merge purposes.
+def _numeric_value(v: Any) -> Optional[float]:
+    """Return the numeric value of ``v`` if it parses as a finite
+    float, else ``None``.  Booleans are NOT numeric here.
+    """
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if (f == f and f not in (float("inf"), float("-inf"))) else None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            f = float(s)
+        except (TypeError, ValueError):
+            return None
+        return f if (f == f and f not in (float("inf"), float("-inf"))) else None
+    return None
 
-    Distinct from :func:`_is_valid_reading` — that helper decides
-    whether the gate accepts the value; this one decides whether an
-    alias collision should prefer this value over its peer.
+
+def _is_effectively_empty(ck: Optional[str], v: Any) -> bool:
+    """Phase P17 · Feb-2026 — unified emptiness check used for both
+    dedupe ("real beats empty") and the gate ("missing readings").
+
+    A value is EMPTY when:
+      * ``None``
+      * whitespace-only string, OR literal ``"null"`` / ``"None"``
+        (case-insensitive)
+      * numeric ``0`` — ONLY when ``ck`` is in
+        :data:`_ZERO_IS_EMPTY_KEYS` (pH / alkalinity / CYA).
+        ``free_chlorine`` treats 0 as a real reading.
+
+    Booleans are always empty (see :func:`_is_valid_reading`).
     """
     if v is None:
         return True
-    if isinstance(v, str) and not v.strip():
+    if isinstance(v, bool):
         return True
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() in ("null", "none"):
+            return True
+    if ck in _ZERO_IS_EMPTY_KEYS:
+        num = _numeric_value(v)
+        if num is not None and num == 0.0:
+            return True
     return False
+
+
+def _is_gate_valid(ck: str, v: Any) -> bool:
+    """True when the gate should count ``v`` as a real reading under
+    canonical key ``ck``.  Combines :func:`_is_valid_reading` (does
+    it parse?) with the per-key zero-carve-out.
+    """
+    if _is_effectively_empty(ck, v):
+        return False
+    return _is_valid_reading(v)
+
+
+# Kept for backward-compat with call sites that already imported the
+# private helper (Phase CHEM2 external callers).  Delegates to the
+# unified :func:`_is_effectively_empty` with ``ck=None`` so the
+# original semantics (blank == None or whitespace) are preserved.
+def _is_blank_reading(v: Any) -> bool:
+    return _is_effectively_empty(None, v)
 
 
 def normalize_readings(source: Any) -> Dict[str, Any]:
@@ -152,99 +285,92 @@ def normalize_readings(source: Any) -> Dict[str, Any]:
 
     Unknown / unaliased keys are dropped.
 
-    Phase CHEM2 · Feb-2026 — Alias dedupe (prefer-value-over-blank):
-        Legacy and canonical alias keys frequently coexist in the
-        same payload (e.g. ``cyanuric`` + ``cyanuric_acid``,
-        ``chlorine`` + ``free_chlorine``, ``total_alkalinity`` +
-        ``alkalinity``, ``cya`` + ``cyanuric_acid``, …).  The merge
-        below resolves every alias collision using two rules only:
+    Phase P17 · Feb-2026 — two-pass dedupe.  Rewrites the CHEM2
+    merge as an order-independent two-pass loop:
 
-          1. If one side is blank and the other is non-blank, KEEP
-             the non-blank value under the canonical key. This is
-             the common case where a tenant migrated schemas but
-             left one shape empty.
-          2. If both sides are non-blank, the value stored under
-             the CANONICAL key wins; the alias hit is logged and
-             dropped. This is a legitimate authoring collision
-             that the tenant must eventually clean up in Mongo.
+        1. Pass 1 walks every input entry and buckets ``(raw_key,
+           value)`` tuples under the resolved canonical key.
+        2. Pass 2 picks the winner per canonical key using these
+           rules, in order:
 
-        Ordering within the input dict/list no longer decides the
-        winner — the merge is order-independent.
+              a. If any candidate is non-empty (see
+                 :func:`_is_effectively_empty`) and any candidate
+                 is empty, drop the empty ones.
+              b. If exactly one non-empty candidate survives, it
+                 wins.
+              c. If multiple non-empty candidates survive AND one
+                 of them is spelled with the canonical key
+                 (``_norm_key(raw_key) == ck``), it wins.
+              d. Otherwise the alphabetically-first alias (by
+                 normalised key) wins — deterministic tie-break.
+              e. Every collision at rules (c)/(d) logs a WARN so
+                 ops can hunt down duplicate writes.
+              f. All-empty buckets still emit a single entry under
+                 the canonical key (first-seen value) so downstream
+                 gate assertions can report "missing" cleanly.
     """
-    out: Dict[str, Any] = {}
-    # Provenance per canonical key — ``"canonical"`` means the value
-    # was written by the canonical key itself (e.g. ``cyanuric_acid``);
-    # ``"alias"`` means it came from a legacy alias (e.g. ``cyanuric``,
-    # ``cya``).  Used by the both-non-blank branch to decide the
-    # winner (rule 2 above).
-    _prov: Dict[str, str] = {}
-
-    def _norm_input_key(k: Any) -> str:
-        return str(k or "").strip().lower().replace("-", "_")
-
-    def _upsert(ck: str, raw_key: Any, val: Any) -> None:
-        is_canonical_key = _norm_input_key(raw_key) == ck
-        new_blank = _is_blank_reading(val)
-        if ck not in out:
-            out[ck] = val
-            _prov[ck] = "canonical" if is_canonical_key else "alias"
-            return
-        stored_blank = _is_blank_reading(out[ck])
-        stored_prov  = _prov.get(ck, "alias")
-        # Rule 1 — one side blank, one side non-blank: keep the
-        # non-blank value.
-        if stored_blank and not new_blank:
-            out[ck] = val
-            _prov[ck] = "canonical" if is_canonical_key else "alias"
-            return
-        if (not stored_blank) and new_blank:
-            return
-        # Rule 2 — both non-blank: canonical wins.
-        if (not stored_blank) and (not new_blank):
-            if is_canonical_key and stored_prov != "canonical":
-                logger.info(
-                    "[chem-normalize] %s alias collision — keeping "
-                    "%s, drop legacy %s",
-                    ck, ck, out.get("_prev_key", "alias"),
-                )
-                out[ck] = val
-                _prov[ck] = "canonical"
-                return
-            if (not is_canonical_key) and stored_prov == "canonical":
-                logger.info(
-                    "[chem-normalize] %s alias collision — keeping "
-                    "%s, drop legacy %s",
-                    ck, ck, raw_key,
-                )
-                return
-            # Neither is the canonical key OR both look canonical
-            # (impossible by construction). First-seen wins for
-            # determinism and we still surface the collision.
-            logger.info(
-                "[chem-normalize] %s alias collision — keeping %s, "
-                "drop legacy %s",
-                ck, ck, raw_key,
-            )
-            return
-        # Both blank — keep first-seen (already stored).
-        return
+    # ── Pass 1 · bucket candidates ─────────────────────────────
+    buckets: Dict[str, List[Tuple[Any, Any]]] = {}
 
     if isinstance(source, dict):
-        for k, v in source.items():
-            ck = _canonical_key(k)
-            if ck:
-                _upsert(ck, k, v)
-        return out
-    if isinstance(source, list):
+        iter_items: List[Tuple[Any, Any]] = list(source.items())
+    elif isinstance(source, list):
+        iter_items = []
         for row in source:
             if not isinstance(row, dict):
                 continue
             raw = row.get("key") or row.get("name")
-            ck = _canonical_key(raw)
-            if not ck:
-                continue
-            _upsert(ck, raw, row.get("value"))
-        return out
+            iter_items.append((raw, row.get("value")))
+    else:
+        return {}
+
+    for raw_key, val in iter_items:
+        ck = _canonical_key(raw_key)
+        if not ck:
+            continue
+        buckets.setdefault(ck, []).append((raw_key, val))
+
+    # ── Pass 2 · pick winner per canonical ─────────────────────
+    out: Dict[str, Any] = {}
+    for ck, candidates in buckets.items():
+        non_empty = [
+            (rk, v) for (rk, v) in candidates
+            if not _is_effectively_empty(ck, v)
+        ]
+        if not non_empty:
+            # All empty — preserve first-seen so downstream gate
+            # calls still report a missing entry cleanly.
+            out[ck] = candidates[0][1]
+            continue
+
+        if len(non_empty) == 1:
+            out[ck] = non_empty[0][1]
+            continue
+
+        # Multiple real values — canonical spelling wins, else the
+        # alphabetically-first alias (by normalised key) for
+        # determinism.
+        canonical_hits = [
+            (rk, v) for (rk, v) in non_empty if _norm_key(rk) == ck
+        ]
+        if canonical_hits:
+            winner_raw, winner_val = canonical_hits[0]
+        else:
+            winner_raw, winner_val = sorted(
+                non_empty, key=lambda t: _norm_key(t[0]),
+            )[0]
+
+        dropped = [
+            rk for (rk, v) in non_empty
+            if not (rk == winner_raw)
+        ]
+        logger.warning(
+            "[chem-normalize] %s alias collision — keeping %s, "
+            "dropped %s",
+            ck, winner_raw, dropped,
+        )
+        out[ck] = winner_val
+
     return out
 
 
@@ -253,7 +379,8 @@ def missing_core_readings(source: Any) -> List[str]:
     readings (matches ``missing_fields`` in the 422 payload).
     Empty list means the gate would pass."""
     norm = normalize_readings(source)
-    return [_LABEL[k] for k in CORE_READINGS if not _is_valid_reading(norm.get(k))]
+    return [_LABEL[k] for k in CORE_READINGS
+            if not _is_gate_valid(k, norm.get(k))]
 
 
 def missing_core_reading_labels(source: Any) -> List[str]:
@@ -261,7 +388,8 @@ def missing_core_reading_labels(source: Any) -> List[str]:
     readings (matches ``missing_labels`` in the 422 payload).  Same
     ordering as :func:`missing_core_readings`."""
     norm = normalize_readings(source)
-    return [DISPLAY_LABELS[k] for k in CORE_READINGS if not _is_valid_reading(norm.get(k))]
+    return [DISPLAY_LABELS[k] for k in CORE_READINGS
+            if not _is_gate_valid(k, norm.get(k))]
 
 
 def assert_core_readings_present(source: Any) -> None:
@@ -272,7 +400,7 @@ def assert_core_readings_present(source: Any) -> None:
     """
     norm = normalize_readings(source)
     missing_keys = [k for k in CORE_READINGS
-                    if not _is_valid_reading(norm.get(k))]
+                    if not _is_gate_valid(k, norm.get(k))]
     if not missing_keys:
         return
     raise HTTPException(
@@ -373,7 +501,7 @@ def assert_bodies_required_readings_present(bodies: Any) -> None:
         return
     norm = normalize_readings(primary.get("readings"))
     missing_keys = [k for k in required
-                    if not _is_valid_reading(norm.get(k))]
+                    if not _is_gate_valid(k, norm.get(k))]
     if not missing_keys:
         return
 
