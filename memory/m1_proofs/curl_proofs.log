@@ -1,0 +1,43 @@
+=== 1. Same-tenant merge → 200 ===
+HTTP 200
+{
+    "ok": true,
+    "primary_customer_id": "m1-live-primary-1789952261",
+    "duplicate_customer_id": "m1-live-dupe-1789952261",
+    "reparent_counts": {
+        "jobs": 2,
+        "invoices": 1,
+        "payments": 0,
+        "service_reports": 0,
+        "estimates": 0,
+        "leads": 0
+    },
+    "field_choices": {
+        "name": "primary",
+        "email": "primary",
+        "phone": "duplicate",
+        "address": "duplicate"
+    },
+    "merged_at": "2026-09-21T00:57:42.486094+00:00",
+    "audit_log_id": "audit_c0c41fa9-6b7b-4f71-a774-45bbddeaa8a2",
+    "timeline_note_id": "note_5676720c-9451-4bce-8335-79742a0d9ba5"
+}
+
+=== 2. Verify merged state ===
+dup merged flags: {"merged_at": "2026-09-21T00:57:42.491403+00:00", "merged_by": "72fbbc5e-f254-4ee3-a6e9-db6485c7f44f", "merged_into": "m1-live-primary-1789952261", "merged_into_customer_id": "m1-live-primary-1789952261"}
+primary chosen: {"name": "M1 Live Primary", "phone": "555-2222", "address": "2 Live Ave"}
+jobs re-parented to primary: 2 · dup jobs remaining: 0
+invoices re-parented: 1
+timeline note on primary: 1
+audit: {"related_records_rewired": {"jobs": 2, "invoices": 1, "payments": 0, "service_reports": 0, "estimates": 0, "leads": 0}, "field_choices": {"name": "primary", "email": "primary", "phone": "duplicate", "address": "duplicate"}, "merge_source": "wizard"}
+
+=== 3. Cross-tenant → 403 ===
+HTTP 403
+{"detail":"cross_tenant_merge_forbidden"}
+=== 4. Self-merge → 400 ===
+HTTP 400
+{"detail":"same_customer_merge_forbidden"}
+=== 5. Re-merge already-merged dup → 409 ===
+HTTP 409
+{"detail":"customer_already_deleted"}
+=== ALL PROOFS COMPLETE ===

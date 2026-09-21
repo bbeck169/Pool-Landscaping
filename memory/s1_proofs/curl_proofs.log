@@ -1,0 +1,37 @@
+=== 1. Login admin@aquaterra.com ===
+admin token len: 303
+=== 2. Login super@aquaterra.com ===
+super token len: 233
+=== 3. Fetch target user id (mike@aquaterra.com) ===
+target uid: 0
+=== 4. PROOF: admin POST /users/0/promote role=super_admin → expect 403 super_admin_role_not_assignable ===
+HTTP 403
+{"detail":"super_admin_role_not_assignable"}
+=== 5. PROOF: super POST /users/0/promote role=technician → expect 200 (no-op) ===
+HTTP 400
+{"detail":"User not found"}
+=== 6. PROOF: admin POST /auth/switch-tenant → expect 403 insufficient_role_for_tenant_switch ===
+HTTP 403
+{"detail":"insufficient_role_for_tenant_switch"}
+=== 7. PROOF: super POST /auth/switch-tenant → expect 200 ===
+HTTP 200
+{"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMTdhNzkwMi02MTE3LTRiMDgtYjdjZC0zY2MwMGFmMjMzYTkiLCJlbWFpbCI6InN1cGVyQGFxdWF0ZXJyYS5jb20iLCJyb2xlIjoic3VwZXJfYWRtaW4iLCJleHAiOjE3OTA1NDcxODMsImFjdGl2ZV90ZW5hbnRfaWQiOiJhZmZkZmJmYS04OGI5LTRiYWEtYWU0NS0yZWY3ODUzMWI2ZTQifQ.lj99l2caz22l6vTeK6ZJMZZ54GMTswanPr74kwsRKAY","token_type":"bearer","active_tenant":{"id":"affdfbfa-88b9-4baa-ae45-2ef78531b6e4","name":"Pool & Landscaping of Vistancia","slug":"aquaterra"}}
+=== 8. PROOF: GET /auth/me (as super) shows role=super_admin (baseline) ===
+{"id":"b17a7902-6117-4b08-b7cd-3cc00af233a9","name":"Super Admin","email":"super@aquaterra.com","role":"super_admin","tenant_id":"affdfbfa-88b9-4baa-ae45-2ef78531b6e4","created_at":"2026-08-19T15:49:30.672381+00:00","auto_clockin_enabled":false,"hourly_rate_cents":0,"preferences":{"quickPins_updated_at":"2026-09-06T19:57:51.691044+00:00"},"updated_at":"2026-09-06T19:57:51.691052+00:00","failed_login_attempts":0,"lockout_until":null,"first_access_at":"2026-09-10T15:49:54.831364+00:00","first_access_ip":"127.0.0.1","has_ever_logged_in":true,"active":true,"recent_colors":[],"tenant_memberships":[{"tenant_id":"affdfbfa-88b9-4baa-ae45-2ef78531b6e4","role":"super_admin","joined_at":"2026-08-19T15:49:30.672381+00:00"}],"active_tenant_id":"affdfbfa-88b9-4baa-ae45-2ef78531b6e4","must_accept_tos":false,"available_tenants":[{"id":"affdfbfa-88b9-4baa-ae45-2ef78531b6e4","name":"Pool & Landscaping of Vistancia","slug":"aquaterra","role":"super_admin","is_active_now":true}]}
+=== 9. Founder proof: GET /auth/me for brian@plofv.com from DB (role=super_admin) ===
+{"id": "174e1343-2011-4b0e-a67f-23209d25da11", "email": "brian@plofv.com", "role": "super_admin"}
+=== ALL PROOFS COMPLETE ===
+
+=== 3b. Target user id (mike@aquaterra.com): 0b8784ff-6204-47bb-8049-23338d19b631 ===
+=== 4b. RE-CONFIRM: admin POST /users/0b8784ff-6204-47bb-8049-23338d19b631/promote role=super_admin → expect 403 ===
+HTTP 403
+{"detail":"super_admin_role_not_assignable"}
+=== 5b. RE-RUN: super POST /users/0b8784ff-6204-47bb-8049-23338d19b631/promote role=technician → expect 200 (no-op ok) ===
+HTTP 200
+{"ok":true,"user_id":"0b8784ff-6204-47bb-8049-23338d19b631","old_role":"technician","new_role":"technician","no_change":true}
+=== 5c. RE-RUN: super promote mike to admin, then back to technician (real state change) ===
+promote→admin HTTP 200
+{"ok":true,"user_id":"0b8784ff-6204-47bb-8049-23338d19b631","old_role":"technician","new_role":"admin"}
+revert→technician HTTP 200
+{"ok":true,"user_id":"0b8784ff-6204-47bb-8049-23338d19b631","old_role":"admin","new_role":"technician"}
+=== FINAL PROOFS RE-RUN COMPLETE ===

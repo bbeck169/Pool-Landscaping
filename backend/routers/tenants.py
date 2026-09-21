@@ -29,6 +29,36 @@ router = APIRouter()
 DEFAULT_TENANT_SLUG = "aquaterra"  # canonical slug — kept for backward compat with existing FKs / links / NFC URLs
 DEFAULT_TENANT_SLUG_ALIASES = ["plofv"]  # Phase 21 · Feb 2026 — new brand aliases resolve to same tenant
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase P15 · Feb-2026 — Permanent Tenant Timezone Setting.
+#
+# Curated whitelist of allowed IANA timezones with human-readable
+# labels.  Exposed by ``GET /api/tenants/timezones`` and enforced by
+# the ``PATCH /api/tenants/mine/settings`` validator.  Order matters
+# — the frontend picker renders in this exact order (US-East → West
+# → Alaska → Arizona → Hawaii).
+#
+# READ-side compat: existing tenants with a legacy value (``UTC``,
+# ``America/Denver`` without label, etc.) still round-trip on GET.
+# The whitelist ONLY gates WRITE via PATCH — no data migration on
+# read, no forced re-save.  BusinessSettings renders a synthetic
+# disabled "(legacy)" option for tenants whose stored value isn't
+# in this list.
+#
+# Keep in sync with:
+#   * frontend/src/components/settings/TimezoneSelect.jsx :: TIMEZONE_OPTIONS
+# ═════════════════════════════════════════════════════════════════════
+TIMEZONE_OPTIONS: List[dict] = [
+    {"value": "America/New_York",    "label": "Eastern Time (ET)"},
+    {"value": "America/Chicago",     "label": "Central Time (CT)"},
+    {"value": "America/Denver",      "label": "Mountain Time (MT)"},
+    {"value": "America/Los_Angeles", "label": "Pacific Time (PT)"},
+    {"value": "America/Anchorage",   "label": "Alaska Time"},
+    {"value": "America/Phoenix",     "label": "Arizona (No DST)"},
+    {"value": "Pacific/Honolulu",    "label": "Hawaii (No DST)"},
+]
+_ALLOWED_TIMEZONE_VALUES = frozenset(o["value"] for o in TIMEZONE_OPTIONS)
+
 # Every collection that stores tenant-owned entities. Additive-only — new
 # collections should be added here as they land.
 _TENANT_COLLECTIONS = [
@@ -549,6 +579,23 @@ async def create_tenant(body: TenantCreate, admin: dict = Depends(require_super_
     return doc
 
 
+@router.get(
+    "/tenants/timezones",
+    tags=["tenants"],
+    operation_id="tenants.listTimezones",
+    summary="List curated allowed IANA timezones for the tenant picker.",
+)
+async def list_timezones(user: dict = Depends(get_current_user)):
+    """Phase P15 · Feb-2026 — return the curated 7-entry timezone
+    whitelist that the Business Settings picker consumes.  Read-only,
+    no admin gate — any authenticated tenant user (including
+    technicians) can fetch this so mobile / read-only shells can
+    stay in sync.  The order returned matches the render order the
+    picker uses (US-East → West → Alaska → Arizona → Hawaii).
+    """
+    return {"timezones": TIMEZONE_OPTIONS}
+
+
 @router.get("/tenants/{tid}")
 async def get_tenant(tid: str, admin: dict = Depends(require_super_admin)):
     t = await db.tenants.find_one({"id": tid}, {"_id": 0})
@@ -964,13 +1011,20 @@ async def patch_own_settings(body: TenantSettingsUpdate,
     upd = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
     if not upd:
         raise HTTPException(400, "Nothing to update")
-    # Batch 12C · Feb 2026 — validate IANA timezone if provided.
+    # Phase P15 · Feb-2026 — Permanent Tenant Timezone Setting.
+    # Validate against the curated 7-entry whitelist (was: any IANA
+    # name from ``available_timezones()``).  Keep the same 400 detail
+    # shape as before for existing FE consumers, plus surface the
+    # allowed values so admins can see what to pick.
     if "timezone" in upd:
-        from zoneinfo import available_timezones
-        if upd["timezone"] not in available_timezones():
+        if upd["timezone"] not in _ALLOWED_TIMEZONE_VALUES:
             raise HTTPException(400, detail={
                 "code": "INVALID_TIMEZONE",
                 "value": upd["timezone"],
+                "message": (
+                    "Timezone must be one of the allowed IANA values."
+                ),
+                "allowed": [o["value"] for o in TIMEZONE_OPTIONS],
             })
     # Feb-2026 · Multi-industry Phase A — validate the industries
     # array before persisting. First invalid slug wins the error

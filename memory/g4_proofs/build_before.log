@@ -1,0 +1,75 @@
+yarn run v1.22.22
+$ NODE_OPTIONS=--max-old-space-size=4096 craco build
+(node:524) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Compiled with warnings.
+
+[eslint] 
+src/components/checklist/IndustryChecklistForm.jsx
+  Line 82:9:  The 'items' logical expression could make the dependencies of useMemo Hook (at line 85) change on every render. To fix this, wrap the initialization of 'items' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/components/settings/TenantIntegrationsCard.jsx
+  Line 1631:5:  React Hook useMemo has a missing dependency: 'connectedRowInKeys'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 1635:5:  React Hook useMemo has a missing dependency: 'connectedRowInKeys'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/components/topbar/TenantSwitcher.jsx
+  Line 50:9:  The 'memberships' logical expression could make the dependencies of useMemo Hook (at line 64) change on every render. To fix this, wrap the initialization of 'memberships' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/customers/CustomersList.jsx
+  Line 514:9:  The 'load' function makes the dependencies of useCallback Hook (at line 1147) change on every render. To fix this, wrap the definition of 'load' in its own useCallback() Hook  react-hooks/exhaustive-deps
+
+src/pages/dispatch/DispatchBoardPage.jsx
+  Line 357:9:  The 'activeStops' logical expression could make the dependencies of useMemo Hook (at line 370) change on every render. To fix this, wrap the initialization of 'activeStops' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/AttritionReport.jsx
+  Line 91:9:  The 'reasonCounts' logical expression could make the dependencies of useMemo Hook (at line 97) change on every render. To fix this, wrap the initialization of 'reasonCounts' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/BookedOutCapacityReport.jsx
+  Line 64:9:  The 'bars' logical expression could make the dependencies of useMemo Hook (at line 87) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'bars' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/ClientLifetimeValueReport.jsx
+  Line 83:9:  The 'buckets' logical expression could make the dependencies of useMemo Hook (at line 86) change on every render. To fix this, wrap the initialization of 'buckets' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/CloseRatioReport.jsx
+  Line 61:9:  The 'chartData' logical expression could make the dependencies of useMemo Hook (at line 72) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'chartData' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/LaborEfficiencyReport.jsx
+  Line 70:9:  The 'chartData' logical expression could make the dependencies of useMemo Hook (at line 82) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'chartData' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/RecurringVsProjectReport.jsx
+  Line 68:9:  The 'trailing' logical expression could make the dependencies of useMemo Hook (at line 84) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'trailing' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/TimeToCloseReport.jsx
+  Line 70:9:  The 'chartData' logical expression could make the dependencies of useMemo Hook (at line 82) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'chartData' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+src/pages/reports/TimeToGetPaidReport.jsx
+  Line 85:9:  The 'chartRows' logical expression could make the dependencies of useMemo Hook (at line 106) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'chartRows' in its own useMemo() Hook  react-hooks/exhaustive-deps
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+File sizes after gzip:
+
+  2.18 MB   build/static/js/main.94e21953.js
+  29.64 kB  build/static/css/main.96fff6dd.css
+  726 B     build/static/js/689.9cdfd615.chunk.js
+
+The bundle size is significantly larger than recommended.
+Consider reducing it with code splitting: https://goo.gl/9VhYWB
+You can also analyze the project dependencies: https://goo.gl/LeUzfb
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  yarn global add serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+
+Done in 57.81s.

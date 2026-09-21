@@ -24,6 +24,7 @@ import { InvoiceAttachments } from "@/src/components/files";
 import InvoiceViewHistory from "@/src/components/invoices/InvoiceViewHistory";
 import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
+import { ClickablePhone, ClickableAddress } from "@/src/components/interactive";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
@@ -310,19 +311,15 @@ export default function InvoiceDetail() {
         <View style={s.card}>
           <Text style={s.sectionLabel}>FROM</Text>
           <Text style={s.companyName}>{company.name}</Text>
-          {company.address ? <Text style={s.muted}>{company.address}</Text> : null}
-          {company.phone ? (
-            <TouchableOpacity onPress={() => Linking.openURL(`tel:${company.phone}`)}>
-              <Text style={[s.muted, { color: colors.brand }]}>{company.phone}</Text>
-            </TouchableOpacity>
-          ) : null}
+          {company.address ? <ClickableAddress address={company.address} style={s.muted} testID="invoice-company-address-link" /> : null}
+          {company.phone ? <ClickablePhone phone={company.phone} style={s.muted} testID="invoice-company-phone-link" /> : null}
         </View>
 
         {/* Bill To */}
         <View style={s.card}>
           <Text style={s.sectionLabel}>BILL TO</Text>
           <Text style={s.billName}>{bill_to.name || "—"}</Text>
-          {bill_to.address ? <Text style={s.muted}>{bill_to.address}</Text> : null}
+          {bill_to.address ? <ClickableAddress address={bill_to.address} style={s.muted} testID="invoice-billto-address-link" /> : null}
           {property_address ? (
             <Text style={[s.muted, { marginTop: 4 }]}>
               <Text style={{ fontFamily: font.semibold }}>Property: </Text>{property_address}

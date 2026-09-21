@@ -339,8 +339,25 @@ export default function BusinessSettings() {
                   try {
                     const doc = await api.patch("/tenants/mine/settings",
                                                   { timezone: nextTz });
-                    setTenantTz(doc?.timezone || nextTz);
+                    const savedTz = doc?.timezone || nextTz;
+                    setTenantTz(savedTz);
                     toast.success(t("timezone.saved", "Timezone updated"));
+                    // Phase P15 · Feb-2026 — broadcast a tenant-scoped
+                    // event so any dashboard / schedule surface that
+                    // memoizes a tenant-tz-derived "today" key can
+                    // bust its cache and re-render without a full
+                    // page reload.  Listeners live in
+                    // ``pages/admin/Dashboard.jsx`` and
+                    // ``pages/schedule/CalendarSchedule.jsx``.
+                    try {
+                      window.dispatchEvent(new CustomEvent(
+                        "tenant:settings-updated",
+                        { detail: { timezone: savedTz } },
+                      ));
+                    } catch {
+                      // ``CustomEvent`` unavailable in jsdom fallback —
+                      // ignore.  React state re-render still fires.
+                    }
                   } catch (err) {
                     toast.error(err?.message || "Save failed");
                   } finally {

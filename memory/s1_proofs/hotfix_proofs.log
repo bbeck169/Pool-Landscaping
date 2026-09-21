@@ -1,0 +1,60 @@
+=== 1. GET /api/auth/me (super) available_tenants — expect ≥2 tenants ===
+available_tenants count: 123
+[
+  {
+    "id": "cra-02939e0a",
+    "name": "CRA cra-02939e0a",
+    "slug": "cra-cra-02939e0a",
+    "role": "super_admin",
+    "is_active_now": false
+  },
+  {
+    "id": "cra-233a2c77",
+    "name": "CRA cra-233a2c77",
+    "slug": "cra-cra-233a2c77",
+    "role": "super_admin",
+    "is_active_now": false
+  },
+  {
+    "id": "cra-3780e758",
+    "name": "CRA cra-3780e758",
+    "slug": "cra-cra-3780e758",
+    "role": "super_admin",
+    "is_active_now": false
+  }
+]
+has pool 200d48ac? True
+has landscaping 86c09b7f? True
+has aquaterra affdfbfa? True
+
+=== 2. RETRY switch super → 200d48ac pool.tenant — expect 200 ===
+HTTP 200
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMTdhNzkwMi02MTE3LTRiMDgtYjdjZC0zY2MwMGFmMjMzYTkiLCJlbWFpbCI6InN1cGVyQGFxdWF0ZXJyYS5jb20iLCJyb2xlIjoic3VwZXJfYWRtaW4iLCJleHAiOjE3OTA1NDgyMTcsImFjdGl2ZV90ZW5hbnRfaWQiOiIyMDBkNDhhYy0xYzllLTQxNWQtODUzMi0wZTNjZGJiOGRmNTQifQ.9zeJ4KmQ7uyfW-abjEVmUc7szQBEJD2P6mLpiiNSnEE",
+    "token_type": "bearer",
+    "active_tenant": {
+        "id": "200d48ac-1c9e-415d-8532-0e3cdbb8df54",
+        "name": "Pool Services Pilot",
+        "slug": "pool"
+    }
+}
+
+=== 3. RETRY switch super → 86c09b7f landscaping.tenant — expect 200 ===
+HTTP 200
+{
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiMTdhNzkwMi02MTE3LTRiMDgtYjdjZC0zY2MwMGFmMjMzYTkiLCJlbWFpbCI6InN1cGVyQGFxdWF0ZXJyYS5jb20iLCJyb2xlIjoic3VwZXJfYWRtaW4iLCJleHAiOjE3OTA1NDgyMTcsImFjdGl2ZV90ZW5hbnRfaWQiOiI4NmMwOWI3Zi03OGRjLTQ2YjEtYTQ2Ni04NTQ5NjE2NzAwYzgifQ.g8guhbssyWaA9sH5nH_0b4Kjdj8ZW_7IeOOT864T_UA",
+    "token_type": "bearer",
+    "active_tenant": {
+        "id": "86c09b7f-78dc-46b1-a466-8549616700c8",
+        "name": "Landscaping Services Pilot",
+        "slug": "landscaping"
+    }
+}
+
+=== 4. Non-existent tenant super switch → still 403 tenant_not_in_memberships ===
+HTTP 403
+{"detail":"tenant_not_in_memberships"}
+=== 5. Admin switch still 403 insufficient_role_for_tenant_switch (S1 lockdown intact) ===
+HTTP 403
+{"detail":"insufficient_role_for_tenant_switch"}
+=== HOTFIX CURL PROOFS COMPLETE ===

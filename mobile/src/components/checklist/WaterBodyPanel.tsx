@@ -66,7 +66,12 @@ export default function WaterBodyPanel({
     return map;
   }, [body.readings]);
 
-  const setReading = (key: string, value: string) => {
+  // Phase P17.M — coerce to number | null; preserve 0 as a valid reading.
+  const setReading = useCallback((key: string, raw: string) => {
+    const trimmed = raw.trim();
+    const coerced: number | null =
+      trimmed === "" ? null : Number.isFinite(Number(trimmed)) ? Number(trimmed) : null;
+
     let next = [...(body.readings || [])];
     const meta = READING_LABELS[key] || { name: key, unit: "ppm" };
     if (key === "cyanuric_acid") {
@@ -74,12 +79,12 @@ export default function WaterBodyPanel({
     }
     const idx = next.findIndex((r) => r.key === key);
     if (idx >= 0) {
-      next[idx] = { ...next[idx], value: value || null };
+      next[idx] = { ...next[idx], value: coerced };
     } else {
-      next.push({ key, name: meta.name, value: value || null, unit: meta.unit });
+      next.push({ key, name: meta.name, value: coerced, unit: meta.unit });
     }
     onChange({ ...body, readings: next });
-  };
+  }, [body, onChange]);
 
   const setLabel = (label: string) => onChange({ ...body, label });
   const setNotes = (notes: string) => onChange({ ...body, notes });

@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { ClickableAddress } from "@/src/components/interactive";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 const FILTERS = [
@@ -153,7 +154,7 @@ export default function Maintenance() {
           renderItem={({ item }) => (
             <View style={styles.card} testID={`maint-${item.customer_id}`}>
               <Text style={styles.custName} numberOfLines={1}>{formatCustomerName(item)}</Text>
-              {item.address ? <Text style={styles.custAddr} numberOfLines={1}>{item.address}</Text> : null}
+              {item.address ? <ClickableAddress address={item.address} style={styles.custAddr} testID={`maint-addr-${item.customer_id}`} /> : null}
               <TypeRow row={item} mtype="filter" onSchedule={openSchedule} onHistory={openHistory} onOpenJob={(id) => router.push(`/job/${id}`)} />
               <TypeRow row={item} mtype="salt_cell" onSchedule={openSchedule} onHistory={openHistory} onOpenJob={(id) => router.push(`/job/${id}`)} />
             </View>

@@ -148,6 +148,34 @@ export function newBodyId(): string {
   return `wb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Phase P17.M — flattenPoolReadings.
+ *
+ * Flattens multi-body readings into a single flat array suitable for
+ * `report.chemical_readings`. Each entry is enriched with `body_id`
+ * and `body_label` so the backend can attribute readings back to their
+ * body of origin.
+ */
+export function flattenPoolReadings(
+  bodies: WaterBody[],
+): { key: string; value: number | string | null; name?: string; unit?: string; body_id: string; body_label: string }[] {
+  if (!Array.isArray(bodies) || bodies.length === 0) return [];
+  const result: any[] = [];
+  for (const body of bodies) {
+    for (const reading of body.readings || []) {
+      if (!reading?.key) continue;
+      const label = READING_LABELS[reading.key];
+      result.push({
+        ...reading,
+        name: reading.name || (label ? label.name : reading.key),
+        body_id: body.id,
+        body_label: body.label,
+      });
+    }
+  }
+  return result;
+}
+
 export function makeEmptyBody(type: BodyType = "pool", sequence = 0): WaterBody {
   const t = READING_ALLOWLIST[type] ? type : "pool";
   return {

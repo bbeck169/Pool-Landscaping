@@ -832,21 +832,20 @@ async def list_jobs(
     # UTC boundaries. Uses ``tenant_scoped_filter`` so the extra
     # disjunction lands under ``$and`` — no dict-spread ``$or``
     # clobber (P10/P12/P12.2 audit posture preserved).
-    from services.tenant_helpers import get_tenant_timezone
+    from services.tenant_helpers import (
+        get_tenant_timezone,
+        tenant_day_utc_bounds as _tenant_day_utc_bounds_helper,
+    )
     from services.query_scope import tenant_scoped_filter as _tsf
     _tz = get_tenant_timezone(tenant)
 
     def _tenant_day_utc_bounds(date_str: str):
         """Return ``[utc_start_iso, utc_end_iso)`` for a ``YYYY-MM-DD``
-        interpreted in the tenant's local timezone."""
-        local_midnight = datetime.strptime(date_str, "%Y-%m-%d").replace(
-            hour=0, minute=0, second=0, microsecond=0, tzinfo=_tz,
-        )
-        utc_start = local_midnight.astimezone(timezone.utc).isoformat()
-        utc_end = (local_midnight + timedelta(days=1)).astimezone(
-            timezone.utc
-        ).isoformat()
-        return utc_start, utc_end
+        interpreted in the tenant's local timezone.  Delegates to the
+        shared :func:`services.tenant_helpers.tenant_day_utc_bounds`
+        (Phase P15 · Feb-2026 · extraction of the original P13 body)
+        so dashboard and job endpoints share one implementation."""
+        return _tenant_day_utc_bounds_helper(tenant, date_str)
 
     if start or end:
         rng: Dict[str, str] = {}

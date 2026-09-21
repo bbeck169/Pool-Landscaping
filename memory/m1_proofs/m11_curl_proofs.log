@@ -1,0 +1,54 @@
+=== POST /api/customers/merge-wizard (M1.1 fully exercised) ===
+HTTP 200
+{
+    "ok": true,
+    "primary_customer_id": "m11-live-pri-1789957494",
+    "duplicate_customer_id": "m11-live-dup-1789957494",
+    "reparent_counts": {
+        "jobs": 0,
+        "invoices": 0,
+        "payments": 0,
+        "service_reports": 0,
+        "estimates": 0,
+        "leads": 0,
+        "recurring_job_templates": 1,
+        "payment_methods": 1,
+        "stripe_subscriptions": 1
+    },
+    "field_choices": {
+        "name": "primary",
+        "email": "primary",
+        "phone": "primary",
+        "address": "primary"
+    },
+    "merged_at": "2026-09-21T02:24:55.110009+00:00",
+    "audit_log_id": "audit_e57ec9b6-adb0-4c64-b1e6-4b190c34f517",
+    "timeline_note_id": "note_99238c54-c9c9-41f8-be37-dc020ea1d43e",
+    "warnings": [
+        "Both customers had portal logins \u2014 user records left untouched. Manual review required in the admin users panel.",
+        "Stripe customer records were not merged. The duplicate carried Stripe customer 'cus_m11_abc'. Reconcile the two Stripe customer objects in the Stripe dashboard if you need a single billing surface."
+    ]
+}
+
+=== Verify: neither user row touched + reparent_counts for new colls ===
+dup user  (unchanged, customer_id=m11-live-dup-1789957494 expected): {"email": "portal-d-1789957494@ex.com", "customer_id": "m11-live-dup-1789957494"}
+pri user  (unchanged, customer_id=m11-live-pri-1789957494 expected): {"email": "portal-p-1789957494@ex.com", "customer_id": "m11-live-pri-1789957494"}
+recurring_job_templates re-parented to primary  : 1
+payment_methods         re-parented to primary  : 1
+stripe_subscriptions    re-parented to primary  : 1
+audit merge_notes                               : [
+  "Both customers had portal logins \u2014 user records left untouched. Manual review required in the admin users panel.",
+  "Stripe customer records were not merged. The duplicate carried Stripe customer 'cus_m11_abc'. Reconcile the two Stripe customer objects in the Stripe dashboard if you need a single billing surface."
+]
+audit reparent_counts                           : {
+  "jobs": 0,
+  "invoices": 0,
+  "payments": 0,
+  "service_reports": 0,
+  "estimates": 0,
+  "leads": 0,
+  "recurring_job_templates": 1,
+  "payment_methods": 1,
+  "stripe_subscriptions": 1
+}
+=== M1.1 CURL PROOFS COMPLETE ===

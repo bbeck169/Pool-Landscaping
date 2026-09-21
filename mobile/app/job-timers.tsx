@@ -9,6 +9,7 @@ import { Header } from "@/src/components/widgets";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { exportCsv, toCsvRow } from "@/src/utils/exportCsv";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { ClickableAddress } from "@/src/components/interactive";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 function fmtDuration(s: number) {
@@ -136,7 +137,7 @@ export default function JobTimersReport() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardTitle} numberOfLines={1}>{formatCustomerName(r)}</Text>
                   <Text style={styles.cardMeta} numberOfLines={1}>{r.date} · {r.service_type}{r.technician_name ? ` · ${r.technician_name}` : ""}</Text>
-                  {r.address ? <Text style={styles.cardAddr} numberOfLines={1}>{r.address}</Text> : null}
+                  {r.address ? <ClickableAddress address={r.address} style={styles.cardAddr} testID={`timers-addr-${r.job_id}`} /> : null}
                 </View>
               </View>
             ))

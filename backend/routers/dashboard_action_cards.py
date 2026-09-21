@@ -24,16 +24,27 @@ Response shape
       "missed_services_today": int,
       "generated_at":          "ISO8601"
     }
+
+Phase P15 · Feb-2026 — every "today" bucket below is anchored to
+the tenant's local timezone (via
+``services.tenant_helpers.tenant_day_utc_bounds`` + ``now_in_tenant_tz``)
+so a request at 01:30 UTC / 18:30 Phoenix returns the CURRENT
+Phoenix day's counts — not tomorrow-in-UTC's.  Reports / analytics
+tiles are intentionally out of scope (deferred to a later phase).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from config import db
 from routers.tenants import get_current_tenant
+from services.tenant_helpers import (
+    now_in_tenant_tz,
+    tenant_day_utc_bounds,
+)
 from utils import get_current_user
 
 router = APIRouter(tags=["dashboard"])
@@ -80,10 +91,13 @@ async def _count_invoices_by_status(
         {"tenant_id": tenant_id, "status": {"$in": statuses}})
 
 
-async def _count_leads_today(tenant_id: str, day_start: datetime) -> int:
+async def _count_leads_today(tenant_id: str, day_start_utc_iso: str) -> int:
+    """Phase P15 · Feb-2026 — anchored to the tenant-local day's
+    UTC start (was: UTC midnight).  ``leads.created_at`` is a UTC
+    ISO string, so the string ``$gte`` compare is safe."""
     return await db.leads.count_documents({
         "tenant_id": tenant_id,
-        "created_at": {"$gte": day_start.isoformat()},
+        "created_at": {"$gte": day_start_utc_iso},
     })
 
 
@@ -94,17 +108,17 @@ async def _count_open_alerts(tenant_id: str) -> int:
 
 
 async def _count_missed_services_today(
-    tenant_id: str, day_start: datetime, today_iso: str,
+    tenant_id: str, day_start_utc: datetime,
 ) -> int:
-    # ``intelligence_alerts.created_at`` is persisted as a BSON
-    # datetime — compare against the datetime directly, not the ISO
-    # string.  Storing ISO on leads / invoices is the historic
-    # convention; alerts diverge, hence the split $gte types.
+    """Phase P15 · Feb-2026 — anchored to the tenant-local day's
+    UTC start (was: UTC midnight).  ``intelligence_alerts.created_at``
+    is stored as a BSON datetime; the tz-aware ``day_start_utc``
+    compares against it directly."""
     q = {
         "tenant_id": tenant_id,
         "category": "missed_service",
         "dismissed_at": None,
-        "created_at": {"$gte": day_start},
+        "created_at": {"$gte": day_start_utc},
     }
     return await db.intelligence_alerts.count_documents(q)
 
@@ -116,9 +130,20 @@ async def get_action_cards(
 ) -> Dict[str, Any]:
     _require_dashboard_role(user)
     tenant_id = tenant["id"]
-    now = datetime.now(timezone.utc)
-    day_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    today_iso = now.date().isoformat()
+    # Phase P15 · Feb-2026 — every "today" bucket is anchored to
+    # the tenant's local calendar day, not UTC.  ``now_in_tenant_tz``
+    # returns a tz-aware datetime in the tenant's zone; its
+    # ``.date().isoformat()`` yields the local YYYY-MM-DD that
+    # ``jobs.scheduled_date`` was written with.  ``tenant_day_utc_bounds``
+    # converts that back to the UTC window
+    # ``[day_start_utc, day_end_utc)`` for datetime-typed fields
+    # (leads.created_at, intelligence_alerts.created_at).
+    now_local = now_in_tenant_tz(tenant)
+    today_iso = now_local.date().isoformat()
+    day_start_utc_iso, _ = tenant_day_utc_bounds(tenant, today_iso)
+    # BSON datetime version of the same anchor for the
+    # intelligence_alerts.created_at compare.
+    day_start_utc = datetime.fromisoformat(day_start_utc_iso)
 
     return {
         "today_routes":          await _count_today_routes(
@@ -130,9 +155,9 @@ async def get_action_cards(
         "overdue_invoices":      await _count_invoices_by_status(
                                      tenant_id, ["overdue", "past_due"]),
         "new_leads_today":       await _count_leads_today(
-                                     tenant_id, day_start),
+                                     tenant_id, day_start_utc_iso),
         "open_alerts":           await _count_open_alerts(tenant_id),
         "missed_services_today": await _count_missed_services_today(
-                                     tenant_id, day_start, today_iso),
-        "generated_at":          now.isoformat(),
+                                     tenant_id, day_start_utc),
+        "generated_at":          datetime.now(timezone.utc).isoformat(),
     }

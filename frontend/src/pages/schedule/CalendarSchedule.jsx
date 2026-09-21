@@ -373,7 +373,17 @@ export default function CalendarSchedule() {
   // default + the TodaySchedule bootstrap value) so a post-5PM local
   // click on "Today" doesn't roll to tomorrow's calendar cell. Refined
   // from ``user.tenant.timezone`` when the auth payload carries it.
-  const tenantTz = user?.tenant?.timezone
+  //
+  // Phase P15 · Feb-2026 — the picker in Business Settings dispatches
+  // ``tenant:settings-updated`` on save. We listen for it and take
+  // the new IANA name from ``detail.timezone`` so the "today" cell
+  // math + day-window rendering updates without a full page reload.
+  // The auth context still holds the pre-save value until the next
+  // login (that's the auth layer's contract) — the override lives
+  // here so this page reflects the change immediately.
+  const [tenantTzOverride, setTenantTzOverride] = useState(null);
+  const tenantTz = tenantTzOverride
+    || user?.tenant?.timezone
     || user?.tenant_timezone
     || TENANT_TZ_FALLBACK;
   // K65.fix · Feb-2026 — flag that flips when the last load() call
@@ -758,6 +768,32 @@ export default function CalendarSchedule() {
   // range and refetch. Same shape as the crew-change hook above.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load({ force: true }); }, [techId]);
+
+  // Phase P15 · Feb-2026 — re-hydrate on tenant-settings updates.
+  // BusinessSettings.jsx dispatches ``tenant:settings-updated`` with
+  // ``detail.timezone`` set to the new IANA name on save.  We take
+  // it as the local override so ``tenantTz`` uses the fresh zone
+  // immediately AND force a schedule re-fetch so any day-window
+  // computation on the wire lines up with the new tz.
+  useEffect(() => {
+    function onTenantSettingsUpdated(evt) {
+      const nextTz = evt?.detail?.timezone;
+      if (nextTz && typeof nextTz === "string") {
+        setTenantTzOverride(nextTz);
+      }
+      // Force refetch so any tenant-tz-anchored server response
+      // (e.g. dashboard action-cards, jobs day-window unions) picks
+      // up the new zone without waiting for the next date change.
+      load({ force: true });
+    }
+    window.addEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+    return () => window.removeEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─────────────────────────────────────────────────────────
   // Phase P5 · Feb-2026 — Legacy tech-filter self-heal.

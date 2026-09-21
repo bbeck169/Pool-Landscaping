@@ -468,6 +468,29 @@ export default function AdminDashboard() {
       .catch((e) => setError(e.message || "Failed to load dashboard"));
   }, []);
 
+  // Phase P15 · Feb-2026 — re-hydrate the dashboard when the tenant
+  // timezone (or any other tenant-scoped setting) changes.  Fired by
+  // BusinessSettings.jsx's TimezoneSelect ``onChange`` handler.  We
+  // refetch ``/dashboard`` (whose numeric counts don't depend on tz
+  // yet) AND bump the ``DashboardActionCards`` remount key so its
+  // tenant-tz-anchored "today" endpoints refetch under the new zone.
+  const [tenantSettingsVersion, setTenantSettingsVersion] = useState(0);
+  useEffect(() => {
+    function onTenantSettingsUpdated() {
+      setTenantSettingsVersion((v) => v + 1);
+      api
+        .get("/dashboard")
+        .then(setData)
+        .catch(() => {});
+    }
+    window.addEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+    return () => window.removeEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+  }, []);
+
   const firstName = user?.name?.split(" ")[0] || "";
 
   return (
@@ -492,10 +515,13 @@ export default function AdminDashboard() {
           breakdown. Auto-collapses to nothing when the tenant
           is empty; the Intelligence Alerts card is pinned so
           the operator always has a deep-link into the alerts
-          surface. Manager+ only. */}
+          surface. Manager+ only.
+          Phase P15 · Feb-2026 — remount via ``tenantSettingsVersion``
+          so a tenant timezone change refetches the tz-anchored
+          "today" counts immediately (no page reload). */}
       {(user?.role === "admin" || user?.role === "super_admin"
          || user?.role === "manager") ? (
-        <DashboardActionCards />
+        <DashboardActionCards key={tenantSettingsVersion} />
       ) : null}
 
       {error ? (

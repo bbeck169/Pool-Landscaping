@@ -4,12 +4,31 @@
  * Presets: Today · Tomorrow · This Week · Next Week · This Month ·
  * Custom Range.  Persists the last selection in localStorage so both
  * revenue tiles remember the range across page loads.
+ *
+ * Phase P15 · Feb-2026 — the Today + Tomorrow presets now compute
+ * their date in the tenant's local timezone (via
+ * ``Intl.DateTimeFormat`` with a ``timeZone`` option) so an admin
+ * clicking "Today" at 01:30 UTC / 18:30 Phoenix gets the CURRENT
+ * Phoenix calendar day, not tomorrow's browser-local day.
+ * Week / month presets remain browser-local — they're
+ * month-granularity and the tz drift is negligible.  They're
+ * queued for a later phase (see wrap-up "Deferred").
+ *
+ * The effective tenant tz is resolved from
+ * ``useAuth().user?.tenant?.timezone`` with an ``America/Phoenix``
+ * fallback (matches the pod-wide P13 default).  A ``tenantTimezone``
+ * prop takes precedence for tests + explicit overrides.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarRange, ChevronDown } from "lucide-react";
 import { colors } from "@/theme";
+import { useAuth } from "@/auth";
 
 const LS_KEY = "admin.dashboard.revenue.range.v1";
+// Phase P15 · Feb-2026 — must match backend
+// ``services.tenant_helpers.DEFAULT_TENANT_TZ`` + the P13 default
+// used by the schedule "today" cell.
+const TENANT_TZ_FALLBACK = "America/Phoenix";
 
 const PRESETS = [
   { key: "today",       label: "Today" },
@@ -20,27 +39,59 @@ const PRESETS = [
   { key: "custom",      label: "Custom Range" },
 ];
 
-function _startOfDay(d) {
-  const x = new Date(d); x.setHours(0, 0, 0, 0); return x;
-}
-function _endOfDay(d) {
-  const x = new Date(d); x.setHours(23, 59, 59, 999); return x;
-}
 function _isoDate(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
-export function rangeFromPreset(preset, custom) {
+/**
+ * Phase P15 · Feb-2026 — the calendar day of ``d`` as seen in
+ * ``timeZone``.  Uses the ``en-CA`` locale because it emits
+ * unambiguous ``YYYY-MM-DD``-ordered numeric parts regardless of
+ * the runtime locale.
+ */
+export function _isoDateInTz(d, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(d);
+    const y = parts.find((p) => p.type === "year")?.value;
+    const m = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+    if (y && m && day) return `${y}-${m}-${day}`;
+  } catch { /* invalid timeZone — fall through */ }
+  return _isoDate(d);
+}
+
+/**
+ * ``rangeFromPreset`` is exported for the unit test harness. The
+ * optional ``opts.tenantTimezone`` argument locks Today + Tomorrow
+ * to the tenant's zone. Week / month presets are unchanged.
+ */
+export function rangeFromPreset(preset, custom, opts) {
   const now = new Date();
+  const tz = opts?.tenantTimezone || TENANT_TZ_FALLBACK;
   switch (preset) {
     case "today": {
-      return { start: _isoDate(now), end: _isoDate(now) };
+      const iso = _isoDateInTz(now, tz);
+      return { start: iso, end: iso };
     }
     case "tomorrow": {
-      const t = new Date(now); t.setDate(t.getDate() + 1);
-      return { start: _isoDate(t), end: _isoDate(t) };
+      // Compute "today in tenant tz" first, then add one calendar
+      // day using UTC arithmetic on the parsed ISO parts. This
+      // avoids the browser-local ``Date.setDate`` DST landmine
+      // while staying tz-correct.
+      const todayIso = _isoDateInTz(now, tz);
+      const [y, m, d] = todayIso.split("-").map((v) => parseInt(v, 10));
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + 1);
+      const yy = dt.getUTCFullYear();
+      const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(dt.getUTCDate()).padStart(2, "0");
+      const iso = `${yy}-${mm}-${dd}`;
+      return { start: iso, end: iso };
     }
     case "this_week": {
       const s = new Date(now); s.setDate(now.getDate() - ((now.getDay() + 6) % 7));
@@ -75,7 +126,19 @@ function loadPersisted() {
   return null;
 }
 
-export default function RevenueDateRangeFilter({ onChange, defaultPreset = "this_month" }) {
+export default function RevenueDateRangeFilter({
+  onChange,
+  defaultPreset = "this_month",
+  tenantTimezone,
+}) {
+  // Phase P15 · Feb-2026 — pull the tenant tz off the auth context
+  // when the parent didn't pass an explicit override. Auth may not
+  // be mounted (some smoke tests render this in isolation) so we
+  // guard the hook read.
+  let authTz;
+  try { authTz = useAuth()?.user?.tenant?.timezone; } catch { /* no-op */ }
+  const effectiveTz = tenantTimezone || authTz || TENANT_TZ_FALLBACK;
+
   const [preset, setPreset] = useState(() => loadPersisted()?.preset || defaultPreset);
   const [custom, setCustom] = useState(() => loadPersisted()?.custom || {
     start: _isoDate(new Date()), end: _isoDate(new Date()),
@@ -85,7 +148,7 @@ export default function RevenueDateRangeFilter({ onChange, defaultPreset = "this
   const wrapRef = useRef(null);
 
   const emit = (p, c) => {
-    const range = rangeFromPreset(p, c);
+    const range = rangeFromPreset(p, c, { tenantTimezone: effectiveTz });
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ preset: p, custom: c }));
     } catch { /* ignore */ }
@@ -101,6 +164,21 @@ export default function RevenueDateRangeFilter({ onChange, defaultPreset = "this
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  // Phase P15 · Feb-2026 — re-emit the current preset when the
+  // tenant timezone flips (BusinessSettings dispatches
+  // ``tenant:settings-updated``). The persisted preset key is
+  // unchanged; only the computed [start, end] shifts.
+  useEffect(() => {
+    function onTenantSettingsUpdated() { emit(preset, custom); }
+    window.addEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+    return () => window.removeEventListener(
+      "tenant:settings-updated", onTenantSettingsUpdated,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, custom, effectiveTz]);
 
   const currentLabel = PRESETS.find((p) => p.key === preset)?.label || "Range";
 

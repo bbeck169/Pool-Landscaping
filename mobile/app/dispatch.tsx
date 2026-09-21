@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, StatusChip, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { ClickableAddress } from "@/src/components/interactive";
 
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -180,7 +181,9 @@ function DispatchJob({ job, onPress, onAssign }: { job: any; onPress: () => void
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.jobTitle} numberOfLines={1}>{job.title}</Text>
-        <Text style={styles.jobSub} numberOfLines={1}>{job.address || formatCustomerName(job)}</Text>
+        {job.address
+          ? <ClickableAddress address={job.address} style={styles.jobSub} testID={`dispatch-addr-${job.id}`} />
+          : <Text style={styles.jobSub} numberOfLines={1}>{formatCustomerName(job)}</Text>}
       </View>
       {!job.technician_id ? (
         <Pressable style={styles.assignBtn} onPress={onAssign} testID={`dispatch-assign-${job.id}`} hitSlop={6}>

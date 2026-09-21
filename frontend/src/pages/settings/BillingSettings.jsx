@@ -6,7 +6,6 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Save, Receipt, CreditCard, RefreshCw, PlayCircle, CheckCircle2, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
 
 export default function BillingSettings() {
   const nav = useNavigate();
@@ -163,37 +162,13 @@ export default function BillingSettings() {
             </button>
           </label>
 
-          {/* Batch 12C · Feb 2026 — Timezone picker. Feb-2026 ·
-              Timezone Finalization ship — rendered via the shared
-              TimezoneSelect component so this page and BusinessSettings
-              stay option-for-option identical. Both routes save through
-              the same PATCH /api/tenants/mine/settings endpoint. */}
-          <div className="mt-4 pt-4"
-                style={{ borderTop: "1px solid #E5E7EB" }}>
-            <TimezoneSelect
-              value={tenantSettings.timezone || "America/Phoenix"}
-              disabled={savingTenant}
-              label="Tenant timezone"
-              helperText="Used to dispatch the weekly Stripe sync + other per-tenant crons."
-              testid="tenant-timezone-picker"
-              onChange={async (e) => {
-                const nextTz = e.target.value;
-                if (savingTenant) return;
-                setSavingTenant(true);
-                try {
-                  const doc = await api.patch("/tenants/mine/settings", {
-                    timezone: nextTz,
-                  });
-                  setTenantSettings((s) => ({ ...s, ...doc, timezone: doc.timezone || nextTz }));
-                  setToast("Timezone updated");
-                } catch (err) {
-                  setToast(err.message || "Save failed");
-                } finally {
-                  setSavingTenant(false);
-                }
-              }}
-            />
-          </div>
+          {/* Batch 12C · Feb 2026 — Timezone picker relocated to
+              Business Settings under Phase P15 · Feb-2026. Business
+              Settings is the canonical home for Regional/Localization
+              controls; Billing keeps the "require card on file" +
+              auto-send toggles only. Same PATCH
+              /api/tenants/mine/settings endpoint powers the picker
+              in its new location. */}
 
           {/* Batch 12C · Feb 2026 — Auto-send add-card link on new
               customer creation. Default OFF. */}

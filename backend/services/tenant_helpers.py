@@ -23,8 +23,8 @@ crew_productivity, quiet_hours, weekly_digest, referral_watcher, etc.).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -90,3 +90,37 @@ def now_in_tenant_tz(
     "today" as an ISO date string use ``.date().isoformat()``.
     """
     return datetime.now(timezone.utc).astimezone(get_tenant_timezone(tenant))
+
+
+def tenant_day_utc_bounds(
+    tenant: Optional[Mapping[str, Any]],
+    date_str: str,
+) -> Tuple[str, str]:
+    """Phase P15 · Feb-2026 — return ``(utc_start_iso, utc_end_iso)``
+    for a ``YYYY-MM-DD`` date interpreted in the tenant's local
+    timezone.  ``utc_end_iso`` is EXCLUSIVE (== next-day midnight in
+    the tenant's tz, converted to UTC) so callers can filter with
+    ``$gte utc_start_iso AND $lt utc_end_iso``.
+
+    Extracted from :func:`routers.jobs._tenant_day_utc_bounds` (P13
+    origin) so every "today-in-tenant-tz" call site shares one
+    implementation.  Fallback chain matches
+    :func:`get_tenant_timezone` — an unknown IANA name coerces to
+    :data:`DEFAULT_TENANT_TZ` (``America/Phoenix``).
+
+    Never raises for a malformed IANA string (falls back to Phoenix)
+    but WILL raise ``ValueError`` for a malformed ``date_str`` — the
+    caller decides how to handle that (jobs.py wraps in ``try/except``
+    and drops the tenant-tz union entirely).
+    """
+    tz = get_tenant_timezone(tenant)
+    local_midnight = datetime.strptime(date_str, "%Y-%m-%d").replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=tz,
+    )
+    utc_start = local_midnight.astimezone(timezone.utc).isoformat()
+    utc_end = (
+        (local_midnight + timedelta(days=1))
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
+    return utc_start, utc_end
