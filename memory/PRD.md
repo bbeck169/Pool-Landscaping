@@ -19877,3 +19877,54 @@ Ready for the focused `e1_tester` pass covering Test 4 re-run + door-hanger cano
 - `test_route_optimization_approval.py` test-isolation fixture scrub (job IDs leak).
 - Optional: prune `data_base64` from photo rows once the S3 backfill (P35) proves stable.
 
+
+---
+
+## P35 · Feb-2026 · S3 Photo Fallback + Migration EXECUTED
+
+**Status:** SHIPPED end-to-end — renderer ladder landed, migration script written + tested, `--execute --pass=both` run against prod DB.
+
+### Diff summary
+
+| File | Kind | Notes |
+|------|------|-------|
+| `backend/routers/jobs.py` | edit | Extended `public_job_photo` at 2663-2762: HEAD-check before S3 redirect, `.get("data")` fix, `[p35] photo fallback base64` WARN, structured 404 with `code=photo_not_found`, data-URL parsing with `s3_mime` fallback. |
+| `backend/scripts/p35_photo_backfill.py` | new | Two-pass idempotent migration script. Pass A reprefixes `job-photos/` → `Photos/`; Pass B uploads base64-only rows. Pass A extended in-run to repair from `data` when the source S3 object is orphaned. Dry-run default; rate-limited at 50 PUTs/s. |
+| `backend/tests/test_p35_photo_backfill.py` | new | 11 tests: 4 renderer paths + 7 migration paths (dry-run, execute, idempotent, tenant filter, base64-repair). |
+| `backend/tests/_f7_loop_fixture.py` | edit | Added `scripts.p35_photo_backfill` to `_REBOUND_MODULES`. |
+
+### Pre → post DB counts (aquaterra prod DB)
+
+| Bucket | Pre-migration | Post-migration |
+|---|---|---|
+| `total_jobs` | 2443 | 2443 |
+| `jobs_with_photos` | 10 | 10 |
+| `old_prefix (job-photos/)` | **6** | **0** ✓ |
+| `base64_no_s3_key` | 0 | 0 |
+| `new_prefix (Photos/)` | 2 | **8** |
+| dual-stored (`data` + `s3_key`) | 7 | 8 |
+| s3-only (`s3_key` no `data`) | 1 | 1 |
+
+Executed at UTC ~2026-02-15T20:54 (roundtrip ~3.2s). All 6 `old_prefix` rows were dangling in S3 (`NoSuchKey`); Pass A's base64-repair path decoded each row's `data` URL and re-uploaded to the canonical key. A follow-up `--execute` run was verified as a zero-mutation no-op (idempotency confirmed).
+
+### Renderer smoke
+
+`curl http://localhost:8001/api/public/job-photo/<jid>/<pid>` on one of the migrated photos returned `HTTP 302` redirecting to a valid presigned URL on `emergant.s3.us-east-2.amazonaws.com` under the `Photos/` prefix. HEAD-check on the object succeeded.
+
+### Template sync audit (item 3 — read-only)
+
+All three photo consumers already route through the endpoint (never `data` direct):
+
+| Consumer | File:line | Excerpt |
+|---|---|---|
+| WorkStream FE | `frontend/src/pages/workstream/WorkstreamPage.jsx:115` | `<img src={\`${BACKEND}${t.url}\`}` |
+| Service report emails | `backend/services/service_report_view.py:333` | `photo_absolute_url → /api/public/job-photo/{jid}/{pid}` |
+| Auto visit email | `backend/services/auto_visit_email.py:340` | `url = p.get("url") or p.get("uri")` |
+
+No fixes needed — all three benefit automatically from the P35 renderer ladder.
+
+### Follow-ups (not P35)
+
+- Prune `data` field on rows once we're confident the S3-only path is stable (separate cleanup phase). Do NOT run this until dashboards show zero `[p35] photo fallback base64` WARNs for 30d.
+- Bucket-side lifecycle: consider a scheduled sweep to detect S3 objects with no corresponding DB row (opposite-direction orphan).
+

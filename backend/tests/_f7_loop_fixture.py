@@ -110,6 +110,7 @@ _REBOUND_MODULES = (
     "migrations.p30_add_card_sms_template",
     "migrations.p30_customers_stripe_customer_id_unique",
     "scripts.ensure_indexes",
+    "scripts.p35_photo_backfill",
     "services.soshie.autopilot_config",
     "services.soshie.autopilot_scheduler",
     "services.soshie.brand_ingest",

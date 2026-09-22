@@ -2664,7 +2664,7 @@ async def update_job(jid: str, body: JobUpdate,
 async def public_job_photo(jid: str, pid: str):
     """Unauthenticated image endpoint for embedding job photos in emails (UUID-gated).
     Intentionally NOT tenant-scoped — the {jid}+{pid} pair acts as the magic token."""
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1, "tenant_id": 1})
     if not job:
         raise HTTPException(404, "Not found")
     photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
@@ -2676,27 +2676,82 @@ async def public_job_photo(jid: str, pid: str):
     # back to the base64 payload so pre-migration photos + flag-off
     # environments keep working. The ``s3_key`` field is NEVER
     # exposed to the client — only the redirect target is.
+    #
+    # ─── Phase P35 · Feb-2026 · renderer fallback ladder ───────────
+    # (1) HEAD-check the S3 object BEFORE issuing the client redirect,
+    #     so a stale ``s3_key`` (NoSuchKey) can transparently fall
+    #     through to the base64 payload instead of sending the
+    #     browser to a broken URL.
+    # (2) Fix the pre-P35 ``KeyError('data')`` bug — use
+    #     ``.get("data")`` so an S3-only row that lost its base64
+    #     doesn't 500.
+    # (3) When the fallback fires, emit a structured
+    #     ``[p35] photo fallback base64`` WARN so ops can measure
+    #     migration-needed volume via log grep.
+    # (4) When BOTH S3 miss + base64 empty, return a structured
+    #     404 (``code=photo_not_found``) instead of the crash.
     s3_key = photo.get("s3_key")
+    s3_hit = False
     if s3_key:
         try:
-            from services.aws_s3.photos import generate_signed_url
-            signed = generate_signed_url(s3_key)
-            if signed:
-                from fastapi.responses import RedirectResponse
-                return RedirectResponse(url=signed, status_code=302)
+            from services.aws_s3.photos import (
+                check_object_exists, generate_signed_url,
+            )
+            if check_object_exists(s3_key):
+                s3_hit = True
+                signed = generate_signed_url(s3_key)
+                if signed:
+                    from fastapi.responses import RedirectResponse
+                    return RedirectResponse(url=signed, status_code=302)
         except Exception as _s3_exc:
             logger.warning(
                 "[photos-s3] read soft-fail jid=%s pid=%s err=%s",
                 jid, pid, _s3_exc,
             )
-    data = photo["data"]
+    # ── Base64 fallback branch (P35 renderer ladder step 2) ──
+    data = photo.get("data")
+    if not data:
+        # Both missing — structured 404, NOT a 500. Log so ops can
+        # spot orphaned rows.
+        logger.warning(
+            "[p35] photo not found (s3+base64 both missing) "
+            "jid=%s pid=%s tenant=%s s3_key=%s",
+            jid, pid, job.get("tenant_id") or "", s3_key or "",
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "photo_not_found", "photo_id": pid},
+        )
+    # If we're here because S3 missed (or s3_key was empty), log the
+    # migration-needed sentinel. Skip when we would have gone S3 —
+    # only actual base64 fallbacks earn the WARN.
+    if not s3_hit:
+        logger.warning(
+            "[p35] photo fallback base64 for photo_id=%s job_id=%s "
+            "tenant=%s — s3_key=%s",
+            pid, jid, job.get("tenant_id") or "", s3_key or "",
+        )
+    import base64
     if "," in data:
         header, b64 = data.split(",", 1)
-        media = header.split(";")[0].replace("data:", "") or "image/jpeg"
+        media = header.split(";")[0].replace("data:", "") or (
+            photo.get("s3_mime") or "image/jpeg"
+        )
     else:
-        b64, media = data, "image/jpeg"
-    import base64
-    return Response(content=base64.b64decode(b64), media_type=media)
+        b64 = data
+        media = photo.get("s3_mime") or "image/jpeg"
+    try:
+        payload = base64.b64decode(b64)
+    except Exception as _dec_exc:
+        logger.warning(
+            "[p35] photo base64 decode failed jid=%s pid=%s err=%s",
+            jid, pid, _dec_exc,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "photo_not_found", "photo_id": pid},
+        )
+    return Response(content=payload, media_type=media)
 
 
 # ─────────────────────────────────────────────────────────────────
