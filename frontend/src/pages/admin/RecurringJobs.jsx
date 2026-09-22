@@ -139,6 +139,20 @@ export default function RecurringJobs() {
     service: "", income: "",
   });
   const [catLoading, setCatLoading] = useState(false);
+  // Phase P33 · Feb-2026 — Property-selector state for the
+  // create/edit modal. Mirrors the Least-Click pattern from
+  // JobNew.jsx: fetch active properties on customer pick, then
+  // branch on count:
+  //   * 0  → inline "no addresses on file" warning; Save disabled.
+  //   * 1  → auto-select the one property + read-only label; no
+  //          dropdown affordance.
+  //   * 2+ → required <select>; Save disabled until a pick.
+  // ``propsLoading`` gates a subtle "Loading…" caption so the
+  // absence of the picker on a slow customer switch doesn't read
+  // as "no properties on this customer".
+  const [customerProperties, setCustomerProperties] = useState([]);
+  const [propsLoading, setPropsLoading] = useState(false);
+  const previousModalCustomerRef = useRef(null);
   // Phase R2 · Feb-2026 — customer search.  Client-side filter.
   //   ``searchInput``: what the user is typing (unthrottled).
   //   ``searchQuery``: debounced value (250ms) used for filtering.
@@ -355,6 +369,11 @@ export default function RecurringJobs() {
     setEditing({ frequency: "weekly", day_of_week: 0, start_date: todayIso(), price_cents: 12000, active: true, is_active: false, notes: "", recurrence_never_ends: true, end_date: null });
     setPriceStr("120.00");
     setPriceErr("");
+    // Phase P33 · Reset property state on modal open — the ref
+    // guards against a stale customer's property list surviving
+    // between modal sessions.
+    setCustomerProperties([]);
+    previousModalCustomerRef.current = null;
     setModalOpen(true);
   };
   const openEdit = (row) => {
@@ -366,8 +385,93 @@ export default function RecurringJobs() {
     setEditing({ ...row, recurrence_never_ends: neverEnds });
     setPriceStr(((row.price_cents || 0) / 100).toFixed(2));
     setPriceErr("");
+    // Phase P33 · Reset property list and force a refetch by
+    // clearing the previous-customer sentinel. The effect below
+    // sees the state transition (null → row.customer_id) and
+    // hydrates.
+    setCustomerProperties([]);
+    previousModalCustomerRef.current = null;
     setModalOpen(true);
   };
+
+  // Phase P33 · Feb-2026 — Fetch active properties for the modal's
+  // selected customer. Mirrors the JobNew.jsx pattern (see
+  // ``frontend/src/pages/jobs/JobNew.jsx`` lines 155-191): every
+  // customer switch invalidates the previous ``property_id`` so a
+  // stale pick from the outgoing customer can't leak into the new
+  // payload. Auto-select fires ONLY in the 1-property case;
+  // multi-property customers get a required <select>.
+  useEffect(() => {
+    if (!modalOpen || !editing) {
+      setCustomerProperties([]);
+      previousModalCustomerRef.current = null;
+      return;
+    }
+    const cid = editing.customer_id || "";
+    // Detect a customer switch (vs. initial hydrate on modal open
+    // where the ref is null). On switch, null the property_id
+    // BEFORE the fetch so the 0/1/2+ auto-select re-runs cleanly.
+    if (previousModalCustomerRef.current !== null
+        && previousModalCustomerRef.current !== cid) {
+      setEditing((x) => (x ? { ...x, property_id: null } : x));
+    }
+    previousModalCustomerRef.current = cid;
+    if (!cid) {
+      setCustomerProperties([]);
+      return;
+    }
+    let cancelled = false;
+    setPropsLoading(true);
+    api.get(`/customers/${cid}/properties`)
+      .then((rows) => {
+        if (cancelled) return;
+        const active = (Array.isArray(rows) ? rows : [])
+          .filter((r) => r && r.active !== false);
+        setCustomerProperties(active);
+        // Auto-fill on the 1-property case so the save can proceed
+        // without a click. Preserve an existing property_id only
+        // when the new customer actually owns it (edit-mode
+        // hydration of an already-set property_id).
+        setEditing((x) => {
+          if (!x) return x;
+          if (x.property_id
+              && active.some((p) => p.id === x.property_id)) {
+            return x;
+          }
+          if (active.length === 1) {
+            return { ...x, property_id: active[0].id };
+          }
+          return { ...x, property_id: null };
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerProperties([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPropsLoading(false);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, editing?.customer_id]);
+
+  // Phase P33 · Feb-2026 — Save-gate flag derived from the
+  // property-selector state. ``true`` means the current
+  // (customer, property) pair is well-formed enough to save:
+  //   * No customer picked yet → true (the customer-required gate
+  //     on Save already blocks this — this hook doesn't
+  //     double-gate).
+  //   * Customer picked, 0 properties → false (Save disabled with
+  //     "no addresses on file" warning).
+  //   * Customer picked, 1 property → true (auto-selected).
+  //   * Customer picked, 2+ properties, property_id set → true.
+  //   * Customer picked, 2+ properties, property_id unset → false.
+  const propertyGateOk = (() => {
+    if (!editing?.customer_id) return true;
+    if (propsLoading) return true;   // don't disable while loading
+    if (customerProperties.length === 0) return false;
+    if (customerProperties.length === 1) return true;
+    return !!editing.property_id;
+  })();
 
   // Phase H9 · Feb-2026 — Accept optional leading "$", 0-5 digit
   // integer part, optional decimal with up to 2 fraction digits.
@@ -1308,6 +1412,91 @@ export default function RecurringJobs() {
                   />
                 </div>
               </label>
+              {/* Phase P33 · Feb-2026 — Property selector.
+                    Least-Click semantics mirror JobNew.jsx: 0-property
+                    warning + Save disabled, 1-property auto-select
+                    with read-only label, 2+ required <select>. The
+                    save-gate is on ``propertyGateOk`` (derived
+                    upstream); this block is pure render. */}
+              {editing.customer_id ? (
+                <div data-testid="recurring-jobs-property-block">
+                  {propsLoading ? (
+                    <div className="text-xs" style={{ color: colors.muted }}
+                          data-testid="recurring-jobs-property-loading">
+                      Loading properties…
+                    </div>
+                  ) : customerProperties.length === 0 ? (
+                    <div className="rounded-lg px-3 py-2 text-xs"
+                          style={{
+                            backgroundColor: colors.warningBg || "#FEF3C7",
+                            color: colors.warningFg || "#92400E",
+                            border: `1px solid ${colors.warningBorder || "#FCD34D"}`,
+                          }}
+                          data-testid="recurring-jobs-property-empty-warning">
+                      This customer has no addresses on file. Add an
+                      address to the customer before scheduling
+                      recurring service.
+                    </div>
+                  ) : customerProperties.length === 1 ? (
+                    <label className="text-xs font-semibold"
+                             style={{ color: colors.muted }}>
+                      Property
+                      <div className="mt-1 rounded-lg px-3 py-2 text-sm"
+                             style={{
+                               backgroundColor: colors.surfaceMuted || colors.surface,
+                               color: colors.onSurface,
+                               border: `1px solid ${colors.border}`,
+                             }}
+                             data-testid="recurring-jobs-property-single">
+                        {(customerProperties[0]?.label
+                            || customerProperties[0]?.nickname
+                            || "Property")
+                          + (customerProperties[0]?.address?.line1
+                              ? ` — ${customerProperties[0].address.line1}`
+                              : "")}
+                      </div>
+                    </label>
+                  ) : (
+                    <label className="text-xs font-semibold"
+                             style={{ color: colors.muted }}>
+                      Property *
+                      <div className="mt-1">
+                        <select
+                          value={editing.property_id || ""}
+                          onChange={(e) => setEditing((x) => ({
+                            ...x, property_id: e.target.value || null,
+                          }))}
+                          className="w-full px-3 py-2 rounded-lg outline-none text-sm"
+                          style={{
+                            backgroundColor: colors.surface,
+                            color: colors.onSurface,
+                            border: `1px solid ${colors.border}`,
+                          }}
+                          data-testid="recurring-jobs-property-select"
+                        >
+                          <option value="">Choose a property…</option>
+                          {customerProperties.map((p) => (
+                            <option key={p.id} value={p.id}
+                                      data-testid={`recurring-jobs-property-option-${p.id}`}>
+                              {(p.label || p.nickname || "Property")
+                                + (p.address?.line1
+                                    ? ` — ${p.address.line1}`
+                                    : "")}
+                            </option>
+                          ))}
+                        </select>
+                        {!editing.property_id ? (
+                          <div className="text-xs mt-1"
+                                 style={{ color: colors.danger }}
+                                 data-testid="recurring-jobs-property-required">
+                            This customer has {customerProperties.length} properties — pick one.
+                          </div>
+                        ) : null}
+                      </div>
+                    </label>
+                  )}
+                </div>
+              ) : null}
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Service type
                 {/* Phase P16 · Feb-2026 — searchable combobox backed
                      by ``/api/master-services``. Auto-fills
@@ -1700,7 +1889,7 @@ export default function RecurringJobs() {
                       className="text-sm font-semibold px-3 py-1.5 rounded"
                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                       data-testid="recurring-jobs-cancel">Cancel</button>
-              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type || !!priceErr}
+              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type || !!priceErr || !propertyGateOk}
                       className="text-sm font-bold px-4 py-1.5 rounded"
                       style={{ background: colors.brand, color: "#fff", border: 0, opacity: (!editing.customer_id || !editing.service_type || !!priceErr) ? 0.5 : 1 }}
                       data-testid="recurring-jobs-save">

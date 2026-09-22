@@ -151,6 +151,16 @@ class RecurringJobPatch(BaseModel):
     # switch above).
     service_category_id: Optional[str] = None
     income_category_id: Optional[str] = None
+    # Phase P33 · Feb-2026 — property_id passthrough on PATCH.
+    # When present + non-empty, the handler re-validates against
+    # ``validate_property_belongs_to_customer`` before persisting
+    # (guards against a stale FE that saved a property from the
+    # previous customer's list, or a cross-customer property swap).
+    property_id: Optional[str] = None
+    # Phase P33 · Feb-2026 — customer_id passthrough on PATCH so
+    # the two ids can be re-validated together when either changes.
+    # Absent (unset) → no change.
+    customer_id: Optional[str] = None
 
 
 async def _resolve_crew_ref(tenant_id: str, crew_id: Optional[str]
@@ -557,6 +567,20 @@ async def create_recurring(body: RecurringJobIn,
     )
     if not cust:
         raise HTTPException(404, "customer not found")
+    # Phase P33 · Feb-2026 — Property validator ladder. Runs AFTER
+    # the customer-exists check so a bogus ``customer_id`` doesn't
+    # 400 on "no properties on this customer" (misleading — the
+    # customer doesn't exist). Auto-fills ``property_id`` when the
+    # customer has exactly one active property AND the payload
+    # omitted it (defense in depth against a stale FE that missed
+    # the client-side auto-select).
+    from services.customer_properties import (
+        resolve_recurring_property_payload,
+    )
+    body.property_id = await resolve_recurring_property_payload(
+        tenant["id"], body.customer_id, body.property_id,
+        context="create_recurring",
+    )
     # Phase H9 · Resolve crew name for the denorm (UI reads it
     # to avoid a follow-up crew lookup).
     crew = await _resolve_crew_ref(tenant["id"], body.crew_id)
@@ -850,7 +874,12 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
     # for ``income_category_id`` / ``service_category_id`` so an
     # explicit clear (empty-string PATCH) actually writes ``None``.
     _ASSIGN_KEYS = {"assigned_tech_id", "crew_id"}
-    _CLEARABLE = _ASSIGN_KEYS | set(_CATEGORY_KEYS.keys())
+    # Phase P33 · Feb-2026 — property_id must survive as explicit
+    # None in the ``$set`` so the resolve-ladder's auto-clear (zero
+    # properties + legacy allow-through) actually erases a stale id
+    # rather than being silently dropped by the ``v is not None``
+    # filter below.
+    _CLEARABLE = _ASSIGN_KEYS | set(_CATEGORY_KEYS.keys()) | {"property_id"}
     updates: Dict[str, Any] = {
         k: v for k, v in raw.items()
         if v is not None or k == "active" or k == "is_active" or k in _CLEARABLE
@@ -861,6 +890,39 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
         assigned_tech_id=updates.get("assigned_tech_id"),
         crew_id=updates.get("crew_id"),
     )
+    # Phase P33 · Feb-2026 — Property validator on PATCH. Fires when
+    # either ``customer_id`` or ``property_id`` is in the patch set,
+    # so a legitimate "swap the property to a new one" AND a
+    # "move the template to a different customer" both re-validate
+    # ownership. The validator runs against the FINAL pair — the
+    # incoming ``customer_id`` if present, otherwise the pre-image's
+    # ``customer_id``.
+    _touches_property = ("property_id" in updates
+                          or "customer_id" in updates)
+    if _touches_property:
+        _existing = await db.recurring_job_templates.find_one(
+            {"id": tpl_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "customer_id": 1, "property_id": 1},
+        )
+        if not _existing:
+            raise HTTPException(404, "template not found")
+        _effective_cid = updates.get("customer_id") or _existing.get("customer_id")
+        _effective_pid = (
+            updates["property_id"] if "property_id" in updates
+            else _existing.get("property_id")
+        )
+        if _effective_cid:
+            from services.customer_properties import (
+                resolve_recurring_property_payload,
+            )
+            _final_pid = await resolve_recurring_property_payload(
+                tenant["id"], _effective_cid, _effective_pid,
+                context="patch_recurring",
+            )
+            # Stamp the resolved (possibly auto-filled) id back on
+            # the write set so the DB doc reflects the validator's
+            # normalization.
+            updates["property_id"] = _final_pid
     # If ``crew_id`` is being SET (non-None), resolve it and stamp
     # the denorm name. If cleared to None, drop the denorm too.
     if "crew_id" in updates:

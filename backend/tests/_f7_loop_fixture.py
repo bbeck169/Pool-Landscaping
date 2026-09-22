@@ -90,6 +90,7 @@ _REBOUND_MODULES = (
     "routers.weekly_digest",
     "routers.auth",
     "services.user_tenants",
+    "services.customer_properties",
     "server",
     "services.auto_invoice",
     "services.intelligence.alerts",
