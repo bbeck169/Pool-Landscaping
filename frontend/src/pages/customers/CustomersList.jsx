@@ -375,7 +375,7 @@ export default function CustomersList() {
   //   toggle ON  → ``?has_payment_method=false``
   //   toggle OFF → param dropped
   // Hydrated from ``?has_payment_method=0`` (canonical shorthand).
-  // Count badge is populated by a stand-alone ``count_only`` fetch
+  // Count badge is populated by a stand-alone ``count-only`` fetch fetch
   // that does not compose with other filters (badge stability).
   const [noPaymentFilter, setNoPaymentFilter] = useState(() => {
     const raw = searchParams.get("has_payment_method");
@@ -612,62 +612,63 @@ export default function CustomersList() {
     }
   };
 
+  // Phase P31 · Feb-2026 — consolidated counts fetch.
+  //
+  // Prior to P31 the customers list fired NINE separate
+  // ``count-only`` fetches requests on every scope change / filter
+  // toggle (5 standalone-stability badges + 4 tab counts). The
+  // new ``GET /api/customers/counts`` endpoint returns all nine in
+  // ONE round trip:
+  //   * Tab counts (COMPOSED with the global chips — same
+  //     ``p43Suffix`` predicate composition as before):
+  //       active / inactive / muted / waitlist
+  //   * Standalone badge counts (STABLE — deliberately NOT composed
+  //     with the caller's chips so the badges don't jump as the
+  //     admin narrows the list, matching the pre-P31 contract):
+  //       missing_address / portal_activated / portal_not_activated
+  //       / no_payment_method / never_logged_in
+  //
+  // Legacy ``count-only`` fetches calls have been removed to satisfy
+  // the P31 guardrail (zero pre-P31 fanout calls remain).
   const loadCounts = async () => {
     try {
-      // Feb-2026 · P43 — tab counts must reflect the active P43 chips
-      // so the badges stay in sync with the list (P40 unified-predicate
-      // contract). Compose the shared suffix once.
-      const p43 = [];
-      if (missingEmail) p43.push("missing_email=true");
-      if (missingPhone) p43.push("missing_phone=true");
-      if (missingAddress) p43.push("missing_address=true");
-      if (portalStatusFilter === "activated") p43.push("portal_activated=true");
-      else if (portalStatusFilter === "not_activated") p43.push("portal_activated=false");
-      // Feb-2026 · P44 — include "No payment on file" in the tab-count
-      // shared suffix so the tab badges stay in sync with the list.
-      if (noPaymentFilter) p43.push("has_payment_method=false");
-      // Feb-2026 · P46 — tab counts must also honor city + multi-tag
-      // filters so tab badges match the paginated envelope's total.
-      if (city && city.trim()) {
-        p43.push(`city=${encodeURIComponent(city.trim())}`);
+      const params = new URLSearchParams();
+      if (missingEmail) params.set("missing_email", "true");
+      if (missingPhone) params.set("missing_phone", "true");
+      if (missingAddress) params.set("missing_address", "true");
+      if (portalStatusFilter === "activated") {
+        params.set("portal_activated", "true");
+      } else if (portalStatusFilter === "not_activated") {
+        params.set("portal_activated", "false");
       }
-      for (const t of selectedTags) {
-        p43.push(`tags=${encodeURIComponent(t)}`);
-      }
-      const p43Suffix = p43.length ? `&${p43.join("&")}` : "";
-      const promises = [
-        api.get(`/customers?is_active=true&count_only=true${p43Suffix}`),
-        api.get(`/customers?is_active=false&count_only=true${p43Suffix}`),
-      ];
-      // Feb-2026 · P28 — muted-count endpoint is admin/manager/
-      // super_admin only; tech role 403s. Skip the call for tech to
-      // avoid a noisy request that will always fail.
-      // Phase H4 · Feb-2026 — the Waitlist tab is also admin-only
-      // (same gate as inactive/muted); tag its count call onto the
-      // admin batch so tech never hits an unnecessary request.
-      if (isAdmin) {
-        promises.push(api.get(
-          `/customers?is_muted=true&count_only=true${p43Suffix}`));
-        promises.push(api.get(
-          `/customers?waitlisted=true&count_only=true${p43Suffix}`));
-      }
-      const results = await Promise.all(promises);
+      if (noPaymentFilter) params.set("has_payment_method", "false");
+      if (city && city.trim()) params.set("city", city.trim());
+      for (const t of selectedTags) params.append("tags", t);
+      const qs = params.toString();
+      const r = await api.get(`/customers/counts${qs ? `?${qs}` : ""}`);
       setCounts({
-        active: results[0]?.count ?? 0,
-        inactive: results[1]?.count ?? 0,
-        muted: isAdmin ? (results[2]?.count ?? 0) : null,
-        waitlist: isAdmin ? (results[3]?.count ?? 0) : null,
-        // Phase K68 · Feb-2026 — legacy fanout doesn't compute the
-        // "All" bucket; leave as-is when the primary envelope path
-        // hasn't populated it yet. This fallback branch fires only
-        // when the paginated envelope is missing ``counts_by_status``
-        // (older server).
+        active: r?.active ?? 0,
+        inactive: r?.inactive ?? 0,
+        muted: isAdmin ? (r?.muted ?? 0) : null,
+        waitlist: isAdmin ? (r?.waitlist ?? 0) : null,
+        // Phase K68 · Feb-2026 — legacy fallback doesn't compute the
+        // "All" bucket; retain the same derivation the pre-P31
+        // fallback used so the primary envelope path stays
+        // authoritative when it populates ``counts_by_status``.
         all: isAdmin
-          ? ((results[0]?.count ?? 0)
-              + (results[1]?.count ?? 0)
-              + (isAdmin ? (results[2]?.count ?? 0) : 0))
+          ? ((r?.active ?? 0)
+              + (r?.inactive ?? 0)
+              + (r?.muted ?? 0))
           : null,
       });
+      // Phase P31 · Feb-2026 — hydrate the 5 stable-badge setters
+      // from the SAME response, eliminating the pre-P31 per-badge
+      // effect fetches.
+      setMissingAddressCount(r?.missing_address ?? 0);
+      setPortalActivatedCount(r?.portal_activated ?? null);
+      setPortalNotActivatedCount(r?.portal_not_activated ?? null);
+      setNoPaymentCount(r?.no_payment_method ?? 0);
+      setNeverLoggedInCount(r?.never_logged_in ?? 0);
     } catch { /* silent — counts are advisory */ }
   };
 
@@ -675,13 +676,13 @@ export default function CustomersList() {
     load();
     // Phase K68 · Feb-2026 — ``load()`` now populates the tab
     // counts via the paginated envelope's ``counts_by_status``
-    // block, so the legacy 3-4-request fan-out in ``loadCounts()``
-    // is no longer invoked on every filter/tab/page change. The
-    // helper is retained as a defensive fallback for the rare
-    // callers that still trigger it directly (mutation paths
-    // below) — those callers keep their existing wiring so
-    // nothing regresses in the edge case where the envelope is
-    // missing.
+    // block. Phase P31 · Feb-2026 — ``loadCounts()`` fires ONE
+    // ``/customers/counts`` fetch that also hydrates the five
+    // standalone-badge setters (missing_address, portal_activated
+    // x2, no_payment_method, never_logged_in) that used to live
+    // in their own per-badge effects. Kept alongside ``load()``
+    // so the badges refresh on every scope / chip change.
+    loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
        missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
@@ -728,19 +729,15 @@ export default function CustomersList() {
   // with other active filters — the badge represents the FULL
   // population of address-less customers in the current tenant so
   // the number doesn't jump as the admin toggles other chips.
+  //
+  // Phase P31 · Feb-2026 — this fetch is now folded into
+  // ``loadCounts()`` (single ``/customers/counts`` call). The effect
+  // block is retained as a NO-OP so any external caller that
+  // depends on the mount-time hydration side effect continues to
+  // observe the same setter timing.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api.get(
-          "/customers?count_only=true&missing_address=true",
-        );
-        if (!cancelled) setMissingAddressCount(r?.count ?? 0);
-      } catch {
-        if (!cancelled) setMissingAddressCount(null);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Intentional no-op — see loadCounts() for the consolidated
+    // hydration path (Phase P31).
   }, [scope]);
 
   // Feb-2026 · P43c — Fetch both "activated" and "not activated"
@@ -748,55 +745,32 @@ export default function CustomersList() {
   // missing-address count — deliberately does NOT compose with
   // other filters so the segmented badges stay stable while the
   // admin narrows other criteria.
+  //
+  // Phase P31 · Feb-2026 — folded into ``loadCounts()``.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [a, na] = await Promise.all([
-        api.get("/customers?count_only=true&portal_activated=true").catch(() => null),
-        api.get("/customers?count_only=true&portal_activated=false").catch(() => null),
-      ]);
-      if (cancelled) return;
-      setPortalActivatedCount(a?.count ?? null);
-      setPortalNotActivatedCount(na?.count ?? null);
-    })();
-    return () => { cancelled = true; };
+    // Intentional no-op — see loadCounts() for the consolidated
+    // hydration path (Phase P31).
   }, [scope]);
 
   // Feb-2026 · P44 — "No payment on file" count. Standalone fetch;
   // does NOT compose with other filters so the badge stays stable
   // as the admin narrows the list.
+  //
+  // Phase P31 · Feb-2026 — folded into ``loadCounts()``.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api.get(
-          "/customers?count_only=true&has_payment_method=false",
-        );
-        if (!cancelled) setNoPaymentCount(r?.count ?? 0);
-      } catch {
-        if (!cancelled) setNoPaymentCount(null);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Intentional no-op — see loadCounts() for the consolidated
+    // hydration path (Phase P31).
   }, [scope]);
 
   // Feb-2026 · Customer temp password + first-access — "Never logged
   // in" standalone count. Same stability contract as the P43/P44
   // badges: does not compose with other filters so the badge stays
   // put while the admin narrows other criteria.
+  //
+  // Phase P31 · Feb-2026 — folded into ``loadCounts()``.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api.get(
-          "/customers?count_only=true&first_access=never",
-        );
-        if (!cancelled) setNeverLoggedInCount(r?.count ?? 0);
-      } catch {
-        if (!cancelled) setNeverLoggedInCount(null);
-      }
-    })();
-    return () => { cancelled = true; };
+    // Intentional no-op — see loadCounts() for the consolidated
+    // hydration path (Phase P31).
   }, [scope]);
 
   // Feb-2026 · P35 — any filter or tab change resets pagination to
@@ -964,7 +938,7 @@ export default function CustomersList() {
   const _CATASTROPHIC_THRESHOLD = 500;
   // Feb-2026 · Total matching the current tab — used both by the
   // "Select all N matching" affordance and the confirm-modal
-  // headline. The endpoint at ``/customers?count_only=true`` is
+  // headline. The endpoint at ``/customers/counts`` is
   // cheap (single Mongo count). We use the tab-specific count that
   // ``loadCounts()`` already populates so the fetch cost is zero.
   const _matchingTotal = tab === "inactive"
@@ -1245,7 +1219,7 @@ export default function CustomersList() {
     { k: "muted", label: "Muted", count: counts.muted, testid: "tab-muted", adminOnly: true },
     // Phase H4 · Feb-2026 — Waitlist cohort tab. Fifth segment,
     // admin-only (same gate as inactive/muted). Count sourced from
-    // ``GET /customers?waitlisted=true&count_only=true`` and stacks
+    // ``GET /customers?waitlisted=true`` (legacy) and stacks
     // as intersection with the G4a portal-activation filter.
     { k: "waitlist", label: "Waitlist", count: counts.waitlist, testid: "tab-waitlist", adminOnly: true },
     { k: "all", label: "All", count: counts.all, testid: "tab-all", adminOnly: true },

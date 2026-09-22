@@ -484,6 +484,192 @@ class CustomerListPage(BaseModel):
     counts_by_status: Optional[Dict[str, int]] = None
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase P31 · Feb-2026 — Consolidated customer counts endpoint.
+#
+# Replaces 9 separate ``count_only=true`` fanout calls the customers
+# list page previously fired on every scope change + filter toggle.
+# One endpoint, one round trip, nine numbers.
+#
+# Response envelope
+# -----------------
+# * Tab counts (composed with the caller-provided global chips —
+#   the same ``p43Suffix`` the FE assembles from
+#   ``missing_email`` / ``missing_phone`` / ``missing_address`` /
+#   ``portal_activated`` / ``has_payment_method`` / ``city`` /
+#   ``tags``):
+#     ``active`` / ``inactive`` / ``muted`` / ``waitlist``
+# * Standalone badge counts (STABLE — deliberately NOT composed
+#   with the caller's chips so the badges don't jump as the admin
+#   narrows the list, matching the pre-P31 "stability" contract
+#   for each of these five badges):
+#     ``missing_address`` / ``portal_activated`` /
+#     ``portal_not_activated`` / ``no_payment_method`` /
+#     ``never_logged_in``
+#
+# The ``muted`` / ``waitlist`` fields are admin-only (matches the
+# per-count call gates in the pre-P31 FE) — returned as ``None``
+# for tech/customer callers so the FE doesn't need a second call
+# to fetch them.
+#
+# All 9 counts execute via ``asyncio.gather`` so wall-clock ≈
+# max(individual count query), not sum. Reuses the exact predicate
+# construction from ``list_customers(count_only=True)`` (same
+# module, same shared helpers) so byte-for-byte parity with the
+# 9-call fanout is guaranteed.
+# ═════════════════════════════════════════════════════════════════════
+class CustomerCountsResponse(BaseModel):
+    active: int
+    inactive: int
+    muted: Optional[int] = None
+    waitlist: Optional[int] = None
+    missing_address: int
+    portal_activated: int
+    portal_not_activated: int
+    no_payment_method: int
+    never_logged_in: int
+
+
+@router.get("/customers/counts", response_model=CustomerCountsResponse,
+              summary="Consolidated customer counts",
+              tags=["customers"],
+              operation_id="customers.counts")
+async def customer_counts(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+    # Global chips — apply to the tab counts, ignored by the
+    # standalone badges (per the pre-P31 stability contract).
+    missing_email: Optional[bool] = False,
+    missing_phone: Optional[bool] = False,
+    missing_address: Optional[bool] = False,
+    portal_activated: Optional[bool] = None,
+    has_payment_method: Optional[bool] = None,
+    city: Optional[str] = None,
+    tags: Optional[List[str]] = Query(None),
+):
+    """Return the nine counts the Customers list page displays, in
+    a single envelope. Replaces the pre-P31 nine-call ``count_only``
+    fanout.
+
+    Delegates each count to ``list_customers(count_only=True, ...)``
+    with the appropriate flag combination so the predicate logic
+    is DRY — a future filter tweak in ``list_customers`` propagates
+    automatically. All nine counts fire concurrently via
+    ``asyncio.gather``.
+    """
+    import asyncio as _asyncio
+    from fastapi.params import Query as _QueryParam
+    # Direct-callers (tests bypassing FastAPI's DI) receive the
+    # ``Query(None)`` sentinel as the default rather than ``None``.
+    # Coerce back so the downstream ``list_customers`` doesn't
+    # inherit a Query object where it expects a scalar / list.
+    if isinstance(tags, _QueryParam):
+        tags = None
+    if isinstance(city, _QueryParam):
+        city = None
+    role = (user.get("role") or "").lower()
+    is_admin = role in ("admin", "super_admin", "manager", "owner")
+
+    async def _one(**overrides):
+        """Invoke the shared list-customers count branch with the
+        caller's global chips + a per-count override. Returns the
+        integer count (never raises — a permission failure downstream
+        would surface as 403, which we let bubble)."""
+        base = {
+            "user": user, "tenant": tenant,
+            # Explicit ``None`` defaults for every list_customers
+            # param that isn't part of the caller's chip surface —
+            # keeps direct-call behavior identical to the FastAPI
+            # HTTP path.
+            "search": None, "tag": None, "tags": tags,
+            "city": city,
+            "waitlisted": None, "unscheduled": None,
+            "is_active": None, "missing_card": None,
+            "missing_email": missing_email,
+            "missing_phone": missing_phone,
+            "missing_address": missing_address,
+            "portal_activated": portal_activated,
+            "portal_invited": None,
+            "first_access": None,
+            "portal_status": None,
+            "is_muted": None,
+            "has_payment_method": has_payment_method,
+            "count_only": True,
+            "include_deleted": False,
+            "include_merged": False,
+            "page": None, "page_size": None,
+            "sort": "created_desc",
+        }
+        base.update(overrides)
+        res = await list_customers(**base)
+        # ``count_only=True`` branch returns ``{"count": N}`` (dict)
+        # OR a ``CustomerListCount`` model — coerce to int.
+        if hasattr(res, "count"):
+            return int(res.count)
+        return int((res or {}).get("count", 0))
+
+    async def _stable(**overrides):
+        """Standalone-badge count — same as ``_one`` but ignores the
+        caller's global chips so the badge number stays stable as
+        the admin narrows the list (pre-P31 stability contract)."""
+        base = {
+            "user": user, "tenant": tenant,
+            "search": None, "tag": None, "tags": None,
+            "city": None,
+            "waitlisted": None, "unscheduled": None,
+            "is_active": None, "missing_card": None,
+            "missing_email": False, "missing_phone": False,
+            "missing_address": False,
+            "portal_activated": None,
+            "portal_invited": None,
+            "first_access": None,
+            "portal_status": None,
+            "is_muted": None,
+            "has_payment_method": None,
+            "count_only": True,
+            "include_deleted": False,
+            "include_merged": False,
+            "page": None, "page_size": None,
+            "sort": "created_desc",
+        }
+        base.update(overrides)
+        res = await list_customers(**base)
+        if hasattr(res, "count"):
+            return int(res.count)
+        return int((res or {}).get("count", 0))
+
+    # Kick off all counts concurrently. Non-admin skips muted +
+    # waitlist (which 403 for tech in the underlying handler).
+    tasks = {
+        "active": _one(is_active=True),
+        "inactive": _one(is_active=False),
+        "missing_address": _stable(missing_address=True),
+        "portal_activated": _stable(portal_activated=True),
+        "portal_not_activated": _stable(portal_activated=False),
+        "no_payment_method": _stable(has_payment_method=False),
+        "never_logged_in": _stable(first_access="never"),
+    }
+    if is_admin:
+        tasks["muted"] = _one(is_muted=True)
+        tasks["waitlist"] = _one(waitlisted=True)
+
+    keys = list(tasks.keys())
+    values = await _asyncio.gather(*tasks.values())
+    payload = dict(zip(keys, values))
+
+    return CustomerCountsResponse(
+        active=payload["active"],
+        inactive=payload["inactive"],
+        muted=payload.get("muted"),
+        waitlist=payload.get("waitlist"),
+        missing_address=payload["missing_address"],
+        portal_activated=payload["portal_activated"],
+        portal_not_activated=payload["portal_not_activated"],
+        no_payment_method=payload["no_payment_method"],
+        never_logged_in=payload["never_logged_in"],
+    )
+
+
 @router.get("/customers",
     response_model=Union[List[CustomerListItem], CustomerListCount,
                             CustomerListPage],
@@ -1886,8 +2072,27 @@ async def get_customer(cid: str,
             )
         raise HTTPException(404, "Customer not found")
     from utils import not_deleted_filter as _nd_cust
+    # Phase P31 · Feb-2026 — apply ``JOBS_LIST_PROJECTION`` at Mongo
+    # query time so photo base64 blobs never cross the wire between
+    # Mongo and the API process. The historic ``{"_id": 0}`` shape
+    # would pull every ``photos[].data`` (base64, ~500KB per photo)
+    # for every job on the customer's timeline — a customer with 50
+    # completed jobs × 5 photos each shipped ~125 MB per profile
+    # load. Post-fetch ``slim_photos_on_rows`` still emits
+    # ``photo_count`` + ``photo_ids`` from the surviving photo
+    # sub-docs (id / label / created_at); the FE consumes only
+    # ``id`` / ``title`` / ``scheduled_date`` / ``technician_name``
+    # / ``status`` on this timeline surface (grep
+    # ``frontend/src/pages/customers/CustomerDetail.jsx`` lines
+    # 898-930), so the projection preserves every field the UI
+    # actually renders.
+    from services.jobs_slim_photos import (
+        JOBS_LIST_PROJECTION,
+        slim_photos_on_rows,
+    )
     jobs = await db.jobs.find(
-        {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()}, {"_id": 0}
+        {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()},
+        JOBS_LIST_PROJECTION,
     ).sort("scheduled_date", -1).to_list(200)
     # Feb-2026 · Slim-photos follow-up — the customer-detail embedded
     # jobs list previously shipped every job's full ``photos`` array
@@ -1900,7 +2105,6 @@ async def get_customer(cid: str,
     # takes no query params for its embedded lists — callers that
     # need full photos fetch ``GET /jobs/{id}`` per row.
     # See /app/memory/PERF_SLIM_PHOTOS_WORKSTREAM_AND_CUSTOMER.md.
-    from services.jobs_slim_photos import slim_photos_on_rows
     slim_photos_on_rows(jobs, include_photos=False)
     doc["jobs"] = jobs
     # Phase 12 · Feb 2026 — derive card-on-file fields at read time.

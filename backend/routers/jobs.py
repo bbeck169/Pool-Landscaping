@@ -18,6 +18,11 @@ from routers.tenants import get_current_tenant
 # jobs (crew_id set, technician_id null OR pointing at a teammate)
 # open for every member of the assigned crew. See services/authz.py.
 from services.authz import is_tech_authorized_on_job
+from services.geo_resolver import (
+    COORD_SOURCE_JOB,
+    COORD_SOURCE_CUSTOMER,
+    resolve_job_coordinates,
+)
 from models import (
     FieldReportUpdate, JobArriveIn, JobIn, JobUpdate,
     PhotoIn, ServiceIssueIn, ServiceRequestIn,
@@ -1241,59 +1246,68 @@ async def list_jobs(
     # skipped for role=customer and no coord fields are set.  This
     # ladder therefore only fires for admin / manager / technician.
     #
-    # Phase P26 · Feb-2026 — stamp a ``coord_source`` audit field on
-    # every enriched job so the FE map layer and downstream
-    # analytics can see the origin of each pin. Pre-P26 the K58
-    # ladder decided the source silently — a debug session had to
-    # re-derive it from the field priority. Values:
-    #   * ``"job"``      — from ``site_lat/lng`` OR ``latitude/
-    #                      longitude`` (rungs 1 + 2).
-    #   * ``"property"`` — from ``property.latitude/longitude`` (rung
-    #                      3). Preserved as a distinct source so the
-    #                      FE can render a subtle differ pin variant
-    #                      if it wants to signal "geocoded via
-    #                      property record, not the job itself".
-    #   * ``"customer"`` — from ``customer.service_lat/lng`` (rung
-    #                      4).
-    #   * ``None``       — no coords resolved; pin dropped.
+    # Phase P31 · Feb-2026 — Coord resolver ladder unified with
+    # ``services.geo_resolver.resolve_job_coordinates`` for parity
+    # with schedule.py + dispatch_board.py. The shared helper
+    # handles two rungs (job → customer); jobs.py preserves an
+    # extra ``property`` rung between them (its geocoded property
+    # coords are a higher-signal fallback than the customer's
+    # billing-address geocode).
+    #
+    # Priority (highest wins — first hit stops the ladder):
+    #   1. job.site_lat/lng OR job.latitude/longitude OR job.lat/lng
+    #      → shared helper, source="job"
+    #   2. property.latitude/longitude (or the flat lat/lng shape)
+    #      → inline, jobs.py-only rung, source="property"
+    #   3. customer.service_lat/lng → shared helper via ``cmap``,
+    #      source="customer"
+    #   4. Nothing resolves → (None, None, None); pin dropped.
+    #
+    # ``coord_source`` is stamped from the resolver output; the FE
+    # relies on the invariant ``coord_source is None ↔ location_lat
+    # is None`` to know whether to render a pin.
+    #
+    # Customers do not see this block — the ``else:`` branch above is
+    # skipped for role=customer and no coord fields are set. This
+    # ladder therefore only fires for admin / manager / technician.
     if user.get("role") != "customer":
+        # ``cmap`` was built upstream (line ~1128); it carries the
+        # tenant-scoped ``service_lat``/``service_lng`` projection
+        # the shared helper needs for the customer fallback.
         for d in docs:
-            # Preserve the pre-K58 baseline value (customer.service_lat
-            # already seeded into location_lat/lng above).
-            lat = d.get("location_lat")
-            lng = d.get("location_lng")
-            # Phase P26 · Feb-2026 — track which rung stamped the
-            # coord value. Baseline is "customer" (customer.service_
-            # lat/lng was seeded above); higher rungs upgrade the
-            # tag as they win.
-            _p26_source = "customer" if (lat is not None and lng is not None) else None
-            # Rung 1 — job.site_lat/lng.
-            site_lat = d.get("site_lat")
-            site_lng = d.get("site_lng")
-            if site_lat is not None and site_lng is not None:
-                lat = site_lat
-                lng = site_lng
-                _p26_source = "job"
-            # Rung 2 — job.latitude/longitude.
-            elif d.get("latitude") is not None and d.get("longitude") is not None:
-                lat = d.get("latitude")
-                lng = d.get("longitude")
-                _p26_source = "job"
-            # Rung 3 — property.latitude/longitude (or flat lat/lng
-            # shape as an inner fallback).
-            else:
+            # Rungs 1-3 via shared helper (job's own coords only —
+            # empty customer_lookup so the helper cannot fall to
+            # the customer rung yet, since we need to try the
+            # property rung between them).
+            lat, lng, source = resolve_job_coordinates(d, {})
+            # Rung 3 (jobs.py-specific) — property.latitude/longitude.
+            # Only tried when the job's own rungs didn't win.
+            if source is None:
                 pid = d.get("property_id")
                 p = pmap.get(pid) if pid else None
                 if p:
-                    p_lat = p.get("latitude") if p.get("latitude") is not None else p.get("lat")
-                    p_lng = p.get("longitude") if p.get("longitude") is not None else p.get("lng")
+                    p_lat = (
+                        p.get("latitude")
+                        if p.get("latitude") is not None
+                        else p.get("lat")
+                    )
+                    p_lng = (
+                        p.get("longitude")
+                        if p.get("longitude") is not None
+                        else p.get("lng")
+                    )
                     if p_lat is not None and p_lng is not None:
-                        lat = p_lat
-                        lng = p_lng
-                        _p26_source = "property"
-            # Rung 4 — customer.service_lat/lng.  Already seeded above;
-            # nothing to do here.
-            #
+                        try:
+                            lat = float(p_lat)
+                            lng = float(p_lng)
+                            source = "property"
+                        except (TypeError, ValueError):
+                            # Malformed property coord — fall through
+                            # to customer rung.
+                            pass
+            # Rung 4 via shared helper — customer.service_lat/lng.
+            if source is None:
+                lat, lng, source = resolve_job_coordinates(d, cmap)
             # Stamp resolved value under BOTH keys.  ``None`` is
             # preserved as ``None`` — no floats-of-null.  K58: dual-
             # key output for mobile shared-helper backfill.
@@ -1301,19 +1315,17 @@ async def list_jobs(
                 d["location_lat"] = float(lat) if lat is not None else None
                 d["location_lng"] = float(lng) if lng is not None else None
             except (TypeError, ValueError):
-                # Malformed coord data (string that isn't a number,
-                # etc.) — treat as absent.
+                # Malformed coord data — treat as absent.
                 d["location_lat"] = None
                 d["location_lng"] = None
-                _p26_source = None
+                source = None
             d["latitude"] = d["location_lat"]
             d["longitude"] = d["location_lng"]
-            # Phase P26 · Feb-2026 — coord_source audit field on the
-            # response. Absent-coords case (both keys None) also
-            # nulls out the source so a caller can rely on
+            # Absent-coords case (both keys None) also nulls out the
+            # source so a caller can rely on
             # ``coord_source is None`` ↔ ``lat is None``.
             d["coord_source"] = (
-                _p26_source if d["location_lat"] is not None else None
+                source if d["location_lat"] is not None else None
             )
     # Feb-2026 · Schedule notes surface — cap the free-text ``notes``
     # column at 500 chars on the wire and expose ``notes_truncated``
