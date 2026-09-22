@@ -422,7 +422,16 @@ async def list_workstream_jobs(
 
     if customer_id:
         q["customer_id"] = customer_id
-    q["status"] = effective_status
+    # Phase P27 · Feb-2026 — case-insensitive status match. The
+    # pre-P27 shape was ``q["status"] = "completed"`` (exact-match)
+    # which silently dropped any doc written with a
+    # ``"Completed"`` (title-case) or ``"COMPLETED"`` casing. Preview
+    # data currently only ships lowercase, but ops migrations +
+    # legacy CSV imports have written mixed cases historically.
+    # Regex anchors ``^`` and ``$`` are required — a bare
+    # ``completed`` substring would false-positive on
+    # ``completed_by_automation`` / ``completed_at`` legacy strings.
+    q["status"] = {"$regex": r"^completed$", "$options": "i"}
 
     if since or until:
         rng: Dict[str, str] = {}
@@ -541,12 +550,61 @@ async def list_workstream_jobs(
         for r in page:
             _project_job_for_tech(r)
 
+    # Phase P27 · Feb-2026 — explicit ``counts`` block so the FE
+    # tile doesn't need to re-derive from the paginated slice
+    # (``page``) — that would silently undercount by ``limit``
+    # once a tenant crosses the pagination boundary. Semantics:
+    #   * ``completed_count`` — every row this handler returned
+    #     (Workstream is completed-only, so this equals ``total``
+    #     for now; broken out as a distinct key so a future
+    #     multi-status Workstream doesn't shift the wire shape).
+    #   * ``total_count``     — total matching rows (pre-slice).
+    #   * ``services_count``  — rows whose ``service_type`` matches
+    #     the shared jobCategory ``_SERVICES_RX`` regex OR fell
+    #     through to the completed-service fallback (empty
+    #     ``service_type`` + status=completed).
+    #   * ``repairs_count``   — rows whose ``service_type`` matches
+    #     the ``_REPAIRS_RX`` regex. Repairs win on ambiguous
+    #     matches (a "pool repair" job counts as repair, not
+    #     service) — mirrors ``frontend/src/lib/jobCategory.js``.
+    #
+    # The FE STILL derives tile totals from the returned list
+    # (client-side ``computePillCounts``) — this ``counts`` block
+    # is a redundant sanity check + a hook for future analytics.
+    import re as _re
+    _SERVICES_RX = _re.compile(
+        r"(service|maintenance|cleaning|pool|landscap|inspection|"
+        r"weekly|monthly)",
+        _re.IGNORECASE,
+    )
+    _REPAIRS_RX = _re.compile(
+        r"(repair|fix|replace|install)", _re.IGNORECASE,
+    )
+    services_count = 0
+    repairs_count = 0
+    for r in rows:
+        st = str(r.get("service_type") or "")
+        if _REPAIRS_RX.search(st):
+            repairs_count += 1
+        elif _SERVICES_RX.search(st):
+            services_count += 1
+        elif (r.get("status") or "").lower() == "completed":
+            # Completed job with an idiosyncratic service_type — falls
+            # into services per the frontend classifier's rule #4.
+            services_count += 1
+
     return {
         "jobs": page,
         "total": total,
         "limit": limit,
         "offset": offset,
         "sort": sort,
+        "counts": {
+            "total_count": total,
+            "completed_count": total,
+            "services_count": services_count,
+            "repairs_count": repairs_count,
+        },
         "filters": {
             "since": since,
             "until": until,

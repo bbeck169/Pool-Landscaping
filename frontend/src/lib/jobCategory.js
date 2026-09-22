@@ -56,7 +56,6 @@ function _isCompleted(job) {
  */
 export function classifyJob(job) {
   const st = String((job && job.service_type) || "");
-  if (!st) return null;
   // Repair wins on ambiguous matches — see rule #3 above.
   if (_REPAIRS_RX.test(st)) return "repair";
   if (_SERVICES_RX.test(st)) return "service";
@@ -64,7 +63,17 @@ export function classifyJob(job) {
   // regex fall through to the Services bucket so finished work
   // doesn't disappear from the pill totals. Non-completed unmatched
   // jobs stay ``null`` (unchanged).
+  //
+  // Phase P27 · Feb-2026 — the completed-fallback check runs
+  // BEFORE the empty-string skip so a completed job whose
+  // ``service_type`` was mistakenly left blank (legacy CSV import,
+  // hand-created work order) still lands in Services. Pre-P27 the
+  // ``if (!st) return null;`` guard at the top short-circuited
+  // that path and silently dropped those rows from the pill total
+  // — the reported "some completed rows never make it into the
+  // tile total" symptom.
   if (_isCompleted(job)) return "service";
+  if (!st) return null;
   return null;
 }
 

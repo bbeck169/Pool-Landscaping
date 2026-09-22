@@ -1,3 +1,47 @@
+## Phase P27 — Workstream Tile Count Sync + Backend Completed Aggregation Fix — SHIPPED (Feb 2026)
+
+Symptom: `0/23 Services` tile could undercount because the backend's status filter was case-sensitive lowercase-exact, and the FE classifier dropped completed jobs with empty `service_type`. Fixed both.
+
+**Discovery**
+- **Backend:** `GET /api/workstream/jobs` (`routers/workstream.py:381`) — no separate summary endpoint exists. Tile counts derive from this single call. Pre-P27 shape: `q["status"] = effective_status` (lowercase exact-match) → silently dropped title-case `"Completed"` rows.
+- **Frontend:** `WorkstreamPage.jsx:546` already derives via `useMemo(() => computePillCounts(jobs), [jobs])` — client-side, no drift possible. Classifier lived in `frontend/src/lib/jobCategory.js`. Pre-P27 rule ordering was `if (!st) return null; ... if (_isCompleted(job)) return "service"` — the empty-string guard fired FIRST so completed jobs with idiosyncratic (blank) `service_type` were silently dropped from tile totals.
+- **Preview data check:** distinct `jobs.status` values on preview are all lowercase (62 `completed`, no title-case). Fix is defensive against legacy CSV imports + one historical migration that could ship title-case rows.
+
+**Item A · Backend (`routers/workstream.py`)**
+1. Case-insensitive match — `q["status"] = {"$regex": r"^completed$", "$options": "i"}`. Regex anchored to prevent false-positive on `completed_by_automation` legacy substrings.
+2. `not_deleted_filter()` spread already applied — retained (already handles missing-field case).
+3. Added explicit `counts` block to response:
+   ```json
+   "counts": {
+     "total_count":     10,
+     "completed_count": 10,
+     "services_count":  10,
+     "repairs_count":   0
+   }
+   ```
+   Semantics documented inline. Mirrors the frontend classifier (repairs wins on ambiguous; empty `service_type` + completed falls through to services).
+
+**Item B · Frontend (`src/lib/jobCategory.js`)**
+- Rule reordering: `_isCompleted(job)` fallback now runs BEFORE the empty-string skip so a completed row with blank `service_type` classifies as `"service"`. Rule #4 was already documented; only the ordering changed.
+- `WorkstreamPage.jsx` **unchanged** — its tile-derivation was already correct (`useMemo` over `jobs` state, no separate summary fetch).
+
+**Test counts** — 16 green (6 backend + 10 frontend):
+- `backend/tests/test_p27_workstream_completed_aggregation.py` (6) — case-insensitive completed match (5 seeded rows, mixed casings + soft-delete + pending), missing-status doc excluded, tenant isolation, `counts` block shape + math, source-lint against pre-P27 anti-pattern, source-lint that `not_deleted_filter()` is still applied.
+- `frontend/src/test/p27-workstream-tile-count-sync.test.jsx` (10) — 4 classifier specs (empty-service_type fallback, non-completed empty stays null, case-insensitive status, repairs wins ambiguous), 1 `computePillCounts` empty-rescue spec, 4 tile-sync specs (initial 5/23 render, filter chip drops 10 pending → 8/13, refetch pushes new row → increments, empty jobs → 0/0), 1 source-lint that `WorkstreamPage.jsx` has no `/workstream/summary` fetch AND uses `useMemo(() => computePillCounts(jobs), [jobs])`.
+
+**Ripple** — P25 (5/5) + P26 (20/20) + P27 (6/6) = 31/31 backend green. Adjacent workstream vitest suites (`workstream-status-ref-cleanup`, `k12-workstream-completed-column`, `workstream-bulk-actions`, `phase21-workstream-tab`, `workstream-today-default`) = 16/17 (1 pre-existing skipped). Backend restart clean; live curl shows new `counts` block on the response.
+
+**Tile copy note** — the tile string is `<remaining>/<total>` + label `SERVICES`, NOT the literal `"0/23 Services"`. On a completed-only feed with 23 total, `remaining` is 0 (all completed), so `0/23` renders. The label is `SERVICES` uppercase (`components/JobCountPill.jsx:65`). The pill contract is preserved verbatim — no visual/styling/copy change.
+
+**Files touched**
+- `backend/routers/workstream.py` — case-insensitive status regex + `counts` block on response.
+- `frontend/src/lib/jobCategory.js` — rule ordering fix for empty-service_type completed rows.
+- `backend/tests/test_p27_workstream_completed_aggregation.py` — 6 pytests (new).
+- `frontend/src/test/p27-workstream-tile-count-sync.test.jsx` — 10 vitest specs (new).
+
+---
+
+
 ## Phase P26 — Coord Fallback to Customer service_lat/lng + Geocoding Backfill Diagnostic — SHIPPED (Feb 2026)
 
 Map pins were missing on the schedule for jobs whose own `lat`/`lng` were null but the linked customer had `service_lat`/`service_lng` populated. Fix: shared serialization-time resolver + audit field.
