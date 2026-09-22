@@ -102,6 +102,44 @@ async def _jobs_tenant_scheduled_start_index() -> None:
         raise
 
 
+async def _resend_webhook_events_dedup_index() -> None:
+    """Phase P36.1 · Feb-2026 — unique partial index on
+    ``resend_webhook_events.svix_id``.
+
+    Idempotency guard for the Resend webhook: Resend retries a
+    signed event with the same ``svix-id`` on network hiccups /
+    5xx responses / at-least-once delivery, so an unindexed insert
+    would create duplicate rows and (worse) double-apply the
+    ``email_outbox.latest_status`` update. This partial index only
+    covers rows that carry a non-null ``svix_id`` so the pre-P36.1
+    backfill window doesn't blow up: legacy rows written before the
+    handler started capturing the header have no ``svix_id`` and the
+    partial filter skips them.
+
+    Background build so a live prod rollout doesn't block writes.
+    Named ``resend_webhook_events_dedup_bg`` for grep-ability.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.resend_webhook_events.create_indexes([
+            IndexModel(
+                [("svix_id", 1)],
+                name="resend_webhook_events_dedup_bg",
+                unique=True,
+                background=True,
+                partialFilterExpression={
+                    "svix_id": {"$type": "string"},
+                },
+            ),
+        ])
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
+
 async def _customers_2dsphere() -> None:
     """Inline customers.service_location 2dsphere (originally in
     server.py sync-boot startup)."""
@@ -212,6 +250,10 @@ async def main() -> int:
     results.append(await _step(
         "jobs_tenant_id_scheduled_start_bg",
         _jobs_tenant_scheduled_start_index(),
+    ))
+    results.append(await _step(
+        "resend_webhook_events_dedup_bg",
+        _resend_webhook_events_dedup_index(),
     ))
     results.append(await _step("customers_2dsphere",    _customers_2dsphere()))
     results.append(await _step(

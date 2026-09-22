@@ -11,9 +11,13 @@
  * keyword set but returns the backend template key `landscape`, not the
  * client-facing `landscaping`).
  *
- * Sync note (Phase J1 · Feb-2026): the priority chain here mirrors
- * backend/routers/jobs.py :: _derive_checklist_kind. Keep both files
- * in lockstep — service_type/title signal wins over tech department.
+ * Sync note (Phase J1 · Feb-2026, updated Phase P36.1): the priority
+ * chain here mirrors backend/routers/jobs.py :: _derive_checklist_kind.
+ * Keep both files in lockstep — service_type/title signal wins over
+ * tech department. Phase P36.1 flipped the no-signal fallback from
+ * "pool" to "generic" to match the backend's "non_pool" default and
+ * avoid dragging non-pool jobs (tree_service, hvac, pest_control, …)
+ * through pool-only UI.
  */
 
 const POOL_KEYWORDS = ["pool", "chem"];
@@ -53,9 +57,13 @@ export function getChecklistType(job) {
   const dept = (job.technician_department || "").toLowerCase();
   if (dept === "landscaping") return "landscaping";
   if (dept === "pool") return "pool";
-  // 4) Fallback: no signal at all — default to pool (safest for this
-  //    business).
-  return "pool";
+  // 4) Phase P36.1 · fallback: no signal at all — default to
+  //    ``"generic"`` (mirrors the backend's ``"non_pool"`` default).
+  //    Pre-P36.1 this was ``"pool"`` which caused non-pool jobs
+  //    (tree_service, hvac, pest_control, irrigation, …) to render
+  //    the pool chemistry form; the backend chemistry gate then
+  //    rejected their close with ``chemistry_core_readings_missing``.
+  return "generic";
 }
 
 export default getChecklistType;

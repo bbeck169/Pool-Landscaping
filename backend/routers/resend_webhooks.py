@@ -100,17 +100,44 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
     email_id = data.get("email_id") or data.get("id")
     to_list = data.get("to") or []
     to_addr = (to_list[0] if to_list else "").strip().lower() or None
+    # Phase P36.1 · Feb-2026 — capture ``svix-id`` on the persisted
+    # event row so the unique index ``resend_webhook_events_dedup_bg``
+    # (see ``scripts/ensure_indexes.py``) can enforce idempotency.
+    # svix-id is Resend's per-delivery opaque token; identical retries
+    # (network hiccups, at-least-once replays) share the same id.
+    _hdrs = dict(request.headers)
+    svix_id = _hdrs.get("svix-id") or _hdrs.get("Svix-Id") or None
 
     # Persist a raw event log for audit + replay.
+    # Phase P36.1 duplicate-safe insert path — the unique index on
+    # ``svix_id`` raises ``DuplicateKeyError`` on a replay, we
+    # short-circuit and return a ``{"status": "duplicate"}`` envelope
+    # so a Resend retry is a truthful no-op (no double outbox
+    # updates, no double suppressions).
     event_row = {
         "id": new_id(),
         "type": event_type,
         "email_id": email_id,
+        "svix_id": svix_id,
         "to": to_addr,
         "raw": data,
         "created_at": now_iso(),
     }
-    await db.resend_webhook_events.insert_one(event_row)
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.resend_webhook_events.insert_one(event_row)
+        _is_new_event = True
+    except DuplicateKeyError:
+        _is_new_event = False
+        logger.info(
+            "[resend-webhook] duplicate event dropped svix_id=%s "
+            "email_id=%s type=%s", svix_id, email_id, event_type,
+        )
+    if not _is_new_event:
+        # Do NOT re-apply outbox / marketing_deliveries / suppression
+        # side effects on a replay — they were applied on the first
+        # event of this svix_id.
+        return {"status": "duplicate", "svix_id": svix_id}
 
     # Update the delivery row (best-effort match by provider_response_id).
     if email_id:
@@ -173,12 +200,35 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
             # missing collection or transient DB fault never causes
             # the webhook to 500 back to Resend (which would trigger
             # unnecessary retries + delayed suppression).
+            #
+            # Phase P36.1 · Feb-2026 · monotonic ts guard — use the
+            # incoming event's ``created_at`` (Resend stamps it in
+            # the envelope) as the ordering key, not wall-clock, so
+            # an out-of-order delivery (webhook A lands after
+            # webhook B despite A's event firing first) cannot
+            # regress the outbox to a stale state. Guard: apply the
+            # update only when the existing ``latest_status_ts`` is
+            # strictly older than the incoming event's ts. Ties are
+            # applied (same status, same ts — idempotent).
+            # Defence-in-depth: the unique svix-id index prevents
+            # exact-duplicate replays; this guard covers legitimately
+            # distinct events that arrive out of order.
             try:
+                _incoming_ts = str(
+                    payload.get("created_at")
+                    or data.get("created_at")
+                    or now_iso(),
+                )
                 await db.email_outbox.update_one(
-                    {"email_id": email_id},
+                    {"email_id": email_id,
+                     "$or": [
+                         {"latest_status_ts": {"$exists": False}},
+                         {"latest_status_ts": None},
+                         {"latest_status_ts": {"$lte": _incoming_ts}},
+                     ]},
                     {"$set": {
                         "latest_status": upd_status,
-                        "latest_status_ts": now_iso(),
+                        "latest_status_ts": _incoming_ts,
                     }},
                 )
             except Exception as _oe:  # noqa: BLE001

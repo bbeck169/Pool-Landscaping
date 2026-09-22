@@ -51,7 +51,13 @@ describe("Phase J1 · getChecklistType priority chain", () => {
     ).toBe("pool");
   });
 
-  it("no signals at all → pool (safe default preserved)", () => {
-    expect(getChecklistType({})).toBe("pool");
+  it("no signals at all → generic (Phase P36.1 · non_pool default)", () => {
+    // Phase P36.1 · Feb-2026 — pre-P36.1 the fallback was "pool",
+    // which caused non-pool jobs (tree_service, hvac, pest_control,
+    // irrigation, ...) to render the pool chemistry form and be
+    // rejected by the backend gate on close with
+    // ``chemistry_core_readings_missing``. Both surfaces now default
+    // to "generic" / "non_pool" for the no-signal case.
+    expect(getChecklistType({})).toBe("generic");
   });
 });

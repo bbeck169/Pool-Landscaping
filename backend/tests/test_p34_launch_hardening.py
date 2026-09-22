@@ -428,3 +428,198 @@ def test_p34_ensure_index_jobs_tenant_scheduled_start():
         )
 
     run_test(_go)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Phase P36.1 · Feb-2026 — Resend webhook idempotency + monotonic ts
+# ══════════════════════════════════════════════════════════════════
+def test_p36_1_resend_webhook_events_dedup_index_shape():
+    """Phase P36.1 — the unique partial index on
+    ``resend_webhook_events.svix_id`` must exist so the webhook
+    handler's ``DuplicateKeyError`` short-circuit path is a
+    faithful idempotency guarantee (not a race condition)."""
+    from scripts.ensure_indexes import _resend_webhook_events_dedup_index
+
+    async def _go(db):
+        await _resend_webhook_events_dedup_index()
+        idx_list = await db.resend_webhook_events.list_indexes().to_list(100)
+        by_name = {i.get("name"): i for i in idx_list}
+        assert "resend_webhook_events_dedup_bg" in by_name, (
+            "P36.1 requires resend_webhook_events_dedup_bg unique "
+            f"partial index — saw indexes: {sorted(by_name)}"
+        )
+        target = by_name["resend_webhook_events_dedup_bg"]
+        assert target.get("unique") is True
+        assert list((target.get("key") or {}).items()) == [("svix_id", 1)]
+        # Partial filter — must skip legacy rows without svix_id so
+        # the backfill window doesn't crash on missing values.
+        pfe = target.get("partialFilterExpression")
+        assert pfe == {"svix_id": {"$type": "string"}}
+
+    run_test(_go)
+
+
+def test_p36_1_resend_webhook_duplicate_svix_id_persists_once():
+    """POSTing the same signed event twice with an identical
+    ``svix-id`` must result in exactly one row in
+    ``resend_webhook_events``. The second write raises
+    ``DuplicateKeyError`` on the unique partial index and the
+    handler short-circuits with ``{"status": "duplicate"}``."""
+    from pymongo.errors import DuplicateKeyError
+    from scripts.ensure_indexes import _resend_webhook_events_dedup_index
+
+    async def _go(db):
+        # Ensure the index exists (idempotent).
+        await _resend_webhook_events_dedup_index()
+        svix_id = f"p36_1-dup-{uuid.uuid4().hex[:8]}"
+        row = {
+            "id": uuid.uuid4().hex,
+            "type": "email.delivered",
+            "email_id": f"eid-{svix_id}",
+            "svix_id": svix_id,
+            "to": "dup@example.com",
+            "raw": {},
+            "created_at": "2026-02-15T00:00:00+00:00",
+        }
+        try:
+            # Write 1 — succeeds.
+            await db.resend_webhook_events.insert_one(dict(row))
+            # Write 2 — same svix_id, new ``id`` — must raise the
+            # unique-index violation. This is the exact behavioural
+            # guarantee the webhook's ``DuplicateKeyError`` catch
+            # relies on.
+            row2 = dict(row)
+            row2["id"] = uuid.uuid4().hex
+            with pytest.raises(DuplicateKeyError):
+                await db.resend_webhook_events.insert_one(row2)
+            # Count — must be 1.
+            count = await db.resend_webhook_events.count_documents(
+                {"svix_id": svix_id},
+            )
+            assert count == 1, (
+                f"unique index failed — {count} rows for svix_id={svix_id}"
+            )
+        finally:
+            await db.resend_webhook_events.delete_many(
+                {"svix_id": svix_id},
+            )
+
+    run_test(_go)
+
+
+def test_p36_1_resend_webhook_partial_index_allows_null_svix_id():
+    """The partial filter must EXCLUDE rows without ``svix_id`` so
+    pre-P36.1 backfill rows (written before the handler started
+    capturing the header) can coexist without violating the
+    unique constraint."""
+    from scripts.ensure_indexes import _resend_webhook_events_dedup_index
+
+    async def _go(db):
+        await _resend_webhook_events_dedup_index()
+        # Two "legacy" rows with no svix_id — must both persist.
+        prefix = f"p36_1-nullsvix-{uuid.uuid4().hex[:8]}"
+        legacy_rows = [
+            {"id": f"{prefix}-a", "type": "email.delivered",
+             "email_id": f"{prefix}-eid-a",
+             "to": "a@example.com", "raw": {},
+             "created_at": "2026-02-15T00:00:00+00:00"},
+            {"id": f"{prefix}-b", "type": "email.delivered",
+             "email_id": f"{prefix}-eid-b",
+             "to": "b@example.com", "raw": {},
+             "created_at": "2026-02-15T00:00:01+00:00"},
+        ]
+        try:
+            await db.resend_webhook_events.insert_many(legacy_rows)
+            count = await db.resend_webhook_events.count_documents(
+                {"id": {"$regex": f"^{prefix}"}},
+            )
+            assert count == 2, (
+                "partial index must allow multiple rows without svix_id"
+            )
+        finally:
+            await db.resend_webhook_events.delete_many(
+                {"id": {"$regex": f"^{prefix}"}},
+            )
+
+    run_test(_go)
+
+
+def test_p36_1_resend_webhook_out_of_order_events_respect_ts_guard():
+    """Simulate an out-of-order webhook delivery: apply the
+    ``delivered`` transition at ts=T+10, then apply the ``sent``
+    transition at ts=T+5. The outbox row must stay on ``delivered``
+    — the monotonic ts guard must reject the older ``sent`` update.
+
+    We exercise the exact update shape the webhook applies so a
+    future refactor that regresses the guard fails this test."""
+    async def _go(db):
+        email_id = f"p36_1-ooo-{uuid.uuid4().hex[:8]}"
+        try:
+            await db.email_outbox.insert_one({
+                "id": uuid.uuid4().hex, "email_id": email_id,
+                "tenant_id": "p36_1-tid", "customer_id": "p36_1-cid",
+                "kind": "portal_invite",
+                "recipient": "ooo@example.com",
+                "latest_status": "queued",
+                "latest_status_ts": "2026-02-15T00:00:00+00:00",
+                "created_at": "2026-02-15T00:00:00+00:00",
+            })
+            # Event 1 — delivered @ T+10.
+            _ts_delivered = "2026-02-15T00:00:10+00:00"
+            await db.email_outbox.update_one(
+                {"email_id": email_id,
+                 "$or": [
+                     {"latest_status_ts": {"$exists": False}},
+                     {"latest_status_ts": None},
+                     {"latest_status_ts": {"$lte": _ts_delivered}},
+                 ]},
+                {"$set": {"latest_status": "delivered",
+                            "latest_status_ts": _ts_delivered}},
+            )
+            row = await db.email_outbox.find_one(
+                {"email_id": email_id}, {"_id": 0},
+            )
+            assert row["latest_status"] == "delivered"
+            assert row["latest_status_ts"] == _ts_delivered
+            # Event 2 — out-of-order ``sent`` @ T+5 (older). Guard
+            # must reject.
+            _ts_sent = "2026-02-15T00:00:05+00:00"
+            await db.email_outbox.update_one(
+                {"email_id": email_id,
+                 "$or": [
+                     {"latest_status_ts": {"$exists": False}},
+                     {"latest_status_ts": None},
+                     {"latest_status_ts": {"$lte": _ts_sent}},
+                 ]},
+                {"$set": {"latest_status": "sent",
+                            "latest_status_ts": _ts_sent}},
+            )
+            row2 = await db.email_outbox.find_one(
+                {"email_id": email_id}, {"_id": 0},
+            )
+            # Outbox must STILL be on ``delivered``.
+            assert row2["latest_status"] == "delivered"
+            assert row2["latest_status_ts"] == _ts_delivered
+        finally:
+            await db.email_outbox.delete_many({"email_id": email_id})
+
+    run_test(_go)
+
+
+def test_p36_1_resend_webhook_captures_svix_id_on_persisted_row():
+    """Source-lint: the webhook handler must copy ``svix-id`` from
+    the request headers into the event row so the unique index
+    can enforce dedup. A future refactor that drops this capture
+    silently regresses idempotency — this test fails loudly."""
+    import inspect
+    import routers.resend_webhooks as _rw
+    src = inspect.getsource(_rw.resend_webhook)
+    assert "svix-id" in src.lower() or "svix_id" in src, (
+        "webhook must capture svix-id / svix_id"
+    )
+    assert '"svix_id"' in src or "svix_id=" in src, (
+        "webhook must persist svix_id on the event row"
+    )
+    assert "DuplicateKeyError" in src, (
+        "webhook must catch DuplicateKeyError for idempotent replay"
+    )

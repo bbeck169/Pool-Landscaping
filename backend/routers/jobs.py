@@ -445,14 +445,24 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
     """Phase 57.d / 56.3.B · read-time derivation of which checklist form
     to render.
 
-    Priority (Phase J1 · Feb-2026):
-      1. explicit override on the job
-      2. **Job Title / Service Type keywords** — promoted above tech
+    Priority (Phase P36.1 · Feb-2026 — non-pool fallback):
+      1. explicit override on the job (``pool``, ``landscape``, or
+         ``non_pool``)
+      2. explicit ``industry`` field on the job (``pool`` → pool,
+         ``landscaping`` → landscape, anything else → ``non_pool``)
+      3. **Job Title / Service Type keywords** — promoted above tech
          department so the work being performed drives the checklist
          choice (a landscaping job gets the landscape checklist even
          when assigned to a Pool tech, and vice versa)
-      3. tech department
-      4. ``"pool"`` fallback (safest default for this business)
+      4. tech department
+      5. ``"non_pool"`` fallback (P36.1) — the safe default for a
+         multi-industry deploy. Was ``"pool"`` pre-P36.1, which
+         caused every non-pool job (tree_service, hvac, pest_control,
+         irrigation, fencing, snow_removal, …) to be dragged through
+         the pool chemistry gate on close and rejected with
+         ``chemistry_core_readings_missing``. Chemistry-gate consumers
+         all fire on ``is_pool_job(job) == True`` which reduces to
+         ``kind == "pool"`` — non-pool jobs now correctly bypass.
 
     Department semantics (Phase 56.3.B):
       • ``pool``        → pool checklist
@@ -467,9 +477,26 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
     """
     # 1) Explicit override on the job — always wins.
     override = (job.get("checklist_kind_override") or "").strip().lower()
-    if override in ("pool", "landscape", "landscaping"):
-        return "landscape" if override.startswith("landscap") else "pool"
-    # 2) Job Title / Service Type / Job Type keywords — Phase J1
+    if override in ("pool", "landscape", "landscaping", "non_pool"):
+        if override.startswith("landscap"):
+            return "landscape"
+        if override == "non_pool":
+            return "non_pool"
+        return "pool"
+    # 2) Phase P36.1 · explicit ``industry`` field on the job — first
+    # class multi-industry hint. ``pool`` → pool (chemistry gate);
+    # landscape-style industries → landscape; every other known
+    # industry key → non_pool (bypasses chemistry).
+    industry = (job.get("industry") or "").strip().lower()
+    if industry in ("pool", "pools"):
+        return "pool"
+    if industry in ("landscaping", "landscape"):
+        return "landscape"
+    if industry:
+        # Any other explicit industry (tree_service, hvac, fencing,
+        # snow_removal, irrigation, pest_control, ...): non_pool.
+        return "non_pool"
+    # 3) Job Title / Service Type / Job Type keywords — Phase J1
     #    promoted above the tech-department block. Landscape signal
     #    is checked first (historical order preserved), then pool.
     hay = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
@@ -477,7 +504,7 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
         return "landscape"
     if any(k in hay for k in _POOL_KEYWORDS):
         return "pool"
-    # 3) Tech department — only consulted when the job itself gave no
+    # 4) Tech department — only consulted when the job itself gave no
     #    landscape/pool signal.
     dept = (tech_department or "").lower()
     if dept == "landscaping":
@@ -486,8 +513,8 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
         return "pool"
     # ``both`` (tech services either) falls through to the safe default
     # below when no service_type keyword hit.
-    # 4) Fallback default.
-    return "pool"
+    # 5) Fallback default (Phase P36.1) — see docstring.
+    return "non_pool"
 
 
 async def _enrich_job_dept_and_kind(doc: dict, tenant_id: str) -> None:

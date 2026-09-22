@@ -140,6 +140,120 @@ def test_p36_pool_control_still_blocked_on_empty_checklist():
     assert_required_items_present("pool", [], resolved)
 
 
+# ═════════════════════════════════════════════════════════════════
+# Phase P36.1 · Feb-2026 — chemistry-gate bypass for non-pool jobs
+# ═════════════════════════════════════════════════════════════════
+# Blocker 1 evidence from the e1_tester sweep: creating a
+# ``tree_service`` job with an empty checklist and calling the
+# close endpoint returned HTTP 422 ``chemistry_core_readings_missing``.
+# Root cause was ``_derive_checklist_kind`` falling back to ``"pool"``
+# when no keyword hit landed, which flipped ``is_pool_job()`` to True
+# and dragged non-pool jobs through the chemistry gate. Fix flips
+# the fallback to ``"non_pool"`` + adds an ``industry``-based first-
+# class hint so tree_service / hvac / pest_control / irrigation /
+# fencing / snow_removal all correctly bypass chemistry on close.
+_P36_1_NONPOOL_INDUSTRIES_FOR_CHEM_BYPASS = [
+    "tree_service", "pest_control", "irrigation", "fencing",
+    "snow_removal", "hvac", "handyman", "roofing", "plumbing",
+    "electrical", "painting", "garage_door", "appliance_repair",
+    "locksmith", "chimney_sweep", "gutter", "window_cleaning",
+    "carpet_cleaning", "pressure_washing", "cleaning", "solar",
+]
+
+
+@pytest.mark.parametrize("industry",
+                            _P36_1_NONPOOL_INDUSTRIES_FOR_CHEM_BYPASS)
+def test_p36_1_nonpool_industry_bypasses_chemistry_gate(industry):
+    """The exact tester-failing case + peers. A job whose ``industry``
+    field says non-pool MUST route through ``kind == "non_pool"`` so
+    ``is_pool_job()`` returns False and the chemistry gate is
+    bypassed on close."""
+    from routers.jobs import _derive_checklist_kind
+    from services.chemistry_gate import is_pool_job
+    job = {"id": f"p36_1-{industry}", "industry": industry,
+            "title": f"{industry} visit"}
+    kind = _derive_checklist_kind(job, None)
+    assert kind == "non_pool", (
+        f"{industry} job MUST resolve to non_pool (not {kind}) — "
+        "otherwise the chemistry gate fires on close"
+    )
+    assert is_pool_job(job) is False
+
+
+def test_p36_1_tree_service_close_no_ticks_does_not_hit_chem_gate():
+    """The exact tester-failing case reproduction — a tree_service
+    job MUST NOT be treated as a pool job by ``is_pool_job``."""
+    from services.chemistry_gate import is_pool_job
+    tree_job = {"id": "p36_1-tree", "industry": "tree_service",
+                 "title": "Prune oak tree"}
+    assert is_pool_job(tree_job) is False
+
+
+def test_p36_1_pool_control_still_gated():
+    """REGRESSION CONTROL (mandatory per P36.1) — a pool job MUST
+    still resolve to ``"pool"`` and MUST still trigger
+    ``is_pool_job`` → True. If this ever flips, we've broken the
+    chemistry gate for real pool jobs."""
+    from routers.jobs import _derive_checklist_kind
+    from services.chemistry_gate import is_pool_job
+    # Case 1: explicit industry.
+    j1 = {"id": "p36_1-pool-1", "industry": "pool",
+           "title": "Weekly service"}
+    assert _derive_checklist_kind(j1, None) == "pool"
+    assert is_pool_job(j1) is True
+    # Case 2: pool signal from service_type keyword (no industry).
+    j2 = {"id": "p36_1-pool-2", "service_type": "Pool chem service"}
+    assert _derive_checklist_kind(j2, None) == "pool"
+    assert is_pool_job(j2) is True
+    # Case 3: pool signal from tech department — ``_derive_checklist_kind``
+    # resolves it via dept, but note ``is_pool_job`` always calls
+    # with ``None`` dept (it doesn't know about assigned techs), so a
+    # bare no-signal job will correctly resolve to ``non_pool`` at
+    # the ``is_pool_job`` boundary. That's OK — the tech-department
+    # path is a UI form-render hint, not a chemistry-gate hint.
+    j3 = {"id": "p36_1-pool-3"}
+    assert _derive_checklist_kind(j3, "pool") == "pool"
+
+
+def test_p36_1_landscape_control_still_bypasses_chem_gate():
+    """P29's landscape unlock regression guard. A landscape job MUST
+    still resolve to ``"landscape"`` and MUST bypass chemistry on
+    close."""
+    from routers.jobs import _derive_checklist_kind
+    from services.chemistry_gate import is_pool_job
+    lawn_job = {"id": "p36_1-lawn", "industry": "landscaping",
+                 "title": "Lawn mow + trim"}
+    assert _derive_checklist_kind(lawn_job, None) == "landscape"
+    assert is_pool_job(lawn_job) is False
+    # And with a keyword hit but no industry field.
+    kw_job = {"id": "p36_1-lawn-kw",
+               "service_type": "Weekly lawn mowing"}
+    assert _derive_checklist_kind(kw_job, None) == "landscape"
+
+
+def test_p36_1_no_signal_job_defaults_to_non_pool_not_pool():
+    """A job with zero signals (no industry, no service_type, no
+    dept) now defaults to ``non_pool`` — was ``pool`` pre-P36.1."""
+    from routers.jobs import _derive_checklist_kind
+    from services.chemistry_gate import is_pool_job
+    empty = {"id": "p36_1-empty"}
+    assert _derive_checklist_kind(empty, None) == "non_pool"
+    assert is_pool_job(empty) is False
+
+
+def test_p36_1_override_non_pool_wins_over_all_signals():
+    """A job with an explicit ``checklist_kind_override: "non_pool"``
+    must resolve to non_pool even if service_type screams pool. This
+    is the escape hatch for edge cases where an admin needs to force
+    the chemistry gate off."""
+    from routers.jobs import _derive_checklist_kind
+    from services.chemistry_gate import is_pool_job
+    j = {"checklist_kind_override": "non_pool",
+          "service_type": "pool chemistry service"}
+    assert _derive_checklist_kind(j, "pool") == "non_pool"
+    assert is_pool_job(j) is False
+
+
 # Templates the user's brief mentioned but that don't exist in the
 # file — skipped per P36 refinement rule "don't hallucinate."
 @pytest.mark.skip(reason="template not present in industry_checklists.py")

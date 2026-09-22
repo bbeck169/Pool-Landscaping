@@ -38,6 +38,16 @@ def test_explicit_override_wins_over_service_type_and_department():
     assert _derive_checklist_kind(job, "landscaping") == "pool"
 
 
-def test_no_signals_uses_pool_fallback_default():
-    """Empty job + empty department → pool (safe default preserved)."""
-    assert _derive_checklist_kind({}, None) == "pool"
+def test_no_signals_uses_non_pool_fallback_default():
+    """Phase P36.1 · Feb-2026 — empty job + empty department →
+    ``non_pool``.
+
+    The pre-P36.1 fallback was ``"pool"``, which caused every job
+    with no keyword hit (tree_service, hvac, pest_control,
+    irrigation, fencing, snow_removal, …) to be dragged through
+    the pool chemistry gate on close and rejected with
+    ``chemistry_core_readings_missing``. The safer multi-industry
+    default is ``non_pool``: chemistry-gate consumers all fire on
+    ``is_pool_job(job)`` which reduces to ``kind == "pool"`` — the
+    new fallback correctly bypasses chemistry."""
+    assert _derive_checklist_kind({}, None) == "non_pool"

@@ -19991,3 +19991,69 @@ Total: 23 templates. Grouped:
 * If additional tenants opt into the unlock, parameterize `P36_TARGET_TENANT_ID` to a set or ship a per-tenant admin toggle. Current scope is single-tenant to match the launch-republish ask.
 * Consider adding a boot-time assertion that pool retains its 7 required rows so a future unrelated edit can't accidentally soften compliance.
 
+
+---
+
+## P36.1 · Feb-2026 · E2E Blocker Fixes
+
+**Status:** SHIPPED — both blockers surfaced by `e1_tester` sweep are closed.
+
+### Diff summary
+
+| File | Kind | Notes |
+|------|------|-------|
+| `backend/routers/jobs.py` | edit | `_derive_checklist_kind` — flipped fallback from `"pool"` to `"non_pool"`, added first-class `job.industry` hint above keyword scan, added `"non_pool"` override support. |
+| `backend/routers/resend_webhooks.py` | edit | Captures `svix-id` on the persisted event row. Duplicate-safe insert with `DuplicateKeyError` short-circuit → `{"status":"duplicate"}` response. Monotonic ts guard on `email_outbox.latest_status` update using event's `created_at`. |
+| `backend/scripts/ensure_indexes.py` | edit | New `_resend_webhook_events_dedup_index` — unique partial index on `svix_id` (skips legacy null rows), background build, named `resend_webhook_events_dedup_bg`. |
+| `frontend/src/lib/checklistType.js` | edit | FE mirror updated — no-signal fallback flipped from `"pool"` → `"generic"` to match the backend `"non_pool"` default. |
+| `backend/tests/test_p34_launch_hardening.py` | append | +5 tests (P36.1): index-shape, duplicate short-circuit, partial-null coexistence, out-of-order ts guard, source-lint. |
+| `backend/tests/test_p36_nonpool_close_unlock.py` | append | +6 tests (P36.1): 21-industry parametrized non-pool-bypass, tree_service explicit, pool control, landscape control, no-signal default, `non_pool` override. |
+| `backend/tests/test_checklist_kind_priority.py` | edit | `test_no_signals_uses_pool_fallback_default` → `test_no_signals_uses_non_pool_fallback_default`. |
+| `frontend/src/test/checklist-type-priority.test.js` | edit | FE mirror test updated to expect `"generic"` on no-signal. |
+
+### Blocker 1 — chemistry gate leaked to non-pool
+
+**Root cause:** `_derive_checklist_kind` fell back to `"pool"` when no landscape / pool keyword hit landed. `is_pool_job(job)` reduces to `kind == "pool"`, so every non-pool job (tree_service, hvac, pest_control, irrigation, fencing, snow_removal, handyman, roofing, plumbing, electrical, painting, garage_door, appliance_repair, locksmith, chimney_sweep, gutter, window_cleaning, carpet_cleaning, pressure_washing, cleaning, solar) got dragged through the chemistry gate and rejected on close with `chemistry_core_readings_missing`.
+
+**Fix:**
+- Fallback → `"non_pool"`.
+- New priority slot: `job.industry` field consulted *between* the explicit override and the keyword scan. `pool` / `pools` → pool; `landscaping` / `landscape` → landscape; anything else → `non_pool`.
+- `checklist_kind_override` now accepts `"non_pool"` as an admin-forced bypass.
+
+**Consumers audited:**
+- `backend/routers/jobs.py:2326,3075` — `is_pool_job(job)` gates chemistry on job close. Now correctly False for non-pool.
+- `backend/routers/service_reports.py:703,729` — `is_pool_job` gate for chemistry + landscape-work-description assert.
+- `backend/routers/mobile_sync.py:151,264` — mirror gate for the mobile close path.
+- `backend/routers/workstream_service_log.py:130` — derives kind for service-log UI (informational, not gating).
+- `backend/services/chemistry_gate.py:598` — `is_pool_job` implementation. Confirmed it strictly checks `== "pool"`.
+
+**Curl smoke** (against localhost:8001):
+```
+PUT /api/jobs/p36_1-tree-...  {"status":"completed"}  → HTTP 200
+PUT /api/jobs/p36_1-pool-...  {"status":"completed"}  → HTTP 422
+                                                        chemistry_core_readings_missing:
+                                                        chlorine, alkalinity, ph, cya
+```
+
+### Blocker 2 — Resend webhook idempotency
+
+**Root cause:** `resend_webhook_events.insert_one(event_row)` was unconditional with a freshly-minted `id` per request. No unique index on `svix-id`. Two identical Resend retries produced two rows and double-applied the `email_outbox.latest_status` update.
+
+**Fix:**
+1. **Capture svix-id** on the persisted event row.
+2. **Unique partial index** `resend_webhook_events_dedup_bg` on `(svix_id)` where `svix_id` is a string (partial filter skips legacy null-svix rows so the backfill window doesn't crash).
+3. **Duplicate-safe insert path** — catch `DuplicateKeyError` → short-circuit with `{"status":"duplicate", "svix_id": ...}` response. No re-application of outbox / marketing_deliveries / suppression side-effects.
+4. **Monotonic ts guard** on the outbox update — use the incoming event's own `created_at` (Resend stamps it in the envelope) as the ordering key. Update filter: `$lte` incoming ts. Prevents out-of-order retry (`sent` landing after `delivered`) from regressing terminal state.
+
+**DB-level duplicate proof:**
+```
+Write 1 (svix_id=p36_1-curl-cf363b56)   →  OK
+Write 2 (same svix_id, new id)           →  DuplicateKeyError code=11000
+Post-write row count                      →  1 (target=1)
+```
+
+### Follow-ups (not P36.1)
+
+- Backfill `svix_id` onto historic `resend_webhook_events` rows via a one-shot migration. Not urgent — the partial index correctly allows legacy null-svix rows to coexist; the dedup guarantee applies to all NEW writes from P36.1 onwards.
+- Consider promoting the `job.industry` → `checklist_kind` map into a lookup table so a new industry doesn't fall through to `non_pool` by silent default.
+
