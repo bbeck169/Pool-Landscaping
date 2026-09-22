@@ -394,8 +394,22 @@ async def get_board(
                     (cust or {}).get("service_address")
                     or j.get("address") or ""
                 )
-                lat = (cust or {}).get("service_lat")
-                lng = (cust or {}).get("service_lng")
+                # Phase P26 · Feb-2026 — routed through the shared
+                # coord resolver so the ``jobs_fallback`` branch
+                # honors the job's own coords when present
+                # (site_lat/lat/latitude), falling back to the
+                # customer's service coords otherwise. Pre-P26 this
+                # branch only ever consulted the customer doc; a
+                # job whose crew already geocoded via the newer
+                # write path but whose linked customer had null
+                # service_lat would render as "not_geocoded" even
+                # though the job itself carried valid coords.
+                from services.geo_resolver import resolve_job_coordinates
+                _lat_p26, _lng_p26, _cs_p26 = resolve_job_coordinates(
+                    j, cmap,
+                )
+                lat = _lat_p26
+                lng = _lng_p26
                 route_stops.append({
                     "job_id": j.get("id"),
                     "customer_id": j.get("customer_id"),
@@ -404,6 +418,7 @@ async def get_board(
                     "service_address": svc_addr,
                     "address": svc_addr,
                     "lat": lat, "lng": lng,
+                    "coord_source": _cs_p26,
                     "route_index": j.get("route_index"),
                     "service_type": j.get("service_type"),
                     "title": j.get("title"),
@@ -424,6 +439,7 @@ async def get_board(
                         "name": display_name,
                         "address": svc_addr,
                         "lat": lat, "lng": lng,
+                        "coord_source": _cs_p26,
                         "tags": [], "category_ids": [],
                         "service_days": [day_norm] if day_norm != "all" else [],
                         "assigned_tech_ids": [tech_user_id],

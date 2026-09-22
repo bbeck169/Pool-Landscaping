@@ -1240,22 +1240,45 @@ async def list_jobs(
     # Customers do not see this block — the ``else:`` branch above is
     # skipped for role=customer and no coord fields are set.  This
     # ladder therefore only fires for admin / manager / technician.
+    #
+    # Phase P26 · Feb-2026 — stamp a ``coord_source`` audit field on
+    # every enriched job so the FE map layer and downstream
+    # analytics can see the origin of each pin. Pre-P26 the K58
+    # ladder decided the source silently — a debug session had to
+    # re-derive it from the field priority. Values:
+    #   * ``"job"``      — from ``site_lat/lng`` OR ``latitude/
+    #                      longitude`` (rungs 1 + 2).
+    #   * ``"property"`` — from ``property.latitude/longitude`` (rung
+    #                      3). Preserved as a distinct source so the
+    #                      FE can render a subtle differ pin variant
+    #                      if it wants to signal "geocoded via
+    #                      property record, not the job itself".
+    #   * ``"customer"`` — from ``customer.service_lat/lng`` (rung
+    #                      4).
+    #   * ``None``       — no coords resolved; pin dropped.
     if user.get("role") != "customer":
         for d in docs:
             # Preserve the pre-K58 baseline value (customer.service_lat
             # already seeded into location_lat/lng above).
             lat = d.get("location_lat")
             lng = d.get("location_lng")
+            # Phase P26 · Feb-2026 — track which rung stamped the
+            # coord value. Baseline is "customer" (customer.service_
+            # lat/lng was seeded above); higher rungs upgrade the
+            # tag as they win.
+            _p26_source = "customer" if (lat is not None and lng is not None) else None
             # Rung 1 — job.site_lat/lng.
             site_lat = d.get("site_lat")
             site_lng = d.get("site_lng")
             if site_lat is not None and site_lng is not None:
                 lat = site_lat
                 lng = site_lng
+                _p26_source = "job"
             # Rung 2 — job.latitude/longitude.
             elif d.get("latitude") is not None and d.get("longitude") is not None:
                 lat = d.get("latitude")
                 lng = d.get("longitude")
+                _p26_source = "job"
             # Rung 3 — property.latitude/longitude (or flat lat/lng
             # shape as an inner fallback).
             else:
@@ -1267,6 +1290,7 @@ async def list_jobs(
                     if p_lat is not None and p_lng is not None:
                         lat = p_lat
                         lng = p_lng
+                        _p26_source = "property"
             # Rung 4 — customer.service_lat/lng.  Already seeded above;
             # nothing to do here.
             #
@@ -1281,8 +1305,16 @@ async def list_jobs(
                 # etc.) — treat as absent.
                 d["location_lat"] = None
                 d["location_lng"] = None
+                _p26_source = None
             d["latitude"] = d["location_lat"]
             d["longitude"] = d["location_lng"]
+            # Phase P26 · Feb-2026 — coord_source audit field on the
+            # response. Absent-coords case (both keys None) also
+            # nulls out the source so a caller can rely on
+            # ``coord_source is None`` ↔ ``lat is None``.
+            d["coord_source"] = (
+                _p26_source if d["location_lat"] is not None else None
+            )
     # Feb-2026 · Schedule notes surface — cap the free-text ``notes``
     # column at 500 chars on the wire and expose ``notes_truncated``
     # so the schedule card can render a 2-line clamp + expand hint

@@ -1,3 +1,51 @@
+## Phase P26 — Coord Fallback to Customer service_lat/lng + Geocoding Backfill Diagnostic — SHIPPED (Feb 2026)
+
+Map pins were missing on the schedule for jobs whose own `lat`/`lng` were null but the linked customer had `service_lat`/`service_lng` populated. Fix: shared serialization-time resolver + audit field.
+
+**Preview null-coord counts (Item B baseline)**
+- Total jobs on preview: **2441**
+- Jobs missing own coords (all three field variants null): **1527**
+- Of those, **rescuable via `customer.service_lat/lng` fallback**: **1031** ← the P26 fix ships these pins.
+- Jobs with no coords anywhere (need geocoding backfill): **496**
+- Customers total: **459**; with `service_lat/lng`: **259** (56.5%)
+
+**Item B · Geocoding backfill service state (report only, per spec)**
+- Module: `backend/services/google_maps/geocoding.py` — exists, 385 lines. Google-Maps HTTP + `db.geocode_cache` idempotent 30-day cache. Public helpers: `geocode_address`, `geocode_and_persist_customer`, `geocode_and_persist_job`.
+- Triggers wired:
+  - `POST /api/admin/customers/geocode-backfill` (also aliased `POST /api/admin/migrations/backfill-customer-geocodes`) — batch endpoint, admin-only, `?dry_run=true` supported. Rate-limited to ~10 QPS via `asyncio.sleep(0.1)` between calls.
+  - Boot task `geocode_backfill_all_tenants_boot()` (fire-and-forget, sleeps 150 ms/customer).
+  - `POST /api/gps/reverse-geocode-backfill` for GPS-ping reverse geocoding.
+  - Customer-create/update hooks (see `routers/customers.py` at lines 1658, 2643).
+  - Lead create/update hooks (see `routers/leads.py` at lines 353, 1640).
+- Write targets: `customers` (`service_lat`, `service_lng`, `geocoded_at`, `geocode_precision`, `geocode_source`) via `geocode_and_persist_customer`. Also `jobs` via `geocode_and_persist_job` (called explicitly by newer write paths).
+- **Not invoked** in this phase per spec — the backfill is left as an ops action once we see the 496-count number. Recommendation: run `POST /api/admin/customers/geocode-backfill?limit=200` (200 = 20s of Google-Maps traffic at 10 QPS, ~$0.10 spend at $0.005/hit) as the next-action item.
+
+**Item A · Coord fallback logic**
+- New module: `backend/services/geo_resolver.py` — `resolve_job_coordinates(job, customer_lookup) -> (lat, lng, coord_source)`. Priority: `site_lat/lng` → `latitude/longitude` → `lat/lng` → customer's `service_lat/lng`. Serialization-time only — never mutates the underlying doc. Coerces stringy numbers (CSV-import artifacts), rejects empty strings + non-numeric strings, requires BOTH lat and lng non-null.
+- Also new: `build_customer_coord_lookup(db, tenant_id, customer_ids)` — batched tenant-scoped fetch (one round trip per list endpoint). Dedupes ids, short-circuits on empty.
+- Wiring:
+  - `routers/schedule.py` — `/schedule/today` emit loop now uses `resolve_job_coordinates(j, cust_map)`. Pre-P26 was `j.get("site_lat") or j.get("lat")` with NO customer fallback (the reported bug). Cust-map projection extended to include `service_lat`/`service_lng`.
+  - `routers/dispatch_board.py` — `jobs_fallback` branch now routes coords through `resolve_job_coordinates` so the job's own coords win when present (pre-P26 was customer-only).
+  - `routers/jobs.py` — K58 4-rung ladder untouched (already correct); added `coord_source` audit field to each list-response envelope (`"job"` | `"property"` | `"customer"` | null).
+- Every response envelope now carries `coord_source` for FE debug + future analytics on fallback rate.
+
+**Test counts** — 29 green:
+- `tests/test_p26_coord_fallback.py` (15) — job-coords-win, priority within job (site → latitude → flat), customer fallback, no-coords null-triple, dangling FK, missing customer_id, cross-tenant lookup, empty-ids short-circuit, source-lint no-per-job-find_one, pure idempotency, stringy-number coercion, empty-string / non-numeric rejection, half-null pair rejection.
+- `tests/test_p26_map_endpoints_return_fallback.py` (5) — `GET /api/jobs` returns coord_source for all 3 cases end-to-end; `/schedule/today` shape guard; source-lint that schedule.py, dispatch_board.py, jobs.py route through the shared resolver.
+
+**Ripple** — P22 (2/2) + P25 (5/5) + P26 (20/20) = 29/29 green. Backend restart clean; `/api/health` reports `status: ok`.
+
+**Files touched**
+- `backend/services/geo_resolver.py` — new module.
+- `backend/routers/schedule.py` — `/schedule/today` emit loop.
+- `backend/routers/dispatch_board.py` — `jobs_fallback` branch.
+- `backend/routers/jobs.py` — coord_source stamped on list envelope.
+- `backend/tests/test_p26_coord_fallback.py` — 15 pytests (new).
+- `backend/tests/test_p26_map_endpoints_return_fallback.py` — 5 pytests (new).
+
+---
+
+
 ## Phase P25 — NumberedReorder Draft-Clobber Fix + Map Pins Verification + Sync-Replay Workstream Event — SHIPPED (Feb 2026)
 
 Three-item phase, all Schedule-adjacent.

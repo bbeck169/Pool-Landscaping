@@ -313,8 +313,15 @@ async def schedule_today(request: Request,
     if cids:
         for c in await db.customers.find(
             {"id": {"$in": cids}, "tenant_id": tid},
+            # Phase P26 · Feb-2026 — added service_lat/service_lng to
+            # the projection so the coord-fallback resolver below can
+            # rescue jobs whose own ``site_lat`` / ``lat`` /
+            # ``latitude`` fields are null but the linked customer
+            # has geocoded coords. Preview data shows ~1,031 of 1,527
+            # jobs missing own coords are rescuable via this fallback.
             {"_id": 0, "id": 1, "gate_code": 1, "notes": 1, "access_notes": 1,
-              "service_notes": 1},
+              "service_notes": 1,
+              "service_lat": 1, "service_lng": 1},
         ).to_list(500):
             cust_map[c["id"]] = c
     _timings.append(f"custs;dur={(_t.perf_counter()-_t_custs)*1000:.1f}")
@@ -365,6 +372,15 @@ async def schedule_today(request: Request,
         service_note = _resolve_service_note(
             cust, stype_for_resolver, user,
         )
+        # Phase P26 · Feb-2026 — coord fallback: prefer the job's
+        # own coords, fall back to the linked customer's
+        # ``service_lat`` / ``service_lng``, and stamp
+        # ``coord_source`` on the response so the schedule map can
+        # debug why a specific pin is (or isn't) plotted. NEVER
+        # mutates the underlying job doc; this is a
+        # serialization-time enrichment only.
+        from services.geo_resolver import resolve_job_coordinates
+        _lat, _lng, _cs = resolve_job_coordinates(j, cust_map)
         items.append({
             "type": "job",
             "id": j.get("id"),
@@ -384,8 +400,13 @@ async def schedule_today(request: Request,
             "city": j.get("city"),
             "state": j.get("state"),
             "zip": j.get("zip"),
-            "lat": j.get("site_lat") or j.get("lat"),
-            "lng": j.get("site_lng") or j.get("lng"),
+            # Phase P26 · Feb-2026 — resolved coords (job → customer
+            # fallback → null). ``coord_source`` is a debug/audit
+            # field the FE map layer can log when a pin's origin is
+            # ambiguous; future analytics can count fallback rate.
+            "lat": _lat,
+            "lng": _lng,
+            "coord_source": _cs,
             "scheduled_start": j.get("scheduled_date") or j.get("scheduled_start"),
             "scheduled_end": j.get("scheduled_end"),
             "status": j.get("status"),
