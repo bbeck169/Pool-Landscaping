@@ -503,7 +503,7 @@ async def create_card_setup_checkout_session(
     metadata:
         Extra keys merged into the session's ``metadata`` — the
         P30 flow always stamps
-        ``source="card_add_setup"``, ``flow="card_on_file_add"``,
+        ``source="card_add_setup"``, ``flow="card_add_setup"``,
         ``crm_tenant_id``, ``crm_customer_id`` on top of anything
         the caller passes. ``source`` is the webhook filter key —
         the webhook branch in ``handle_webhook_event`` gates on
@@ -525,7 +525,13 @@ async def create_card_setup_checkout_session(
     merged_metadata.update({
         "crm_tenant_id": tenant_id,
         "crm_customer_id": customer_id,
-        "flow": "card_on_file_add",
+        # P30 addendum · Feb-2026 — canonical value standardized to
+        # ``card_add_setup`` (matches ``source`` below). ``flow`` is
+        # a legacy free-form tag used by ops dashboards; keeping the
+        # two aligned removes an ambiguity that briefly surfaced
+        # during the P30 refinement pass (``card_on_file_add`` was
+        # the pre-standardization value).
+        "flow": "card_add_setup",
         # ``source`` is the WEBHOOK FILTER KEY — do not rename or
         # drop. Coordinated with the branch in
         # ``handle_webhook_event`` (checkout.session.completed).
@@ -1908,10 +1914,59 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     if etype == "payment_method.detached":
+        # P30 addendum · Feb-2026 — tenant-scoped detach. Prior code
+        # cleared the mirror row globally by ``pm_id``, which was
+        # fine as long as each PM is unique to one tenant. The P30
+        # unique index on ``customers.stripe_customer_id`` is the
+        # primary guarantee against cross-tenant collisions, but
+        # defense in depth is cheap here: resolve the internal
+        # customer via ``stripe_customer_id`` on the event's
+        # ``customer`` field, then clear card fields on THAT row
+        # only. Idempotent — a no-op when the customer is already
+        # cleared.
         pm_id = data.get("id")
+        stripe_cust_id = data.get("customer")
+        detach_ts = datetime.now(timezone.utc).isoformat()
+
+        # Always drop the ``payment_methods`` mirror if we recognize
+        # the PM. Guarded on ``pm_id`` so the collection query is
+        # never wildcarded.
         if pm_id:
-            await db.payment_methods.delete_many({"provider_payment_method_id": pm_id})
-            result["handled"] = True
+            await db.payment_methods.delete_many(
+                {"provider_payment_method_id": pm_id},
+            )
+
+        # Clear the flags on the CRM customer row. The unique index
+        # ensures at most one match; the query is written to be
+        # narrow (``stripe_customer_id`` is the sole filter) so a
+        # cross-tenant leak can't happen even in the presence of a
+        # legacy dup (we log CRITICAL when we spot one).
+        if stripe_cust_id:
+            candidates = await db.customers.find(
+                {"stripe_customer_id": stripe_cust_id},
+                {"_id": 0, "id": 1, "tenant_id": 1,
+                    "stripe_default_payment_method": 1},
+            ).to_list(10)
+            if len(candidates) > 1:
+                logger.critical(
+                    "[p30-webhook] payment_method.detached — %d rows "
+                    "share stripe_customer_id=%r across tenants=%s. "
+                    "Unique index missing or bypassed. Clearing "
+                    "flags on ALL matches; RCA required.",
+                    len(candidates), stripe_cust_id,
+                    sorted({c.get("tenant_id") for c in candidates}),
+                )
+            for cand in candidates:
+                await db.customers.update_one(
+                    {"id": cand["id"], "tenant_id": cand["tenant_id"]},
+                    {"$set": {
+                        "has_card_on_file": False,
+                        "stripe_default_payment_method": None,
+                        "card_removed_at": detach_ts,
+                        "card_removed_via": "stripe_detached_webhook",
+                    }},
+                )
+        result["handled"] = True
         return result
 
     if etype in ("payment_intent.succeeded", "payment_intent.payment_failed"):
@@ -2103,11 +2158,27 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         # setup mode has no ``payment_intent`` to reconcile).
         # ════════════════════════════════════════════════════════════
         if meta.get("source") == "card_add_setup":
-            if not session_id or not tenant_id or not customer_id:
-                logger.warning(
-                    "[p30-webhook] card_add_setup session missing "
-                    "identifiers — session_id=%s tenant=%s customer=%s",
-                    session_id, tenant_id, customer_id,
+            # P30 addendum · strict metadata routing. Any missing
+            # identifier is a red-flag — Stripe never generates
+            # sessions without our own metadata, so a gap here
+            # means either a spoofed webhook or a legacy session
+            # from before the metadata schema settled. NEVER
+            # attempts to guess (no phone/email fallback lookups).
+            # Log ERROR, return 200 so Stripe stops retrying, do
+            # NOT attach.
+            if not session_id:
+                logger.error(
+                    "[p30-webhook] card_add_setup rejected — "
+                    "session.id missing; no attach",
+                )
+                return result
+            if not tenant_id or not customer_id:
+                logger.error(
+                    "[p30-webhook] card_add_setup rejected — "
+                    "metadata.crm_tenant_id=%r or "
+                    "metadata.crm_customer_id=%r missing; "
+                    "session=%s; no attach",
+                    tenant_id, customer_id, session_id,
                 )
                 return result
 
@@ -2131,6 +2202,47 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 result["idempotent"] = True
                 return result
 
+            # Tenant-scoped customer lookup — the ``(id, tenant_id)``
+            # pair IS the tenant scope filter (matches the pattern
+            # every other router uses). A miss here means the
+            # customer was deleted, or (worse) the session metadata
+            # was tampered to point at a different tenant. Either
+            # way we refuse to attach.
+            cust_row = await db.customers.find_one(
+                {"id": customer_id, "tenant_id": tenant_id},
+                {"_id": 0, "id": 1, "stripe_customer_id": 1},
+            )
+            if not cust_row:
+                logger.error(
+                    "[p30-webhook] card_add_setup rejected — "
+                    "customer=%s not found in tenant=%s "
+                    "(session=%s); no attach",
+                    customer_id, tenant_id, session_id,
+                )
+                return result
+
+            # P30 addendum · Stripe-customer parity check. The
+            # session's ``customer`` (Stripe id) MUST match the
+            # internal customer row's ``stripe_customer_id``. A
+            # mismatch is either a tampered session or a stale row
+            # that got its Stripe-side id swapped out from under us.
+            # Log CRITICAL (highest severity) — this deserves a
+            # human-eyed review.
+            session_stripe_cust = data.get("customer")
+            row_stripe_cust = cust_row.get("stripe_customer_id")
+            if (session_stripe_cust and row_stripe_cust
+                    and session_stripe_cust != row_stripe_cust):
+                logger.critical(
+                    "[p30-webhook] card_add_setup rejected — "
+                    "Stripe customer parity mismatch: session.customer=%r "
+                    "internal.stripe_customer_id=%r "
+                    "(tenant=%s crm_customer=%s session=%s). "
+                    "Possible tampered session or stale row. NO ATTACH.",
+                    session_stripe_cust, row_stripe_cust,
+                    tenant_id, customer_id, session_id,
+                )
+                return result
+
             # Retrieve the SetupIntent → PaymentMethod on this
             # session. Stripe stamps ``setup_intent`` on setup-mode
             # sessions once ``checkout.session.completed`` fires.
@@ -2151,13 +2263,10 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
             # Attach + set as default on the Stripe customer. Attach
             # is idempotent server-side; Stripe returns the PM even
-            # if it was already attached.
+            # if it was already attached. Uses the parity-verified
+            # ``row_stripe_cust`` (never the session's echoed value).
             if pm_id:
-                cust_row = await db.customers.find_one(
-                    {"id": customer_id, "tenant_id": tenant_id},
-                    {"_id": 0, "stripe_customer_id": 1},
-                )
-                stripe_cust_id = (cust_row or {}).get("stripe_customer_id")
+                stripe_cust_id = row_stripe_cust
                 if stripe_cust_id:
                     try:
                         await _to_thread(

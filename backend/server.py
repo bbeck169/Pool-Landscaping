@@ -2902,6 +2902,79 @@ def _p24_warn_active_testmode_mocks() -> int:
     return count
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase P30 addendum · Feb-2026 — Stripe live-mode env gap WARN.
+#
+# When ``STRIPE_MODE=live`` we require:
+#   * ``PUBLIC_FRONTEND_ORIGIN`` — non-empty (return URL host).
+#   * ``STRIPE_SECRET_KEY_LIVE`` — starts with ``sk_live_``.
+#   * ``STRIPE_WEBHOOK_SECRET_LIVE`` OR ``STRIPE_WEBHOOK_SECRET`` —
+#     starts with ``whsec_``.
+#
+# Missing / mis-shaped values fire ONE ``logger.warning`` per gap so
+# ops sees the mis-config on the first probe. Never CRITICAL — the
+# ``[PROD-GUARDRAIL]`` block above owns fatal prod checks; this
+# block is preview + prod combined so a stripe-live pod anywhere
+# gets an early heads-up before webhooks start dropping.
+# ═════════════════════════════════════════════════════════════════════
+_P30_STRIPE_LIVE_ENVS = (
+    ("PUBLIC_FRONTEND_ORIGIN", None),
+    ("STRIPE_SECRET_KEY_LIVE", "sk_live_"),
+    # Webhook secret is satisfied by either the mode-specific env or
+    # the plain fallback; the helper checks both below.
+    ("STRIPE_WEBHOOK_SECRET_LIVE", "whsec_"),
+)
+
+
+def _p30_warn_stripe_live_env_gaps() -> int:
+    """Emit ONE ``logger.warning`` per Stripe live-mode env gap.
+
+    Only fires when ``STRIPE_MODE=live``. Test-mode pods are quiet.
+    Returns the count of warnings emitted (0..N) so tests can assert
+    the exact number.
+    """
+    mode = (os.environ.get("STRIPE_MODE") or "test").strip().lower()
+    if mode != "live":
+        return 0
+    count = 0
+    for env_name, expected_prefix in _P30_STRIPE_LIVE_ENVS:
+        val = (os.environ.get(env_name) or "").strip()
+        if not val:
+            # Webhook secret has a fallback env — check the fallback
+            # before firing the WARN so a pod that uses the generic
+            # name doesn't get spurious noise.
+            if env_name == "STRIPE_WEBHOOK_SECRET_LIVE":
+                fallback = (
+                    os.environ.get("STRIPE_WEBHOOK_SECRET") or ""
+                ).strip()
+                if fallback:
+                    if not fallback.startswith("whsec_"):
+                        logger.warning(
+                            "STARTUP: STRIPE_MODE=live but "
+                            "STRIPE_WEBHOOK_SECRET does not start with "
+                            "'whsec_' — Stripe webhooks will 400 on "
+                            "signature verification.",
+                        )
+                        count += 1
+                    continue
+            logger.warning(
+                "STARTUP: STRIPE_MODE=live but %s is not set — "
+                "P30 card-add + Stripe webhook flow will fail.",
+                env_name,
+            )
+            count += 1
+            continue
+        if expected_prefix and not val.startswith(expected_prefix):
+            logger.warning(
+                "STARTUP: STRIPE_MODE=live but %s does not start with "
+                "'%s' — value appears to be a test-mode key or "
+                "placeholder.",
+                env_name, expected_prefix,
+            )
+            count += 1
+    return count
+
+
 async def _p24_run_perf_customers_boot(db_handle) -> dict:
     """Run the ``perf_customers_v1`` REQUIRED migration.
 
@@ -3080,6 +3153,33 @@ async def _run_boot_sequence():
         _p30_tpl_factory,
         must_succeed=False,
     )
+    # Phase P30 addendum · Feb-2026 — partial unique index on
+    # ``customers.stripe_customer_id`` so a duplicate mint can never
+    # cross-tenant-leak the ``payment_method.detached`` handler.
+    # Pre-flight scans for existing duplicates; if any are present
+    # the index is SKIPPED with a WARN and the migration stamps
+    # ERROR — boot never crashes, ops runs a data cleanup pass.
+    async def _p30_idx_factory():
+        from migrations.p30_customers_stripe_customer_id_unique import (
+            run as _p30_idx_run,
+        )
+        _res = await _p30_idx_run()
+        if _res.get("index_created"):
+            logger.info(
+                "[p30-idx] boot pass — partial unique index installed",
+            )
+        else:
+            logger.warning(
+                "[p30-idx] boot pass — index NOT created: %s",
+                _res.get("error"),
+            )
+        return _res
+
+    await _run_structural_migration(
+        "p30_customers_stripe_customer_id_unique",
+        _p30_idx_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py
@@ -3087,6 +3187,7 @@ async def _run_boot_sequence():
     # STRUCTURAL bucket before bind so the log lines and migration
     # sentinel are visible on the first ``/health/ready`` probe.
     _p24_warn_active_testmode_mocks()
+    _p30_warn_stripe_live_env_gaps()
     await _p24_run_perf_customers_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be

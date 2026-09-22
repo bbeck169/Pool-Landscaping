@@ -127,41 +127,87 @@ def _normalize_phone_e164(value: Optional[str]) -> Optional[str]:
     return None
 
 
+# Phase P30 · Feb-2026 — Canonical E.164 helper name. The RingCentral
+# SMS-reply matcher must normalize BOTH the inbound number (which RC
+# always delivers in `+1XXXXXXXXXX` shape) AND the stored customer
+# phone (which can be anything: `(480) 555-0102`, `480-555-0102`,
+# `+14805550102`). Prior to P30 we normalized only the incoming side
+# and relied on a permissive digit-regex over the last-10 digits for
+# the stored side — this dropped matches when e.g. the stored phone
+# was `+1 (480) 555-0102` and the regex anchor got confused by the
+# leading space. Introducing `_to_e164` (name mandated by the P30
+# spec) and applying it symmetrically eliminates the surface.
+#
+# Alias to `_normalize_phone_e164` — same implementation, spec-named
+# entry point. Existing callers (`ringout`, `sms_send`) continue to
+# use `_normalize_phone_e164`; new code uses `_to_e164`.
+def _to_e164(value: Optional[str]) -> Optional[str]:
+    """P30 canonical name — see :func:`_normalize_phone_e164`.
+
+    Returns the ``+1XXXXXXXXXX`` (US) or ``+XXXXXX...`` (foreign)
+    representation of ``value`` or ``None`` if the value cannot be
+    coerced. Both sides of a phone comparison MUST route through
+    this helper before ``==`` — do not compare raw strings.
+    """
+    return _normalize_phone_e164(value)
+
+
 async def _match_customer_by_phone(tenant_id: Optional[str], phone: str) -> Optional[dict]:
     if not phone:
         return None
-    # Phase 54.1 — compare on the normalized form so a webhook's
-    # `+14805550102` matches a seeded `480-555-0102`. Because the
-    # stored phones may contain arbitrary non-digit separators (dashes,
-    # spaces, parens), we build a permissive regex from the last 10
-    # digits: `4\D*8\D*0\D*...` so `480-555-0102` matches
-    # `+14805550102` extracted digits.
-    normalized = _normalize_phone_e164(phone)
+    # Phase P30 · Feb-2026 — normalize BOTH sides via `_to_e164`.
+    # Stored customer phones may live on the scalar `phone` field
+    # OR the array `phones` field, and may contain arbitrary
+    # separators (dashes, spaces, parens, leading `+1`). We fetch
+    # candidates via a permissive last-10-digit regex (index-free
+    # but bounded — customers/tenant is typically < 10k rows), then
+    # confirm the match in Python by comparing `_to_e164(stored)`
+    # against `_to_e164(incoming)`. This is symmetric — an inbound
+    # `+14805550102` from RingCentral matches a seeded
+    # `(480) 555-0102` and vice-versa.
+    incoming_e164 = _to_e164(phone)
     digits = _normalize_phone(phone)
     q: Dict[str, Any] = {}
-    if tenant_id: q["tenant_id"] = tenant_id
-    # Try exact string match first (fast path for phones stored
-    # already in E.164 or the same shape as the incoming value).
-    # Seeded customer docs may hold their phone number on EITHER the
-    # scalar `phone` field OR the array `phones` field; check both.
-    for candidate in (phone, normalized):
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+
+    # Fast path — exact-string match on either side of the pair.
+    # Preserves the pre-P30 behavior for tenants whose customers'
+    # phones are already stored in E.164 form.
+    for candidate in (phone, incoming_e164):
         if not candidate:
             continue
         q_exact = dict(q, **{"$or": [{"phones": candidate}, {"phone": candidate}]})
         match = await db.customers.find_one(q_exact, {"_id": 0})
         if match:
             return match
-    # Fall back to a digit-agnostic regex over the last 10 digits.
+
+    # Fallback — digit-agnostic regex over the last 10 digits to
+    # collect candidates, then confirm E.164 equality in Python so
+    # both sides normalize identically before comparison.
     tail10 = digits[-10:] if len(digits) >= 10 else digits
-    if len(tail10) >= 7:
-        pattern = "".join(f"{d}\\D*" for d in tail10)
-        # Anchor at end so `4805550102` doesn't spuriously hit
-        # something like `1480555010200000000`.
-        rgx = {"$regex": pattern + "$"}
-        q_regex = dict(q, **{"$or": [{"phones": rgx}, {"phone": rgx}]})
-        match = await db.customers.find_one(q_regex, {"_id": 0})
-        if match:
-            return match
+    if len(tail10) < 7 or incoming_e164 is None:
+        return None
+    pattern = "".join(f"{d}\\D*" for d in tail10)
+    # Anchor at end so `4805550102` doesn't spuriously hit something
+    # like `1480555010200000000`.
+    rgx = {"$regex": pattern + "$"}
+    q_regex = dict(q, **{"$or": [{"phones": rgx}, {"phone": rgx}]})
+    # `find` (not `find_one`) — the regex can return multiple
+    # candidates; we filter to the one whose E.164 form matches.
+    cursor = db.customers.find(q_regex, {"_id": 0})
+    async for cand in cursor:
+        stored_values = []
+        raw_phones = cand.get("phones")
+        if isinstance(raw_phones, list):
+            stored_values.extend(raw_phones)
+        elif raw_phones:
+            stored_values.append(raw_phones)
+        if cand.get("phone"):
+            stored_values.append(cand.get("phone"))
+        for sv in stored_values:
+            if _to_e164(sv) == incoming_e164:
+                return cand
     return None
 
 

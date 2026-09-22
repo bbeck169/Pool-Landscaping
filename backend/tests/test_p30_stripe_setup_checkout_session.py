@@ -92,9 +92,10 @@ def test_p30_metadata_carries_source_flow_tenant_and_customer(_stripe_stub):
         )
         kwargs = _stripe_stub.checkout.Session.create.call_args.kwargs
         m = kwargs["metadata"]
-        # Canonical P30 keys.
+        # Canonical P30 keys — standardized on ``card_add_setup``
+        # across ``source`` + ``flow`` after the addendum pass.
         assert m["source"] == "card_add_setup"
-        assert m["flow"] == "card_on_file_add"
+        assert m["flow"] == "card_add_setup"
         assert m["crm_tenant_id"] == "tenant-Q"
         assert m["crm_customer_id"] == "cust-9"
         # Caller-provided extras survive the merge.
@@ -127,7 +128,7 @@ def test_p30_caller_cannot_override_canonical_source_key(_stripe_stub):
         m = _stripe_stub.checkout.Session.create.call_args.kwargs["metadata"]
         assert m["source"] == "card_add_setup"
         assert m["crm_tenant_id"] == "t"
-        assert m["flow"] == "card_on_file_add"
+        assert m["flow"] == "card_add_setup"
 
     run_test(_go)
 
