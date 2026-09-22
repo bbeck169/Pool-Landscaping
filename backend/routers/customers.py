@@ -5124,8 +5124,8 @@ async def admin_reverify_bank(
             base_url = (
                 os.environ.get("PUBLIC_FRONTEND_ORIGIN")
                 or (tenant.get("brand") or {}).get("public_origin")
-                or "https://poolscape-audit.preview.emergentagent.com"
-            ).strip()
+                or "https://app.plofv.com"   # P30.2 · flipped from preview host
+            ).strip().rstrip("/")
             link = build_add_card_link(base_url, cid, tenant["id"])
             subject = "Please verify your bank account"
             html = (
