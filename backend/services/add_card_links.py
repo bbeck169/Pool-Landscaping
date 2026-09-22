@@ -122,19 +122,34 @@ def reset_rate_limit(customer_id: str) -> None:
 
 
 # ─── Seed default templates ──────────────────────────────────────────
+# Phase P30 · Feb-2026 — unified SMS + email copy pointing at the
+# Stripe-hosted Checkout Session URL (see
+# ``services.payments.stripe_charge.create_setup_checkout_session``).
+# The ``{{ADD_CARD_LINK}}`` merge tag resolves to the Stripe
+# session URL in ``routers.customers.send_card_add_link`` — the
+# frontend never renders a self-hosted add-card page for this flow.
 _EMAIL_SUBJECT = "Please add a card to your account"
 _EMAIL_BODY = (
     "<p>Hi {{CUSTOMER_FIRST_NAME}},</p>"
     "<p>To keep your service on schedule, please add a card on file "
     "with {{COMPANY_NAME}}.</p>"
     "<p>Adding a card is quick, secure, and only takes a minute:</p>"
-    "<p><a href=\"{{ADD_CARD_LINK}}\">Add my card securely</a></p>"
+    "<p><a href=\"{{ADD_CARD_LINK}}\">Click Here to Add Card</a></p>"
     "<p>If you have any questions, just reply to this email.</p>"
     "<p>— The {{COMPANY_NAME}} team</p>"
 )
+# Phase P30 · Feb-2026 — SMS template updated to the customer-facing
+# copy Ryan approved. Includes explicit customer name + company name
+# in TWO places (opening and sign-off) so a screenshot forwarded
+# to a family member reads unambiguously. Note: this template + a
+# ~200-char Stripe Checkout URL exceeds the 160-char SMS segment
+# limit — carrier will send as 2-3 segments, not a bug.
 _SMS_BODY = (
-    "Hi {{CUSTOMER_FIRST_NAME}} — {{COMPANY_NAME}} needs a card on "
-    "file for your account. Add it here: {{ADD_CARD_LINK}}"
+    "Hi {{CUSTOMER_FIRST_NAME}}, To keep your service on schedule, "
+    "please add a card on file with {{COMPANY_NAME}}. Adding a card "
+    "is quick, secure, and only takes a minute: {{ADD_CARD_LINK}}. "
+    "If you have any questions, just reply to this text. - The "
+    "{{COMPANY_NAME}} team"
 )
 
 # ─── Batch 12C · Feb 2026 — ambiguous-match digest templates ─────────
@@ -166,7 +181,16 @@ async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
     """Insert the two ``add_card_request_*`` templates for ``tenant_id``
     if they don't already exist. Batch 12C also seeds the
     ``stripe_sync_ambiguous_matches`` digest template. Returns count
-    of rows inserted."""
+    of rows inserted.
+
+    Phase P30 · Feb-2026 — additionally REFRESHES the body/subject
+    of any ``is_system=True`` add-card template whose stored body
+    still matches the pre-P30 copy. This lets the boot seeder
+    upgrade existing tenants to the P30 unified copy without a
+    separate migration. Tenants that have CUSTOMIZED the template
+    (``is_system=False`` OR body diverged from the pre-P30 canonical
+    string) are left alone — customization is preserved.
+    """
     inserted = 0
     common = {
         "tenant_id": tenant_id,
@@ -175,9 +199,11 @@ async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
         "is_active": True,
         "created_at": now_iso(),
     }
-    if not await db.marketing_templates.find_one(
-        {"tenant_id": tenant_id, "code": "add_card_request_email"}, {"_id": 0}
-    ):
+    existing_email = await db.marketing_templates.find_one(
+        {"tenant_id": tenant_id, "code": "add_card_request_email"},
+        {"_id": 0, "body": 1, "is_system": 1},
+    )
+    if not existing_email:
         await db.marketing_templates.insert_one({
             **common,
             "id": new_id(), "code": "add_card_request_email",
@@ -185,9 +211,22 @@ async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
             "subject": _EMAIL_SUBJECT, "body": _EMAIL_BODY,
         })
         inserted += 1
-    if not await db.marketing_templates.find_one(
-        {"tenant_id": tenant_id, "code": "add_card_request_sms"}, {"_id": 0}
-    ):
+    elif (existing_email.get("is_system")
+          and "Add my card securely" in (existing_email.get("body") or "")):
+        # P30 body refresh — the pre-P30 copy anchored on "Add my
+        # card securely" (deprecated). System templates only.
+        await db.marketing_templates.update_one(
+            {"tenant_id": tenant_id, "code": "add_card_request_email",
+             "is_system": True},
+            {"$set": {"subject": _EMAIL_SUBJECT, "body": _EMAIL_BODY,
+                       "updated_at": now_iso()}},
+        )
+
+    existing_sms = await db.marketing_templates.find_one(
+        {"tenant_id": tenant_id, "code": "add_card_request_sms"},
+        {"_id": 0, "body": 1, "is_system": 1},
+    )
+    if not existing_sms:
         await db.marketing_templates.insert_one({
             **common,
             "id": new_id(), "code": "add_card_request_sms",
@@ -195,6 +234,16 @@ async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
             "subject": None, "body": _SMS_BODY,
         })
         inserted += 1
+    elif (existing_sms.get("is_system")
+          and "needs a card on file for your account" in (existing_sms.get("body") or "")):
+        # P30 body refresh — the pre-P30 SMS anchored on
+        # "needs a card on file for your account" (deprecated).
+        # System templates only.
+        await db.marketing_templates.update_one(
+            {"tenant_id": tenant_id, "code": "add_card_request_sms",
+             "is_system": True},
+            {"$set": {"body": _SMS_BODY, "updated_at": now_iso()}},
+        )
     # Batch 12C · Feb 2026 — ambiguous-match digest templates.
     if not await db.marketing_templates.find_one(
         {"tenant_id": tenant_id, "code": "stripe_sync_ambiguous_matches"},

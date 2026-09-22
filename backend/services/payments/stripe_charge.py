@@ -249,6 +249,51 @@ async def _create_intent(
 
 
 # ── Public helpers ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+# Phase P30 · Feb-2026 — Ensure a Stripe Customer exists for a CRM
+# customer. Extracted from the nested ``_create_fresh_stripe_customer``
+# closure inside ``create_setup_intent`` so the P30 Checkout Session
+# helper can reuse the exact same idempotency + metadata shape
+# without duplicating logic. Idempotency key is per (mode, tenant,
+# customer) — a mode flip mints a fresh Customer instead of
+# deduping back to a stale live-mode id.
+# ══════════════════════════════════════════════════════════════════
+async def ensure_stripe_customer(
+    *, tenant_id: str, customer_id: str,
+) -> str:
+    """Return the Stripe Customer id for a CRM customer, creating one
+    on Stripe's side (and persisting the id) if the CRM row doesn't
+    have one yet. Never returns empty string — raises
+    ``ValueError`` if the CRM customer doesn't exist at all.
+    """
+    _init_api_key()
+    customer = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not customer:
+        raise ValueError("customer not found")
+    existing = customer.get("stripe_customer_id") or ""
+    if existing:
+        return existing
+    stripe_cust = await _to_thread(
+        _stripe.Customer.create,
+        email=(customer.get("email") or None),
+        name=(customer.get("name") or None),
+        metadata={
+            "crm_customer_id": customer_id,
+            "crm_tenant_id": tenant_id,
+            "stripe_mode": _mode(),
+        },
+        idempotency_key=f"cust_create:{_mode()}:{tenant_id}:{customer_id}",
+    )
+    new_id = _asdict(stripe_cust).get("id") or stripe_cust["id"]
+    await db.customers.update_one(
+        {"id": customer_id, "tenant_id": tenant_id},
+        {"$set": {"stripe_customer_id": new_id}},
+    )
+    return new_id
+
+
 async def create_setup_intent(
     *,
     tenant_id: str,
@@ -399,6 +444,119 @@ async def create_setup_intent(
         # ``GET /api/payments/stripe/config``.
         "publishable_key": _publishable_key(),
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+# Phase P30 · Feb-2026 — Direct Stripe Checkout Session (mode="setup")
+# for the "Add card on file" email + SMS unified flow.
+#
+# Prior card-on-file flow: mint a JWT via ``add_card_links``, send a
+# self-hosted ``/portal/add-card?token=...`` link, load our own
+# Elements form, then call ``create_setup_intent`` above. That's four
+# hops through our infra for a payment method save.
+#
+# P30 flow: create a Stripe-hosted Checkout Session with
+# ``mode="setup"``, drop the ``session.url`` straight into the
+# email + SMS, and let Stripe handle everything up to the success
+# redirect. Zero self-hosted UI in the critical path — Stripe's
+# hosted page carries the PCI scope on our behalf.
+#
+# The two-flow split is intentional. ``create_setup_intent`` is still
+# the right call for the in-portal "swap default card" affordance
+# where a logged-in customer clicks a button inside our shell. This
+# helper is the right call for the OUT-of-band email/SMS nudge where
+# there is no session, no auth, and no shell.
+# ══════════════════════════════════════════════════════════════════
+async def create_card_setup_checkout_session(
+    *,
+    customer_id: str,
+    tenant_id: str,
+    stripe_customer_id: str,
+    success_url: str,
+    cancel_url: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Create a Stripe Checkout Session in setup mode. Returns the
+    hosted ``session.url`` ready to be delivered via email/SMS.
+
+    Parameters
+    ----------
+    customer_id / tenant_id:
+        Our CRM identifiers — stamped on the session's ``metadata``
+        so the ``checkout.session.completed`` webhook can attribute
+        the resulting PaymentMethod back to the right CRM customer.
+    stripe_customer_id:
+        The provider-side Customer id. REQUIRED — the caller is
+        expected to have ensured one exists via the sibling
+        ``ensure_stripe_customer`` helper. Raises ``ValueError`` on
+        empty/None to force the caller to handle this explicitly —
+        silently minting a Customer here would create untraceable
+        orphans on ``customer.stripe_customer_id`` sync.
+    success_url:
+        Stripe expands the literal placeholder
+        ``{CHECKOUT_SESSION_ID}`` in this URL. The router SHOULD
+        include it so the success page can read the session id and
+        confirm the setup completed.
+    cancel_url:
+        Optional; Stripe uses its own fallback ``/close`` page if
+        omitted.
+    metadata:
+        Extra keys merged into the session's ``metadata`` — the
+        P30 flow always stamps
+        ``source="card_add_setup"``, ``flow="card_on_file_add"``,
+        ``crm_tenant_id``, ``crm_customer_id`` on top of anything
+        the caller passes. ``source`` is the webhook filter key —
+        the webhook branch in ``handle_webhook_event`` gates on
+        ``metadata.source == "card_add_setup"`` to avoid conflating
+        with the Phase-47 invoice-pay flow.
+
+    Never returns None. Raises ``StripeError`` (or its subclasses)
+    on Stripe-side failure so the FastAPI handler can 502.
+    """
+    _init_api_key()
+    if not stripe_customer_id:
+        raise ValueError("stripe_customer_id required")
+
+    # Metadata precedence: caller-provided → P30 canonical keys.
+    # We overwrite the caller for the four canonical keys so a
+    # future refactor that accidentally passes conflicting values
+    # doesn't corrupt the webhook's routing.
+    merged_metadata: Dict[str, Any] = dict(metadata or {})
+    merged_metadata.update({
+        "crm_tenant_id": tenant_id,
+        "crm_customer_id": customer_id,
+        "flow": "card_on_file_add",
+        # ``source`` is the WEBHOOK FILTER KEY — do not rename or
+        # drop. Coordinated with the branch in
+        # ``handle_webhook_event`` (checkout.session.completed).
+        "source": "card_add_setup",
+    })
+
+    session_kwargs: Dict[str, Any] = {
+        "mode": "setup",
+        "payment_method_types": ["card"],
+        "customer": stripe_customer_id,
+        "success_url": success_url,
+        "metadata": merged_metadata,
+    }
+    if cancel_url:
+        session_kwargs["cancel_url"] = cancel_url
+
+    session = await _to_thread(
+        _stripe.checkout.Session.create, **session_kwargs,
+    )
+    url = _asdict(session).get("url") or getattr(session, "url", None)
+    if not url:
+        raise RuntimeError(
+            f"Stripe Checkout Session created without a URL for "
+            f"customer={customer_id} tenant={tenant_id}",
+        )
+    return url
+
+
+# P30 · Feb-2026 — Legacy alias kept for a single caller migration
+# window. New code MUST use ``create_card_setup_checkout_session``.
+create_setup_checkout_session = create_card_setup_checkout_session
 
 
 async def attach_payment_method(
@@ -1930,6 +2088,128 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         payment_status = data.get("payment_status")  # "paid" | "unpaid" | "no_payment_required"
         amount_total_cents = int(data.get("amount_total") or 0)
         currency = (data.get("currency") or "usd").lower()
+
+        # ════════════════════════════════════════════════════════════
+        # Phase P30 · Feb-2026 — card-on-file setup completion.
+        # Session created by
+        # ``create_card_setup_checkout_session`` and carrying
+        # ``metadata.source == "card_add_setup"``. Attach the
+        # PaymentMethod that Stripe just saved, mark it as default,
+        # and stamp the CRM customer.
+        #
+        # This branch runs BEFORE the P47 invoice branch below so
+        # a session that (impossibly) carried BOTH markers still
+        # gets classified as an "add-card" event (safer default —
+        # setup mode has no ``payment_intent`` to reconcile).
+        # ════════════════════════════════════════════════════════════
+        if meta.get("source") == "card_add_setup":
+            if not session_id or not tenant_id or not customer_id:
+                logger.warning(
+                    "[p30-webhook] card_add_setup session missing "
+                    "identifiers — session_id=%s tenant=%s customer=%s",
+                    session_id, tenant_id, customer_id,
+                )
+                return result
+
+            # Idempotency — a Stripe redelivery MUST NOT double-flag
+            # the customer or mint a duplicate audit row. Keyed on
+            # ``session_id`` in ``db.payment_events`` (P30 audit
+            # kind ``p30_card_add_setup_completed``).
+            existing = await db.payment_events.find_one(
+                {"session_id": session_id,
+                    "kind": "p30_card_add_setup_completed"},
+                {"_id": 0, "id": 1},
+            )
+            if existing:
+                logger.info(
+                    "[p30-webhook] session=%s already processed — "
+                    "idempotent no-op",
+                    session_id,
+                )
+                result["handled"] = True
+                result["source"] = "card_add_setup"
+                result["idempotent"] = True
+                return result
+
+            # Retrieve the SetupIntent → PaymentMethod on this
+            # session. Stripe stamps ``setup_intent`` on setup-mode
+            # sessions once ``checkout.session.completed`` fires.
+            setup_intent_id = data.get("setup_intent")
+            pm_id: Optional[str] = None
+            if setup_intent_id:
+                try:
+                    si = await _to_thread(
+                        _stripe.SetupIntent.retrieve, setup_intent_id,
+                    )
+                    pm_id = _asdict(si).get("payment_method")
+                except Exception as _si_exc:
+                    logger.warning(
+                        "[p30-webhook] SetupIntent.retrieve failed "
+                        "for si=%s: %s",
+                        setup_intent_id, _si_exc,
+                    )
+
+            # Attach + set as default on the Stripe customer. Attach
+            # is idempotent server-side; Stripe returns the PM even
+            # if it was already attached.
+            if pm_id:
+                cust_row = await db.customers.find_one(
+                    {"id": customer_id, "tenant_id": tenant_id},
+                    {"_id": 0, "stripe_customer_id": 1},
+                )
+                stripe_cust_id = (cust_row or {}).get("stripe_customer_id")
+                if stripe_cust_id:
+                    try:
+                        await _to_thread(
+                            _stripe.PaymentMethod.attach, pm_id,
+                            customer=stripe_cust_id,
+                        )
+                        await _to_thread(
+                            _stripe.Customer.modify, stripe_cust_id,
+                            invoice_settings={
+                                "default_payment_method": pm_id,
+                            },
+                        )
+                    except Exception as _att_exc:
+                        logger.warning(
+                            "[p30-webhook] PM attach/default failed "
+                            "cust=%s pm=%s: %s",
+                            stripe_cust_id, pm_id, _att_exc,
+                        )
+
+            # Stamp the CRM customer.
+            now_iso_str = datetime.now(timezone.utc).isoformat()
+            await db.customers.update_one(
+                {"id": customer_id, "tenant_id": tenant_id},
+                {"$set": {
+                    "has_card_on_file": True,
+                    "stripe_default_payment_method": pm_id,
+                    "card_added_at": now_iso_str,
+                    "card_added_via": "setup_link",
+                }},
+            )
+
+            # Audit row (also serves as the idempotency sentinel above).
+            await db.payment_events.insert_one({
+                "id": str(uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "customer_id": customer_id,
+                "kind": "p30_card_add_setup_completed",
+                "session_id": session_id,
+                "setup_intent_id": setup_intent_id,
+                "payment_method_id": pm_id,
+                "created_at": now_iso_str,
+            })
+
+            logger.info(
+                "[p30-webhook] card_add_setup completed — "
+                "tenant=%s customer=%s session=%s pm=%s",
+                tenant_id, customer_id, session_id, pm_id,
+            )
+            result["handled"] = True
+            result["source"] = "card_add_setup"
+            result["payment_method_id"] = pm_id
+            return result
 
         if not session_id or not invoice_id:
             # Not a Phase-47 session (or metadata got stripped

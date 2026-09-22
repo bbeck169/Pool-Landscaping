@@ -4470,9 +4470,7 @@ async def send_card_add_link(cid: str,
     5 minutes per customer."""
     if user.get("role") not in ("admin", "manager", "super_admin"):
         raise HTTPException(403, "Admin or manager access required")
-    from services.add_card_links import (
-        build_add_card_link, ensure_rate_limit,
-    )
+    from services.add_card_links import ensure_rate_limit
     from services.marketing.merge_tags import render_context, render_template
 
     customer = await db.customers.find_one(
@@ -4483,19 +4481,64 @@ async def send_card_add_link(cid: str,
     # 1/5min rate limit (raises 429).
     ensure_rate_limit(cid)
 
-    # Base URL for the magic link — served from the tenant's public
-    # domain if configured, else the caller's ``x-forwarded-host`` /
-    # env FRONTEND_ORIGIN fallback.
+    # Phase P30 · Feb-2026 — Direct Stripe Checkout Session (mode="setup").
+    # Was: build a JWT self-hosted magic link to ``/portal/add-card`` and
+    # render our own SetupIntent Elements form. That flow required us to
+    # own the PCI-scoped page + explain a two-hop UX to customers.
+    # Now: mint a Stripe-hosted Checkout Session, drop the ``session.url``
+    # straight into email + SMS. Stripe carries the PCI scope; our
+    # frontend only needs to render ``/portal/setup-success`` after the
+    # redirect. Zero self-hosted UI in the critical path.
     base_url = (
         os.environ.get("PUBLIC_FRONTEND_ORIGIN")
         or (tenant.get("brand") or {}).get("public_origin")
-        or ""
-    ).strip()
-    if not base_url:
-        # Last-resort fallback — the app's dev preview host. Still
-        # produces a working link when env is unset.
-        base_url = "https://poolscape-audit.preview.emergentagent.com"
-    link = build_add_card_link(base_url, cid, tenant["id"])
+        or "https://app.plofv.com"   # P30 · production default (was preview)
+    ).strip().rstrip("/")
+
+    # Ensure the customer has a Stripe Customer id BEFORE creating the
+    # Checkout Session (Stripe requires the ``customer`` field on
+    # setup-mode sessions). Reuses the same idempotency + metadata
+    # shape as ``create_setup_intent`` — a single canonical helper.
+    from services.payments.stripe_charge import (
+        ensure_stripe_customer, create_card_setup_checkout_session,
+    )
+    try:
+        stripe_customer_id = await ensure_stripe_customer(
+            tenant_id=tenant["id"], customer_id=cid,
+        )
+    except ValueError as _vexc:
+        raise HTTPException(404, str(_vexc))
+
+    try:
+        link = await create_card_setup_checkout_session(
+            customer_id=cid,
+            tenant_id=tenant["id"],
+            stripe_customer_id=stripe_customer_id,
+            # ``{CHECKOUT_SESSION_ID}`` is a Stripe-side placeholder —
+            # the double-braces are LITERAL, don't escape.
+            success_url=(
+                f"{base_url}/portal/setup-success"
+                "?session_id={CHECKOUT_SESSION_ID}"
+            ),
+            cancel_url=f"{base_url}/portal/setup-cancelled",
+            metadata={"trigger_source": "send_card_add_link"},
+        )
+    except Exception as _sxc:
+        logger.error(
+            "[p30] create_setup_checkout_session failed cid=%s "
+            "tenant=%s: %s",
+            cid, tenant["id"], _sxc,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "STRIPE_SESSION_ERROR",
+                "message": (
+                    "Could not create Stripe Checkout Session. "
+                    "Check Stripe API keys + logs."
+                ),
+            },
+        )
 
     ctx = render_context(customer=customer, tenant=tenant,
                           add_card_link=link)

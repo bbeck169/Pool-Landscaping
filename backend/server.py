@@ -3055,6 +3055,31 @@ async def _run_boot_sequence():
         _p29_factory,
         must_succeed=False,
     )
+    # Phase P30 · Feb-2026 — refresh the add-card SMS + email
+    # ``marketing_templates`` rows to the unified P30 copy. Only
+    # touches ``is_system=True`` rows (or rows still carrying the
+    # pre-P30 marker phrase); customized rows are preserved.
+    # Best-effort (``must_succeed=False``) — boot never blocks on
+    # this cleanup.
+    async def _p30_tpl_factory():
+        from migrations.p30_add_card_sms_template import (
+            run as _p30_tpl_run,
+        )
+        _res = await _p30_tpl_run()
+        logger.info(
+            "[p30-tpl] boot pass — tenants_scanned=%s sms_updated=%s "
+            "email_updated=%s",
+            _res.get("tenants_scanned"),
+            _res.get("sms_updated"),
+            _res.get("email_updated"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "p30_add_card_sms_template",
+        _p30_tpl_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py

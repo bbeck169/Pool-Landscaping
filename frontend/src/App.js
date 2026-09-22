@@ -24,6 +24,9 @@ import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 const PortalReviewSubmit = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreviewsubmit" */ "@/pages/portal/PortalReviewSubmit"));
 const PortalAgreementRenew = React.lazy(() => import(/* webpackChunkName: "p-portal-portalagreementrenew" */ "@/pages/portal/PortalAgreementRenew"));
+
+// Phase P30 · Feb 2026 — Stripe Checkout setup-mode redirect target.
+const SetupSuccess = React.lazy(() => import(/* webpackChunkName: "p-portal-setupsuccess" */ "@/pages/portal/SetupSuccess"));
 const Signup = React.lazy(() => import(/* webpackChunkName: "p-signup" */ "@/pages/Signup"));
 // Feb-2026 · Business Signup SP2 — new public + wizard surface.
 const BusinessSignup = React.lazy(() => import(/* webpackChunkName: "p-businesssignup" */ "@/pages/BusinessSignup"));
@@ -836,6 +839,12 @@ export default function App() {
           {/* Phase 47c · Feb 2026 — RESTORED after the Phase LZ4 retirement.
               Direct Stripe SetupIntent flow (see /pages/public/AddCardPage). */}
           <Route path="/portal/add-card" element={<AddCardPage />} />
+
+          {/* Phase P30 · Feb 2026 — Stripe-hosted Checkout Session
+              (mode=setup) redirect target. No auth — customer arrives
+              from email/SMS link. */}
+          <Route path="/portal/setup-success" element={<SetupSuccess />} />
+          <Route path="/portal/setup-cancelled" element={<SetupSuccess />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
