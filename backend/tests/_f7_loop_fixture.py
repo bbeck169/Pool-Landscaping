@@ -109,6 +109,7 @@ _REBOUND_MODULES = (
     "migrations.p29_clear_landscape_required_overrides",
     "migrations.p30_add_card_sms_template",
     "migrations.p30_customers_stripe_customer_id_unique",
+    "migrations.p36_clear_nonpool_required_overrides",
     "scripts.ensure_indexes",
     "scripts.p35_photo_backfill",
     "services.soshie.autopilot_config",

@@ -19928,3 +19928,66 @@ No fixes needed — all three benefit automatically from the P35 renderer ladder
 - Prune `data` field on rows once we're confident the S3-only path is stable (separate cleanup phase). Do NOT run this until dashboards show zero `[p35] photo fallback base64` WARNs for 30d.
 - Bucket-side lifecycle: consider a scheduled sweep to detect S3 objects with no corresponding DB row (opposite-direction orphan).
 
+
+---
+
+## P36 · Feb-2026 · Global Unlock (Non-Pool Checklist `required:False`)
+
+**Status:** SHIPPED — 44 in-memory items flipped in `DEFAULT_TEMPLATES`, 21 persisted template docs re-seeded, migration wired into startup, boot pass idempotent.
+
+### Diff summary
+
+| File | Kind | Notes |
+|------|------|-------|
+| `backend/routers/industry_checklists.py` | edit | 44 items across 21 non-pool, non-landscape templates flipped from `required: True` → `required: False`. Pool block (lines 60-74) untouched — grep-verified 7 `required: True` remain. |
+| `backend/migrations/p36_clear_nonpool_required_overrides.py` | new | Idempotent migration. Refreshes all 21 non-pool, non-landscape template docs. Tenant-scoped override cleanup (`67752881-7a80-4a2c-a03e-5d1aff4861a4`). Skips pool + landscape (P29 owns landscape). |
+| `backend/server.py` | edit | Wired `_p36_factory` into the P21 structural-migration boot block (`must_succeed=False`), right after P29. |
+| `backend/tests/test_p36_nonpool_close_unlock.py` | new | 28 tests + 2 explicit skips. Source-lint pool untouched, 21-industry parametrized close-gate pass, migration idempotency, tenant-scope isolation, pool-override control. |
+| `backend/tests/_f7_loop_fixture.py` | edit | +1 (`migrations.p36_clear_nonpool_required_overrides` in `_REBOUND_MODULES`). |
+
+### Templates found in `industry_checklists.py` (grep-driven)
+
+Total: 23 templates. Grouped:
+
+* **Pool** (untouched) — `pool` · 7 required rows preserved.
+* **Landscape** (P29 owns, untouched by P36) — `landscaping` · already all `required: False`.
+* **P36 targets** (21 industries, all flipped) — `hvac`, `pest_control`, `cleaning`, `solar`, `handyman`, `plumbing`, `electrical`, `roofing`, `painting`, `garage_door`, `appliance_repair`, `locksmith`, `chimney_sweep`, `gutter`, `window_cleaning`, `carpet_cleaning`, `pressure_washing`, `tree_service`, `snow_removal`, `fencing`, `irrigation`.
+* **Not present in file** (user brief mentioned but no template exists) — `general_maintenance`, `tree_trimming`. Both marked `pytest.skip` in the test file per the "don't hallucinate" rule.
+
+### Execute output (target tenant, prod DB)
+
+* Templates updated: **21 of 21** (`hvac`, `pest_control`, `cleaning`, `solar`, `handyman`, `plumbing`, `electrical`, `roofing`, `painting`, `garage_door`, `appliance_repair`, `locksmith`, `chimney_sweep`, `gutter`, `window_cleaning`, `carpet_cleaning`, `pressure_washing`, `tree_service`, `snow_removal`, `fencing`, `irrigation`).
+* Overrides updated: **0** — this tenant has no non-pool custom overrides.
+* Items flipped (overrides): 0.
+* 2nd run reported zero mutations (idempotent).
+
+### Post-migration verification
+
+* `industry_checklist_templates` non-pool docs with `items.required=true`: **0** ✓
+* `tenant_checklist_overrides` for tenant `67752881-...` with `items.required=true`: **0** ✓
+* Pool template `required=True` count: **7** ✓ (untouched)
+
+### Pool block untouched — proof
+
+* Pre-edit: `grep -c '"required": True' backend/routers/industry_checklists.py` → 51.
+* Post-edit: 7 (pool block only, lines 64-70).
+* Pool block line count: 60-74 (15 lines) — identical before and after.
+
+### `tree_service` explicit flip evidence
+
+```
+252:    "tree_service": [
+253:        {"key": "trees_serviced_species",   ..., "required": False},
+254:        {"key": "work_performed_type",      ..., "required": False},
+255:        {"key": "debris_hauled_chipped",    ..., "required": False},
+256:        {"key": "drop_zone_verified",       ..., "required": False},
+257:        {"key": "overhead_line_clearance",  ..., "required": False},
+258:        {"key": "client_walkthrough_tree",  ..., "required": False},
+259:    ],
+```
+
+### Follow-ups (NOT P36)
+
+* If additional tenants opt into the unlock, parameterize `P36_TARGET_TENANT_ID` to a set or ship a per-tenant admin toggle. Current scope is single-tenant to match the launch-republish ask.
+* Consider adding a boot-time assertion that pool retains its 7 required rows so a future unrelated edit can't accidentally soften compliance.
+

@@ -3128,6 +3128,32 @@ async def _run_boot_sequence():
         _p29_factory,
         must_succeed=False,
     )
+    # Phase P36 · Feb-2026 — global unlock for every non-pool,
+    # non-landscape industry checklist. Same shape as P29 but
+    # scoped to the launch-republish target tenant. Pool + landscape
+    # are intentionally NOT touched here: pool retains its
+    # compliance gate; landscape is P29's ownership. Best-effort —
+    # boot never blocks on this pass; InitState stamps ERROR on
+    # failure so ops sees it on ``/api/health``.
+    async def _p36_factory():
+        from migrations.p36_clear_nonpool_required_overrides import (
+            run as _p36_run,
+        )
+        _p36_res = await _p36_run()
+        logger.info(
+            "[p36-nonpool-unlock] boot pass — "
+            "overrides_updated=%s items_flipped=%s skipped=%s",
+            _p36_res.get("overrides_updated_total"),
+            _p36_res.get("overrides_items_flipped_total"),
+            _p36_res.get("overrides_skipped_already_clear"),
+        )
+        return _p36_res
+
+    await _run_structural_migration(
+        "p36_clear_nonpool_required_overrides",
+        _p36_factory,
+        must_succeed=False,
+    )
     # Phase P30 · Feb-2026 — refresh the add-card SMS + email
     # ``marketing_templates`` rows to the unified P30 copy. Only
     # touches ``is_system=True`` rows (or rows still carrying the
