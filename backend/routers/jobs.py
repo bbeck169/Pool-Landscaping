@@ -185,13 +185,14 @@ POOL_READINGS = [
     {"key": "combined_chlorine", "label": "Combined Chlorine", "unit": "ppm", "ideal": "0–0.2", "min": 0, "max": 0.2},
     # Phase CHEM1 · Feb-2026 — Total Chlorine (``total_cl``) removed.
     # The chemistry gate now requires the "Required Four" only
-    # (free_chlorine, ph, alkalinity, cyanuric_acid).
-    # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
-    # ``"free_chlorine"`` so legacy Field Report + Pool Checklist stay
-    # in lockstep with ``chemistry_gate.CORE_READINGS``.
-    {"key": "free_chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    # (chlorine, ph, alkalinity, cyanuric_acid).
+    # Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+    # ``chlorine`` end-to-end. Legacy spellings still resolve via
+    # the gate's ALIAS_MAP so persisted docs / legacy templates
+    # keep working; the seed uses the new canonical.
+    {"key": "chlorine", "label": "Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
     {"key": "ph", "label": "pH", "unit": "", "ideal": "7.4–7.6", "min": 7.4, "max": 7.6},
-    {"key": "alkalinity", "label": "Total Alkalinity", "unit": "ppm", "ideal": "80–120", "min": 80, "max": 120},
+    {"key": "alkalinity", "label": "Alkalinity", "unit": "ppm", "ideal": "80–120", "min": 80, "max": 120},
     {"key": "cyanuric", "label": "Cyanuric Acid", "unit": "ppm", "ideal": "30–50", "min": 30, "max": 50},
     {"key": "calcium_hardness", "label": "Calcium Hardness", "unit": "ppm", "ideal": "200–400", "min": 200, "max": 400},
     {"key": "salt", "label": "Salt", "unit": "ppm", "ideal": "2700–3400", "min": 2700, "max": 3400},
@@ -783,6 +784,7 @@ async def list_jobs(
     limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
     include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
     include_photos: bool = Query(False, description="Feb-2026 · Slim-photos ship — opt back into the full ``photos`` array on list rows. Default (``false``) drops ``photos`` and returns only ``photo_count`` + ``photo_ids`` for cheap lazy-loading."),
+    response: Response = None,
 ):
     q = await scope_jobs_query(user, tenant, status, technician_id)
     # Phase F3.5 · Feb-2026 — customer_id filter. Applied AFTER scope_jobs_query
@@ -897,13 +899,34 @@ async def list_jobs(
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
-    # K15 · Feb-2026 — defensive hard cap on tech/crew-scoped reads
-    # so a future caller widening the date window can't blow past
-    # 300 rows on the covered indexes (k15_jobs_tech_schedule_status
-    # / k15_jobs_crew_schedule). Non-scoped admin listings keep
-    # their existing 1000-row default.
-    if technician_id or crew_id:
-        limit = min(limit, 300)
+    # K15 · Feb-2026 — defensive hard cap on tech/crew-scoped reads.
+    #
+    # P22 · Feb-2026 · P0 PROD HOTFIX — the original K15 cap clamped
+    # ``limit`` to 300 rows unconditionally whenever a tech or crew
+    # scope was in play. On multi-day schedule fetches (e.g. a 30-day
+    # window that touches 400–600 jobs) the earlier rows in the
+    # window filled the 300 slots and the tail of the range silently
+    # dropped off — production symptom was "Schedule renders blank
+    # from Sep 22 onward" for tech Ethan.
+    #
+    # New shape:
+    #   • Caller passed a date range (``start`` OR ``end`` OR
+    #     ``scheduled_date``) — the range itself is the natural
+    #     bound, so we do NOT apply the K15 clamp. The base
+    #     ``limit`` param (default 1000, max 5000) is still enforced
+    #     downstream, so an unbounded blast is impossible.
+    #   • Caller did NOT pass a date range — this is a "give me all
+    #     my jobs" call; keep a sane cap at 1000 (was 300). If we
+    #     end up returning exactly ``limit`` rows we set the
+    #     ``X-Truncated: true`` response header so the UI can warn.
+    #
+    # The 300-row constant is intentionally gone from this file so
+    # nothing later can silently re-introduce it. Covered indexes
+    # (``k15_jobs_tech_schedule_status`` / ``k15_jobs_crew_schedule``)
+    # comfortably serve 1000 rows on Aquaterra prod scale.
+    _has_date_range = bool(start or end or scheduled_date)
+    if (technician_id or crew_id) and not _has_date_range:
+        limit = min(limit, 1000)
     # Feb-2026 · Crew Phase A · admin-equivalent crew filter. Techs are
     # already scoped to their own jobs by ``scope_jobs_query`` above,
     # so a tech passing ``?crew_id=`` would still only see THEIR jobs
@@ -1007,6 +1030,19 @@ async def list_jobs(
                         else {"_id": 0, "photos.data": 0})},
     ]
     docs = await db.jobs.aggregate(pipeline, allowDiskUse=True).to_list(limit)
+    # P22 · Feb-2026 — truncation signal. When the read fills the cap
+    # exactly, we flag it via a response header so the UI can surface
+    # a "results truncated, narrow your filter" banner. Only fires
+    # for the defensive "no date range" branch — callers with an
+    # explicit window are already bounded by their own range. The
+    # header is a no-op for direct-function-call tests (no
+    # ``response`` object injected).
+    if (
+        response is not None
+        and not _has_date_range
+        and len(docs) >= int(limit)
+    ):
+        response.headers["X-Truncated"] = "true"
     # In-Python re-sort to preserve the pre-K65.fix ordering
     # contract: by DAY (YYYY-MM-DD prefix of scheduled_date),
     # then by admin-assigned route_index, then by full scheduled_date
@@ -2418,6 +2454,33 @@ async def update_job(jid: str, body: JobUpdate,
                 )
             except Exception:
                 pass
+            # Phase P25 · Feb-2026 — Workstream activity-feed event.
+            # Distinct from the automation_engine / marketing
+            # event_dispatcher emits above; those drive
+            # customer-facing automations (comms sequences, review
+            # requests), while this row lands in
+            # ``db.workstream_events`` for the office/dispatch
+            # activity feed and the workstream-job-detail
+            # timeline. Wired here on the ONLINE completion path so
+            # the mobile-sync replay path
+            # (``routers/mobile_sync.py::_handle_job_close``) can
+            # reuse the same helper — schema drift between the two
+            # paths would break the timeline resolver.
+            try:
+                from routers.workstream import emit_job_completed_event
+                await emit_job_completed_event(
+                    tenant_id=tenant["id"],
+                    actor_user_id=user.get("id"),
+                    actor_role=user.get("role"),
+                    job=fresh,
+                    completed_at=fresh.get("completed_at"),
+                    source="online",
+                )
+            except Exception as _wf_e:
+                logger.warning(
+                    "[workstream] online job.completed emit failed: %s",
+                    _wf_e,
+                )
             # Feb-2026 · Item 8 · auto-trigger a review request when a
             # job is marked completed, unless the tenant opted out via
             # ``settings.review_auto_request_after_job=False``. Own

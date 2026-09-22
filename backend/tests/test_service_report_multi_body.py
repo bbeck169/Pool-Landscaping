@@ -360,8 +360,12 @@ def test_patch_multi_body_persists_and_mirrors_top_level():
         # Legacy mirrors are rebuilt: chemical_readings = pool body
         # readings; chemicals_added = union of all bodies' chemicals.
         # Phase CHEM1 · Feb-2026 — Required Four pool readings.
+        # Phase P17.1 · Feb-2026 — canonical rename: server response
+        # emits ``chlorine`` (was ``free_chlorine`` under P17). The
+        # ``free_chlorine`` input above remains a valid SOURCE alias
+        # via ALIAS_MAP.
         assert len(rep["chemical_readings"]) == 4
-        assert any(r["key"] == "free_chlorine" for r in rep["chemical_readings"])
+        assert any(r["key"] == "chlorine" for r in rep["chemical_readings"])
         assert len(rep["chemicals_added"]) == 2
         slugs = {c.get("product_slug") for c in rep["chemicals_added"]}
         assert slugs == {"liquid_chlorine", "chlorine_tabs"}

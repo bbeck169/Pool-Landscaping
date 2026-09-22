@@ -9,7 +9,8 @@ from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, require_super_admin,
+                   send_sms, notify_customer, auth_response)
 from models import TechnicianIn
 
 from routers.tenants import get_current_tenant
@@ -263,6 +264,43 @@ async def create_technician(body: TechnicianIn, user: dict = Depends(require_adm
     return doc
 
 
+# ──────────────────────────────────────────────────────────────────
+# Phase P23.1 · Feb-2026 — Super-admin diagnostic: technicians across
+# ALL tenants. Motivation: the ``p23_restore_ethan_steven_technicians``
+# boot migration correctly restores two techs into a production
+# tenant that DOES NOT EXIST on preview; the tester's admin account
+# lives in a different tenant so ``GET /api/technicians`` returns
+# empty (tenant isolation working as designed). This endpoint gives
+# ops / super-admins a cross-tenant view WITHOUT loosening isolation
+# on the tenant-scoped endpoint.
+#
+# Auth: strictly ``require_super_admin`` — do NOT permit regular
+# admin.  Every row carries an explicit ``tenant_id`` field so the
+# caller sees exactly which tenant each row belongs to.
+#
+# Response shape mirrors ``GET /api/technicians`` (same top-level
+# fields on each doc: ``id``, ``name``, ``email``, ``department``,
+# ``tenant_id``, ``active``, plus ``created_at`` / ``updated_at``
+# when present) minus the ``active_jobs*`` counters (skipped
+# deliberately — a cross-tenant fanout would 10x the read cost and
+# the counters aren't the diagnostic point here).
+# ──────────────────────────────────────────────────────────────────
+@router.get("/admin/technicians/all-tenants")
+async def list_technicians_all_tenants(
+    user: dict = Depends(require_super_admin),
+):
+    """Cross-tenant technician listing for super-admin diagnostics.
+
+    Returns every ``db.technicians`` row (ANY tenant, ANY active
+    state) sorted by ``(tenant_id, name)``. Each doc includes its
+    ``tenant_id`` so the caller sees the owning tenant explicitly.
+    """
+    docs = await db.technicians.find(
+        {}, {"_id": 0},
+    ).sort([("tenant_id", 1), ("name", 1)]).to_list(5000)
+    return {"count": len(docs), "technicians": docs}
+
+
 @router.get("/technicians/me")
 async def get_technician_me(user: dict = Depends(get_current_user),
                               tenant: dict = Depends(get_current_tenant)):
@@ -451,5 +489,203 @@ async def technician_performance(tid: str, user: dict = Depends(get_current_user
         "on_time_rate": round(100 * len(on_time) / len(completed), 1) if completed else 0,
         "avg_duration_min": round(sum(durations) / len(durations)) if durations else 0,
         "avg_customer_rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase P23 · Feb-2026 — Soft-delete + delete-hardening.
+#
+# There is intentionally NO hard-delete path for technicians on this
+# endpoint — the ~600-job FK relink incident that triggered P23 makes
+# any future hard-delete a data-loss event. Callers get three
+# outcomes:
+#
+#   1. No active jobs assigned to this tech → 200, soft-delete stamp
+#      (``active: false, deleted_at, deleted_by``). Row remains in
+#      ``db.technicians`` so the FK stays resolvable.
+#   2. N > 0 active jobs assigned → 409 with ``TECHNICIAN_HAS_ACTIVE_JOBS``
+#      + count + helpful hint. Doc UNCHANGED.
+#   3. ``?force=true&reassign_to=<other>`` (admin-only) → validate
+#      target, bulk-reassign active jobs, then soft-delete. Full
+#      audit trail via ``deletion_audit`` (1 tech row + N job rows,
+#      all sharing a single ``bulk_op_id``).
+#
+# Uses ``tenant_scoped_filter`` on every read/write. Never dict-
+# spreads ``$or``.
+# ─────────────────────────────────────────────────────────────────
+@router.delete("/technicians/{tid}",
+                 operation_id="technicians.softDelete")
+async def soft_delete_technician(
+    tid: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+    force: bool = Query(
+        False, description="P23: admin override that bulk-reassigns active jobs "
+                              "to ``reassign_to`` and THEN soft-deletes the tech.",
+    ),
+    reassign_to: Optional[str] = Query(
+        None, description="P23: required when ``force=true`` — the "
+                              "technician_id that inherits the reassigned jobs.",
+    ),
+):
+    """Soft-delete a technician. NEVER hard-deletes — see module
+    header comment for the P23 rationale."""
+    from services.query_scope import tenant_scoped_filter
+    from routers.deletion_audit import write_deletion_audit_entry
+    import uuid as _uuid
+
+    tid_ = tid
+    tenant_id = tenant["id"]
+    now_utc = datetime.now(timezone.utc).isoformat()
+
+    # 1) Locate the tech (tenant-scoped). Cross-tenant → 404.
+    doc = await db.technicians.find_one(
+        {"id": tid_, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Technician not found")
+    if doc.get("deleted_at"):
+        # Idempotent — a repeat delete of an already-soft-deleted tech
+        # is a 200 with the current state, not a 409.
+        return {
+            "ok": True, "already_deleted": True,
+            "id": tid_, "deleted_at": doc.get("deleted_at"),
+        }
+
+    # 2) Count active jobs still assigned to this tech (blocking set).
+    # ``active`` = not-soft-deleted AND status ∉ {completed, cancelled}.
+    # Uses ``tenant_scoped_filter`` so the soft-delete ``$or`` never
+    # collides with any other disjunction we might add later.
+    active_q = tenant_scoped_filter(
+        tenant_id,
+        technician_id=tid_,
+        status={"$nin": ["completed", "cancelled"]},
+    )
+    active_count = await db.jobs.count_documents(active_q)
+
+    # 3) Non-force path with N > 0 → 409 CONFLICT, doc unchanged.
+    if active_count > 0 and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TECHNICIAN_HAS_ACTIVE_JOBS",
+                "assigned_job_count": active_count,
+                "message": (
+                    f"Cannot delete technician: {active_count} active "
+                    "jobs still assigned. Reassign or complete them "
+                    "first, or use ?force=true&reassign_to=<other_tech_id>."
+                ),
+            },
+        )
+
+    # 4) Force path — validate and reassign before soft-deleting.
+    bulk_op_id = str(_uuid.uuid4())
+    reassigned_job_ids: List[str] = []
+    if force:
+        # Force without ``reassign_to`` is a caller error (no place to
+        # send the jobs → hard-orphaning them defeats the purpose of
+        # the whole P23 delete-hardening).
+        if not reassign_to:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "force=true requires reassign_to=<other_technician_id> "
+                    "so active jobs get a new owner instead of orphaning."
+                ),
+            )
+        if reassign_to == tid_:
+            raise HTTPException(
+                status_code=400,
+                detail="reassign_to cannot equal the technician being deleted",
+            )
+        # Target must exist, live in the same tenant, and be active.
+        target = await db.technicians.find_one(
+            {"id": reassign_to, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "active": 1, "deleted_at": 1},
+        )
+        if not target:
+            raise HTTPException(
+                status_code=400,
+                detail="reassign_to technician not found in this tenant",
+            )
+        if target.get("deleted_at") or target.get("active") is False:
+            raise HTTPException(
+                status_code=400,
+                detail="reassign_to technician is not active",
+            )
+
+        # Snapshot each affected job BEFORE the update — the audit
+        # rows need the pre-reassign state.
+        pre_update_docs = await db.jobs.find(
+            active_q, {"_id": 0},
+        ).to_list(length=None)
+        reassigned_job_ids = [j["id"] for j in pre_update_docs]
+
+        # Bulk reassign — same tenant-scoped filter shape so no
+        # cross-tenant leak on the write.
+        if reassigned_job_ids:
+            await db.jobs.update_many(
+                active_q,
+                {"$set": {
+                    "technician_id": reassign_to,
+                    "reassigned_at": now_utc,
+                    "reassigned_reason": "technician_deleted",
+                    "reassigned_from": tid_,
+                }},
+            )
+
+        # One ``deletion_audit`` row per reassigned job — same
+        # ``bulk_op_id`` as the tech-level row below so the group
+        # is queryable as a set.
+        for pre in pre_update_docs:
+            await write_deletion_audit_entry(
+                tenant_id=tenant_id,
+                resource_type="job",
+                resource_id=pre["id"],
+                user=user,
+                snapshot=pre,
+                deletion_reason="technician_deleted",
+                bulk_op_id=bulk_op_id,
+            )
+
+    # 5) Soft-delete the technician itself. Snapshot BEFORE the flip.
+    tech_snapshot = dict(doc)
+    await db.technicians.update_one(
+        {"id": tid_, "tenant_id": tenant_id},
+        {"$set": {
+            "active": False,
+            "deleted_at": now_utc,
+            "deleted_by": user.get("id"),
+            "updated_at": now_utc,
+        }},
+    )
+
+    # 6) Audit entry for the technician — always written, regardless
+    # of which path fired (plain soft-delete or force-reassign).
+    await write_deletion_audit_entry(
+        tenant_id=tenant_id,
+        resource_type="technician",
+        resource_id=tid_,
+        user=user,
+        snapshot=tech_snapshot,
+        deletion_reason=(
+            "technician_deleted_with_force_reassign" if force
+            else "technician_soft_deleted"
+        ),
+        bulk_op_id=bulk_op_id,
+    )
+    logger.info(
+        "[p23-delete] soft-delete tech=%s tenant=%s by=%s force=%s "
+        "reassign_to=%s jobs_reassigned=%s",
+        tid_, tenant_id, user.get("email") or user.get("id"),
+        force, reassign_to if force else None, len(reassigned_job_ids),
+    )
+    return {
+        "ok": True,
+        "id": tid_,
+        "deleted_at": now_utc,
+        "active_jobs_reassigned": len(reassigned_job_ids),
+        "reassigned_to": reassign_to if force else None,
+        "bulk_op_id": bulk_op_id,
     }
 

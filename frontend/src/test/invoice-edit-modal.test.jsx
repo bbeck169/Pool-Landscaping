@@ -40,10 +40,19 @@ afterEach(() => cleanup());
 
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import { invalidateCategoryCache } from "@/components/income/CategoryPicker";
+// Phase P16.1 · Feb-2026 — the Master Service combobox module holds
+// a per-tab cache; invalidate between tests so a prior GET
+// ``/master-services`` result (mocked as ``{items:[]}``) doesn't
+// leak into a later spec.
+import { invalidateMasterServicesCache }
+  from "@/components/services/MasterServiceCombobox";
 
 // CategoryPicker caches its first fetch at module scope — reset that
 // between suites so a stale mocked promise doesn't leak across tests.
-beforeEach(() => invalidateCategoryCache());
+beforeEach(() => {
+  invalidateCategoryCache();
+  invalidateMasterServicesCache();
+});
 
 const draftInvoice = () => ({
   id: "inv-e2e-1",
@@ -89,8 +98,13 @@ describe("InvoiceEditModal", () => {
     expect(screen.getByTestId("invoice-edit-subtotal-value").textContent).toMatch(/150/);
     // Add a row.
     fireEvent.click(screen.getByTestId("invoice-edit-add-line"));
-    // New empty row's description populates.
-    const newDescInput = screen.getByTestId("invoice-edit-line-2-desc");
+    // Phase P16.1 · Feb-2026 — the description input is now
+    // wrapped in a MasterServiceCombobox; the inner input carries
+    // the ``-input`` suffix.  Free-typing still bubbles the value
+    // via the combobox's onChange handler, so ``fireEvent.change``
+    // on the inner input is a faithful stand-in for a real user
+    // keystroke.
+    const newDescInput = screen.getByTestId("invoice-edit-line-2-desc-input");
     fireEvent.change(newDescInput, { target: { value: "Salt" } });
     const newQtyInput = screen.getByTestId("invoice-edit-line-2-qty");
     fireEvent.change(newQtyInput, { target: { value: "5" } });

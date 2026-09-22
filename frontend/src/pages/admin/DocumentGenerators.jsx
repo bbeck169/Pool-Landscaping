@@ -48,7 +48,7 @@ function ChecklistPanel() {
   const [t, setT] = useState({
     name: "Weekly Pool Checklist",
     visit_type: "pool",
-    readings_rows: ["pH", "Free Cl", "Alkalinity", "Calcium Hardness", "CYA"],
+    readings_rows: ["pH", "Chlorine", "Alkalinity", "Calcium Hardness", "CYA"],
     checklist_items: [],
     include_photos_section: true,
     include_customer_signature_line: true,
@@ -293,7 +293,7 @@ function QuickPanel() {
     visit_date: today,
     tech_name: "",
     visit_type: "pool",
-    chemical_readings: [{label: "pH", value: ""}, {label: "Free Cl", value: ""}],
+    chemical_readings: [{label: "pH", value: ""}, {label: "Chlorine", value: ""}],
     chemicals_added: [],
     checklist_items: [],
     customer_notes: "",

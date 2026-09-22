@@ -68,11 +68,15 @@ describe("K59.a · stringifyDetail — dict (structured business-rule raise)", (
     const detail = {
       detail: "chemistry_core_readings_missing",
       message: "Cannot close job — required chemistry readings missing",
-      missing_labels: ["Free Cl", "Total Cl", "Alkalinity", "pH", "CYA"],
+      // Phase P17.1 · Feb-2026 — canonical rename: production 422
+      // payload emits ``["Chlorine", "Alkalinity", "pH", "CYA"]``
+      // (was ``["Free Cl", "Total Cl", "Alkalinity", "pH", "CYA"]``
+      // under P17; Phase CHEM1 dropped ``Total Cl`` from the gate).
+      missing_labels: ["Chlorine", "Alkalinity", "pH", "CYA"],
     };
     const out = stringifyDetail(detail);
     expect(out).toContain("Cannot close job");
-    expect(out).toContain("Free Cl, Total Cl, Alkalinity, pH, CYA");
+    expect(out).toContain("Chlorine, Alkalinity, pH, CYA");
   });
 
   it("prefers ``message`` over ``msg`` over ``error`` over ``detail``", () => {

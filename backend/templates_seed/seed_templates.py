@@ -459,7 +459,7 @@ TEMPLATES = [
      "description":"Per-visit water chemistry readings and chemicals added.",
      "schema":[
        _sec("Pool Info",[_f("customer","Customer","text",required=True),_f("pool_id","Pool ID","text"),_f("date","Date","date",required=True),_f("visit_type","Visit type","select",options=["Weekly","Bi-weekly","On-call","Opening","Closing"])]),
-       _sec("Readings",[_f("readings","","table",columns=[{"key":"time","label":"Time"},{"key":"free_chlorine","label":"Free Cl (ppm)","type":"number"},{"key":"ph","label":"pH","type":"number"},{"key":"alkalinity","label":"Alk (ppm)","type":"number"},{"key":"cya","label":"CYA (ppm)","type":"number"},{"key":"calcium_hardness","label":"CaHardness (ppm)","type":"number"},{"key":"temp_f","label":"Temp (°F)","type":"number"}])]),
+       _sec("Readings",[_f("readings","","table",columns=[{"key":"time","label":"Time"},{"key":"chlorine","label":"Chlorine (ppm)","type":"number"},{"key":"ph","label":"pH","type":"number"},{"key":"alkalinity","label":"Alk (ppm)","type":"number"},{"key":"cya","label":"CYA (ppm)","type":"number"},{"key":"calcium_hardness","label":"CaHardness (ppm)","type":"number"},{"key":"temp_f","label":"Temp (°F)","type":"number"}])]),
        _sec("Chemicals Added",[_f("chems","","table",columns=[{"key":"chemical","label":"Chemical"},{"key":"amount","label":"Amount"},{"key":"unit","label":"Unit"}])]),
        _sec("Observations",[_f("clarity","Water clarity","select",options=["Clear","Hazy","Cloudy","Green"]),_f("issues","Issues observed","long_text")]),
        _sec("Technician",[_f("tech_name","Technician","text"),_f("signature","Signature","signature")]),
@@ -480,7 +480,7 @@ TEMPLATES = [
        _sec("Readings",[
          _f("readings","","table",columns=[
            {"key":"time","label":"Time"},
-           {"key":"free_chlorine","label":"Free Cl","type":"number"},
+           {"key":"chlorine","label":"Chlorine","type":"number"},
            {"key":"combined_chlorine","label":"Combined Cl","type":"number"},
            {"key":"ph","label":"pH","type":"number"},
            {"key":"alkalinity","label":"Alk","type":"number"},
@@ -529,7 +529,7 @@ TEMPLATES = [
            {"key":"date","label":"Date","type":"date"},
            {"key":"open_time","label":"Open"},
            {"key":"close_time","label":"Close"},
-           {"key":"free_cl","label":"Free Cl","type":"number"},
+           {"key":"chlorine","label":"Chlorine","type":"number"},
            {"key":"ph","label":"pH","type":"number"},
            {"key":"alk","label":"Alk","type":"number"},
            {"key":"psi","label":"Filter PSI","type":"number"},
@@ -576,7 +576,7 @@ TEMPLATES = [
        _sec("Weekly Entries",[
          _f("entries","","table",columns=[
            {"key":"date","label":"Date","type":"date"},
-           {"key":"free_cl","label":"Free Cl","type":"number"},
+           {"key":"chlorine","label":"Chlorine","type":"number"},
            {"key":"ph","label":"pH","type":"number"},
            {"key":"alk","label":"Alk","type":"number"},
            {"key":"vacuumed","label":"Vacuumed","type":"checkbox"},

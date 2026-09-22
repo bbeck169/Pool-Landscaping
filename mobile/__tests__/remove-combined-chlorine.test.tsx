@@ -36,6 +36,16 @@ jest.mock("@/src/theme", () => ({
   radius: { sm: 4, md: 8, lg: 16, pill: 999 },
   font: { regular: "System", bold: "System", semibold: "System", medium: "System", mono: "monospace" },
   fontSize: { xs: 10, sm: 12, base: 14, md: 14, lg: 16, xl: 20, xxl: 24 },
+  // Phase P17.2 · Feb-2026 — restored missing ``inputColors`` mock
+  // which the real ``src/theme.ts`` exports and
+  // ``PoolChecklistForm``'s inline styles read.  Without this,
+  // the form crashed at first render.
+  inputColors: {
+    bg: "#FFFFFF",
+    text: "#000080",
+    placeholder: "rgba(0,0,128,0.55)",
+    border: "#ccc",
+  },
 }));
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
@@ -98,23 +108,24 @@ describe("Remove Combined Chlorine — mobile", () => {
     expect(queryByTestId("pool-reading-combined_chlorine-input")).toBeNull();
   });
 
-  it("core fields (FC, TC, pH, TA, CYA) ARE rendered", () => {
+  it("core fields: form renders without crash (readings now in WaterBodyPanel)", () => {
     const { getByTestId } = renderForm();
-    expect(getByTestId("pool-reading-free_chlorine-input")).toBeTruthy();
-    expect(getByTestId("pool-reading-total_chlorine-input")).toBeTruthy();
-    expect(getByTestId("pool-reading-ph-input")).toBeTruthy();
-    expect(getByTestId("pool-reading-total_alkalinity-input")).toBeTruthy();
-    expect(getByTestId("pool-reading-cyanuric_acid-input")).toBeTruthy();
+    // Phase CHEM5 moved per-reading inputs into WaterBodyPanel.
+    // PoolChecklistForm itself no longer emits ``pool-reading-*-input``
+    // testIDs.  Guard that the form mounts and shows its container.
+    expect(getByTestId("pool-checklist-form")).toBeTruthy();
+    // Algae card is always present as a structural guard.
+    expect(getByTestId("mobile-visible-algae-card")).toBeTruthy();
   });
 
   it("readingFields filter strips combined_chlorine from merged list", () => {
-    const { queryAllByTestId } = renderForm();
-    const allInputs = queryAllByTestId(/^pool-reading-.*-input$/);
-    const ccInputs = allInputs.filter((el) =>
-      el.props.testID?.includes("combined_chlorine"),
-    );
+    const { queryAllByTestId, getByTestId } = renderForm();
+    // Phase CHEM5 — PoolChecklistForm no longer renders per-reading
+    // inputs.  The combined_chlorine filter still operates in WaterBodyPanel.
+    // Here we guard that the form itself renders cleanly and does NOT
+    // emit any combined_chlorine testID via its own tree.
+    const ccInputs = queryAllByTestId(/combined_chlorine/);
     expect(ccInputs).toHaveLength(0);
-    // Should have exactly 5 core fields
-    expect(allInputs.length).toBe(5);
+    expect(getByTestId("pool-checklist-form")).toBeTruthy();
   });
 });

@@ -13,6 +13,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 const { getSpy, delSpy, postSpy, patchSpy } = vi.hoisted(() => ({
   getSpy: vi.fn(),
@@ -47,6 +48,14 @@ vi.mock("@/components/customers/CustomerCombobox", () => ({
 import RecurringJobs from "@/pages/admin/RecurringJobs";
 
 
+// Phase P18 · Feb-2026 — the page now consumes ``useSearchParams``
+// for the Active / Paused tab strip, so every render MUST live under
+// a router context.  Wrapping keeps every existing assertion
+// intact.
+const renderPage = () =>
+  render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
+
+
 function _row(id, overrides = {}) {
   return {
     id,
@@ -72,7 +81,7 @@ beforeEach(() => {
   patchSpy.mockReset();
   // Default paths — list + customers + techs + crews + orphans.
   getSpy.mockImplementation(async (path) => {
-    if (path === "/recurring-jobs") {
+    if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) {
       return {
         items: [
           _row("active-1"),
@@ -92,7 +101,7 @@ beforeEach(() => {
 
 describe("RecurringJobs · is_active badge + delete buttons", () => {
   it("renders both soft + hard delete buttons with distinct testids", async () => {
-    render(<RecurringJobs />);
+    renderPage();
     // Wait for the list load to settle.
     expect(await screen.findByTestId(
       "recurring-job-soft-delete-btn-active-1",
@@ -103,7 +112,7 @@ describe("RecurringJobs · is_active badge + delete buttons", () => {
   });
 
   it("renders an Inactive badge only when is_active === false", async () => {
-    render(<RecurringJobs />);
+    renderPage();
     // Wait for the list.
     await screen.findByTestId("recurring-job-soft-delete-btn-active-1");
     // is_active=false row has the badge.
@@ -117,7 +126,7 @@ describe("RecurringJobs · is_active badge + delete buttons", () => {
   });
 
   it("clicking hard-delete opens the confirmation modal (does not hit API)", async () => {
-    render(<RecurringJobs />);
+    renderPage();
     const btn = await screen.findByTestId(
       "recurring-job-hard-delete-btn-active-1",
     );
@@ -144,7 +153,7 @@ describe("RecurringJobs · is_active badge + delete buttons", () => {
   });
 
   it("Cancel button dismisses the modal without deleting", async () => {
-    render(<RecurringJobs />);
+    renderPage();
     fireEvent.click(await screen.findByTestId(
       "recurring-job-hard-delete-btn-active-1",
     ));
@@ -162,7 +171,7 @@ describe("RecurringJobs · is_active badge + delete buttons", () => {
 
   it("Delete permanently hits DELETE /recurring-jobs/{id}?hard=true", async () => {
     delSpy.mockResolvedValue({ hard_deleted: true, future_jobs_cancelled: 3 });
-    render(<RecurringJobs />);
+    renderPage();
     fireEvent.click(await screen.findByTestId(
       "recurring-job-hard-delete-btn-active-1",
     ));
@@ -175,7 +184,7 @@ describe("RecurringJobs · is_active badge + delete buttons", () => {
 
   it("Soft delete hits DELETE /recurring-jobs/{id} (no hard flag)", async () => {
     delSpy.mockResolvedValue({ active: false });
-    render(<RecurringJobs />);
+    renderPage();
     fireEvent.click(await screen.findByTestId(
       "recurring-job-soft-delete-btn-active-1",
     ));

@@ -49,7 +49,7 @@ Band = Literal["below", "average", "above", "elevated"]
 #
 # ``lo`` is None for phosphates (no "below" band — 0 is fine).
 _THRESHOLDS: Dict[str, Dict[str, Optional[float]]] = {
-    "free_chlorine":   {"lo": 2,   "mid": 5,    "hi": 8},
+    "chlorine":        {"lo": 2,   "mid": 5,    "hi": 8},
     "ph":              {"lo": 7.2, "mid": 7.6,  "hi": 8.0},
     "alkalinity":      {"lo": 80,  "mid": 120,  "hi": 140},
     "cya":             {"lo": 30,  "mid": 100,  "hi": 150},
@@ -61,9 +61,9 @@ _THRESHOLDS: Dict[str, Dict[str, Optional[float]]] = {
 # spec-facing alias) to a threshold key. Anything not in this map is
 # returned as-is and looked up in ``_THRESHOLDS``; a miss returns ``None``.
 _ALIASES: Dict[str, str] = {
-    "chlorine": "free_chlorine",
-    "free_cl": "free_chlorine",
-    "free_chlorine": "free_chlorine",
+    "chlorine": "chlorine",
+    "free_cl": "chlorine",
+    "free_chlorine": "chlorine",
 
     # ``combined_chlorine`` deliberately DOES NOT map — the numeric
     # range of combined Cl is very different from free/total, and

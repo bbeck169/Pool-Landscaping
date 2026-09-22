@@ -8,6 +8,7 @@
  *   POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
  */
 import React, { useEffect, useState, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search, MoreVertical, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -18,6 +19,7 @@ import {
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CategoryComboCell from "@/components/recurring/CategoryComboCell";
+import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import { CustomerLink, PhoneLink } from "@/components/customer";
 
 const FREQ_OPTIONS = [
@@ -46,6 +48,20 @@ export default function RecurringJobs() {
   const { role } = usePermissions();
   const canHardDelete = role === "admin" || role === "super_admin";
   const [items, setItems] = useState([]);
+  // ── Phase P18 · Feb-2026 · Active / Paused tab switcher ──────────
+  // Selected tab persists in the URL query (``?status=active`` |
+  // ``?status=paused``) so refresh + deep links land on the right
+  // tab.  Counts come from the backend so the badge reflects the
+  // TENANT-wide count, not just the current filtered page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const _initialStatus = (() => {
+    const raw = (searchParams.get("status") || "").toLowerCase();
+    return raw === "paused" ? "paused" : "active";
+  })();
+  const [statusTab, setStatusTab] = useState(_initialStatus);
+  const [tabCounts, setTabCounts] = useState({
+    active: 0, paused: 0, total: 0,
+  });
   const [customers, setCustomers] = useState([]);
   const [techs, setTechs] = useState([]);
   // Phase H9 · Feb-2026 — load crews for the combined "Assigned
@@ -150,13 +166,26 @@ export default function RecurringJobs() {
     setLoading(true);
     try {
       const [tpls, custs, techsRes, crewsRes] = await Promise.all([
-        api.get("/recurring-jobs"),
+        // Phase P18 · Feb-2026 — pass the ``status`` filter so the
+        // backend narrows the row set BEFORE returning; counts still
+        // reflect the tenant-wide totals via the aggregate.
+        api.get(`/recurring-jobs?status=${encodeURIComponent(statusTab)}`),
         api.get("/customers?is_active=true&limit=500").catch(() => ({ items: [] })),
         api.get("/technicians").catch(() => []),
         // Phase H9 · Feb-2026 — crews. Same 403-safe pattern.
         api.get("/crews").catch(() => ({ items: [] })),
       ]);
       setItems(tpls?.items || []);
+      // Phase P18 · Feb-2026 — the response now carries ``counts:
+      // {active, paused, total}`` (backend aggregate). Legacy consumers
+      // still see ``items`` + ``count`` unchanged.
+      if (tpls?.counts && typeof tpls.counts === "object") {
+        setTabCounts({
+          active: Number(tpls.counts.active || 0),
+          paused: Number(tpls.counts.paused || 0),
+          total: Number(tpls.counts.total || 0),
+        });
+      }
       setCustomers(Array.isArray(custs) ? custs : (custs?.items || []));
       setTechs(Array.isArray(techsRes) ? techsRes : (techsRes?.items || []));
       setCrews(Array.isArray(crewsRes) ? crewsRes : (crewsRes?.items || []));
@@ -239,6 +268,22 @@ export default function RecurringJobs() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Phase P18 · Feb-2026 — refetch whenever the tab changes AND
+  // sync the ``?status=`` URL param so refresh / deep links land on
+  // the right tab. Search state (searchInput / searchQuery) is
+  // preserved by React state across the refetch; the URL param is
+  // the single source of truth for the selected tab.
+  useEffect(() => {
+    const currentParam = (searchParams.get("status") || "").toLowerCase();
+    if (currentParam !== statusTab) {
+      const next = new URLSearchParams(searchParams);
+      next.set("status", statusTab);
+      setSearchParams(next, { replace: true });
+    }
+    load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusTab]);
 
   // Phase P3 · Feb-2026 — Escape closes the Edit / Create modal.
   // Attached only while ``modalOpen`` is true so we don't fight
@@ -432,8 +477,32 @@ export default function RecurringJobs() {
 
   const togglePause = async (row) => {
     setBusy(row.id);
-    try { await api.patch(`/recurring-jobs/${row.id}`, { active: !row.active }); await load(); }
-    finally { setBusy(null); }
+    try {
+      // Phase P18 · Feb-2026 — send both ``is_active`` (canonical)
+      // AND ``active`` (legacy mirror) so the backend PATCH detects
+      // the True→False transition and fires the auto-cancel side-
+      // effect.  When pausing, we surface the cancelled_visit_count
+      // in a toast.  Resume (False→True) fires inline generation
+      // via the pre-existing Auto-Activate path.
+      const effectiveActive = row.is_active !== undefined
+        ? !!row.is_active : !!row.active;
+      const nextActive = !effectiveActive;
+      const res = await api.patch(`/recurring-jobs/${row.id}`, {
+        is_active: nextActive,
+        active: nextActive,
+      });
+      if (!nextActive) {
+        // Pause path — announce how many future visits were cancelled.
+        const n = Number(res?.cancelled_visit_count || 0);
+        const noun = n === 1 ? "visit" : "visits";
+        toast.success(`Paused. ${n} future ${noun} cancelled.`);
+      } else {
+        toast.success("Resumed.");
+      }
+      await load();
+    } catch (e) {
+      toast.error(e?.message || "Save failed");
+    } finally { setBusy(null); }
   };
 
   const softDelete = async (row) => {
@@ -863,6 +932,50 @@ export default function RecurringJobs() {
         </div>
       ) : (
         <>
+        {/* Phase P18 · Feb-2026 — Active / Paused tab switcher.
+             Counts come from the tenant-wide aggregate returned by
+             the backend so the badge stays honest even when the
+             client-side customer search filter narrows the visible
+             row set. URL query ``?status=`` is the source of truth
+             for the selected tab. */}
+        <div
+          className="flex items-center gap-1 mb-4 rounded-xl p-1 w-fit"
+          style={{ background: colors.surfaceSecondary,
+                    border: `1px solid ${colors.border}` }}
+          role="tablist"
+          aria-label="Recurring jobs status filter"
+          data-testid="recurring-status-tabs"
+        >
+          {[
+            { key: "active", label: "Active" },
+            { key: "paused", label: "Paused" },
+          ].map((tab) => {
+            const isActive = statusTab === tab.key;
+            const badge = Number(tabCounts[tab.key] || 0);
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setStatusTab(tab.key)}
+                disabled={loading || busy != null}
+                className="px-3 py-1.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60"
+                style={{
+                  backgroundColor: isActive ? "#FFFFFF" : "transparent",
+                  color: isActive ? colors.onSurface : colors.muted,
+                  border: isActive
+                    ? `1px solid ${colors.border}`
+                    : "1px solid transparent",
+                }}
+                data-testid={`recurring-status-tab-${tab.key}`}
+                data-count={badge}
+              >
+                {tab.label} ({badge})
+              </button>
+            );
+          })}
+        </div>
         {/* Phase R2 · Feb-2026 — customer search.  Client-side
              filter; bulk-select "on page" scopes to filtered rows. */}
         <div className="mb-3 relative max-w-md">
@@ -1196,10 +1309,51 @@ export default function RecurringJobs() {
                 </div>
               </label>
               <label className="text-xs font-semibold" style={{ color: colors.muted }}>Service type
-                <input type="text" value={editing.service_type || ""} onChange={(e) => setEditing((x) => ({ ...x, service_type: e.target.value }))}
-                       className="w-full mt-1 px-2 py-1.5 rounded text-sm"
-                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                       data-testid="recurring-jobs-service" placeholder="Weekly Pool Service" />
+                {/* Phase P16 · Feb-2026 — searchable combobox backed
+                     by ``/api/master-services``. Auto-fills
+                     ``price_cents`` + ``service_category_id`` on
+                     pick or after "+ Add" flow. Free-typing still
+                     works — parent state stays a plain name string
+                     so pre-P16 rows / new one-off services survive
+                     save with the raw name. */}
+                <div className="mt-1" data-testid="recurring-jobs-service-wrap">
+                  <MasterServiceCombobox
+                    value={editing.service_type || ""}
+                    defaultPriceHint={
+                      Number.isFinite(editing.price_cents) && editing.price_cents > 0
+                        ? Number((editing.price_cents / 100).toFixed(2))
+                        : null
+                    }
+                    onChange={({ name, default_price, category }) => {
+                      setEditing((x) => {
+                        const next = { ...x, service_type: name };
+                        if (Number.isFinite(default_price) && default_price != null) {
+                          next.price_cents = Math.round(default_price * 100);
+                        }
+                        if (category) {
+                          // Resolve category NAME → service_category_id
+                          // against the tenant's service_categories list.
+                          // Case-insensitive to match backend
+                          // normalisation.  Unknown name → leave the
+                          // existing selection alone so pickers stay
+                          // in-range.
+                          const catRow = (serviceCats || []).find(
+                            (c) => String(c.name || "").toLowerCase()
+                              === String(category).toLowerCase(),
+                          );
+                          if (catRow) next.service_category_id = catRow.id;
+                        }
+                        return next;
+                      });
+                      // Keep the local ``priceStr`` in sync so the
+                      // number input reflects the auto-fill.
+                      if (Number.isFinite(default_price) && default_price != null) {
+                        setPriceStr(Number(default_price).toFixed(2));
+                      }
+                    }}
+                    testid="recurring-jobs-service"
+                  />
+                </div>
               </label>
               {/* Phase P4 · Feb-2026 — Category taxonomy row.
                    Two dropdowns side-by-side. Blank first option

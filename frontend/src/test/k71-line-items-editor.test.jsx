@@ -52,9 +52,15 @@ vi.mock("@/api", () => ({
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 import { invalidateCategoryCache }
   from "@/components/income/CategoryPicker";
+// Phase P16.1 · Feb-2026 — invalidate the MasterServiceCombobox
+// module-level cache between tests so a prior test's empty
+// ``/master-services`` fetch doesn't leak into this one.
+import { invalidateMasterServicesCache }
+  from "@/components/services/MasterServiceCombobox";
 
 beforeEach(() => {
   invalidateCategoryCache();
+  invalidateMasterServicesCache();
 });
 
 const legacyLine = {
@@ -218,8 +224,12 @@ describe("Phase K80.a · K71LineItemsEditor · Add + Delete affordances", () => 
     // After click: new editable row appears at index 1, existing row
     // stays at index 0 in read mode.
     expect(screen.getByTestId("k71-row-edit-1")).toBeTruthy();
-    // Input starts empty — verifies scaffold defaults (empty Item).
-    const itemInput = screen.getByTestId("k71-input-item-1");
+    // Phase P16.1 · Feb-2026 — the Item field is now a
+    // MasterServiceCombobox whose inner <input> exposes
+    // ``k71-input-item-{i}-input``; the wrapper div carries the
+    // legacy ``k71-input-item-{i}`` testid.  Assert on the inner
+    // input so ``.value`` still resolves.
+    const itemInput = screen.getByTestId("k71-input-item-1-input");
     expect(itemInput.value).toBe("");
   });
 
@@ -244,7 +254,10 @@ describe("Phase K80.a · K71LineItemsEditor · Add + Delete affordances", () => 
                                    onLinesUpdated={onLinesUpdated} />);
     fireEvent.click(screen.getByTestId("k71-add-line-btn"));
     // Provide a description but leave both category pickers blank.
-    fireEvent.change(screen.getByTestId("k71-input-item-1"),
+    // Phase P16.1 · Feb-2026 — target the combobox's INNER input
+    // (``-input`` suffix) so ``fireEvent.change`` fires on an
+    // actual <input>.
+    fireEvent.change(screen.getByTestId("k71-input-item-1-input"),
                        { target: { value: "New service" } });
     fireEvent.click(screen.getByTestId("k71-save-1"));
 

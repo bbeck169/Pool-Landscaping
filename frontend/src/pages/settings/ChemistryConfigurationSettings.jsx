@@ -24,16 +24,18 @@ import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 
 const CHEMICAL_ROWS = [
-  { key: "free_chlorine",    label: "Free Chlorine",    step: 0.1 },
+  // Phase P17.2 · Feb-2026 — display-label unification.
+  { key: "chlorine",         label: "Chlorine",         step: 0.1 },
   { key: "ph",               label: "pH",               step: 0.1 },
-  { key: "alkalinity",       label: "Total Alkalinity", step: 5   },
+  { key: "alkalinity",       label: "Alkalinity",       step: 5   },
   { key: "cyanuric_acid",    label: "Cyanuric Acid",    step: 5   },
   { key: "calcium_hardness", label: "Calcium Hardness", step: 25  },
   { key: "salt",             label: "Salt",             step: 50  },
 ];
 
 const FORMULA_ROWS = [
-  { key: "free_chlorine",       label: "Free Chlorine (liquid)" },
+  // Phase P17.2 · Feb-2026 — display-label unification.
+  { key: "chlorine",            label: "Chlorine (liquid)" },
   { key: "ph_up",               label: "pH Up (Soda Ash)" },
   { key: "ph_down",             label: "pH Down (Muriatic Acid)" },
   { key: "alkalinity_up",       label: "Alkalinity Up (Sodium Bicarb)" },
@@ -193,7 +195,7 @@ export default function ChemistryConfigurationSettings() {
       const chem = key === "ph_down" ? "ph_down" : key;
       const current = key === "ph_down" ? 8.0
                     : key === "ph_up"   ? 7.0
-                    : key === "free_chlorine" ? 1.0
+                    : key === "chlorine" ? 1.0
                     : key === "alkalinity_up" ? 60
                     : key === "cyanuric_acid_up" ? 20
                     : key === "calcium_hardness_up" ? 150

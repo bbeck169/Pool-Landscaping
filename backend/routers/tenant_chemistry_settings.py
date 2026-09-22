@@ -56,7 +56,7 @@ class ChemistrySettingsPatchIn(BaseModel):
     """Partial PATCH — each field optional.
 
     ``targets`` is a partial dict keyed by chemical (e.g. only
-    ``{"free_chlorine": {"min": 1.2, "max": 3.5}}`` to edit one row).
+    ``{"chlorine": {"min": 1.2, "max": 3.5}}`` to edit one row).
     ``gate_mode`` accepts ``strict`` / ``warn_only`` / ``off``.
     """
     model_config = ConfigDict(extra="forbid")
@@ -132,7 +132,7 @@ class DosingFormulasPatchIn(BaseModel):
     Empty string clears back to the AZ default.
     """
     model_config = ConfigDict(extra="forbid")
-    free_chlorine:       Optional[str] = None
+    chlorine:            Optional[str] = None
     ph_up:               Optional[str] = None
     ph_down:             Optional[str] = None
     alkalinity_up:       Optional[str] = None

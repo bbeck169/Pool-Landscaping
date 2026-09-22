@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from config import db, logger
 from utils import new_id, now_iso, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
+from services.query_scope import tenant_scoped_filter
 
 router = APIRouter(tags=["recurring_jobs"])
 
@@ -632,11 +633,64 @@ async def create_recurring(body: RecurringJobIn,
 
 @router.get("/recurring-jobs")
 async def list_recurring(active: Optional[bool] = Query(None),
+                          status: Optional[str] = Query(
+                              None,
+                              description=(
+                                  "Phase P18 · Feb-2026 — filter by "
+                                  "status: 'active' | 'paused' | None. "
+                                  "None returns everything (backward-"
+                                  "compat with legacy callers using "
+                                  "the ``active`` bool query param)."
+                              ),
+                          ),
                           user: dict = Depends(require_admin_or_manager),
                           tenant: dict = Depends(get_current_tenant)):
-    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
-    if active is not None:
-        q["active"] = bool(active)
+    """List recurring-job templates for the current tenant.
+
+    Phase P18 · Feb-2026 — Active/Paused tab support.
+      * ``status=active``  → returns rows where the canonical
+        ``is_active`` field is True (OR the legacy ``active`` field
+        is True on rows that predate the CHEM2-era backfill).
+      * ``status=paused``  → the inverse.
+      * ``status`` omitted (or ``None``) → no status filter.  The
+        legacy ``active: Optional[bool]`` param remains supported
+        so any UI still on the pre-P18 wire contract keeps working;
+        ``status`` wins when both are present.
+      * Response ADDITIVELY carries ``counts = {active, paused,
+        total}`` so the frontend tab strip can render badges
+        without a second round-trip.
+    """
+    # ── Phase P18 · Feb-2026 — active predicate ────────────────────
+    # Every row's "is this active?" answer is either:
+    #   1. ``is_active == True``                (post-backfill), or
+    #   2. ``is_active`` missing AND ``active == True``  (legacy).
+    # The paused predicate is the strict inverse — anything else.
+    _ACTIVE_OR = [
+        {"is_active": True},
+        {"is_active": {"$exists": False}, "active": True},
+    ]
+    _PAUSED_OR = [
+        {"is_active": False},
+        {"is_active": {"$exists": False},
+         "$or": [{"active": False}, {"active": {"$exists": False}}]},
+    ]
+
+    or_clauses: list = []
+    if status == "active":
+        or_clauses.append(_ACTIVE_OR)
+    elif status == "paused":
+        or_clauses.append(_PAUSED_OR)
+    elif status is None and active is True:
+        or_clauses.append(_ACTIVE_OR)
+    elif status is None and active is False:
+        or_clauses.append(_PAUSED_OR)
+    # else: no status filter — return everything.
+
+    # Phase P18 · Feb-2026 — funnel every query through
+    # ``tenant_scoped_filter`` so the new active/paused ``$or``
+    # can't collide with soft-delete via dict-spread merge.
+    q = tenant_scoped_filter(tenant["id"], *or_clauses)
+
     rows = await db.recurring_job_templates.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
     # Attach the next 3 upcoming occurrences so the UI table can render a preview.
     today = date.today()
@@ -667,7 +721,35 @@ async def list_recurring(active: Optional[bool] = Query(None),
         r.setdefault("customer_email", c.get("email") or "")
         r.setdefault("customer_phone", c.get("phone") or "")
 
-    return {"items": rows, "count": len(rows)}
+    # ── Phase P18 · Feb-2026 — counts (single aggregate) ───────────
+    # ``$ifNull`` picks ``is_active`` when present, else falls back
+    # to the legacy ``active`` field.  Compare to True to bucket the
+    # row.  One round-trip regardless of tenant size.
+    counts: Dict[str, int] = {"active": 0, "paused": 0, "total": 0}
+    counts_pipeline = [
+        {"$match": {"tenant_id": tenant["id"]}},
+        {"$group": {
+            "_id": {
+                "$cond": [
+                    {"$eq": [
+                        True,
+                        {"$ifNull": ["$is_active", "$active"]},
+                    ]},
+                    "active",
+                    "paused",
+                ],
+            },
+            "count": {"$sum": 1},
+        }},
+    ]
+    async for c in db.recurring_job_templates.aggregate(counts_pipeline):
+        bucket = c.get("_id")
+        cnt = int(c.get("count") or 0)
+        if bucket in ("active", "paused"):
+            counts[bucket] = cnt
+        counts["total"] += cnt
+
+    return {"items": rows, "count": len(rows), "counts": counts}
 
 
 @router.get("/recurring-jobs/{tpl_id}")
@@ -851,10 +933,136 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
                 "[recurring_job.instant_generation_failed] template=%s "
                 "op=patch error=%s", tpl_id, _gen_exc,
             )
+    # ── Phase P18 · Feb-2026 — Pause side-effect ──
+    # When ``is_active`` transitions True→False, cancel every FUTURE
+    # ``pending`` / ``scheduled`` visit derived from this template
+    # AND snapshot each into ``deletion_audit`` (resource_type="job",
+    # shared ``bulk_op_id``) so a future Resume flow — or a forensic
+    # audit — has the pre-cancel state.
+    #
+    # Soft-cancel (status flip + reason stamp), NEVER hard-delete —
+    # preserves the audit trail on the job docs themselves and keeps
+    # any downstream analytics happy.
+    cancelled_visit_count = 0
+    if (_needs_is_active_pre
+        and _incoming_is_active is False
+        and _before_is_active is True):
+        cancelled_visit_count = await _cancel_future_visits_on_pause(
+            tenant_id=tenant["id"], tpl_id=tpl_id, actor=user,
+        )
     if _final is not None:
         _final["generated_count"] = generated_count
         _final["skipped_no_start_date"] = skipped_no_start_date
+        _final["cancelled_visit_count"] = cancelled_visit_count
     return _final
+
+
+# ─── Phase P18 · Feb-2026 · Pause side-effect helper ─────────────────
+async def _cancel_future_visits_on_pause(
+    *, tenant_id: str, tpl_id: str, actor: Dict[str, Any],
+) -> int:
+    """Cancel every FUTURE ``pending`` / ``scheduled`` visit derived
+    from ``tpl_id``.  Called from :func:`patch_recurring` when the
+    template's ``is_active`` transitions True → False.
+
+    Behaviour:
+      * Future-visit predicate — ``scheduled_date >= <today_iso>``
+        OR ``scheduled_start >= <now_utc>``.  The generator persists
+        recurring visits with ``scheduled_date`` (a ``YYYY-MM-DD``
+        string) and NO ``scheduled_start`` field, so filtering on
+        ``scheduled_start`` alone would silently miss every generated
+        occurrence.  Manually-scheduled jobs (which populate
+        ``scheduled_start`` as an ISO datetime) also match.  Past
+        visits are NEVER touched (they're either done, in-progress,
+        or already historic — cancelling them retroactively would
+        corrupt the billing + KPI trail).
+      * ``status IN ("pending", "scheduled")`` — completed /
+        cancelled / on-hold visits are also skipped.
+      * Update stamps: ``status="cancelled"``, ``cancelled_at=<now>``,
+        ``cancelled_reason="recurring_paused"``.
+      * One :func:`write_deletion_audit_entry` row per affected job
+        with a SHARED ``bulk_op_id`` so the whole pause action is
+        queryable as a group.
+      * NO hard-delete — the ``jobs`` row stays in the collection
+        with its new ``cancelled`` status so a future Resume flow
+        can restore cleanly (deferred, tracked in P18 wrap-up).
+
+    Filter uses ``tenant_scoped_filter`` to prevent any ``$or``
+    clobber via dict-spread merge.  Never raises — a per-audit-write
+    failure is logged but doesn't abort the pause path.
+
+    Returns the number of visits actually flipped (matches the
+    Mongo ``update_many.modified_count``).
+    """
+    import uuid
+    from routers.deletion_audit import write_deletion_audit_entry
+
+    now_dt = datetime.now(timezone.utc)
+    now_iso_str = now_dt.isoformat()
+    today_iso = now_dt.date().isoformat()
+    bulk_op_id = str(uuid.uuid4())
+
+    # Build the filter via ``tenant_scoped_filter``.  The date/
+    # datetime disjunction MUST flow through the helper because a
+    # naive dict-spread with ``_nd()`` (the soft-delete OR) would
+    # clobber it — this is the exact idiom the P12 audit called out.
+    future_q = tenant_scoped_filter(
+        tenant_id,
+        [
+            {"scheduled_date": {"$gte": today_iso}},
+            {"scheduled_start": {"$gte": now_iso_str}},
+        ],
+        recurring_template_id=tpl_id,
+        status={"$in": ["pending", "scheduled"]},
+    )
+
+    # Snapshot first so the deletion_audit row carries the pre-flip
+    # state.  Only ``id`` needs to survive on the projection side;
+    # the ``snapshot`` uses the full doc minus ``_id`` (audit
+    # helper's own scrub).
+    affected = await db.jobs.find(future_q, {"_id": 0}).to_list(5000)
+    if not affected:
+        return 0
+
+    # Update every match in ONE round-trip.  ``modified_count`` is
+    # authoritative even when idempotent flips happen (defensive).
+    upd = await db.jobs.update_many(
+        future_q,
+        {"$set": {
+            "status": "cancelled",
+            "cancelled_at": now_iso_str,
+            "cancelled_reason": "recurring_paused",
+            "updated_at": now_iso_str,
+        }},
+    )
+
+    # Write one deletion_audit per affected job.  Best-effort — a
+    # write failure logs + continues so the pause never blocks on a
+    # side collection outage.
+    for job_doc in affected:
+        try:
+            await write_deletion_audit_entry(
+                tenant_id=tenant_id,
+                resource_type="job",
+                resource_id=str(job_doc.get("id") or job_doc.get("_id") or ""),
+                user=actor or {},
+                snapshot=job_doc,
+                deletion_reason="recurring_paused",
+                bulk_op_id=bulk_op_id,
+            )
+        except Exception:                                          # noqa: BLE001
+            logger.exception(
+                "[recurring.pause.audit] audit write failed for "
+                "job=%s template=%s tenant=%s bulk_op_id=%s",
+                job_doc.get("id"), tpl_id, tenant_id, bulk_op_id,
+            )
+
+    logger.info(
+        "[recurring.pause] template=%s tenant=%s cancelled_visits=%s "
+        "bulk_op_id=%s",
+        tpl_id, tenant_id, int(upd.modified_count or 0), bulk_op_id,
+    )
+    return int(upd.modified_count or 0)
 
 
 # Feb-2026 · Recurring Jobs · category audit. Writes ONE

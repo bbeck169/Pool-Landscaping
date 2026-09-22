@@ -64,7 +64,11 @@ def test_no_alias_present_is_passthrough_unchanged():
     """Regression guard: a payload with NO alias overlap comes out
     exactly as before (canonical keys only, unknown keys dropped —
     ``calcium_hardness`` is not in ``CORE_READINGS`` or ``_ALIASES``
-    so it never survived the normalizer)."""
+    so it never survived the normalizer).
+
+    Phase P17.1 · Feb-2026 — the chlorine canonical flipped from
+    ``free_chlorine`` to ``chlorine``. The input ``free_chlorine``
+    remains a valid SOURCE alias that folds onto ``chlorine``."""
     r = normalize_readings({
         "free_chlorine":  2.5,
         "ph":             7.4,
@@ -73,7 +77,7 @@ def test_no_alias_present_is_passthrough_unchanged():
         "not_a_reading":  "ignored",
     })
     assert r == {
-        "free_chlorine":  2.5,
+        "chlorine":       2.5,
         "ph":             7.4,
         "alkalinity":     100,
         "cyanuric_acid":  40,
@@ -93,12 +97,15 @@ def test_alkalinity_alias_pair_prefers_non_blank_regardless_of_order():
 
 
 def test_chlorine_alias_pair_prefers_non_blank_regardless_of_order():
-    # Legacy ``chlorine`` blank, canonical ``free_chlorine`` filled.
-    r1 = normalize_readings({"chlorine": "", "free_chlorine": 2.5})
-    assert r1 == {"free_chlorine": 2.5}
-    # Reverse.
-    r2 = normalize_readings({"chlorine": 2.0, "free_chlorine": None})
-    assert r2 == {"free_chlorine": 2.0}
+    # Phase P17.1 · Feb-2026 — canonical rename: the chlorine
+    # canonical is now ``chlorine`` (was ``free_chlorine`` under
+    # P17). Legacy ``free_chlorine`` remains a SOURCE alias.
+    # Legacy ``free_chlorine`` blank, canonical ``chlorine`` filled.
+    r1 = normalize_readings({"free_chlorine": "", "chlorine": 2.5})
+    assert r1 == {"chlorine": 2.5}
+    # Reverse — legacy filled, canonical blank.
+    r2 = normalize_readings({"free_chlorine": 2.0, "chlorine": None})
+    assert r2 == {"chlorine": 2.0}
 
 
 def test_alias_dedupe_works_on_list_shape_too():

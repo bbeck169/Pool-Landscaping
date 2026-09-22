@@ -42,18 +42,19 @@ export const BODY_TYPE_TINTS = {
 // `services.water_bodies.READING_ALLOWLIST`.
 //
 // Phase CHEM1 · Feb-2026 — ``total_chlorine`` removed. The Required
-// set for pool bodies is now the "Required Four" (free_chlorine, ph,
-// alkalinity, cyanuric_acid).
+// set for pool bodies is now the "Required Four" (chlorine, ph,
+// alkalinity, cyanuric_acid). Phase P17.1 · Feb-2026 — canonical
+// rename: ``free_chlorine`` → ``chlorine`` end-to-end.
 export const READING_ALLOWLIST = {
   pool: [
-    "free_chlorine", "ph", "alkalinity",
+    "chlorine", "ph", "alkalinity",
     "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
   ],
-  spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness"],
-  water_feature: ["free_chlorine", "ph"],
-  fountain: ["free_chlorine", "ph"],
+  spa: ["chlorine", "ph", "alkalinity", "calcium_hardness"],
+  water_feature: ["chlorine", "ph"],
+  fountain: ["chlorine", "ph"],
   other: [
-    "free_chlorine", "ph", "alkalinity",
+    "chlorine", "ph", "alkalinity",
     "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
   ],
 };
@@ -63,7 +64,7 @@ export const READING_ALLOWLIST = {
 // `services.water_bodies.READING_REQUIRED`. Only ``pool`` blocks submit.
 // Phase CHEM1 · Feb-2026 — the Required Four (per body) gate pool close.
 export const READING_REQUIRED = {
-  pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
+  pool: ["chlorine", "ph", "alkalinity", "cyanuric_acid"],
   spa: [],
   water_feature: [],
   fountain: [],
@@ -99,7 +100,7 @@ export const CHEMICAL_ALLOWLIST = {
 
 // Display metadata for the compact reading rows on Panel bodies.
 export const READING_LABELS = {
-  free_chlorine:    { name: "Free Chlorine",   unit: "ppm", short: "Free Cl" },
+  chlorine:         { name: "Free Chlorine",   unit: "ppm", short: "Chlorine" },
   ph:               { name: "pH",              unit: "",    short: "pH" },
   alkalinity:       { name: "Total Alkalinity", unit: "ppm", short: "TA" },
   cyanuric_acid:    { name: "Cyanuric Acid",   unit: "ppm", short: "CYA" },

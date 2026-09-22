@@ -82,7 +82,7 @@ beforeEach(() => {
   postSpy.mockReset();
   patchSpy.mockReset();
   getSpy.mockImplementation(async (path) => {
-    if (path === "/recurring-jobs") {
+    if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) {
       return {
         items: [{
           id: "overflow-row-1",

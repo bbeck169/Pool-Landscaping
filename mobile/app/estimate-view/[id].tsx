@@ -33,6 +33,7 @@ import {
 } from "@/src/api/estimatesFull";
 import { InvoiceAttachments } from "@/src/components/files";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
+import { ClickablePhone, ClickableAddress } from "@/src/components/interactive";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
@@ -370,15 +371,15 @@ export default function EstimateViewScreen() {
         <View style={s.card}>
           <Text style={s.sectionLabel}>FROM</Text>
           <Text style={s.companyName}>{company.name}</Text>
-          {company.address ? <Text style={s.muted}>{company.address}</Text> : null}
-          {company.phone ? <Text style={[s.muted, { color: colors.brand }]}>{company.phone}</Text> : null}
+          {company.address ? <ClickableAddress address={company.address} style={s.muted} testID="estimate-company-address-link" /> : null}
+          {company.phone ? <ClickablePhone phone={company.phone} style={s.muted} testID="estimate-company-phone-link" /> : null}
         </View>
 
         {/* Bill To */}
         <View style={s.card}>
           <Text style={s.sectionLabel}>PREPARED FOR</Text>
           <Text style={s.billName}>{bill_to.name || "—"}</Text>
-          {bill_to.address ? <Text style={s.muted}>{bill_to.address}</Text> : null}
+          {bill_to.address ? <ClickableAddress address={bill_to.address} style={s.muted} testID="estimate-billto-address-link" /> : null}
           {property_address ? <Text style={[s.muted, { marginTop: 4 }]}><Text style={{ fontFamily: font.semibold }}>Property: </Text>{property_address}</Text> : null}
         </View>
 

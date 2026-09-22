@@ -38,10 +38,13 @@ import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-nativ
 const DRAG_REORDER_ENABLED = Platform.OS !== "web";
 
 // Phase 37 — canonical testid key (parity with web PoolChecklistForm.jsx).
+// Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+// ``chlorine``. Legacy spellings still resolve to the new canonical.
 const _NAME_TO_CANONICAL: Record<string, string> = {
-  "free chlorine": "free_chlorine",
+  "free chlorine": "chlorine",
   "combined chlorine": "combined_chlorine",    // kept for historic data reads
-  "chlorine": "free_chlorine",
+  "chlorine": "chlorine",
+  "free_chlorine": "chlorine",
   "ph": "ph",
   "ph level": "ph",
   "total alkalinity": "total_alkalinity",
@@ -61,7 +64,7 @@ const _NAME_TO_CANONICAL: Record<string, string> = {
   "filter psi": "filter_psi",
   "psi": "filter_psi",
   // Short-form abbreviations (backend template defaults)
-  "fc": "free_chlorine",
+  "fc": "chlorine",
   "cc": "combined_chlorine",                    // kept for historic data reads
   "ta": "total_alkalinity",
   "ch": "calcium_hardness",

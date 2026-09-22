@@ -221,13 +221,15 @@ def test_missing_message_format_names_primary_label_not_generic_wording():
 
 
 def test_missing_fields_labels_ordering_matches_core_readings():
-    # ``free_chlorine`` before ``ph`` before ``alkalinity`` before
-    # ``cyanuric_acid`` per CORE_READINGS ordering.
+    # ``chlorine`` before ``ph`` before ``alkalinity`` before
+    # ``cyanuric_acid`` per CORE_READINGS ordering. Phase P17.1 ·
+    # Feb-2026 flipped the chlorine display label from ``Free Cl``
+    # to ``Chlorine``.
     body = _body(readings={})  # ALL four missing
     with pytest.raises(HTTPException) as ei:
         assert_bodies_required_readings_present([body])
     labels = ei.value.detail["missing_labels"]
-    assert labels == ["Free Cl", "Alkalinity", "pH", "CYA"]
+    assert labels == ["Chlorine", "Alkalinity", "pH", "CYA"]
 
 
 def test_detail_schema_is_byte_compatible_with_pre_chem2():

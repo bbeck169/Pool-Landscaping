@@ -65,18 +65,16 @@ POOL_READING_FIELDS_DEFAULT = [
     # exactly as they were.
     {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
      "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
-    # Feb-2026 · P12B — was ``"chlorine"``; renamed to the canonical
-    # ``"free_chlorine"`` so it matches ``chemistry_gate.CORE_READINGS``
-    # verbatim.  The bare ``"chlorine"`` key had no entry in the
-    # gate's ``_ALIASES`` map so techs filling every visible field
-    # still got ``chemistry_core_readings_missing``.  A belt-and-
-    # braces alias was also added in ``chemistry_gate._ALIASES`` for
-    # any tenant that persisted the old key via ``PUT /settings/service-templates``.
-    {"key": "free_chlorine",     "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
+    # Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+    # ``chlorine`` end-to-end. Legacy spellings (``free_chlorine``,
+    # ``free_cl``, ``fc``) remain as source aliases in
+    # ``chemistry_gate.ALIAS_MAP`` so persisted templates continue
+    # to resolve to the new canonical key.
+    {"key": "chlorine",          "name": "Chlorine",          "unit": "ppm",  "type": "select",
      "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
     {"key": "ph",                "name": "pH",                "unit": "",     "type": "select",
      "ideal": "7.4–7.6",  "min": 6,    "max": 8.5,  "step": 0.1},
-    {"key": "alkalinity",        "name": "Total Alkalinity",  "unit": "ppm",  "type": "select",
+    {"key": "alkalinity",        "name": "Alkalinity",        "unit": "ppm",  "type": "select",
      "ideal": "80–120",   "min": 0,    "max": 500,  "step": 20},
     {"key": "cyanuric",          "name": "Cyanuric Acid",     "unit": "ppm",  "type": "select",
      "ideal": "30–50",    "min": 0,    "max": 600,  "step": 10},
@@ -950,7 +948,7 @@ async def submit_service_report(
         logger.warning(f"reservation consume failed: {e}")
 
     # Phase 39 · Algae-risk auto-flag — if this and the previous service
-    # report both show free_chlorine <= 0.5 ppm, write an algae_risk_flags
+    # report both show chlorine <= 0.5 ppm, write an algae_risk_flags
     # entry so the office sees the at-risk customer on the retention report.
     try:
         from routers.reports import evaluate_algae_risk
@@ -1901,8 +1899,8 @@ def _chem_added_line(row: dict) -> str:
 # isn't in here we just show the value with no indicator.
 _TARGET_RANGES = {
     "ph":               (7.2, 7.6),
-    "free_chlorine":    (1.0, 3.0),
     "chlorine":         (1.0, 3.0),
+    "free_chlorine":    (1.0, 3.0),
     "combined_chlorine":(0.0, 0.2),
     "alkalinity":       (80, 120),
     "total_alkalinity": (80, 120),

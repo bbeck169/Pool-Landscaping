@@ -50,9 +50,9 @@ first" rules).  A WARN log fires on every legitimate alias
 collision so ops can spot future dupes.
 
 The 422 wire contract (``missing_fields`` / ``missing_labels`` /
-``bodies``) is intentionally NOT changed by P17 — a canonical
-rename (e.g. ``free_chlorine`` → ``chlorine``) is queued as a
-separate P17.1 phase that touches every consumer end-to-end.
+``bodies``) flips under Phase P17.1 · Feb-2026 to the ``chlorine``
+canonical (see :data:`CORE_READINGS`, :data:`_LABEL`,
+:data:`DISPLAY_LABELS`).
 """
 from __future__ import annotations
 
@@ -68,12 +68,17 @@ from fastapi import HTTPException
 # (Feb-2026).  Every alias in :data:`ALIAS_MAP` folds onto one of
 # these four keys.
 #
-# NOTE — the ``free_chlorine`` canonical stays as-is under P17. A
-# separate P17.1 phase queues the ``free_chlorine`` → ``chlorine``
-# rename (touches wire contract + every downstream consumer).
+# Phase P17.1 · Feb-2026 — the ``free_chlorine`` canonical was
+# renamed to ``chlorine`` end-to-end. Legacy spellings
+# (``free_chlorine``, ``free_cl``, ``freecl``, ``fc``,
+# ``free chlorine``) remain as SOURCE aliases in :data:`ALIAS_MAP`
+# pointing at ``chlorine`` so existing writes and stored docs
+# continue to resolve correctly. The 422 wire contract
+# (``missing_fields`` / ``missing_labels``) now emits ``chlorine``
+# / ``Chlorine`` instead of ``free_cl`` / ``Free Cl``.
 # ═════════════════════════════════════════════════════════════════════
 CORE_READINGS: List[str] = [
-    "free_chlorine",
+    "chlorine",
     "alkalinity",
     "ph",
     "cyanuric_acid",
@@ -82,7 +87,7 @@ CORE_READINGS: List[str] = [
 # UI-friendly SHORT labels for the ``missing_fields`` payload — used
 # by legacy API consumers and machine parsers (kebab-y snake case).
 _LABEL: Dict[str, str] = {
-    "free_chlorine":  "free_cl",
+    "chlorine":       "chlorine",
     "alkalinity":     "alkalinity",
     "ph":             "ph",
     "cyanuric_acid":  "cya",
@@ -92,7 +97,7 @@ _LABEL: Dict[str, str] = {
 # every UI surface (button tooltips, inline banners, mobile hints).
 # Product-approved wording (Feb-2026 spec).
 DISPLAY_LABELS: Dict[str, str] = {
-    "free_chlorine":  "Free Cl",
+    "chlorine":       "Chlorine",
     "alkalinity":     "Alkalinity",
     "ph":             "pH",
     "cyanuric_acid":  "CYA",
@@ -120,12 +125,13 @@ ALIAS_MAP: Dict[str, str] = {
     "ph":               "ph",
     "p_h":              "ph",
     "ph_balance":       "ph",       # legacy — preserved
-    # ── free_chlorine ─────────────────────────────────────────
-    "free_chlorine":    "free_chlorine",
-    "chlorine":         "free_chlorine",
-    "free_cl":          "free_chlorine",
-    "freecl":           "free_chlorine",
-    "fc":               "free_chlorine",
+    # ── chlorine (Phase P17.1 · Feb-2026 canonical rename;
+    # legacy spellings preserved as source aliases) ────────────
+    "chlorine":         "chlorine",
+    "free_chlorine":    "chlorine",
+    "free_cl":          "chlorine",
+    "freecl":           "chlorine",
+    "fc":               "chlorine",
     # ── alkalinity ────────────────────────────────────────────
     "alkalinity":       "alkalinity",
     "total_alkalinity": "alkalinity",
@@ -138,10 +144,9 @@ ALIAS_MAP: Dict[str, str] = {
 }
 
 # Zero-carve-out: 0 is a physically meaningful reading ONLY for
-# free_chlorine (a fully-consumed pool CAN read 0.0 ppm free
-# chlorine).  For pH / alkalinity / CYA, 0 is a sentinel for
-# "not entered" and MUST be treated as empty for both dedupe and
-# gate purposes.
+# chlorine (a fully-consumed pool CAN read 0.0 ppm free chlorine).
+# For pH / alkalinity / CYA, 0 is a sentinel for "not entered" and
+# MUST be treated as empty for both dedupe and gate purposes.
 _ZERO_IS_EMPTY_KEYS = frozenset({"ph", "alkalinity", "cyanuric_acid"})
 
 
@@ -237,7 +242,7 @@ def _is_effectively_empty(ck: Optional[str], v: Any) -> bool:
         (case-insensitive)
       * numeric ``0`` — ONLY when ``ck`` is in
         :data:`_ZERO_IS_EMPTY_KEYS` (pH / alkalinity / CYA).
-        ``free_chlorine`` treats 0 as a real reading.
+        ``chlorine`` treats 0 as a real reading.
 
     Booleans are always empty (see :func:`_is_valid_reading`).
     """
@@ -278,9 +283,9 @@ def normalize_readings(source: Any) -> Dict[str, Any]:
     """Coerce a ``chemical_readings`` payload into a flat
     ``{canonical_key: value}`` dict.  Accepts:
 
-    * list-of-dicts:   ``[{"key": "free_chlorine", "value": 2.5}, …]``
+    * list-of-dicts:   ``[{"key": "chlorine", "value": 2.5}, …]``
                        — the ``service_reports.chemical_readings`` shape.
-    * dict:            ``{"free_chlorine": 2.5, …}``
+    * dict:            ``{"chlorine": 2.5, …}``
                        — the legacy ``jobs.chemical_readings`` shape.
 
     Unknown / unaliased keys are dropped.

@@ -12,6 +12,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 const { getSpy, postSpy } = vi.hoisted(() => ({
   getSpy: vi.fn(),
@@ -102,7 +103,7 @@ describe("RecurringJobs · auto-assign badge + toast", () => {
   });
 
   it("renders the auto-assigned badge on rows where auto_assigned=true", async () => {
-    render(<RecurringJobs />);
+    render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
 
     // Row with auto_assigned=true → badge present, correct testid.
     const badge = await screen.findByTestId(

@@ -1,0 +1,34 @@
+## Iteration P17.M — Chemistry Restoration + Interactive-Link Parity
+- **Commit**: 9153801f5cc0ae2478141aa1b9b2c0a17e9a5cc0
+- **Date**: 2026-04-16
+- **Changes**:
+  - Added `flattenPoolReadings` function to `mobile/src/lib/waterBodies.ts` — flattens multi-body readings into flat array with `body_id`, `body_label`, `name` enrichment
+  - Fixed `setReading` in `WaterBodyPanel.tsx` to coerce chemistry values to `number | null` (no strings), preserving `0` as valid
+  - Wrapped `setReading` in `useCallback` for stability
+  - Created interactive link primitives under `mobile/src/components/interactive/`:
+    - `ClickableName.tsx` — navigates to customer/technician detail
+    - `ClickablePhone.tsx` — wraps existing PhoneLink
+    - `ClickableAddress.tsx` — wraps existing AddressLink
+    - `index.ts` — barrel export
+  - Swept 4 screens to replace raw text/phone/address renders with interactive components:
+    - `app/invoice/[id].tsx` — company phone & address, bill-to address
+    - `app/job-timers.tsx` — timer row addresses
+    - `app/dispatch.tsx` — job address
+    - `app/maintenance.tsx` — customer address
+- **Files modified**:
+  - `mobile/src/lib/waterBodies.ts`
+  - `mobile/src/components/checklist/WaterBodyPanel.tsx`
+  - `mobile/src/components/interactive/ClickableName.tsx` (new)
+  - `mobile/src/components/interactive/ClickablePhone.tsx` (new)
+  - `mobile/src/components/interactive/ClickableAddress.tsx` (new)
+  - `mobile/src/components/interactive/index.ts` (new)
+  - `mobile/app/invoice/[id].tsx`
+  - `mobile/app/job-timers.tsx`
+  - `mobile/app/dispatch.tsx`
+  - `mobile/app/maintenance.tsx`
+- **Web files referenced**:
+  - `frontend/src/components/interactive/ClickableName.jsx`
+  - `frontend/src/components/interactive/ClickablePhone.jsx`
+  - `frontend/src/components/interactive/ClickableAddress.jsx`
+- **Tests**: `chemistry-gate-mobile.test.ts` — 8/8 passed
+- **Known issues**: None introduced. Pre-existing `k61-checklist-contract.test.ts` failure still present (not related).

@@ -18,6 +18,7 @@ import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
@@ -78,7 +79,7 @@ export default function DispatchBoardMobile() {
   const load = useCallback(async () => {
     setLoading(true); setMsg(null);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayKeyInTenantTz();
       const [jRes, sRes, tRes, bRes] = await Promise.all([
         api.get("/jobs?limit=500"),
         api.get("/dispatch/settings"),
@@ -252,7 +253,7 @@ export default function DispatchBoardMobile() {
   }, [boardPins]);
 
   const openOptimize = useCallback((techUserId: string) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayKeyInTenantTz();
     const name = techDirectory[techUserId]?.name;
     router.push({
       pathname: "/dispatch/optimize",

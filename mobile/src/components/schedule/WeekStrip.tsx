@@ -20,9 +20,11 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const DAY_LABELS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
+// Phase P19 · Use tenant timezone for "today" derivation.
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
+
 function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return todayKeyInTenantTz();
 }
 
 function isoToDate(iso?: string | null): Date {

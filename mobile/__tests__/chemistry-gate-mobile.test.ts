@@ -151,18 +151,22 @@ describe("flattenPoolReadings", () => {
   });
 
   it("populates name from READING_LABELS when name not provided", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename: READING_LABELS keys
+    // on ``chlorine``.  Phase P17.2 · Feb-2026 — display-label
+    // unification flipped the ``name`` field from ``Free Chlorine``
+    // to ``Chlorine``.
     const bodies: WaterBody[] = [
       {
         ...makeEmptyBody("pool", 0),
         id: "b1",
         label: "Pool",
         readings: [
-          { key: "free_chlorine", value: 2.0 },  // no name field
+          { key: "chlorine", value: 2.0 },  // no name field
         ],
       },
     ];
     const flat = flattenPoolReadings(bodies);
-    expect(flat[0].name).toBe("Free Chlorine");  // from READING_LABELS
+    expect(flat[0].name).toBe("Chlorine");  // from READING_LABELS (P17.2 unified)
   });
 });
 

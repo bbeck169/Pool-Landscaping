@@ -80,7 +80,7 @@ beforeEach(() => {
   postSpy.mockReset();
   patchSpy.mockReset();
   getSpy.mockImplementation(async (path) => {
-    if (path === "/recurring-jobs") {
+    if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) {
       return { items: [ROW] };
     }
     if (path.startsWith("/customers")) return { items: [] };
@@ -178,7 +178,7 @@ describe("Phase P3 · 3-dot Actions menu", () => {
     expect(screen.getByTestId("recurring-jobs-price").value).toBe("120.00");
   });
 
-  it("menu → Pause calls PATCH /recurring-jobs/{id} with active:false", async () => {
+  it("menu → Pause calls PATCH /recurring-jobs/{id} with is_active + active both false", async () => {
     mount();
     fireEvent.click(
       await screen.findByTestId("recurring-row-actions-btn-row-p3"),
@@ -189,14 +189,18 @@ describe("Phase P3 · 3-dot Actions menu", () => {
     await waitFor(() => expect(patchSpy).toHaveBeenCalled());
     const [url, body] = patchSpy.mock.calls[0];
     expect(url).toBe("/recurring-jobs/row-p3");
-    expect(body).toEqual({ active: false });
+    // Phase P18 · Feb-2026 — the pause PATCH now carries BOTH the
+    // canonical ``is_active`` and the legacy ``active`` mirror so
+    // the backend detects the True→False transition on the
+    // canonical field and fires the auto-cancel side-effect.
+    expect(body).toEqual({ is_active: false, active: false });
   });
 
-  it("menu → Resume calls PATCH /recurring-jobs/{id} with active:true when row is paused", async () => {
+  it("menu → Resume calls PATCH /recurring-jobs/{id} with is_active + active both true when row is paused", async () => {
     // Re-seed a paused row.
-    const pausedRow = { ...ROW, active: false };
+    const pausedRow = { ...ROW, active: false, is_active: false };
     getSpy.mockImplementation(async (path) => {
-      if (path === "/recurring-jobs") return { items: [pausedRow] };
+      if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) return { items: [pausedRow] };
       if (path.startsWith("/customers")) return { items: [] };
       if (path === "/technicians") return { items: [] };
       if (path === "/crews") return { items: [] };
@@ -212,7 +216,10 @@ describe("Phase P3 · 3-dot Actions menu", () => {
     expect(item.textContent).toMatch(/Resume/);
     fireEvent.click(item);
     await waitFor(() => expect(patchSpy).toHaveBeenCalled());
-    expect(patchSpy.mock.calls[0][1]).toEqual({ active: true });
+    // Phase P18 · Feb-2026 — see the Pause test above; the same
+    // dual-key contract applies to Resume so the backend detects
+    // the False→True transition on the canonical field.
+    expect(patchSpy.mock.calls[0][1]).toEqual({ is_active: true, active: true });
   });
 
   it("menu → Delete permanently opens the confirm dialog (no direct DELETE fire yet)", async () => {

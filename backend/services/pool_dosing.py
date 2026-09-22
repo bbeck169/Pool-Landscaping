@@ -39,19 +39,22 @@ from config_chlorine_targets import (
 # Target ranges: (min, max, ideal). Free chlorine is resolved per-season.
 _TARGETS = {
     "ph":                 (7.2,   7.6,   7.4),
-    "free_chlorine":      (1.0,   3.0,   2.0),   # low-season fallback
+    "chlorine":           (1.0,   3.0,   2.0),   # low-season fallback
     "total_alkalinity":   (80,    120,   100),
     "calcium_hardness":   (200,   400,   250),
     "cyanuric_acid":      (30,    50,    40),
     "salt":               (2700,  3400,  3200),
 }
 
-# Handy reading aliases the mobile/web templates may send.
+# Handy reading aliases the mobile/web templates may send. Phase P17.1
+# · Feb-2026 — ``free_chlorine`` is preserved as a source alias so
+# any legacy caller / persisted doc still resolves to the new
+# ``chlorine`` canonical.
 _ALIASES = {
     "ph": "ph",
-    "free_chlorine": "free_chlorine",
-    "fc": "free_chlorine",
-    "chlorine": "free_chlorine",
+    "chlorine": "chlorine",
+    "free_chlorine": "chlorine",
+    "fc": "chlorine",
     "total_alkalinity": "total_alkalinity",
     "ta": "total_alkalinity",
     "alkalinity": "total_alkalinity",
@@ -201,7 +204,7 @@ def compute(
     Sprint 3b · Feb-2026 — ``tenant_targets`` (optional) overrides
     the hardcoded ``_TARGETS`` for pH / total_alkalinity /
     cyanuric_acid / calcium_hardness / salt AND the low-season
-    chlorine range. Shape: ``{"free_chlorine": {"min": .., "max": ..,
+    chlorine range. Shape: ``{"chlorine": {"min": .., "max": ..,
     "ideal": ..}, ...}``. Falls back to ``_TARGETS`` for missing keys.
     ``tenant_formulas`` (optional) is a dict keyed by formula key
     (see ``services.chemistry_dosing_engine.FORMULA_KEYS``) — when
@@ -275,8 +278,8 @@ def compute(
     # ``resolve_chlorine_target`` stays authoritative — pool
     # sanitation demands a fixed high-season minimum regardless of
     # tenant preference.
-    if season == "low" and tenant_targets and tenant_targets.get("free_chlorine"):
-        t_fc = tenant_targets["free_chlorine"]
+    if season == "low" and tenant_targets and tenant_targets.get("chlorine"):
+        t_fc = tenant_targets["chlorine"]
         try:
             fc_lo = float(t_fc.get("min", fc_lo))
             fc_hi = float(t_fc.get("max", fc_hi))
@@ -285,8 +288,8 @@ def compute(
             pass
 
     # 1. Free chlorine — sanitiser.
-    if "free_chlorine" in r:
-        fc = r["free_chlorine"]
+    if "chlorine" in r:
+        fc = r["chlorine"]
         if fc < fc_lo:
             preferred_form, form_reason = _decide_chlorine_form(
                 fc, fc_target_ppm, season, customer, recent_service_reports,
@@ -310,7 +313,7 @@ def compute(
                 # Liquid chlorine 12.5% — 10 fl-oz per 10k gal ≈ +2 ppm.
                 # Phase 56.5 unit tweak — surface as gallons (2dp).
                 override = _tenant_dose(
-                    "free_chlorine", fc, fc_lo, fc_hi, fc_target_ppm,
+                    "chlorine", fc, fc_lo, fc_hi, fc_target_ppm,
                 )
                 if override is not None:
                     qty = round(override, 2)
@@ -326,7 +329,7 @@ def compute(
                 )
             out.append(_rec(
                 chemical, qty, unit, reason, "immediate",
-                "free_chlorine", fc, (fc_lo, fc_hi, fc_target_ppm),
+                "chlorine", fc, (fc_lo, fc_hi, fc_target_ppm),
                 target_ppm=fc_target_ppm, season=season,
                 preferred_form=preferred_form,
                 preferred_form_reason=form_reason,
@@ -336,7 +339,7 @@ def compute(
                 "Wait — do not add chlorine", 0, "",
                 f"Free chlorine is {fc:.1f} ppm — above the seasonal "
                 f"ceiling ({fc_hi:.1f} ppm). Let it drift down.",
-                "routine", "free_chlorine", fc,
+                "routine", "chlorine", fc,
                 (fc_lo, fc_hi, fc_target_ppm),
                 target_ppm=fc_target_ppm, season=season,
             ))

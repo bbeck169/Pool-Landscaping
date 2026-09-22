@@ -88,12 +88,12 @@ def test_get_chemistry_returns_az_defaults(admin_h):
     body = r.json()
     assert body["gate_mode"] == "strict"
     targets = body["targets"]
-    for k in ("free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+    for k in ("chlorine", "ph", "alkalinity", "cyanuric_acid",
                 "calcium_hardness", "salt"):
         assert k in targets
-    assert targets["free_chlorine"]["min"] == 1.0
-    assert targets["free_chlorine"]["max"] == 3.0
-    assert targets["free_chlorine"]["unit"] == "ppm"
+    assert targets["chlorine"]["min"] == 1.0
+    assert targets["chlorine"]["max"] == 3.0
+    assert targets["chlorine"]["unit"] == "ppm"
     assert targets["ph"]["min"] == 7.2
     assert targets["ph"]["max"] == 7.6
     assert targets["salt"]["max"] == 3400.0
@@ -113,13 +113,13 @@ def test_patch_chemistry_targets_partial_update(admin_h):
     r = requests.patch(
         f"{API}/tenants/mine/settings/chemistry",
         headers=admin_h,
-        json={"targets": {"free_chlorine": {"min": 1.5, "max": 4.0}}},
+        json={"targets": {"chlorine": {"min": 1.5, "max": 4.0}}},
         timeout=15,
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["targets"]["free_chlorine"]["min"] == 1.5
-    assert body["targets"]["free_chlorine"]["max"] == 4.0
+    assert body["targets"]["chlorine"]["min"] == 1.5
+    assert body["targets"]["chlorine"]["max"] == 4.0
     # Other rows untouched at defaults.
     assert body["targets"]["ph"]["min"] == 7.2
 
@@ -154,14 +154,14 @@ def test_patch_chemistry_rejects_out_of_bounds(admin_h):
     r = requests.patch(
         f"{API}/tenants/mine/settings/chemistry",
         headers=admin_h,
-        json={"targets": {"free_chlorine": {"min": 0, "max": 25}}},
+        json={"targets": {"chlorine": {"min": 0, "max": 25}}},
         timeout=15,
     )
     assert r.status_code == 400
     body = r.json()
     detail = body.get("detail") if isinstance(body.get("detail"), dict) else body
     assert detail.get("detail") == "chemistry_target_out_of_bounds"
-    assert detail.get("field") == "free_chlorine"
+    assert detail.get("field") == "chlorine"
     assert detail.get("allowed") == {"min": 0.0, "max": 10.0}
 
 
@@ -224,13 +224,13 @@ def test_patch_dosing_formula_happy_path(admin_h):
     r = requests.patch(
         f"{API}/tenants/mine/settings/chemistry/dosing-formulas",
         headers=admin_h,
-        json={"free_chlorine": formula},
+        json={"chlorine": formula},
         timeout=15,
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["formulas"]["free_chlorine"]["tenant_formula"] == formula
-    assert body["formulas"]["free_chlorine"]["using_default"] is False
+    assert body["formulas"]["chlorine"]["tenant_formula"] == formula
+    assert body["formulas"]["chlorine"]["using_default"] is False
 
 
 def test_patch_dosing_formula_rejects_bad_syntax(admin_h):
@@ -285,7 +285,7 @@ def test_dose_preview_happy_path(admin_h):
     r = requests.post(
         f"{API}/chemistry/dose/preview",
         headers=admin_h,
-        json={"chemical": "free_chlorine", "current": 1.0,
+        json={"chemical": "chlorine", "current": 1.0,
               "volume_gallons": 10000},
         timeout=15,
     )
@@ -293,7 +293,7 @@ def test_dose_preview_happy_path(admin_h):
     body = r.json()
     assert body["evaluation_ok"] is True
     assert body["source"] == "az_default"
-    # AZ default free_chlorine formula on low-season inputs → 0.04
+    # AZ default chlorine formula on low-season inputs → 0.04
     assert body["recommended_dose_oz"] == 0.04
 
 
@@ -302,7 +302,7 @@ def test_dose_preview_with_custom_formula(admin_h):
         f"{API}/chemistry/dose/preview",
         headers=admin_h,
         json={
-            "chemical": "free_chlorine", "current": 1.0,
+            "chemical": "chlorine", "current": 1.0,
             "volume_gallons": 10000,
             "formula": "max(0, (avg_target - current) * volume_gallons * 0.00013)",
         },
@@ -330,7 +330,7 @@ def test_dose_preview_forbidden_for_tech(tech_h):
     r = requests.post(
         f"{API}/chemistry/dose/preview",
         headers=tech_h,
-        json={"chemical": "free_chlorine", "current": 1.0,
+        json={"chemical": "chlorine", "current": 1.0,
               "volume_gallons": 10000},
         timeout=15,
     )

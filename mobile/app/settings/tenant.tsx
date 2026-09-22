@@ -18,13 +18,18 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 import TenantIndustryBadges from "@/src/components/tenant/TenantIndustryBadges";
+import { setTenantTz } from "@/src/utils/tenantTime";
 
-const TIMEZONES = [
-  { value: "America/New_York", label: "Eastern", short: "ET" },
-  { value: "America/Chicago", label: "Central", short: "CT" },
-  { value: "America/Denver", label: "Mountain", short: "MT" },
-  { value: "America/Phoenix", label: "Arizona", short: "AZ" },
-  { value: "America/Los_Angeles", label: "Pacific", short: "PT" },
+// Keep in sync with backend/routers/tenants.py TIMEZONE_OPTIONS.
+// Used ONLY as a fallback when the /api/tenants/timezones fetch fails.
+const FALLBACK_TIMEZONE_OPTIONS: { value: string; label: string; short: string }[] = [
+  { value: "America/New_York",    label: "Eastern Time (ET)",  short: "ET" },
+  { value: "America/Chicago",     label: "Central Time (CT)",  short: "CT" },
+  { value: "America/Denver",      label: "Mountain Time (MT)", short: "MT" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PT)",  short: "PT" },
+  { value: "America/Anchorage",   label: "Alaska Time",        short: "AK" },
+  { value: "America/Phoenix",     label: "Arizona (No DST)",   short: "AZ" },
+  { value: "Pacific/Honolulu",    label: "Hawaii (No DST)",    short: "HI" },
 ];
 
 function relativeTime(iso: string) {
@@ -51,12 +56,32 @@ export default function TenantSettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [tzOptions, setTzOptions] = useState(FALLBACK_TIMEZONE_OPTIONS);
 
   const load = useCallback(async () => {
     if (!allowed) { setLoading(false); return; }
     try {
-      const res = await api.get("/tenants/mine/settings");
+      const [res, tzRes] = await Promise.all([
+        api.get("/tenants/mine/settings"),
+        api.get("/tenants/timezones").catch(() => null),
+      ]);
       setData(res);
+      // Hydrate tenant tz into module cache for todayKeyInTenantTz().
+      if (res?.timezone) setTenantTz(res.timezone);
+      if (tzRes?.timezones && Array.isArray(tzRes.timezones) && tzRes.timezones.length > 0) {
+        // Map API response to include short codes for chip labels.
+        const SHORT_MAP: Record<string, string> = {
+          "America/New_York": "ET", "America/Chicago": "CT",
+          "America/Denver": "MT", "America/Los_Angeles": "PT",
+          "America/Anchorage": "AK", "America/Phoenix": "AZ",
+          "Pacific/Honolulu": "HI",
+        };
+        setTzOptions(tzRes.timezones.map((t: any) => ({
+          value: t.value,
+          label: t.label,
+          short: SHORT_MAP[t.value] || t.value.split("/").pop()?.replace(/_/g, " ") || t.value,
+        })));
+      }
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, [allowed]);
 
@@ -67,6 +92,10 @@ export default function TenantSettingsScreen() {
     try {
       const updated = await api.patch("/tenants/mine/settings", patch);
       setData(updated);
+      // If timezone was updated, propagate to the module-level cache.
+      if (patch.timezone && updated?.timezone) {
+        setTenantTz(updated.timezone);
+      }
       showToast("Saved");
     } catch (e: any) {
       Alert.alert("Failed", e.message || "Update failed");
@@ -94,7 +123,8 @@ export default function TenantSettingsScreen() {
 
   const tz = data?.timezone || "America/Phoenix";
   const nextSyncDay = "Thu 02:00";
-  const tzLabel = TIMEZONES.find((t) => t.value === tz)?.label || tz;
+  const tzLabel = tzOptions.find((t) => t.value === tz)?.label || tz;
+  const isLegacy = !!tz && !tzOptions.some((t) => t.value === tz);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -119,8 +149,14 @@ export default function TenantSettingsScreen() {
         {/* Timezone */}
         <View style={s.card} testID="settings-timezone">
           <Text style={s.sectionLabel}>TIMEZONE</Text>
+          {isLegacy && (
+            <View style={s.legacyBadge} testID="tz-legacy-badge">
+              <Ionicons name="warning-outline" size={14} color="#B45309" />
+              <Text style={s.legacyText}>{tz} (legacy) — please select a new timezone</Text>
+            </View>
+          )}
           <View style={s.tzGrid}>
-            {TIMEZONES.map((t) => (
+            {tzOptions.map((t) => (
               <TouchableOpacity
                 key={t.value}
                 style={[s.tzChip, tz === t.value && s.tzChipActive]}
@@ -209,6 +245,8 @@ const s = StyleSheet.create({
   tzSub: { fontFamily: font.regular, fontSize: 10, color: colors.muted, marginTop: 1 },
   tzSubActive: { color: "rgba(255,255,255,0.8)" },
   syncNote: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginTop: spacing.md, fontStyle: "italic" },
+  legacyBadge: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FEF3C7", borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 6, marginBottom: spacing.sm },
+  legacyText: { fontFamily: font.medium, fontSize: 11, color: "#B45309", flex: 1 },
   switchRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   switchLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   switchDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2, maxWidth: "90%" },

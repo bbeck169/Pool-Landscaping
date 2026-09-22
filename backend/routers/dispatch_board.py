@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import get_current_user
-from utils import not_deleted_filter as _nd
+from services.query_scope import tenant_scoped_filter
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -344,16 +344,18 @@ async def get_board(
     if (not route_stops) and date and tech_user_id:
         import re as _re
         date_prefix = _re.escape(date)
-        job_q: Dict[str, Any] = {
-            "tenant_id": tenant["id"],
-            "scheduled_date": {"$regex": f"^{date_prefix}"},
-            "$or": [
-                {"tech_user_id": tech_user_id},
-                {"assigned_to": tech_user_id},
-                {"technician_id": tech_user_id},
-            ],
-        }
-        job_q = {**job_q, **_nd()}
+        # Phase P12.3 · Feb-2026 · $or-clobber sweep — tech-lane
+        # disjunction under ``$and`` beside soft-delete; the
+        # previous ``{**job_q, **_nd()}`` merge would silently
+        # widen this dispatch-board fallback to the whole tenant's
+        # day.
+        job_q = tenant_scoped_filter(
+            tenant["id"],
+            [{"tech_user_id": tech_user_id},
+             {"assigned_to": tech_user_id},
+             {"technician_id": tech_user_id}],
+            scheduled_date={"$regex": f"^{date_prefix}"},
+        )
         jobs = await db.jobs.find(
             job_q,
             {"_id": 0, "id": 1, "customer_id": 1, "customer_name": 1,

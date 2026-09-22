@@ -165,21 +165,97 @@ export function useNumberedOrder(jobs, opts = {}) {
   // ``null`` = hidden; ``{text, code}`` renders <ReorderErrorBanner/>.
   const [laneBanner, setLaneBanner] = useState(null);
 
+  // ── Phase P25 · Feb-2026 — actively-typing draft protection.
+  // Pre-P25 the sync effect below unconditionally re-hydrated every
+  // row from ``initialOrder`` / ``job.route_index`` when the server
+  // pushed fresh values (reorder response, poll, WebSocket). That
+  // clobbered the user's in-flight edit — they'd type ``7`` into a
+  // row, the parent's optimistic update would re-fire the memo, and
+  // the input would snap back to the server's stale ``3``.
+  //
+  // Fix: track the set of job ids whose input is currently focused
+  // (or blurred within a 300ms grace window — covers the IME race
+  // where a Chinese/Japanese IME candidate popup steals blur before
+  // the composition commits). Rows in ``typingIds`` keep their
+  // local draft; all other rows re-hydrate from the fresh server
+  // data. React state (not a ref) so the effect below actually
+  // re-runs when the typing set changes and a just-blurred row can
+  // catch up to the latest server value once its 300ms grace
+  // window elapses.
+  const TYPING_GRACE_MS = 300;
+  const [typingIds, setTypingIds] = useState(() => new Set());
+  const blurTimersRef = React.useRef({});   // {jobId: setTimeout handle}
+  const notifyFocus = useCallback((jobId) => {
+    // Cancel any pending blur-eviction so the row stays in the set.
+    const pending = blurTimersRef.current[jobId];
+    if (pending) {
+      clearTimeout(pending);
+      delete blurTimersRef.current[jobId];
+    }
+    setTypingIds((prev) => {
+      if (prev.has(jobId)) return prev;
+      const next = new Set(prev);
+      next.add(jobId);
+      return next;
+    });
+  }, []);
+  const notifyBlur = useCallback((jobId) => {
+    // Debounce eviction — an input that lost focus more than
+    // ~300ms ago drops OUT of the typing set (per spec) so the
+    // next server push can update it. Guards against IME
+    // recomposition races where blur → focus fires within a few ms.
+    const existing = blurTimersRef.current[jobId];
+    if (existing) clearTimeout(existing);
+    blurTimersRef.current[jobId] = setTimeout(() => {
+      delete blurTimersRef.current[jobId];
+      setTypingIds((prev) => {
+        if (!prev.has(jobId)) return prev;
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+    }, TYPING_GRACE_MS);
+  }, []);
+  // Cleanup on unmount so a stale setTimeout can't stamp state on
+  // an unmounted component.
+  useEffect(() => () => {
+    for (const h of Object.values(blurTimersRef.current)) {
+      clearTimeout(h);
+    }
+    blurTimersRef.current = {};
+  }, []);
+
   // Keep the draft map in sync when the day's jobs change (e.g., a
-  // new job gets scheduled).  Preserve any edits the user has made
-  // for existing job ids.
+  // new job gets scheduled) OR when the server pushes fresh
+  // ``route_index`` values (reorder response, poll refresh, WS
+  // push). P25 · Feb-2026 — the merge rule changed from
+  //   "keep every prior draft that still has a job row"
+  // (pre-P25 — clobbered fresh server values with stale locals)
+  // to
+  //   "keep prior drafts ONLY for rows whose input is currently
+  //    focused (in ``typingIds``); replace all other rows with the
+  //    fresh server value".
+  // This preserves the mid-edit gesture without letting stale
+  // locals overwrite a reorder that the server just confirmed.
   useEffect(() => {
     setDrafts((prev) => {
       const fresh = _initialDrafts(jobs, initialOrder);
       const merged = { ...fresh };
       for (const id of Object.keys(prev)) {
-        if (id in fresh) merged[id] = prev[id];
+        if (id in fresh && typingIds.has(id)) {
+          merged[id] = prev[id];
+        }
       }
       return merged;
     });
     // Note: intentionally depend on jobs + initialOrder identity —
     // when the optimizer produces a new order, the caller passes a
     // fresh array so the map resets to the new 1..N sequence.
+    // ``typingIds`` is intentionally NOT in the dep array — the
+    // effect fires only when the SERVER data (jobs / initialOrder)
+    // changes; a focus/blur alone must not re-merge (otherwise
+    // typing into a row and blurring would re-hydrate mid-keystroke
+    // if the parent hadn't refetched yet).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs, initialOrder]);
 
@@ -386,6 +462,14 @@ export function useNumberedOrder(jobs, opts = {}) {
     // user tries to open the Reorder modal anyway).
     laneBanner, setLaneBanner,
     save, blurSave, reset, buildOrderedIds, insertShift,
+    // Phase P25 · Feb-2026 — actively-typing draft protection.
+    // ``notifyFocus`` / ``notifyBlur`` are wired into the
+    // ``NumberOrderInput`` primitive so its focus/blur transitions
+    // toggle the ``typingIds`` set that gates the sync-effect
+    // merge above. ``typingIds`` is exposed too so tests (and
+    // consumer components that build their own number inputs)
+    // can assert / participate.
+    notifyFocus, notifyBlur, typingIds,
   };
 }
 
@@ -446,13 +530,25 @@ export function NumberOrderInput({ job, controller, disabled, testId, autoFocus 
       value={controller.drafts[job.id] ?? ""}
       placeholder="—"
       autoFocus={autoFocus}
-      onFocus={() => setPreEditValue(controller.drafts[job.id] ?? "")}
+      onFocus={() => {
+        setPreEditValue(controller.drafts[job.id] ?? "");
+        // Phase P25 · Feb-2026 — mark this row as actively typing
+        // so the sync effect in ``useNumberedOrder`` preserves the
+        // in-flight draft when the server pushes fresh values.
+        controller.notifyFocus?.(job.id);
+      }}
       onChange={(e) => controller.setInput(job.id, e.target.value)}
       onBlur={async () => {
         // Sprint 3d · Feb-2026 — pass the touched job id so the
         // hook fires the insert-shift endpoint for this row only.
         // On API failure the input is reverted to the pre-focus
         // value (optimistic rollback).
+        //
+        // Phase P25 · Feb-2026 — schedule the row's exit from the
+        // ``typingIds`` set (300ms grace). Called BEFORE the save
+        // so the IME edge-case (blur → immediate refocus during
+        // composition) still keeps the row protected.
+        controller.notifyBlur?.(job.id);
         const cur = (controller.drafts[job.id] ?? "").trim();
         if (cur === preEditValue) return;
         const r = await controller.blurSave(job.id);

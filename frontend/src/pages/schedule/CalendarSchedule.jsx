@@ -1149,6 +1149,32 @@ export default function CalendarSchedule() {
     list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     return list;
   }, [filteredJobs, focusISO, tenantTz]);
+
+  // ── Phase P25 · Feb-2026 — Map data source: filter-INDEPENDENT.
+  // Pre-P25 the map was fed ``dayJobs``, which applied the active
+  // tech / crew / status / service / query filter chip. That meant
+  // an operator who selected a single tech saw only that tech's
+  // pins — pins for other techs' jobs at the same time silently
+  // disappeared from the map (the reported "some technicians'
+  // Today pins are missing" symptom). Spec §Item B: "ensure the
+  // map's data source is independent of the filter chip".
+  //
+  // Fix: derive a second day-scoped list from ``rawJobs`` (bypass
+  // ``filteredJobs`` entirely). Same tenant-tz bucketing rule as
+  // ``dayJobs`` (P13 fallback for UTC-stamped ``scheduled_date``
+  // strings). No client-side truncation, no ``.slice(0, N)``,
+  // no ``maxJobs`` — every renderable pin ships to the map.
+  const mapDayJobs = useMemo(() => {
+    const list = (rawJobs || []).filter((j) => {
+      const sdISO = (j.scheduled_date || "").slice(0, 10);
+      if (sdISO && sdISO === focusISO) return true;
+      const ss = j.scheduled_start;
+      if (!ss) return false;
+      return getTenantISODate(ss, tenantTz) === focusISO;
+    });
+    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
+    return list;
+  }, [rawJobs, focusISO, tenantTz]);
   // Feb-2026 · Keep ``selectAllInView`` in sync with the derived
   // day list without stashing it in state.
   React.useEffect(() => { dayJobsRef.current = dayJobs; }, [dayJobs]);
@@ -1936,7 +1962,7 @@ export default function CalendarSchedule() {
             <div id="schedule-map-body" data-testid="schedule-map-body">
               <ScheduleMapErrorBoundary>
                 <ScheduleMap
-                  jobs={dayJobs}
+                  jobs={mapDayJobs}
                   techs={techs}
                   techColorMap={techColorMap}
                 />

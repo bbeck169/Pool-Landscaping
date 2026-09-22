@@ -10,13 +10,14 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 // Phase 38 · Feb-2026 · Phase 30.4 completeness — replaced legacy
 // `Alert.alert` (silently fails on user's Android/Expo Go build) with
 // an inline status banner (no new dep).
 
 export default function HuddleScreen() {
   const { user } = useAuth();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKeyInTenantTz();
   const [yesterday, setYesterday] = useState("");
   const [todayText, setTodayText] = useState("");
   const [blockers, setBlockers] = useState("");

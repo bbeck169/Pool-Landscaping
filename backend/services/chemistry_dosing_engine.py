@@ -94,7 +94,7 @@ AZ_DEFAULT_FORMULAS: Dict[str, str] = {
     # Liquid chlorine 12.5% — round(gallons, 2)
     # oz = 10 * delta/2 * scale (scale = gal/10000)
     # gal = oz / 128  ⇒  qty = delta * volume / 256000
-    "free_chlorine":       "round(max(0, (avg_target - current) * volume_gallons / 256000), 2)",
+    "chlorine":            "round(max(0, (avg_target - current) * volume_gallons / 256000), 2)",
     # Soda ash — round(lbs, 1)
     # oz = 6 * delta/0.2 * scale = 30*delta*volume/10000 ; lbs = oz/16
     "ph_up":               "round(max(0, (avg_target - current) * volume_gallons * 3 / 16000), 1)",
@@ -228,7 +228,7 @@ def evaluate(
     """Evaluate a single dose recommendation.
 
     Args:
-        chemical: One of :data:`FORMULA_KEYS` (``free_chlorine``,
+        chemical: One of :data:`FORMULA_KEYS` (``chlorine``,
             ``ph_up``, ``ph_down``, ``alkalinity_up``,
             ``cyanuric_acid_up``, ``calcium_hardness_up``,
             ``salt_up``).

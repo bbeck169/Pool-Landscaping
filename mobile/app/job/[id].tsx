@@ -10,7 +10,8 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { api, ApiNetworkError } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
-import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
+import { useOnline, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
+import { capturePhoto, getPhotosForEntity, flushPhotos, subscribePhotos, type PendingPhoto as SyncPendingPhoto } from "@/src/services/sync/photoWorker";
 import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
@@ -86,7 +87,7 @@ export default function JobDetail() {
   const [uploading, setUploading] = useState(false);
   const [onWaySending, setOnWaySending] = useState(false);
   const [onWaySent, setOnWaySent] = useState(false);
-  const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
+  const [pendingPhotos, setPendingPhotos] = useState<SyncPendingPhoto[]>([]);
   // Feb-2026 MP2 UI — property info displayed alongside customer.
   const [property, setProperty] = useState<any>(null);
   // lineItems state removed — LineItemsSection component manages its own data
@@ -118,7 +119,7 @@ export default function JobDetail() {
     try {
       // P0 fix: fire-and-forget — don't block the fetch on offline flushes.
       flushPendingMutations().catch(() => {});
-      flushPendingPhotos().catch(() => {});
+      flushPhotos().catch(() => {});
 
       // P0 fix: hard 20s timeout on the main API fetch.
       const fresh = await Promise.race([
@@ -149,7 +150,7 @@ export default function JobDetail() {
         setProperty(null);
       }
       // Line items fetching moved to LineItemsSection component
-      setPendingPhotos(await pendingForJob(id));
+      setPendingPhotos(await getPhotosForEntity(id as string));
     } catch (e: any) {
       // Phase 1 Offline Read — try SQLite read_cache first (hydrator-populated),
       // then AsyncStorage caches as fallback.
@@ -179,7 +180,7 @@ export default function JobDetail() {
             : "Couldn't load job. Retry?"
         );
       }
-      setPendingPhotos(await pendingForJob(id));
+      setPendingPhotos(await getPhotosForEntity(id as string));
     } finally {
       setLoading(false);
     }
@@ -267,26 +268,21 @@ export default function JobDetail() {
         if (!perm.canAskAgain) setPermSheet(true);
         return;
       }
-      const opts: ImagePicker.ImagePickerOptions = { base64: true, quality: 0.5, allowsEditing: true };
+      // Phase P21 — no {base64: true}; use URI-only path to avoid OOM.
+      const opts: ImagePicker.ImagePickerOptions = { quality: 0.7, allowsEditing: true };
       const result =
         source === "camera"
           ? await ImagePicker.launchCameraAsync(opts)
           : await ImagePicker.launchImageLibraryAsync(opts);
-      if (result.canceled || !result.assets?.[0]?.base64) return;
-      const dataUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const rawUri = result.assets[0].uri;
       setPhotoSheet(false);
       setUploading(true);
-      if (online) {
-        try {
-          setJob(await api.post(`/jobs/${id}/photos`, { data: dataUri, label: "Service Image" }));
-          return;
-        } catch (e) {
-          // fall through to offline queue
-        }
-      }
-      // Offline (or upload failed) — queue locally and show optimistically.
-      await queuePhoto({ jobId: id as string, data: dataUri, label: "Service Image" });
-      setPendingPhotos(await pendingForJob(id));
+      // Route through the durable SQLite photoWorker pipeline.
+      // It downscales, stages to filesystem, inserts into SQLite,
+      // and flushes upload when online — no base64 in JS memory.
+      await capturePhoto(rawUri, "job", id as string);
+      setPendingPhotos(await getPhotosForEntity(id as string));
     } catch (e) {
       // swallow — user can retry
     } finally {
@@ -669,12 +665,14 @@ export default function JobDetail() {
                   ) : null}
                 </View>
               ))}
-              {pendingPhotos.map((p: any) => (
+              {pendingPhotos.map((p) => (
                 <View key={p.id} style={styles.photoThumb} testID={`pending-photo-${p.id}`}>
-                  <Image source={{ uri: p.data }} style={styles.photoImg} contentFit="cover" />
+                  <Image source={{ uri: p.local_uri }} style={styles.photoImg} contentFit="cover" />
                   <View style={styles.photoPendingBadge}>
                     <Ionicons name="cloud-upload-outline" size={11} color="#fff" />
-                    <Text style={styles.photoLabelText}>Pending</Text>
+                    <Text style={styles.photoLabelText}>
+                      {p.upload_status === "stalled" ? "Failed" : "Pending"}
+                    </Text>
                   </View>
                 </View>
               ))}

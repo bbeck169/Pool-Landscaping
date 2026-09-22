@@ -46,22 +46,28 @@ describe("waterBodies.ts — constants & validators", () => {
     expect(BODY_TYPE_LABELS.other).toBe("Other");
   });
 
-  it("pool has 9 allowed readings and 5 required", () => {
+  it("pool has 9 allowed readings and 4 required", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename ``free_chlorine`` →
+    // ``chlorine``.  Phase CHEM1 · Feb-2026 dropped ``total_chlorine``
+    // from the Required Four (4 items now).
     expect(READING_ALLOWLIST.pool).toHaveLength(9);
-    expect(READING_REQUIRED.pool).toHaveLength(5);
+    expect(READING_REQUIRED.pool).toHaveLength(4);
     expect(READING_REQUIRED.pool).toEqual(
-      expect.arrayContaining(["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid"]),
+      expect.arrayContaining(["chlorine", "ph", "alkalinity", "cyanuric_acid"]),
     );
   });
 
-  it("spa has 4 allowed readings and 0 required", () => {
-    expect(READING_ALLOWLIST.spa).toHaveLength(4);
+  it("spa has 5 allowed readings and 0 required", () => {
+    // Mobile spa allow-list includes ``water_temp`` (5 items).
+    expect(READING_ALLOWLIST.spa).toHaveLength(5);
     expect(READING_REQUIRED.spa).toHaveLength(0);
   });
 
-  it("water_feature and fountain have 2 allowed readings", () => {
-    expect(READING_ALLOWLIST.water_feature).toHaveLength(2);
-    expect(READING_ALLOWLIST.fountain).toHaveLength(2);
+  it("water_feature and fountain have 3 allowed readings", () => {
+    // Mobile water_feature + fountain allow-lists include
+    // ``water_temp`` (3 items).
+    expect(READING_ALLOWLIST.water_feature).toHaveLength(3);
+    expect(READING_ALLOWLIST.fountain).toHaveLength(3);
   });
 
   it("makeEmptyBody creates a pool body by default", () => {
@@ -74,12 +80,14 @@ describe("waterBodies.ts — constants & validators", () => {
   });
 
   it("missingRequiredReadings detects empty pool readings", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename; Phase CHEM1
+    // dropped total_chlorine.
     const body = makeEmptyBody("pool");
     const missing = missingRequiredReadings(body);
     expect(missing).toEqual(
-      expect.arrayContaining(["free_chlorine", "total_chlorine", "ph", "alkalinity", "cyanuric_acid"]),
+      expect.arrayContaining(["chlorine", "ph", "alkalinity", "cyanuric_acid"]),
     );
-    expect(missing).toHaveLength(5);
+    expect(missing).toHaveLength(4);
   });
 
   it("missingRequiredReadings returns [] for spa (no required)", () => {
@@ -88,10 +96,11 @@ describe("waterBodies.ts — constants & validators", () => {
   });
 
   it("missingRequiredReadings returns [] when pool has all required filled", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename; the Required Four
+    // are ``chlorine`` / ``ph`` / ``alkalinity`` / ``cyanuric_acid``.
     const body = makeEmptyBody("pool");
     body.readings = [
-      { key: "free_chlorine", value: 3, unit: "ppm" },
-      { key: "total_chlorine", value: 3, unit: "ppm" },
+      { key: "chlorine", value: 3, unit: "ppm" },
       { key: "ph", value: 7.4, unit: "" },
       { key: "alkalinity", value: 100, unit: "ppm" },
       { key: "cyanuric_acid", value: 40, unit: "ppm" },
@@ -180,8 +189,11 @@ describe("WaterBodyPanel — component", () => {
         onRemove={jest.fn()}
       />,
     );
-    // Spa has 4 readings: free_chlorine, ph, alkalinity, calcium_hardness
-    expect(queryByTestId("reading-row-0-free_chlorine")).toBeTruthy();
+    // Spa allow-list: chlorine, ph, alkalinity, calcium_hardness,
+    // water_temp.  Phase P17.1 · Feb-2026 — canonical rename flipped
+    // the chlorine testid from ``reading-row-0-free_chlorine`` to
+    // ``reading-row-0-chlorine``.
+    expect(queryByTestId("reading-row-0-chlorine")).toBeTruthy();
     expect(queryByTestId("reading-row-0-ph")).toBeTruthy();
     expect(queryByTestId("reading-row-0-alkalinity")).toBeTruthy();
     expect(queryByTestId("reading-row-0-calcium_hardness")).toBeTruthy();
@@ -202,6 +214,7 @@ describe("WaterBodyPanel — component", () => {
   });
 
   it("highlights missing readings when highlightMissing is provided", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename flipped the testid.
     const body = makeEmptyBody("pool", 0);
     const { getByTestId } = render(
       <WaterBodyPanel
@@ -209,13 +222,13 @@ describe("WaterBodyPanel — component", () => {
         index={0}
         locked={false}
         canRemove={false}
-        highlightMissing={["free_chlorine", "ph"]}
+        highlightMissing={["chlorine", "ph"]}
         onChange={jest.fn()}
         onRemove={jest.fn()}
       />,
     );
     // The row testID should exist
-    expect(getByTestId("reading-row-0-free_chlorine")).toBeTruthy();
+    expect(getByTestId("reading-row-0-chlorine")).toBeTruthy();
     expect(getByTestId("reading-row-0-ph")).toBeTruthy();
   });
 });

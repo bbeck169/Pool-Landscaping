@@ -103,7 +103,7 @@ function _makeGetImpl({ svcOverride, incOverride,
       if (incRejects) throw new Error("boom inc");
       return { items: incOverride ?? INC_LIST, total: INC_LIST.length };
     }
-    if (path === "/recurring-jobs") return { items: [BASE_ROW] };
+    if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) return { items: [BASE_ROW] };
     if (path.startsWith("/customers")) return { items: [] };
     if (path === "/technicians") return { items: [] };
     if (path === "/crews") return { items: [] };

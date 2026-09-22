@@ -52,21 +52,24 @@ afterEach(() => cleanup());
 
 
 describe("PortalServiceReportDetail · water-test bands", () => {
-  it("renders 'Average' band for free_chlorine=2.0 and NEVER surfaces 2.0", async () => {
+  it("renders 'Average' band for chlorine=2.0 and NEVER surfaces 2.0", async () => {
+    // Phase P17.1 · Feb-2026 — canonical rename: readings use
+    // ``chlorine`` (was ``free_chlorine`` under P17). Portal
+    // displays ``DISPLAY_LABELS["chlorine"] = "Chlorine"``.
     getMock.mockResolvedValueOnce(mkSr([
-      { key: "free_chlorine",  value: 2.0 },
+      { key: "chlorine",       value: 2.0 },
       { key: "ph",             value: 7.4 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
     ]));
     render(<PortalServiceReportDetail />);
     const row = await waitFor(
-      () => screen.getByTestId("portal-service-report-reading-free_chlorine"),
+      () => screen.getByTestId("portal-service-report-reading-chlorine"),
       { timeout: 2000 },
     );
     // Display label + band chip present.
-    expect(within(row).getByText("Free Cl")).toBeTruthy();
-    expect(within(row).getByTestId("chem-label-free_chlorine")).toBeTruthy();
+    expect(within(row).getByText("Chlorine")).toBeTruthy();
+    expect(within(row).getByTestId("chem-label-chlorine")).toBeTruthy();
     // Raw numeric value MUST NOT be rendered inside the reading row.
     expect(row.textContent).not.toContain("2.0");
     expect(row.textContent).not.toContain("2");
@@ -74,7 +77,7 @@ describe("PortalServiceReportDetail · water-test bands", () => {
 
   it("renders 'Elevated' band chip for pH=8.5 without leaking the number", async () => {
     getMock.mockResolvedValueOnce(mkSr([
-      { key: "free_chlorine",  value: 2.5 },
+      { key: "chlorine",       value: 2.5 },
       { key: "ph",             value: 8.5 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
@@ -92,7 +95,7 @@ describe("PortalServiceReportDetail · water-test bands", () => {
 
   it("omits optional readings (water_temp) when blank", async () => {
     getMock.mockResolvedValueOnce(mkSr([
-      { key: "free_chlorine",  value: 2.5 },
+      { key: "chlorine",       value: 2.5 },
       { key: "ph",             value: 7.4 },
       { key: "alkalinity",     value: 90 },
       { key: "cyanuric_acid",  value: 45 },
@@ -100,7 +103,7 @@ describe("PortalServiceReportDetail · water-test bands", () => {
     ]));
     render(<PortalServiceReportDetail />);
     await waitFor(
-      () => screen.getByTestId("portal-service-report-reading-free_chlorine"),
+      () => screen.getByTestId("portal-service-report-reading-chlorine"),
       { timeout: 2000 },
     );
     // Blank optional row MUST NOT render (filter in the component
@@ -113,7 +116,7 @@ describe("PortalServiceReportDetail · water-test bands", () => {
   it("renders chemicals used with exact numeric amounts (NOT band-ified)", async () => {
     getMock.mockResolvedValueOnce(mkSr(
       [
-        { key: "free_chlorine",  value: 2.5 },
+        { key: "chlorine",       value: 2.5 },
         { key: "ph",             value: 7.4 },
         { key: "alkalinity",     value: 90 },
         { key: "cyanuric_acid",  value: 45 },

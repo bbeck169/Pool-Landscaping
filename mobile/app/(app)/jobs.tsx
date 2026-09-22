@@ -6,11 +6,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
-import { useOnline, cacheJobs, getCachedJobs, flushPendingPhotos, flushPendingMutations } from "@/src/offline";
+import { useOnline, cacheJobs, getCachedJobs, flushPendingMutations } from "@/src/offline";
+import { flushPhotos } from "@/src/services/sync/photoWorker";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header, JobCard, FilterRow, NotificationBell, OfflineBanner } from '@/src/components/widgets';
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -42,7 +44,7 @@ export default function Jobs() {
     const cacheKey = `${user?.role}_${user?.id}`;
     try {
       await flushPendingMutations().catch(() => {});
-      await flushPendingPhotos().catch(() => {});
+      await flushPhotos().catch(() => {});
       const q = f === "all" ? "" : `?status=${f}`;
       const data = await api.get(`/jobs${q}`);
       setJobs(data);
@@ -93,7 +95,7 @@ export default function Jobs() {
   // Phase 50.E — earliest scheduled-today incomplete job for the tech.
   const nextJob = useMemo(() => {
     if (!isTech) return null;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayKeyInTenantTz();
     const candidates = jobs.filter((j) =>
       String(j.scheduled_date || "").startsWith(today) &&
       !["completed", "cancelled", "canceled", "no_show", "skipped"].includes(String(j.status || "").toLowerCase()),

@@ -35,8 +35,11 @@ import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
 
 describe("Phase CHEM1 · Required Four contract (web mirror)", () => {
   it("CORE_KEYS + label maps expose exactly the Required Four", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+    // ``chlorine`` end-to-end. Legacy ``free_chlorine`` remains a
+    // source alias in ALIAS_MAP; CORE_KEYS emits the new canonical.
     expect(CORE_KEYS).toEqual([
-      "free_chlorine", "alkalinity", "ph", "cyanuric_acid",
+      "chlorine", "alkalinity", "ph", "cyanuric_acid",
     ]);
     expect(CORE_KEYS.includes("total_chlorine")).toBe(false);
     expect(DISPLAY_LABELS.total_chlorine).toBeUndefined();
@@ -57,12 +60,13 @@ describe("Phase CHEM1 · Required Four contract (web mirror)", () => {
 
   it("gate 400 payload names the missing Required Four fields", () => {
     const missing = missingCoreReadings([
-      // Free Cl missing.
+      // Chlorine missing (P17.1 · Feb-2026 canonical rename — was
+      // ``Free Cl`` under P17).
       { key: "ph",             value: 7.4 },
       { key: "alkalinity",     value: 100 },
       { key: "cyanuric_acid",  value: 40 },
     ]);
-    expect(missing).toEqual(["Free Cl"]);
+    expect(missing).toEqual(["Chlorine"]);
   });
 
   it("gate silently tolerates total_chlorine in the payload", () => {
@@ -78,15 +82,18 @@ describe("Phase CHEM1 · Required Four contract (web mirror)", () => {
   it("chemistry bands map no longer classifies total_chlorine", () => {
     expect(CANONICAL_BAND_THRESHOLDS.total_chlorine).toBeUndefined();
     expect(bandForReading("total_chlorine", 3.0)).toBeNull();
-    // Sanity — free_chlorine still bands correctly.
-    expect(bandForReading("free_chlorine", 3.0)).toBe("Average");
+    // Sanity — chlorine still bands correctly. Phase P17.1 · Feb-2026
+    // — canonical rename: bands module keys on ``chlorine``.
+    expect(bandForReading("chlorine", 3.0)).toBe("Average");
   });
 
   it("water-bodies allow-list drops total_chlorine from pool/other", () => {
     expect(READING_ALLOWLIST.pool.includes("total_chlorine")).toBe(false);
     expect(READING_ALLOWLIST.other.includes("total_chlorine")).toBe(false);
+    // Phase P17.1 · Feb-2026 — canonical rename: READING_REQUIRED.pool
+    // emits ``chlorine`` (was ``free_chlorine`` under P17).
     expect(READING_REQUIRED.pool).toEqual([
-      "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+      "chlorine", "ph", "alkalinity", "cyanuric_acid",
     ]);
     expect(READING_LABELS.total_chlorine).toBeUndefined();
   });
@@ -97,7 +104,9 @@ describe("Phase CHEM1 · Required Four contract (web mirror)", () => {
       type: "pool",
       label: "Kids Pool",
       readings: [
-        { key: "free_chlorine", value: 2.0 },
+        // Phase P17.1 · Feb-2026 — canonical rename: use ``chlorine``
+        // key (was ``free_chlorine`` under P17).
+        { key: "chlorine",      value: 2.0 },
         // pH deliberately missing
         { key: "alkalinity",    value: 90 },
         { key: "cyanuric_acid", value: 35 },
@@ -137,8 +146,10 @@ describe("Phase CHEM1 · PoolChecklistForm renders no Total Chlorine input", () 
     // ``PoolChecklistForm`` folds ``alkalinity`` onto
     // ``total_alkalinity`` via ``canonicalReadingKey``, so we
     // assert on the resolved test-id.
+    // Phase P17.1 · Feb-2026 — canonical rename: the chlorine test-id
+    // resolves to ``chlorine`` (was ``free_chlorine`` under P17).
     const _REQUIRED_TESTID_KEYS = [
-      "free_chlorine",
+      "chlorine",
       "total_alkalinity",
       "ph",
       "cyanuric_acid",

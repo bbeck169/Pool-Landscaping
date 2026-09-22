@@ -35,9 +35,11 @@ def test_az_default_ph_up_matches_pool_dosing():
 
 
 def test_az_default_free_chlorine_matches_pool_dosing():
-    # fc=1.0, low-season ideal 2.0, 10000 gal → 0.04 gal.
-    res = evaluate("free_chlorine", current=1.0,
-                    target_range=_target_row("free_chlorine"),
+    # chlorine=1.0, low-season ideal 2.0, 10000 gal → 0.04 gal.
+    # Phase P17.1 · Feb-2026 — the dosing engine keys on the new
+    # ``chlorine`` canonical (was ``free_chlorine`` under P17).
+    res = evaluate("chlorine", current=1.0,
+                    target_range=_target_row("chlorine"),
                     volume_gallons=10_000)
     assert res["evaluation_ok"]
     assert res["recommended_dose_oz"] == 0.04
@@ -79,7 +81,7 @@ def test_az_default_calcium_hardness_up_matches_pool_dosing():
 # ── Custom tenant formula — happy path ─────────────────────────────
 def test_custom_formula_evaluates_and_returns_tenant_source():
     formula = "max(0, (avg_target - current) * volume_gallons * 0.00013)"
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000, tenant_formula=formula)
     assert res["evaluation_ok"]
@@ -92,7 +94,7 @@ def test_custom_formula_evaluates_and_returns_tenant_source():
 def test_custom_formula_clips_negative_with_max():
     # current above target → delta negative → max(0, ...) = 0.
     formula = "max(0, (avg_target - current) * volume_gallons * 0.00013)"
-    res = evaluate("free_chlorine", current=5.0,
+    res = evaluate("chlorine", current=5.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000, tenant_formula=formula)
     assert res["evaluation_ok"]
@@ -102,7 +104,7 @@ def test_custom_formula_clips_negative_with_max():
 
 # ── Sandbox guards — bad / unsafe / timing out formulas ────────────
 def test_bad_syntax_falls_back_to_az_default():
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000,
                     tenant_formula="(2 + )")
@@ -114,7 +116,7 @@ def test_bad_syntax_falls_back_to_az_default():
 
 
 def test_import_attempt_is_blocked_by_preflight():
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000,
                     tenant_formula="__import__('os').system('ls')")
@@ -127,7 +129,7 @@ def test_import_attempt_is_blocked_by_preflight():
 
 
 def test_attribute_access_is_blocked():
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000,
                     tenant_formula="current.real")
@@ -136,7 +138,7 @@ def test_attribute_access_is_blocked():
 
 
 def test_lambda_is_blocked_by_preflight():
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000,
                     tenant_formula="(lambda: 42)()")
@@ -149,7 +151,7 @@ def test_lambda_is_blocked_by_preflight():
 def test_pathological_power_is_capped():
     # ``x ** y`` with y > 100 raises NumberTooHigh under simpleeval
     # (see MAX_POWER=100 at module load).
-    res = evaluate("free_chlorine", current=1.0,
+    res = evaluate("chlorine", current=1.0,
                     target_range={"min": 1.0, "max": 3.0, "ideal": 2.0},
                     volume_gallons=10_000,
                     tenant_formula="2 ** 2 ** 2 ** 2 ** 2")

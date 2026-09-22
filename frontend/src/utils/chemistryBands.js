@@ -12,7 +12,7 @@ export const BAND_ABOVE = "Above Average";
 export const BAND_ELEVATED = "Elevated";
 
 export const CANONICAL_BAND_THRESHOLDS = {
-  free_chlorine:  { average_min: 1,   average_max: 5,   above_avg_max: 10 },
+  chlorine:       { average_min: 1,   average_max: 5,   above_avg_max: 10 },
   ph:             { average_min: 7.2, average_max: 7.6, above_avg_max: 8.2 },
   alkalinity:     { average_min: 80,  average_max: 120, above_avg_max: 140 },
   cyanuric_acid:  { average_min: 30,  average_max: 80,  above_avg_max: 150 },

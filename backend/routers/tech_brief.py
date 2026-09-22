@@ -79,18 +79,21 @@ router = APIRouter(tags=["tech-brief"])
 
 # Canonical chemistry keys we surface in the snapshot. Mirrors the
 # A2 chemistry-upsell scan + Phase 51 pool-reading vocabulary.
-_CHEM_KEYS = ("salt", "ph", "alkalinity", "free_chlorine",
+_CHEM_KEYS = ("salt", "ph", "alkalinity", "chlorine",
               "cyanuric_acid", "calcium_hardness")
 
-# Map internal reading keys → the compact snapshot field names in
-# the response contract (``free_chlorine`` → ``chlorine``,
-# ``calcium_hardness`` → ``hardness``) so the mobile UI stays
-# stable if we ever rename an internal key.
+# Phase P17.1 · Feb-2026 — the ``free_chlorine`` → ``chlorine``
+# rename shim is now a no-op because the internal canonical is
+# already ``chlorine``. ``calcium_hardness`` → ``hardness`` stays
+# because the response contract keeps the shorter mobile-facing
+# name. Legacy stored keys (``free_chlorine`` etc.) still resolve
+# via the compat entry so historical reports keep rendering.
 _CHEM_OUT = {
     "salt":              "salt",
     "ph":                "ph",
     "alkalinity":        "alkalinity",
-    "free_chlorine":     "chlorine",
+    "chlorine":          "chlorine",
+    "free_chlorine":     "chlorine",   # legacy compat — pre-P17.1 docs
     "cyanuric_acid":     "cyanuric_acid",
     "calcium_hardness":  "hardness",
 }

@@ -54,6 +54,7 @@ from routers import (
     budgets,
     chemical_costs,
     recurring_jobs,
+    master_services,
     intelligence_alerts,
     pricebook_manual_pricing,
     zillow_admin,
@@ -393,7 +394,16 @@ async def _api_health_probe():
     # ``/api/health`` mirror — some Emergent ingress rules and the
     # frontend fetch wrappers always prefix ``/api`` regardless of
     # target. Same guarantees as ``/health``: no DB, no auth, < 5ms.
-    return {"status": "ok"}
+    #
+    # P21 · Feb-2026 — extends the pre-P21 ``{"status": "ok"}`` shape
+    # with an ``init`` sub-object reporting SEED + INTEGRITY_SCAN
+    # progress from ``app.state.init``. Top-level ``status`` stays
+    # ``ok`` the moment schema migrations complete — SEED / SCAN
+    # progress NEVER downgrades the probe.
+    init_state = getattr(app.state, "init", None)
+    if init_state is None:
+        return {"status": "ok"}
+    return {"status": "ok", "init": init_state.health_snapshot()}
 
 
 @api_router.get("/health/live", include_in_schema=False)
@@ -1155,6 +1165,7 @@ for module in [notifications_router,
                budgets,
                chemical_costs,
                recurring_jobs,
+               master_services,
                pricebook_manual_pricing,
                zillow_admin,
                ringcentral,
@@ -1865,18 +1876,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"perf_triad_indexes crashed: {e}")
 
-    # Phase F3.5 · Feb-2026 — customer-scoped compound indexes.  Adds
-    # (tenant_id, customer_id, created_at) on jobs/invoices/payments/
-    # customer_notes and (tenant_id, customer_id) on properties so the
-    # detail-page tabs + list N+1 hydrations stay fast at prod scale.
-    try:
-        if not _RUN_STARTUP_INDEXES:
-            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
-        from services.migrations.perf_customers_indexes import run as _perf_customers_run
-        _pcv1_res = await _perf_customers_run(db)
-        logger.info(f"[perf-customers-v1] {_pcv1_res}")
-    except Exception as e:
-        logger.warning(f"perf_customers_indexes crashed: {e}")
+    # Phase F3.5 · Feb-2026 — customer-scoped compound indexes.
+    # Phase P24 · Feb-2026 — MOVED to the STRUCTURAL pre-yield block
+    # in ``_run_boot_sequence`` because ``/health/ready`` verifies the
+    # ``perf_customers_v1`` sentinel and returns 503 until it's
+    # stamped. The migration is idempotent + sentinel-gated so
+    # keeping this SEED-bucket call would be a harmless double-run,
+    # but the pre-yield location is the correct one for a REQUIRED
+    # migration. See ``services/migrations/perf_customers_indexes.py``
+    # + P21 lifespan doc-comment.
+    logger.debug(
+        "[perf-customers-v1] SEED-bucket call is a no-op post P24 — "
+        "migration now runs in the STRUCTURAL pre-yield block"
+    )
 
     # Phase K47 · Feb-2026 — ``invoice_views`` collection indexes for
     # the view-tracking feature. Idempotent + best-effort — if the
@@ -2771,8 +2783,169 @@ async def _background_seed():
     logger.info("Background seed pipeline complete.")
 
 
-@app.on_event("startup")
-async def startup():
+# ── Phase P24 · Feb-2026 — Go-live cleanup helpers ────────────────
+# Extracted from ``_run_boot_sequence`` so pytest can drive them
+# directly without importing the full 500-line boot chain. The
+# STRUCTURAL bucket calls them at the same point (see line ~2873).
+
+
+# Truthy set duplicated verbatim from the three module-level
+# ``*_testmode_mock`` helpers so all four sites accept the SAME
+# spellings (``1`` / ``true`` / ``yes`` / ``on`` — case-insensitive).
+_P24_TRUTHY = {"1", "true", "yes", "on"}
+_P24_TESTMODE_FLAGS: tuple = (
+    "AI_TESTMODE_MOCK",
+    "CALENDARS_TESTMODE_MOCK",
+    "ZILLOW_TESTMODE_MOCK",
+)
+
+
+# ── Phase P23.1 · Feb-2026 — Non-silent structural-migration runner
+# Wraps a structural migration coroutine so its lifecycle is
+# tracked on ``app.state.init.structural_migrations`` and its
+# exception surface is NO LONGER swallowed silently.
+#
+# Contract per spec §4:
+#   * ``must_succeed=False`` — default. Non-critical migrations
+#     (best-effort backfills). On exception: emit a WARN with the
+#     full traceback, stamp ``ERROR`` state, DO NOT re-raise.
+#   * ``must_succeed=True`` — critical migrations whose failure is
+#     an on-call signal (p23 tech restore, perf_customers_v1). On
+#     exception: emit a WARN with the full traceback, stamp
+#     ``ERROR`` state, DO NOT re-raise (per spec §4 explicit "does
+#     not crash boot") — but the ERROR state MUST be visible on
+#     ``/api/health`` so ops sees the failure.
+#
+# The DIFFERENCE between the two flags today is telemetry-only
+# (both currently non-raising to preserve P21's "boot always
+# yields" contract). A future ``must_succeed`` migration that DOES
+# want to hard-fail can flip its own re-raise in the caller — the
+# state stamp on ERROR is still made either way.
+async def _run_structural_migration(
+    name: str,
+    coro_factory,
+    *,
+    must_succeed: bool = False,
+    state=None,
+):
+    """Run a structural migration coroutine under InitState tracking.
+
+    Parameters
+    ----------
+    name:
+        Migration key — appears verbatim on
+        ``/api/health.init.structural_migrations.<name>`` and in log
+        prefixes. MUST match the migration module's canonical name.
+    coro_factory:
+        Zero-arg callable returning the awaitable to execute. Passed
+        as a factory (not the awaitable itself) so retries — if a
+        future caller wires them — get a fresh coroutine each time.
+    must_succeed:
+        See docstring above. Only affects log severity and the
+        state's ``retry_count`` semantic; boot never crashes on
+        exception (spec §4).
+    state:
+        The ``InitState`` instance to stamp. Defaults to
+        ``app.state.init`` — the lifespan populates this before
+        ``_run_boot_sequence`` is invoked.
+
+    Returns
+    -------
+    The migration's return value on success, or ``None`` on
+    exception (the exception is captured on the state record).
+    """
+    if state is None:
+        state = getattr(app.state, "init", None)
+    if state is not None:
+        state.start_structural(name)
+    try:
+        result = await coro_factory()
+        if state is not None:
+            state.done_structural(name)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        # ERROR log with full traceback — the pre-P23.1 site used
+        # ``logger.warning(f"... failed: {e}")`` which lost the
+        # traceback and the tester couldn't triage the real cause.
+        # ``logger.exception`` captures the traceback via the active
+        # sys.exc_info(); severity=ERROR for ``must_succeed=True``
+        # so ops paging thresholds can key on level.
+        severity = logger.error if must_succeed else logger.warning
+        severity(
+            "[structural-migration] %s failed (must_succeed=%s): %s",
+            name, must_succeed, exc,
+            exc_info=True,
+        )
+        if state is not None:
+            state.error_structural(name, exc)
+        return None
+
+
+def _p24_warn_active_testmode_mocks() -> int:
+    """Emit ONE ``logger.warning`` per active *_TESTMODE_MOCK flag.
+
+    Returns the count of warnings emitted (0..len(_P24_TESTMODE_FLAGS))
+    so callers / tests can assert the exact number. Runs in EVERY
+    environment (unlike the ``[PROD-GUARDRAIL]`` block which only
+    CRITICALs when ``APP_ENV=production``) so a misconfigured pod
+    surfaces in ``supervisorctl tail backend`` on the first probe.
+    """
+    count = 0
+    for flag in _P24_TESTMODE_FLAGS:
+        val = (os.environ.get(flag) or "").strip().lower()
+        if val in _P24_TRUTHY:
+            logger.warning(
+                "STARTUP: %s is enabled — real integration disabled",
+                flag,
+            )
+            count += 1
+    return count
+
+
+async def _p24_run_perf_customers_boot(db_handle) -> dict:
+    """Run the ``perf_customers_v1`` REQUIRED migration.
+
+    Sentinel-gated internally (see
+    ``services/migrations/perf_customers_indexes.py``) so second-boot
+    is a no-op. P23.1 · Feb-2026 — now routed through
+    ``_run_structural_migration`` so a Mongo hiccup surfaces on
+    ``/api/health.init.structural_migrations.perf_customers_v1``
+    with the full traceback in the boot log instead of a lossy
+    ``logger.warning`` swallow.
+    """
+    async def _factory():
+        from services.migrations.perf_customers_indexes import (
+            run as _perf_customers_run,
+        )
+        res = await _perf_customers_run(db_handle)
+        logger.info(
+            "[perf-customers-v1] structural pass — skipped=%s created=%s "
+            "already=%s collections=%s",
+            res.get("skipped"),
+            res.get("created"),
+            res.get("already"),
+            res.get("collections"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "perf_customers_v1", _factory, must_succeed=True,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
+async def _run_boot_sequence():
+    """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
+
+    Formerly the ``@app.on_event("startup")`` handler. Content is
+    preserved verbatim EXCEPT the two headline background tasks that
+    used to fire at the tail (SEED via ``_defer()`` and INTEGRITY_SCAN
+    via ``_bg_f3_integrity_check``) — those now hang off the lifespan
+    below with structured retry + progress tracking on
+    ``app.state.init``. All other in-body ``asyncio.create_task(_bg_*)``
+    fires stay in place so the per-tenant backfill fanouts keep their
+    pre-P21 timing.
+    """
     global SEEDS_STARTED_AT
     import asyncio
     from datetime import datetime, timezone as _tz
@@ -2823,6 +2996,45 @@ async def startup():
             )
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[s1] founder boot migration failed: {e}")
+    # Phase P23 · Feb-2026 — Ethan / Steven technician restoration.
+    # STRUCTURAL — the two ~600-job tech lanes are unrenderable until
+    # ``db.technicians`` has these rows back. Idempotent upsert via
+    # ``$setOnInsert`` so subsequent boots no-op. See
+    # ``migrations/p23_restore_ethan_steven_technicians.py``.
+    #
+    # P23.1 · Feb-2026 — routed through ``_run_structural_migration``
+    # so a failure logs ERROR + full traceback AND stamps
+    # ``app.state.init.structural_migrations``. The pre-P23.1
+    # ``logger.warning(f"... failed: {e}")`` catch silently ate the
+    # traceback and the tester couldn't triage a boot-time regression
+    # from the health probe alone.
+    async def _p23_factory():
+        from migrations.p23_restore_ethan_steven_technicians import (
+            run as _p23_restore_run,
+        )
+        _p23_res = await _p23_restore_run()
+        logger.info(
+            "[p23-restore] boot pass — inserted=%s already_present=%s "
+            "active_jobs_relinked=%s",
+            _p23_res.get("inserted"),
+            _p23_res.get("already_present"),
+            _p23_res.get("active_job_count"),
+        )
+        return _p23_res
+
+    await _run_structural_migration(
+        "p23_restore_ethan_steven_technicians",
+        _p23_factory,
+        must_succeed=True,
+    )
+    # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
+    # migration. Extracted into module-level helpers so pytest can
+    # invoke them directly (see tests/test_p24_env_flip_defaults.py
+    # and tests/test_p24_perf_customers_migration.py). Both run in the
+    # STRUCTURAL bucket before bind so the log lines and migration
+    # sentinel are visible on the first ``/health/ready`` probe.
+    _p24_warn_active_testmode_mocks()
+    await _p24_run_perf_customers_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
@@ -4326,7 +4538,16 @@ async def startup():
         except Exception as e:
             logger.warning(f"background seed task crashed: {e}")
 
-    asyncio.create_task(_defer())
+    # P21 · Feb-2026 — SEED + INTEGRITY_SCAN moved out of the boot
+    # body into ``lifespan`` (see bottom of file). They now hang off
+    # ``app.state.init`` with structured retry + progress tracking so
+    # ``/api/health`` can report their progress without inference
+    # from the supervisor logs. The two closures above / below are
+    # kept alive as inner names so pre-P21 lint / grep tools that
+    # reach for ``_defer`` / ``_bg_f3_integrity_check`` still find
+    # them, but they are NOT scheduled here anymore — the lifespan
+    # picks them up as ``_do_seed`` / ``_do_integrity_scan`` (see
+    # module-level wrappers below).
 
     # Phase F3 · Feb-2026 — data-integrity boot-check.
     # G3b Batch D · Feb-2026 — moved to BG. F4 readiness gate
@@ -4408,7 +4629,9 @@ async def startup():
             logger.warning(
                 "integrity_check scan crashed (continuing): %s", exc,
             )
-    asyncio.create_task(_bg_f3_integrity_check())
+    # P21 · Feb-2026 — no longer scheduled here; the lifespan chains
+    # this scan AFTER SEED completes (see ``_do_integrity_scan`` +
+    # ``_seed_then_scan`` below).
 
     logger.info("Boot path complete — API is now accepting requests.")
 
@@ -4424,10 +4647,267 @@ async def health_seeds():
     }
 
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
+async def _p21_shutdown_sequence():
+    """P21 · Feb-2026 — shutdown work, moved out of the deprecated
+    ``@app.on_event("shutdown")`` decorator into the lifespan context
+    manager below. Preserved verbatim from the pre-P21 handler."""
     try:
         scheduler.shutdown(wait=False)
     except Exception:
         pass
     client.close()
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase P21 · Feb-2026 — Async startup: bind fast, init in background.
+#
+# Split the boot path into three phases:
+#   1. STRUCTURAL (pre-yield, SYNC) — Mongo ping + schema/index
+#      migrations + one-shot data migrations. Must complete before
+#      any request lands. Runs inside ``_run_boot_sequence`` above.
+#   2. SEED (post-yield, ASYNC, TRACKED, ONE-RETRY-ON-FAILURE) —
+#      heavy demo/reference seeds + per-tenant backfills. Handled
+#      by ``_do_seed`` → ``_run_seed_task``.
+#   3. INTEGRITY_SCAN (post-yield, ASYNC, TRACKED, CHAINED-AFTER-SEED
+#      — no retry, scan defects flip health to a warn state not
+#      hard-fail). Handled by ``_do_integrity_scan`` →
+#      ``_run_integrity_scan``.
+#
+# Progress lives on ``app.state.init`` (:class:`InitState`) and is
+# surfaced by ``/api/health`` (``init`` sub-object). Never returns
+# non-200 solely because SEED/SCAN are still running — top-level
+# ``status`` flips ``ok`` the instant schema migrations finish.
+# ─────────────────────────────────────────────────────────────────
+from contextlib import asynccontextmanager as _p21_asynccontextmanager
+from services.init_state import InitState as _P21_InitState
+
+
+async def _do_seed() -> None:
+    """Real seed body — a thin wrapper around ``_background_seed``
+    so tests can monkey-patch this single symbol to inject failure
+    modes without touching the ~500-line seed pipeline. The tail
+    also mirrors the sync-boot dev-widget-domain seed + M5
+    marketing-sequences seed via their existing helpers so the
+    scheduler-tick / boot-tick paths keep parity."""
+    await _background_seed()
+
+
+async def _do_integrity_scan() -> None:
+    """Real integrity-scan body — imports the F3 startup scan and
+    stamps the F4 readiness state fields. Preserves the pre-P21
+    semantics verbatim (no ``raise IntegrityCheckFailure`` — state
+    stamp only so ``/health/ready`` surfaces the correct reason)."""
+    try:
+        from services.startup.integrity_check import (
+            run_startup_integrity_check,
+            start_log_only_reminder_task,
+            _enforce_flag_from_env as _integrity_enforce_flag,
+            IntegrityCheckFailure,
+        )
+        try:
+            _integrity_report = await run_startup_integrity_check(db)
+        except IntegrityCheckFailure as _icf:
+            _drt_icf = 0
+            try:
+                _drt_icf = int(getattr(_icf, "dangling_refs_total", 0) or 0)
+                if not _drt_icf:
+                    _drt_icf = int(
+                        ((getattr(_icf, "report", {}) or {}).get("summary")
+                            or {}).get("total_dangling_refs", 0) or 0
+                    )
+            except Exception:  # noqa: BLE001
+                _drt_icf = 0
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt_icf
+            _F4_BOOT_INTEGRITY_STATE["error"] = None
+            logger.critical(
+                "[integrity_check] enforce=True with %s dangling refs "
+                "— pod remains alive; /health/ready = 503 "
+                "dangling_refs_present until data-repair completes.",
+                _drt_icf,
+            )
+            return
+        try:
+            _drt = int(
+                (_integrity_report.get("summary") or {}).get(
+                    "total_dangling_refs", 0,
+                )
+            )
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = _drt
+            _F4_BOOT_INTEGRITY_STATE["error"] = None
+        except Exception:  # noqa: BLE001
+            _F4_BOOT_INTEGRITY_STATE["complete"] = True
+            _F4_BOOT_INTEGRITY_STATE["dangling_refs_total"] = 0
+            _F4_BOOT_INTEGRITY_STATE["error"] = None
+        try:
+            _total = (_integrity_report.get("summary") or {}).get(
+                "total_dangling_refs", 0)
+            if _total > 0 and not _integrity_enforce_flag():
+                start_log_only_reminder_task(db)
+        except Exception as _rem_e:  # noqa: BLE001
+            logger.warning(
+                "[integrity_check] reminder wiring failed: %s", _rem_e,
+            )
+    except Exception as exc:  # noqa: BLE001
+        _F4_BOOT_INTEGRITY_STATE["complete"] = True
+        _F4_BOOT_INTEGRITY_STATE["error"] = str(exc)[:500]
+        logger.warning(
+            "integrity_check scan crashed (continuing): %s", exc,
+        )
+
+
+# One-retry backoff for SEED. Kept as a module-level constant so
+# tests can shrink it (the retry codepath still runs, timing is
+# what changes). See ``test_p21_async_startup.py``.
+P21_SEED_RETRY_DELAY_SECS: float = 60.0
+
+
+async def _run_seed_task(state: _P21_InitState) -> None:
+    """Fire ``_do_seed`` under InitState tracking. On failure, ONE
+    retry after ``P21_SEED_RETRY_DELAY_SECS`` seconds. Never raises
+    — the pod stays alive-but-serving even if the seed pipeline is
+    persistently broken. Errors surface via
+    ``/api/health`` → ``init.seed.error``."""
+    state.start("seed")
+    logger.info("[startup] phase=startup task=seed status=running")
+    try:
+        await _do_seed()
+        state.done("seed")
+        rec = state.tasks["seed"]
+        logger.info(
+            "[startup] phase=startup task=seed status=done "
+            "duration_ms=%s", rec.duration_ms,
+        )
+        return
+    except Exception as e:  # noqa: BLE001
+        state.error("seed", e)
+        logger.error(
+            "[startup] phase=startup task=seed status=error error=%r",
+            str(e)[:300],
+            exc_info=True,
+        )
+    # ── one retry ──
+    try:
+        await asyncio.sleep(P21_SEED_RETRY_DELAY_SECS)
+    except asyncio.CancelledError:
+        raise
+    state.bump_retry("seed")
+    state.start("seed")
+    logger.info(
+        "[startup] phase=startup task=seed status=running retry_count=1",
+    )
+    try:
+        await _do_seed()
+        state.done("seed")
+        rec = state.tasks["seed"]
+        logger.info(
+            "[startup] phase=startup task=seed status=done retry_count=1 "
+            "duration_ms=%s", rec.duration_ms,
+        )
+    except Exception as e2:  # noqa: BLE001
+        state.error("seed", e2)
+        logger.error(
+            "[startup] phase=startup task=seed status=error retry_count=1 "
+            "error=%r", str(e2)[:300], exc_info=True,
+        )
+
+
+async def _run_integrity_scan(state: _P21_InitState) -> None:
+    """Fire ``_do_integrity_scan`` under InitState tracking. No
+    retry — the scan itself internally state-stamps on failure so
+    ``/health/ready`` still surfaces a coherent reason code."""
+    state.start("integrity_scan")
+    logger.info(
+        "[startup] phase=startup task=integrity_scan status=running",
+    )
+    try:
+        await _do_integrity_scan()
+        state.done("integrity_scan")
+        rec = state.tasks["integrity_scan"]
+        logger.info(
+            "[startup] phase=startup task=integrity_scan status=done "
+            "duration_ms=%s", rec.duration_ms,
+        )
+    except Exception as e:  # noqa: BLE001
+        state.error("integrity_scan", e)
+        logger.error(
+            "[startup] phase=startup task=integrity_scan status=error "
+            "error=%r", str(e)[:300], exc_info=True,
+        )
+
+
+async def _seed_then_scan(state: _P21_InitState) -> None:
+    """Chained runner — SEED first, then INTEGRITY_SCAN. Task ordering
+    is a P21 spec requirement so a mid-seed scan doesn't tag freshly
+    seeded rows as dangling."""
+    await _run_seed_task(state)
+    await _run_integrity_scan(state)
+
+
+@_p21_asynccontextmanager
+async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
+    """P21 · Feb-2026 — FastAPI lifespan. Replaces the deprecated
+    ``@app.on_event("startup")`` + ``@app.on_event("shutdown")``
+    decorators.
+
+    Order of operations:
+      1. Run structural boot sequence synchronously (Mongo ping,
+         index bootstraps, one-shot schema migrations, per-tenant
+         backfill fanouts). Nothing serves requests until this
+         returns.
+      2. Stamp ``state.schema_migrations_done_at`` so ``/api/health``
+         reports ``schema_migrations: done`` immediately.
+      3. Fire the chained SEED → INTEGRITY_SCAN background task and
+         park its handle on ``app.state.bg_tasks`` for the shutdown
+         cancel/gather.
+      4. Yield — server begins accepting requests.
+      5. On shutdown: cancel bg tasks, gather, then run the DB
+         client cleanup + scheduler stop.
+    """
+    state = _P21_InitState()
+    app.state.init = state
+
+    # Pre-bind — structural migrations run to completion. Any failure
+    # inside ``_run_boot_sequence`` already logs and swallows per
+    # try/except so the pod still binds; the health endpoint will
+    # surface the failure in a follow-up phase if any structural step
+    # is missing (e.g. required migrations list on ``/health/ready``).
+    _boot_start = time.time()
+    logger.info(
+        "[startup] phase=schema_migrations status=running",
+    )
+    await _run_boot_sequence()
+    state.mark_migrations_done()
+    logger.info(
+        "[startup] phase=schema_migrations status=done duration_ms=%s",
+        int((time.time() - _boot_start) * 1000),
+    )
+
+    # Post-bind — SEED chained into INTEGRITY_SCAN.
+    app.state.bg_tasks = [
+        asyncio.create_task(
+            _seed_then_scan(state), name="p21_seed_then_scan",
+        ),
+    ]
+
+    try:
+        yield
+    finally:
+        # Shutdown — cancel BG tasks first so we don't dangle a seed
+        # mid-write, then close DB / scheduler.
+        for task in getattr(app.state, "bg_tasks", []) or []:
+            task.cancel()
+        if getattr(app.state, "bg_tasks", None):
+            await asyncio.gather(
+                *app.state.bg_tasks, return_exceptions=True,
+            )
+        await _p21_shutdown_sequence()
+
+
+# Wire the lifespan onto the already-constructed ``app``. Setting
+# ``app.router.lifespan_context`` after construction is a supported
+# Starlette pattern — the ASGI ``lifespan`` protocol is invoked by
+# uvicorn on server boot and reads the current attribute value.
+import time  # noqa: E402 — deliberate late import (lifespan-only need)
+app.router.lifespan_context = lifespan

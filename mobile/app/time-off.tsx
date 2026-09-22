@@ -9,6 +9,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { showConfirm } from "@/src/components/ConfirmModal";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 
 const TYPES = ["sick", "vacation", "personal", "unpaid"] as const;
 
@@ -106,7 +107,7 @@ function pillTint(status: string) {
 }
 
 function RequestSheet({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKeyInTenantTz();
   const [type, setType] = useState<(typeof TYPES)[number]>("sick");
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);

@@ -21,7 +21,7 @@ log = logging.getLogger("chemistry_tenant_targets")
 # ``total_chlorine`` was removed in Phase CHEM1 and is intentionally
 # absent here.
 CHEMICAL_KEYS: Tuple[str, ...] = (
-    "free_chlorine",
+    "chlorine",
     "ph",
     "alkalinity",
     "cyanuric_acid",
@@ -34,7 +34,7 @@ CHEMICAL_KEYS: Tuple[str, ...] = (
 # Note: salt uses 0-6000 ppm (per Sprint 3b brief — salt system
 # ranges are wider than the other chemicals; 2500-3500 typical).
 OUTER_BOUNDS: Dict[str, Tuple[float, float]] = {
-    "free_chlorine":    (0.0, 10.0),
+    "chlorine":         (0.0, 10.0),
     "ph":               (0.0, 14.0),
     "alkalinity":       (0.0, 500.0),
     "cyanuric_acid":    (0.0, 300.0),
@@ -44,7 +44,7 @@ OUTER_BOUNDS: Dict[str, Tuple[float, float]] = {
 
 # UI unit strings. ``ph`` is unit-less by convention.
 UNITS: Dict[str, str] = {
-    "free_chlorine":    "ppm",
+    "chlorine":         "ppm",
     "ph":               "",
     "alkalinity":       "ppm",
     "cyanuric_acid":    "ppm",
@@ -57,12 +57,12 @@ UNITS: Dict[str, str] = {
 # ``(min+max)/2``). This is critical for regression protection: an
 # AZ-default tenant must see identical doses to today's behaviour.
 #
-# free_chlorine ``ideal=2.0`` is the low-season target midpoint. The
-# seasonal resolver in ``pool_dosing.resolve_chlorine_target`` still
-# overrides at compute-time for the high season (Mar–Sep, 5.0 ppm
-# bull's-eye) — that behaviour is unchanged and orthogonal.
+# Phase P17.1 · Feb-2026 — canonical key renamed to ``chlorine``.
+# The seasonal resolver in ``pool_dosing.resolve_chlorine_target``
+# still overrides at compute-time for the high season (Mar–Sep,
+# 5.0 ppm bull's-eye) — that behaviour is unchanged and orthogonal.
 AZ_DEFAULT_TARGETS: Dict[str, Dict[str, Any]] = {
-    "free_chlorine":    {"min": 1.0,  "max": 3.0,  "ideal": 2.0,   "unit": "ppm"},
+    "chlorine":         {"min": 1.0,  "max": 3.0,  "ideal": 2.0,   "unit": "ppm"},
     "ph":               {"min": 7.2,  "max": 7.6,  "ideal": 7.4,   "unit": ""},
     "alkalinity":       {"min": 80,   "max": 120,  "ideal": 100,   "unit": "ppm"},
     "cyanuric_acid":    {"min": 30,   "max": 50,   "ideal": 40,    "unit": "ppm"},
@@ -123,7 +123,7 @@ def _resolve_ideal(minimum: float, maximum: float, key: str) -> float:
 def merge_with_defaults(stored: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Merge the stored ``targets`` block onto AZ defaults.
 
-    A stored partial (e.g. only ``free_chlorine`` edited) preserves
+    A stored partial (e.g. only ``chlorine`` edited) preserves
     every other chemical at the AZ default. Unknown/legacy keys are
     dropped. Adds a resolved ``ideal`` per chemical so downstream
     dosing math has a single, deterministic bull's-eye to aim at.

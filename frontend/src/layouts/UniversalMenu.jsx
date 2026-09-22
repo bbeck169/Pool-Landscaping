@@ -34,6 +34,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { navForRoleAndDept } from '@/nav/roleNav';
 import { colors } from "@/theme";
 import NotificationBell from "@/components/NotificationBell";
+import RemovePinConfirm from "@/components/nav/RemovePinConfirm";
 
 // Feb-2026 · Raised from 6 → 20 per user request. Pins live in
 // localStorage only (no backend cap), so this is a pure UX limit.
@@ -96,6 +97,13 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState("all");
 
+  // Phase P20 · Feb-2026 — Bookmark REMOVE now requires confirmation
+  // (parity with the Quick Access rail's ``RemovePinConfirm`` flow).
+  // ``pendingRemoval`` holds the entry whose pin is about to be
+  // dropped; a non-null value opens the shared confirm dialog. ADD
+  // path is unchanged — no confirmation, immediate write.
+  const [pendingRemoval, setPendingRemoval] = useState(null);
+
   // Per-user persistence keys mirror the mobile scheme
   // (`tools-pins-v1::{userId}`) so the storage layout is
   // recognizable / debuggable across surfaces.
@@ -119,6 +127,23 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
       return next;
     });
   }, [pinsKey]);
+
+  // Phase P20 · Feb-2026 — Bookmark click router. If the entry is
+  // currently pinned we defer the remove to a confirm dialog; if
+  // it's unpinned we run the ADD immediately (no confirmation).
+  const handleBookmarkClick = useCallback((entry, isPinned) => {
+    if (isPinned) {
+      setPendingRemoval({ to: entry.to, label: entry.label });
+    } else {
+      togglePin(entry.to);
+    }
+  }, [togglePin]);
+
+  const handleConfirmRemoval = useCallback(() => {
+    const target = pendingRemoval;
+    setPendingRemoval(null);
+    if (target) togglePin(target.to);
+  }, [pendingRemoval, togglePin]);
 
   const markUsed = useCallback((path) => {
     setRecents((prev) => {
@@ -383,7 +408,7 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
                         </Link>
                         <button
                           type="button"
-                          onClick={(ev) => { ev.stopPropagation(); togglePin(e.to); }}
+                          onClick={(ev) => { ev.stopPropagation(); handleBookmarkClick(e, pinned); }}
                           className="p-1 rounded hover:bg-gray-100"
                           data-testid={`web-menu-pin-toggle-${slug}`}
                           aria-label={pinned ? `Unpin ${e.label}` : `Pin ${e.label}`}
@@ -404,6 +429,16 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Phase P20 · Feb-2026 — Confirm dialog for bookmark REMOVE
+        only. Rendered as a sibling of the dropdown so the Radix
+        portal is unaffected by the menu's open state. ADD path is
+        immediate and never opens this dialog. */}
+    <RemovePinConfirm
+      open={!!pendingRemoval}
+      onOpenChange={(v) => { if (!v) setPendingRemoval(null); }}
+      pin={pendingRemoval}
+      onConfirm={handleConfirmRemoval}
+    />
     </>
   );
 }

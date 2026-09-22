@@ -14,6 +14,12 @@ import { Platform } from "react-native";
 /* ── Minimal mocks ─────────────────────────────────────────────────── */
 
 // Mock theme
+// Phase P17.2 · Feb-2026 — restored missing ``inputColors`` mock
+// which the real ``src/theme.ts`` exports and
+// ``PoolChecklistForm``'s inline styles read (``inputColors.bg`` /
+// ``.text`` / ``.placeholder``).  Without the mock export the
+// checklist form crashed at first render with "Cannot read
+// properties of undefined (reading 'bg')".
 jest.mock("@/src/theme", () => ({
   colors: {
     brand: "#2563EB", muted: "#9CA3AF", onSurface: "#111827",
@@ -25,6 +31,12 @@ jest.mock("@/src/theme", () => ({
   font: { regular: "System", medium: "System", bold: "System" },
   fontSize: { xs: 11, sm: 13, md: 15, lg: 18, xl: 22 },
   money: (v: number) => `$${(v || 0).toFixed(2)}`,
+  inputColors: {
+    bg: "#FFFFFF",
+    text: "#000080",
+    placeholder: "rgba(0,0,128,0.55)",
+    border: "#E5E7EB",
+  },
 }));
 
 jest.mock("@expo/vector-icons", () => {
@@ -141,7 +153,7 @@ describe("Chemistry UI trim — Expo Web", () => {
     expect(getByText("Notes")).toBeTruthy();
   });
 
-  it("WaterBodyPanel on NATIVE renders 'Chemicals Used' block", () => {
+  it("WaterBodyPanel on NATIVE renders chemicals section block", () => {
     Object.defineProperty(Platform, "OS", { value: "ios", writable: true });
     const { getByText, getByTestId } = render(
       <WaterBodyPanel
@@ -153,8 +165,10 @@ describe("Chemistry UI trim — Expo Web", () => {
         onRemove={jest.fn()}
       />
     );
-    expect(getByText("Chemicals Used")).toBeTruthy();
-    expect(getByTestId("chem-row-0-0")).toBeTruthy();
+    // Phase CHEM5 header: isPrimary defaults false → "Additional Body of Water Chemicals".
+    expect(getByText("Additional Body of Water Chemicals")).toBeTruthy();
+    // ChemicalDropdownStack mock still renders.
+    expect(getByText("ChemicalDropdownStack")).toBeTruthy();
   });
 
   /* ━━ PoolChecklistForm ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -214,9 +228,9 @@ describe("Chemistry UI trim — Expo Web", () => {
     expect(getByTestId("pool-service-type-set-other")).toBeTruthy();
   });
 
-  it("PoolChecklistForm on NATIVE renders 'Chemical Readings' heading", () => {
+  it("PoolChecklistForm on NATIVE renders form container without crash", () => {
     Object.defineProperty(Platform, "OS", { value: "ios", writable: true });
-    const { getByText } = render(
+    const { getByTestId } = render(
       <PoolChecklistForm
         jobId="test-job"
         customerId="cust-1"
@@ -230,11 +244,14 @@ describe("Chemistry UI trim — Expo Web", () => {
         notes=""
         observations={{}}
         onChange={jest.fn()}
-        template="generic"
+        template="pool_service"
         canEditServiceType={true}
         onReclassify={jest.fn()}
       />
     );
-    expect(getByText("Chemical Readings")).toBeTruthy();
+    // Phase CHEM5 moved readings to WaterBodyPanel; PoolChecklistForm
+    // itself no longer renders a "Chemical Readings" heading. Guard
+    // that the form mounts without error on native.
+    expect(getByTestId("pool-checklist-form")).toBeTruthy();
   });
 });

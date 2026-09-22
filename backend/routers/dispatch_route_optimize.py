@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user, require_gps_read  # noqa: F401
-from utils import not_deleted_filter as _nd
+from services.query_scope import tenant_scoped_filter
 
 router = APIRouter()
 
@@ -160,13 +160,21 @@ async def optimize_route(body: OptimizeBody,
     # ISO datetime "YYYY-MM-DDTHH:MM:SS+00:00"; match both via regex.
     import re as _re
     date_prefix = _re.escape(date)
-    q = {"tenant_id": tenant_id,
-         "scheduled_date": {"$regex": f"^{date_prefix}"},
-         "$or": [{"tech_user_id": tech_id},
-                  {"assigned_to": tech_id},
-                  {"technician_id": tech_id}]}
+    # Phase P12.3 · Feb-2026 · $or-clobber sweep.  The tech-lane
+    # disjunction (tech_user_id / assigned_to / technician_id) MUST
+    # co-exist with the soft-delete $or under ``$and`` — the old
+    # ``{**q, **_nd()}`` merge silently widened this preview into
+    # every job on the day for the whole tenant.  The
+    # ``scheduled_date`` regex stays as a top-level exact kwarg
+    # because it isn't a $or predicate.
+    q = tenant_scoped_filter(
+        tenant_id,
+        [{"tech_user_id": tech_id},
+         {"assigned_to": tech_id},
+         {"technician_id": tech_id}],
+        scheduled_date={"$regex": f"^{date_prefix}"},
+    )
     jobs: List[Dict[str, Any]] = []
-    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         jobs.append(j)
     if not jobs:

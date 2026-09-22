@@ -268,22 +268,40 @@ def test_p12_clean_batch_no_soft_guard_flags(
 
 
 # ── 4) Technician-role caller is still gated (P9 preserved) ─────────
-def test_p12_technician_role_pinned_to_self_p9_preserved(aquaterra_tech_h):
-    """The Feb-2026 dispatcher-only guard hard-403s any tech caller —
-    P9 pinning surfaces here as a hard rejection, which is the existing
-    behavior the brief explicitly requires us to keep. If future work
-    softens this to actual pinning, update this test in the same
-    commit."""
+def test_p12_technician_role_pinned_to_self_p9_preserved(aquaterra_tech_h, dbc):
+    """Phase P19.1 · Feb-2026 — technician-role callers are now
+    silent-pinned to themselves per the P9 contract instead of
+    being hard-403'd by the previous Feb-2026 dispatcher-only
+    gate.  This lock-in swap is the ONE test the P19.1 fix flips.
+
+    An empty-day tech call must return ``200`` + the empty envelope
+    with the P12 soft-guard fields still populated — never 403.
+    The cross-user + cross-tenant guards remain 403 (covered by
+    ``test_p12_cross_tenant_target_is_rejected`` and the dedicated
+    P19.1 suite).
+    """
+    # Ensure the target day is empty for mike so the response is
+    # deterministically "trivial".
+    mike = dbc.users.find_one({"email": "mike@aquaterra.com"})
+    assert mike, "mike@aquaterra.com missing from seed"
+    day = "2028-09-19"
+    dbc.jobs.delete_many({"tenant_id": mike["tenant_id"],
+                            "scheduled_date": day,
+                            "technician_id": mike["id"]})
     r = requests.post(
         f"{API}/schedule/optimize-route",
         headers=aquaterra_tech_h,
-        json={"date": "2026-09-19"},
+        json={"date": day},
         timeout=15,
     )
-    assert r.status_code == 403, (
-        f"technician-role caller must be blocked (P9 dispatcher-only "
-        f"gate), got {r.status_code} {r.text[:200]}"
+    assert r.status_code == 200, (
+        f"technician-role caller must silent-pin to self (P19.1), "
+        f"got {r.status_code} {r.text[:200]}"
     )
+    body = r.json()
+    assert body.get("ordered_job_ids") == []
+    assert body.get("orphaned_tech_ids") == []
+    assert body.get("skipped_unassigned") == []
 
 
 # ── 5) Cross-tenant tech_id → 403 (preserved) ───────────────────────

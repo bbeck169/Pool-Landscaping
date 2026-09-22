@@ -245,6 +245,9 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             assert "make it right" not in body
             # Chemistry — Feb-2026 hotfix: customer-facing views now
             # render qualitative BANDS in place of raw ppm/pH numbers.
+            # Phase P17.2 · Feb-2026 — display-label unification:
+            # ``Free Chlorine`` folds onto ``Chlorine`` on customer
+            # surfaces; the door hanger uses the new short form.
             # free_chlorine=2.5 → Average; total_chlorine=3.0 → Average;
             # ph=7.4 → Average; alkalinity=80 → Average; cyanuric_acid=40 → Average.
             # Every value in this test payload sits in the Average band.
@@ -252,7 +255,7 @@ def test_door_hanger_full_body_contains_every_section(monkeypatch):
             _wt_start = body.index("Water Test</h3>")
             _wt_end   = body.index("</table>", _wt_start)
             _wt = body[_wt_start:_wt_end]
-            for _label in ("Free Chlorine", "pH",
+            for _label in ("Chlorine", "pH",
                            "Alkalinity", "Cyanuric Acid"):
                 assert f">{_label}</td>" in _wt, (
                     f"missing display label {_label!r} in Water Test section"
@@ -668,14 +671,15 @@ def test_door_hanger_water_test_renders_all_five_cores_in_fixed_order(monkeypatc
             _wt = body[body.index("Water Test</h3>"):body.index("</table>",
                        body.index("Water Test</h3>"))]
             # Every core rendered, in display order.
+            # Phase P17.2 · Feb-2026 — display-label unification.
             positions = {
                 lbl: _wt.index(f">{lbl}</td>") for lbl in
-                ("Free Chlorine", "pH",
+                ("Chlorine", "pH",
                  "Alkalinity", "Cyanuric Acid")
             }
             ordered = sorted(positions.items(), key=lambda kv: kv[1])
             assert [k for k, _ in ordered] == [
-                "Free Chlorine", "pH",
+                "Chlorine", "pH",
                 "Alkalinity", "Cyanuric Acid",
             ]
         finally:
@@ -858,9 +862,11 @@ def test_door_hanger_combined_chlorine_never_rendered(monkeypatch):
                        body.index("</table>", body.index("Water Test</h3>"))]
             assert "Combined Chlorine" not in _wt
             assert "combined" not in _wt.lower()
-            # Free Chlorine (the sibling) still renders — sanity check
-            # that we didn't accidentally drop the wrong row.
-            assert ">Free Chlorine</td>" in _wt
+            # Phase P17.2 · Feb-2026 — customer-facing chlorine
+            # short-form is ``Chlorine`` (unified label).  The
+            # sibling row still renders — sanity check that we
+            # didn't accidentally drop the wrong row.
+            assert ">Chlorine</td>" in _wt
         finally:
             await _drain(tid, jid, cid)
 
@@ -868,8 +874,12 @@ def test_door_hanger_combined_chlorine_never_rendered(monkeypatch):
 
 
 def test_door_hanger_new_customer_labels(monkeypatch):
-    """Customer-facing email uses long-form labels; tech-facing
-    ``DISPLAY_LABELS`` shorthand ('Free Cl', 'CYA') must NOT leak."""
+    """Customer-facing email uses unified labels; tech-facing
+    ``DISPLAY_LABELS`` shorthand ('Free Cl', 'CYA') must NOT leak.
+
+    Phase P17.2 · Feb-2026 — display-label unification flipped
+    the customer-facing chlorine short-form from ``Free Chlorine``
+    to ``Chlorine`` and ``Total Alkalinity`` to ``Alkalinity``."""
     async def _go():
         tid = await _tenant_id()
         cid = await _mk_customer(tid)
@@ -894,7 +904,7 @@ def test_door_hanger_new_customer_labels(monkeypatch):
             _wt = body[body.index("Water Test</h3>"):
                        body.index("</table>", body.index("Water Test</h3>"))]
             # New customer-facing labels present.
-            assert ">Free Chlorine</td>" in _wt
+            assert ">Chlorine</td>" in _wt
             assert ">Cyanuric Acid</td>" in _wt
             # Phase CHEM1 · Total Chlorine removed — must not surface.
             assert ">Total Chlorine</td>" not in _wt
@@ -902,6 +912,9 @@ def test_door_hanger_new_customer_labels(monkeypatch):
             assert ">Free Cl</td>" not in _wt
             assert ">Total Cl</td>" not in _wt
             assert ">CYA</td>" not in _wt
+            # Phase P17.2 · unified labels — legacy P17-era long
+            # form ``Free Chlorine`` must NOT appear anywhere either.
+            assert ">Free Chlorine</td>" not in _wt
         finally:
             await _drain(tid, jid, cid)
 
@@ -1621,6 +1634,144 @@ def test_door_hanger_elevated_ledger_is_idempotent_on_resend(monkeypatch):
                 {"tenant_id": tid, "trigger_entity.id": jid,
                  "trigger_entity.kind": "job_door_hanger"},
             )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase P17.2 · Feb-2026 — Door-hanger legacy-alias canonicalizer +
+# unified display-label wire-contract acceptance.
+# ═════════════════════════════════════════════════════════════════════
+def test_p17_2_legacy_free_chlorine_seed_renders_chlorine_and_triggers_elevated_cta(monkeypatch):
+    """P17.2 acceptance: a service-report seeded with the LEGACY
+    ``free_chlorine`` alias key (P17-era storage shape) must
+
+      1. Fold onto the ``chlorine`` canonical inside the door-hanger
+         renderer (proves the ``_coerce_readings`` canonicalizer fix
+         reaches the renderer's ``by_key`` lookup).
+      2. Render the unified ``>Chlorine</td>`` cell on the Water Test
+         card (proves the ``_DH_DISPLAY_ORDER`` label flip).
+      3. Trigger the ``NEXT STEPS · A few readings look elevated``
+         CTA when 2+ core readings are in the ``Elevated`` band
+         (proves ``_dh_elevated_core_count`` counts legacy-alias
+         rows post-canonicalization).
+
+    Before P17.2 the seed was silently dropped by the renderer (the
+    ``by_key.get("chlorine")`` lookup missed the ``free_chlorine`` key
+    the tail loop in ``resolve_water_test`` was emitting) and the
+    CTA never fired, so tenants writing legacy readings got a
+    blank Water Test section and no follow-up nudge.
+    """
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        # Two cores in ELEVATED band (>10 chlorine, >8.4 pH); the
+        # other two Average.  Seeded UNDER THE LEGACY ``free_chlorine``
+        # alias key so a real production doc's shape is reproduced.
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                {"key": "free_chlorine",  "value": 12.0},   # Elevated
+                {"key": "ph",             "value": 8.6},    # Elevated
+                {"key": "alkalinity",     "value": 90},     # Average
+                {"key": "cyanuric_acid",  "value": 45},     # Average
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+
+            # ── Water Test card: legacy row canonicalises + renders
+            # under the unified ``Chlorine`` label.
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+            assert ">Chlorine</td>" in _wt, (
+                "legacy free_chlorine seed failed to fold onto the "
+                "chlorine canonical — _coerce_readings canonicalizer "
+                "regression"
+            )
+            # Legacy P17-era long form must NOT surface anywhere.
+            assert ">Free Chlorine</td>" not in _wt
+            assert ">Free Cl</td>" not in _wt
+            # ``Elevated`` band chip on both cores (band classifier
+            # keys on the canonical, so the seed had to fold first).
+            assert "<b>Elevated</b>" in _wt
+
+            # ── NEXT STEPS CTA fires (2+ elevated cores).
+            assert "NEXT STEPS" in body
+            assert "A few readings look elevated" in body
+            assert "Reply to Schedule Follow-Up" in body
+        finally:
+            await _db().marketing_event_ledger.delete_many(
+                {"tenant_id": tid, "event_key": f"elevated_followup_shown:{jid}"},
+            )
+            await _db().marketing_deliveries.delete_many(
+                {"tenant_id": tid, "trigger_entity.id": jid,
+                 "trigger_entity.kind": "job_door_hanger"},
+            )
+            await _drain(tid, jid, cid)
+
+    _run(_go())
+
+
+def test_p17_2_legacy_free_chlorine_alias_key_below_threshold_still_renders(monkeypatch):
+    """P17.2 acceptance: a legacy ``free_chlorine`` seed with a value
+    BELOW the elevated threshold (0.5 ppm — Below Average band) still
+    canonicalises + renders under the ``Chlorine`` label.  The
+    Elevated CTA STAYS SUPPRESSED (0 elevated cores) so we can prove
+    the canonicalizer and the CTA gating are decoupled.
+
+    This is the coverage the brief called out — legacy alias input
+    below alert threshold; label reads ``Chlorine`` (not
+    ``Free Chlorine``); the low-chlorine band chip surfaces.
+    """
+    async def _go():
+        tid = await _tenant_id()
+        cid = await _mk_customer(tid)
+        jid = await _mk_pool_job(tid, cid)
+        from utils import now_iso, new_id
+        await _db().service_reports.insert_one({
+            "id": new_id(), "tenant_id": tid, "job_id": jid,
+            "tech_id": "mike-tech",
+            "submitted_at": now_iso(),
+            "chemical_readings": [
+                # Legacy alias key — 0.5 ppm chlorine (<1 → Below Average).
+                {"key": "free_chlorine",  "value": 0.5},
+                {"key": "ph",             "value": 7.4},   # Average
+                {"key": "alkalinity",     "value": 90},    # Average
+                {"key": "cyanuric_acid",  "value": 45},    # Average
+            ],
+        })
+        captured = _stub_email_send(monkeypatch)
+        try:
+            r = await _call_email_door_hanger(jid, tid)
+            assert r["ok"] is True
+            body = captured.get("html") or ""
+            _wt = body[body.index("Water Test</h3>"):
+                       body.index("</table>", body.index("Water Test</h3>"))]
+
+            # Unified label reads ``Chlorine`` — the canonicalizer
+            # folded the legacy alias key into the canonical bucket.
+            assert ">Chlorine</td>" in _wt
+            assert ">Free Chlorine</td>" not in _wt
+            # Below-Average band chip is on the Chlorine row.
+            _cl_pos = _wt.index(">Chlorine</td>")
+            _cl_row = _wt[_cl_pos:_wt.index("</tr>", _cl_pos)]
+            assert "<b>Below Average</b>" in _cl_row, (
+                "low chlorine (0.5 ppm) should render Below Average "
+                "band chip — canonicalizer or band lookup regression"
+            )
+            # NEXT STEPS CTA MUST NOT fire — only 1 non-Average core.
+            assert "NEXT STEPS" not in body
+            assert "A few readings look elevated" not in body
+        finally:
             await _drain(tid, jid, cid)
 
     _run(_go())

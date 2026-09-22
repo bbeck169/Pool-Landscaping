@@ -41,6 +41,27 @@ import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
 
+# ═════════════════════════════════════════════════════════════════════
+# Phase P24 · Feb-2026 — Hermetic test-run guard.
+# ═════════════════════════════════════════════════════════════════════
+# The P24 go-live cleanup flipped the three flags below to ``false`` in
+# ``backend/.env`` so real integrations run in production. If a
+# developer sources that ``.env`` into their shell before invoking
+# pytest, the test suite would hit the real OpenAI / Google Calendar
+# / Zillow APIs and burn budget on every green run.
+#
+# ``os.environ.setdefault`` (never ``os.environ[k] = v``) so a suite
+# that EXPLICITLY wants the flag off (e.g. a live-integration smoke)
+# can still override via ``monkeypatch.setenv(k, "false")`` or by
+# invoking pytest with the var already set to ``false``.
+_P24_HERMETIC_TESTMODE_FLAGS = (
+    "AI_TESTMODE_MOCK",
+    "CALENDARS_TESTMODE_MOCK",
+    "ZILLOW_TESTMODE_MOCK",
+)
+for _p24_flag in _P24_HERMETIC_TESTMODE_FLAGS:
+    os.environ.setdefault(_p24_flag, "true")
+
 _CREDS_PATH = Path("/app/memory/test_credentials.md")
 
 # Deliverable (b) triage · Feb 2026 — the set of legacy iteration / phase

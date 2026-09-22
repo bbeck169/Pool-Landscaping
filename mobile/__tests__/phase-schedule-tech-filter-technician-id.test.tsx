@@ -7,8 +7,7 @@
  *  3. The filteredJobs memo compares j.technician_id === techFilter.
  *  4. The old buggy pattern (user?.id as tech scope) is NOT present.
  *  5. Unassigned jobs (technician_id null) visible under "all".
- *  6. isJobLockedByRoute source assertion still works (regression).
- *  7. The picker options use t.id from /api/technicians (which IS technician_id).
+ *  6. The picker options use t.id from /api/technicians (which IS technician_id).
  */
 import * as fs from "fs";
 import * as path from "path";

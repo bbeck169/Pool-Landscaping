@@ -35,13 +35,16 @@ import { expandChemistryLabel } from "../../lib/expandChemistryLabel";
 // small ``_REQUIRED_MARKER_KEYS`` union below folds both onto the
 // same required flag so the star renders no matter which shape the
 // template surfaces.
+// Phase P17.1 · Feb-2026 — canonical chlorine key renamed from
+// ``free_chlorine`` to ``chlorine``. Legacy keys stay in the rule /
+// default maps below so pre-P17.1 stored readings still validate.
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
 const _READING_RULES = {
-  free_chlorine:    { min: 0, max: 10,   decimals: 2, unit: "ppm" },
   chlorine:         { min: 0, max: 10,   decimals: 2, unit: "ppm" },
+  free_chlorine:    { min: 0, max: 10,   decimals: 2, unit: "ppm" },
   ph:               { min: 0, max: 14,   decimals: 2, unit: "pH" },
   total_alkalinity: { min: 0, max: 500,  decimals: 1, unit: "ppm" },
   alkalinity:       { min: 0, max: 500,  decimals: 1, unit: "ppm" },
@@ -50,22 +53,25 @@ const _READING_RULES = {
   salt:             { min: 0, max: 6000, decimals: 0, unit: "ppm" },
 };
 const _READING_DEFAULTS = {
-  free_chlorine: 3, combined_chlorine: 0.5, chlorine: 3,
+  chlorine: 3, free_chlorine: 3, combined_chlorine: 0.5,
   ph: 7.6, total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70, cya: 70,
 };
 // Phase CHEM1 · Feb-2026 — the visual "*" marker mirrors the backend
 // Required Four gate. ``canonicalReadingKey`` folds the ``alkalinity``
 // reading onto ``total_alkalinity``, so the marker set contains both
-// spellings.
+// spellings. Phase P17.1 · Feb-2026 — canonical rename includes
+// legacy ``free_chlorine`` spelling so the marker still fires on
+// pre-rename saved reports.
 const _REQUIRED_MARKER_KEYS = new Set([
   ..._CORE_READING_KEYS,
   "total_alkalinity",
+  "free_chlorine",
 ]);
 // Phase 49.1 — keys whose "blank" state means "not typed yet" (not
 // "not tested"). Users must explicitly toggle Not-tested for these rows.
 const _DEFAULT_TESTED_KEYS = new Set([
-  "free_chlorine", "combined_chlorine", "chlorine",
+  "chlorine", "free_chlorine", "combined_chlorine",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
@@ -338,13 +344,17 @@ const _resolveScale = (r) => {
 
 // Phase 37 — canonical testid key. Backend often uses shorter keys like
 // `chlorine`, `alkalinity`, `cyanuric` while the tester expects the
-// canonical `free_chlorine`, `total_alkalinity`, `cyanuric_acid`. Map
+// canonical `chlorine`, `total_alkalinity`, `cyanuric_acid`. Map
 // via display name first, then fall back to a normalized version of
 // whichever key came in.
+//
+// Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+// ``chlorine``. Legacy spellings still resolve to the new canonical.
 const _NAME_TO_CANONICAL = {
-  "free chlorine": "free_chlorine",
+  "free chlorine": "chlorine",
   "combined chlorine": "combined_chlorine",
-  "chlorine": "free_chlorine",
+  "chlorine": "chlorine",
+  "free_chlorine": "chlorine",
   "ph": "ph",
   "ph level": "ph",
   "total alkalinity": "total_alkalinity",

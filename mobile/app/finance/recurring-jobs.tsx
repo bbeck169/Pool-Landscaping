@@ -24,6 +24,7 @@ import { AdminListPage } from "@/src/components/layout/AdminListPage";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { useToast } from "@/src/components/ToastProvider";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import MasterServiceCombobox from "@/src/components/services/MasterServiceCombobox";
 
 type RecurringJob = {
   id: string;
@@ -168,19 +169,28 @@ export default function RecurringJobsMobile() {
   const [editing, setEditing] = useState<Partial<RecurringJob> | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [hardDeleteTarget, setHardDeleteTarget] = useState<RecurringJob | null>(null);
+  const [activeTab, setActiveTab] = useState<"active" | "paused">("active");
+  const [tabCounts, setTabCounts] = useState({ active: 0, paused: 0 });
   const { showToast } = useToast();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r: any = await api.get("/recurring-jobs");
+      const r: any = await api.get(`/recurring-jobs?status=${activeTab}`);
       setRows(Array.isArray(r) ? r : r?.items || []);
+      // P18 — backend returns a counts block {active, paused, total}
+      if (r?.counts && typeof r.counts === "object") {
+        setTabCounts({
+          active: Number(r.counts.active || 0),
+          paused: Number(r.counts.paused || 0),
+        });
+      }
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -243,10 +253,14 @@ export default function RecurringJobsMobile() {
   const toggleActive = useCallback(async (row: RecurringJob) => {
     setBusyId(row.id);
     try {
-      await api.patch(`/recurring-jobs/${row.id}`, { active: !row.active });
+      const res: any = await api.patch(`/recurring-jobs/${row.id}`, { active: !row.active });
+      // P18 — show cancelled count on pause action.
+      if (!row.active === false && res?.cancelled_visit_count != null) {
+        showToast(`Paused. ${res.cancelled_visit_count} future visit(s) cancelled.`);
+      }
       await load();
     } catch { /* ignore */ } finally { setBusyId(null); }
-  }, [load]);
+  }, [load, showToast]);
 
   const generateNow = useCallback((row: RecurringJob) => {
     showConfirm({
@@ -325,6 +339,27 @@ export default function RecurringJobsMobile() {
       emptyTestID="recurring-empty"
       headerExtra={
         <View style={{ gap: spacing.sm }}>
+          {/* P18 · Active / Paused tab strip */}
+          <View style={s.tabStrip} testID="recurring-tab-strip">
+            <Pressable
+              style={[s.tab, activeTab === "active" && s.tabActive]}
+              onPress={() => setActiveTab("active")}
+              testID="recurring-tab-active"
+            >
+              <Text style={[s.tabText, activeTab === "active" && s.tabTextActive]}>
+                Active ({tabCounts.active})
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[s.tab, activeTab === "paused" && s.tabActive]}
+              onPress={() => setActiveTab("paused")}
+              testID="recurring-tab-paused"
+            >
+              <Text style={[s.tabText, activeTab === "paused" && s.tabTextActive]}>
+                Paused ({tabCounts.paused})
+              </Text>
+            </Pressable>
+          </View>
           <Text style={s.hint} testID="recurring-hint">
             Auto-generates a rolling 2-week horizon of jobs (nightly at 02:00 UTC).
           </Text>
@@ -430,11 +465,17 @@ export default function RecurringJobsMobile() {
             </View>
             <View>
               <Text style={s.fieldLabel}>Service type</Text>
-              <AppTextInput
+              <MasterServiceCombobox
                 value={editing.service_type || ""}
                 onChangeText={(t) => setEditing((x) => ({ ...(x || {}), service_type: t }))}
-                style={s.input}
-                placeholder="e.g. Pool Cleaning"
+                onPick={({ name, default_price, category }) => {
+                  setEditing((x) => ({
+                    ...(x || {}),
+                    service_type: name,
+                    ...(default_price != null ? { price_cents: default_price } : {}),
+                  }));
+                }}
+                defaultPriceHint={editing.price_cents}
                 testID="recurring-service-type"
               />
             </View>
@@ -658,6 +699,11 @@ export default function RecurringJobsMobile() {
 }
 
 const s = StyleSheet.create({
+  tabStrip: { flexDirection: "row", gap: 0, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
+  tab: { flex: 1, paddingVertical: 10, alignItems: "center", backgroundColor: colors.surface },
+  tabActive: { backgroundColor: colors.brand },
+  tabText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.muted },
+  tabTextActive: { color: "#fff" },
   hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   row: {
     padding: spacing.md, borderRadius: radius.md, borderWidth: 1,

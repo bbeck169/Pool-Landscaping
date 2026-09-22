@@ -22,8 +22,10 @@ const normalizeKey = (name: string) =>
   String(name || "").toLowerCase().replace(/[\s()]+/g, "_");
 
 // Phase 46.1 defaults, shown as placeholder text when the field is empty.
+// Phase P17.1 · Feb-2026 — canonical rename: `free_chlorine` → `chlorine`.
+// Legacy keys retained so pre-P17.1 stored reports still display defaults.
 const DEFAULT_VALUES: Record<string, number> = {
-  free_chlorine: 3,   combined_chlorine: 0.5, chlorine: 3, tcl: 3,
+  chlorine: 3,    free_chlorine: 3,   combined_chlorine: 0.5, tcl: 3,
   ph: 7.6,
   total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70,  cya: 70,
@@ -36,20 +38,20 @@ const DEFAULT_VALUES: Record<string, number> = {
 // the input dims. Includes Combined Chlorine + TCL aliases per Phase 49
 // Fix 1 (Combined/Total Chlorine were also spec'd for default-tested).
 const DEFAULT_TESTED_KEYS = new Set<string>([
-  "free_chlorine", "combined_chlorine", "chlorine", "tcl",
+  "chlorine", "free_chlorine", "combined_chlorine", "tcl",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
 ]);
 
 // Phase 48 — per-key numeric bounds + decimal precision. Keys are
-// normalized (snake_case) so the aliases (`chlorine`, `alkalinity`) all
-// share the same rule.
+// normalized (snake_case) so the aliases (`free_chlorine`, `alkalinity`)
+// all share the same rule.
 type Rule = { min: number; max: number; decimals: number };
 const RULES: Record<string, Rule> = {
+  chlorine:           { min: 0, max: 10,    decimals: 2 },
   free_chlorine:      { min: 0, max: 10,    decimals: 2 },
   combined_chlorine:  { min: 0, max: 10,    decimals: 2 },
-  chlorine:           { min: 0, max: 10,    decimals: 2 },
   ph:                 { min: 0, max: 14,    decimals: 2 },
   total_alkalinity:   { min: 0, max: 500,   decimals: 1 },
   alkalinity:         { min: 0, max: 500,   decimals: 1 },

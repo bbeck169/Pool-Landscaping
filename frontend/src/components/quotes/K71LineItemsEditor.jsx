@@ -35,6 +35,14 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pencil, X, Check, Plus, Trash2, Undo2 } from "lucide-react";
 import { colors, money } from "@/theme";
 import CategoryPicker from "@/components/income/CategoryPicker";
+// Phase P16.1 · Feb-2026 — Master Service combobox drop-in on the
+// per-line "Item" field so an admin / manager can pick from the
+// pricebook (auto-fills unit price + service category) or free-type
+// a one-off name. ``loadCategories("service")`` is imported so the
+// combobox's picked category NAME can be resolved to the tenant's
+// ``service_category_id`` for auto-fill purposes.
+import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
+import { loadCategories as _loadServiceCats } from "@/components/income/CategoryPicker";
 
 const MAX_LONG_DESC = 500;
 const UNDO_WINDOW_MS = 5000;
@@ -138,9 +146,11 @@ function EditableRow({ line, index, onSave, onCancel }) {
     line.income_category_id_override || ""
   );
   const [attempted, setAttempted] = useState(false);
-  const nameRef = useRef(null);
-
-  useEffect(() => { nameRef.current?.focus(); }, []);
+  // Phase P16.1 · Feb-2026 — the auto-focus ``nameRef`` that used
+  // to target the raw <input> is dropped: the MasterServiceCombobox
+  // renders its own internal input and manages focus + dropdown-
+  // open state on user click, which is the actual UX the ref used
+  // to approximate.
 
   // Feb-2026 · Phase 2 — Live margin display. Uses OVERRIDE-first
   // resolution to match backend ``effective_*`` semantics so admins
@@ -202,17 +212,38 @@ function EditableRow({ line, index, onSave, onCancel }) {
           <div className="col-span-12 sm:col-span-5">
             <label className="text-[10px] uppercase font-bold block mb-1"
                     style={{ color: colors.muted }}>Item</label>
-            <input
-              ref={nameRef}
-              type="text"
+            {/* Phase P16.1 · Feb-2026 — Master Service combobox in
+                 place of the raw ``description`` input.  A pick
+                 auto-fills ``unitPrice`` (dollars) + resolves the
+                 picked category NAME to the tenant's
+                 ``service_category_id`` via the shared
+                 ``service_categories`` cache used by
+                 ``CategoryPicker``.  Free-typing still saves the
+                 raw string on commit — backward-compatible with
+                 legacy line items that never lived in the
+                 pricebook. */}
+            <MasterServiceCombobox
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-2 py-1 text-sm rounded"
-              style={{ background: colors.surface,
-                        border: `1px solid ${
-                          attempted && !description.trim()
-                            ? "#DC2626" : colors.border}` }}
-              data-testid={`k71-input-item-${index}`}
+              defaultPriceHint={
+                Number(unitPrice) > 0 ? Number(unitPrice) : null
+              }
+              onChange={({ name, default_price, category }) => {
+                setDescription(name);
+                if (Number.isFinite(default_price) && default_price != null) {
+                  setUnitPrice(String(default_price));
+                }
+                if (category) {
+                  _loadServiceCats("service").then((cats) => {
+                    const match = (cats || []).find(
+                      (c) => String(c.name || "").toLowerCase()
+                        === String(category).toLowerCase(),
+                    );
+                    if (match?.id) setServiceCategoryId(match.id);
+                  });
+                }
+              }}
+              placeholder="Search or add a service…"
+              testid={`k71-input-item-${index}`}
             />
           </div>
           <div className="col-span-4 sm:col-span-2">

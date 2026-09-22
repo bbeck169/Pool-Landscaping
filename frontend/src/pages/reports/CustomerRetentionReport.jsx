@@ -166,7 +166,7 @@ function AlgaeRiskPanel() {
                 <div className="flex flex-wrap gap-3 mt-1 text-[11px]" style={{ color: "#B45309" }}>
                   {evi.map((e, i) => (
                     <span key={i}>
-                      Visit {i + 1}: <b>{e.free_chlorine} ppm</b>{" "}
+                      Visit {i + 1}: <b>{e.chlorine ?? e.free_chlorine} ppm</b>{" "}
                       <span style={{ color: "#6B7280" }}>
                         ({String(e.date || "").slice(0, 10)})
                       </span>

@@ -43,10 +43,12 @@ def test_required_four_render_as_bands_with_numeric_subtitle():
     assert "3.5" in html  # numeric subtitle
     assert "ppm"  in html
     # Redundancy sanity — none of the bands leak the wrong reading.
-    # Free Cl 3.5 → Average (avg band = 1..5).
+    # Chlorine 3.5 → Average (avg band = 1..5).
     assert "Below Average" not in html  # nothing was <1 here
     # Text fallback also carries the band name for accessibility.
-    assert "Free Cl" in out["text"]
+    # Phase P17.1 · Feb-2026 — canonical rename: DISPLAY_LABELS now
+    # emits ``"Chlorine"`` (was ``"Free Cl"`` under P17).
+    assert "Chlorine" in out["text"]
     assert "Average" in out["text"]
 
 

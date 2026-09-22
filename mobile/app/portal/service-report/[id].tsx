@@ -18,6 +18,7 @@ import { Header } from "@/src/components/widgets";
 import { BODY_TYPE_LABELS, BODY_TYPE_TINTS, READING_LABELS } from "@/src/lib/waterBodies";
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
+import { ClickableAddress } from "@/src/components/interactive";
 
 /* ── helpers ──────────────────────────────── */
 
@@ -191,7 +192,7 @@ export default function PortalServiceReportDetail() {
                 {sr?.job?.address ? (
                   <View style={s.metaItem} testID="portal-service-report-address">
                     <Ionicons name="location-outline" size={12} color={colors.muted} />
-                    <Text style={s.metaText}>{sr.job.address}</Text>
+                    <ClickableAddress address={sr.job.address} style={s.metaText} testID="portal-service-report-address-link" />
                   </View>
                 ) : null}
               </View>

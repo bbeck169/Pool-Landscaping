@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user, new_id, now_iso
-from utils import not_deleted_filter as _nd
+from services.query_scope import tenant_scoped_filter
 from services.route_optimizer import (
     PINNED_STATUSES,
     GOOGLE_DIRECTIONS_MAX_WAYPOINTS,
@@ -109,21 +109,27 @@ async def _load_day_jobs(tenant_id: str,
     """
     import re
     date_prefix = re.escape(date)
-    q = {
-        "tenant_id": tenant_id,
-        "$or": [
+    # Phase P12.3 · Feb-2026 · $or-clobber sweep.  The tech-lane
+    # disjunction (tech_user_id / assigned_to / technician_id) AND
+    # the date disjunction (scheduled_date / scheduled_start) both
+    # need to co-exist under ``$and`` — the previous
+    # ``{**q, **_nd()}`` merge clobbered the tech-lane $or with the
+    # soft-delete $or, silently widening every tenant read to the
+    # whole tenant's jobs.  ``tenant_scoped_filter`` nests every
+    # disjunction under a private ``$and`` bag so neither clobber
+    # is possible.
+    q = tenant_scoped_filter(
+        tenant_id,
+        [
             {"tech_user_id": {"$in": tech_user_ids}},
             {"assigned_to": {"$in": tech_user_ids}},
             {"technician_id": {"$in": tech_user_ids}},
         ],
-        "$and": [{
-            "$or": [
-                {"scheduled_date": {"$regex": f"^{date_prefix}"}},
-                {"scheduled_start": {"$regex": f"^{date_prefix}"}},
-            ],
-        }],
-    }
-    q = {**q, **_nd()}
+        [
+            {"scheduled_date": {"$regex": f"^{date_prefix}"}},
+            {"scheduled_start": {"$regex": f"^{date_prefix}"}},
+        ],
+    )
     jobs: list[dict[str, Any]] = []
     async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort([("route_index", 1),
                                                        ("scheduled_start", 1)]):
@@ -260,6 +266,8 @@ async def preview(body: PreviewBody,
     """Pure compute — no state written."""
     tenant_id = _tenant_of(caller)
     if (caller.get("role") or "").lower() == "customer":
+        # Legit 403 · customer / portal role forbidden from every
+        # dispatch endpoint (parity with route_optimization.py).
         raise HTTPException(403, "Not allowed")
 
     # Admin may target another tech; tech is always themselves.
@@ -267,13 +275,45 @@ async def preview(body: PreviewBody,
     if body.tech_user_id and _is_admin(caller):
         tech_id = body.tech_user_id
     elif body.tech_user_id and body.tech_user_id != caller["id"]:
+        # Legit 403 · non-admin caller attempting to preview
+        # another user's route.  A tech implicit-scoped to
+        # themselves passes this branch entirely.
         raise HTTPException(403, "Cannot preview another user's route")
 
     jobs = await _load_day_jobs(tenant_id,
                                   await _resolve_target_scope_ids(caller, tech_id),
                                   body.date)
     if not jobs:
-        raise HTTPException(404, "no_jobs_for_tech_on_date")
+        # Phase P12.3 · Feb-2026 · P9 silent-pin symmetry.  The
+        # previous 404 (``no_jobs_for_tech_on_date``) here mirrored
+        # the same regression P19.1 fixed on the main optimize
+        # endpoint: a tech scoping to their own empty day is a
+        # legitimate read, not an error condition.  Return the
+        # trivial-empty envelope in the same wire shape the main
+        # endpoint emits for tech-empty so FE preview widgets can
+        # render "nothing to optimize" instead of blowing up on a
+        # 404.  ``miles_saved`` / ``minutes_saved`` are stamped as
+        # 0 (nothing to save on nothing to move); soft-guard lists
+        # are empty (no jobs → no orphans, no unassigned).
+        return {
+            "proposed_order": [],
+            "ordered_job_ids": [],
+            "orphaned_tech_ids": [],
+            "skipped_unassigned": [],
+            "miles_saved": 0.0,
+            "minutes_saved": 0.0,
+            "estimated_miles_saved": 0.0,
+            "estimated_minutes_saved": 0.0,
+            "stops_affected": 0,
+            "pinned_ids": [],
+            "no_change": True,
+            "algorithm": "trivial",
+            "warnings": ["No jobs scheduled for this tech on this date."],
+            "tech_user_id": tech_id,
+            "date": body.date,
+            "origin": {"lat": body.current_lat, "lng": body.current_lng,
+                        "source": "no_jobs"},
+        }
 
     hydrated = await _hydrate_geo(jobs, tenant_id)
 
@@ -343,6 +383,8 @@ async def request_(body: RequestBody,
     tenant_id = _tenant_of(caller)
     role = (caller.get("role") or "").lower()
     if role == "customer":
+        # Legit 403 · customer / portal role forbidden from every
+        # dispatch endpoint.
         raise HTTPException(403, "Not allowed")
     # Admins should call /apply directly instead — but we don't 403 here;
     # we still let them create a request row for audit purposes.
@@ -478,6 +520,10 @@ async def apply(body: ApplyBody,
     """Admin-only direct apply (skips the pending queue)."""
     tenant_id = _tenant_of(caller)
     if not _is_admin(caller):
+        # Legit 403 · admin-only write endpoint.  Manager + tech
+        # + customer are all forbidden from direct-apply; the
+        # approval-request path is available to non-admins via
+        # POST /request.
         raise HTTPException(403, "Only admins may apply directly")
 
     # Verify tenant boundary — the tech must belong to caller's tenant.
@@ -485,6 +531,8 @@ async def apply(body: ApplyBody,
         {"id": body.tech_user_id}, {"_id": 0, "tenant_id": 1},
     ) or {}
     if tech_row.get("tenant_id") not in (None, tenant_id):
+        # Legit 403 · cross-tenant guard.  Admin cannot apply
+        # against a tech that belongs to a different tenant.
         raise HTTPException(403, "tech_user_id not in current tenant")
 
     return await _apply_internal(
@@ -500,12 +548,15 @@ async def approve(request_id: str = FPath(..., min_length=1),
                     caller: dict = Depends(get_current_user)):
     tenant_id = _tenant_of(caller)
     if not _is_admin(caller):
+        # Legit 403 · admin-only approval action.
         raise HTTPException(403, "Only admins may approve")
 
     req = await db.route_optimization_requests.find_one(
         {"id": request_id, "tenant_id": tenant_id}, {"_id": 0},
     )
     if not req:
+        # Legit 404 · resource lookup miss on the approve path
+        # (tenant-scoped find returned nothing).
         raise HTTPException(404, "request not found")
     if req.get("status") != "pending":
         raise HTTPException(409, f"request not pending (status={req.get('status')})")
@@ -548,12 +599,15 @@ async def reject(request_id: str = FPath(..., min_length=1),
                    caller: dict = Depends(get_current_user)):
     tenant_id = _tenant_of(caller)
     if not _is_admin(caller):
+        # Legit 403 · admin-only rejection action.
         raise HTTPException(403, "Only admins may reject")
 
     req = await db.route_optimization_requests.find_one(
         {"id": request_id, "tenant_id": tenant_id}, {"_id": 0},
     )
     if not req:
+        # Legit 404 · resource lookup miss on the reject path
+        # (tenant-scoped find returned nothing).
         raise HTTPException(404, "request not found")
     if req.get("status") != "pending":
         raise HTTPException(409, f"request not pending (status={req.get('status')})")
@@ -581,6 +635,9 @@ async def undo(body: UndoBody, caller: dict = Depends(get_current_user)):
         {"_id": 0},
     )
     if not doc:
+        # Legit 404 · resource lookup miss on the undo path
+        # (tenant-scoped find returned nothing for the given
+        # applied_id).
         raise HTTPException(404, "applied_id not found")
     if doc.get("undone"):
         raise HTTPException(410, "already_undone")
@@ -619,6 +676,9 @@ async def list_pending(caller: dict = Depends(get_current_user)):
     """Admin-facing list — used by the web approval UI in sub-phase C."""
     tenant_id = _tenant_of(caller)
     if not _is_admin(caller):
+        # Legit 403 · admin-only pending-queue read.  Techs get
+        # per-user status via a separate endpoint; managers and
+        # customers are forbidden entirely.
         raise HTTPException(403, "Only admins may list pending requests")
     now = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []

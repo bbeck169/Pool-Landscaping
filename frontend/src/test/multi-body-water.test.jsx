@@ -39,25 +39,29 @@ import {
 // ══════════════════════════════════════════════════════════════════════
 describe("waterBodies helpers", () => {
   it("READING_ALLOWLIST matches the approved kickoff spec", () => {
+    // Phase P17.1 · Feb-2026 — canonical rename: allow-list emits
+    // ``chlorine`` (was ``free_chlorine`` under P17). Legacy source
+    // spellings remain in ALIAS_MAP for read-path compatibility.
     expect(READING_ALLOWLIST.pool).toEqual([
-      "free_chlorine", "ph", "alkalinity",
+      "chlorine", "ph", "alkalinity",
       "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
     ]);
     expect(READING_ALLOWLIST.spa).toEqual([
-      "free_chlorine", "ph", "alkalinity", "calcium_hardness",
+      "chlorine", "ph", "alkalinity", "calcium_hardness",
     ]);
     expect(READING_ALLOWLIST.water_feature).toEqual([
-      "free_chlorine", "ph",
+      "chlorine", "ph",
     ]);
     expect(READING_ALLOWLIST.fountain).toEqual([
-      "free_chlorine", "ph",
+      "chlorine", "ph",
     ]);
   });
 
   it("READING_REQUIRED gates only pool (Required Four)", () => {
     expect(READING_REQUIRED.pool).toHaveLength(4);
+    // Phase P17.1 · Feb-2026 — canonical rename.
     expect(READING_REQUIRED.pool).toEqual([
-      "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+      "chlorine", "ph", "alkalinity", "cyanuric_acid",
     ]);
     expect(READING_REQUIRED.spa).toHaveLength(0);
     expect(READING_REQUIRED.water_feature).toHaveLength(0);
@@ -99,12 +103,13 @@ describe("waterBodies helpers", () => {
 
   it("missingRequiredReadings flags empty pool cores; is empty for spa", () => {
     const empty = missingRequiredReadings({ type: "pool", readings: [] });
-    expect(empty).toEqual(["free_chlorine", "ph",
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    expect(empty).toEqual(["chlorine", "ph",
                             "alkalinity", "cyanuric_acid"]);
     const filled = missingRequiredReadings({
       type: "pool",
       readings: [
-        { key: "free_chlorine", value: 3 },
+        { key: "chlorine", value: 3 },
         { key: "ph", value: 7.4 },
         { key: "alkalinity", value: 90 },
         { key: "cyanuric_acid", value: 45 },
@@ -132,8 +137,9 @@ describe("<WaterBodyPanel /> per-body rendering", () => {
         body={body} index={1} locked={false} canRemove
         onChange={vi.fn()} onRemove={vi.fn()} />,
     );
-    // Allowed for spa.
-    expect(screen.getByTestId("wb-reading-free_chlorine")).toBeInTheDocument();
+    // Allowed for spa. Phase P17.1 · Feb-2026 — canonical rename:
+    // WaterBodyPanel now emits the ``chlorine`` testid.
+    expect(screen.getByTestId("wb-reading-chlorine")).toBeInTheDocument();
     expect(screen.getByTestId("wb-reading-ph")).toBeInTheDocument();
     expect(screen.getByTestId("wb-reading-alkalinity")).toBeInTheDocument();
     expect(screen.getByTestId("wb-reading-calcium_hardness")).toBeInTheDocument();
@@ -154,7 +160,7 @@ describe("<WaterBodyPanel /> per-body rendering", () => {
         body={body} index={1} locked={false} canRemove
         onChange={vi.fn()} onRemove={vi.fn()} />,
     );
-    expect(screen.getByTestId("wb-reading-free_chlorine")).toBeInTheDocument();
+    expect(screen.getByTestId("wb-reading-chlorine")).toBeInTheDocument();
     expect(screen.getByTestId("wb-reading-ph")).toBeInTheDocument();
     expect(screen.queryByTestId("wb-reading-alkalinity")).toBeNull();
     expect(screen.queryByTestId("wb-reading-cyanuric_acid")).toBeNull();
@@ -213,10 +219,13 @@ describe("<WaterBodyPanel /> per-body rendering", () => {
   it("Type-change strips readings + chemicals disallowed under the new type", () => {
     const onChange = vi.fn();
     // Body starts as pool with a full readings set + salt bag.
+    // Phase P17.1 · Feb-2026 — canonical rename: use ``chlorine``
+    // key. Legacy ``free_chlorine`` still resolves via ALIAS_MAP but
+    // the P17.1 canonical is the current wire contract.
     const body = {
       id: "b1", type: "pool", label: "Pool", sequence: 0,
       readings: [
-        { key: "free_chlorine", value: 3, name: "Free Cl", unit: "ppm" },
+        { key: "chlorine", value: 3, name: "Chlorine", unit: "ppm" },
         { key: "cyanuric_acid", value: 45, name: "CYA", unit: "ppm" },
         { key: "salt", value: 3200, name: "Salt", unit: "ppm" },
       ],
@@ -238,7 +247,8 @@ describe("<WaterBodyPanel /> per-body rendering", () => {
     const next = onChange.mock.calls.at(-1)[0];
     expect(next.type).toBe("spa");
     const nextKeys = next.readings.map((r) => r.key);
-    expect(nextKeys).toContain("free_chlorine");
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    expect(nextKeys).toContain("chlorine");
     expect(nextKeys).not.toContain("cyanuric_acid");
     expect(nextKeys).not.toContain("salt");
     const nextSlugs = next.chemicals_used.map((c_) => c_.product_slug);

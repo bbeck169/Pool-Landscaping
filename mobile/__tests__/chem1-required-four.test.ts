@@ -16,7 +16,10 @@ import {
   missingRequiredReadings,
 } from "../src/lib/waterBodies";
 
-const REQUIRED_FOUR = ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"];
+// Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` →
+// ``chlorine``. Legacy source spellings remain in ALIAS_MAP for
+// read-path compatibility; Required Four now emits ``chlorine``.
+const REQUIRED_FOUR = ["chlorine", "ph", "alkalinity", "cyanuric_acid"];
 
 describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
 
@@ -58,7 +61,8 @@ describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
       type: "pool",
       label: "Main Pool",
       readings: [
-        { key: "free_chlorine", value: 3 },
+        // Phase P17.1 · Feb-2026 — canonical rename.
+        { key: "chlorine", value: 3 },
         { key: "ph", value: 7.6 },
         { key: "alkalinity", value: 100 },
         { key: "cyanuric_acid", value: 70 },
@@ -72,7 +76,8 @@ describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
       type: "pool",
       label: "Main Pool",
       readings: [
-        { key: "free_chlorine", value: 3 },
+        // Phase P17.1 · Feb-2026 — canonical rename.
+        { key: "chlorine", value: 3 },
         { key: "ph", value: 7.6 },
         { key: "alkalinity", value: 100 },
         { key: "cyanuric_acid", value: 70 },
@@ -95,7 +100,8 @@ describe("Phase CHEM1 — total_chlorine removed + Required Four only", () => {
       type: "pool",
       label: "Main Pool",
       readings: [
-        { key: "free_chlorine", value: 3 },
+        // Phase P17.1 · Feb-2026 — canonical rename.
+        { key: "chlorine", value: 3 },
         // ph, alkalinity, cyanuric_acid missing
       ],
     } as any;

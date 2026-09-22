@@ -831,10 +831,12 @@ ALGAE_RISK_CHLORINE_PPM = 0.5
 
 
 def _chlorine_ppm(readings) -> float | None:
-    """Extract the free-chlorine value from a `chemical_readings` list.
+    """Extract the chlorine value from a `chemical_readings` list.
 
-    Falls back to `chlorine` (single-column pools) if `free_chlorine`
-    isn't present. Returns None if nothing usable is stored.
+    Phase P17.1 · Feb-2026 — accepts the canonical ``chlorine`` key
+    plus legacy spellings (``free_chlorine``, ``free chlorine``) so
+    reports written before the rename still resolve.
+    Returns None if nothing usable is stored.
     """
     if not readings:
         return None
@@ -848,7 +850,7 @@ def _chlorine_ppm(readings) -> float | None:
             by_key[k] = float(v)
         except (TypeError, ValueError):
             continue
-    for k in ("free_chlorine", "free chlorine", "chlorine"):
+    for k in ("chlorine", "free_chlorine", "free chlorine"):
         if k in by_key:
             return by_key[k]
     return None
@@ -858,7 +860,7 @@ async def evaluate_algae_risk(tenant_id: str, customer_id: str | None):
     """Called from service_reports.submit. Idempotent — one open flag per
     customer at a time. Writes `{tenant_id, customer_id, flagged_at,
     evidence, resolved:False}` when the last two submitted reports both
-    show free_chlorine ≤ 0.5 ppm."""
+    show chlorine ≤ 0.5 ppm."""
     if not customer_id:
         return None
     # Any already-open flag? Keep it open, just refresh evidence.
@@ -885,7 +887,7 @@ async def evaluate_algae_risk(tenant_id: str, customer_id: str | None):
             return None  # streak broken
         evidence.append({
             "report_id": rep.get("id"),
-            "free_chlorine": cl,
+            "chlorine": cl,
             "date": rep.get("submitted_at"),
         })
     now = now_iso()

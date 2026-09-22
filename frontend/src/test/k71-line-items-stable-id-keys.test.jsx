@@ -59,6 +59,25 @@ vi.mock("@/components/income/CategoryPicker", () => ({
       <option value="inc-a">Income A</option>
     </select>
   ),
+  loadCategories: vi.fn(async () => []),
+  invalidateCategoryCache: vi.fn(),
+}));
+
+// Phase P16.1 · Feb-2026 — stub the Master Service combobox with a
+// plain <input> so this file's stable-id-keys contract isn't
+// coupled to the combobox's dropdown / fetch surface.  Downstream
+// tests (``p16-1-combobox-sweep``) cover the real integration.
+vi.mock("@/components/services/MasterServiceCombobox", () => ({
+  default: ({ value, onChange, testid }) => (
+    <input
+      data-testid={`${testid}-input`}
+      value={value || ""}
+      onChange={(e) => onChange?.({
+        name: e.target.value, default_price: null, category: null,
+      })}
+    />
+  ),
+  invalidateMasterServicesCache: vi.fn(),
 }));
 
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
@@ -184,7 +203,10 @@ describe("K71LineItemsEditor · stable-id keys + duplicate-row guard", () => {
     expect(screen.getByTestId("k71-row-edit-1")).toBeTruthy();
 
     // Fill in the required fields + commit.
-    fireEvent.change(screen.getByTestId("k71-input-item-1"),
+    // Phase P16.1 · Feb-2026 — target the Master Service combobox's
+    // inner <input> (``-input`` suffix); the wrapper div carries
+    // the legacy ``k71-input-item-{i}`` testid.
+    fireEvent.change(screen.getByTestId("k71-input-item-1-input"),
                      { target: { value: "Fresh add" } });
     fireEvent.change(screen.getByTestId("k71-input-qty-1"),
                      { target: { value: "3" } });

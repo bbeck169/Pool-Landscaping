@@ -7,18 +7,16 @@
 //   * `null` / `undefined` / `""` / whitespace-only → MISSING
 //   * literal `"null"` / `"None"` (case-insensitive) → MISSING
 //   * `0` is MISSING for ph / alkalinity / cyanuric_acid (P17
-//     zero-carve-out); `0` remains VALID for free_chlorine
+//     zero-carve-out); `0` remains VALID for chlorine
 //     (fully-consumed pools can legitimately read 0 ppm).
 //   * Negative floats + numeric strings that parse → VALID
 //   * Unparseable strings → MISSING
 //
 // Phase P17 · Feb-2026 · P0 HOTFIX — Chemistry Gate Key Unification.
-// Also drops the historical `total_chlorine` entry that CHEM1
-// removed on the backend but was never cleaned up here — the
-// mobile helper now matches CORE_READINGS on the backend
-// (free_chlorine, alkalinity, ph, cyanuric_acid) so the gate no
-// longer flags a "total_chlorine missing" that the API doesn't
-// require.
+// Phase P17.1 · Feb-2026 — canonical rename: `free_chlorine` →
+// `chlorine`. Legacy spellings (`free_chlorine`, `free_cl`,
+// `freecl`, `fc`) remain as SOURCE aliases so any stored doc /
+// legacy client write still resolves to the new canonical.
 //
 // Keep in sync with:
 //   * backend/services/chemistry_gate.py  :: ALIAS_MAP
@@ -26,19 +24,19 @@
 
 export type CanonicalKey =
   | "ph"
-  | "free_chlorine"
+  | "chlorine"
   | "alkalinity"
   | "cyanuric_acid";
 
 export const CORE_KEYS: readonly CanonicalKey[] = [
-  "free_chlorine",
+  "chlorine",
   "alkalinity",
   "ph",
   "cyanuric_acid",
 ] as const;
 
 const LABEL: Record<CanonicalKey, string> = {
-  free_chlorine: "Free Cl",
+  chlorine: "Chlorine",
   alkalinity: "Alkalinity",
   ph: "pH",
   cyanuric_acid: "CYA",
@@ -54,12 +52,13 @@ export const ALIAS_MAP: Record<string, CanonicalKey> = {
   ph: "ph",
   p_h: "ph",
   ph_balance: "ph",              // legacy — preserved
-  // ── free_chlorine ─────────────────────────────────────────
-  free_chlorine: "free_chlorine",
-  chlorine: "free_chlorine",
-  free_cl: "free_chlorine",
-  freecl: "free_chlorine",
-  fc: "free_chlorine",
+  // ── chlorine (Phase P17.1 · Feb-2026 canonical rename;
+  // legacy spellings preserved as source aliases) ────────────
+  chlorine: "chlorine",
+  free_chlorine: "chlorine",
+  free_cl: "chlorine",
+  freecl: "chlorine",
+  fc: "chlorine",
   // ── alkalinity ────────────────────────────────────────────
   alkalinity: "alkalinity",
   total_alkalinity: "alkalinity",

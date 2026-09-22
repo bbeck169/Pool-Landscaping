@@ -31,7 +31,6 @@ import { useFocusEffect, useRouter, Redirect } from "expo-router";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
-import { isJobLockedByRoute } from "@/src/lib/sequentialRouteLock";
 import { logNav } from "@/src/utils/diagnostics";
 import { ScheduleErrorBoundary } from "@/src/components/ScheduleErrorBoundary";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -1073,14 +1072,6 @@ function GridView(props: any) {
   const isToday = focusISO === iso(new Date());
   const [actionsOpen, setActionsOpen] = useState(false);
 
-  // Phase SRL — sequential route lock: compute which jobs are locked for techs.
-  const lockedIds = useMemo(() => {
-    if (isAdmin) return new Set<string>();
-    return new Set(
-      jobs.filter((j: Job) => isJobLockedByRoute(jobs, j)).map((j: Job) => j.id),
-    );
-  }, [jobs, isAdmin]);
-
   // Map show/hide toggle — persisted per-device.
   const [mapVisible, setMapVisible] = useState(true);
   useEffect(() => {
@@ -1421,7 +1412,6 @@ function GridView(props: any) {
                   isDragging={isActive}
                   cachedForOffline={cachedJobIds?.has(item.id)}
                   pendingSync={pendingEntityIds?.has(item.id)}
-                  routeLocked={lockedIds.has(item.id)}
                 />
               </ScaleDecorator>
             );
@@ -1454,7 +1444,6 @@ function GridView(props: any) {
               role={role}
               cachedForOffline={cachedJobIds?.has(item.id)}
               pendingSync={pendingEntityIds?.has(item.id)}
-              routeLocked={lockedIds.has(item.id)}
             />
           )}
         />
@@ -1470,7 +1459,7 @@ function GridView(props: any) {
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging, cachedForOffline, pendingSync, routeLocked }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData, isAdminForCard, onEdit, role, onDrag, isDragging, cachedForOffline, pendingSync }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Feb-2026 · Schedule-UI · colored left border.
@@ -1480,25 +1469,14 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   const showOnMyWay = !_TERMINAL_STATUS.has((job.status || "").toLowerCase());
   const showDragHandle = rearrangeMode && isAdminForCard && onDrag;
 
-  // Phase SRL — sequential route lock: locked rows show alert instead of opening checklist.
-  const handlePress = routeLocked
-    ? () => Alert.alert("Route lock", "Please complete the previous job on your route before starting this one.")
-    : onOpen;
-
   return (
     <Pressable
-      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder, backgroundColor: k50CardBg }, isDragging && { opacity: 0.7, shadowOpacity: 0.3 }, routeLocked && gStyles.routeLockedCard]}
-      onPress={rearrangeMode ? undefined : handlePress}
+      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder, backgroundColor: k50CardBg }, isDragging && { opacity: 0.7, shadowOpacity: 0.3 }]}
+      onPress={rearrangeMode ? undefined : onOpen}
       onLongPress={showDragHandle ? onDrag : undefined}
       testID={`grid-job-${job.id}`}
       hitSlop={4}
     >
-      {/* Phase SRL — lock badge for sequentially-locked rows */}
-      {routeLocked && (
-        <View style={gStyles.lockBadge} testID={`grid-lock-${job.id}`}>
-          <Ionicons name="lock-closed" size={12} color={colors.muted} />
-        </View>
-      )}
       {rearrangeMode ? (
         <View style={gStyles.reorderBadge} testID={`grid-reorder-badge-${job.id}`}>
           <Text style={gStyles.reorderBadgeText}>{idx + 1}</Text>
@@ -1727,26 +1705,18 @@ function CalendarView({
                 {dayJ.length === 0 ? (
                   <Text style={cStyles.colEmpty}>—</Text>
                 ) : (() => {
-                  // Phase SRL — sort dayJ by route order for lock computation.
+                  // Phase SRL sort kept for visual consistency only.
                   dayJ.sort((a: Job, b: Job) =>
                     (a.route_index ?? a.route_order ?? 999) - (b.route_index ?? b.route_order ?? 999));
                   return dayJ.map((j) => {
                   const svc = SERVICE_COLOR(j.service_type);
-                  const calLocked = !isAdmin && isJobLockedByRoute(dayJ, j);
                   return (
                     <Pressable
                       key={j.id}
-                      onPress={calLocked
-                        ? () => Alert.alert("Route lock", "Please complete the previous job on your route before starting this one.")
-                        : () => onOpenJob(j.id)}
-                      style={[cStyles.eventCard, { backgroundColor: svc.bg, borderLeftColor: svc.tag }, calLocked && { opacity: 0.55 }]}
+                      onPress={() => onOpenJob(j.id)}
+                      style={[cStyles.eventCard, { backgroundColor: svc.bg, borderLeftColor: svc.tag }]}
                       testID={`calendar-event-${j.id}`}
                     >
-                      {calLocked && (
-                        <View style={{ position: "absolute", top: 4, right: 4 }} testID={`calendar-lock-${j.id}`}>
-                          <Ionicons name="lock-closed" size={10} color={colors.muted} />
-                        </View>
-                      )}
                       <Text style={[cStyles.eventTitle, { color: svc.fg }]} numberOfLines={2}>
                         {isRecurring(j) ? "🔁 " : ""}
                         {j.service_type || j.title || "Job"}
@@ -2176,13 +2146,6 @@ const gStyles = StyleSheet.create({
   newBtnText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
   // Feb-2026 · Schedule inline-edit — Pencil affordance on admin cards.
   editBtn: { padding: spacing.xs, marginLeft: spacing.xs, alignSelf: "center" },
-  // Phase SRL — route-locked row styles.
-  routeLockedCard: { opacity: 0.55 },
-  lockBadge: {
-    position: "absolute" as const, top: 6, right: 6, zIndex: 2,
-    backgroundColor: colors.surfaceSecondary, borderRadius: 10,
-    padding: 3, borderWidth: 1, borderColor: colors.border,
-  },
 });
 
 const cStyles = StyleSheet.create({

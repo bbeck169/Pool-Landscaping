@@ -5,7 +5,17 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { PageHeader, Button, TextInput, Toast } from "@/components/ui-kit";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
-import CategoryPicker from "@/components/income/CategoryPicker";
+import CategoryPicker, {
+  loadCategories as _loadServiceCats,
+} from "@/components/income/CategoryPicker";
+// Phase P16.1.1 · Feb-2026 — Master Service combobox drop-in for the
+// create-flow line-items editor.  P16.1 wired the combobox into the
+// K71 detail-edit surface (``K71LineItemsEditor`` used by
+// ``QuoteInvoiceDetail.jsx``) but the create page mounted at
+// ``/quotes/new`` and ``/invoices/new`` had its own inline editor
+// still using ``<input list="items-datalist">``; this import closes
+// that gap on both estimate and invoice create paths.
+import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 
 /** Combined New form for both quotes and invoices — same data model, different `doc_type`. */
 export default function QuoteInvoiceNew({ docType = "quote" }) {
@@ -42,7 +52,6 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
     return "";
   };
   const [customers, setCustomers] = useState([]);
-  const [items, setItems] = useState([]);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   // Feb-2026 · Invoice inline edit sprint — per-row error state so
@@ -68,7 +77,10 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
 
   useEffect(() => {
     api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
-    api.get("/items").then(setItems).catch(() => {});
+    // Phase P16.1.1 · Feb-2026 — the legacy ``/items`` datalist
+    // fetch was retired when the description field flipped to
+    // ``MasterServiceCombobox``, which pulls active rows from
+    // ``/services/active`` on demand.
     api.get("/settings/terms").then((r) => {
       const def = docType === "invoice" ? r.default_invoice_terms : r.default_quote_terms;
       setTermsDefault(def || "");
@@ -181,7 +193,10 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
     }
   };
 
-  const priceBook = items.filter((i) => i.category !== "Chemical");
+  // Phase P16.1.1 · Feb-2026 — the legacy pricebook ``<datalist>``
+  // for the description field was replaced by the
+  // ``MasterServiceCombobox`` above, which pulls active rows from
+  // ``/services/active`` on demand.
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid={`${docType}-new-page`}>
@@ -263,40 +278,79 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                               style={{ color: colors.muted }}>
                         DESCRIPTION
                       </label>
-                      <input
-                        list={`items-datalist-${i}`}
+                      {/* Phase P16.1.1 · Feb-2026 — Master Service
+                          combobox in place of the raw ``description``
+                          input + datalist.  Mirrors the K71
+                          drop-in in ``K71LineItemsEditor.jsx``.  A
+                          pick auto-fills ``unit_price`` (dollars) +
+                          ``category`` (name, the shape this page
+                          ships to ``POST /quotes``) + resolves the
+                          category NAME to a
+                          ``service_category_id`` for K71-parity in
+                          the create payload.  Free-typing still
+                          saves the raw string — backward-compatible
+                          with legacy pricebook items that never
+                          lived in ``services``. */}
+                      <MasterServiceCombobox
                         value={li.description}
-                        onChange={(e) => {
-                          const chosen = priceBook.find((it) => it.name === e.target.value);
-                          if (chosen) {
-                            setForm((f) => ({
-                              ...f,
-                              line_items: f.line_items.map((x, idx) =>
-                                idx === i
-                                  ? { ...x, description: chosen.name,
-                                      unit_price: chosen.unit_price || 0,
-                                      category: chosen.category || x.category || "",
-                                      pricebook_item_id: chosen.id,
-                                      item_id: chosen.id,
-                                      _item_type: (chosen.item_type || "product").toLowerCase(),
-                                      _pricebook_unit_price: Number(chosen.unit_price || 0) }
-                                  : x
-                              ),
-                            }));
-                          } else {
-                            setLine(i, "description", e.target.value);
+                        defaultPriceHint={
+                          Number(li.unit_price) > 0 ? Number(li.unit_price) : null
+                        }
+                        onChange={({ name, default_price, category }) => {
+                          // Functional setState — target ONLY this
+                          // row by index so no stale-prop bleed
+                          // spills onto siblings when React batches
+                          // multiple picks in the same tick.
+                          setForm((f) => ({
+                            ...f,
+                            line_items: f.line_items.map((x, idx) => {
+                              if (idx !== i) return x;
+                              const next = { ...x, description: name };
+                              if (Number.isFinite(default_price)
+                                  && default_price != null) {
+                                next.unit_price = default_price;
+                                next._pricebook_unit_price
+                                  = Number(default_price);
+                              }
+                              if (category) {
+                                // The create payload ships
+                                // ``category`` (name) to the
+                                // backend; K71 stores
+                                // ``service_category_id``.  Stamp
+                                // BOTH so subsequent phases that
+                                // switch this page to the K71
+                                // wire shape don't regress.
+                                next.category = category;
+                              }
+                              return next;
+                            }),
+                          }));
+                          // Async — resolve the picked category
+                          // NAME to a service_category_id via the
+                          // shared ``service_categories`` cache
+                          // used by CategoryPicker.  Same pattern
+                          // as K71.
+                          if (category) {
+                            _loadServiceCats("service").then((cats) => {
+                              const match = (cats || []).find(
+                                (c) => String(c.name || "").toLowerCase()
+                                  === String(category).toLowerCase(),
+                              );
+                              if (!match?.id) return;
+                              setForm((f) => ({
+                                ...f,
+                                line_items: f.line_items.map((x, idx) =>
+                                  idx === i
+                                    ? { ...x, service_category_id: match.id }
+                                    : x,
+                                ),
+                              }));
+                            });
                           }
                         }}
-                        placeholder="Item / description"
-                        className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-                        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                        data-testid={`qf-line-${i}-desc`}
+                        placeholder="Search or add a service…"
+                        testid={`qf-line-${i}-desc`}
                       />
-                      <datalist id={`items-datalist-${i}`}>
-                        {priceBook.map((it) => (
-                          <option key={it.id} value={it.name} />
-                        ))}
-                      </datalist>
                     </div>
                     <div className="col-span-4 md:col-span-2">
                       <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1"

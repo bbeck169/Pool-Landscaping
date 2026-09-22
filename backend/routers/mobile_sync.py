@@ -158,10 +158,15 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
             )
     await _log_conflict(op, tenant_id, {"status": job.get("status"),
                                             "completed_at": job.get("completed_at")})
+    # Preserve the offline-captured completion timestamp — that's
+    # the real-world close time the tech recorded. Only fall back
+    # to ``now_iso()`` if the mobile payload didn't carry one
+    # (older mobile builds; treat as best-effort).
+    completed_at_val = op.payload.get("completed_at") or now_iso()
     await db.jobs.update_one(
         {"id": op.entity_id, "tenant_id": tenant_id},
         {"$set": {"status": "completed",
-                    "completed_at": op.payload.get("completed_at") or now_iso(),
+                    "completed_at": completed_at_val,
                     "last_synced_at": now_iso(),
                     "client_op_id": op.client_op_id,
                     "updated_at": now_iso()}},
@@ -179,6 +184,42 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
             schedule_auto_send_door_hanger(op.entity_id, tenant_id)
         except Exception:
             pass
+        # Phase P25 · Feb-2026 — Workstream activity-feed event.
+        # Uses the SAME emitter helper as the online path
+        # (``routers/jobs.py`` PATCH handler) so the event shape
+        # in ``db.workstream_events`` is identical regardless of
+        # write path. Idempotency: the enclosing
+        # ``if _prev_status != "completed"`` gate prevents a
+        # replay of an already-completed job from double-emitting,
+        # and the outer ``pending_sync_receipts.client_op_id``
+        # short-circuit (see ``mobile_sync`` around line 538)
+        # prevents the entire handler from running on a duplicate
+        # ``client_op_id`` — so the event lands at most ONCE per
+        # (job, completion-transition, client_op_id) tuple.
+        # ``completed_at`` = offline-captured timestamp so the
+        # event's causal timestamp reflects when the tech actually
+        # closed the job, not when the sync replayed.
+        try:
+            fresh = await db.jobs.find_one(
+                {"id": op.entity_id, "tenant_id": tenant_id},
+                {"_id": 0},
+            )
+            if fresh:
+                from routers.workstream import emit_job_completed_event
+                await emit_job_completed_event(
+                    tenant_id=tenant_id,
+                    actor_user_id=user_id,
+                    actor_role="technician",
+                    job=fresh,
+                    completed_at=completed_at_val,
+                    source="mobile_sync_replay",
+                )
+        except Exception as _wf_e:                              # noqa: BLE001
+            logger.warning(
+                "[workstream] mobile_sync_replay job.completed "
+                "emit failed for job=%s: %s",
+                op.entity_id, _wf_e,
+            )
     return {"server_id": op.entity_id, "server_ts": now_iso()}
 
 

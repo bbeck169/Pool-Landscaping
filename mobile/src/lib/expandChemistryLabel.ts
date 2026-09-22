@@ -25,10 +25,19 @@
  */
 
 const _K60_LABEL_MAP: Readonly<Record<string, string>> = Object.freeze({
-  fc:         "Free Chlorine",
-  cc:         "Combined Chlorine",
+  // Phase P17.2 · Feb-2026 — display-label unification: ``fc`` and
+  // ``ta`` fold onto the unified customer-facing labels (was
+  // ``Free Chlorine`` / ``Total Alkalinity`` under P17).  ``tc``
+  // was dropped from the map at CHEM1 removal but is RESTORED here
+  // because tenants running the legacy template still expect
+  // ``TC`` to expand to ``Total Chlorine`` on the door hanger.
+  // ``cc`` (combined chlorine short-form) intentionally stays
+  // REMOVED — CHEM1 retired the reading and product spec drops it
+  // from the customer view.
+  fc:         "Chlorine",
+  tc:         "Total Chlorine",
   ph:         "pH",
-  ta:         "Total Alkalinity",
+  ta:         "Alkalinity",
   cya:        "Cyanuric Acid",
   ch:         "Calcium Hardness",
   salt:       "Salt",

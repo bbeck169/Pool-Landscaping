@@ -17,7 +17,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
-import * as writeQueue from "@/src/services/writeQueue";
+import { capturePhoto, getPhotosForEntity } from "@/src/services/sync/photoWorker";
 import { useOnline } from "@/src/offline";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
@@ -49,38 +49,24 @@ export default function PhotoUploader({
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed"); return; }
-    const pick = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.6, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.6, base64: true });
-    if (pick.canceled || !pick.assets?.length) return;
-    const a: any = pick.assets[0];
-    const dataUrl = `data:${a.mimeType || "image/jpeg"};base64,${a.base64}`;
-    const label = `checklist-${new Date().toISOString()}`;
+    // Phase P21 — URI-only, no {base64: true}.
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    const rawUri = result.assets[0].uri;
     setBusy(true);
     try {
-      // Phase 40 · Step 2 — offline path: enqueue for later replay and
-      // optimistically show the photo in the grid so the tech can carry
-      // on. The queued POST carries an X-Idempotency-Key so a mid-flush
-      // retry can't duplicate the image.
-      if (!online) {
-        await writeQueue.enqueue({
-          kind: "upload-photo",
-          jobId,
-          body: { data: dataUrl, label },
-        });
-        const optimistic = {
-          id: `pending-${Date.now()}`,
-          data: dataUrl,
-          label,
-        };
-        onPhotosChange([...(photos || []), optimistic]);
-        return;
-      }
-      const updated = await api.post(`/jobs/${jobId}/photos`, {
-        data: dataUrl,
-        label,
-      });
-      onPhotosChange(updated.photos || []);
+      // Route through durable SQLite photoWorker pipeline.
+      await capturePhoto(rawUri, "job", jobId);
+      // Show optimistic pending thumbnail by refreshing from photoWorker.
+      const pending = await getPhotosForEntity(jobId);
+      const optimistic = pending.map((p) => ({
+        id: p.id,
+        data: p.local_uri,
+        label: "Pending upload",
+      }));
+      onPhotosChange([...(photos || []).filter((p) => !p.id.startsWith("pending-")), ...optimistic]);
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Try again.");
     } finally { setBusy(false); }

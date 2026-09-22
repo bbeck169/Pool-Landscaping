@@ -59,7 +59,9 @@ describe("Chemistry readings unification · named exports", () => {
   });
   it("PoolChecklistForm exports canonicalReadingKey", () => {
     expect(typeof canonicalReadingKey).toBe("function");
-    expect(canonicalReadingKey({ name: "Free Chlorine" })).toBe("free_chlorine");
+    // Phase P17.1 · Feb-2026 — canonical rename: ``Free Chlorine`` /
+    // ``free_chlorine`` now folds onto the new ``chlorine`` canonical.
+    expect(canonicalReadingKey({ name: "Free Chlorine" })).toBe("chlorine");
     expect(canonicalReadingKey({ name: "Water Temp" })).toBe("water_temp");
     expect(canonicalReadingKey({ name: "Total Alkalinity" })).toBe("total_alkalinity");
   });
@@ -131,8 +133,8 @@ describe("ReadingInputRow · required indicator", () => {
   it("renders a red '*' when required=true", () => {
     render(
       <ReadingInputRow
-        testKey="free_chlorine"
-        reading={{ key: "free_chlorine", name: "Free Chlorine",
+        testKey="chlorine"
+        reading={{ key: "chlorine", name: "Chlorine",
                     unit: "ppm", value: null }}
         previous={undefined}
         recent={undefined}
@@ -141,7 +143,10 @@ describe("ReadingInputRow · required indicator", () => {
         onChange={() => {}}
       />,
     );
-    const marker = screen.getByTestId("pool-reading-free_chlorine-required");
+    // Phase P17.1 · Feb-2026 — canonical rename: the required-star
+    // marker resolves to ``pool-reading-chlorine-required`` (was
+    // ``pool-reading-free_chlorine-required`` under P17).
+    const marker = screen.getByTestId("pool-reading-chlorine-required");
     expect(marker).toBeTruthy();
     expect(marker.textContent).toBe("*");
     // Red — the color class must survive any future re-theme so

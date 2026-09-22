@@ -61,8 +61,11 @@ describe("api.ts · 422 dict-detail unwrapper (Feb 2026 · P0 fix)", () => {
         detail: {
           detail: "chemistry_core_readings_missing",
           message: "Cannot close job — required chemistry readings missing",
-          missing_fields: ["free_cl", "cya"],
-          missing_labels: ["Free Cl", "CYA"],
+          // Phase P17.1 · Feb-2026 — canonical rename: production
+          // 422 payload emits ``chlorine`` / ``Chlorine`` (was
+          // ``free_cl`` / ``Free Cl`` under P17).
+          missing_fields: ["chlorine", "cya"],
+          missing_labels: ["Chlorine", "CYA"],
         },
       }),
     );
@@ -75,7 +78,7 @@ describe("api.ts · 422 dict-detail unwrapper (Feb 2026 · P0 fix)", () => {
     expect(err).toBeTruthy();
     // Message combines base + labels for a single human-readable line.
     expect(err.message).toMatch(/Cannot close job/i);
-    expect(err.message).toMatch(/Free Cl/);
+    expect(err.message).toMatch(/Chlorine/);
     expect(err.message).toMatch(/CYA/);
     // Never falls back to the generic "Request failed" bucket.
     expect(err.message).not.toMatch(/Request failed \(422\)/);

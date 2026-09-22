@@ -113,17 +113,27 @@ async def optimize_route(
                                      specific reason.
     """
     if user.get("role") == "customer":
+        # Customers / portal roles are forbidden from every dispatch
+        # endpoint — no read, no compute, no cache lookup.  This is
+        # the SINGLE legitimate blanket-403 the endpoint carries.
         raise HTTPException(403, "Not allowed")
-    # Feb-2026 HOTFIX (live user report) — the Optimize Route bulk
-    # action is a dispatcher / planner tool. Technicians must not
-    # invoke it, even though they can PATCH their own jobs. This is
-    # defense-in-depth alongside the FE hide of the toolbar button.
-    if (user.get("role") or "").lower() == "technician":
-        raise HTTPException(
-            403,
-            "Optimize Route is a dispatcher action — technicians cannot "
-            "invoke it. Ask your dispatcher to reorder the day.",
-        )
+    # Phase P19.1 · Feb-2026 — the previous Feb-2026 hotfix hard-
+    # 403'd any ``technician`` caller here, on the grounds that
+    # Optimize Route is a "dispatcher / planner tool".  That
+    # collides with the P9 silent-pin contract: a technician
+    # scoping to their OWN empty day (or an existing day the FE
+    # widget queries as a read-preview) must resolve to a plain
+    # ``200 OK`` with an empty envelope, not ``403``.  The safety
+    # the hotfix was reaching for is already provided by:
+    #   * The cross-user guard at ``requested_tid != user["id"]``
+    #     below → non-admin techs cannot target another user.
+    #   * The tenant-scoped filter on the jobs query → a tech only
+    #     ever sees their OWN tenant's rows.
+    # A tech invoking on themselves is therefore never a data
+    # leak; the response is a plain shape describing (their own)
+    # day.  The soft-guard fields (``orphaned_tech_ids`` /
+    # ``skipped_unassigned``) still stamp on the response so the
+    # existing P12 warnings surface identically.
     # Only admins can override which user to optimize for.
     # Feb-2026 · Schedule optimize-route targeting fix — accept the
     # explicit ``technician_id`` from the body payload FIRST (see
@@ -134,6 +144,11 @@ async def optimize_route(
     if requested_tid and user.get("role") in ("admin", "super_admin"):
         target_uid = requested_tid
     elif requested_tid and requested_tid != user["id"]:
+        # Legit 403 · non-admin caller attempting to target another
+        # user's route.  Techs may only invoke on their own id
+        # (implicit or explicit).  This guard covers the P19.1
+        # "cross-user targeting" case that the removed blanket-403
+        # was over-serving.
         raise HTTPException(403, "Cannot optimize another user's route")
 
     # Hard cross-tenant guard: if the caller is planning for someone else,
@@ -157,6 +172,9 @@ async def optimize_route(
             else:
                 raise HTTPException(404, "user_id not found")
         if other.get("tenant_id") != tenant["id"]:
+            # Legit 403 · cross-tenant guard.  The resolved target
+            # user exists but belongs to a different tenant.  Never
+            # relaxed — surviving after P19.1.
             raise HTTPException(403, "user_id not in current tenant")
 
     date_str = body.date or datetime.now(timezone.utc).date().isoformat()
@@ -572,12 +590,17 @@ async def get_route_stops(
     themselves; customers are 403'd (unchanged with the optimizer).
     """
     if user.get("role") == "customer":
+        # Legit 403 · customer / portal role forbidden from every
+        # dispatch endpoint including read-side route stops.
         raise HTTPException(403, "Not allowed")
     if user.get("role") not in ("admin", "super_admin"):
         # A technician can only fetch their own route stops. Both the
         # ``id`` (user row) and ``technician_id`` (technicians table)
         # forms are accepted so older seeds still resolve.
         if tech_id not in (user.get("id"), user.get("technician_id")):
+            # Legit 403 · non-admin caller attempting to read another
+            # user's route stops.  Same cross-user guard as the
+            # optimize endpoint — surviving after P19.1.
             raise HTTPException(403, "Cannot read another user's route")
 
     date_str = date or datetime.now(timezone.utc).date().isoformat()

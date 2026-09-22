@@ -101,6 +101,119 @@ async def create_event(
     return doc
 
 
+# ══════════════════════════════════════════════════════════════════
+# Phase P25 · Feb-2026 — Internal emitter helper for the tap-job
+# job-completion signal.
+#
+# Pre-P25 the job-completion side-effect fan-out (in
+# ``routers/jobs.py`` at the ``status flips to completed`` transition
+# block) fired the ``services.automation_engine`` "job.completed"
+# event AND the ``services.marketing.event_dispatcher``
+# "job_completed" schema-v2 event, but never wrote to
+# ``db.workstream_events`` — so the /workstream feed and the
+# workstream-job-detail timeline endpoint had no server-side row
+# for job closures. The office/dispatch's Workstream activity feed
+# was blank for anything closed from mobile.
+#
+# The offline-replay path in ``routers/mobile_sync.py::_handle_job_close``
+# ALSO didn't emit — that's the reported P25 symptom
+# ("technicians closing jobs offline replay the completion later,
+# but the Workstream activity feed never gets the job.completed
+# event"). This helper is called from both write sites so the
+# emission shape stays consistent — schema drift here would break
+# the workstream-job-detail timeline resolver.
+#
+# Idempotency contract: caller (each write path) MUST gate on
+# whatever dedupe key they already use — online path guards on
+# ``prev_status != "completed"`` (transition semantic), replay path
+# guards on ``pending_sync_receipts.client_op_id`` (short-circuits
+# before the handler runs) plus its own transition guard. This
+# helper does NOT re-check dedupe internally so the caller is the
+# single source of truth for "is this a real transition".
+#
+# ``completed_at`` argument policy: caller passes the field
+# verbatim from the completion payload (offline queue's captured
+# timestamp, NOT the replay's ``now_iso()``). This preserves the
+# event's causal timestamp so the dispatch timeline reflects
+# real-world completion time, not sync replay time.
+# ══════════════════════════════════════════════════════════════════
+async def emit_job_completed_event(
+    tenant_id: str,
+    actor_user_id: Optional[str],
+    actor_role: Optional[str],
+    job: Dict[str, Any],
+    completed_at: Optional[str] = None,
+    source: str = "online",
+) -> Optional[dict]:
+    """Insert a ``job.completed`` row into ``db.workstream_events``.
+
+    Parameters
+    ----------
+    tenant_id:
+        Owning tenant id (from ``get_current_tenant``).
+    actor_user_id:
+        The user id that closed the job. Optional so the automation
+        engine's system-triggered closures (rare) still emit.
+    actor_role:
+        The user's role at close time. Stored on the event for the
+        management feed's actor badge.
+    job:
+        The job doc AS PERSISTED (post-completion — includes the
+        stamped ``completed_at``, ``status="completed"``, and any
+        totals). Used to populate the event's ``payload.job``
+        summary.
+    completed_at:
+        The completion timestamp to store on the event. On the
+        offline path this is the OFFLINE-CAPTURED timestamp (from
+        ``op.payload.completed_at``), NOT ``now_iso()``. Falls
+        back to ``job.completed_at`` if the caller omits.
+    source:
+        Free-form tag ("online" | "mobile_sync_replay" | ...) so
+        downstream filters can distinguish paths.
+
+    Returns
+    -------
+    The inserted event doc (minus ``_id``), or ``None`` on
+    insert failure (logged, never raised — job completion path
+    must not fail because a telemetry write failed).
+    """
+    try:
+        job_id = job.get("id") or job.get("job_id")
+        completed_at_val = (
+            completed_at
+            or job.get("completed_at")
+            or now_iso()
+        )
+        doc = {
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "type": "job.completed",
+            "actor_user_id": actor_user_id,
+            "actor_role": actor_role,
+            "payload": {
+                "job_id": job_id,
+                "customer_id": job.get("customer_id"),
+                "customer_name": job.get("customer_name"),
+                "technician_id": job.get("technician_id"),
+                "completed_at": completed_at_val,
+                "source": source,
+            },
+            "related_ref": {"type": "job", "id": job_id} if job_id else None,
+            "created_at": now_iso(),
+        }
+        await db.workstream_events.insert_one(dict(doc))
+        doc.pop("_id", None)
+        return doc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[workstream] job.completed emit failed for job=%s "
+            "tenant=%s source=%s: %s",
+            (job.get("id") if isinstance(job, dict) else "?"),
+            tenant_id, source, exc,
+        )
+        return None
+
+
 @router.get("/workstream/events")
 async def list_events(
     user: dict = Depends(get_current_user),

@@ -64,7 +64,11 @@ CANONICAL_LANDSCAPE_CHECKLIST = [
     "Check pest / disease pressure", "Verify gates locked & site walk-through",
 ]
 STANDARD_READING_KEYS = [
-    "pH", "Free Cl", "Total Cl", "Alkalinity", "Calcium Hardness",
+    # Phase P17.2 · Feb-2026 — retired ``Total Cl`` column (CHEM1
+    # dropped total_chlorine from the Required Four; seed / document
+    # generators no longer emit it).  Legacy stored docs still
+    # resolve via ``chemistry_gate.ALIAS_MAP``; nothing to migrate.
+    "pH", "Chlorine", "Alkalinity", "Calcium Hardness",
     "CYA", "Salt", "Temp", "Phosphates", "Copper", "Iron", "TDS",
 ]
 

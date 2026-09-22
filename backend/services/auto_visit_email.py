@@ -136,8 +136,11 @@ def _visit_date_formatted(sr: dict, job: dict) -> str:
 #
 # The customer email speaks CANONICAL keys (matches the chemistry
 # gate). Legacy dict-shape readings might arrive with mixed casing
-# ("pH", "FC", "Free Cl") — we look up the canonical form via the
-# gate's alias table so the band classifier fires on every payload.
+# ("pH", "chlorine", "Chlorine") — Phase P17.1 flipped the chlorine
+# canonical from ``free_chlorine`` → ``chlorine`` and Phase P17.2
+# unified the display label from ``Free Cl`` → ``Chlorine``.  Legacy
+# spellings (``free_chlorine``, ``free_cl``, ``fc``) still resolve via
+# the gate's alias table so the band classifier fires on every payload.
 def _canonicalize_reading_key(raw: Any) -> Optional[str]:
     try:
         from services.chemistry_gate import _canonical_key
@@ -152,8 +155,8 @@ def _canonicalize_reading_key(raw: Any) -> Optional[str]:
 def _iter_readings(readings: Any):
     """Yield ``(canonical_key, display_label, value, band_label)``
     tuples for the render loop. Accepts BOTH the list-of-dicts shape
-    (``[{"key": "free_chlorine", "value": 2.5, "unit": "ppm", "label": …}]``)
-    and the legacy dict shape (``{"free_chlorine": 2.5}``).
+    (``[{"key": "chlorine", "value": 2.5, "unit": "ppm", "label": …}]``)
+    and the legacy dict shape (``{"chlorine": 2.5}``).
 
     ``band_label`` is the pre-computed band string set by the
     portal redact (``_redact_report_for_customer`` — Slice 3C).
@@ -183,7 +186,7 @@ def _reading_unit(raw: Any) -> str:
     """Best-effort unit lookup for the numeric subtitle. Canonical
     keys carry standardised units — everything else prints unit-less."""
     UNIT = {
-        "free_chlorine":    "ppm",
+        "chlorine":         "ppm",
         "alkalinity":       "ppm",
         "cyanuric_acid":    "ppm",
         "ph":               "",

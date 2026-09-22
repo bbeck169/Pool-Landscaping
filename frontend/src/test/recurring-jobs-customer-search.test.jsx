@@ -20,6 +20,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 vi.mock("sonner", () => {
   const _toast = Object.assign(vi.fn(), {
@@ -103,7 +104,7 @@ async function _tick(ms = 300) {
 
 describe("Recurring Jobs · Phase R2 customer search", () => {
   it("filters the list by customer name (case-insensitive)", async () => {
-    render(<RecurringJobs />);
+    render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
     // All three rows render initially.
     await waitFor(() => {
       expect(screen.getByTestId("recurring-job-row-tpl-a")).toBeInTheDocument();
@@ -132,7 +133,7 @@ describe("Recurring Jobs · Phase R2 customer search", () => {
   });
 
   it("clear-button empties the input and restores the full list", async () => {
-    render(<RecurringJobs />);
+    render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
     await waitFor(() => screen.getByTestId("recurring-job-row-tpl-a"));
 
     fireEvent.change(screen.getByTestId("recurring-search-input"),
@@ -154,7 +155,7 @@ describe("Recurring Jobs · Phase R2 customer search", () => {
   });
 
   it("select-all-on-page respects the active search filter", async () => {
-    render(<RecurringJobs />);
+    render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
     await waitFor(() => screen.getByTestId("recurring-job-row-tpl-a"));
 
     // Filter to just Bob.

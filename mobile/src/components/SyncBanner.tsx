@@ -9,8 +9,8 @@ import {
   pendingCount,
   pendingMutationCount,
   flushPendingMutations,
-  flushPendingPhotos,
 } from "@/src/offline";
+import { flushPhotos } from "@/src/services/sync/photoWorker";
 
 /**
  * Global connectivity + sync status strip shown above the staff tab bar.
@@ -45,7 +45,7 @@ export function SyncBanner() {
         setSyncing(true);
         try {
           await flushPendingMutations();
-          await flushPendingPhotos();
+          await flushPhotos();
         } catch {}
         await refresh();
         setSyncing(false);

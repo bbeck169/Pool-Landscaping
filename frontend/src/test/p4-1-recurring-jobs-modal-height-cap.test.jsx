@@ -88,7 +88,7 @@ beforeEach(() => {
   postSpy.mockReset();
   patchSpy.mockReset();
   getSpy.mockImplementation(async (path) => {
-    if (path === "/recurring-jobs") return { items: [ROW] };
+    if (path === "/recurring-jobs" || path.startsWith("/recurring-jobs?")) return { items: [ROW] };
     if (path === "/service-categories") return { items: [], total: 0 };
     if (path === "/income-categories")  return { items: [], total: 0 };
     if (path.startsWith("/customers"))  return { items: [] };

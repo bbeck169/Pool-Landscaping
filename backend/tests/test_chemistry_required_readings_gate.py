@@ -120,7 +120,9 @@ def test_helper_rejects_empty_whitespace_and_unparseable_strings():
         "alkalinity": 80,
         "cyanuric_acid": 40,
     })
-    assert set(r) == {"free_cl", "ph"}
+    # Phase P17.1 · Feb-2026 — the short label for the chlorine
+    # canonical is ``"chlorine"`` (was ``"free_cl"`` under P17).
+    assert set(r) == {"chlorine", "ph"}
 
 
 def test_helper_accepts_list_of_dicts_shape():
@@ -147,16 +149,19 @@ def test_helper_accepts_aliased_keys():
 def test_422_payload_carries_both_canonical_and_display_labels():
     """The 422 detail MUST expose both ``missing_fields`` (canonical
     short) and ``missing_labels`` (display) so machine callers and
-    UI callers each have a direct source of truth."""
+    UI callers each have a direct source of truth.
+
+    Phase P17.1 · Feb-2026 — canonical rename flipped ``free_cl`` /
+    ``Free Cl`` (P17 sentinels) to ``chlorine`` / ``Chlorine``."""
     from services.chemistry_gate import assert_core_readings_present
     with pytest.raises(HTTPException) as ei:
         assert_core_readings_present({})  # nothing present
     d = ei.value.detail
     assert d["missing_fields"] == [
-        "free_cl", "alkalinity", "ph", "cya",
+        "chlorine", "alkalinity", "ph", "cya",
     ]
     assert d["missing_labels"] == [
-        "Free Cl", "Alkalinity", "pH", "CYA",
+        "Chlorine", "Alkalinity", "pH", "CYA",
     ]
     # Arrays are index-aligned so a caller can zip them safely.
     assert len(d["missing_fields"]) == len(d["missing_labels"])
@@ -276,9 +281,12 @@ def test_admin_put_to_completed_with_missing_cores_raises_422():
         # No service_report + no legacy job.chemical_readings → gate blocks.
         try:
             from routers.jobs import update_job
-            # Body model — a minimal object with a ``.dict()`` shim.
+            # Body model — a minimal object with ``.dict()`` and
+            # ``.model_dump()`` shims (Pydantic v1 + v2 compat).
             class _B:
                 def dict(self):
+                    return {"status": "completed"}
+                def model_dump(self):
                     return {"status": "completed"}
             tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0}) or {"id": tid}
             with pytest.raises(HTTPException) as ei:
@@ -303,6 +311,8 @@ def test_admin_put_to_could_not_service_is_not_gated():
 
             class _B:
                 def dict(self):
+                    return {"status": "could_not_service"}
+                def model_dump(self):
                     return {"status": "could_not_service"}
             tenant = await _db().tenants.find_one({"id": tid}, {"_id": 0}) or {"id": tid}
             # No raise — gate must NOT apply to CNS transitions.

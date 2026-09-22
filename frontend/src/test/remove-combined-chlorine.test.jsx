@@ -74,7 +74,12 @@ describe("Job Checklist · Combined Chlorine removed (web)", () => {
 
   it("renders the five remaining chem inputs", () => {
     render(<PoolChecklistForm {...baseProps} onChange={() => {}} />);
-    for (const k of ["free_chlorine", "ph",
+    // Phase P17.1 · Feb-2026 — canonical rename: PoolChecklistForm's
+    // ``canonicalReadingKey`` maps ``Free Chlorine`` / ``free_chlorine``
+    // onto ``chlorine``, so the emitted testid is now
+    // ``pool-reading-chlorine-input`` (was
+    // ``pool-reading-free_chlorine-input`` under P17).
+    for (const k of ["chlorine", "ph",
                      "total_alkalinity", "cyanuric_acid"]) {
       expect(screen.getByTestId(`pool-reading-${k}-input`)).toBeTruthy();
     }
@@ -90,7 +95,9 @@ describe("Job Checklist · Combined Chlorine removed (web)", () => {
   it("onChange payload omits combined_chlorine when another reading is edited", () => {
     const onChange = vi.fn();
     render(<PoolChecklistForm {...baseProps} onChange={onChange} />);
-    const fc = screen.getByTestId("pool-reading-free_chlorine-input");
+    // Phase P17.1 · Feb-2026 — canonical rename: the free-chlorine
+    // input renders under the ``chlorine`` testid.
+    const fc = screen.getByTestId("pool-reading-chlorine-input");
     fireEvent.change(fc, { target: { value: "2.5" } });
     fireEvent.blur(fc);
     expect(onChange).toHaveBeenCalled();
@@ -103,9 +110,12 @@ describe("Job Checklist · Combined Chlorine removed (web)", () => {
     expect(keys.includes("combined chlorine")).toBe(false);
     // Other core readings still round-trip through the payload.
     // Phase CHEM1 · Feb-2026 — Total Chlorine removed; the Required
-    // Four (free_chlorine, ph, alkalinity, cyanuric_acid) are the
-    // canonical checks.
-    expect(keys.includes("free_chlorine")).toBe(true);
+    // Four (chlorine, ph, alkalinity, cyanuric_acid) are the
+    // canonical checks. Phase P17.1 · Feb-2026 — canonical rename
+    // flipped ``free_chlorine`` → ``chlorine``.
+    expect(
+      keys.includes("chlorine") || keys.includes("free_chlorine"),
+    ).toBe(true);
     expect(keys.includes("total_chlorine")).toBe(false);
     expect(keys.includes("ph")).toBe(true);
   });

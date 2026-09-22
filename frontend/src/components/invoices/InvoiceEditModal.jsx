@@ -11,6 +11,14 @@ import { colors, money } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 import { api } from "@/api";
 import CategoryPicker from "@/components/income/CategoryPicker";
+// Phase P16.1 · Feb-2026 — Master Service combobox drop-in on the
+// per-line description field so the invoice inline edit modal
+// shares the pricebook auto-fill path with the K71 quotes editor.
+// The modal's ``category`` column is an INCOME category (a
+// distinct taxonomy from ``service_categories``), so we skip
+// category auto-fill here — only ``unit_price`` is stamped from
+// the picked master service.
+import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 
 const MONEY_FIELDS = new Set([
@@ -426,13 +434,32 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                         style={{ borderTop: `1px solid ${colors.border}`,
                                   background: rowErr ? "#FEF2F2" : undefined }}>
                       <td className="px-2 py-1">
-                        <input
-                          className="w-full px-2 py-1 text-sm rounded"
-                          style={{ background: colors.surface,
-                                    border: `1px solid ${colors.border}` }}
-                          value={li.description}
-                          onChange={(e) => patchItem(i, { description: e.target.value })}
-                          data-testid={`invoice-edit-line-${i}-desc`}
+                        {/* Phase P16.1 · Feb-2026 — Master Service
+                             combobox in place of the raw description
+                             input.  Pick auto-fills ``unit_price``
+                             (dollars) via ``patchItem``.  The
+                             modal's ``category`` field is an
+                             INCOME category — a distinct taxonomy
+                             from ``service_categories`` — so we
+                             intentionally skip category auto-fill
+                             here to avoid stamping a mismatched
+                             id into the wrong bucket. */}
+                        <MasterServiceCombobox
+                          value={li.description || ""}
+                          defaultPriceHint={
+                            Number(li.unit_price) > 0
+                              ? Number(li.unit_price) : null
+                          }
+                          onChange={({ name, default_price }) => {
+                            const patch = { description: name };
+                            if (Number.isFinite(default_price)
+                                && default_price != null) {
+                              patch.unit_price = Number(default_price);
+                            }
+                            patchItem(i, patch);
+                          }}
+                          placeholder="Search or add a service…"
+                          testid={`invoice-edit-line-${i}-desc`}
                         />
                         <label
                           className="inline-flex items-center gap-1.5 mt-1 text-[11px] cursor-pointer select-none"

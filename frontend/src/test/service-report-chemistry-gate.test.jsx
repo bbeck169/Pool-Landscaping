@@ -9,10 +9,13 @@
  * Test JID from user brief: ``bb80b3ad-20da-4a1d-8c08-514dcba402f5``.
  *
  * Assertions match the Fix-1 tooltip contract exactly:
- *   * Display labels ("Free Cl", "Total Cl", "Alkalinity", "pH", "CYA")
+ *   * Display labels ("Chlorine", "Alkalinity", "pH", "CYA")
  *     — NOT the canonical shortnames.
  *   * Comma-space separator between missing labels.
  *   * Empty ``title`` when the gate passes so hover shows nothing.
+ *   * Phase P17.1 · Feb-2026 — canonical rename: display label for
+ *     the chlorine field flipped from ``Free Cl`` → ``Chlorine``;
+ *     legacy ``free_chlorine`` remains a source alias.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -49,7 +52,9 @@ vi.mock("sonner", () => ({
 import ServiceReport from "@/pages/tech/ServiceReport";
 
 const CORE_ROWS = [
-  { key: "free_chlorine",  value: null },
+  // Phase P17.1 · Feb-2026 — canonical rename: ``chlorine`` replaces
+  // ``free_chlorine`` in the Required Four wire contract.
+  { key: "chlorine",       value: null },
   { key: "alkalinity",     value: null },
   { key: "ph",             value: null },
   { key: "cyanuric_acid",  value: null },
@@ -98,10 +103,10 @@ afterEach(() => cleanup());
 
 
 describe("ServiceReport · chemistry gate button transitions", () => {
-  it("1. Only pH + Free Cl filled → disabled + title 'Missing: Alkalinity, CYA'", async () => {
+  it("1. Only pH + Chlorine filled → disabled + title 'Missing: Alkalinity, CYA'", async () => {
     const btn = await renderWithReport(
       mkReport({
-        chemical_readings: readingsWithFilled(["ph", "free_chlorine"]),
+        chemical_readings: readingsWithFilled(["ph", "chlorine"]),
       }),
     );
     expect(btn).toBeDisabled();
@@ -112,7 +117,7 @@ describe("ServiceReport · chemistry gate button transitions", () => {
   });
 
   it("2. Optional readings (water_temp + calcium_hardness) do NOT unblock", async () => {
-    const rows = readingsWithFilled(["ph", "free_chlorine"]);
+    const rows = readingsWithFilled(["ph", "chlorine"]);
     rows.push({ key: "water_temp", value: 82 });
     rows.push({ key: "calcium_hardness", value: 250 });
     const btn = await renderWithReport(
@@ -129,7 +134,7 @@ describe("ServiceReport · chemistry gate button transitions", () => {
     const btn = await renderWithReport(
       mkReport({
         chemical_readings: readingsWithFilled([
-          "free_chlorine",
+          "chlorine",
           "alkalinity", "ph", "cyanuric_acid",
         ]),
       }),
@@ -142,11 +147,12 @@ describe("ServiceReport · chemistry gate button transitions", () => {
   });
 
   it("4. Zero + negative floats count as VALID readings (real chemistry)", async () => {
-    // A tech legitimately entering 0.0 for Free Cl (freshly shocked
+    // A tech legitimately entering 0.0 for Chlorine (freshly shocked
     // pool) or a negative-drift sensor reading MUST NOT be treated as
     // missing.  Backend rule mirrored by the client.
+    // Phase P17.1 · Feb-2026 — canonical rename.
     const rows = [
-      { key: "free_chlorine",  value: 0 },       // real reading
+      { key: "chlorine",       value: 0 },       // real reading
       { key: "alkalinity",     value: 80 },
       { key: "ph",             value: 7.4 },
       { key: "cyanuric_acid",  value: 40 },
@@ -159,7 +165,7 @@ describe("ServiceReport · chemistry gate button transitions", () => {
 
   it("5. Empty + whitespace + unparseable strings are ALL missing", async () => {
     const rows = [
-      { key: "free_chlorine",  value: "" },
+      { key: "chlorine",       value: "" },
       { key: "alkalinity",     value: "not-a-number" },
       { key: "ph",             value: 7.4 },
       { key: "cyanuric_acid",  value: 40 },
@@ -168,8 +174,10 @@ describe("ServiceReport · chemistry gate button transitions", () => {
       mkReport({ chemical_readings: rows }),
     );
     expect(btn).toBeDisabled();
+    // Phase P17.1 · Feb-2026 — display label flipped ``Free Cl`` →
+    // ``Chlorine``.
     expect(btn.getAttribute("title")).toBe(
-      "Missing: Free Cl, Alkalinity",
+      "Missing: Chlorine, Alkalinity",
     );
   });
 });

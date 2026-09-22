@@ -70,8 +70,10 @@ def chem_line_cost_cents(name: str, qty: float, prices: Dict[str, int]) -> int:
 
 
 # ─── Canonical water-test key order (post-P0 Workstream fix) ─────────
+# Phase P17.2 · Feb-2026 — display-label unification: ``Free Chlorine``
+# folds onto ``Chlorine`` on customer-facing surfaces.
 _WATER_TEST_CANONICAL: List[Tuple[str, str, str]] = [
-    ("free_chlorine",   "Free Chlorine",  "ppm"),
+    ("chlorine",        "Chlorine",       "ppm"),
     ("ph",              "Ph Balance",     ""),
     ("alkalinity",      "Alkalinity",     "ppm"),
     ("cyanuric_acid",   "CYA",            "ppm"),
@@ -81,19 +83,58 @@ _WATER_TEST_CANONICAL: List[Tuple[str, str, str]] = [
 
 def _coerce_readings(raw: Any) -> Dict[str, Any]:
     """Accept both storage shapes and return a flat ``{key: value}``
-    dict.  ``list`` = canonical tech write path.  ``dict`` = legacy."""
-    if isinstance(raw, dict):
-        return dict(raw)
-    if isinstance(raw, list):
+    dict.  ``list`` = canonical tech write path.  ``dict`` = legacy.
+
+    Phase P17.2 · Feb-2026 — Door-hanger canonicalizer fix.  Every
+    incoming key is routed through
+    ``services.chemistry_gate._canonical_key`` so legacy stored docs
+    (``readings.free_chlorine``, ``readings.free_cl``, ``readings.fc``,
+    etc.) fold onto the new P17.1 ``chlorine`` canonical.  Without
+    this the door-hanger renderer's ``by_key.get("chlorine")`` lookup
+    silently drops legacy rows and the "NEXT STEPS · A few readings
+    look elevated" CTA never fires on tenants who still write under
+    the legacy alias.  Non-core keys (``salt``, ``tds``, ``phosphates``,
+    ``water_temp``, tenant-custom) pass through verbatim so the tail
+    loop in :func:`resolve_water_test` still emits them.
+
+    Collision policy: when both canonical and an alias carry a value,
+    the non-empty value wins; when both are non-empty the first-seen
+    value survives (dict iteration order for the ``dict`` input, list
+    order for the ``list`` input).  Full order-independent
+    real-beats-empty semantics live in
+    ``chemistry_gate.normalize_readings`` — this coercer is
+    intentionally the lighter, non-core-preserving variant.
+    """
+    from services.chemistry_gate import _canonical_key
+
+    def _key(k: str) -> str:
+        ck = _canonical_key(k)
+        return ck if ck else k
+
+    def _bucket(items: List[Tuple[str, Any]]) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
+        for k, v in items:
+            if not k:
+                continue
+            ck = _key(k)
+            existing = out.get(ck)
+            if existing in (None, "") and v not in (None, ""):
+                out[ck] = v
+            elif ck not in out:
+                out[ck] = v
+        return out
+
+    if isinstance(raw, dict):
+        return _bucket([(str(k or "").strip(), v) for k, v in raw.items()])
+    if isinstance(raw, list):
+        items: List[Tuple[str, Any]] = []
         for row in raw:
             if not isinstance(row, dict):
                 continue
             k = (row.get("key") or "").strip()
-            if not k:
-                continue
-            out[k] = row.get("value")
-        return out
+            if k:
+                items.append((k, row.get("value")))
+        return _bucket(items)
     return {}
 
 

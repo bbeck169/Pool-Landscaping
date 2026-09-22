@@ -57,8 +57,8 @@ _RECO: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("cyanuric_acid",    "low"):  ("stabilizer_addition",   "Stabilizer addition recommended"),
     ("ph",               "high"): ("ph_treatment",          "pH balancing recommended"),
     ("ph",               "low"):  ("ph_treatment",          "pH balancing recommended"),
-    ("free_chlorine",    "high"): ("chlorine_treatment",    "Chlorine balance recommended"),
-    ("free_chlorine",    "low"):  ("chlorine_treatment",    "Chlorine balance recommended"),
+    ("chlorine",         "high"): ("chlorine_treatment",    "Chlorine balance recommended"),
+    ("chlorine",         "low"):  ("chlorine_treatment",    "Chlorine balance recommended"),
     ("alkalinity",       "high"): ("alkalinity_treatment",  "Alkalinity balancing recommended"),
     ("alkalinity",       "low"):  ("alkalinity_treatment",  "Alkalinity balancing recommended"),
 }
@@ -70,7 +70,7 @@ _MEASUREMENT_LABELS: Dict[str, str] = {
     "calcium_hardness": "calcium hardness",
     "cyanuric_acid":    "cyanuric acid",
     "ph":               "pH",
-    "free_chlorine":    "free chlorine",
+    "chlorine":         "free chlorine",
     "alkalinity":       "alkalinity",
 }
 

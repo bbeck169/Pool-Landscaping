@@ -40,6 +40,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { geolocate } from "@/src/utils/geolocate";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 import OptimizeRoutePreview from "@/src/components/schedule/OptimizeRoutePreview";
 import { hasGoogleMapsKey, MapUnavailablePlaceholder } from "@/src/utils/mapsKey";
 // K46 · Native-navigation deep link helper. Used inside the callout
@@ -270,7 +271,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
     // never receives an empty date string.
     const d = jobs.find((j) => (j.scheduled_date || "").length >= 10)?.scheduled_date;
     if (d && d.length >= 10) return d.slice(0, 10);
-    return new Date().toISOString().slice(0, 10);
+    return todayKeyInTenantTz();
   }, [jobs]);
 
   const reshufflableCount = useMemo(
@@ -444,6 +445,21 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
 
   const selectedPin = selectedId ? pins.find((p) => p.job.id === selectedId) : null;
 
+  // Phase P22 — tracksViewChanges fix.  Mount markers with tracking
+  // enabled so the first paint actually rasterises the custom views,
+  // then flip to false for scroll/zoom performance.
+  const [markersTracking, setMarkersTracking] = useState(true);
+  useEffect(() => {
+    if (!markersTracking) return;
+    const t = setTimeout(() => setMarkersTracking(false), 350);
+    return () => clearTimeout(t);
+  }, [markersTracking]);
+  // Re-enable tracking briefly whenever the pin set changes (new jobs,
+  // filter switch) so freshly added markers also get their first paint.
+  useEffect(() => {
+    setMarkersTracking(true);
+  }, [pins]);
+
   /* ── Header (chevron toggle) ─────────────────────────────────────── */
   const header = (
     <View style={s.header}>
@@ -526,7 +542,7 @@ export default function DailyRouteMap({ jobs, userId, onOpenJob, testID }: Daily
                 }}
                 anchor={{ x: 0.5, y: 1.0 }}
                 onPress={() => setSelectedId(p.job.id)}
-                tracksViewChanges={false}
+                tracksViewChanges={markersTracking}
               >
                 <RoutePinView pinKind={p.kind} num={p.num} jobId={p.job.id} />
               </Marker>

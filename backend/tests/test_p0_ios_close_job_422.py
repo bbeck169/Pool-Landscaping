@@ -167,11 +167,11 @@ def test_pool_close_missing_readings_returns_structured_422():
         assert outer.get("detail") == "chemistry_core_readings_missing"
         assert isinstance(outer.get("missing_fields"), list)
         assert set(outer["missing_fields"]) == {
-            "free_cl", "alkalinity", "ph", "cya",
+            "chlorine", "alkalinity", "ph", "cya",
         }
         assert isinstance(outer.get("missing_labels"), list)
         assert set(outer["missing_labels"]) == {
-            "Free Cl", "Alkalinity", "pH", "CYA",
+            "Chlorine", "Alkalinity", "pH", "CYA",
         }
         assert isinstance(outer.get("message"), str)
         assert "chemistry" in outer["message"].lower() \

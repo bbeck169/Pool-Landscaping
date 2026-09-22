@@ -131,13 +131,14 @@ export default function RevenueDateRangeFilter({
   defaultPreset = "this_month",
   tenantTimezone,
 }) {
-  // Phase P15 · Feb-2026 — pull the tenant tz off the auth context
-  // when the parent didn't pass an explicit override. Auth may not
-  // be mounted (some smoke tests render this in isolation) so we
-  // guard the hook read.
-  let authTz;
-  try { authTz = useAuth()?.user?.tenant?.timezone; } catch { /* no-op */ }
-  const effectiveTz = tenantTimezone || authTz || TENANT_TZ_FALLBACK;
+  // Phase P19.2 · Feb-2026 — ``useAuth()`` is called unconditionally
+  // at the top of the component body per the React Rules of Hooks.
+  // The previous try/catch scaffold was a violation. Auth may not be
+  // mounted (some smoke tests render this in isolation), in which
+  // case ``useContext`` returns ``null`` and the optional chaining
+  // on ``auth`` handles the fall-through — no try/catch needed.
+  const auth = useAuth();
+  const effectiveTz = tenantTimezone ?? auth?.user?.tenant?.timezone ?? TENANT_TZ_FALLBACK;
 
   const [preset, setPreset] = useState(() => loadPersisted()?.preset || defaultPreset);
   const [custom, setCustom] = useState(() => loadPersisted()?.custom || {
@@ -199,6 +200,7 @@ export default function RevenueDateRangeFilter({
   return (
     <div className="relative inline-block" ref={wrapRef}
           data-testid="revenue-range-filter">
+      <span className="sr-only" data-testid="revenue-tz-badge">{effectiveTz}</span>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

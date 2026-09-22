@@ -16,6 +16,7 @@ import {
 } from "@/components/recurring/MonthlyNthWeekdaySelector";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import JobTitleCombobox from "@/components/JobTitleCombobox";
+import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 // Feb 2026 · Color-coded Service / Repair segmented toggle. Same
 // control lives on ScheduleJobEditModal via the shared component.
 import WorkClassToggle from "@/components/jobs/WorkClassToggle";
@@ -524,33 +525,33 @@ export default function JobNew({
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
                 SERVICE TYPE
               </label>
-              <select
-                value={form.service_type}
-                onChange={set("service_type")}
-                className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-                style={{
-                  backgroundColor: colors.surface,
-                  color: colors.onSurface,
-                  border: `1px solid ${colors.border}`,
+              {/* Phase P16.1 · Feb-2026 — searchable Master Service
+                   combobox in place of the plain select. Picks
+                   auto-fill ``form.price`` (dollars) from the
+                   Master Service ``default_price``. JobNew has no
+                   ``service_category_id`` field, so the combobox's
+                   category auto-fill is a no-op here (parent
+                   simply doesn't watch it). Free-typing still
+                   works — service_type stays a plain string, which
+                   preserves back-compat with legacy job seeds. */}
+              <MasterServiceCombobox
+                value={form.service_type || ""}
+                defaultPriceHint={
+                  Number.isFinite(form.price) && form.price > 0
+                    ? Number(form.price) : null
+                }
+                onChange={({ name, default_price }) => {
+                  setForm((f) => {
+                    const next = { ...f, service_type: name };
+                    if (Number.isFinite(default_price) && default_price != null) {
+                      next.price = Number(default_price);
+                    }
+                    return next;
+                  });
                 }}
-                data-testid="jf-service"
-              >
-                {/* Feb-2026 · placeholder option so the "+ New
-                    Scheduled Job" modal renders visibly blank when
-                    ``service_type=""`` is passed as an initial
-                    value. Historical /jobs/new callers still land
-                    on "Pool Cleaning" (the ``preselectedService``
-                    default) so the placeholder is never selected
-                    for them. */}
-                {!form.service_type ? (
-                  <option value="" data-testid="jf-service-placeholder">
-                    Choose a service…
-                  </option>
-                ) : null}
-                {services.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
+                placeholder="Choose a service…"
+                testid="jf-service"
+              />
             </div>
             <div>
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>

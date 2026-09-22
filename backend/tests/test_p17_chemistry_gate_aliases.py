@@ -5,6 +5,17 @@ behavior across ``services/chemistry_gate.py``.  Every alias for the
 Required Four must resolve to a single canonical key; the gate must
 never block a job when readings are present under any alias
 combination.
+
+Phase P17.1 · Feb-2026 — canonical rename.  The Required-Four
+canonical for the chlorine field flipped from ``free_chlorine`` to
+``chlorine`` end-to-end.  Legacy source spellings
+(``free_chlorine``, ``free_cl``, ``freecl``, ``fc``,
+``free chlorine``) remain as SOURCE aliases pointing at ``chlorine``
+so existing writes and stored docs continue to resolve; the 422
+wire contract now emits ``chlorine`` / ``Chlorine`` in
+``missing_fields`` / ``missing_labels``.  This suite exercises the
+new canonical output shape while still driving payloads under every
+legacy alias to prove the alias lookup path stays intact.
 """
 from __future__ import annotations
 
@@ -34,15 +45,15 @@ _ALIAS_MATRIX = [
     ("Ph",              "ph"),
     ("p_h",             "ph"),
     ("p-h",             "ph"),
-    # free_chlorine
-    ("free_chlorine",   "free_chlorine"),
-    ("Free Chlorine",   "free_chlorine"),
-    ("chlorine",        "free_chlorine"),
-    ("Chlorine",        "free_chlorine"),
-    ("free_cl",         "free_chlorine"),
-    ("Free Cl",         "free_chlorine"),
-    ("FreeCl",          "free_chlorine"),
-    ("FC",              "free_chlorine"),
+    # chlorine — new P17.1 canonical (was free_chlorine under P17)
+    ("chlorine",        "chlorine"),
+    ("Chlorine",        "chlorine"),
+    ("free_chlorine",   "chlorine"),
+    ("Free Chlorine",   "chlorine"),
+    ("free_cl",         "chlorine"),
+    ("Free Cl",         "chlorine"),
+    ("FreeCl",          "chlorine"),
+    ("FC",              "chlorine"),
     # alkalinity
     ("alkalinity",      "alkalinity"),
     ("Alkalinity",      "alkalinity"),
@@ -93,7 +104,7 @@ def test_all_canonical_keys_are_in_core_readings():
 # ═════════════════════════════════════════════════════════════════════
 @pytest.mark.parametrize("canonical,alias,real_value", [
     ("ph",             "pH",              7.4),
-    ("free_chlorine",  "chlorine",        3.0),
+    ("chlorine",       "free_chlorine",   3.0),
     ("alkalinity",     "Total Alkalinity", 90),
     ("cyanuric_acid",  "Cyanuric Acid",   40),
 ])
@@ -106,7 +117,7 @@ def test_real_value_beats_empty_string_under_any_alias(
 
 @pytest.mark.parametrize("canonical,alias,real_value", [
     ("ph",             "pH",              7.4),
-    ("free_chlorine",  "chlorine",        3.0),
+    ("chlorine",       "free_chlorine",   3.0),
     ("alkalinity",     "Total Alkalinity", 90),
     ("cyanuric_acid",  "Cyanuric Acid",   40),
 ])
@@ -119,7 +130,7 @@ def test_real_value_beats_none_under_any_alias(
 
 @pytest.mark.parametrize("alias,real_value", [
     ("pH",              7.4),
-    ("chlorine",        3.0),
+    ("free_chlorine",   3.0),
     ("Total Alkalinity", 90),
     ("Cyanuric Acid",   40),
 ])
@@ -128,8 +139,6 @@ def test_real_value_beats_string_null_literal_under_any_alias(
 ):
     """P17 · Feb-2026 — the string ``"null"`` (older mobile builds
     serialised missing readings this way) is treated as empty."""
-    out = normalize_readings({alias: real_value, "PLACEHOLDER": "null"})
-    # Add a second alias pointing at the same canonical, carrying "null":
     canonical = ALIAS_MAP[alias.strip().lower().replace(" ", "_")]
     payload = {alias: real_value, canonical: "null"}
     assert normalize_readings(payload) == {canonical: real_value}
@@ -137,7 +146,7 @@ def test_real_value_beats_string_null_literal_under_any_alias(
 
 # ═════════════════════════════════════════════════════════════════════
 # Item 2b · Zero-carve-out — 0 is empty for pH/alk/CYA, real for
-# free_chlorine.
+# chlorine.
 # ═════════════════════════════════════════════════════════════════════
 def test_zero_is_empty_for_ph_when_real_value_present():
     out = normalize_readings({"ph": 0, "pH": 7.4})
@@ -154,16 +163,24 @@ def test_zero_is_empty_for_cyanuric_when_real_value_present():
     assert out == {"cyanuric_acid": 40}
 
 
-def test_zero_is_a_real_reading_for_free_chlorine():
-    """A fully-consumed pool can legitimately read 0 ppm free
-    chlorine — 0 must NOT be treated as empty for free_chlorine."""
+def test_zero_is_a_real_reading_for_chlorine():
+    """A fully-consumed pool can legitimately read 0 ppm chlorine — 0
+    must NOT be treated as empty for chlorine."""
+    out = normalize_readings({"chlorine": 0})
+    assert out == {"chlorine": 0}
+
+
+def test_zero_is_a_real_reading_for_chlorine_under_legacy_alias():
+    """Legacy ``free_chlorine`` alias still resolves onto the new
+    canonical ``chlorine`` while preserving the zero-carve-out
+    inverse (0 is a real reading)."""
     out = normalize_readings({"free_chlorine": 0})
-    assert out == {"free_chlorine": 0}
+    assert out == {"chlorine": 0}
 
 
-def test_zero_beats_none_for_free_chlorine():
-    out = normalize_readings({"free_chlorine": 0, "chlorine": None})
-    assert out == {"free_chlorine": 0}
+def test_zero_beats_none_for_chlorine():
+    out = normalize_readings({"chlorine": 0, "free_chlorine": None})
+    assert out == {"chlorine": 0}
 
 
 def test_zero_string_is_empty_for_ph():
@@ -179,9 +196,22 @@ def test_missing_core_readings_flags_single_ph_zero():
     assert "ph" in missing
 
 
-def test_missing_core_readings_accepts_free_chlorine_zero():
-    """A single ``{free_chlorine: 0}`` is a valid reading and MUST
-    NOT be flagged as missing free_chlorine."""
+def test_missing_core_readings_accepts_chlorine_zero():
+    """A single ``{chlorine: 0}`` is a valid reading and MUST NOT be
+    flagged as missing chlorine."""
+    missing = missing_core_readings({
+        "chlorine": 0,
+        "ph": 7.4,
+        "alkalinity": 90,
+        "cyanuric_acid": 40,
+    })
+    assert missing == []
+
+
+def test_missing_core_readings_accepts_chlorine_zero_under_legacy_alias():
+    """P17.1 alias-preservation guard: a legacy write carrying
+    ``free_chlorine: 0`` still folds onto the new canonical without
+    tripping the gate."""
     missing = missing_core_readings({
         "free_chlorine": 0,
         "ph": 7.4,
@@ -197,19 +227,20 @@ def test_missing_core_readings_accepts_free_chlorine_zero():
 def test_normalize_readings_accepts_mixed_aliases():
     """The exact payload from the P17 acceptance criterion — every
     reading present under a different alias.  Output uses canonical
-    key names (``free_chlorine`` under P17; a P17.1 rename is queued
-    to move to ``chlorine``)."""
+    key names; Phase P17.1 flipped the chlorine canonical from
+    ``free_chlorine`` → ``chlorine`` so the output is now keyed
+    ``chlorine``."""
     out = normalize_readings({
         "pH":                7.4,
         "Total Alkalinity":  90,
         "Cyanuric Acid":     40,
-        "chlorine":          3.0,
+        "Free Chlorine":     3.0,
     })
     assert out == {
         "ph":              7.4,
         "alkalinity":      90,
         "cyanuric_acid":   40,
-        "free_chlorine":   3.0,
+        "chlorine":        3.0,
     }
 
 
@@ -220,7 +251,7 @@ def test_gate_passes_with_mixed_aliases():
         "pH":                7.4,
         "Total Alkalinity":  90,
         "Cyanuric Acid":     40,
-        "chlorine":          3.0,
+        "Free Chlorine":     3.0,
     })
 
 
@@ -230,7 +261,7 @@ def test_gate_raises_when_ph_zero_only():
     with pytest.raises(HTTPException) as exc_info:
         assert_core_readings_present({
             "ph":              0,
-            "free_chlorine":   3.0,
+            "chlorine":        3.0,
             "alkalinity":      90,
             "cyanuric_acid":   40,
         })
@@ -240,11 +271,11 @@ def test_gate_raises_when_ph_zero_only():
     assert "ph" in detail["missing_fields"]
 
 
-def test_gate_passes_when_free_chlorine_zero_and_rest_present():
-    """Zero-carve-out inverse — 0 ppm free chlorine is a real
-    reading, so the gate passes when the other three are present."""
+def test_gate_passes_when_chlorine_zero_and_rest_present():
+    """Zero-carve-out inverse — 0 ppm chlorine is a real reading, so
+    the gate passes when the other three are present."""
     assert_core_readings_present({
-        "free_chlorine":   0,
+        "chlorine":        0,
         "ph":              7.4,
         "alkalinity":      90,
         "cyanuric_acid":   40,
@@ -298,6 +329,15 @@ def test_both_real_non_canonical_alphabetically_first_wins():
     assert forward == reverse == {"alkalinity": 90}
 
 
+def test_chlorine_canonical_wins_over_legacy_free_chlorine_when_both_real():
+    """P17.1 alias-preservation guard: when both the new canonical
+    ``chlorine`` and the legacy ``free_chlorine`` carry real values,
+    the canonical spelling wins."""
+    forward = normalize_readings({"chlorine": 2.5, "free_chlorine": 3.0})
+    reverse = normalize_readings({"free_chlorine": 3.0, "chlorine": 2.5})
+    assert forward == reverse == {"chlorine": 2.5}
+
+
 # ═════════════════════════════════════════════════════════════════════
 # List-of-dicts payload shape (service_reports.chemical_readings).
 # ═════════════════════════════════════════════════════════════════════
@@ -306,14 +346,14 @@ def test_list_shape_normalises_and_dedupes():
         {"key": "pH",               "value": 7.4},
         {"key": "Total Alkalinity", "value": 90},
         {"key": "Cyanuric Acid",    "value": 40},
-        {"key": "chlorine",         "value": 3.0},
+        {"key": "Free Chlorine",    "value": 3.0},
     ]
     out = normalize_readings(rows)
     assert out == {
         "ph":              7.4,
         "alkalinity":      90,
         "cyanuric_acid":   40,
-        "free_chlorine":   3.0,
+        "chlorine":        3.0,
     }
 
 

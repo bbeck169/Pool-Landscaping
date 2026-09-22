@@ -88,12 +88,20 @@ async def write_deletion_audit_entry(
     Legacy single-row callers pass ``None``.  Persisted verbatim
     into the audit doc so downstream analytics (the super-admin
     deletion viewer, forensic reconstruction) can filter.
+    Phase P23 · Feb-2026 — ``"technician"`` accepted as a
+    resource_type for the new ``DELETE /api/technicians/{id}``
+    endpoint. Soft-delete (default) and force-reassign paths BOTH
+    write a snapshot row here; the force path also writes one
+    ``"job"`` row per reassigned job, sharing a ``bulk_op_id`` so
+    the group is queryable as a set.
     """
     if resource_type not in ("invoice", "payment", "customer", "lead",
-                              "recurring_job"):
+                              "recurring_job", "job", "master_service",
+                              "technician"):
         raise ValueError(
             f"resource_type must be invoice|payment|customer|lead|"
-            f"recurring_job, got {resource_type!r}"
+            f"recurring_job|job|master_service|technician, got "
+            f"{resource_type!r}"
         )
     doc = {
         "id": new_id(),

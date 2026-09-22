@@ -441,8 +441,13 @@ _DH_BAND_CHIPS = {
 # in fixed display order. Combined Chlorine is intentionally NOT in
 # the list (product spec). Any key not present here is dropped by
 # the renderer, so unknown / experimental readings never leak.
+# Phase P17.2 · Feb-2026 — display-label unification: ``Free Chlorine``
+# short-form is now ``Chlorine`` (was P17-era ``Free Chlorine`` long
+# form) and ``Total Alkalinity`` is now ``Alkalinity`` — mirrors the
+# unified labels shipped in ``chemistry_gate.DISPLAY_LABELS``.  The
+# ``chlorine`` / ``alkalinity`` canonical keys (P17.1) are untouched.
 _DH_DISPLAY_ORDER = [
-    ("free_chlorine",    "Free Chlorine"),
+    ("chlorine",         "Chlorine"),
     ("ph",               "pH"),
     ("alkalinity",       "Alkalinity"),
     ("cyanuric_acid",    "Cyanuric Acid"),
@@ -458,7 +463,7 @@ _DH_DISPLAY_ORDER = [
 # ``frozenset`` here because the renderer needs O(1) membership and
 # a stable local reference (avoids a circular import at module load).
 _DH_CORE_KEYS = frozenset({
-    "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+    "chlorine", "ph", "alkalinity", "cyanuric_acid",
 })
 
 
@@ -549,9 +554,13 @@ def _dh_render_water_test(water_test: List[Dict[str, Any]]) -> str:
     Feb-2026 spec (product-approved):
       * Combined Chlorine is intentionally NOT rendered — customers
         find the row confusing and it's noise on the email.
-      * Long-form labels ("Free Chlorine", "Cyanuric Acid") replace
-        the tech-facing shorthand ("Free Cl", "CYA"). Tech UIs keep
-        their compact chips via ``chemistry_gate.DISPLAY_LABELS``.
+      * Long-form labels ("Chlorine", "Cyanuric Acid") replace
+        the tech-facing shorthand ("Chlorine", "CYA"). Phase P17.2 ·
+        Feb-2026 — display-label unification flipped ``Free Chlorine``
+        onto ``Chlorine`` so tech UIs and the door hanger share the
+        same customer-facing short form; the split is now labels-only
+        (tech UIs render band-chip abbreviations, door hanger renders
+        the full customer name).
       * Every banded key (5 core + 4 extended: calcium hardness,
         salt, TDS, phosphates) renders a chip; Water Temp is
         informational-only and renders as raw value + unit.

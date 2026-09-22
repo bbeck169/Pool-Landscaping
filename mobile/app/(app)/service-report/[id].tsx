@@ -13,6 +13,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { writeCache, readCache } from "@/src/services/readCache";
+import { capturePhoto, getPhotosForEntity } from "@/src/services/sync/photoWorker";
 // Feb-2026 · Chemistry required-readings gate — mirror of backend
 // helper (see ``backend/services/chemistry_gate.py``).
 import { missingCoreReadings } from "@/utils/chemistryGate";
@@ -141,17 +142,22 @@ export default function ServiceReportScreen() {
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed"); return; }
-    const pick = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.6, base64: true })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.6, base64: true });
-    if (pick.canceled || !pick.assets?.length) return;
-    const a: any = pick.assets[0];
-    const dataUrl = `data:${a.mimeType || "image/jpeg"};base64,${a.base64}`;
+    // Phase P21 — URI-only, no {base64: true}. Routed through durable photoWorker.
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    const rawUri = result.assets[0].uri;
     try {
-      const updated = await api.post(`/jobs/${id}/photos`, {
-        data: dataUrl, label: `svc-${new Date().toISOString()}`,
-      });
-      setReport({ ...report, photos: updated.photos || [] });
+      await capturePhoto(rawUri, "job", id as string);
+      // Optimistic: show pending photos from SQLite pipeline.
+      const pending = await getPhotosForEntity(id as string);
+      const optimistic = pending.map((p) => ({
+        id: p.id,
+        data: p.local_uri,
+        label: "Pending upload",
+      }));
+      setReport({ ...report, photos: [...(report.photos || []).filter((p: any) => !p.id.startsWith("pending-")), ...optimistic] });
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Try again.");
     }

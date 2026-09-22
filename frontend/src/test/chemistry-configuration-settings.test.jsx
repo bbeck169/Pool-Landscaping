@@ -40,7 +40,9 @@ import { toast } from "sonner";
 
 const DEFAULT_CHEM = {
   targets: {
-    free_chlorine:    { min: 1.0, max: 3.0,  unit: "ppm" },
+    // Phase P17.1 · Feb-2026 — canonical rename: tenant settings API
+    // keys on ``chlorine`` (was ``free_chlorine`` under P17).
+    chlorine:         { min: 1.0, max: 3.0,  unit: "ppm" },
     ph:               { min: 7.2, max: 7.6,  unit: "" },
     alkalinity:       { min: 80,  max: 120,  unit: "ppm" },
     cyanuric_acid:    { min: 30,  max: 50,   unit: "ppm" },
@@ -49,7 +51,7 @@ const DEFAULT_CHEM = {
   },
   gate_mode: "strict",
   outer_bounds: {
-    free_chlorine: [0, 10], ph: [0, 14], alkalinity: [0, 500],
+    chlorine: [0, 10], ph: [0, 14], alkalinity: [0, 500],
     cyanuric_acid: [0, 300], calcium_hardness: [0, 1000],
     salt: [0, 6000],
   },
@@ -57,7 +59,8 @@ const DEFAULT_CHEM = {
 
 const DEFAULT_FORMULAS = {
   formulas: {
-    free_chlorine:       { tenant_formula: "", default_formula: "round(max(0, (avg_target - current) * volume_gallons / 256000), 2)", using_default: true },
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    chlorine:            { tenant_formula: "", default_formula: "round(max(0, (avg_target - current) * volume_gallons / 256000), 2)", using_default: true },
     ph_up:               { tenant_formula: "", default_formula: "round(max(0, (avg_target - current) * volume_gallons * 3 / 16000), 1)", using_default: true },
     ph_down:             { tenant_formula: "", default_formula: "round(max(0, (current - avg_target) * volume_gallons / 32000), 2)", using_default: true },
     alkalinity_up:       { tenant_formula: "", default_formula: "round(max(0, (avg_target - current) * volume_gallons * 21 / 1600000), 1)", using_default: true },
@@ -88,7 +91,7 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     _authState.user = { role: "technician", id: "u2" };
     render(<ChemistryConfigurationSettings />);
     expect(screen.getByTestId("chemistry-config-forbidden")).toBeTruthy();
-    expect(screen.queryByTestId("chem-target-row-free_chlorine")).toBeNull();
+    expect(screen.queryByTestId("chem-target-row-chlorine")).toBeNull();
     expect(api.get).not.toHaveBeenCalled();
   });
 
@@ -98,7 +101,8 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     await waitFor(() => {
       expect(api.get).toHaveBeenCalledWith("/tenants/mine/settings/chemistry");
     });
-    expect(screen.getByTestId("chem-target-row-free_chlorine")).toBeTruthy();
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    expect(screen.getByTestId("chem-target-row-chlorine")).toBeTruthy();
     expect(screen.getByTestId("chem-target-row-ph")).toBeTruthy();
     expect(screen.getByTestId("chem-target-row-alkalinity")).toBeTruthy();
     expect(screen.getByTestId("chem-target-row-cyanuric_acid")).toBeTruthy();
@@ -117,19 +121,20 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     api.patch.mockResolvedValue({
       ...DEFAULT_CHEM,
       targets: { ...DEFAULT_CHEM.targets,
-                  free_chlorine: { min: 1.5, max: 4.0, unit: "ppm" } },
+                  chlorine: { min: 1.5, max: 4.0, unit: "ppm" } },
     });
     render(<ChemistryConfigurationSettings />);
     await waitFor(() => expect(api.get).toHaveBeenCalled());
-    fireEvent.change(screen.getByTestId("chem-target-min-free_chlorine"),
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    fireEvent.change(screen.getByTestId("chem-target-min-chlorine"),
                       { target: { value: "1.5" } });
-    fireEvent.change(screen.getByTestId("chem-target-max-free_chlorine"),
+    fireEvent.change(screen.getByTestId("chem-target-max-chlorine"),
                       { target: { value: "4.0" } });
-    fireEvent.click(screen.getByTestId("chem-target-save-free_chlorine"));
+    fireEvent.click(screen.getByTestId("chem-target-save-chlorine"));
     await waitFor(() => {
       expect(api.patch).toHaveBeenCalledWith(
         "/tenants/mine/settings/chemistry",
-        { targets: { free_chlorine: { min: 1.5, max: 4.0 } } },
+        { targets: { chlorine: { min: 1.5, max: 4.0 } } },
       );
     });
     expect(toast.success).toHaveBeenCalled();
@@ -153,14 +158,15 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     api.patch.mockRejectedValueOnce({
       response: { data: { detail: {
         detail: "chemistry_target_out_of_bounds",
-        message: "free_chlorine range 0-25 outside allowed 0-10",
+        message: "chlorine range 0-25 outside allowed 0-10",
       } } },
     });
     render(<ChemistryConfigurationSettings />);
     await waitFor(() => expect(api.get).toHaveBeenCalled());
-    fireEvent.change(screen.getByTestId("chem-target-max-free_chlorine"),
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    fireEvent.change(screen.getByTestId("chem-target-max-chlorine"),
                       { target: { value: "25" } });
-    fireEvent.click(screen.getByTestId("chem-target-save-free_chlorine"));
+    fireEvent.click(screen.getByTestId("chem-target-save-chlorine"));
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalled();
     });
@@ -179,7 +185,8 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
       );
     });
     expect(screen.getByTestId("chem-formulas-cheatsheet")).toBeTruthy();
-    for (const key of ["free_chlorine", "ph_up", "ph_down",
+    // Phase P17.1 · Feb-2026 — canonical rename.
+    for (const key of ["chlorine", "ph_up", "ph_down",
                         "alkalinity_up", "cyanuric_acid_up",
                         "calcium_hardness_up", "salt_up"]) {
       expect(screen.getByTestId(`chem-formula-row-${key}`)).toBeTruthy();
@@ -199,17 +206,18 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     render(<ChemistryConfigurationSettings />);
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByTestId("chem-formulas-toggle"));
+    // Phase P17.1 · Feb-2026 — canonical rename.
     await waitFor(() =>
-      expect(screen.getByTestId("chem-formula-row-free_chlorine")).toBeTruthy(),
+      expect(screen.getByTestId("chem-formula-row-chlorine")).toBeTruthy(),
     );
-    fireEvent.change(screen.getByTestId("chem-formula-input-free_chlorine"),
+    fireEvent.change(screen.getByTestId("chem-formula-input-chlorine"),
                       { target: { value: "max(0, (avg_target - current) * volume_gallons * 0.00013)" } });
-    fireEvent.click(screen.getByTestId("chem-formula-test-free_chlorine"));
+    fireEvent.click(screen.getByTestId("chem-formula-test-chlorine"));
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(
         "/chemistry/dose/preview",
         expect.objectContaining({
-          chemical: "free_chlorine",
+          chemical: "chlorine",
           current: 1.0,
           volume_gallons: 10000,
           formula: "max(0, (avg_target - current) * volume_gallons * 0.00013)",
@@ -218,7 +226,7 @@ describe("ChemistryConfigurationSettings · Sprint 3b", () => {
     });
     // Preview result is displayed inline.
     await waitFor(() =>
-      expect(screen.getByTestId("chem-formula-preview-free_chlorine")).toBeTruthy(),
+      expect(screen.getByTestId("chem-formula-preview-chlorine")).toBeTruthy(),
     );
   });
 

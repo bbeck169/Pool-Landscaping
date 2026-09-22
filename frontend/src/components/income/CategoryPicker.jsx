@@ -33,7 +33,7 @@ import { api } from "@/api";
 const _cachedPromises = { income: null, service: null };
 const _cachedItems = { income: [], service: [] };
 
-function loadCategories(source = "income") {
+export function loadCategories(source = "income") {
   if (!_cachedPromises[source]) {
     const url = source === "service"
       ? "/service-categories"

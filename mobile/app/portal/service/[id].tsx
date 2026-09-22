@@ -15,6 +15,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { JobBeforeAfterPhotos } from "@/src/components/files";
+import { ClickableAddress } from "@/src/components/interactive";
 // Phase 30 · Feb-2026 — shared mobile TechAvatar for tech chips.
 import TechAvatar from "@/components/common/TechAvatar";
 
@@ -90,7 +91,7 @@ export default function PortalServiceDetail() {
           {job.address ? (
             <View style={s.metaRow}>
               <Ionicons name="location-outline" size={13} color={colors.muted} />
-              <Text style={s.metaText}>{job.address}</Text>
+              <ClickableAddress address={job.address} style={s.metaText} testID="portal-service-address-link" />
             </View>
           ) : null}
         </View>

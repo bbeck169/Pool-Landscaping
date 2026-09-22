@@ -52,20 +52,20 @@ BODY_TYPE_LABELS: Dict[str, str] = {
 # below (fully free-form).
 READING_ALLOWLIST: Dict[str, Tuple[str, ...]] = {
     "pool": (
-        "free_chlorine", "ph", "alkalinity",
+        "chlorine", "ph", "alkalinity",
         "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
     ),
     "spa": (
-        "free_chlorine", "ph", "alkalinity", "calcium_hardness",
+        "chlorine", "ph", "alkalinity", "calcium_hardness",
     ),
     "water_feature": (
-        "free_chlorine", "ph",
+        "chlorine", "ph",
     ),
     "fountain": (
-        "free_chlorine", "ph",
+        "chlorine", "ph",
     ),
     "other": (
-        "free_chlorine", "ph", "alkalinity",
+        "chlorine", "ph", "alkalinity",
         "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates",
     ),
 }
@@ -75,12 +75,13 @@ READING_ALLOWLIST: Dict[str, Tuple[str, ...]] = {
 # submit; every other type is soft-warn (empty list = no required set).
 #
 # Phase CHEM1 · Feb-2026 — the required set is now the "Required Four"
-# (free_chlorine, ph, alkalinity, cyanuric_acid); ``total_chlorine`` was
-# removed. The gate operates PER BODY: a multi-body report requires all
-# four on every ``pool`` body to close.
+# (chlorine, ph, alkalinity, cyanuric_acid); ``total_chlorine`` was
+# removed. Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine``
+# → ``chlorine``. The gate operates PER BODY: a multi-body report
+# requires all four on every ``pool`` body to close.
 READING_REQUIRED: Dict[str, Tuple[str, ...]] = {
     "pool": (
-        "free_chlorine", "ph", "alkalinity", "cyanuric_acid",
+        "chlorine", "ph", "alkalinity", "cyanuric_acid",
     ),
     "spa": (),
     "water_feature": (),

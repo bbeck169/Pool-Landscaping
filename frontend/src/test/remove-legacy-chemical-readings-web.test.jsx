@@ -70,8 +70,13 @@ describe("Pool checklist · legacy Chemical Readings header removed", () => {
 
   it("still renders every reading input row", () => {
     render(<PoolChecklistForm {..._baseProps} onChange={() => {}} />);
+    // Phase P17.1 · Feb-2026 — canonical rename: ``free_chlorine`` /
+    // ``Free Chlorine`` folds onto the new ``chlorine`` canonical
+    // via ``canonicalReadingKey``, so the emitted testid is
+    // ``pool-reading-chlorine-input`` (was
+    // ``pool-reading-free_chlorine-input`` under P17).
     for (const key of [
-      "free_chlorine", "ph",
+      "chlorine", "ph",
       "total_alkalinity", "cyanuric_acid",
     ]) {
       expect(screen.getByTestId(`pool-reading-${key}-input`)).toBeTruthy();
@@ -81,7 +86,9 @@ describe("Pool checklist · legacy Chemical Readings header removed", () => {
   it("writes back via onChange({chemical_readings: [...]}) (WaterBodyManager mirror preserved)", () => {
     const onChange = vi.fn();
     render(<PoolChecklistForm {..._baseProps} onChange={onChange} />);
-    const fc = screen.getByTestId("pool-reading-free_chlorine-input");
+    // Phase P17.1 · Feb-2026 — canonical rename: input testid folds
+    // onto the ``chlorine`` canonical.
+    const fc = screen.getByTestId("pool-reading-chlorine-input");
     fireEvent.change(fc, { target: { value: "2.5" } });
     fireEvent.blur(fc);
     // Latest call must carry chemical_readings — the WaterBodyManager

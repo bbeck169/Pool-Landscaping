@@ -79,7 +79,12 @@ def test_gate_passes_with_only_required_four_and_optionals_blank():
 
 
 def test_gate_raises_with_free_chlorine_missing_names_field():
-    """Free Chlorine missing → 422 with ``free_cl`` in the payload."""
+    """Free Chlorine missing → 422 with ``chlorine`` in the payload.
+
+    Phase P17.1 · Feb-2026 — canonical rename: the 422 wire contract
+    emits ``"chlorine"`` / ``"Chlorine"`` (was ``"free_cl"`` /
+    ``"Free Cl"`` under P17). Legacy ``free_chlorine`` remains a
+    valid source alias in the payload input."""
     from services.chemistry_gate import assert_core_readings_present
     with pytest.raises(HTTPException) as ei:
         assert_core_readings_present({
@@ -90,8 +95,8 @@ def test_gate_raises_with_free_chlorine_missing_names_field():
         })
     d = ei.value.detail
     assert d["detail"] == "chemistry_core_readings_missing"
-    assert "free_cl" in d["missing_fields"]
-    assert "Free Cl" in d["missing_labels"]
+    assert "chlorine" in d["missing_fields"]
+    assert "Chlorine" in d["missing_labels"]
 
 
 def test_gate_ignores_total_chlorine_in_payload():
@@ -121,9 +126,11 @@ def test_gate_missing_labels_never_include_total_cl():
     d = ei.value.detail
     assert "Total Cl" not in d["missing_labels"]
     assert "total_cl" not in d["missing_fields"]
-    # Required Four are still surfaced in canonical order.
-    assert d["missing_fields"] == ["free_cl", "alkalinity", "ph", "cya"]
-    assert d["missing_labels"] == ["Free Cl", "Alkalinity", "pH", "CYA"]
+    # Required Four are still surfaced in canonical order — Phase
+    # P17.1 · Feb-2026 flipped ``free_cl`` / ``Free Cl`` to
+    # ``chlorine`` / ``Chlorine``.
+    assert d["missing_fields"] == ["chlorine", "alkalinity", "ph", "cya"]
+    assert d["missing_labels"] == ["Chlorine", "Alkalinity", "pH", "CYA"]
 
 
 # ═════════════════════════════════════════════════════════════════════

@@ -37,7 +37,10 @@ import { api, ApiError, ApiNetworkError } from "@/src/api";
 
 describe("K61.a.2 · ApiError class", () => {
   it("attaches status + detail alongside the humanised message", () => {
-    const raw = { detail: "chemistry_core_readings_missing", missing_labels: ["FC", "TA"] };
+    // Phase P17.1 · Feb-2026 — canonical rename: mirror the current
+    // production 422 shape (``Chlorine`` / ``Alkalinity``, no legacy
+    // FC/TA short forms).
+    const raw = { detail: "chemistry_core_readings_missing", missing_labels: ["Chlorine", "Alkalinity"] };
     const err = new ApiError("Cannot close job", 422, raw);
     expect(err).toBeInstanceOf(Error);
     expect(err).toBeInstanceOf(ApiError);
@@ -116,8 +119,12 @@ describe("K61.a.2 · request() throws ApiError on HTTP failures", () => {
   it("attaches RAW dict detail on structured 422 business-rule raise (chemistry gate)", async () => {
     const rawDetail = {
       detail: "chemistry_core_readings_missing",
-      missing_labels: ["Free Cl", "Total Cl", "Alkalinity", "pH", "CYA"],
-      missing_fields: ["free_cl", "total_cl", "alkalinity", "ph", "cya"],
+      // Phase P17.1 · Feb-2026 — canonical rename: production 422
+      // now emits ``chlorine`` / ``Chlorine`` (was ``free_cl`` /
+      // ``Free Cl`` under P17; Phase CHEM1 dropped ``total_cl``
+      // from the gate).
+      missing_labels: ["Chlorine", "Alkalinity", "pH", "CYA"],
+      missing_fields: ["chlorine", "alkalinity", "ph", "cya"],
       message: "Cannot close job — required chemistry readings missing",
     };
     _mockFetch(422, { detail: rawDetail });
@@ -131,11 +138,11 @@ describe("K61.a.2 · request() throws ApiError on HTTP failures", () => {
     // reads via ``err.detail?.detail === 'chemistry_core_readings_missing'``.
     expect((caught.detail as any).detail).toBe("chemistry_core_readings_missing");
     expect((caught.detail as any).missing_labels).toEqual([
-      "Free Cl", "Total Cl", "Alkalinity", "pH", "CYA",
+      "Chlorine", "Alkalinity", "pH", "CYA",
     ]);
     // Message is humanised for legacy callers.
     expect(caught.message).toContain("Cannot close job");
-    expect(caught.message).toContain("Free Cl");
+    expect(caught.message).toContain("Chlorine");
   });
 
   it("REGRESSION — never throws a plain ``Error`` on HTTP failures", async () => {

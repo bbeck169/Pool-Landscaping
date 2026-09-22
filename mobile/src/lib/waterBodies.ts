@@ -47,17 +47,17 @@ export const BODY_TYPE_TINTS: Record<string, { bg: string; fg: string; border: s
 /* ── Reading allow-list per body type ───────────────────────────────── */
 
 export const READING_ALLOWLIST: Record<string, string[]> = {
-  pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
-  spa: ["free_chlorine", "ph", "alkalinity", "calcium_hardness", "water_temp"],
-  water_feature: ["free_chlorine", "ph", "water_temp"],
-  fountain: ["free_chlorine", "ph", "water_temp"],
-  other: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  pool: ["chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
+  spa: ["chlorine", "ph", "alkalinity", "calcium_hardness", "water_temp"],
+  water_feature: ["chlorine", "ph", "water_temp"],
+  fountain: ["chlorine", "ph", "water_temp"],
+  other: ["chlorine", "ph", "alkalinity", "cyanuric_acid", "calcium_hardness", "salt", "tds", "phosphates", "water_temp"],
 };
 
 /* ── Required readings — the Required Four per body ─────────────────── */
 
 export const READING_REQUIRED: Record<string, string[]> = {
-  pool: ["free_chlorine", "ph", "alkalinity", "cyanuric_acid"],
+  pool: ["chlorine", "ph", "alkalinity", "cyanuric_acid"],
   spa: [],
   water_feature: [],
   fountain: [],
@@ -77,10 +77,14 @@ export const CHEMICAL_ALLOWLIST: Record<string, string[]> = {
 /* ── Display metadata ───────────────────────────────────────────────── */
 
 export const READING_LABELS: Record<string, { name: string; unit: string; short: string }> = {
-  free_chlorine:      { name: "Free Chlorine",      unit: "ppm", short: "FC" },
+  // Phase P17.2 · Feb-2026 — display-label unification: ``name`` and
+  // ``short`` both flip to ``Chlorine`` (was ``Free Chlorine`` / ``FC``
+  // under P17).  Data key ``chlorine`` untouched.
+  chlorine:           { name: "Chlorine",           unit: "ppm", short: "Chlorine" },
   combined_chlorine:  { name: "Combined Chlorine",   unit: "ppm", short: "CC" },
   ph:                 { name: "pH",                  unit: "",    short: "pH" },
-  alkalinity:         { name: "Total Alkalinity",    unit: "ppm", short: "TA" },
+  // Phase P17.2 · Feb-2026 — display-label unification.
+  alkalinity:         { name: "Alkalinity",          unit: "ppm", short: "Alkalinity" },
   cyanuric_acid:      { name: "Cyanuric Acid",       unit: "ppm", short: "CYA" },
   calcium_hardness:   { name: "Calcium Hardness",    unit: "ppm", short: "CH" },
   salt:               { name: "Salt",                unit: "ppm", short: "Salt" },
@@ -142,25 +146,20 @@ export function validateBodies(bodies: WaterBody[]): { valid: boolean; errors: a
   return { valid: errors.length === 0, errors };
 }
 
-/* ── Factory helpers ────────────────────────────────────────────────── */
-
-export function newBodyId(): string {
-  return `wb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
+/* ── Flatten helper ─────────────────────────────────────────────────
  * Phase P17.M — flattenPoolReadings.
  *
  * Flattens multi-body readings into a single flat array suitable for
- * `report.chemical_readings`. Each entry is enriched with `body_id`
+ * `report.chemical_readings`.  Each entry is enriched with `body_id`
  * and `body_label` so the backend can attribute readings back to their
- * body of origin.
+ * body of origin.  Preserves every original reading field via spread.
  */
+
 export function flattenPoolReadings(
   bodies: WaterBody[],
 ): { key: string; value: number | string | null; name?: string; unit?: string; body_id: string; body_label: string }[] {
   if (!Array.isArray(bodies) || bodies.length === 0) return [];
-  const result: any[] = [];
+  const result: { key: string; value: number | string | null; name?: string; unit?: string; body_id: string; body_label: string }[] = [];
   for (const body of bodies) {
     for (const reading of body.readings || []) {
       if (!reading?.key) continue;
@@ -174,6 +173,12 @@ export function flattenPoolReadings(
     }
   }
   return result;
+}
+
+/* ── Factory helpers ────────────────────────────────────────────────── */
+
+export function newBodyId(): string {
+  return `wb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function makeEmptyBody(type: BodyType = "pool", sequence = 0): WaterBody {

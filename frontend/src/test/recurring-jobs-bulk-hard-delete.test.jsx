@@ -22,6 +22,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 vi.mock("sonner", () => {
   const _toast = Object.assign(vi.fn(), {
@@ -90,7 +91,7 @@ afterEach(() => vi.clearAllMocks());
 
 
 async function _mount() {
-  const view = render(<RecurringJobs />);
+  const view = render(<MemoryRouter><RecurringJobs /></MemoryRouter>);
   await waitFor(() =>
     expect(screen.getByTestId("recurring-row-checkbox-tpl-a")).toBeTruthy(),
   );

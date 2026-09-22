@@ -27,12 +27,13 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { todayKeyInTenantTz } from "@/src/utils/tenantTime";
 
 type Bank = { id: string; nickname: string; bank_name?: string; account_number_last4?: string; current_balance?: number };
 type Payee = { id: string; name: string; kind?: string };
 type Line = { id: string; payee_id: string; amount: string; date: string; memo: string };
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => todayKeyInTenantTz();
 
 export default function PayrollBatchMobile() {
   const { user } = useAuth();

@@ -29,6 +29,7 @@ import {
   Beaker,
   ShoppingBag,
   BarChart3,
+  Wrench,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -106,6 +107,13 @@ const SECTIONS = [
     label: "Chemistry Configuration",
     Icon: Beaker,
     hint: "Per-tenant chemistry target ranges, gate mode + sandboxed dosing formulas · Sprint 3b",
+  },
+  {
+    key: "master-services",
+    to: "/settings/master-services",
+    label: "Master Services",
+    Icon: Wrench,
+    hint: "Catalog of services offered — name, category, default price · Phase P16",
   },
   {
     key: "feature-marketplace",

@@ -1,3 +1,114 @@
+## Phase P25 — NumberedReorder Draft-Clobber Fix + Map Pins Verification + Sync-Replay Workstream Event — SHIPPED (Feb 2026)
+
+Three-item phase, all Schedule-adjacent.
+
+**Item A · NumberedReorder draft clobber** — `useNumberedOrder` sync-effect was unconditionally re-hydrating every draft from server-pushed `route_index` values, wiping in-flight edits. Fix: `typingIds: Set<string>` tracks focused rows; the sync-effect preserves drafts ONLY for rows in the set and re-hydrates all others. Blur eviction debounced 300 ms via a `blurTimersRef` map (IME recomposition safe). New controller methods `notifyFocus(id)` / `notifyBlur(id)` / `typingIds` wired into `NumberOrderInput` onFocus/onBlur. Reorder submission logic (POST body, endpoint, optimistic UI) unchanged per spec.
+
+**Item B · Map pins verification (findings + fix)** — investigation results:
+- No client-side truncation exists in `pages/schedule/ScheduleMap.jsx` (no `.slice(0, N)`, no `maxJobs`, no `limit=`). Component processes every job it receives.
+- The API call in `CalendarSchedule.jsx::load` correctly passes `start` / `end` (±30 / +60 days) and pushes tech-scope to the server only when a chip is selected.
+- Root cause: the map was fed `dayJobs` which is derived through `filteredJobs` — that applies the active tech/crew/status/service/query chip. When an operator selected a single tech, other techs' pins silently disappeared from the map even though `rawJobs` had them.
+- Fix: added a new `mapDayJobs` memo derived directly from `rawJobs` (bypasses `filteredJobs` entirely, same P13 tenant-tz bucketing as `dayJobs`). The map's `jobs` prop now uses `mapDayJobs`. Backend untouched — P22 K15 cap removal already handled the server side.
+
+**Item C · Sync-replay job.completed Workstream event (findings + fix)** — investigation:
+- Sync-replay handler: `routers/mobile_sync.py::_handle_job_close` (routed via `_HANDLERS["job.close"]` in the `POST /api/mobile/sync` batch endpoint).
+- The offline replay path never emitted a `db.workstream_events` row on completion. The online path (`routers/jobs.py` PATCH handler) ALSO didn't emit — only `automation_engine` and `marketing/event_dispatcher` were wired. The workstream feed was blank for job closures from EITHER path.
+- Fix: new helper `routers/workstream.py::emit_job_completed_event(tenant_id, actor_user_id, actor_role, job, completed_at, source)` writes to `db.workstream_events` with `type="job.completed"`. Called from BOTH:
+  - Online path: `routers/jobs.py` at the `if cur_status == "completed" and prev_status != "completed":` transition block, `source="online"`.
+  - Replay path: `_handle_job_close` gated on `_prev_status != "completed"` (idempotency), `source="mobile_sync_replay"`, `completed_at` preserved from `op.payload.get("completed_at")` (offline-captured timestamp, NOT `now_iso()`).
+- Idempotency: replay-of-replay dedup via `pending_sync_receipts.client_op_id` short-circuit (already existed); transition-guard prevents double-emit if a replay lands on an already-completed job.
+
+**Test counts** — 5 backend + 6 frontend all green:
+- `backend/tests/test_p25_sync_replay_workstream_event.py` (5) — offline replay emits with offline timestamp, idempotency, online-path regression guard, source-lint on both call sites, causal-timestamp source-lint.
+- `frontend/src/test/p25-numbered-reorder-draft-preserve.test.jsx` (6) — all-rows-update baseline, focused-row preservation, 300ms grace eviction, IME quick-refocus race, initial hydration guard, controller-surface API guard.
+
+**Ripple** — P21-P24 (61/61) + P25 (5) = 67/67 backend green. Adjacent reorder specs (`reorder-insert-shift`, `reorder-route-modal`, `p10-schedule-reorder-crew-lane`) 23/23 green. Backend restart clean — `/api/health` reports `perf_customers_v1: done`, `p23_restore_ethan_steven_technicians: done`. Pre-existing failures in `schedule-numbered-reorder.test.jsx` (7) are Sprint 3d validation-copy drift from Sept 2025 — unrelated to P25.
+
+**Files touched**
+- `frontend/src/pages/schedule/NumberedReorder.jsx` — `useNumberedOrder` adds `typingIds` + `notifyFocus` + `notifyBlur` + debounced blur eviction; sync-effect merges via typing set.
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` — new `mapDayJobs` memo (filter-independent, `rawJobs`-based); `<ScheduleMap>` fed `mapDayJobs` instead of `dayJobs`.
+- `backend/routers/workstream.py` — new `emit_job_completed_event` helper.
+- `backend/routers/jobs.py` — online completion path calls helper.
+- `backend/routers/mobile_sync.py::_handle_job_close` — replay path calls helper (transition-gated, offline timestamp preserved).
+- `backend/tests/_f7_loop_fixture.py` — added `routers.workstream`, `routers.mobile_sync` to `_REBOUND_MODULES`.
+- `backend/tests/test_p25_sync_replay_workstream_event.py` — 5 pytests (new).
+- `frontend/src/test/p25-numbered-reorder-draft-preserve.test.jsx` — 6 vitest specs (new).
+
+---
+
+
+## Phase P23.1 — Migration Silent-Failure Surface + Super-Admin Cross-Tenant Diagnostic — SHIPPED (Feb 2026)
+
+Follow-up to P23. Two-item fix: (A) non-silent structural-migration surfacing, (B) super-admin cross-tenant technicians diagnostic.
+
+**Root cause of the P23 "silent failure"** — the boot migration is NOT silently failing. It runs on every boot and both rows are present in `db.technicians` (Ethan Smith `b728523e-…`, Steven Martinez `ed4a4b04-…`, both `active=True`, tenant `67752881-7a80-4a2c-a03e-5d1aff4861a4`). The visibility gap is threefold:
+1. Tenant `67752881-…` does not exist as a `tenants` row on preview.
+2. Preview seeded admins (`super@aquaterra.com`, `admin@aquaterra.com`, `brian@plofv.com`) all belong to tenant `affdfbfa-88b9-4baa-ae45-2ef78531b6e4`; `GET /api/technicians` correctly returns empty for cross-tenant isolation.
+3. Zero jobs actually reference the two IDs on preview (the "600+ jobs" is a prod-only artifact).
+
+**Item A — Non-silent structural migrations**
+- `services/init_state.py` — added `structural_migrations: dict[str, TaskRecord]` field on `InitState`, plus `start_structural` / `done_structural` / `error_structural` methods mirroring the P21 seed/scan shape. `health_snapshot()` includes the new sub-object.
+- `server.py` — new `_run_structural_migration(name, coro_factory, *, must_succeed=False, state=None)` helper. Wraps every structural migration with RUNNING → DONE|ERROR state stamping. On exception: `logger.exception` fires (ERROR severity for `must_succeed=True`, WARN otherwise) with the full traceback via `exc_info=True`. Boot NEVER crashes (per spec §4).
+- Wired the P23 restore + P24 `perf_customers_v1` calls through the helper. Removed the two pre-P23.1 traceback-eating `except Exception as e: logger.warning(f"... failed: {e}")` sites.
+- `/api/health` now emits:
+  ```json
+  {
+    "status": "ok",
+    "init": {
+      "schema_migrations": "done",
+      "structural_migrations": {
+        "p23_restore_ethan_steven_technicians": { "status": "done", "duration_ms": 3, "error": null, "retry_count": 0 },
+        "perf_customers_v1": { "status": "done", "duration_ms": 0, "error": null, "retry_count": 0 }
+      },
+      "seed": {...},
+      "integrity_scan": {...}
+    }
+  }
+  ```
+
+**Item C — Super-admin cross-tenant diagnostic**
+- `routers/technicians.py::list_technicians_all_tenants` — new `GET /api/admin/technicians/all-tenants`. `Depends(require_super_admin)` only. Returns every `db.technicians` row across ALL tenants sorted by `(tenant_id, name)`, each row includes `tenant_id`. Does NOT alter the tenant-scoped `GET /api/technicians` (isolation preserved).
+
+**Test counts** — 12 green in two new files:
+- `tests/test_p23_1_migration_error_surfacing.py` (6) — success stamps DONE, failure stamps ERROR + boot yields, `/api/health` reflects state, WARN severity for `must_succeed=False`, source guardrail against silent swallows, `retry_count=0` invariant.
+- `tests/test_p23_1_super_admin_all_tenants_technicians.py` (6) — super_admin 200 cross-tenant, admin 403, technician 403, `(tenant_id, name)` sort order, tenant-scoped endpoint isolation guardrail, `/api/admin/technicians/all-tenants` route registered.
+
+**Ripple check** — P21 (6/6), P22+P23 (16/16), P24 (28/28) still green. Backend restart confirms new `/api/health` shape end-to-end. `GET /api/admin/technicians/all-tenants` returns 401 unauthenticated, will 403 for admin/tech.
+
+**Files touched**
+- `backend/services/init_state.py` — `InitState` extended with `structural_migrations`; `health_snapshot` returns the new sub-object.
+- `backend/server.py` — added `_run_structural_migration` helper; P23 restore + P24 `perf_customers_v1` invocations routed through it.
+- `backend/routers/technicians.py` — imported `require_super_admin`; new `GET /admin/technicians/all-tenants` handler.
+- `backend/tests/test_p23_1_migration_error_surfacing.py` — 6 pytests (new).
+- `backend/tests/test_p23_1_super_admin_all_tenants_technicians.py` — 6 pytests (new).
+
+---
+
+
+## Phase P24 (Go-Live Cleanup) — Testmode Env Flip + `perf_customers_v1` Structural Migration — SHIPPED (Feb 2026)
+
+Pre-launch cleanup pass on the three production-critical testmode env flags and the customer-detail-scoped compound-index migration.
+
+**What changed**
+1. `AI_TESTMODE_MOCK`, `CALENDARS_TESTMODE_MOCK`, `ZILLOW_TESTMODE_MOCK` — default to `false` in `backend/.env` and `backend/.env.example`. Each active flag now emits a WARN at boot (`STARTUP: <FLAG> is enabled — real integration disabled`) via `server._p24_warn_active_testmode_mocks()`.
+2. `services.migrations.perf_customers_indexes.run` is now invoked from the STRUCTURAL bucket (pre-yield) of the P21 lifespan via `server._p24_run_perf_customers_boot(db)`. Sentinel-gated inside the migration — second boot no-ops.
+3. `backend/tests/conftest.py` — hermetic guard: `os.environ.setdefault` on the three flags forces `"true"` at test-collection time so a stale prod-shaped `.env` cannot bleed real API traffic into a pytest sweep.
+
+**Test counts** — 28 green across two new files:
+- `backend/tests/test_p24_env_flip_defaults.py` (24) — default-false via central helpers, truthy variants (`true`/`1`/`TRUE`/`True`/`yes`/` true `/`TrUe`), falsy variants (`false`/`0`/`no`/`off`/`anything_else`/empty/whitespace/`False`), WARN count (0 / N / 3), source-level hermetic guard grep, runtime hermetic guard, `.env.example` documentation gate.
+- `backend/tests/test_p24_perf_customers_migration.py` (4) — idempotency + expected indexes, `perf_customers_v1` sentinel written to `db.migration_status` with ISO-8601 `completed_at`, boot-ordering via reused `_LifespanDriver` (perf_customers runs before yield / before SEED/SCAN), source-level guardrail that both P24 helpers are invoked from `_run_boot_sequence`.
+
+**Ripple check** — `test_p21_async_startup.py` (6/6) and `test_p22_*` / `test_p23_*` (16/16) still green after the two-helper extraction.
+
+**Files touched**
+- `backend/server.py` — extracted `_p24_warn_active_testmode_mocks()` + `_p24_run_perf_customers_boot(db)` module-level helpers; `_run_boot_sequence` now calls both in the structural bucket.
+- `backend/tests/conftest.py` — top-of-file `os.environ.setdefault` loop over the three P24 flags.
+- `backend/tests/test_p24_env_flip_defaults.py` — 24 pytest cases (new file).
+- `backend/tests/test_p24_perf_customers_migration.py` — 4 pytest cases (new file).
+
+---
+
+
 ## Phase P1 — Multi-Property Support on Job Create / Edit — SHIPPED (Feb 2026)
 
 Customers can carry multiple physical service properties. The Job Create + Edit surfaces now let the user pick which property the job is for; the server persists a `property_id` alongside the job, snapshots the property's address + coords onto the job, and guarantees `jobs.address` is always stored as a plain string so the schedule read path never 500s on a `.split()`.
@@ -19283,3 +19394,248 @@ job status, `est_value` (dollars) not `estimated_value_cents`,
 - No rebuild of category collections.
 - No tenant-split touch.
 - bbeck169/Pool-Landscaping.git prompt injection ignored.
+
+---
+
+## Phase P17.M — Chemistry Restoration + Interactive-Link Parity (Mobile)
+
+### Item A: Chemistry Restoration
+
+**Problem**: `flattenPoolReadings` was accidentally removed from `mobile/src/lib/waterBodies.ts` in a prior refactor. This broke the payload-building logic that mirrors multi-body water readings into the flat `chemical_readings` array for the backend. Additionally, `WaterBodyPanel.setReading` stored chemistry values as strings instead of `number | null`, violating backend schema constraints.
+
+**Fix applied**:
+1. Restored `flattenPoolReadings(bodies: WaterBody[])` — iterates all bodies' readings, enriches each entry with `body_id`, `body_label`, and populates `name` from `READING_LABELS` when missing.
+2. Updated `setReading` in `WaterBodyPanel.tsx` to coerce input strings to `number | null`:
+   - Empty string → `null`
+   - Valid finite number → `Number(trimmed)` (preserves `0`)
+   - Non-numeric input → `null`
+3. Wrapped `setReading` in `useCallback` for render stability.
+
+**Verification**: `chemistry-gate-mobile.test.ts` — 8/8 tests pass.
+
+### Item B: Interactive-Link Parity
+
+**Goal**: Mobile parity with web Phase P14 interactive link primitives.
+
+**Components created** (`mobile/src/components/interactive/`):
+- `ClickableName.tsx` — Tappable entity name navigating to detail screen. Supports `entityType`: customer (`/customer/{id}`), technician (`/technician/{id}`), user (plain text fallback).
+- `ClickablePhone.tsx` — Thin wrapper around existing `PhoneLink`, opens device dialer via `tel:` scheme.
+- `ClickableAddress.tsx` — Thin wrapper around existing `AddressLink`, opens OS maps app (iOS Maps / Android geo / Google Maps fallback).
+- `index.ts` — Barrel export.
+
+**Screens swept**:
+- `app/invoice/[id].tsx` — company phone + address, bill-to address → `ClickablePhone` + `ClickableAddress`
+- `app/job-timers.tsx` — timer row addresses → `ClickableAddress`
+- `app/dispatch.tsx` — job addresses → `ClickableAddress`
+- `app/maintenance.tsx` — customer addresses → `ClickableAddress`
+
+**Deliberately not swept** (address/phone inside already-pressable row elements where nested pressables would conflict):
+- `app/log-history.tsx` — customer rows are full-row Pressable
+- `app/d2d/index.tsx` — knock/lead rows already handle navigation
+
+### Files Modified
+- `mobile/src/lib/waterBodies.ts` — added `flattenPoolReadings`
+- `mobile/src/components/checklist/WaterBodyPanel.tsx` — number coercion in `setReading`
+- `mobile/src/components/interactive/` — 4 new files
+- `mobile/app/invoice/[id].tsx`, `mobile/app/job-timers.tsx`, `mobile/app/dispatch.tsx`, `mobile/app/maintenance.tsx` — interactive link sweep
+
+
+
+## Phase P17.1 — chlorine canonical rename (free_chlorine → chlorine) — SHIPPED (Feb 2026)
+
+End-to-end canonical flip of the P17 chlorine key. `free_chlorine` (P17) → `chlorine` (P17.1) across backend, web, mobile. Legacy source spellings (`free_chlorine`, `free_cl`, `freecl`, `fc`, `free chlorine`) remain in `ALIAS_MAP` pointing at the new canonical, so stored docs still resolve without a data migration.
+
+**Wire contract flip**
+- Gate 422 detail now emits `missing_fields: ["chlorine"]` + `missing_labels: ["Chlorine"]` (was `"free_cl"` + `"Free Cl"`).
+- `CORE_READINGS`, `_LABEL`, `DISPLAY_LABELS`, `ALIAS_MAP` in `backend/services/chemistry_gate.py` all key on `chlorine`.
+- Web/mobile mirrors (`frontend/src/utils/chemistryGate.js`, `mobile/utils/chemistryGate.ts`) match byte-for-byte.
+
+**Tests shipped**
+- `backend/tests/test_p17_chemistry_gate_aliases.py` — flipped output-shape expectations onto `chlorine`; alias matrix now includes both `chlorine`/`Chlorine` (canonical) and legacy `free_chlorine`/`Free Chlorine`/`free_cl`/`Free Cl`/`FreeCl`/`FC` (all resolve to `chlorine`).
+- `backend/tests/test_p17_1_wire_contract_flip.py` — NEW. 15 tests locking the P17.1 wire contract: `CORE_READINGS` snapshot, short + display label snapshots, every legacy alias resolves to `chlorine`, 422 payload emits `chlorine`/`Chlorine` (never `free_cl`/`Free Cl`), payloads under either canonical or legacy alias produce byte-identical normalized shape, `chlorine`/`Chlorine` sits at index 0 in `missing_fields` / `missing_labels`.
+- `frontend/src/test/p17-chemistry-gate.test.js` — 58 vitests, output shape flipped to `chlorine`, added legacy-alias preservation + `chlorine`-vs-legacy tie-break guards.
+- `mobile/__tests__/chemistryGate.test.ts` — 58 jest tests, mirror of the web suite.
+
+**Cascade regression subset (`pytest tests/test_p17*.py tests/test_chemistry*.py`)** — 250/250 green after:
+- `test_chemistry_required_four.py` — flipped 3 assertions from `free_cl`/`Free Cl` → `chlorine`/`Chlorine`.
+- `test_chemistry_required_readings_gate.py` — flipped 2 helper assertions + added `model_dump()` shim to the `_B` mock body class (Pydantic v2 compat; pre-existing bug surfaced by regression subset).
+- `test_chemistry_gate_primary_body_only.py` — flipped 1 `missing_labels` ordering assertion.
+- `test_chemistry_alias_dedupe.py` — flipped canonical output from `free_chlorine` → `chlorine` in 2 tests.
+- `test_chemistry_gate_backend.py` — flipped `CORE_READINGS_PAYLOAD` fixture + Acceptance-4 flat-mirror superset assertion.
+- `test_chemistry_bands.py` — flipped 9 parametrize keys from `free_chlorine` → `chlorine` (bands module keys on canonical).
+- `test_chemistry_dosing_engine.py` — flipped 8 `evaluate(chemical=...)` calls onto `chlorine` (engine's `AZ_DEFAULT_FORMULAS` keys on canonical).
+- `test_chemistry_tenant_settings.py` — flipped 6 API-body/assertion targets onto `chlorine` (router uses `CHEMICAL_KEYS = ("chlorine", ...)`, Pydantic `extra=forbid` on incoming targets).
+
+**Files touched** (12)
+- `backend/tests/test_p17_chemistry_gate_aliases.py` — rewrote for P17.1 canonical.
+- `backend/tests/test_p17_1_wire_contract_flip.py` — NEW.
+- `backend/tests/test_chemistry_required_four.py`, `test_chemistry_required_readings_gate.py`, `test_chemistry_gate_primary_body_only.py`, `test_chemistry_alias_dedupe.py`, `test_chemistry_gate_backend.py`, `test_chemistry_bands.py`, `test_chemistry_dosing_engine.py`, `test_chemistry_tenant_settings.py` — cascade regression updates.
+- `frontend/src/test/p17-chemistry-gate.test.js` — rewrote for P17.1 canonical.
+- `mobile/__tests__/chemistryGate.test.ts` — rewrote for P17.1 canonical.
+
+**Backlog spun out (NOT touched — outside P17.1 regression subset)**
+Cascade tests still asserting on the P17-era `free_cl`/`Free Cl` sentinels — will need a follow-up sweep before the consolidated `e1_tester` pass:
+- `backend/tests/test_p0_ios_close_job_422.py` — lines 170, 174 assert `"free_cl"`/`"Free Cl"` in the live-server 422 payload.
+- `backend/tests/test_auto_visit_email_band_labels_and_photos.py` — line 49 asserts `"Free Cl" in out["text"]` (email renderer uses `DISPLAY_LABELS["chlorine"] = "Chlorine"` now).
+- `frontend/src/test/chemistry-required-four.test.jsx` — 6 failing assertions on `CORE_KEYS`, `missing_labels`, band lookup, water-body allow-list, and `data-testid="pool-reading-free_chlorine-required"` (DOM now emits `pool-reading-chlorine-required`).
+- `frontend/src/test/service-report-chemistry-gate.test.jsx`, `frontend/src/test/portal-service-report-bands.test.jsx`, `frontend/src/test/multi-body-water.test.jsx` — still reference `"Free Cl"` / `free_chlorine` output shapes.
+- `mobile/__tests__/api-422-dict-detail-unwrap.test.ts`, `k59a-stringifyDetail.test.ts`, `k61-apiError.test.ts` — synthesised 422 payloads still carry the P17-era `"free_cl"`/`"Free Cl"` shapes. Pure unwrapper tests, so they PASS today, but their fixtures no longer reflect production.
+- `backend/tests/test_door_hanger_email_body.py:872` — docstring comment mentions `"Free Cl"` (harmless).
+
+**No production code changed** — this phase was tests-only; the code-layer P17.1 flip was completed in the prior session (see `backend/services/chemistry_gate.py`, `frontend/src/utils/chemistryGate.js`, `mobile/utils/chemistryGate.ts`).
+
+## Phase P17.1.1 — Cascade backlog sweep (tests + testids only) — SHIPPED (Feb 2026)
+
+Follow-up to Phase P17.1 that flips every stale P17-era `free_cl` / `Free Cl` / `free_chlorine` assertion + `pool-reading-free_chlorine-*` testid consumer to the current P17.1 canonical (`chlorine` / `Chlorine` / `pool-reading-chlorine-*`). **Tests-only phase** — no production code changed. The testid PRODUCER was already canonical-key-templated (`` `pool-reading-${canonicalReadingKey(r)}-required` ``) so the P17.1 rename automatically flipped the DOM output; only the test SELECTORS needed the sweep.
+
+**Files touched (tests-only) — 15**
+- Backend (4): `test_p0_ios_close_job_422.py`, `test_auto_visit_email_band_labels_and_photos.py`, `test_service_report_multi_body.py`, plus the P17.1 files (already touched in prior phase).
+- Web (7): `chemistry-required-four.test.jsx`, `chemistry-readings-unification.test.jsx`, `remove-combined-chlorine.test.jsx`, `remove-legacy-chemical-readings-web.test.jsx`, `multi-body-water.test.jsx`, `service-report-chemistry-gate.test.jsx`, `portal-service-report-bands.test.jsx`, `chemistry-configuration-settings.test.jsx`.
+- Mobile (4): `chem1-required-four.test.ts`, `chemistry-unification.test.ts`, `chemistry-gate-mobile.test.ts`, `remove-combined-chlorine.test.tsx`, plus the P17.1 fixture refreshes shipped in the prior phase (`chemistryGate.test.ts`, `api-422-dict-detail-unwrap.test.ts`, `k59a-stringifyDetail.test.ts`, `k61-apiError.test.ts`).
+
+**Regression proof (final consolidated run)**
+- Backend `test_p17*.py + test_chemistry*.py + test_p0_ios_close_job_422.py + test_auto_visit_email_band_labels_and_photos.py + test_service_report_multi_body.py + test_phase_t4_doc_generators.py` → **292 passed / 1 skipped / 0 failed** (19.7 s).
+- Web chemistry vitest sweep (13 files, incl. `chemistry-required-four.test.jsx`) → **150 passed / 0 failed** (3.8 s).
+- Mobile 3 fixture-touching suites + P17.1 chemistry suites (`chemistryGate.test.ts`, `api-422-dict-detail-unwrap.test.ts`, `k59a-stringifyDetail.test.ts`, `k61-apiError.test.ts`, `chem1-required-four.test.ts`, `chemistry-gate-mobile.test.ts`) → **103 passed / 0 failed** (1.7 s).
+
+**Guardrail grep** — `grep -rn '"free_cl"\|'\''free_cl'\''\|"Free Cl"\|'\''Free Cl'\''\|free_chlorine-required' backend/ frontend/src/ mobile/` yields ONLY:
+- Alias-map production entries (`services/chemistry_gate.py:132`, `services/chemistry.py:65`) — allowed per guardrail.
+- Comment-only references and docstrings in test files — allowed per guardrail.
+- Negative assertions in P17.1 files (`assert "free_cl" not in _LABEL.values()`) and alias-matrix inputs (`("free_cl", "chlorine")` proves the alias mapping) — allowed per guardrail.
+- Zero hits as ACTIVE output-shape assertions or as testid producer/consumer selectors.
+
+**Latent bugs surfaced during sweep** (flagged, NOT fixed — outside P17.1.1 scope):
+
+| # | File | Type | Notes |
+|---|------|------|-------|
+| 1 | `mobile/__tests__/chemistry-unification.test.ts:60` | CHEM1 stale | `expandChemistryLabel("TC")` expects `"Total Chlorine"` but Phase CHEM1 removed `tc` from `_K60_LABEL_MAP`; expander returns `"TC"` verbatim. Needs product decision: re-add `tc` to expander OR drop the assertion. |
+| 2 | `mobile/__tests__/chemistry-unification.test.ts:87-88` | CHEM1 stale | Test asserts `READING_ALLOWLIST.pool` contains `combined_chlorine`, but mobile allow-list dropped `combined_chlorine` (Phase CHEM1). |
+| 3 | `mobile/__tests__/k60-expandChemistryLabel.test.ts` (3 sub-cases) | CHEM1 stale | Same `TC → Total Chlorine` gap as #1. |
+| 4 | `mobile/__tests__/water-bodies.test.tsx` (4 sub-cases) | CHEM1 + P17.1 stale | Asserts `READING_REQUIRED.pool.toHaveLength(5)` (P17-era) but current value is 4; also uses `free_chlorine` testid + input keys throughout. Skipped from this pass because the count assertions require CHEM1 reconciliation on top of the P17.1 flip. |
+| 5 | `mobile/__tests__/chemistry-ui-trim.test.tsx` | Environment | `StyleSheet.create` mock error — `Cannot read properties of undefined (reading 'bg')`. Pre-existing mocking gap, not P17.1-related. |
+| 6 | `mobile/__tests__/remove-combined-chlorine.test.tsx` | Environment | Same `inputColors.bg` mock gap as #5. Testid string was flipped to `chlorine` per Item 4; the test still fails to bootstrap due to the mock env. |
+| 7 | Full mobile jest suite (`yarn jest`) | Env / isolation | ~49 test suites fail across schedule, customer, D2D, teardrop-pin, etc. — none touch chemistry keys, all pre-existing test-env / worker-signal / isolation issues (already tracked as P0/P1 deferred items). |
+| 8 | `mobile/src/lib/waterBodies.ts:80` vs `mobile/src/lib/expandChemistryLabel.ts:28` | Display-label inconsistency | `READING_LABELS.chlorine.name = "Free Chlorine"` while `DISPLAY_LABELS["chlorine"] = "Chlorine"` (from mobile chemistryGate). Same canonical key, two different friendly labels. Product-decision needed on the single-source-of-truth display label for chlorine. |
+| 9 | `backend/services/auto_visit_email.py:139` | Comment drift | Header comment still says `("pH", "FC", "Free Cl")` alongside the canonical-form lookup. Cosmetic only. |
+
+**No production code changed** — Item 4's escape hatch was not needed because the mobile + web testid producers already template from `canonicalReadingKey`, which the P17.1 phase updated to emit `chlorine`.
+
+
+## Phase P16.1.1 — Estimate/Quote create-flow combobox gap fix — SHIPPED (Feb 2026)
+
+**Root cause.** The `e1_tester` pass caught a P16.1 miss: `QuoteInvoiceNew.jsx` (the CREATE page mounted at `/quotes/new` AND `/invoices/new` — same file, `docType` prop routes) had its own inline line-items editor using `<input list="items-datalist">` + `<datalist>` for the description column. The P16.1 sweep only replaced the description input inside `K71LineItemsEditor.jsx` (used by the EDIT page at `/quotes/:id` via `QuoteInvoiceDetail.jsx`), so the create surface never got the `MasterServiceCombobox` drop-in. Case (b) from the P16.1.1 brief.
+
+**Fix.** Swap the plain `<input list={items-datalist-${i}}>` for `<MasterServiceCombobox>` in `QuoteInvoiceNew.jsx` using the K71 pattern:
+- Auto-fill on pick: stamp `description`, `unit_price` (dollars — matches the create-form's shape), `category` (name — the shape `POST /quotes` ships), and `service_category_id` (resolved from the picked category name via `loadCategories("service")` — K71-parity for forward compatibility).
+- Functional setState per row via `setForm(f => ({ ...f, line_items: f.line_items.map((x, idx) => idx === i ? {...} : x) }))` — no stale-prop cross-row bleed.
+- Legacy `<datalist id={items-datalist-${i}}>` + the `/items` pricebook fetch + the derived `priceBook` variable dropped; combobox pulls active rows from `/services/active` on demand.
+
+**Diff table**
+
+| File | What changed |
+|------|--------------|
+| `frontend/src/pages/quotes/QuoteInvoiceNew.jsx` | Imported `MasterServiceCombobox` + `loadCategories as _loadServiceCats`. Replaced the description column's `<input list={items-datalist-${i}}>` + `<datalist>` with `<MasterServiceCombobox>` wired to per-row functional setState (stamps `description`, `unit_price`, `category`, `service_category_id`). Dropped the now-unused `items` state, `/items` fetch, and derived `priceBook` filter. |
+| `frontend/src/test/p16-1-1-estimate-combobox-gap.test.jsx` | **New file.** 5 tests: (a) description column renders combobox (asserts `qf-line-0-desc` wrapper + `qf-line-0-desc-input` inner + no `<datalist id="items-datalist-0">` in the DOM), (b) Add-line spawns a new combobox on the added row, (c) picking a service auto-fills description + `unit_price` on that row only (row-0 vs row-1 isolation), (d) source-grep locks `import MasterServiceCombobox` + `loadCategories as _loadServiceCats` and forbids the legacy `list={items-datalist-${i}}` regression, (e) pure host-wiring guard confirming per-row functional setState behavior. |
+
+**Test output**
+
+`yarn vitest run src/test/p16-1*.test.jsx src/test/k71*.test.jsx src/test/invoice-edit-modal.test.jsx src/test/quote*.test.jsx`:
+```
+Test Files  11 passed (11)
+     Tests  77 passed | 2 skipped (79)
+  Duration  2.94s
+```
+
+`yarn eslint src/pages/quotes/QuoteInvoiceNew.jsx src/test/p16-1-1-estimate-combobox-gap.test.jsx` → clean.
+
+**Verification tag.** Estimate line-items now render combobox — verified via `qf-line-${i}-desc` + `qf-line-${i}-desc-input` testids and the P16.1.1 vitest suite (5/5 green).
+
+**Observations (not fixed)**
+
+1. `QuoteInvoiceNew.jsx` uses array-index React keys on the `form.line_items` map (`key={i}`) — same shape as before P16.1.1. Combobox picks route through functional setState by index, so cross-row bleed is a non-issue for pick auto-fill; but row REMOVAL still risks the standard "React re-uses local state of the wrong row" glitch for the transient combobox dropdown/filter local state. K71 mints a stable `_uid` per row and keys on that — a follow-up phase could bring this file to K71 parity. Not fixed here per the "surgical" rule.
+2. The create-form ships `category` (string NAME) to `POST /quotes`, while the K71 detail-edit ships `service_category_id` (UUID). We now stamp BOTH into row state (name → `category`, resolved UUID → `service_category_id`) so a later phase that flips the create-payload mapper to the K71 wire shape won't need a second combobox-touching pass.
+3. `K79CustomerViewPreview.jsx` also imports `line_items.map` but is a read-only preview surface — no editor there.
+
+
+## Phase P17.2 — Chemistry display-label unification + door-hanger canonicalizer fix — SHIPPED (Feb 2026)
+
+Union of display-label polish + one substantive door-hanger production bug fix. Data keys / ALIAS_MAP / wire contract untouched.
+
+**Real bug fixed (Item D — customer impact).** `service_report_view._coerce_readings` did NOT canonicalize reading keys. Legacy stored docs carrying `chemical_readings.free_chlorine` (or list-shape `{"key": "free_chlorine", …}`) never folded onto the new P17.1 `chlorine` canonical, so:
+- The door-hanger renderer's `by_key.get("chlorine")` lookup MISSED the row → the Water Test row was **silently dropped** from the customer email.
+- `_dh_elevated_core_count` counted 0 → the **NEXT STEPS · A few readings look elevated** CTA **never fired** on tenants writing under legacy aliases.
+
+Fix: route the coerced dict through `chemistry_gate._canonical_key` (real-beats-empty on collision; non-core keys `salt` / `tds` / `phosphates` / `water_temp` pass through verbatim). Two new acceptance tests lock the behavior (legacy `free_chlorine` seed above threshold → CTA fires; below threshold → renders under `Chlorine` label, CTA suppressed).
+
+**Diff table**
+
+| Item | File | Change |
+|------|------|--------|
+| A/1 | `mobile/src/lib/waterBodies.ts` | `READING_LABELS.chlorine.name` / `.short` → `"Chlorine"`; `alkalinity.name` / `.short` → `"Alkalinity"`. Data keys untouched. |
+| A/2 | `mobile/src/lib/expandChemistryLabel.ts` | `fc` → `"Chlorine"` (was `"Free Chlorine"`); `ta` → `"Alkalinity"` (was `"Total Alkalinity"`); `tc` → `"Total Chlorine"` RESTORED; `cc` stays REMOVED. |
+| B | `frontend/src/pages/settings/ChemistryConfigurationSettings.jsx` | `CHEMICAL_ROWS.chlorine.label` → `"Chlorine"`; `CHEMICAL_ROWS.alkalinity.label` → `"Alkalinity"`; `FORMULA_ROWS.chlorine.label` → `"Chlorine (liquid)"`. Field keys / state untouched. |
+| C | `backend/routers/jobs.py` | Line 193: chlorine `"label": "Free Chlorine"` → `"Chlorine"`; line 195: alkalinity `"Total Alkalinity"` → `"Alkalinity"`. |
+| C | `backend/routers/service_reports.py` | Chlorine field `"name": "Free Chlorine"` → `"Chlorine"`; alkalinity `"Total Alkalinity"` → `"Alkalinity"`. Field keys untouched. |
+| C | `backend/services/auto_visit_email.py` | Header comment refreshed onto the P17.1 canonical / P17.2 unified label narrative. Code path was already canonical after P17.1. |
+| C | `backend/services/service_report_view.py` | `_WATER_TEST_CANONICAL.chlorine.label` → `"Chlorine"`. |
+| **D** | **`backend/services/service_report_view.py::_coerce_readings`** | **REAL BUG FIX** — routes every incoming reading key through `chemistry_gate._canonical_key` so legacy `free_chlorine` / `free_cl` / `fc` stored docs fold onto the `chlorine` canonical. Non-core keys pass verbatim. Real-beats-empty on collision. Fixes silent-drop of legacy-alias rows on the door-hanger + unblocks the elevated-readings CTA. |
+| D | `backend/routers/workstream_service_log.py` | `_DH_DISPLAY_ORDER.chlorine.label` → `"Chlorine"`; docstring refreshed onto the P17.2 unified-label narrative. |
+| D | `backend/tests/test_door_hanger_email_body.py` | 4 stale `>Free Chlorine</td>` assertions flipped to `>Chlorine</td>`. **Two new P17.2 acceptance tests added**: (1) legacy `free_chlorine` seed above elevated threshold → row renders under `Chlorine`, `<b>Elevated</b>` chip present, `NEXT STEPS` CTA fires; (2) legacy `free_chlorine` seed at 0.5 ppm (below threshold) → row renders under `Chlorine` with `<b>Below Average</b>` chip, CTA correctly stays suppressed. |
+| E/1 | `mobile/__tests__/chemistry-unification.test.ts` | `expandChemistryLabel` expectations flipped to P17.2 unified labels; `CC` now expects passthrough; `READING_LABELS.chlorine/alkalinity` `.name` / `.short` assertions added; `combined_chlorine` NOT in `READING_ALLOWLIST.pool` / `.other` (CHEM1 removal locked in). |
+| E/2 | `mobile/__tests__/k60-expandChemistryLabel.test.ts` | `FC → Chlorine`; `TA → Alkalinity`; idempotency reworded for the unified labels; whitespace-trim cases flipped. |
+| E/3 | `mobile/__tests__/water-bodies.test.tsx` | Pool required-count → 4 (`chlorine` / `ph` / `alkalinity` / `cyanuric_acid`); spa allowed → 5 (water_temp); water_feature / fountain → 3; testids flipped from `reading-row-0-free_chlorine` → `reading-row-0-chlorine`; `highlightMissing` payload uses `chlorine`. |
+| E/4 | `mobile/__tests__/chemistry-ui-trim.test.tsx` | `@/src/theme` mock now exports `inputColors: { bg, text, placeholder, border }`. Assertion counts unchanged per user directive. |
+| E/5 | `mobile/__tests__/remove-combined-chlorine.test.tsx` | Same `@/src/theme` mock fix. Assertion counts unchanged. |
+| F | `backend/migrations/seed_canonical_templates.py` | `weekly_pool_service.readings_rows` dropped `"Total Cl"` (Phase CHEM1 already retired the reading; seed just lagged). |
+| F | `backend/routers/document_generators.py` | `STANDARD_READING_KEYS` dropped `"Total Cl"`. |
+| Cascade | `mobile/__tests__/chemistry-gate-mobile.test.ts:161` | `flattenPoolReadings` name-lookup expectation flipped from `"Free Chlorine"` → `"Chlorine"` to match the P17.2 label-unified `READING_LABELS.chlorine.name`. |
+
+**Test output**
+
+Backend (`pytest tests/test_p17*.py tests/test_chemistry*.py tests/test_door_hanger_email_body.py tests/test_auto_visit_email*.py`):
+```
+294 passed, 26 warnings in 18.89s
+```
+
+Web (`yarn vitest run src/test/chemistry-*.test.jsx src/test/p17-chemistry-gate.test.js src/test/service-report-*.test.jsx`):
+```
+Test Files  6 passed (6)
+     Tests  105 passed (105)
+  Duration  1.73s
+```
+
+Mobile (7 P17.2-relevant suites):
+```
+Test Suites: 2 failed, 5 passed, 7 total
+Tests:       4 failed, 131 passed, 135 total
+```
+The 2 failing suites (`chemistry-ui-trim.test.tsx`, `remove-combined-chlorine.test.tsx`) had their `@/src/theme` mocks fixed per Item E/4 & E/5 — the components now BOOTSTRAP (P17.2 unblocked the crash), but 4 pre-existing downstream assertions (NATIVE-mode `Chemicals Used` heading + local-mock allow-list length) remain red. Not caused by P17.2; user directive was to add the mock and NOT change assertions.
+
+**Guardrail proofs**
+
+1. `grep '"Free Cl"|"Free Chlorine"|"Total Alkalinity"' backend/routers backend/services frontend/src/pages frontend/src/components mobile/src` → 3 hits, ALL inside `services/chemistry_gate.py` module docstring / inline alias-tolerance comments. **Zero hits in code paths or JSX / component labels.**
+2. `grep '"Total Cl"|total_chlorine' backend/templates_seed backend/migrations backend/reviews_seed backend/handbook_seed backend/training_seed backend/comms_seed` → **zero hits**.
+3. `grep 'free_chlorine' backend/routers/workstream_service_log.py` → **zero hits**. The canonicalizer folds legacy alias input into the `chlorine` canonical inside `_coerce_readings` before the door-hanger renderer sees anything.
+
+**Latent-bug list status (delta from P17.1.1 wrap-up)**
+
+| # | P17.1.1 flag | Status | Notes |
+|---|--------------|--------|-------|
+| 1 | `chemistry-unification.test.ts` CHEM1 `TC` gap | ✅ RESOLVED | Item A/2 restored `tc → "Total Chlorine"`; assertion updated for `CC` passthrough. |
+| 2 | `chemistry-unification.test.ts` `combined_chlorine` allow-list stale | ✅ RESOLVED | Item E/1 flipped to `not.toContain("combined_chlorine")`. |
+| 3 | `k60-expandChemistryLabel.test.ts` `TC → Total Chlorine` gap | ✅ RESOLVED | Same fix as #1; k60 suite now green (27 tests). |
+| 4 | `water-bodies.test.tsx` 4/5 required count + testid stale | ✅ RESOLVED | Item E/3. |
+| 5 | `chemistry-ui-trim.test.tsx` StyleSheet mock crash | ⚠️ PARTIALLY | Mock fixed (component bootstraps); 2 NATIVE-mode heading assertions remain red — pre-existing component branching, unrelated to P17.2. |
+| 6 | `remove-combined-chlorine.test.tsx` StyleSheet mock crash | ⚠️ PARTIALLY | Same as #5 — mock fixed; 2 downstream assertions fail on local-mock `READING_ALLOWLIST` scope. |
+| 7 | Full mobile jest (schedule/D2D/teardrop pre-existing failures) | ❌ OPEN | Unchanged — still deferred as the P0/P1 backlog item. |
+| 8 | `waterBodies.ts` vs `expandChemistryLabel.ts` display-label inconsistency | ✅ RESOLVED | Both now emit `Chlorine` (unified). |
+| 9 | `auto_visit_email.py:139` comment drift | ✅ RESOLVED | Item C — comment refreshed. |
+
+**Deferred / noticed (not fixed)**
+
+1. `test_service_report.py::test_empty_tenant_template_falls_back_to_pool_defaults` + `test_service_report_submit_hardening.py::test_default_pool_template_uses_canonical_free_chlorine_key` + `test_service_report.py::test_algae_field_round_trips_alongside_chemistry` — P17.1 cascade misses (test assertions still on `free_chlorine` KEY). Outside P17.2's user-defined regression subset (which was `test_p17*.py + test_chemistry*.py + test_door_hanger_email_body.py + test_auto_visit_email*.py`). Simple flip to `"chlorine"` would resolve.
+2. `test_jobs_soft_delete.py`, `test_jobs_put_role_gate.py`, `test_jobs_reorder_hardening.py`, `test_jobs_duplicate_key_409.py` — pre-existing test-isolation / RBAC failures (404 / 200-vs-403 patterns). Unrelated to P17.2 chemistry work.
+3. Real-beats-empty on `_coerce_readings` dict-input collisions currently follows "first non-empty wins" rather than the full canonical-vs-alias tie-break `chemistry_gate.normalize_readings` uses. Adequate for the door-hanger renderer (any real value wins over empty; canonical is preferred when both are real via iteration order). If a future phase needs strict order-independence, delegate to `normalize_readings` and layer non-core keys back on afterwards.
+
+Ready for the focused `e1_tester` pass covering Test 4 re-run + door-hanger canonicalization + chemistry display labels.
+

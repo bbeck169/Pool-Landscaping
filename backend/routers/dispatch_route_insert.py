@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import get_current_user
-from utils import not_deleted_filter as _nd
+from services.query_scope import tenant_scoped_filter
 
 # Reuse Phase 3 helpers so the math stays identical.
 from routers.dispatch_route_optimize import (  # noqa: F401
@@ -117,20 +117,28 @@ async def list_unscheduled_jobs(
     # ``crew_id``. The Unscheduled Jobs panel is a dispatcher inbox
     # for jobs with NO assignment at all; crew-assigned-but-undated
     # jobs are surfaced elsewhere.
-    q = {"tenant_id": tenant_id,
-         "$and": [
-             {"$or": [{"scheduled_date": None},
-                       {"scheduled_date": {"$exists": False}},
-                       {"scheduled_date": ""}]},
-             {"$nor": [
-                 {"tech_user_id": {"$exists": True, "$nin": [None, ""]}},
-                 {"assigned_to": {"$exists": True, "$nin": [None, ""]}},
-                 {"technician_id": {"$exists": True, "$nin": [None, ""]}},
-                 {"crew_id": {"$exists": True, "$nin": [None, ""]}},
-             ]},
-         ]}
+    # Phase P12.3 · Feb-2026 · $or-clobber sweep.  This site never
+    # had a top-level tech-lane $or (the tech identity checks live
+    # inside a top-level ``$nor`` here), so the previous
+    # ``{**q, **_nd()}`` was technically safe — but the guardrail
+    # requires zero dict-spread merges in this file so a future
+    # edit can't silently regress by adding a top-level $or.
+    # ``$nor`` isn't a valid Python kwarg name, so it lands via a
+    # post-build attach — no collision because
+    # ``tenant_scoped_filter`` only writes ``$and`` at the top.
+    q = tenant_scoped_filter(
+        tenant_id,
+        [{"scheduled_date": None},
+         {"scheduled_date": {"$exists": False}},
+         {"scheduled_date": ""}],
+    )
+    q["$nor"] = [
+        {"tech_user_id": {"$exists": True, "$nin": [None, ""]}},
+        {"assigned_to": {"$exists": True, "$nin": [None, ""]}},
+        {"technician_id": {"$exists": True, "$nin": [None, ""]}},
+        {"crew_id": {"$exists": True, "$nin": [None, ""]}},
+    ]
     items: List[Dict[str, Any]] = []
-    q = {**q, **_nd()}
     cursor = db.jobs.find(q, {"_id": 0, "id": 1, "title": 1, "address": 1,
                                 "customer_id": 1, "customer_name": 1,
                                 "service_type": 1, "lat": 1, "lon": 1}).limit(limit)
@@ -173,13 +181,18 @@ async def insert_route_job(body: InsertBody,
 
     # Load existing route for that (tech, date) in current order.
     date_prefix = re.escape(date)
-    q = {"tenant_id": tenant_id,
-         "scheduled_date": {"$regex": f"^{date_prefix}"},
-         "$or": [{"tech_user_id": tech_id},
-                  {"assigned_to": tech_id},
-                  {"technician_id": tech_id}]}
+    # Phase P12.3 · Feb-2026 · $or-clobber sweep.  Tech-lane
+    # disjunction under ``$and`` alongside soft-delete; the
+    # previous merge silently dropped the tech-lane on top-level
+    # $or collision with ``_nd()``.
+    q = tenant_scoped_filter(
+        tenant_id,
+        [{"tech_user_id": tech_id},
+         {"assigned_to": tech_id},
+         {"technician_id": tech_id}],
+        scheduled_date={"$regex": f"^{date_prefix}"},
+    )
     existing: List[Dict[str, Any]] = []
-    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         existing.append(j)
 
@@ -227,8 +240,11 @@ async def insert_route_job(body: InsertBody,
                               {"$set": set_payload})
 
     # Build response payload — reload the final ordered list.
+    # ``q`` already carries the soft-delete under ``$and`` from the
+    # ``tenant_scoped_filter`` call above; a second ``_nd()`` merge
+    # would clobber it back onto the top level and re-introduce
+    # the P12.3 anti-pattern.  Reuse ``q`` verbatim.
     final: List[Dict[str, Any]] = []
-    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         final.append({"job_id": j["id"], "address": j.get("address") or "",
@@ -293,13 +309,16 @@ async def preview_insert_batch(body: PreviewBatchBody,
 
     # Load the currently-assigned route.
     date_prefix = re.escape(body.route_date)
-    q = {"tenant_id": tenant_id,
-          "scheduled_date": {"$regex": f"^{date_prefix}"},
-          "$or": [{"tech_user_id": body.tech_user_id},
-                    {"assigned_to": body.tech_user_id},
-                    {"technician_id": body.tech_user_id}]}
+    # Phase P12.3 · Feb-2026 · $or-clobber sweep — tech-lane
+    # disjunction nests safely under ``$and`` beside soft-delete.
+    q = tenant_scoped_filter(
+        tenant_id,
+        [{"tech_user_id": body.tech_user_id},
+         {"assigned_to": body.tech_user_id},
+         {"technician_id": body.tech_user_id}],
+        scheduled_date={"$regex": f"^{date_prefix}"},
+    )
     existing_pts: List[Tuple[float, float]] = []
-    q = {**q, **_nd()}
     async for j in db.jobs.find(q, {"_id": 0, "photos.data": 0}).sort("route_index", 1):
         c = await _job_coords(j)
         if c:

@@ -85,6 +85,11 @@ const PricebookCostComparison = React.lazy(() => import(/* webpackChunkName: "p-
 const CategoriesAdmin = React.lazy(() => import(/* webpackChunkName: "p-pricebook-categoriesadmin" */ "@/pages/pricebook/CategoriesAdmin"));
 const SupplierSpendReport = React.lazy(() => import(/* webpackChunkName: "p-reports-supplierspendreport" */ "@/pages/reports/SupplierSpendReport"));
 const ServiceCategoriesPage = React.lazy(() => import(/* webpackChunkName: "p-settings-servicecategoriespage" */ "@/pages/settings/ServiceCategoriesPage"));
+// Phase P16 · Feb-2026 — Master Services (Pricebook) settings page.
+// Distinct from ServiceCategoriesPage (which manages the taxonomy);
+// this one manages the flat name / default_price / category rows the
+// Add-Recurring-Job combobox writes back into.
+const MasterServicesSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-masterservicessettings" */ "@/pages/settings/MasterServicesSettings"));
 const JobOutcomeReasonsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-joboutcomereasonspage" */ "@/pages/settings/JobOutcomeReasonsPage"));
 // Feb-2026 · P29b — Muted Reasons admin (super_admin / admin / manager).
 const MutedReasonsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-mutedreasonspage" */ "@/pages/settings/MutedReasonsPage"));
@@ -930,6 +935,11 @@ export default function App() {
             {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}
             <Route path="admin/reports/supplier-spend" element={<AdminOnly><SupplierSpendReport /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
+            {/* Phase P16 · Feb-2026 — Master Services (Pricebook) settings.
+                Admin OR manager can reach the page (CRUD); DELETE is still
+                admin-only on the backend and hidden as a disabled button
+                for managers in the UI. */}
+            <Route path="settings/master-services" element={<AdminOrManager><MasterServicesSettings /></AdminOrManager>} />
             {/* Pricebook × Profit-Reporting Phase 1 · Feb-2026 —
                 consolidated Categories admin (Income + Service tabs)
                 reached from the Pricebook toolbar. */}
