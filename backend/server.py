@@ -3027,6 +3027,34 @@ async def _run_boot_sequence():
         _p23_factory,
         must_succeed=True,
     )
+    # Phase P29 · Feb-2026 — landscape checklist unlock. Re-seeds the
+    # persisted landscape template's ``required`` flags AND clears
+    # ``required=True`` on every per-tenant landscape override so
+    # techs can close landscape jobs with an empty checklist. Scope
+    # is strictly ``industry == "landscaping"`` on both collections
+    # — pool + all other industries carry compliance gates and are
+    # untouched. Best-effort (``must_succeed=False``) — boot never
+    # blocks on this cleanup pass; the InitState still stamps ERROR
+    # on failure so ops sees it on ``/api/health``.
+    async def _p29_factory():
+        from migrations.p29_clear_landscape_required_overrides import (
+            run as _p29_run,
+        )
+        _p29_res = await _p29_run()
+        logger.info(
+            "[p29-landscape-unlock] boot pass — template_updated=%s "
+            "overrides_updated=%s overrides_skipped=%s",
+            _p29_res.get("template_updated"),
+            _p29_res.get("overrides_updated"),
+            _p29_res.get("overrides_skipped_already_clear"),
+        )
+        return _p29_res
+
+    await _run_structural_migration(
+        "p29_clear_landscape_required_overrides",
+        _p29_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py

@@ -1,3 +1,58 @@
+## Phase P29 — Unlock Landscape Checklist — SHIPPED (Feb 2026)
+
+Landscape jobs could not close with an empty checklist because the MI1 template shipped 4 `required=True` rows AND the boot seeder no-op'd on existing template docs so the pre-P29 defaults persisted forever. Fixed at three layers.
+
+**Discovery (preview state)**
+- `db.industry_checklist_templates` for `industry="landscaping"` had `mowed_lawn_areas`, `edged_walkways_driveways`, `blew_off_hardscape`, `cleared_debris` marked `required=True`.
+- `db.tenant_checklist_overrides` for `industry="landscaping"` count = 0 (no per-tenant overrides on preview; migration is defensive for prod).
+- `assert_required_items_present` in `routers/industry_checklists.py:357` gates job-close on required-item completion for every industry except `pool` (pool has its own chemistry gate).
+
+**Item A · In-memory template flipped** (`backend/routers/industry_checklists.py` lines 75-85)
+Every landscape row now ships `required: False`. Pool + all 21 other industries **untouched**. Inline P29 comment added: `# P29 · Feb-2026 — required=False so landscape jobs close with empty checklist; techs opt in per site.`
+
+**Item B · One-shot migration** (`backend/migrations/p29_clear_landscape_required_overrides.py`)
+Idempotent. Two passes, both scoped strictly to `industry == "landscaping"`:
+1. `industry_checklist_templates` doc — `find_one_and_update` rewrites `items` from the fresh in-memory `DEFAULT_TEMPLATES["landscaping"]`.
+2. `tenant_checklist_overrides` docs — cursor iteration; each row's `required` flag flipped to `False` in place (label / key / group / label_i18n preserved). Rows with all-required=False short-circuit as `overrides_skipped_already_clear` for idempotency.
+Wired into P21 STRUCTURAL boot block via `_run_structural_migration("p29_clear_landscape_required_overrides", _factory, must_succeed=False)` — best-effort, boot never blocks; InitState stamps `done` / `error` on `/api/health`.
+
+**Item C · Endpoint contract preserved**
+`GET /api/checklists/industry/landscaping` returns the same envelope shape as pre-P29:
+```
+{"industry": "landscaping",
+  "items": [...9 rows with key/label/required/label_en/label_i18n_available],
+  "source": "default",
+  "locale": "en",
+  "updated_at": "..."}
+```
+Only the `required` values shifted (7 → 0 required rows). No field added, none removed.
+
+**Test counts** — 11 green:
+- `backend/tests/test_p29_landscape_checklist_unlock.py`:
+  - `test_p29_in_memory_landscape_template_all_required_false` — locks the router constant.
+  - `test_p29_pool_template_untouched` — 7 required / 3 optional distribution locked.
+  - `test_p29_other_industry_templates_untouched` — HVAC + pest_control required-key sets locked (legally-critical EPA + re-entry rows).
+  - `test_p29_get_landscape_returns_all_required_false` — endpoint returns all required=False.
+  - `test_p29_get_pool_returns_original_required_distribution` — pool endpoint unchanged.
+  - `test_p29_migration_first_run_updates_template_and_landscape_overrides` — scope guardrail (landscape override cleared, pool override untouched).
+  - `test_p29_migration_second_run_is_a_noop` — idempotency.
+  - `test_p29_migration_refreshes_persisted_template_doc` — stale-template refresh.
+  - `test_p29_source_lint_no_required_true_on_landscape_template` — regex-locate the landscape block, assert no `"required": True`.
+  - `test_p29_migration_wired_into_structural_boot` — server.py source-lint on P21 wiring + `must_succeed=False`.
+  - `test_p29_endpoint_contract_shape_unchanged` — envelope keys locked.
+
+**Ripple** — P21 (6/6) + P23 (all) + P23.1 (12/12) + P29 (11/11) = 41/41 green. Backend restart clean; `/api/health` reports `p29_clear_landscape_required_overrides: {status: done, duration_ms: 1}`. Live curl on `GET /api/checklists/industry/landscaping` returns 9 rows all `required=False`; pool endpoint unchanged.
+
+**Files touched**
+- `backend/routers/industry_checklists.py` — 4 `required: True` → `required: False` flips on the `landscaping` block only + inline P29 comment.
+- `backend/migrations/p29_clear_landscape_required_overrides.py` — new migration.
+- `backend/server.py` — wired P29 factory into `_run_boot_sequence` (after P23 restore, before P24 warn) via `_run_structural_migration(must_succeed=False)`.
+- `backend/tests/_f7_loop_fixture.py` — added `routers.industry_checklists` + `migrations.p29_clear_landscape_required_overrides` to `_REBOUND_MODULES`.
+- `backend/tests/test_p29_landscape_checklist_unlock.py` — 11 pytests (new).
+
+---
+
+
 ## Phase P28 — JobTimersPage 30-Day Default + Remove Phase-2 Geofencing Note — SHIPPED (Feb 2026)
 
 Single-file surgical change to `frontend/src/pages/timers/JobTimersPage.jsx`. Two items, one commit.

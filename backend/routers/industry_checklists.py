@@ -73,12 +73,18 @@ DEFAULT_TEMPLATES: Dict[str, List[Dict[str, Any]]] = {
         {"key": "emptied_betta_skimmer",  "label": "Emptied Betta Skimmer",     "required": False},
     ],
     "landscaping": [
-        {"key": "mowed_lawn_areas",         "label": "Mowed lawn areas",                    "required": True},
-        {"key": "edged_walkways_driveways", "label": "Edged walkways and driveways",        "required": True},
+        # P29 · Feb-2026 — required=False so landscape jobs close with empty
+        # checklist; techs opt in per site. Pool template + all other
+        # industries UNTOUCHED. Corresponding stored template + tenant
+        # override docs are re-seeded / cleared by
+        # ``backend/migrations/p29_clear_landscape_required_overrides.py``
+        # (wired into the P21 structural boot block).
+        {"key": "mowed_lawn_areas",         "label": "Mowed lawn areas",                    "required": False},
+        {"key": "edged_walkways_driveways", "label": "Edged walkways and driveways",        "required": False},
         {"key": "trimmed_shrubs_hedges",    "label": "Trimmed shrubs and hedges",           "required": False},
-        {"key": "blew_off_hardscape",       "label": "Blew off hardscape surfaces",         "required": True},
+        {"key": "blew_off_hardscape",       "label": "Blew off hardscape surfaces",         "required": False},
         {"key": "removed_weeds_from_beds",  "label": "Removed weeds from beds",             "required": False},
-        {"key": "cleared_debris",           "label": "Cleared debris from work area",       "required": True},
+        {"key": "cleared_debris",           "label": "Cleared debris from work area",       "required": False},
         {"key": "inspected_irrigation",     "label": "Inspected irrigation heads",          "required": False},
         {"key": "bagged_removed_clippings", "label": "Bagged and removed clippings",        "required": False},
         {"key": "applied_fertilizer",       "label": "Applied fertilizer or treatment",     "required": False},

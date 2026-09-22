@@ -915,6 +915,7 @@ function ScheduleCalendarInner() {
           onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
           isAdmin={isAdmin}
+          isTech={isTech}
         />
       )}
 
@@ -1665,7 +1666,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
 /* ═══ Calendar view ══════════════════════════════════════════════════ */
 function CalendarView({
   weekDays, weekTitle, jobsByDay, showBH, onToggleBH, onPrev, onNext, onOpenJob,
-  weatherWidget, isAdmin,
+  weatherWidget, isAdmin, isTech,
 }: any) {
   return (
     <View style={{ flexGrow: 1 }}>

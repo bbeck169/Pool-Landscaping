@@ -1011,6 +1011,8 @@ export default function JobChecklistScreen() {
               locked={locked}
               checklistItems={report.checklist_items || []}
               notes={report.notes || ""}
+              internalNotes={report.internal_notes || ""}
+              customerNotes={report.customer_notes || ""}
               onChange={patchReport}
             />
           )}
