@@ -151,15 +151,49 @@ function _fmtDate(iso) {
 }
 
 
+// Phase P15 · Feb-2026 — must match backend
+// ``services.tenant_helpers.DEFAULT_TENANT_TZ`` + the P13 default
+// used by the schedule "today" cell. Same fallback string as
+// ``components/dashboard/RevenueDateRangeFilter.jsx``.
+const TENANT_TZ_FALLBACK = "America/Phoenix";
+
+function _isoDateInTz(d, timeZone) {
+  // Returns the calendar date of ``d`` in ``timeZone`` as a
+  // ``YYYY-MM-DD`` string. ``en-CA`` locale gives unambiguous
+  // numeric parts regardless of the runtime locale.
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(d);
+    const y = parts.find((p) => p.type === "year")?.value;
+    const m = parts.find((p) => p.type === "month")?.value;
+    const day = parts.find((p) => p.type === "day")?.value;
+    if (y && m && day) return `${y}-${m}-${day}`;
+  } catch { /* invalid timeZone — fall through */ }
+  return d.toISOString().slice(0, 10);
+}
+
+
 function _defaultRange() {
-  // This week (Sun→today), aligns with the schedule tab default.
-  const today = new Date();
-  const dow = today.getUTCDay();
-  const start = new Date(today);
-  start.setUTCDate(today.getUTCDate() - dow);
+  // Phase P28 · Feb-2026 — Last 30 calendar days, ending today.
+  // Pre-P28 the default was "this week (Sun→today)" which felt
+  // arbitrary alongside the Workstream / Dashboard defaults that
+  // ship a rolling window. 30 days is inclusive on BOTH ends
+  // (``date_from`` = today - 30, ``date_to`` = today).
+  //
+  // Tenant-tz derivation via ``_isoDateInTz`` — the P15 pattern
+  // used across dashboard filters. ``TENANT_TZ_FALLBACK`` is
+  // ``America/Phoenix`` (production Pool of Vistancia). A
+  // follow-up chore can wire ``useAuth().user.tenant.timezone``
+  // here once the JobTimersPage picks up the auth hook; browser
+  // locale via ``Intl`` handles most other tenants correctly.
+  const now = new Date();
+  const past = new Date(now);
+  past.setDate(now.getDate() - 30);
   return {
-    date_from: start.toISOString().slice(0, 10),
-    date_to: today.toISOString().slice(0, 10),
+    date_from: _isoDateInTz(past, TENANT_TZ_FALLBACK),
+    date_to:   _isoDateInTz(now,  TENANT_TZ_FALLBACK),
   };
 }
 
@@ -710,8 +744,7 @@ export default function JobTimersPage() {
       <h1 className="text-2xl font-bold mb-1">Job Timers</h1>
       <p className="text-sm opacity-70 mb-4">
         Retrospective view of GPS-triggered timers auto-closed on
-        service-report submit. Mobile GPS geofence auto-start ships
-        in Phase 2.
+        service-report submit.
       </p>
 
       {/* Feb-2026 · Dashboard phase — summary card at top. Always

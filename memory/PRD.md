@@ -1,3 +1,43 @@
+## Phase P28 — JobTimersPage 30-Day Default + Remove Phase-2 Geofencing Note — SHIPPED (Feb 2026)
+
+Single-file surgical change to `frontend/src/pages/timers/JobTimersPage.jsx`. Two items, one commit.
+
+**Item A · `_defaultRange` → last 30 days (tenant tz)**
+- Was: this-week (`start = today - dayOfWeek()`, both via `setUTCDate`).
+- Now: rolling 30 days, `date_from = today − 30d`, `date_to = today`, both derived via new inline `_isoDateInTz(d, TENANT_TZ_FALLBACK)` helper. Fallback tz `"America/Phoenix"` matches the P15 pattern used across other dashboard filters (`components/dashboard/RevenueDateRangeFilter.jsx`).
+- Return-shape contract preserved verbatim (`{date_from, date_to}` ISO strings). Every caller (`filters` state init at line 720, CSV export filename builder, both filter-strip render sites in `TimersTab` + `AvgTimeTab`) is unaffected.
+
+**Item B · Phase-2 geofencing note removed**
+- Was: `<p>Retrospective view of GPS-triggered timers auto-closed on service-report submit. Mobile GPS geofence auto-start ships in Phase 2.</p>`
+- Now: `<p>Retrospective view of GPS-triggered timers auto-closed on service-report submit.</p>` (surrounding copy preserved; only the stale sentence removed).
+- The `<p>` wrapper stays because the sibling copy is still meaningful.
+
+**Test counts** — 6 green:
+- `frontend/src/test/p28-job-timers-defaults.test.jsx` (6):
+  1. Default range: `date_from = 2026-01-16`, `date_to = 2026-02-15` for a system-clock pin at `2026-02-15T12:00Z` in Phoenix.
+  2. Phase-2 / "ships in Phase" / "geofence auto-start" strings absent from rendered HTML.
+  3. Surrounding retrospective-view copy preserved.
+  4-5. Manual range picker still works — `fireEvent.change` on both `jt-filter-from` / `jt-filter-to` inputs propagates to rendered value.
+  6. Both testids + legacy alias (`job-timers-filter-from`) still mounted.
+
+**Ripple** — 17/17 adjacent JobTimer vitest specs still green (`job-timers-dashboard`, `phase37b-timer-badges`, `phase37b1-timer-start-method-filter`). No backend touched. Zero regressions.
+
+**Guardrail grep**
+```
+$ grep -nE "Phase 2|ships in Phase|geofence auto-start" \
+    frontend/src/pages/timers/JobTimersPage.jsx
+(zero hits)
+```
+
+**Tenant-tz reuse note** — `_isoDateInTz` inlined per surgical-single-file constraint (spec said "do NOT touch shared date helpers"). Fallback is `"America/Phoenix"` (matches `RevenueDateRangeFilter.jsx::TENANT_TZ_FALLBACK` and the backend `services.tenant_helpers.DEFAULT_TENANT_TZ`). Follow-up chore: wire `useAuth().user.tenant.timezone` into JobTimersPage once the file adopts the auth hook.
+
+**Files touched**
+- `frontend/src/pages/timers/JobTimersPage.jsx` — `_defaultRange` rewritten + inline `_isoDateInTz` + `TENANT_TZ_FALLBACK` constant; Phase-2 sentence deleted from `<p>` intro copy.
+- `frontend/src/test/p28-job-timers-defaults.test.jsx` — 6 vitest specs (new).
+
+---
+
+
 ## Phase P27 — Workstream Tile Count Sync + Backend Completed Aggregation Fix — SHIPPED (Feb 2026)
 
 Symptom: `0/23 Services` tile could undercount because the backend's status filter was case-sensitive lowercase-exact, and the FE classifier dropped completed jobs with empty `service_type`. Fixed both.
