@@ -1107,6 +1107,11 @@ export default function CustomersList() {
   const [h1ConfirmOpen, setH1ConfirmOpen] = useState(false);
   const [h1Busy, setH1Busy] = useState(false);
   const [h1Result, setH1Result] = useState(null); // {counts, failures}
+  // Phase P34 · Feb-2026 — per-customer_id Resend delivery status map,
+  // hydrated by polling ``/admin/portal-invites/delivery-status`` for
+  // up to 2 min after the bulk-invite response returns. Key = cid,
+  // value = { latest_status, latest_status_ts, email_id, recipient }.
+  const [p34DeliveryMap, setP34DeliveryMap] = useState({});
   // Feb-2026 · Bulk-Portal-Invite-from-CustomersList follow-up —
   // batch tester caught that Cancel + backdrop-click close paths
   // did NOT refetch the customers list (only the success path did,
@@ -1132,9 +1137,17 @@ export default function CustomersList() {
         "/admin/customers/portal-invite/bulk",
         { customer_ids: ids },
       );
-      setH1Result(res);
+      // Phase P34 · Feb-2026 — endpoint now returns immediately after
+      // enqueuing the send batch to a background task. ``queued``
+      // is the truthful count; ``sent`` starts at 0 and only rises
+      // via the delivery-status poll (below). We stash the exact
+      // cid list on ``h1Result`` so the follow-up poll knows what
+      // to fetch.
+      setH1Result({ ...res, invited_ids: ids });
+      setP34DeliveryMap({});
+      const queuedCount = Number(res.queued ?? res.sent ?? 0);
       const parts = [];
-      parts.push(`Sent ${res.sent}`);
+      parts.push(`Queued ${queuedCount}`);
       const skipTotal = (res.skipped_already_activated || 0)
         + (res.skipped_no_contact || 0)
         + (res.skipped_wrong_tenant || 0);
@@ -1159,6 +1172,49 @@ export default function CustomersList() {
       setH1Busy(false);
     }
   };
+
+  // Phase P34 · Feb-2026 — poll for delivery status after a bulk
+  // invite completes. Fires every 15s for up to 2min (8 polls) then
+  // stops. Uses a single ``ids=`` query so the round-trip is one
+  // request per tick regardless of batch size.
+  useEffect(() => {
+    const invitedIds = Array.isArray(h1Result?.invited_ids)
+      ? h1Result.invited_ids
+      : [];
+    if (!invitedIds.length) return undefined;
+    let cancelled = false;
+    let ticks = 0;
+    const _POLL_MAX_TICKS = 8;
+    const _POLL_INTERVAL_MS = 15_000;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const q = encodeURIComponent(invitedIds.join(","));
+        const res = await api.get(
+          `/admin/portal-invites/delivery-status?ids=${q}`,
+        );
+        const items = (res && res.items) || {};
+        if (!cancelled) setP34DeliveryMap(items);
+      } catch (_e) {
+        // Silent — the delivery panel simply keeps the last-known
+        // status. A network blip doesn't need a toast.
+      }
+    };
+    // Fire immediately on modal-open, then every 15s.
+    poll();
+    const t = setInterval(() => {
+      ticks += 1;
+      if (ticks >= _POLL_MAX_TICKS) {
+        clearInterval(t);
+        return;
+      }
+      poll();
+    }, _POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [h1Result]);
 
   // Feb-2026 · P45 — "Next visit" formatter.
   // • null / empty / unparseable  → "—"
@@ -3067,6 +3123,80 @@ export default function CustomersList() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {/* Phase P34 · Feb-2026 — Bulk-invite Delivery panel. Renders
+          a per-customer_id Delivery column so admins can see live
+          Resend delivery status as it flows in from the webhook.
+          Polling loop lives on ``useEffect`` above; this panel is
+          purely presentational. */}
+      {h1Result && Array.isArray(h1Result.invited_ids) && h1Result.invited_ids.length > 0 ? (
+        <div
+          className="fixed bottom-6 left-6 z-40 rounded-2xl p-4 shadow-2xl w-full max-w-md"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid="p34-delivery-panel"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold"
+                style={{ color: colors.onSurface }}>
+              Portal invite delivery
+              ({h1Result.invited_ids.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => { setH1Result(null); setP34DeliveryMap({}); }}
+              className="text-xs px-2 py-0.5 rounded"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        color: colors.onSurface }}
+              data-testid="p34-delivery-panel-close"
+            >
+              Close
+            </button>
+          </div>
+          <table
+            className="w-full text-xs"
+            data-testid="p34-delivery-table"
+          >
+            <thead>
+              <tr style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+                <th className="text-left font-semibold pb-1">Customer</th>
+                <th className="text-left font-semibold pb-1">Delivery</th>
+              </tr>
+            </thead>
+            <tbody>
+              {h1Result.invited_ids.slice(0, 25).map((cid) => {
+                const entry = p34DeliveryMap[cid] || null;
+                const status = entry?.latest_status || "pending";
+                return (
+                  <tr
+                    key={cid}
+                    data-testid={`p34-delivery-row-${cid}`}
+                    style={{ color: colors.onSurfaceSecondary || colors.muted }}
+                  >
+                    <td className="font-mono py-0.5 pr-2 truncate max-w-[10rem]">
+                      {cid.slice(0, 12)}
+                    </td>
+                    <td
+                      className="py-0.5"
+                      data-testid={`p34-delivery-status-${cid}`}
+                    >
+                      {status}
+                    </td>
+                  </tr>
+                );
+              })}
+              {h1Result.invited_ids.length > 25 ? (
+                <tr>
+                  <td colSpan={2} className="italic pt-1"
+                      style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+                    … and {h1Result.invited_ids.length - 25} more.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       ) : null}
 

@@ -38,7 +38,19 @@ from fastapi import HTTPException
 from config import JWT_ALGO, JWT_SECRET
 
 _TOKEN_SUB = "job_view"
-_DEFAULT_TTL_HOURS = 24
+# Phase P34 · Feb-2026 — Magic-link TTL unification.
+#
+# All four magic-link helpers now default to 168 hours (7 days). The
+# pre-P34 shape had context-appropriate TTLs (24h/48h/72h/48h) that
+# were correct in isolation but caused a UX inconsistency: a customer
+# who received a portal-home link on Monday and a related invoice
+# email on Wednesday couldn't tell why the Monday link stopped
+# working while the Wednesday one still did. 168h across all four
+# resolves that ambiguity without materially widening the security
+# window — each token is still ``sub``-scoped (see the P32 audit) so
+# a leaked ``portal_invoice_pay`` still can't be replayed against a
+# ``portal_home`` verifier.
+_DEFAULT_TTL_HOURS = 168
 
 
 def mint_job_view_token(
@@ -146,8 +158,8 @@ def build_job_view_url(
 # ═══════════════════════════════════════════════════════════════════════
 _TOKEN_SUB_INVOICE_PAY = "portal_invoice_pay"
 _TOKEN_SUB_ESTIMATE_VIEW = "portal_estimate_view"
-_INVOICE_TTL_HOURS = 48
-_ESTIMATE_TTL_HOURS = 72
+_INVOICE_TTL_HOURS = 168      # P34 · unified to 7 days
+_ESTIMATE_TTL_HOURS = 168     # P34 · unified to 7 days
 
 
 def mint_invoice_pay_token(
@@ -283,7 +295,7 @@ def build_estimate_view_url(
 # can't be replayed as any of the three resource-scoped tokens.
 # ═══════════════════════════════════════════════════════════════════════
 _TOKEN_SUB_PORTAL_HOME = "portal_home"
-_PORTAL_HOME_TTL_HOURS = 48
+_PORTAL_HOME_TTL_HOURS = 168   # P34 · unified to 7 days
 
 
 def mint_portal_home_token(

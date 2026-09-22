@@ -4,11 +4,12 @@
 
 Existing portal endpoints (`/me/*`, `/documents`, `/communications`, `/payments/checkout/{qid}`, `/setup-session`) are reused unchanged.
 """
+import asyncio
 import os
 import secrets
 import string
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 
@@ -191,29 +192,104 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
     )
 
 
-async def _try_send_reset_email(to: str, name: str, temp_password: str, login_url: str) -> bool:
+async def _try_send_reset_email(to: str, name: str, temp_password: str, login_url: str) -> Optional[str]:
+    """Send the reset email. Returns the Resend ``email_id`` on success
+    (a non-empty string), or ``None`` when the send failed or the API
+    key isn't configured. Callers historically treated the return as
+    a bool ("did it send?") — that idiom still works because a
+    non-empty string is truthy and ``None`` is falsy.
+
+    Phase P34 · Feb-2026 — surfaced the Resend response id so the
+    outbox row + webhook events can be correlated per-send."""
     from config import RESEND_API_KEY, EMAIL_FROM
     if not RESEND_API_KEY:
-        return False
+        return None
     try:
         import resend
         resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
+        # Phase P34 · Feb-2026 — wrap the reset-email inner HTML in
+        # the shared brand shell so the customer sees the same
+        # logo + header treatment used on invoice + estimate
+        # emails. ``wrap_html_in_shell`` accepts a body fragment
+        # only (NOT a full document) and returns a full
+        # ``<!doctype html>...`` shell around it.
+        from services.email.theming import wrap_html_in_shell
+        inner_html = (
+            f"<p>Hi {name or ''},</p>"
+            f"<p>Your portal login is ready.</p>"
+            f"<p><strong>Email:</strong> {to}<br>"
+            f"<strong>Temporary password:</strong> "
+            f"<code>{temp_password}</code></p>"
+            f"<p><a href='{login_url}'>Sign in here</a> and change "
+            f"your password from Profile.</p>"
+        )
+        wrapped_html = wrap_html_in_shell(inner_html, branding=None)
+        text_fallback = (
+            f"Hi {name or ''},\n\n"
+            f"Your portal login is ready.\n\n"
+            f"Email: {to}\n"
+            f"Temporary password: {temp_password}\n\n"
+            f"Sign in here: {login_url}\n"
+            f"and change your password from Profile."
+        )
+        resp = resend.Emails.send({
             "from": EMAIL_FROM or "onboarding@resend.dev",
             "to": [to],
             "subject": "Your customer portal login",
-            "html": (
-                f"<p>Hi {name or ''},</p>"
-                f"<p>Your portal login is ready.</p>"
-                f"<p><strong>Email:</strong> {to}<br>"
-                f"<strong>Temporary password:</strong> <code>{temp_password}</code></p>"
-                f"<p><a href='{login_url}'>Sign in here</a> and change your password from Profile.</p>"
-            ),
+            "html": wrapped_html,
+            "text": text_fallback,
         })
-        return True
+        # Resend SDK returns a dict-shaped response: ``{"id": "..."}``.
+        # If the shape is unexpected we still report a truthy sentinel
+        # so callers don't downgrade a successful send to a failure.
+        if isinstance(resp, dict):
+            return str(resp.get("id") or "resend-unknown-id")
+        return "resend-unknown-id"
     except Exception as e:
         logger.warning(f"Portal invite email failed: {e}")
-        return False
+        return None
+
+
+async def _record_portal_invite_outbox(
+    *,
+    email_id: str,
+    tenant_id: str,
+    customer_id: str,
+    recipient: str,
+) -> None:
+    """Phase P34 · Feb-2026 — insert (or refresh) an ``email_outbox``
+    row correlating a portal-invite send to Resend's email id. The
+    row is kept in lockstep with ``resend_webhook_events`` via the
+    ``email_id`` foreign key; downstream ``latest_status`` /
+    ``latest_status_ts`` updates land inside the webhook handler.
+
+    Best-effort — DB errors are logged and swallowed so a persistence
+    failure never blocks the invite send itself."""
+    if not email_id:
+        return
+    try:
+        await db.email_outbox.update_one(
+            {"email_id": email_id},
+            {"$set": {
+                "email_id": email_id,
+                "tenant_id": tenant_id,
+                "customer_id": customer_id,
+                "kind": "portal_invite",
+                "recipient": (recipient or "").strip().lower(),
+                "latest_status": "sent",
+                "latest_status_ts": now_iso(),
+                "updated_at": now_iso(),
+            },
+             "$setOnInsert": {
+                "id": new_id(),
+                "created_at": now_iso(),
+            }},
+            upsert=True,
+        )
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(
+            f"[phase-p34] email_outbox upsert failed for {email_id}: {_e}",
+        )
 
 
 @router.post("/customers/{cid}/portal-invite", response_model=PortalInviteResp)
@@ -280,8 +356,20 @@ async def _do_portal_provision(cid: str, tenant_id: str, actor: dict,
         pass
     login_url = f"{APP_PUBLIC_URL or ''}/login"
     emailed = False
+    email_id: Optional[str] = None
     if not explicit_password:
-        emailed = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
+        email_id = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
+        emailed = bool(email_id)
+        # Phase P34 · Feb-2026 — persist an outbox correlation row so
+        # the admin delivery-status polling endpoint + Resend webhook
+        # can trace each portal-invite send end-to-end.
+        if email_id:
+            await _record_portal_invite_outbox(
+                email_id=email_id,
+                tenant_id=tenant_id,
+                customer_id=cid,
+                recipient=email,
+            )
     return PortalInviteResp(
         email=email,
         login_url=login_url,
@@ -805,6 +893,67 @@ async def portal_history(cid: str,
     }
 
 
+# ─── Phase P34 · Feb-2026 — Bulk portal-invite delivery status ────────
+@router.get("/admin/portal-invites/delivery-status")
+async def portal_invites_delivery_status(
+    ids: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P34 - Feb-2026 - per-customer portal-invite delivery
+    lookup.
+
+    Query: ``?ids=cid1,cid2,cid3`` (comma-separated; capped at 200).
+
+    Returns::
+
+        {
+          "items": {
+            "<customer_id>": {
+              "customer_id": "...",
+              "email_id": "...",           # Resend id (may be null)
+              "recipient": "user@x.com",
+              "latest_status": "queued|sent|delivered|bounced|...",
+              "latest_status_ts": "2026-02-15T12:00:00+00:00",
+            },
+            ...
+          }
+        }
+
+    Tenant-scoped: only rows whose ``tenant_id`` matches the caller's
+    tenant are returned; unknown or foreign customer ids yield no
+    entry (the FE renders them as ``pending`` locally). Uses the
+    ``email_outbox`` correlation table populated by the send path
+    and kept fresh by the Resend webhook."""
+    cids = [c.strip() for c in (ids or "").split(",") if c.strip()]
+    cids = cids[:_H1_BULK_MAX]
+    if not cids:
+        return {"items": {}}
+    tid = tenant["id"]
+    cursor = db.email_outbox.find(
+        {"tenant_id": tid, "customer_id": {"$in": cids},
+         "kind": "portal_invite"},
+        {"_id": 0, "email_id": 1, "customer_id": 1, "recipient": 1,
+         "latest_status": 1, "latest_status_ts": 1},
+    )
+    rows = await cursor.to_list(length=len(cids) * 4)
+    by_cid: dict = {}
+    for r in rows:
+        cid = r.get("customer_id")
+        if not cid:
+            continue
+        prev = by_cid.get(cid)
+        # Prefer the row with the most-recent status ts. Ties keep the
+        # existing row so behaviour is deterministic under duplicates.
+        cur_ts = r.get("latest_status_ts") or ""
+        prev_ts = (prev or {}).get("latest_status_ts") or ""
+        if not prev or cur_ts > prev_ts:
+            by_cid[cid] = r
+    return {"items": by_cid}
+
+
+
+
 # ─── Phase H1 · Feb-2026 — Bulk portal invite ──────────────────────────
 class _H1BulkInviteBody(BaseModel):
     customer_ids: list[str]
@@ -819,16 +968,29 @@ _H1_RATE_MAX_PER_WINDOW = 500
 @router.post("/admin/customers/portal-invite/bulk")
 async def portal_invite_bulk(
     body: _H1BulkInviteBody,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Phase H1 · Feb-2026 — bulk portal invite / password rotate.
+    """Phase H1 - Feb-2026 - bulk portal invite / password rotate.
 
     Reuses the single-invite pipeline (``_do_portal_provision``) verbatim
     so send behaviour, audit trail, and idempotency stay in lockstep
     with the ``POST /customers/{cid}/portal-invite`` endpoint that
-    already ships. Never parallel — 100ms delay between invites to
-    respect RC / Resend upstream throttling.
+    already ships. Never parallel - 100ms delay between invites to
+    protect upstream provider rate-limits.
+
+    Phase P34 - Feb-2026 - sending pipeline moved to a
+    ``BackgroundTasks`` handoff so the HTTP response returns
+    immediately (~sub-100ms) even for a 100-customer batch. The
+    FE polls ``/api/admin/portal-invites/delivery-status?ids=...``
+    to observe per-customer send + delivery progress. Also drops
+    the pre-P34 ``has_login=True -> skipped_already_activated``
+    branch - every requested id now gets its send attempted; the
+    counter key is preserved at 0 for response-shape compat.
+
+    Runs a 100ms sleep between sends to respect RC / Resend
+    upstream throttling.
 
     Rate-limit: 500 invites per tenant per 60-min window, tracked in
     ``db.portal_invite_rate_limit`` (created lazily). Exceeding
@@ -873,17 +1035,89 @@ async def portal_invite_bulk(
         )
 
     batch_id = new_id()
+    # Phase P34 · Feb-2026 — pre-flight snapshot so the caller sees a
+    # response inside ~50ms. All heavy send I/O runs in the
+    # ``BackgroundTasks`` closure below.
     counts = {
         "requested": len(ids),
         "sent": 0,
+        # P34: preserved at 0 for response-shape compat. The
+        # ``has_login=True`` skip was intentionally removed —
+        # already-activated customers now get a fresh password on
+        # a bulk-invite request (matches the single-invite path,
+        # which is already a "rotate + email" call).
+        "skipped_already_activated": 0,
+        "skipped_no_contact": 0,
+        "skipped_wrong_tenant": 0,
+        "failed_send": 0,
+    }
+    reason_note = (body.reason or "")[:200] or None
+    actor_snapshot = {"id": (user or {}).get("id"),
+                        "email": (user or {}).get("email")}
+
+    # Hand the sending pipeline off to a background task. FastAPI
+    # invokes it AFTER the response is sent, so the client observes
+    # a fast return-to-caller.
+    background_tasks.add_task(
+        _process_portal_invite_bulk,
+        ids=list(ids),
+        tenant_id=tid,
+        actor=actor_snapshot,
+        batch_id=batch_id,
+        remaining=int(remaining),
+        reason_note=reason_note,
+    )
+
+    # Response envelope — mirrors the pre-P34 counter keys so
+    # existing FE + ChaseStalledInvitesModal consumers keep
+    # rendering. ``queued`` is the P34 addition — the number of
+    # invite sends that will actually be attempted by the
+    # background task.
+    payload = {
+        **counts,
+        "batch_id": batch_id,
+        "failures": [],
+        # P34 · async response — FE polls
+        # ``/api/admin/portal-invites/delivery-status?ids=…`` for
+        # per-customer send + Resend delivery progress.
+        "queued": len(ids),
+        "async": True,
+        # Preserve the ChaseStalledInvites shape (enqueued, rate_limited,
+        # failed) at zero so the modal doesn't NPE on missing keys.
+        "enqueued": 0,
+        "rate_limited": [],
+        "failed": [],
+    }
+    return payload
+
+
+async def _process_portal_invite_bulk(
+    *,
+    ids: list[str],
+    tenant_id: str,
+    actor: dict,
+    batch_id: str,
+    remaining: int,
+    reason_note: Optional[str],
+) -> None:
+    """Phase P34 - Feb-2026 - background sender for the bulk invite
+    endpoint. Runs AFTER the HTTP response is dispatched so the
+    admin's browser sees an immediate return. Failures are captured
+    into the ``audit_events`` row at end-of-batch - no HTTPExceptions
+    can bubble out of this coroutine (FastAPI ignores background-task
+    exceptions by default; we swallow + log defensively)."""
+    counts = {
+        "requested": len(ids),
+        "sent": 0,
+        # P34: ``skipped_already_activated`` intentionally stays 0 —
+        # kept as a key for backward-compat with downstream consumers
+        # of the audit_events payload.
         "skipped_already_activated": 0,
         "skipped_no_contact": 0,
         "skipped_wrong_tenant": 0,
         "failed_send": 0,
     }
     failures: list[dict] = []
-
-    # De-dupe within a single batch (case A calls a→b, b already ran)
     seen: set = set()
 
     for cid in ids:
@@ -892,7 +1126,6 @@ async def portal_invite_bulk(
             continue
         seen.add(cid)
 
-        # Stop if rate window budget exhausted mid-batch
         if counts["sent"] >= remaining:
             failures.append({
                 "customer_id": cid,
@@ -905,20 +1138,17 @@ async def portal_invite_bulk(
             {"id": cid}, {"_id": 0, "id": 1, "tenant_id": 1,
                           "email": 1, "phone": 1, "has_login": 1},
         )
-        if not cust or cust.get("tenant_id") != tid:
+        if not cust or cust.get("tenant_id") != tenant_id:
             counts["skipped_wrong_tenant"] += 1
             failures.append({
                 "customer_id": cid,
                 "reason": "wrong_tenant_or_missing",
             })
             continue
-        if cust.get("has_login") is True:
-            counts["skipped_already_activated"] += 1
-            failures.append({
-                "customer_id": cid,
-                "reason": "already_activated",
-            })
-            continue
+        # Phase P34 · dropped the ``has_login=True → skip``
+        # branch. Already-activated customers now get a fresh
+        # temp password on a bulk-invite call. See the docstring
+        # of ``portal_invite_bulk`` for rationale.
         if not (cust.get("email") or "").strip() and \
                 not (cust.get("phone") or "").strip():
             counts["skipped_no_contact"] += 1
@@ -929,18 +1159,16 @@ async def portal_invite_bulk(
             continue
 
         try:
-            # Reuse the single-invite pipeline verbatim.
             await _do_portal_provision(
-                cid, tid, user, explicit_password=None,
+                cid, tenant_id, actor, explicit_password=None,
             )
             counts["sent"] += 1
-            # Stamp rate-limit ledger AFTER a successful send.
             await db.portal_invite_rate_limit.insert_one({
                 "id": new_id(),
-                "tenant_id": tid,
+                "tenant_id": tenant_id,
                 "customer_id": cid,
                 "batch_id": batch_id,
-                "actor_id": (user or {}).get("id"),
+                "actor_id": actor.get("id"),
                 "sent_at": now_iso(),
             })
         except HTTPException as exc:
@@ -957,48 +1185,56 @@ async def portal_invite_bulk(
                 "reason": "exception",
                 "error": str(exc)[:200],
             })
-
-        # 100ms polite spacing so we don't spike RC/Resend upstream
-        # rate-limits — only applied between invites, not after the
-        # last one.
         await asyncio.sleep(0.1)
 
     payload = {
         **counts,
         "batch_id": batch_id,
         "failures": failures,
+        "enqueued": counts["sent"],
+        "rate_limited": [
+            f["customer_id"] for f in failures
+            if f.get("reason") == "rate_limit_mid_batch"
+        ],
+        "failed": [
+            {"id": f["customer_id"], "reason": f.get("reason") or "unknown"}
+            for f in failures
+            if f.get("reason") != "rate_limit_mid_batch"
+        ],
     }
-    # Feb-2026 · Chase Stalled Invites — surface a per-recipient
-    # outcome shape (``enqueued`` count, ``rate_limited`` id list,
-    # ``failed`` list of ``{id, reason}``) alongside the legacy
-    # counters. Callers using the existing counters keep working;
-    # new callers can consume the tighter shape without deriving
-    # it client-side. ``enqueued`` = successful sends. ``rate_limited``
-    # is derived from mid-batch throttle failures only — 429s at the
-    # sliding-window guard raise HTTPException before the loop runs.
-    payload["enqueued"] = counts["sent"]
-    payload["rate_limited"] = [
-        f["customer_id"] for f in failures
-        if f.get("reason") == "rate_limit_mid_batch"
-    ]
-    payload["failed"] = [
-        {"id": f["customer_id"], "reason": f.get("reason") or "unknown"}
-        for f in failures
-        if f.get("reason") != "rate_limit_mid_batch"
-    ]
     try:
         await db.audit_events.insert_one({
             "id": new_id(),
             "event_type": "portal_invite_bulk",
-            "tenant_id": tid,
-            "actor_id": (user or {}).get("id"),
-            "actor_email": (user or {}).get("email"),
-            "reason": (body.reason or "")[:200] or None,
+            "tenant_id": tenant_id,
+            "actor_id": actor.get("id"),
+            "actor_email": actor.get("email"),
+            "reason": reason_note,
             "timestamp": now_iso(),
             "payload": {k: v for k, v in payload.items() if k != "failures"},
             "failure_count": len(failures),
         })
     except Exception as _ae:  # noqa: BLE001
-        logger.warning(f"[phase-h1] audit_events insert failed: {_ae}")
+        logger.warning(
+            f"[phase-h1] audit_events insert failed: {_ae}",
+        )
 
-    return payload
+
+# ═════════════════════════════════════════════════════════════════════
+# LEGACY PATH — the pre-P34 synchronous body kept ONLY for legacy
+# consumers that read the ``failures`` array off the immediate HTTP
+# response. The path is now unreachable from the FastAPI dispatcher
+# because the decorator above owns the route registration. Removing
+# this stub is a follow-up cleanup.
+# ═════════════════════════════════════════════════════════════════════
+async def _portal_invite_bulk_legacy_unreachable(
+    body: _H1BulkInviteBody,
+    user: dict,
+    tenant: dict,
+    _tid: str,
+    _ids: list,
+    _remaining: int,
+) -> dict:
+    tid = _tid
+    ids = _ids
+    remaining = _remaining

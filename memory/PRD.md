@@ -19826,3 +19826,54 @@ The 2 failing suites (`chemistry-ui-trim.test.tsx`, `remove-combined-chlorine.te
 
 Ready for the focused `e1_tester` pass covering Test 4 re-run + door-hanger canonicalization + chemistry display labels.
 
+
+---
+
+## P34 · Feb-2026 · Launch Hardening Punchlist
+
+**Status:** SHIPPED end-to-end (items 1-5, 7, 8, 9, 10 landed; item 6 deferred).
+
+### Diff summary
+
+| File | Kind | Notes |
+|------|------|-------|
+| `backend/routers/portal_admin.py` | edit | Fixed U+00B7 SyntaxError. `_try_send_reset_email` → returns `Optional[str]` (email_id). New `_record_portal_invite_outbox` helper. New `GET /admin/portal-invites/delivery-status` endpoint. |
+| `backend/routers/resend_webhooks.py` | edit | Extended `resend_webhook` to mirror status into `email_outbox`. |
+| `backend/scripts/ensure_indexes.py` | edit | Item 10 — background compound index `jobs_tenant_id_scheduled_start_bg`. |
+| `backend/tests/_f7_loop_fixture.py` | edit | Added `routers.resend_webhooks` + `scripts.ensure_indexes` to `_REBOUND_MODULES`. |
+| `backend/tests/test_portal_invite_bulk.py` | rewrite | Updated all 8 tests for P34 async endpoint model (BackgroundTasks). |
+| `backend/tests/test_p34_launch_hardening.py` | new | 11 new tests locking items 2-5, 7, 9a-d, 10. |
+| `frontend/src/pages/public/AddCardPage.jsx` | edit | Item 8 — added branded `BrandLogo` header. |
+| `frontend/src/pages/customers/CustomersList.jsx` | edit | Item 9 — Delivery column panel + 15s polling loop for 2 min. |
+| `frontend/src/test/p34-launch-hardening.test.jsx` | new | Vitest for items 1 + 8. |
+
+### What shipped
+
+- **Item 1** — Portal layout `pt-16` header spacing (`layouts/AppLayout.jsx`).
+- **Item 2** — Magic-link TTLs unified at 168h across invoice / estimate / portal-home / default (`services/portal_magic_links.py`).
+- **Item 3** — `PUBLIC_FRONTEND_ORIGIN=https://app.plofv.com` in `backend/.env`.
+- **Item 4** — `STRIPE_TESTMODE_MOCK_CONNECT=false` in `backend/.env`.
+- **Item 5** — Bulk portal-invite pipeline moved to `BackgroundTasks` handoff; endpoint returns sub-100ms envelope with `queued`/`async`/`batch_id`.
+- **Item 7** — `has_login=True → skipped_already_activated` short-circuit removed; every invited id now gets a send attempt. Counter key preserved at 0 for response-shape compat.
+- **Item 8** — `AddCardPage.jsx` now renders a branded `BrandLogo` header above the card; link target = `/portal/login`.
+- **Item 9** — Resend webhook delivery tracking MVP:
+  - `_try_send_reset_email` returns Resend's `email_id`.
+  - `email_outbox` collection populated on each portal-invite send.
+  - `POST /api/webhooks/resend` mirrors status transitions into `email_outbox.latest_status` / `latest_status_ts`.
+  - `GET /api/admin/portal-invites/delivery-status?ids=...` returns tenant-scoped per-cid delivery map.
+  - `CustomersList.jsx` renders a Delivery column with 15s polling for up to 2 min post bulk-invite.
+- **Item 10** — `jobs(tenant_id, scheduled_start)` compound index, `background=True`, named `jobs_tenant_id_scheduled_start_bg`.
+
+### P34 Deferred
+
+- `inputColors` mock — symbol not present in `frontend/`; only lives in `mobile/src/theme.ts` + `mobile/src/components/ui/AppTextInput.tsx`. Per the "no-touch-mobile" run-rule we did not stub or mock it; awaiting a failing-test path from the user before creating a web-side shim.
+
+### Follow-ups (not P34)
+
+- Prune the orphaned `_portal_invite_bulk_legacy_unreachable` synchronous body — unreachable since the decorator moved to the async endpoint; kept only for grep-history and can be deleted in a cleanup pass.
+- `charge.dispute.created` / `charge.refunded` / `invoice.paid` webhook types still need to route through the tenant-scoped resolver (carry-over from P30.2 follow-ups).
+- Unify `jobs.py._resolve_property_for_job` (422 shape) with P33's `validate_property_belongs_to_customer` (400/404 shape) — requires coordinated FE + test updates.
+- P32.1 — build the actual 14-day portal-invite magic-link (escalated from P32 audit).
+- `test_route_optimization_approval.py` test-isolation fixture scrub (job IDs leak).
+- Optional: prune `data_base64` from photo rows once the S3 backfill (P35) proves stable.
+

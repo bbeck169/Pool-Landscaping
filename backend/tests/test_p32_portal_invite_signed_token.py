@@ -71,28 +71,29 @@ _HELPER_MATRIX = {
         "sub": "job_view",
         "extra_id_arg": "job_id",
         "extra_id_claim": "job_id",
-        "ttl_hours_default": 24,
+        # P34 · Feb-2026 — unified TTL 168h across all four helpers.
+        "ttl_hours_default": 168,
     },
     "mint_invoice_pay_token": {
         "verify": "verify_invoice_pay_token",
         "sub": "portal_invoice_pay",
         "extra_id_arg": "invoice_id",
         "extra_id_claim": "invoice_id",
-        "ttl_hours_default": 48,
+        "ttl_hours_default": 168,
     },
     "mint_estimate_view_token": {
         "verify": "verify_estimate_view_token",
         "sub": "portal_estimate_view",
         "extra_id_arg": "estimate_id",
         "extra_id_claim": "estimate_id",
-        "ttl_hours_default": 72,
+        "ttl_hours_default": 168,
     },
     "mint_portal_home_token": {
         "verify": "verify_portal_home_token",
         "sub": "portal_home",
         "extra_id_arg": None,
         "extra_id_claim": None,
-        "ttl_hours_default": 48,
+        "ttl_hours_default": 168,
     },
 }
 

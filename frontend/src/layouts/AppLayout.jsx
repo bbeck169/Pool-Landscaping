@@ -726,9 +726,25 @@ function AppLayout() {
           {/* Feb-2026 · Slice 2C — customer per-service ToS gate. Wraps
               the outlet so pending pool + landscaping ToS acceptances
               block route interaction. Self-gates on role === "customer";
-              no-op for admin / super_admin / technician / manager. */}
+              no-op for admin / super_admin / technician / manager.
+              Phase P34 · Feb-2026 — customer-portal outlet gets a
+              ``pt-16`` (4rem, matches the fixed-header height) so
+              portal Home / Invoices / Estimates don't sit under the
+              header bar. Admin/staff routes keep their zero-padding
+              behavior (their layout owns its own header spacing). */}
           <OnboardingGate>
-            <Outlet />
+            <div
+              className={
+                location.pathname.startsWith("/portal") ? "pt-16" : ""
+              }
+              data-testid={
+                location.pathname.startsWith("/portal")
+                  ? "portal-outlet-wrapper"
+                  : "admin-outlet-wrapper"
+              }
+            >
+              <Outlet />
+            </div>
           </OnboardingGate>
         </DynamicCrumbProvider>
 

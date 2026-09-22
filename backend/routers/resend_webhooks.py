@@ -166,6 +166,26 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
                 {"provider_response_id": email_id},
                 {"$set": set_doc},
             )
+            # Phase P34 · Feb-2026 — mirror the transition into the
+            # ``email_outbox`` correlation table so the bulk
+            # portal-invite Delivery column can render live status
+            # for each queued send. Best-effort: swallow errors so a
+            # missing collection or transient DB fault never causes
+            # the webhook to 500 back to Resend (which would trigger
+            # unnecessary retries + delayed suppression).
+            try:
+                await db.email_outbox.update_one(
+                    {"email_id": email_id},
+                    {"$set": {
+                        "latest_status": upd_status,
+                        "latest_status_ts": now_iso(),
+                    }},
+                )
+            except Exception as _oe:  # noqa: BLE001
+                logger.warning(
+                    "[resend-webhook] email_outbox update failed for %s: %s",
+                    email_id, _oe,
+                )
 
     # Auto-suppress bounces + complaints so we never send to them again.
     # We add a global-tenant "all" suppression when we can locate the

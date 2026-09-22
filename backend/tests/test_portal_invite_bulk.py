@@ -1,7 +1,18 @@
 """Phase H1 · Feb-2026 — /admin/customers/portal-invite/bulk tests.
 
+Phase P34 update · Feb-2026 — the endpoint now returns after enqueuing
+a ``BackgroundTasks`` handoff so the immediate HTTP response returns
+zeroed counters + ``queued`` / ``async`` / ``batch_id`` sentinels.
+The counter mutations happen inside ``_process_portal_invite_bulk``;
+tests that need to assert on send behaviour invoke that helper
+directly instead of going through the async endpoint envelope.
+
+Also drops the pre-P34 ``has_login=True -> skipped_already_activated``
+skip — the bulk endpoint now sends to every requested id (matches the
+single-invite pipeline, which is already a "rotate + email" call).
+
 Locks partitioning, rate-limit, batch cap, RBAC, audit trail, and
-in-batch idempotency for the new bulk portal invite endpoint.
+in-batch idempotency for the bulk portal invite endpoint.
 """
 from __future__ import annotations
 
@@ -9,7 +20,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from tests._f7_loop_fixture import run_test
 
@@ -20,9 +31,15 @@ def _stub_email_send(monkeypatch):
     event loop the httpx client the SDK spawns latches onto a
     different loop and throws ``Future attached to a different
     loop``. Stubbing here isolates the boundary — send behaviour is
-    already locked by the single-invite tests upstream."""
+    already locked by the single-invite tests upstream.
+
+    Phase P34 update — ``_try_send_reset_email`` now returns
+    ``Optional[str]`` (a Resend email_id on success, ``None`` on
+    failure). Return a deterministic fake id so the ``email_outbox``
+    correlation writes are still exercised end-to-end.
+    """
     async def _fake_try_send(*args, **kwargs):
-        return False
+        return f"fake-email-{uuid.uuid4().hex[:8]}"
     import routers.portal_admin as _pa
     monkeypatch.setattr(_pa, "_try_send_reset_email", _fake_try_send,
                           raising=False)
@@ -52,6 +69,12 @@ async def _cleanup(db, tid, prefix):
         "tenant_id": tid,
         "reason": {"$regex": f"^{prefix}", "$options": "i"},
     })
+    # P34: also scrub outbox rows so cross-test pollution can't leak
+    # into ``delivery-status`` assertions in adjacent tests.
+    await db.email_outbox.delete_many({
+        "tenant_id": tid,
+        "customer_id": {"$regex": f"^{prefix}"},
+    })
 
 
 async def _seed_customer(db, tid, cid, email=None, phone=None,
@@ -63,10 +86,25 @@ async def _seed_customer(db, tid, cid, email=None, phone=None,
     })
 
 
+async def _run_bulk(db, admin, tid, cids, *, reason=None):
+    """Fire the endpoint AND drain the enqueued BackgroundTasks in-
+    line so the test sees the terminal counter state. Returns
+    ``(envelope, background_tasks)`` — the envelope is the immediate
+    HTTP response, the tasks arg is preserved so callers can assert
+    on task metadata if they need to."""
+    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
+    bt = BackgroundTasks()
+    body = _H1BulkInviteBody(customer_ids=cids, reason=reason)
+    envelope = await portal_invite_bulk(
+        body=body, background_tasks=bt, user=admin, tenant={"id": tid},
+    )
+    for task in bt.tasks:
+        await task()
+    return envelope, bt
+
+
 # ═══════════════════════════ 1 · Happy path ══════════════════════════
 def test_h1_happy_path_two_eligible_one_already_activated():
-    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
-
     async def _go(db):
         tid, admin = await _seed(db)
         prefix = "H1_HAPPY_" + uuid.uuid4().hex[:6] + "_"
@@ -77,19 +115,30 @@ def test_h1_happy_path_two_eligible_one_already_activated():
         await _seed_customer(db, tid, cids[2], email=f"{prefix}c@e.com",
                                 has_login=True)
         try:
-            body = _H1BulkInviteBody(customer_ids=cids, reason=f"{prefix}test")
-            res = await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
-            )
-            assert res["requested"] == 3
-            assert res["sent"] == 2
-            assert res["skipped_already_activated"] == 1
-            assert res["skipped_no_contact"] == 0
-            assert res["skipped_wrong_tenant"] == 0
-            assert res["failed_send"] == 0
-            assert res["batch_id"]
-            # has_login must now be True on A + B, unchanged on C
-            for i in (0, 1):
+            envelope, _bt = await _run_bulk(db, admin, tid, cids,
+                                              reason=f"{prefix}test")
+            # Immediate envelope — P34 async shape.
+            assert envelope["queued"] == 3
+            assert envelope["async"] is True
+            assert envelope["batch_id"]
+            # After background drain: the audit row carries the
+            # terminal counters.
+            audit = await db.audit_events.find_one({
+                "event_type": "portal_invite_bulk",
+                "tenant_id": tid,
+                "payload.batch_id": envelope["batch_id"],
+            }, {"_id": 0})
+            assert audit is not None, "audit row missing"
+            # P34: has_login=True no longer short-circuits — all three
+            # invitees get a send attempt. ``skipped_already_activated``
+            # is retained at 0 for backward-compat.
+            assert audit["payload"]["sent"] == 3
+            assert audit["payload"]["skipped_already_activated"] == 0
+            assert audit["payload"]["skipped_no_contact"] == 0
+            assert audit["payload"]["skipped_wrong_tenant"] == 0
+            assert audit["payload"]["failed_send"] == 0
+            # has_login must now be True on all three
+            for i in range(3):
                 d = await db.customers.find_one({"id": cids[i]},
                                                     {"has_login": 1})
                 assert d["has_login"] is True, f"{cids[i]} not stamped"
@@ -101,8 +150,6 @@ def test_h1_happy_path_two_eligible_one_already_activated():
 
 # ═══════════════════════════ 2 · Skip no-contact ═════════════════════
 def test_h1_skip_no_contact():
-    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
-
     async def _go(db):
         tid, admin = await _seed(db)
         prefix = "H1_NC_" + uuid.uuid4().hex[:6] + "_"
@@ -110,12 +157,15 @@ def test_h1_skip_no_contact():
         cid = f"{prefix}nocontact"
         await _seed_customer(db, tid, cid, email=None, phone=None)
         try:
-            body = _H1BulkInviteBody(customer_ids=[cid])
-            res = await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
-            )
-            assert res["sent"] == 0
-            assert res["skipped_no_contact"] == 1
+            envelope, _bt = await _run_bulk(db, admin, tid, [cid])
+            audit = await db.audit_events.find_one({
+                "event_type": "portal_invite_bulk",
+                "tenant_id": tid,
+                "payload.batch_id": envelope["batch_id"],
+            }, {"_id": 0})
+            assert audit is not None
+            assert audit["payload"]["sent"] == 0
+            assert audit["payload"]["skipped_no_contact"] == 1
         finally:
             await _cleanup(db, tid, prefix)
 
@@ -124,8 +174,6 @@ def test_h1_skip_no_contact():
 
 # ═══════════════════════════ 3 · Wrong-tenant ═════════════════════════
 def test_h1_skip_wrong_tenant():
-    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
-
     async def _go(db):
         tid, admin = await _seed(db)
         prefix = "H1_XT_" + uuid.uuid4().hex[:6] + "_"
@@ -141,12 +189,15 @@ def test_h1_skip_wrong_tenant():
             "email": f"{prefix}x@e.com", "is_active": True,
         })
         try:
-            body = _H1BulkInviteBody(customer_ids=[cid])
-            res = await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
-            )
-            assert res["sent"] == 0
-            assert res["skipped_wrong_tenant"] == 1
+            envelope, _bt = await _run_bulk(db, admin, tid, [cid])
+            audit = await db.audit_events.find_one({
+                "event_type": "portal_invite_bulk",
+                "tenant_id": tid,
+                "payload.batch_id": envelope["batch_id"],
+            }, {"_id": 0})
+            assert audit is not None
+            assert audit["payload"]["sent"] == 0
+            assert audit["payload"]["skipped_wrong_tenant"] == 1
         finally:
             await db.customers.delete_one({"id": cid})
             await db.tenants.delete_one({"id": alt_tid})
@@ -166,7 +217,9 @@ def test_h1_batch_cap_201_rejected():
         )
         with pytest.raises(HTTPException) as ei:
             await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
+                body=body,
+                background_tasks=BackgroundTasks(),
+                user=admin, tenant={"id": tid},
             )
         assert ei.value.status_code == 400
         assert "Batch too large" in ei.value.detail or \
@@ -199,7 +252,9 @@ def test_h1_rate_limit_429_when_budget_exhausted():
             body = _H1BulkInviteBody(customer_ids=[f"{prefix}new"])
             with pytest.raises(HTTPException) as ei:
                 await portal_invite_bulk(
-                    body=body, user=admin, tenant={"id": tid},
+                    body=body,
+                    background_tasks=BackgroundTasks(),
+                    user=admin, tenant={"id": tid},
                 )
             assert ei.value.status_code == 429
             det = ei.value.detail
@@ -223,6 +278,7 @@ def test_h1_empty_body_rejected():
         with pytest.raises(HTTPException) as ei:
             await portal_invite_bulk(
                 body=_H1BulkInviteBody(customer_ids=[]),
+                background_tasks=BackgroundTasks(),
                 user=admin, tenant={"id": tid},
             )
         assert ei.value.status_code == 400
@@ -232,8 +288,6 @@ def test_h1_empty_body_rejected():
 
 # ═══════════════════════════ 7 · In-batch dedupe ══════════════════════
 def test_h1_in_batch_duplicate_is_skipped_second_time():
-    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
-
     async def _go(db):
         tid, admin = await _seed(db)
         prefix = "H1_DEDUP_" + uuid.uuid4().hex[:6] + "_"
@@ -241,14 +295,20 @@ def test_h1_in_batch_duplicate_is_skipped_second_time():
         cid = f"{prefix}A"
         await _seed_customer(db, tid, cid, email=f"{prefix}a@e.com")
         try:
-            body = _H1BulkInviteBody(customer_ids=[cid, cid, cid])
-            res = await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
-            )
+            envelope, _bt = await _run_bulk(db, admin, tid, [cid, cid, cid])
+            audit = await db.audit_events.find_one({
+                "event_type": "portal_invite_bulk",
+                "tenant_id": tid,
+                "payload.batch_id": envelope["batch_id"],
+            }, {"_id": 0})
+            assert audit is not None
             # First send succeeds; the two duplicates are caught by
-            # the in-loop ``seen`` set BEFORE any DB read.
-            assert res["sent"] == 1
-            assert res["skipped_already_activated"] == 2, res
+            # the in-loop ``seen`` set BEFORE any DB read. Post-P34
+            # the dedupe counter piggybacks on
+            # ``skipped_already_activated`` (kept at 2) for
+            # response-shape compat with pre-P34 consumers.
+            assert audit["payload"]["sent"] == 1
+            assert audit["payload"]["skipped_already_activated"] == 2, audit
         finally:
             await _cleanup(db, tid, prefix)
 
@@ -257,8 +317,6 @@ def test_h1_in_batch_duplicate_is_skipped_second_time():
 
 # ═══════════════════════════ 8 · Audit trail ══════════════════════════
 def test_h1_audit_row_written():
-    from routers.portal_admin import portal_invite_bulk, _H1BulkInviteBody
-
     async def _go(db):
         tid, admin = await _seed(db)
         prefix = "H1_AUD_" + uuid.uuid4().hex[:6] + "_"
@@ -266,13 +324,10 @@ def test_h1_audit_row_written():
         cid = f"{prefix}A"
         await _seed_customer(db, tid, cid, email=f"{prefix}a@e.com")
         try:
-            body = _H1BulkInviteBody(
-                customer_ids=[cid], reason=f"{prefix}audit-test",
+            envelope, _bt = await _run_bulk(
+                db, admin, tid, [cid], reason=f"{prefix}audit-test",
             )
-            res = await portal_invite_bulk(
-                body=body, user=admin, tenant={"id": tid},
-            )
-            batch_id = res["batch_id"]
+            batch_id = envelope["batch_id"]
             row = await db.audit_events.find_one({
                 "event_type": "portal_invite_bulk",
                 "tenant_id": tid,

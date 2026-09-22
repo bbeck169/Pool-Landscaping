@@ -65,6 +65,43 @@ async def _job_edits_indexes() -> None:
     )
 
 
+async def _jobs_tenant_scheduled_start_index() -> None:
+    """Phase P34 · Feb-2026 — background compound index on
+    ``jobs(tenant_id, scheduled_start)``.
+
+    Enables the dashboard schedule-window scan + the recurring-job
+    materializer's per-tenant scheduled-start range queries to
+    tenant-scan a single b-tree branch rather than the full
+    ``tenant_id``-only compound. The index is created with
+    ``background=True`` so provisioning against a live prod cluster
+    doesn't block writes on ``jobs`` while the build catches up.
+
+    Named ``jobs_tenant_id_scheduled_start_bg`` so it's greppable /
+    droppable independently of any legacy indexes we've left in place.
+    Idempotent: MongoDB's ``create_index`` returns the existing name
+    when the (keys, name) pair matches, so re-running is a no-op.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.jobs.create_indexes([
+            IndexModel(
+                [("tenant_id", 1), ("scheduled_start", 1)],
+                name="jobs_tenant_id_scheduled_start_bg",
+                background=True,
+            ),
+        ])
+    except OperationFailure as e:
+        # An older deploy may have left a differently-named index
+        # over the same key set. In that case Mongo raises 85
+        # (IndexOptionsConflict) — treat as a no-op so ensure_indexes
+        # stays green. We intentionally do NOT drop the legacy index
+        # here (that lives in a separate migration).
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
 async def _customers_2dsphere() -> None:
     """Inline customers.service_location 2dsphere (originally in
     server.py sync-boot startup)."""
@@ -172,6 +209,10 @@ async def main() -> int:
     # named ensure_indexes function).  Mirror them here so ops has
     # ONE command to run.
     results.append(await _step("job_edits",             _job_edits_indexes()))
+    results.append(await _step(
+        "jobs_tenant_id_scheduled_start_bg",
+        _jobs_tenant_scheduled_start_index(),
+    ))
     results.append(await _step("customers_2dsphere",    _customers_2dsphere()))
     results.append(await _step(
         "call_logs_and_ringcentral", _call_logs_and_ringcentral_indexes(),

@@ -30,6 +30,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import BrandLogo from "@/components/branding/BrandLogo";
 
 const _API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -176,6 +177,25 @@ export default function AddCardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4" data-testid="phase47c-add-card-page">
+      {/*
+       * Phase P34 · Feb-2026 — Branded header row above the card so
+       * the public "Add card" surface matches the customer-facing
+       * shell used on InvoiceView + EstimateView. Uses ``BrandLogo``
+       * (variant="full") which multi-tenant resolves the logo url
+       * server-side via ``useTenantBrand``. The link target is
+       * ``/portal/login`` (not "/") so a public no-auth visitor
+       * lands on the login page instead of the role-gated app root.
+       */}
+      <header
+        className="max-w-md mx-auto mb-6 flex items-center justify-center"
+        data-testid="add-card-page-brand-header"
+      >
+        <BrandLogo
+          variant="full"
+          linkTo="/portal/login"
+          testId="add-card-page-brand-logo"
+        />
+      </header>
       <div className="max-w-md mx-auto">
         <Card>
           <CardHeader>
