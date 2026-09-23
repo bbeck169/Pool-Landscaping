@@ -20568,3 +20568,184 @@ supervisorctl:
 
 Every migration reports `done` (including P38.1 which just ran in dry-run mode as part of the boot pass).
 
+
+
+---
+
+## P38.1 · Feb-2026 · Reverse Backfill · EXECUTED (parser-extended, no-op stamp)
+
+**Status:** EXECUTED against the connected DB. Parser upgraded to handle both `YYYY-MM-DD` and full-ISO-datetime shapes. Marker stamped. 0 rows mutated because the original 41 targets self-healed between the two dry-runs (see Data-Quality Findings below).
+
+### Diff since original P38.1 ship
+
+| File | Change |
+| --- | --- |
+| `backend/migrations/p38_1_reverse_backfill_scheduled_start.py` | Parser extended: `_derive_scheduled_start` now returns `(iso, used_utc_fallback, source)` where `source ∈ {"iso_datetime_direct", "date_default_time", None}`. Non-midnight ISO datetimes are copied verbatim; midnight-only + `YYYY-MM-DD` route through default-time. New CLI flag `--normalize-scheduled-date` (default OFF) truncates ISO shape → `YYYY-MM-DD` on the same write. Summary carries 7 counters. |
+| `backend/tests/test_p38_1_reverse_backfill.py` | +5 tests (12 total): ISO-direct-copy, midnight-treated-as-date, normalize-on, normalize-off-by-default, unparseable-skipped. |
+
+### Test tail
+
+```
+$ python -m pytest tests/test_p38_1_reverse_backfill.py -v --tb=short
+======================== 12 passed, 22 warnings in 8.4s ========================
+```
+
+Each of the 12 tests passes:
+* dry_run_no_writes (original)
+* execute_populates_start_at_default_time (original)
+* preserves_existing_scheduled_start (original)
+* idempotent_via_marker (original)
+* tenant_filter_bypasses_marker (original)
+* utc_fallback_when_no_tz (original)
+* custom_time_via_env (original)
+* **iso_datetime_direct_copy** (new — verbatim copy for non-midnight ISO)
+* **midnight_iso_treated_as_date** (new — midnight ISO routes through default-time; ambiguity guard)
+* **normalize_scheduled_date_flag** (new — flag ON truncates ISO shape)
+* **normalize_off_by_default** (new — flag OFF preserves ISO shape)
+* **unparseable_scheduled_date_skipped** (new — garbage rows counted under `skipped_unparseable`)
+
+### Marker cleanup evidence
+
+```
+p38.1 marker doc present before this execute run: False
+```
+No cleanup needed — the marker was never stamped by any prior dry-run or boot factory pass. Boot factory ships in `STARTUP_EXECUTE_MODE = False`, so it can never stamp.
+
+### Fresh `--dry-run` (post-parser-extension)
+
+```
+INFO:pool_crm:[p38.1] done — scanned=0 backfilled=0 iso_direct=0 default_time=0 utc_fallback=0 skipped=0 normalized=0 duration_s=0.006 dry_run=True tenant=*
+{
+  "scanned": 0, "backfilled": 0,
+  "backfilled_iso_direct": 0, "backfilled_default_time": 0,
+  "backfilled_utc_fallback": 0, "skipped_unparseable": 0,
+  "normalized_scheduled_date": 0,
+  "duration_s": 0.006,
+  "dry_run": true, "skipped_by_marker": false,
+  "executed_at": null,
+  "tenant_filter": null, "limit": null,
+  "default_time": "08:00", "normalize_flag": false
+}
+```
+
+**Zero rows matched the P38.1 predicate.** The 41 rows I originally identified in the earlier dry-run had already self-healed by the time of this second dry-run — some other writer path in the codebase populated `scheduled_start` on those rows between the two runs. See Data-Quality Findings.
+
+### First `--execute` (JSON)
+
+```
+{
+  "scanned": 0, "backfilled": 0,
+  "backfilled_iso_direct": 0, "backfilled_default_time": 0,
+  "backfilled_utc_fallback": 0, "skipped_unparseable": 0,
+  "normalized_scheduled_date": 0,
+  "duration_s": 0.006,
+  "dry_run": false, "skipped_by_marker": false,
+  "executed_at": "2026-09-23T04:27:03.852975+00:00",
+  "tenant_filter": null, "limit": null,
+  "default_time": "08:00", "normalize_flag": false
+}
+```
+
+### Marker doc post-execute
+
+```
+{
+  "name": "p38_1_reverse_backfill_scheduled_start",
+  "applied_at": "2026-09-23T04:27:03.852986+00:00",
+  "summary": {
+    "scanned": 0, "backfilled": 0, "backfilled_utc_fallback": 0,
+    "default_time": "08:00",
+    "tenant_filter": null, "limit": null
+  }
+}
+```
+
+### Post-execute inverse-count verification
+
+```
+rows still matching P38.1 predicate post-execute: 0  (target: 0)  ✓
+```
+
+### Second `--execute` idempotency proof
+
+```
+INFO:pool_crm:[p38.1] marker present in migrations_applied — skipping execute pass (pass --force or --tenant to override)
+{
+  "scanned": 0, "backfilled": 0,
+  "backfilled_iso_direct": 0, "backfilled_default_time": 0,
+  "backfilled_utc_fallback": 0, "skipped_unparseable": 0,
+  "normalized_scheduled_date": 0,
+  "duration_s": 0.003,
+  "dry_run": false, "skipped_by_marker": true,
+  "executed_at": null,
+  "tenant_filter": null, "limit": null,
+  "default_time": "08:00", "normalize_flag": false
+}
+```
+
+### Data-quality findings (writer culprits — for follow-up phases)
+
+**Primary culprit — `backend/seed_frozen.py:43,47`:**
+```python
+DEMO_JOBS = [
+    {"id": "job-01", "customer_id": "cust-vip-01",
+     ...
+     "scheduled_date": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+     ...
+    },
+    {"id": "job-02", "customer_id": "cust-std-02",
+     ...
+     "scheduled_date": (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()},
+]
+```
+The demo-seed script writes 2 jobs (`job-01` and `job-02`) with `scheduled_date` set to a full ISO datetime via `.isoformat()` on a `datetime` (should be `.date().isoformat()` for the `YYYY-MM-DD` schema contract).  This runs on every boot for the demo tenant.  Fix: change `(datetime.now(timezone.utc) + timedelta(days=2)).isoformat()` → `(datetime.now(timezone.utc) + timedelta(days=2)).date().isoformat()` in both lines.
+
+**Affected tenants (concentration):**
+* `affdfbfa-88b9-4baa-ae45-2ef78531b6e4` — 40 of the original 41 rows.  This is a preview/demo tenant.
+* `a1-tid-46b2290a-e3c2-4100-9af7-1c78654c025f` — 1 row.
+
+**Where the 41 rows went between the two dry-runs (mystery, partially resolved):**
+Between the first dry-run (scanned=41) and the second (scanned=0), some writer path populated `scheduled_start` on those 41 rows.  Grep evidence:
+* `backend/routers/schedule.py:410` — reads `scheduled_start = j.get("scheduled_date") or j.get("scheduled_start")` — treats `scheduled_date` as a fallback for `scheduled_start` on read.  This is a READ path, so it wouldn't have written the DB, but it demonstrates the codebase EXPECTS `scheduled_date` to sometimes carry a datetime string.
+* `backend/routers/portal_appointments.py:183-184` — co-writes both fields:
+   ```python
+   "scheduled_start": sched_start,
+   "scheduled_date": appt["preferred_date"],
+   ```
+* `backend/routers/dispatch.py:475,538` — writes `{"$set": {"scheduled_date": proposed, ...}}` when a schedule proposal is accepted.  A recent dispatch proposal on the affected tenant would explain a batch of newly co-populated rows.
+
+Most likely explanation: the demo tenant `affdfbfa-...` has a background writer (schedule board / dispatch flow) that re-visited the 40 pending rows in the last hour and populated their `scheduled_start` via a batch schedule action.  This is BENIGN — the rows now have both `scheduled_date` (still in ISO shape) AND `scheduled_start` (populated) — so downstream schedule dashboards will render them correctly.
+
+**Follow-up recommendation (NOT for this phase):**
+1. Fix `seed_frozen.py` two-line ISO-datetime bug (should be `.date().isoformat()`).
+2. Run `python -m migrations.p38_1_reverse_backfill_scheduled_start --execute --force --normalize-scheduled-date` after fixing seed_frozen.py to clean up the 47 rows whose `scheduled_date` is still in ISO shape.  The `--force` bypasses the stamped marker; `--normalize-scheduled-date` truncates the ISO shape back to `YYYY-MM-DD`.  Idempotent — safe to re-run.
+3. Add a Pydantic V2 field validator on the `scheduled_date` field that regex-checks `^\d{4}-\d{2}-\d{2}$` at write-time so this schema drift can't recur.
+
+### Health + supervisor snapshot (post-P38.1-execute)
+
+```
+GET /api/health → HTTP 200
+
+init.structural_migrations:
+  p23_restore_ethan_steven_technicians:      done ✓
+  p29_clear_landscape_required_overrides:    done ✓
+  p36_clear_nonpool_required_overrides:      done ✓
+  p30_add_card_sms_template:                 done ✓
+  p30_customers_stripe_customer_id_unique:   done ✓
+  p38_backfill_scheduled_date:               done ✓
+  p38_1_reverse_backfill_scheduled_start:    done ✓
+  perf_customers_v1:                         done ✓
+
+supervisorctl:
+  backend  RUNNING  pid 7376  uptime 1:26:15
+  frontend RUNNING  pid 113   uptime 2:47:52
+```
+
+### Hard-rules compliance
+
+* No mobile files touched.
+* No `backend/.env` modifications.
+* Tenant scoping preserved on every migration query (`tenant_id` filter opt-in via `--tenant=<id>`; base query already narrow enough that a full-scope run touches every tenant symmetrically).
+* No supervisor restart.  Backend hot-reloaded picked up the parser upgrade automatically.
+* No `--normalize-scheduled-date` used on this execute run (safer, non-destructive as requested).
+

@@ -303,3 +303,188 @@ def test_reverse_backfill_custom_time_via_env(monkeypatch):
         await _wipe(db, [tid])
 
     run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 8. Feb-2026 · ISO-datetime shape → direct copy path
+#     (handles the 41-row schema-shape surprise found on prod-preview)
+# ═════════════════════════════════════════════════════════════════
+def test_reverse_backfill_iso_datetime_direct_copy():
+    from migrations.p38_1_reverse_backfill_scheduled_start import run as p38_1_run
+
+    tid = "p38.1-test-iso-direct"
+    iso_dt = "2026-08-19T14:30:00+00:00"
+
+    async def _go(db):
+        await _wipe(db, [tid])
+        await _seed_tenant(db, tid, tz="America/Phoenix")
+        ids = await _seed_jobs_missing_start(db, tid, 1, sched_date=iso_dt)
+
+        summary = await p38_1_run(execute=True, tenant_id=tid)
+        assert summary["backfilled"] == 1
+        assert summary["backfilled_iso_direct"] == 1
+        assert summary["backfilled_default_time"] == 0
+        assert summary["backfilled_utc_fallback"] == 0
+        assert summary["skipped_unparseable"] == 0
+
+        # Direct copy — scheduled_start MUST equal the ISO datetime
+        # exactly, NOT some default-time interpretation.
+        row = await db.jobs.find_one({"id": ids[0]})
+        assert row["scheduled_start"] == iso_dt, (
+            f"expected verbatim ISO copy, got {row.get('scheduled_start')!r}"
+        )
+
+        await _wipe(db, [tid])
+
+    run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 9. Midnight ISO datetime → default-time treatment (ambiguity guard)
+# ═════════════════════════════════════════════════════════════════
+def test_reverse_backfill_midnight_iso_treated_as_date():
+    from migrations.p38_1_reverse_backfill_scheduled_start import run as p38_1_run
+
+    tid = "p38.1-test-midnight-iso"
+
+    async def _go(db):
+        await _wipe(db, [tid])
+        await _seed_tenant(db, tid, tz="America/Phoenix")
+        # Two seeds: midnight-Z suffix AND midnight-+00:00 explicit
+        # tz.  Both should route through default-time.
+        await db.jobs.insert_one({
+            "id": "midnight-z", "tenant_id": tid,
+            "scheduled_date": "2026-09-15T00:00:00Z",
+        })
+        await db.jobs.insert_one({
+            "id": "midnight-utc", "tenant_id": tid,
+            "scheduled_date": "2026-09-15T00:00:00+00:00",
+        })
+
+        summary = await p38_1_run(execute=True, tenant_id=tid)
+        assert summary["backfilled"] == 2
+        assert summary["backfilled_iso_direct"] == 0, (
+            "midnight-only ISO datetimes must NOT be direct-copied"
+        )
+        assert summary["backfilled_default_time"] == 2
+
+        expected = datetime(
+            2026, 9, 15, 8, 0, tzinfo=ZoneInfo("America/Phoenix"),
+        ).isoformat()
+        for jid in ["midnight-z", "midnight-utc"]:
+            row = await db.jobs.find_one({"id": jid})
+            assert row["scheduled_start"] == expected, (
+                f"midnight ISO row {jid} not routed to default-time"
+            )
+
+        await _wipe(db, [tid])
+
+    run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 10. --normalize-scheduled-date flag ON → scheduled_date truncated
+# ═════════════════════════════════════════════════════════════════
+def test_reverse_backfill_normalize_scheduled_date_flag():
+    from migrations.p38_1_reverse_backfill_scheduled_start import run as p38_1_run
+
+    tid = "p38.1-test-normalize-on"
+    iso_dt = "2026-08-19T14:30:00+00:00"
+
+    async def _go(db):
+        await _wipe(db, [tid])
+        await _seed_tenant(db, tid, tz="America/Phoenix")
+        await _seed_jobs_missing_start(db, tid, 1, sched_date=iso_dt)
+
+        summary = await p38_1_run(
+            execute=True, tenant_id=tid, normalize_scheduled_date=True,
+        )
+        assert summary["backfilled"] == 1
+        assert summary["backfilled_iso_direct"] == 1
+        assert summary["normalized_scheduled_date"] == 1
+        assert summary["normalize_flag"] is True
+
+        # scheduled_start = verbatim ISO; scheduled_date cleaned to
+        # first-10 chars (YYYY-MM-DD).
+        row = await db.jobs.find_one({"tenant_id": tid})
+        assert row["scheduled_start"] == iso_dt
+        assert row["scheduled_date"] == "2026-08-19", (
+            f"scheduled_date not normalised: {row.get('scheduled_date')!r}"
+        )
+
+        await _wipe(db, [tid])
+
+    run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 11. --normalize-scheduled-date OFF (default) → scheduled_date untouched
+# ═════════════════════════════════════════════════════════════════
+def test_reverse_backfill_normalize_off_by_default():
+    from migrations.p38_1_reverse_backfill_scheduled_start import run as p38_1_run
+
+    tid = "p38.1-test-normalize-off"
+    iso_dt = "2026-08-19T14:30:00+00:00"
+
+    async def _go(db):
+        await _wipe(db, [tid])
+        await _seed_tenant(db, tid, tz="America/Phoenix")
+        await _seed_jobs_missing_start(db, tid, 1, sched_date=iso_dt)
+
+        summary = await p38_1_run(execute=True, tenant_id=tid)  # no normalize kwarg
+        assert summary["backfilled"] == 1
+        assert summary["backfilled_iso_direct"] == 1
+        assert summary["normalized_scheduled_date"] == 0
+        assert summary["normalize_flag"] is False
+
+        # scheduled_date preserved verbatim in its original ISO shape.
+        row = await db.jobs.find_one({"tenant_id": tid})
+        assert row["scheduled_start"] == iso_dt
+        assert row["scheduled_date"] == iso_dt, (
+            f"scheduled_date should be untouched w/o flag; "
+            f"got {row.get('scheduled_date')!r}"
+        )
+
+        await _wipe(db, [tid])
+
+    run_test(_go)
+
+
+# ═════════════════════════════════════════════════════════════════
+# 12. Unparseable scheduled_date → skipped + counted, no mutation
+# ═════════════════════════════════════════════════════════════════
+def test_reverse_backfill_unparseable_scheduled_date_skipped():
+    from migrations.p38_1_reverse_backfill_scheduled_start import run as p38_1_run
+
+    tid = "p38.1-test-unparseable"
+
+    async def _go(db):
+        await _wipe(db, [tid])
+        await _seed_tenant(db, tid, tz="America/Phoenix")
+        # Seed a legitimate row AND a garbage row so we can prove
+        # the good one still gets backfilled while the bad one is
+        # counted-then-skipped.
+        await db.jobs.insert_one({
+            "id": "good-row", "tenant_id": tid,
+            "scheduled_date": "2026-02-15",
+        })
+        await db.jobs.insert_one({
+            "id": "garbage-row", "tenant_id": tid,
+            "scheduled_date": "not-a-date-at-all-really",
+        })
+
+        summary = await p38_1_run(execute=True, tenant_id=tid)
+        assert summary["scanned"] == 2
+        assert summary["backfilled"] == 1
+        assert summary["skipped_unparseable"] == 1
+
+        good = await db.jobs.find_one({"id": "good-row"})
+        garbage = await db.jobs.find_one({"id": "garbage-row"})
+        assert good.get("scheduled_start") is not None
+        assert garbage.get("scheduled_start") is None, (
+            "garbage row must NOT be mutated"
+        )
+
+        await _wipe(db, [tid])
+
+    run_test(_go)

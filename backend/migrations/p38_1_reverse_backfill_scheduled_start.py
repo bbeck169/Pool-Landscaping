@@ -105,18 +105,62 @@ def _derive_scheduled_start(
     scheduled_date: str,
     tenant: Optional[Mapping[str, Any]],
     default_time: dtime,
-) -> Tuple[Optional[str], bool]:
-    """Return ``(iso_scheduled_start, used_utc_fallback)`` or
-    ``(None, False)`` when ``scheduled_date`` isn't a parseable
-    ``YYYY-MM-DD`` string.
+) -> Tuple[Optional[str], bool, Optional[str]]:
+    """Return ``(iso_scheduled_start, used_utc_fallback, source)``.
+
+    ``source`` is one of:
+      * ``"iso_datetime_direct"`` — ``scheduled_date`` parsed as a
+        full ISO datetime with a non-midnight time → copied verbatim
+        (naive → assumed UTC).  ``used_utc_fallback`` is False on
+        this path (the datetime carries its own tz).
+      * ``"date_default_time"`` — ``scheduled_date`` parsed either as
+        ``YYYY-MM-DD`` OR as a midnight-only ISO datetime → default
+        time-of-day applied in the tenant's local tz.
+        ``used_utc_fallback`` is True when the tenant carries NO tz
+        field at all (UTC 08:00 fallback).
+      * ``None`` (with ``(None, False, None)``) — unparseable.  Caller
+        counts under ``skipped_unparseable``.
+
+    The "midnight is ambiguous" heuristic: an ISO datetime whose time
+    component is exactly ``00:00:00`` could either be an
+    intentionally-scheduled midnight event OR a legacy writer that
+    stored a date-only value as ``T00:00:00Z``.  We prefer the
+    conservative interpretation (default-time treatment) so the
+    scheduler dashboards render these at a sensible service-day
+    start rather than at 12:00 AM.
     """
     if not isinstance(scheduled_date, str) or not scheduled_date.strip():
-        return (None, False)
+        return (None, False, None)
+    raw = scheduled_date.strip()
+    # ``fromisoformat`` handles the ``Z`` suffix only in 3.11+; be
+    # defensive.
+    normalised = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+
+    # Attempt 1 — full ISO datetime path.  ``fromisoformat`` also
+    # accepts bare ``YYYY-MM-DD`` (returns midnight naive), which
+    # falls into the midnight branch below.
     try:
-        y, m, d = scheduled_date.split("-", 2)
-        year, month, day = int(y), int(m), int(d)
-    except (ValueError, AttributeError):
-        return (None, False)
+        dt = datetime.fromisoformat(normalised)
+    except (ValueError, TypeError):
+        dt = None
+
+    if dt is not None and dt.time() != dtime(0, 0):
+        # Real time-of-day carried inline — direct copy path.
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (dt.isoformat(), False, "iso_datetime_direct")
+
+    # Attempt 2 — date-only / midnight-only → default-time path.
+    if dt is not None:
+        the_date = dt.date()
+    else:
+        # ``fromisoformat`` failed entirely; try strict ``YYYY-MM-DD``
+        # via strptime on the first 10 chars.
+        try:
+            the_date = datetime.strptime(raw[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return (None, False, None)
+
     if _tenant_has_tz(tenant):
         tz = _tz_for_tenant(tenant)
         used_utc = False
@@ -125,13 +169,13 @@ def _derive_scheduled_start(
         used_utc = True
     try:
         local_dt = datetime(
-            year=year, month=month, day=day,
+            year=the_date.year, month=the_date.month, day=the_date.day,
             hour=default_time.hour, minute=default_time.minute,
             tzinfo=tz,
         )
     except ValueError:
-        return (None, False)
-    return (local_dt.isoformat(), used_utc)
+        return (None, False, None)
+    return (local_dt.isoformat(), used_utc, "date_default_time")
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -173,6 +217,7 @@ async def run(
     tenant_id: Optional[str] = None,
     limit: Optional[int] = None,
     force: bool = False,
+    normalize_scheduled_date: bool = False,
 ) -> Dict[str, Any]:
     started = time.time()
     default_time = _default_time_of_day()
@@ -187,7 +232,11 @@ async def run(
         return {
             "scanned": 0,
             "backfilled": 0,
+            "backfilled_iso_direct": 0,
+            "backfilled_default_time": 0,
             "backfilled_utc_fallback": 0,
+            "skipped_unparseable": 0,
+            "normalized_scheduled_date": 0,
             "duration_s": round(time.time() - started, 3),
             "dry_run": False,
             "skipped_by_marker": True,
@@ -195,6 +244,7 @@ async def run(
             "tenant_filter": tenant_id,
             "limit": limit,
             "default_time": default_time_str,
+            "normalize_flag": normalize_scheduled_date,
         }
 
     # Narrow query — ``scheduled_date`` set + ``scheduled_start`` null/missing.
@@ -226,7 +276,11 @@ async def run(
 
     scanned = 0
     backfilled = 0
+    backfilled_iso_direct = 0
+    backfilled_default_time = 0
     backfilled_utc_fallback = 0
+    skipped_unparseable = 0
+    normalized_scheduled_date = 0
 
     cursor = db.jobs.find(query, projection)
     if limit is not None and limit > 0:
@@ -235,15 +289,23 @@ async def run(
     batch: list[dict] = []
 
     async def _flush_batch(rows: list[dict]) -> None:
-        nonlocal backfilled, backfilled_utc_fallback
+        nonlocal backfilled, backfilled_iso_direct, backfilled_default_time
+        nonlocal backfilled_utc_fallback, skipped_unparseable
+        nonlocal normalized_scheduled_date
         for row in rows:
             tid = row.get("tenant_id") or ""
             sd = row.get("scheduled_date") or ""
             tenant = await _get_tenant(tid) if tid else None
-            iso_start, used_utc = _derive_scheduled_start(
+            iso_start, used_utc, source = _derive_scheduled_start(
                 sd, tenant, default_time,
             )
             if iso_start is None:
+                skipped_unparseable += 1
+                logger.warning(
+                    "[p38.1] skipping unparseable tenant=%s job=%s "
+                    "scheduled_date=%r",
+                    tid, row.get("id"), sd,
+                )
                 continue
             if used_utc:
                 logger.warning(
@@ -252,14 +314,31 @@ async def run(
                     "@ %s UTC (tenant tz missing)",
                     tid, row.get("id"), iso_start, default_time_str,
                 )
+
+            # Compute the ``scheduled_date`` normalisation write (if
+            # the flag is set AND the current stored value carries a
+            # ``T`` — meaning it's NOT already a plain YYYY-MM-DD).
+            normalized_target: Optional[str] = None
+            if normalize_scheduled_date and "T" in sd:
+                normalized_target = sd[:10]
+
             if execute:
+                update_doc: Dict[str, Any] = {"scheduled_start": iso_start}
+                if normalized_target and normalized_target != sd:
+                    update_doc["scheduled_date"] = normalized_target
                 await db.jobs.update_one(
                     {"id": row["id"], "tenant_id": tid},
-                    {"$set": {"scheduled_start": iso_start}},
+                    {"$set": update_doc},
                 )
             backfilled += 1
+            if source == "iso_datetime_direct":
+                backfilled_iso_direct += 1
+            elif source == "date_default_time":
+                backfilled_default_time += 1
             if used_utc:
                 backfilled_utc_fallback += 1
+            if normalized_target and normalized_target != sd:
+                normalized_scheduled_date += 1
 
     async for doc in cursor:
         scanned += 1
@@ -268,8 +347,12 @@ async def run(
             await _flush_batch(batch)
             logger.info(
                 "[p38.1] batch progress — scanned=%s backfilled=%s "
-                "utc_fallback=%s dry_run=%s",
-                scanned, backfilled, backfilled_utc_fallback, not execute,
+                "iso_direct=%s default_time=%s utc_fallback=%s "
+                "skipped=%s dry_run=%s",
+                scanned, backfilled,
+                backfilled_iso_direct, backfilled_default_time,
+                backfilled_utc_fallback, skipped_unparseable,
+                not execute,
             )
             batch = []
     if batch:
@@ -279,7 +362,11 @@ async def run(
     summary: Dict[str, Any] = {
         "scanned": scanned,
         "backfilled": backfilled,
+        "backfilled_iso_direct": backfilled_iso_direct,
+        "backfilled_default_time": backfilled_default_time,
         "backfilled_utc_fallback": backfilled_utc_fallback,
+        "skipped_unparseable": skipped_unparseable,
+        "normalized_scheduled_date": normalized_scheduled_date,
         "duration_s": duration_s,
         "dry_run": not execute,
         "skipped_by_marker": False,
@@ -289,16 +376,20 @@ async def run(
         "tenant_filter": tenant_id,
         "limit": limit,
         "default_time": default_time_str,
+        "normalize_flag": normalize_scheduled_date,
     }
 
     if execute and not tenant_id:
         await _stamp_marker(summary)
 
     logger.info(
-        "[p38.1] done — scanned=%s backfilled=%s utc_fallback=%s "
-        "duration_s=%s dry_run=%s tenant=%s default_time=%s",
-        scanned, backfilled, backfilled_utc_fallback,
-        duration_s, not execute, tenant_id or "*", default_time_str,
+        "[p38.1] done — scanned=%s backfilled=%s iso_direct=%s "
+        "default_time=%s utc_fallback=%s skipped=%s "
+        "normalized=%s duration_s=%s dry_run=%s tenant=%s",
+        scanned, backfilled, backfilled_iso_direct,
+        backfilled_default_time, backfilled_utc_fallback,
+        skipped_unparseable, normalized_scheduled_date,
+        duration_s, not execute, tenant_id or "*",
     )
     return summary
 
@@ -312,6 +403,7 @@ def _build_argparser() -> argparse.ArgumentParser:
         description=(
             "Backfill jobs.scheduled_start from scheduled_date at a "
             "default time-of-day in the tenant's local timezone.  "
+            "Handles both YYYY-MM-DD and full-ISO-datetime shapes.  "
             "Dry-run by default."
         ),
     )
@@ -321,6 +413,17 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--tenant", dest="tenant", default=None)
     p.add_argument("--limit", dest="limit", type=int, default=None)
     p.add_argument("--force", dest="force", action="store_true", default=False)
+    p.add_argument(
+        "--normalize-scheduled-date",
+        dest="normalize_scheduled_date",
+        action="store_true",
+        default=False,
+        help=(
+            "Additionally clean up ``scheduled_date`` by truncating any "
+            "full-ISO-datetime shape (\"YYYY-MM-DDT...\") to just its "
+            "date portion (\"YYYY-MM-DD\").  Non-destructive default: OFF."
+        ),
+    )
     return p
 
 
@@ -336,6 +439,7 @@ def _cli_main() -> int:
         tenant_id=args.tenant,
         limit=args.limit,
         force=args.force,
+        normalize_scheduled_date=bool(args.normalize_scheduled_date),
     ))
     print(json.dumps(summary, indent=2))
     return 0
