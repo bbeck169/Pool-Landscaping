@@ -1766,3 +1766,178 @@ async def restore_autobilling_run(
         user=user, tenant=tenant,
     )
     return {"ok": True, "id": rid, "restored": True}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase P41 · Feb-2026 — Autobilling Runs · HARD DELETE (single + bulk).
+#
+# Physical removal of the audit document from ``db.autobilling_runs``.
+# Distinct from the soft-delete surface above:
+#   * soft-delete (``DELETE /autobilling/runs/{rid}``)  → sets
+#     ``deleted_at`` + hides from default list; preserved for audit.
+#   * hard-delete (``DELETE /autobilling-runs/{run_id}``) → physical
+#     ``delete_one`` on the row; cannot be undone.
+#
+# Security invariants (do NOT drift):
+#   1. Tenant scoping is mandatory on EVERY query. Cross-tenant
+#      delete returns 404 (existence-hiding) — never 403.
+#   2. Admin / super_admin / owner only (require_admin).
+#   3. In-progress runs (``status in {running, in_progress}``) are
+#      NOT hard-blocked — deletion proceeds, but a WARN is logged
+#      so operations can audit dangerous deletes later.
+#   4. Cascade behavior deferred — grep of the backend confirmed
+#      no other collection back-references ``autobilling_run_id``,
+#      so the physical delete has zero orphan risk today. If a
+#      future collection adds that FK, extend this handler to also
+#      purge those docs OR keep the row soft-only.
+# ═════════════════════════════════════════════════════════════════════════
+_AUTOBILLING_RUNS_HARD_DELETE_CAP = 500
+_IN_PROGRESS_STATUSES = {"running", "in_progress"}
+
+
+class _AutobillingRunsHardDeleteBulkIn(_AutobillingBulkBase):
+    ids: List[str]
+
+
+async def _write_runs_harddelete_audit(*, target_id: str,
+                                        user: dict, tenant: dict,
+                                        prior_status: Optional[str],
+                                        prior_ts: Optional[str]) -> None:
+    """Best-effort audit trail for a PHYSICAL delete. The row itself
+    is gone after the ``delete_one``, so we snapshot ``prior_status``
+    + ``prior_ts`` into the audit event for forensics."""
+    try:
+        await db.audits.insert_one({
+            "id": new_id(),
+            "kind": "autobilling_runs_hard_delete",
+            "tenant_id": tenant["id"],
+            "target_id": target_id,
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "prior_status": prior_status,
+            "prior_ts": prior_ts,
+            "at": now_iso(),
+        })
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning(
+            f"[p41] hard-delete audit failed for {target_id}: {e}",
+        )
+
+
+@router.delete("/autobilling-runs/{run_id}",
+                operation_id="autobillingRuns.hardDelete")
+async def hard_delete_autobilling_run(
+    run_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P41 — physical removal of a single autobilling audit
+    row. Tenant-scoped. 404 (existence-hiding) when the row belongs
+    to another tenant OR does not exist at all."""
+    # Fetch (tenant-scoped) so we can (a) return 404 for cross-tenant
+    # / unknown ids and (b) snapshot the prior status for the WARN
+    # log + audit event before the physical delete.
+    row = await db.autobilling_runs.find_one(
+        {"id": run_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "status": 1, "ts": 1},
+    )
+    if not row:
+        raise HTTPException(404, "Autobilling run not found")
+
+    prior_status = row.get("status")
+    if prior_status in _IN_PROGRESS_STATUSES:
+        logger.warning(
+            "[p41] hard-delete of active autobilling_run "
+            f"id={run_id} tenant={tenant['id']} status={prior_status}",
+        )
+
+    res = await db.autobilling_runs.delete_one(
+        {"id": run_id, "tenant_id": tenant["id"]},
+    )
+    if res.deleted_count == 0:
+        # Between the find_one and delete_one another admin deleted
+        # the row. Existence-hide with 404 to match the spec.
+        raise HTTPException(404, "Autobilling run not found")
+
+    await _write_runs_harddelete_audit(
+        target_id=run_id, user=user, tenant=tenant,
+        prior_status=prior_status, prior_ts=row.get("ts"),
+    )
+    return {"deleted": True, "id": run_id}
+
+
+@router.post("/autobilling-runs/hard-delete-bulk",
+              operation_id="autobillingRuns.hardDeleteBulk")
+async def hard_delete_autobilling_runs_bulk(
+    body: _AutobillingRunsHardDeleteBulkIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P41 — physical removal of many autobilling audit rows
+    in one call. Tenant-scoped. Ids that don't exist for this tenant
+    are reported in ``not_found`` (deleted_count may be < requested).
+    Always returns 200 — the caller uses the counts to decide UX.
+    """
+    ids = list(body.ids or [])
+    requested_count = len(ids)
+    if requested_count == 0:
+        # Empty is legal — return zero counts rather than a 400 so
+        # the FE doesn't have to special-case pre-flight validation.
+        return {"deleted_count": 0, "requested_count": 0, "not_found": []}
+    if requested_count > _AUTOBILLING_RUNS_HARD_DELETE_CAP:
+        raise HTTPException(
+            400,
+            "hard-delete-bulk capped at "
+            f"{_AUTOBILLING_RUNS_HARD_DELETE_CAP} rows per call",
+        )
+
+    # De-dup while preserving order (a caller sending the same id
+    # twice should count as a single delete + a single audit).
+    seen: set = set()
+    deduped: List[str] = []
+    for rid in ids:
+        if rid not in seen:
+            seen.add(rid)
+            deduped.append(rid)
+
+    # Fetch existing rows in one round-trip (tenant-scoped). Rows
+    # that come back are safe to delete; ids missing from the set
+    # roll into ``not_found``. This keeps the bulk call at 2 DB
+    # ops (find + delete_many) instead of N.
+    existing_docs = await db.autobilling_runs.find(
+        {"tenant_id": tenant["id"], "id": {"$in": deduped}},
+        {"_id": 0, "id": 1, "status": 1, "ts": 1},
+    ).to_list(_AUTOBILLING_RUNS_HARD_DELETE_CAP)
+    existing_by_id = {d["id"]: d for d in existing_docs}
+    not_found = [rid for rid in deduped if rid not in existing_by_id]
+
+    # WARN on any in-progress runs BEFORE the physical delete.
+    for rid, doc in existing_by_id.items():
+        if doc.get("status") in _IN_PROGRESS_STATUSES:
+            logger.warning(
+                "[p41] hard-delete of active autobilling_run "
+                f"id={rid} tenant={tenant['id']} "
+                f"status={doc.get('status')} (bulk)",
+            )
+
+    deleted_count = 0
+    if existing_by_id:
+        res = await db.autobilling_runs.delete_many(
+            {"tenant_id": tenant["id"],
+              "id": {"$in": list(existing_by_id.keys())}},
+        )
+        deleted_count = res.deleted_count
+
+    # Best-effort audit per row (each hard-delete gets its own audit
+    # event so forensics stays granular).
+    for rid, doc in existing_by_id.items():
+        await _write_runs_harddelete_audit(
+            target_id=rid, user=user, tenant=tenant,
+            prior_status=doc.get("status"), prior_ts=doc.get("ts"),
+        )
+
+    return {
+        "deleted_count": deleted_count,
+        "requested_count": requested_count,
+        "not_found": not_found,
+    }

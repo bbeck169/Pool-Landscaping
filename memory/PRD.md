@@ -20805,3 +20805,101 @@ Additional collateral fix: `frontend/src/test/k71-line-items-responsive-cards.te
 - Writers still don't hydrate `line_items[].income_category_id` at invoice-write time (`billing_plans/run`, `chem_line_items`, `dispatch.py`). Reader ladder + P40 validator are the safety nets; hydrator is P41+ backlog.
 - Pydantic V2 `Field(pattern=UUID_RE)` on `LineItem.income_category_id` / `service_category_id` would move the guard from the router helper to the model layer.
 - One pre-existing test failure identified: `frontend/src/test/invoice-save-errors-inline.test.jsx` — "The given element does not have a value setter" on `qf-line-0-desc`. Unrelated to P40 (confirmed via `git stash` bisect); the test's selectors are stale against the current QuoteInvoiceNew markup. Not in scope for P40.
+
+---
+
+## Phase P41 · Autobilling Runs · Hard Delete
+
+**Status:** ✅ Shipped Feb-2026 · preview verified (curl + tests) · 2 endpoints + 2 UI actions + 11 backend tests + 7 frontend tests.
+
+### Motivation
+Existing autobilling audit surface offered only soft-delete (sets `deleted_at`, still recoverable via Restore). Operators reported clutter accumulating in the audit log even after soft-delete; they want a permanent purge path for historical rows they'll never need for compliance. P41 adds a strictly-guarded physical-delete surface alongside the existing soft-delete flow.
+
+### Backend endpoints (both under `/api/autobilling-runs/` path)
+- `DELETE /api/autobilling-runs/{run_id}` → single hard delete.
+  - Returns `{"deleted": true, "id": "<run_id>"}` on success, 404 otherwise.
+- `POST /api/autobilling-runs/hard-delete-bulk` → bulk hard delete; body `{"ids": [...]}`.
+  - Always 200 with `{deleted_count, requested_count, not_found}` counts.
+  - Cap: 500 ids per call (matches the soft-delete cap `_AUTOBILLING_RUNS_BULK_DELETE_CAP`).
+  - Empty array legal → returns zero counts (no 400 to simplify FE pre-flight).
+  - Deduplicates repeated ids in the input (counted once in `deleted_count`).
+
+### Security invariants (locked in code + tests)
+1. **Tenant scoping mandatory** — every `.find_one` / `.delete_one` / `.delete_many` / `.find` in the two handlers carries `{"tenant_id": tenant["id"]}`. Cross-tenant delete returns **404** (existence-hiding), never 403. Verified by `test_hard_delete_returns_404_for_other_tenant_run` and `test_bulk_hard_delete_tenant_scoping_ignores_other_tenant_ids`.
+2. **Admin gate** — both endpoints depend on `require_admin` (admin / super_admin / owner). Technicians rejected before the handler runs. Verified.
+3. **In-progress warn** — `status in {"running", "in_progress"}` deletes proceed (per user spec: "no blockers") but log `[p41] hard-delete of active autobilling_run id=<> tenant=<> status=<>` via `logger.warning`. Verified by `test_hard_delete_in_progress_run_still_deletes_with_warn_log`.
+4. **Audit trail** — every physical delete writes a `db.audits` doc `kind: "autobilling_runs_hard_delete"` with `prior_status` + `prior_ts` snapshot for forensics (the row itself is gone after the delete).
+
+### Cascade decision (deferred by design)
+Grep result on the tip of `main` before implementing:
+```
+grep -rn "autobilling_run_id\|autobilling_runs\." backend/
+```
+returned zero references outside `backend/routers/finances.py` itself. No collection back-references `autobilling_run_id`, `run_id.autobilling`, or similar. **Orphan risk = none today.** P41 handlers therefore delete the run doc only. If a future phase adds a collection with an `autobilling_run_id` FK, extend `hard_delete_autobilling_run` + `hard_delete_autobilling_runs_bulk` to also purge those docs OR downgrade the deletion to soft-only.
+
+### Frontend — `frontend/src/pages/finance/AutobillingRuns.jsx`
+- Row action: new `AlertOctagon` icon button (`data-testid=autobilling-runs-row-hard-delete-<id>`) alongside the existing trash icon. `aria-label` reads "Permanently delete run <id>". Distinct dark-red (`#7F1D1D`) to differentiate from the soft-delete red (`#DC2626`).
+- Row confirm modal (`data-testid=autobilling-runs-hard-delete-confirm`):
+  - Title: "Permanently delete this billing run?"
+  - Body: "This will permanently remove billing run `<8-char prefix>` from your account. This action cannot be undone."
+  - Primary button (red danger): "Delete Permanently".
+  - Cancel button preserved.
+- Bulk button: shown alongside the existing "Delete Selected" bulk-soft when ≥ 1 row selected (`autobilling-runs-bulk-hard-delete-button`).
+- Bulk confirm modal shares the same layout; title reads "Permanently delete N billing runs?".
+- Optimistic remove: on 200, prunes deleted ids from local `rows` state; ids in `not_found` stay in the table (they were never in tenant scope).
+- Toasts:
+  - Full success (single or bulk `deleted_count == requested`): `success` → "Billing run permanently deleted." / "Permanently deleted N billing runs."
+  - Partial (bulk `deleted_count < requested`): `info` → "Permanently deleted N of M billing runs."
+  - Error: `error` toast with the API error message; row NOT removed.
+- Selection cleared on successful bulk delete.
+
+### Tests
+- `backend/tests/test_p41_autobilling_hard_delete.py` — 11 tests, all pass:
+  1. Single hard delete removes doc + returns `{deleted: true, id}`.
+  2. Unknown id → 404.
+  3. Other-tenant id → 404 (existence-hiding) + row still exists for its owner tenant.
+  4. `require_admin` rejects technicians (401/403).
+  5. In-progress run deletes anyway + WARN log captured.
+  6. Bulk removes all matching + reports counts.
+  7. Bulk partial success reports `not_found`.
+  8. Bulk cross-tenant ids → 0 deleted + all leaked as `not_found`.
+  9. Bulk `require_admin` rejects technicians.
+  10. Bulk empty array → `{deleted_count: 0, requested_count: 0, not_found: []}`.
+  11. Bulk deduplicates repeated ids (`deleted_count == 1` when caller sends 3 copies of same id).
+- `frontend/src/test/p41-autobilling-hard-delete.test.jsx` — 7 tests, all pass:
+  1. Row menu shows Delete Permanently icon + aria-label.
+  2. Confirming row delete calls `api.del("/autobilling-runs/<id>")` + removes row + success toast.
+  3. Cancelling leaves row + no API call fires.
+  4. Bulk button hidden with no selection.
+  5. Bulk confirm calls `api.post("/autobilling-runs/hard-delete-bulk", {ids})` + clears selection.
+  6. API error → error toast + row NOT removed.
+  7. Partial success uses "N of M" phrasing on `toast.info`.
+
+### Live curl proof (preview)
+```
+DELETE /api/autobilling-runs/p41_smoke_0
+  → HTTP 200  {"deleted":true,"id":"p41_smoke_0"}
+
+DELETE /api/autobilling-runs/p41_other_smoke  (other-tenant id via aquaterra JWT)
+  → HTTP 404  {"detail":"Autobilling run not found"}
+
+POST   /api/autobilling-runs/hard-delete-bulk
+       body: {"ids": ["p41_smoke_1", "p41_other_smoke", "p41_ghost"]}
+  → HTTP 200  {"deleted_count": 1, "requested_count": 3,
+               "not_found": ["p41_other_smoke", "p41_ghost"]}
+```
+
+### Hard-rules compliance
+- Tenant scoping preserved on every query — no drift.
+- No cascade to related collections (grep confirmed none exist).
+- No mobile files touched.
+- No `backend/.env` modifications.
+- Existing soft-delete + restore + bulk-cancel + CSV export + filters + sort all preserved (regression tests green).
+- Confirmation modals mandatory on both single + bulk paths.
+- No `deleted_at` stamping on the run doc — physical delete per spec.
+- No new deletable-cursor pattern — reused the existing Motor client bindings.
+
+### Ticket-worthy follow-ups (deferred)
+- Cascade support: if a future collection adds an `autobilling_run_id` FK, extend the handlers to purge orphans in the same transaction.
+- Rate-limit on the bulk endpoint (500-id cap is the only guard today).
+- Row menu "⋯" dropdown: current impl exposes the hard-delete as a distinct icon button. A proper compact dropdown menu (soft, hard, restore) would clean up wide-role rows.

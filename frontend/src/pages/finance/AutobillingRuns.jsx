@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Repeat, XCircle, Trash2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, Repeat, XCircle, Trash2, RotateCcw, AlertOctagon } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
@@ -279,6 +279,79 @@ export default function AutobillingRuns() {
     }
   };
 
+  // ═════════════════════════════════════════════════════════════════
+  // Phase P41 · Feb-2026 — HARD DELETE state + handlers.
+  //
+  // Distinct from soft-delete: physical removal via
+  //   DELETE /api/autobilling-runs/{run_id}         (single)
+  //   POST   /api/autobilling-runs/hard-delete-bulk (bulk, ids body)
+  // The confirmation modal is MANDATORY — irreversible action.
+  // ═════════════════════════════════════════════════════════════════
+  const [confirmHardDeleteOpen, setConfirmHardDeleteOpen] = useState(false);
+  const [hardDeleteTargetId, setHardDeleteTargetId] = useState(null);
+  const [hardDeleteBusy, setHardDeleteBusy] = useState(false);
+
+  const openRowHardDelete = (id) => {
+    setHardDeleteTargetId(id);
+    setConfirmHardDeleteOpen(true);
+  };
+  const openBulkHardDelete = () => {
+    setHardDeleteTargetId(null);
+    setConfirmHardDeleteOpen(true);
+  };
+  const closeHardDeleteConfirm = () => {
+    if (hardDeleteBusy) return;
+    setConfirmHardDeleteOpen(false);
+    setHardDeleteTargetId(null);
+  };
+
+  const doHardDelete = async () => {
+    setHardDeleteBusy(true);
+    try {
+      if (hardDeleteTargetId) {
+        // Single hard-delete.
+        await api.del(`/autobilling-runs/${hardDeleteTargetId}`);
+        sonnerToast.success("Billing run permanently deleted.");
+        setRows((prev) => prev.filter((r) => r.id !== hardDeleteTargetId));
+        // Clear the selection membership too, in case the row was
+        // ticked in the bulk selection.
+        setSelectedIds((prev) => {
+          if (!prev.has(hardDeleteTargetId)) return prev;
+          const next = new Set(prev);
+          next.delete(hardDeleteTargetId);
+          return next;
+        });
+      } else {
+        // Bulk hard-delete.
+        const ids = Array.from(selectedIds);
+        const requested = ids.length;
+        const res = await api.post(
+          "/autobilling-runs/hard-delete-bulk", { ids },
+        );
+        const deleted = Number(res?.deleted_count || 0);
+        const notFound = new Set(res?.not_found || []);
+        // Optimistic remove — drop the ids that MongoDB confirmed
+        // as gone. Ids in `not_found` stay in the table (they may
+        // still exist for another tenant, but not for this one —
+        // effectively they were never in the visible list).
+        setRows((prev) => prev.filter(
+          (r) => !ids.includes(r.id) || notFound.has(r.id)));
+        const msg = deleted === requested
+          ? `Permanently deleted ${deleted} billing run${
+              deleted === 1 ? "" : "s"}.`
+          : `Permanently deleted ${deleted} of ${requested} billing runs.`;
+        sonnerToast[deleted === requested ? "success" : "info"](msg);
+        clearSelection();
+      }
+      setConfirmHardDeleteOpen(false);
+      setHardDeleteTargetId(null);
+    } catch (e) {
+      sonnerToast.error(e?.message || "Permanent delete failed");
+    } finally {
+      setHardDeleteBusy(false);
+    }
+  };
+
 
   const exportCsv = () => {
     const header = ["Timestamp", "Plan", "Schedule", "Anchor date", "Current month", "Status", "Message", "Invoice"];
@@ -398,6 +471,19 @@ export default function AutobillingRuns() {
             data-testid="autobilling-runs-bulk-delete-button"
           >
             <Trash2 size={12} /> Delete Selected ({selectedCount})
+          </button>
+        ) : null}
+
+        {canSoftDelete && selectedCount > 0 ? (
+          <button
+            type="button"
+            onClick={openBulkHardDelete}
+            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md"
+            style={{ background: "#7F1D1D", color: "#fff", border: 0 }}
+            data-testid="autobilling-runs-bulk-hard-delete-button"
+            title="Physically remove selected billing runs (cannot be undone)"
+          >
+            <AlertOctagon size={12} /> Delete Permanently ({selectedCount})
           </button>
         ) : null}
 
@@ -533,17 +619,30 @@ export default function AutobillingRuns() {
                           <RotateCcw size={14} />
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => openRowDelete(r.id)}
-                          aria-label={`Delete run ${r.id}`}
-                          title="Delete"
-                          className="inline-flex items-center justify-center p-1.5 rounded-md hover:bg-red-50"
-                          style={{ color: "#DC2626" }}
-                          data-testid={`autobilling-runs-row-delete-${r.id}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openRowDelete(r.id)}
+                            aria-label={`Delete run ${r.id}`}
+                            title="Delete (soft)"
+                            className="inline-flex items-center justify-center p-1.5 rounded-md hover:bg-red-50"
+                            style={{ color: "#DC2626" }}
+                            data-testid={`autobilling-runs-row-delete-${r.id}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openRowHardDelete(r.id)}
+                            aria-label={`Permanently delete run ${r.id}`}
+                            title="Delete Permanently (cannot be undone)"
+                            className="inline-flex items-center justify-center p-1.5 rounded-md hover:bg-red-50 ml-1"
+                            style={{ color: "#7F1D1D" }}
+                            data-testid={`autobilling-runs-row-hard-delete-${r.id}`}
+                          >
+                            <AlertOctagon size={13} />
+                          </button>
+                        </>
                       )}
                     </td>
                   ) : null}
@@ -726,6 +825,85 @@ export default function AutobillingRuns() {
                   : deleteTargetId
                     ? "Confirm"
                     : `Confirm (${selectedCount})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase P41 · Feb-2026 — HARD DELETE confirmation modal.
+          Mandatory confirm: physical delete cannot be undone.
+          Distinct testids from the soft-delete modal so the two
+          flows never cross wires in tests. */}
+      {confirmHardDeleteOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeHardDeleteConfirm();
+          }}
+          data-testid="autobilling-runs-hard-delete-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ background: "#fff", border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-2"
+                style={{ color: "#7F1D1D" }}
+                data-testid="autobilling-runs-hard-delete-confirm-title">
+              {hardDeleteTargetId
+                ? "Permanently delete this billing run?"
+                : `Permanently delete ${selectedCount} billing run${
+                    selectedCount === 1 ? "" : "s"}?`}
+            </h2>
+            <p className="text-sm mb-4"
+               style={{ color: colors.onSurface }}
+               data-testid="autobilling-runs-hard-delete-confirm-body">
+              {hardDeleteTargetId
+                ? (
+                  <>
+                    This will permanently remove billing run{" "}
+                    <span className="font-mono font-bold">
+                      {String(hardDeleteTargetId).slice(0, 8)}
+                    </span>{" "}
+                    from your account. This action cannot be undone.
+                  </>
+                ) : (
+                  <>
+                    This will permanently remove {selectedCount} billing
+                    run{selectedCount === 1 ? "" : "s"}. This action cannot
+                    be undone.
+                  </>
+                )}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeHardDeleteConfirm}
+                disabled={hardDeleteBusy}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface,
+                          opacity: hardDeleteBusy ? 0.5 : 1 }}
+                data-testid="autobilling-runs-hard-delete-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doHardDelete}
+                disabled={hardDeleteBusy}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#7F1D1D" }}
+                data-testid="autobilling-runs-hard-delete-confirm-btn"
+              >
+                {hardDeleteBusy
+                  ? "Deleting…"
+                  : hardDeleteTargetId
+                    ? "Delete Permanently"
+                    : `Delete Permanently (${selectedCount})`}
               </button>
             </div>
           </div>
