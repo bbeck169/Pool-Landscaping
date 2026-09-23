@@ -20418,3 +20418,153 @@ After adding the URL signing secret + restarting the backend:
 * **Route Mojio + Geotab pings through the P34 `gps_settings.enabled` gate** — currently telematics pings persist regardless of the tenant's `gps_settings.enabled` flag.  The current behavior is intentional (telematics is a separate signal source, not a per-tech gps opt-in) but may want a tenant-level toggle in a follow-up.
 * **`gps_settings.enabled` per-vehicle** — surface a "pause telematics for vehicle X" toggle in the mgmt UI (Change 2 raised the mgmt table to first-class; this would extend it).
 
+
+
+---
+
+## P38 · Feb-2026 · EXECUTED (no-op marker stamp)
+
+**Status:** EXECUTED against the connected DB (preview: `Pool_&_Landscaping_of_Vistancia`). Zero rows mutated. Marker stamped.
+
+### First-pass `--execute`
+```
+INFO:pool_crm:[p38] done — scanned=0 backfilled=0 utc_fallback=0 duration_s=0.005 dry_run=False tenant=*
+{
+  "scanned": 0,
+  "backfilled": 0,
+  "backfilled_utc_fallback": 0,
+  "duration_s": 0.005,
+  "dry_run": false,
+  "skipped_by_marker": false,
+  "executed_at": "2026-09-23T04:14:17.477678+00:00",
+  "tenant_filter": null,
+  "limit": null
+}
+```
+
+### Marker doc verification (`db.migrations_applied`)
+```
+{
+  "name": "p38_backfill_scheduled_date",
+  "applied_at": "2026-09-23T04:14:17.477688+00:00",
+  "summary": {
+    "scanned": 0,
+    "backfilled": 0,
+    "backfilled_utc_fallback": 0,
+    "tenant_filter": null,
+    "limit": null
+  }
+}
+```
+
+### Second-pass `--execute` (marker gate short-circuit)
+```
+INFO:pool_crm:[p38] marker present in migrations_applied — skipping execute pass (pass --force or --tenant to override)
+{
+  "scanned": 0,
+  "backfilled": 0,
+  "backfilled_utc_fallback": 0,
+  "duration_s": 0.003,
+  "dry_run": false,
+  "skipped_by_marker": true,
+  "executed_at": null,
+  "tenant_filter": null,
+  "limit": null
+}
+```
+
+Loop closed. `STARTUP_EXECUTE_MODE` still ships as `False` in code — the boot log will continue to surface the dry-run scan count on every restart, but the marker doc prevents any accidental mutation even when the flag flips to `True` in a future PR.
+
+---
+
+## P38.1 · Feb-2026 · Reverse Backfill — SHIPPED, EXECUTE HELD
+
+**Status:** Code + 7 tests SHIPPED and green.  Startup wire in `_run_boot_sequence` behind `STARTUP_EXECUTE_MODE = False`.  Dry-run against the connected DB surfaced a **schema-shape surprise** — halted before `--execute` per operator directive.
+
+### Files landed
+
+| File | Change |
+| --- | --- |
+| `backend/migrations/p38_1_reverse_backfill_scheduled_start.py` | NEW · same shape as P38 · hybrid idempotency (query narrowness + `migrations_applied` marker) · env-configurable default time (`P38_1_DEFAULT_START_TIME`, `HH:MM`, default `08:00`) |
+| `backend/tests/test_p38_1_reverse_backfill.py` | NEW · 7 tests (dry-run / execute-populates-default-time / preserve-existing / marker-idempotent / tenant-filter-bypass / utc-fallback / custom-time-env) |
+| `backend/server.py` | `_p38_1_factory` wired into `_run_boot_sequence` immediately after P38 |
+| `backend/tests/_f7_loop_fixture.py` | added `migrations.p38_1_reverse_backfill_scheduled_start` to `_REBOUND_MODULES` |
+
+Test tail:
+```
+$ python -m pytest tests/test_p38_1_reverse_backfill.py -v --tb=short
+======================== 7 passed, 22 warnings in 7.01s ========================
+```
+
+### Dry-run result (connected DB)
+
+```
+INFO:pool_crm:[p38.1] done — scanned=41 backfilled=0 utc_fallback=0 duration_s=0.006 dry_run=True tenant=* default_time=08:00
+{
+  "scanned": 41,
+  "backfilled": 0,
+  "backfilled_utc_fallback": 0,
+  "duration_s": 0.006,
+  "dry_run": true,
+  "skipped_by_marker": false,
+  "executed_at": null,
+  "tenant_filter": null,
+  "limit": null,
+  "default_time": "08:00"
+}
+```
+
+### Surprise findings — investigation
+
+1. **The earlier "~2,374 inverse rows" figure was WRONG.** Root cause was bash `$` escaping in my inline `-c 'import ... count_documents({...})'` recap query — the `$or` operator got mangled by the shell.  A clean Python re-count via Motor shows only **41** rows actually match the P38.1 target predicate.
+2. **All 41 scanned rows carry `scheduled_date` in the WRONG shape.** They're full ISO datetime strings, not `YYYY-MM-DD` calendar dates. Samples:
+   ```
+   scheduled_date = "2026-08-19T15:49:30.199741+00:00"
+   scheduled_date = "2026-08-19T09:00:00+00:00"
+   scheduled_date = "2026-08-20T09:00:00+00:00"
+   scheduled_date = "2026-08-21T09:00:00+00:00"
+   scheduled_date = "2026-08-22T09:00:00+00:00"
+   ```
+3. **All 41 are ISO-datetime parseable** (100% of them) — no fully malformed strings.
+4. **Concentration:** 40 rows come from a single tenant (`affdfbfa-88b9-4baa-ae45-2ef78531b6e4`), 1 row from `a1-tid-46b2290a-e3c2-4100-9af7-1c78654c025f`.  Strongly suggests a single legacy writer (import job, recurring-job scheduler, or migration) is dropping ISO datetimes into the `scheduled_date` string column for that tenant.
+
+### Migration behavior — safety guardrail worked
+
+`_derive_scheduled_start` tried to parse `"2026-08-19T15:49:30.199741+00:00"` as a `YYYY-MM-DD` via `int("2026-08-19T15")` and correctly returned `(None, False)`, resulting in `backfilled=0` even at `--execute`.  So a hypothetical `--execute` here would be a no-op — but it would also **stamp the marker**, which would then prevent a future correctly-shaped P38.1 execute from firing without `--force`.  For that reason, execute was HELD.
+
+### Recommended path forward (operator decision)
+
+Option A — **Update P38.1 to handle both shapes** (recommended):
+* Extend `_derive_scheduled_start` to accept both `YYYY-MM-DD` and full ISO datetime formats.  When the input is a full ISO datetime, use it directly as `scheduled_start` (and optionally re-write `scheduled_date` to just the calendar-day portion in the tenant's tz).  Ship in a P38.1a follow-up.
+* This is the most useful outcome — the 41 rows carry a REAL scheduled time, we just need to move it into the right column.
+
+Option B — **Leave the 41 rows alone.**
+* Ship P38.1 as-is (safety guardrail catches them, `backfilled=0`), `--execute` becomes a no-op stamp.
+* Data-quality issue for the affected tenant remains, but P38.1's marker-stamp is closed.
+
+Option C — **Investigate the writer path for the affected tenant first.**
+* Grep for code that writes `scheduled_date=` with a datetime instead of a date string.  Likely candidates: `recurring_jobs.py`, `route_optimization.py`, an import route, or a legacy CLI writer.
+* Fix the source, THEN P38.1 the 41 stragglers.
+
+**No `--execute` was invoked on P38.1.  Marker doc absent in `migrations_applied`.** Awaiting operator direction.
+
+### Health + supervisor snapshot (Feb-2026)
+
+```
+GET /api/health → HTTP 200
+init.structural_migrations:
+  p23_restore_ethan_steven_technicians:      done
+  p29_clear_landscape_required_overrides:     done
+  p36_clear_nonpool_required_overrides:       done
+  p30_add_card_sms_template:                  done
+  p30_customers_stripe_customer_id_unique:    done
+  p38_backfill_scheduled_date:                done
+  p38_1_reverse_backfill_scheduled_start:     done
+  perf_customers_v1:                          done
+supervisorctl:
+  backend  RUNNING  pid 7376
+  frontend RUNNING  pid 113
+```
+
+Every migration reports `done` (including P38.1 which just ran in dry-run mode as part of the boot pass).
+

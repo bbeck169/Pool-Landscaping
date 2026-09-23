@@ -111,6 +111,7 @@ _REBOUND_MODULES = (
     "migrations.p30_customers_stripe_customer_id_unique",
     "migrations.p36_clear_nonpool_required_overrides",
     "migrations.p38_backfill_scheduled_date",
+    "migrations.p38_1_reverse_backfill_scheduled_start",
     "routers.telematics_webhooks",
     "services.telematics",
     "services.telematics.registry",

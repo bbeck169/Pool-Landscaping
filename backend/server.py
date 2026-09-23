@@ -3249,6 +3249,35 @@ async def _run_boot_sequence():
         _p38_factory,
         must_succeed=False,
     )
+    # Phase P38.1 · Feb-2026 — reverse backfill (scheduled_start
+    # from scheduled_date at a default time-of-day in the tenant's
+    # local timezone).  Same startup-wiring pattern as P38 — ships
+    # in ``execute=False`` mode so the boot log surfaces the count
+    # without mutating prod on the first deploy after this PR.
+    async def _p38_1_factory():
+        from migrations.p38_1_reverse_backfill_scheduled_start import (
+            run as _p38_1_run,
+            STARTUP_EXECUTE_MODE as _p38_1_execute,
+        )
+        _res = await _p38_1_run(execute=bool(_p38_1_execute))
+        logger.info(
+            "[p38.1-reverse-scheduled-start] boot pass — "
+            "scanned=%s backfilled=%s utc_fallback=%s "
+            "dry_run=%s skipped_by_marker=%s default_time=%s",
+            _res.get("scanned"),
+            _res.get("backfilled"),
+            _res.get("backfilled_utc_fallback"),
+            _res.get("dry_run"),
+            _res.get("skipped_by_marker"),
+            _res.get("default_time"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "p38_1_reverse_backfill_scheduled_start",
+        _p38_1_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py
