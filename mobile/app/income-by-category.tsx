@@ -46,10 +46,10 @@ export default function IncomeByCategory() {
             const pct = data.total ? (r.amount / data.total) * 100 : 0;
             const color = BAR_COLORS[i % BAR_COLORS.length];
             return (
-              <View key={r.category} style={styles.row} testID={`income-cat-${r.category}`}>
+              <View key={r.category_id || r.category} style={styles.row} testID={`income-cat-${r.category_id || r.category}`}>
                 <View style={styles.rowHead}>
-                  <Text style={styles.rowCat}>{r.category}</Text>
-                  <Text style={styles.rowAmt}>{money(r.amount)}</Text>
+                  <Text style={styles.rowCat} numberOfLines={1} ellipsizeMode="tail">{r.label || r.category}</Text>
+                  <Text style={styles.rowAmt} numberOfLines={1}>{money(r.amount)}</Text>
                 </View>
                 <View style={styles.track}>
                   <View style={[styles.fill, { width: `${Math.max(3, pct)}%`, backgroundColor: color }]} />
@@ -71,8 +71,8 @@ const styles = StyleSheet.create({
   totalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   row: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
   rowHead: { flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.sm },
-  rowCat: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
-  rowAmt: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  rowCat: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginRight: spacing.sm },
+  rowAmt: { flexShrink: 0, fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
   track: { height: 10, borderRadius: 5, backgroundColor: colors.surfaceSecondary, overflow: "hidden" },
   fill: { height: 10, borderRadius: 5 },
   rowPct: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 4 },

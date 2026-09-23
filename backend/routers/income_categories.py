@@ -194,7 +194,14 @@ async def validate_line_item_k71_categories(
     tenant_id: str, line_items: List[Dict[str, Any]],
 ) -> None:
     """K71 gate — enforces service+income category pairs on NEW/edited
-    line items. Legacy items (missing both K71 fields) pass silently."""
+    line items. Legacy items (missing both K71 fields) pass silently.
+
+    Feb-2026 · Phase P40 — error payloads now carry ``available_categories``
+    + ``invalid_value`` + a ``code`` alias so callers (K71 editor +
+    LineItemsSection retry flow + Income-by-Category upstream cure)
+    can render the archived-category picker chip without a second
+    round-trip to fetch the active list.
+    """
     from routers.service_categories import ensure_defaults_for_tenant \
         as _ensure_svc_defaults
     await ensure_defaults_for_tenant(tenant_id)
@@ -206,6 +213,7 @@ async def validate_line_item_k71_categories(
     ).to_list(500)
     inc_ids = {c["id"] for c in inc_cats}
     inc_names = {(c.get("name") or "").strip().lower() for c in inc_cats}
+    inc_available = [c["name"] for c in inc_cats]
 
     svc_cats = await db.service_categories.find(
         {"tenant_id": tenant_id, "is_archived": False},
@@ -213,6 +221,7 @@ async def validate_line_item_k71_categories(
     ).to_list(500)
     svc_ids = {c["id"] for c in svc_cats}
     svc_names = {(c.get("name") or "").strip().lower() for c in svc_cats}
+    svc_available = [c["name"] for c in svc_cats]
 
     for idx, li in enumerate(line_items or []):
         # Phase K71 · Feb-2026 — K71-touched detection is str-typed
@@ -243,10 +252,13 @@ async def validate_line_item_k71_categories(
                 detail={
                     "error": "service_category_required",
                     "error_code": "k71_service_category_required",
+                    "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].service_category_id",
                     "line_index": idx,
                     "message": ("Service category is required for this "
                                  "line item. Set it in the inline editor."),
+                    "invalid_value": "",
+                    "available_categories": svc_available,
                 },
             )
         if svc_val not in svc_ids and svc_val.lower() not in svc_names:
@@ -255,9 +267,16 @@ async def validate_line_item_k71_categories(
                 detail={
                     "error": "service_category_invalid",
                     "error_code": "k71_service_category_invalid",
+                    "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].service_category_id",
                     "line_index": idx,
                     "attempted": svc_val,
+                    "invalid_value": svc_val,
+                    "message": (
+                        f"Line item {idx} references an inactive or "
+                        f"unknown service category: {svc_val!r}."
+                    ),
+                    "available_categories": svc_available,
                 },
             )
 
@@ -267,10 +286,13 @@ async def validate_line_item_k71_categories(
                 detail={
                     "error": "income_category_required",
                     "error_code": "k71_income_category_required",
+                    "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].income_category_id",
                     "line_index": idx,
                     "message": ("Income category is required for this "
                                  "line item. Set it in the inline editor."),
+                    "invalid_value": "",
+                    "available_categories": inc_available,
                 },
             )
         if inc_val not in inc_ids and inc_val.lower() not in inc_names:
@@ -279,9 +301,16 @@ async def validate_line_item_k71_categories(
                 detail={
                     "error": "income_category_invalid",
                     "error_code": "k71_income_category_invalid",
+                    "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].income_category_id",
                     "line_index": idx,
                     "attempted": inc_val,
+                    "invalid_value": inc_val,
+                    "message": (
+                        f"Line item {idx} references an inactive or "
+                        f"unknown income category: {inc_val!r}."
+                    ),
+                    "available_categories": inc_available,
                 },
             )
 

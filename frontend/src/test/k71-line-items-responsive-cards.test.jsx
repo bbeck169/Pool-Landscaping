@@ -47,9 +47,16 @@ vi.mock("@/theme", () => ({
 
 // CategoryPicker is only mounted inside the edit form; a light
 // stub is enough for this test file — every case here starts in
-// read mode.
+// read mode. K71LineItemsEditor also imports the ``loadCategories``
+// helper from this module (Phase P40 — active-category id fetch),
+// so the mock must export it too. Returning empty arrays exercises
+// the P40 guard's "no active ids known" path, which correctly
+// classifies every prefilled row as legacy/valid and never trips
+// the stale-category banner — matching this suite's expectations.
 vi.mock("@/components/income/CategoryPicker", () => ({
   default: () => null,
+  loadCategories: async () => [],
+  invalidateCategoryCache: () => {},
 }));
 
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";

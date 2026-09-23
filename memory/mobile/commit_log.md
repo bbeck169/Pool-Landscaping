@@ -2525,3 +2525,19 @@
   - `src/services/SyncManager.tsx`
   - `src/hooks/useRouteHydration.ts`
   - `app/(app)/settings/offline-diagnostics.tsx`
+
+
+## Iteration — Income by Category UUID Label Fix
+- **Commit**: c043b131a133555794c182e82c2d3b06ab7e1125
+- **Date**: 2026-09-23
+- **Changes**:
+  - Fixed Income by Category screen displaying raw UUIDs instead of human-readable labels
+  - Changed render from `r.category` to `r.label || r.category` (fallback-safe)
+  - Added `numberOfLines={1}` + `ellipsizeMode="tail"` to the category label Text
+  - Added `numberOfLines={1}` to the amount Text to prevent wrapping
+  - Added `flex: 1` to `rowCat` style so long labels truncate with ellipsis
+  - Added `flexShrink: 0` + `marginRight` to `rowAmt` style so dollar amounts never compress
+  - Updated React `key` to use `r.category_id || r.category` (stable key)
+- **Files modified**: `app/income-by-category.tsx`
+- **Web files referenced**: N/A (backend contract change only)
+- **Verified**: Screenshot confirms labels show "Service Revenue (Demo)" and "Pool" (not UUIDs), amounts right-aligned on one line. Lint clean.

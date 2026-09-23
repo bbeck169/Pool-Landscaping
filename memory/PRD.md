@@ -20749,3 +20749,59 @@ supervisorctl:
 * No supervisor restart.  Backend hot-reloaded picked up the parser upgrade automatically.
 * No `--normalize-scheduled-date` used on this execute run (safer, non-destructive as requested).
 
+
+---
+
+## Phase P40 · Line-Item Category Validation Guard (upstream cure)
+
+**Status:** ✅ Shipped Feb-2026 · preview verified · 2 files touched + 2 new test files.
+
+### Motivation
+"Income by Category" mobile screen rendered raw UUIDs for 2 of 3 rows. Prior phase added a read-side label resolver ladder (`compute_income_by_category` in `backend/routers/finances.py`) as a safety net. P40 is the **upstream cure**: prevent bad `line_items[].service_category_id` / `income_category_id` values from being written or held silently in the first place, on both the K71 write path and the K71 editor UI.
+
+### Backend — `validate_line_item_k71_categories` payload enrichment
+- File: `backend/routers/income_categories.py` (existing helper at `:193`).
+- Every 400 branch (`_required` × 2, `_invalid` × 2) now emits:
+  - `code: "invalid_line_item_category"` — stable P40 client-switch key alongside legacy `error_code`.
+  - `invalid_value` — the offending id/string (alias for `attempted`).
+  - `available_categories` — list of ACTIVE tenant category names for the offending taxonomy (`income_categories` OR `service_categories`), tenant-scoped, archived rows excluded. Enables the FE to render the picker chip without a second round-trip.
+- Backward-compat preserved: `error_code`, `attempted`, `field`, `line_index`, `message` all still present.
+
+### Frontend — `K71LineItemsEditor` stale-reference guard
+- File: `frontend/src/components/quotes/K71LineItemsEditor.jsx`.
+- Loads active income + service ids on mount via the shared `loadCategories("income"|"service")` cache from `CategoryPicker` (no new backend endpoint — grep confirmed `/api/income-categories` and `/api/service-categories` already return `{items: [{id, name, is_archived}]}`).
+- Computes a `staleIndices` set: any K71-touched row whose `service_category_id` or `income_category_id` doesn't resolve to an ACTIVE id.
+- ReadRow + MobileCard receive a `stale` prop → renders `aria-invalid="true"`, red border, "Inactive category" badge, and inline error copy "This category is no longer active. Pick from the list."
+- Added a new `k71-stale-category-banner` (top) and a form-level `k71-form-invalid-message` (bottom, `role="alert"`).
+- Fail-open policy: if either active list resolves to empty (genuine emptiness OR `loadCategories` swallowed a fetch failure into `[]`), the guard stays disabled; the backend validator remains the durable safety net.
+
+### Tests
+- `backend/tests/test_p40_line_item_category_validation.py` — 7 tests, all pass:
+  1. Valid categories → no raise.
+  2. UUID-shaped unresolvable → 400 with `code`, `invalid_value`, `available_categories`.
+  3. Archived category → 400 rejected + archived name absent from `available_categories`.
+  4. Contract shape assertion (`code`, `field`, `invalid_value`, `available_categories`, `message`, `line_index`).
+  5. Multiple invalids → 400 reports FIRST invalid with `available_categories`.
+  6. Legacy line (no K71 fields) → passes (backward compat).
+  7. Tenant scoping — tenant B's category NEVER appears in tenant A's `available_categories`.
+- `frontend/src/test/k71-line-items-category-guard.test.jsx` — 5 tests, all pass:
+  1. Prefilled row with unresolvable id → `aria-invalid="true"` + stale banner + form message.
+  2. Prefilled row with valid id → no highlight, no form message.
+  3. Fetch error → fail-open (empty active list means no form-level block).
+  4. Form-level alert renders when any row is flagged; only the stale row carries `aria-invalid`.
+  5. Missing-empty gap + stale-id row → BOTH banners render + form message counts both.
+
+Additional collateral fix: `frontend/src/test/k71-line-items-responsive-cards.test.jsx` mock now exports `loadCategories` + `invalidateCategoryCache` (K71 editor imports these at module scope after P40). All 5 responsive-card tests still pass.
+
+### Hard-rules compliance
+- No mobile files touched. Mobile fix from prior dispatch stands.
+- No `backend/.env` modifications.
+- No migrations run.
+- Tenant-scoped `tenant_id` filter preserved on every categories `.find()` in `validate_line_item_k71_categories`.
+- K71 editor `_uid` stable-key pattern untouched — all 8 stable-id-keys regression tests pass.
+- Web `revenue_by_category` reader ladder + `compute_income_by_category` safety net untouched.
+
+### Ticket-worthy follow-ups (deferred)
+- Writers still don't hydrate `line_items[].income_category_id` at invoice-write time (`billing_plans/run`, `chem_line_items`, `dispatch.py`). Reader ladder + P40 validator are the safety nets; hydrator is P41+ backlog.
+- Pydantic V2 `Field(pattern=UUID_RE)` on `LineItem.income_category_id` / `service_category_id` would move the guard from the router helper to the model layer.
+- One pre-existing test failure identified: `frontend/src/test/invoice-save-errors-inline.test.jsx` — "The given element does not have a value setter" on `qf-line-0-desc`. Unrelated to P40 (confirmed via `git stash` bisect); the test's selectors are stale against the current QuoteInvoiceNew markup. Not in scope for P40.

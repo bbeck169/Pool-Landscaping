@@ -31,10 +31,12 @@
  *     income_category_id present) show a subtle "Uncategorized" badge.
  *   - PDF/portal never render this component (staff-only surface).
  */
-import React, { useEffect, useRef, useState } from "react";
-import { Pencil, X, Check, Plus, Trash2, Undo2 } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Pencil, X, Check, Plus, Trash2, Undo2, AlertCircle } from "lucide-react";
 import { colors, money } from "@/theme";
-import CategoryPicker from "@/components/income/CategoryPicker";
+import CategoryPicker, {
+  loadCategories as _loadCatsByKind,
+} from "@/components/income/CategoryPicker";
 // Phase P16.1 · Feb-2026 — Master Service combobox drop-in on the
 // per-line "Item" field so an admin / manager can pick from the
 // pricebook (auto-fills unit price + service category) or free-type
@@ -43,7 +45,6 @@ import CategoryPicker from "@/components/income/CategoryPicker";
 // ``service_category_id`` for auto-fill purposes.
 import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import { loadCategories as _loadServiceCats } from "@/components/income/CategoryPicker";
-
 const MAX_LONG_DESC = 500;
 const UNDO_WINDOW_MS = 5000;
 
@@ -492,17 +493,24 @@ function EditableRow({ line, index, onSave, onCancel }) {
   );
 }
 
-function ReadRow({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
+function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete }) {
   const q = Number(line.quantity || 0);
   const u = Number(line.unit_price || 0);
   const legacy = isLegacyLine(line);
   return (
     <tr
       style={{ borderBottom: `1px solid ${colors.divider}`,
-                backgroundColor: line.is_late_fee ? "#FFF7ED" : undefined }}
+                backgroundColor: line.is_late_fee
+                  ? "#FFF7ED"
+                  : stale ? "#FEF2F2" : undefined }}
       data-testid={`k71-row-${index}`}
+      aria-invalid={stale ? "true" : undefined}
+      data-stale={stale ? "true" : undefined}
     >
-      <td className="px-2 py-2" style={{ color: colors.onSurface }}>
+      <td className="px-2 py-2" style={{ color: colors.onSurface,
+                                          borderLeft: stale
+                                            ? "3px solid #DC2626"
+                                            : undefined }}>
         <div className="flex items-center gap-2">
           <span className="font-semibold">{line.description}</span>
           {line.is_late_fee ? (
@@ -515,12 +523,28 @@ function ReadRow({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
             </span>
           ) : null}
           {legacy ? <LegacyBadge /> : null}
+          {stale ? (
+            <span
+              className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide flex items-center gap-1"
+              style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}
+              data-testid={`k71-stale-badge-${index}`}
+            >
+              <AlertCircle size={10} /> Inactive category
+            </span>
+          ) : null}
         </div>
         {line.long_description ? (
           <div className="text-xs mt-0.5"
                 style={{ color: colors.muted }}
                 data-testid={`k71-longdesc-${index}`}>
             {line.long_description}
+          </div>
+        ) : null}
+        {stale ? (
+          <div className="text-[11px] mt-1"
+                style={{ color: "#DC2626" }}
+                data-testid={`k71-stale-error-${index}`}>
+            This category is no longer active. Pick from the list.
           </div>
         ) : null}
       </td>
@@ -563,7 +587,7 @@ function ReadRow({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
   );
 }
 
-function MobileCard({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) {
+function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete }) {
   const q = Number(line.quantity || 0);
   const u = Number(line.unit_price || 0);
   const legacy = isLegacyLine(line);
@@ -571,10 +595,14 @@ function MobileCard({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) 
     <li
       className="rounded-xl border p-3 flex flex-col gap-2"
       style={{
-        borderColor: colors.divider,
-        background: line.is_late_fee ? "#FFF7ED" : colors.surface,
+        borderColor: stale ? "#DC2626" : colors.divider,
+        background: line.is_late_fee
+          ? "#FFF7ED"
+          : stale ? "#FEF2F2" : colors.surface,
       }}
       data-testid={`k71-card-${index}`}
+      aria-invalid={stale ? "true" : undefined}
+      data-stale={stale ? "true" : undefined}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -593,12 +621,28 @@ function MobileCard({ line, index, canEdit, deleteDisabled, onEdit, onDelete }) 
               </span>
             ) : null}
             {legacy ? <LegacyBadge testid={`k71-uncategorized-badge-mobile-${index}`} /> : null}
+            {stale ? (
+              <span
+                className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide flex items-center gap-1"
+                style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}
+                data-testid={`k71-stale-badge-mobile-${index}`}
+              >
+                <AlertCircle size={10} /> Inactive
+              </span>
+            ) : null}
           </div>
           {line.long_description ? (
             <div className="text-xs mt-1"
                  style={{ color: colors.muted }}
                  data-testid={`k71-longdesc-mobile-${index}`}>
               {line.long_description}
+            </div>
+          ) : null}
+          {stale ? (
+            <div className="text-[11px] mt-1"
+                  style={{ color: "#DC2626" }}
+                  data-testid={`k71-stale-error-mobile-${index}`}>
+              This category is no longer active. Pick from the list.
             </div>
           ) : null}
         </div>
@@ -689,6 +733,41 @@ export default function K71LineItemsEditor({
   // Single-slot pending delete with 5s undo window.
   //   { line, originalIndex, timeoutId }
   const [pendingDelete, setPendingDelete] = useState(null);
+
+  // Phase P40 · Feb-2026 — active-category id sets for stale-
+  // reference detection on prefilled rows. Fail-open policy: if
+  // either taxonomy resolves to an EMPTY list (genuinely empty
+  // OR the underlying fetch failed — ``loadCategories`` swallows
+  // errors into ``[]``), the guard stays disabled and the backend
+  // validator remains the durable safety net. In practice each
+  // tenant boot-seeds default categories, so a truly-empty list
+  // means the fetch failed.
+  const [activeIds, setActiveIds] = useState({
+    income: null, service: null,  // null = still loading; Set = ready
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      _loadCatsByKind("income"),
+      _loadCatsByKind("service"),
+    ]).then(([inc, svc]) => {
+      if (cancelled) return;
+      setActiveIds({
+        income: new Set(
+          (inc || [])
+            .filter((c) => !c.is_archived)
+            .map((c) => c.id),
+        ),
+        service: new Set(
+          (svc || [])
+            .filter((c) => !c.is_archived)
+            .map((c) => c.id),
+        ),
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Ref so the delayed onLinesUpdated call captures the LATEST
   // localItems (in case the user adds another line during the window).
@@ -827,6 +906,44 @@ export default function K71LineItemsEditor({
     })
     .filter((v) => v !== null);
 
+  // Phase P40 · Feb-2026 — upstream cure for "UUIDs in Income by
+  // Category". A K71 line whose service_category_id or
+  // income_category_id no longer maps to an ACTIVE tenant category
+  // (archived, deleted, stale from a legacy write) is flagged the
+  // same way as the empty-string gap: red border on the read row,
+  // aria-invalid, inline error, and a form-level banner.
+  //
+  // Guard: only trust activeIds when BOTH sets have loaded AND
+  // BOTH are non-empty. An empty list (real or fetch-failure via
+  // ``loadCategories`` swallow-catch) means we can't tell active
+  // from stale — fail-open, backend validator handles it on save.
+  const activeIdsReady = activeIds.income instanceof Set
+    && activeIds.service instanceof Set
+    && activeIds.income.size > 0
+    && activeIds.service.size > 0;
+  const staleIndices = useMemo(() => {
+    if (!activeIdsReady) return new Set();
+    const out = new Set();
+    items.forEach((li, i) => {
+      const svcVal = typeof li.service_category_id === "string"
+        ? li.service_category_id.trim() : "";
+      const incVal = typeof li.income_category_id === "string"
+        ? li.income_category_id.trim() : "";
+      // Skip legacy grandfathered rows (neither field present).
+      if (!svcVal && !incVal) return;
+      // Skip rows already caught by the empty-string gap detector —
+      // they render the same banner slot.
+      if (!svcVal || !incVal) return;
+      if (!activeIds.service.has(svcVal)) { out.add(i); return; }
+      if (!activeIds.income.has(incVal)) { out.add(i); return; }
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, activeIdsReady, activeIds.income, activeIds.service]);
+
+  const invalidCount = gaps.length + staleIndices.size;
+  const hasInvalidRows = invalidCount > 0;
+
   return (
     <div>
       {gaps.length && canEdit ? (
@@ -843,6 +960,23 @@ export default function K71LineItemsEditor({
               : `${gaps.length} line items are missing a Service or Income category.`}{" "}
             You must set them before sending, approving or converting.
           </span>
+        </div>
+      ) : null}
+      {staleIndices.size > 0 && canEdit ? (
+        <div
+          className="rounded-xl p-3 mb-3 text-sm flex items-start gap-2"
+          style={{ background: "#FEE2E2", color: "#7F1D1D",
+                    border: "1px solid #FCA5A5" }}
+          data-testid="k71-stale-category-banner"
+        >
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <span className="font-semibold">Inactive categories:</span>{" "}
+            {staleIndices.size === 1
+              ? "1 line item references a category that is no longer active."
+              : `${staleIndices.size} line items reference categories that are no longer active.`}{" "}
+            Pick a valid category from the list on each highlighted row.
+          </div>
         </div>
       ) : null}
       <table
@@ -882,6 +1016,7 @@ export default function K71LineItemsEditor({
                 index={i}
                 canEdit={canEdit && editIndex === null}
                 deleteDisabled={pendingDelete !== null}
+                stale={staleIndices.has(i)}
                 onEdit={setEditIndex}
                 onDelete={handleDelete}
               />
@@ -909,6 +1044,7 @@ export default function K71LineItemsEditor({
               index={i}
               canEdit={canEdit}
               deleteDisabled={pendingDelete !== null}
+              stale={staleIndices.has(i)}
               onEdit={setEditIndex}
               onDelete={handleDelete}
             />
@@ -939,6 +1075,30 @@ export default function K71LineItemsEditor({
 
       {pendingDelete ? (
         <UndoToast onUndo={handleUndo} testid="k71-undo-toast" />
+      ) : null}
+
+      {/* Phase P40 · Feb-2026 — form-level guard message. Rendered
+          whenever ANY row is flagged (missing OR stale category).
+          This is the "one or more line items has an inactive
+          category — fix highlighted rows to save" copy the caller
+          spec asks for. Doc-level Save buttons (send/approve/
+          convert) already gate on ``check_line_items_k71_gaps``
+          server-side; this banner exists so the operator sees the
+          problem BEFORE clicking Send / Approve. */}
+      {hasInvalidRows && canEdit ? (
+        <div
+          className="rounded-xl p-3 mt-3 text-sm flex items-start gap-2"
+          role="alert"
+          style={{ background: "#FEE2E2", color: "#7F1D1D",
+                    border: "1px solid #FCA5A5" }}
+          data-testid="k71-form-invalid-message"
+        >
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <span>
+            One or more line items has an inactive or missing category.
+            Fix highlighted rows to save.
+          </span>
+        </div>
       ) : null}
     </div>
   );
