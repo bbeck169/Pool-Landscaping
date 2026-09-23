@@ -1,0 +1,61 @@
+{
+  "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4",
+  "taken_at": "2026-09-23T06:31:31.123080+00:00",
+  "db_name": "Pool_&_Landscaping_of_Vistancia",
+  "queries": {
+    "users": {
+      "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4"
+    },
+    "technicians": {
+      "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4"
+    },
+    "jobs": {
+      "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4"
+    },
+    "invitations": {
+      "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4"
+    }
+  },
+  "schema_notes": {
+    "tenant_scoping_field": "tenant_id",
+    "field_alternatives_checked": [
+      "tenantId",
+      "org_id",
+      "organization_id",
+      "workspace_id",
+      "account_id"
+    ],
+    "field_alternatives_hits": 0,
+    "invitations_collection_exists": false
+  },
+  "collections": {
+    "users": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_063131_phase0_1/users.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "collection_exists": true
+    },
+    "technicians": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_063131_phase0_1/technicians.json",
+      "count": 2,
+      "bytes": 807,
+      "sha256": "ca0c755602b96a6508eecdef5514304f53397c94e59cb8a943d28f29528892d2",
+      "collection_exists": true
+    },
+    "jobs": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_063131_phase0_1/jobs.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "collection_exists": true
+    },
+    "invitations": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_063131_phase0_1/invitations.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "collection_exists": false
+    }
+  }
+}
