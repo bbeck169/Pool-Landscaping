@@ -118,17 +118,21 @@ describe("Portal Sign-out header button", () => {
     expect(iBell).toBeLessThan(iMenu);
   });
 
-  it("uses fixed floating position that clears the bell at right-14 (right-[6.5rem])", () => {
+  it("Phase P38 · Feb-2026 — sign-out button no longer carries its own `fixed top-*/right-*` classes (wrapper positions the cluster)", () => {
     renderMenu({ variant: "floating" });
     const btn = screen.getByTestId("portal-signout");
-    // Right anchor is right-[6.5rem] = 104 px → sits to the LEFT of
-    // the bell (which is at right-14 = 56 px anchor + w-10 = 40 px
-    // wide, so bell left-edge = 96 px, giving an 8 px gap).
-    expect(btn.className).toMatch(/fixed/);
-    expect(btn.className).toMatch(/top-3/);
-    expect(btn.className).toMatch(/right-\[6\.5rem\]/);
-    // Above the bell (z-40 shared with bell + hamburger).
-    expect(btn.className).toMatch(/z-40/);
+    const classes = btn.className.split(/\s+/);
+    // Wrapper handles fixed positioning now.  The pill itself is
+    // an inline-flex sibling.
+    expect(classes).not.toContain("fixed");
+    expect(classes).not.toContain("top-3");
+    expect(classes.some((c) => c.startsWith("right-"))).toBe(false);
+    expect(classes).not.toContain("z-40");
+    // The destructive-red visual identity + inline-flex layout MUST
+    // still be present — P38 is a positioning refactor, not a
+    // restyle.
+    expect(btn.className).toMatch(/inline-flex/);
+    expect(btn.className).toMatch(/bg-\[#DC2626\]/);
   });
 
   it("clicking Sign Out calls useAuth().logout AND navigates to /portal/login (replace)", async () => {

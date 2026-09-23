@@ -87,6 +87,23 @@ const PAYMENTS_PROVIDER_LABELS = {
                   desc: "Bring your own Lumino API key · sandbox or production." },
 };
 
+// Phase P39 · Feb-2026 — Telematics BYO provider display metadata.
+const TELEMATICS_PROVIDER_LABELS = {
+  telematics_mojio:  {
+    short: "mojio",
+    label: "Mojio",
+    desc: "Vehicle location pings via a signed HMAC-SHA256 webhook.",
+  },
+  telematics_geotab: {
+    short: "geotab",
+    label: "Geotab",
+    desc: (
+      "MyGeotab notification-template webhook + 60s DeviceStatusInfo "
+      + "polling adapter.  ``api_key`` doubles as MyGeotab sessionId."
+    ),
+  },
+};
+
 
 function StatusPill({ tone = "neutral", children, testid }) {
   const palette = {
@@ -1505,13 +1522,355 @@ function PaymentsCard({ schema, row, usage, health, canWrite, busy, setBusyFor, 
 /** ————————————————————————————————————————————————————————————
  *  Root component.
  *  ———————————————————————————————————————————————————————————— */
+/**
+ *  Phase P39 · Feb-2026 — Telematics BYO card (Mojio, Geotab).
+ *
+ *  Per-PROVIDER card: renders the provider label + description + a
+ *  read-only "Webhook URL" pill with copy-to-clipboard so the admin
+ *  can paste the signed URL into the provider dashboard.
+ *
+ *  The vehicle → technician mapping table + unmapped-vehicles list
+ *  are tenant-level concerns (not provider-level) — they render in
+ *  the sibling ``TelematicsVehicleMappingsCard`` component so their
+ *  testids stay unique regardless of how many telematics providers
+ *  are configured.
+ */
+function TelematicsCard({ schema }) {
+  const providerKey = schema.provider_key;
+  const meta = TELEMATICS_PROVIDER_LABELS[providerKey] || { short: providerKey, label: providerKey, desc: "" };
+  const [webhookUrl, setWebhookUrl] = React.useState(null);
+  const [webhookUrlError, setWebhookUrlError] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.get(
+          `/tenants/me/integrations/telematics/webhook-url?provider=${meta.short}`,
+        );
+        if (!cancelled) setWebhookUrl(r?.url || null);
+      } catch (e) {
+        if (!cancelled) setWebhookUrlError(e?.message || "unknown error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [meta.short]);
+
+  const copyWebhookUrl = React.useCallback(() => {
+    if (!webhookUrl) return;
+    try {
+      navigator.clipboard.writeText(webhookUrl);
+      toast.success("Webhook URL copied");
+    } catch {
+      toast.error("Clipboard unavailable");
+    }
+  }, [webhookUrl]);
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid={`tenant-integration-${providerKey}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>
+            {meta.label}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>
+            {meta.desc}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg p-2" style={{ border: `1px solid ${colors.border}` }}>
+        <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">
+          Webhook URL
+        </div>
+        {webhookUrl ? (
+          <div className="flex items-center gap-2">
+            <code
+              className="flex-1 text-[11px] break-all"
+              style={{ color: colors.onSurface }}
+              data-testid={`tenant-integration-${providerKey}-webhook-url`}
+            >
+              {webhookUrl}
+            </code>
+            <button
+              type="button"
+              onClick={copyWebhookUrl}
+              className="text-xs px-2 py-1 rounded border"
+              style={{ borderColor: colors.border }}
+              data-testid={`tenant-integration-${providerKey}-webhook-copy`}
+            >
+              Copy
+            </button>
+          </div>
+        ) : webhookUrlError ? (
+          <div className="text-xs" style={{ color: colors.destructive }}>
+            {webhookUrlError}
+          </div>
+        ) : (
+          <div className="text-xs italic" style={{ color: colors.onSurfaceSecondary }}>
+            Loading…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ *  Phase P39 · Feb-2026 — Tenant-level vehicle mappings card.
+ *
+ *  Renders ONCE per tenant (not per provider) so testids on the add
+ *  row + delete buttons stay unique.  Contains:
+ *    * Vehicle → technician mapping table (with per-row last_seen
+ *      + unmapped_pings_count, Change 2).
+ *    * Add row with backfill-on-map checkbox (default CHECKED,
+ *      Change 2).
+ *    * Unmapped-vehicles diagnostic list from the last 30 days.
+ */
+function TelematicsVehicleMappingsCard({
+  technicians, canWrite, busy, setBusyFor,
+  vehicleLinks, unmapped, reload,
+}) {
+  const [addVehicleId, setAddVehicleId] = React.useState("");
+  const [addTech, setAddTech] = React.useState("");
+  const [backfill, setBackfill] = React.useState(true);
+
+  const submitAdd = React.useCallback(async (evt) => {
+    if (evt && evt.preventDefault) evt.preventDefault();
+    if (!addVehicleId.trim() || !addTech) {
+      toast.error("Vehicle ID and technician are required");
+      return;
+    }
+    setBusyFor("telematics-add", true);
+    try {
+      const r = await api.post(
+        "/tenants/me/integrations/telematics/vehicle-links",
+        {
+          external_vehicle_id: addVehicleId.trim(),
+          technician_user_id: addTech,
+          backfill,
+        },
+      );
+      const n = (r && typeof r.backfilled === "number") ? r.backfilled : 0;
+      if (n > 0) {
+        toast.success(`Vehicle linked — backfilled ${n} historical pings`);
+      } else {
+        toast.success("Vehicle linked");
+      }
+      setAddVehicleId("");
+      setAddTech("");
+      setBackfill(true);
+      reload && reload();
+    } catch (e) {
+      toast.error(e?.message || "Failed to add link");
+    } finally {
+      setBusyFor("telematics-add", false);
+    }
+  }, [addVehicleId, addTech, backfill, setBusyFor, reload]);
+
+  const deleteLink = React.useCallback(async (linkId) => {
+    setBusyFor(`telematics-del-${linkId}`, true);
+    try {
+      await api.delete(`/tenants/me/integrations/telematics/vehicle-links/${linkId}`);
+      toast.success("Link removed");
+      reload && reload();
+    } catch (e) {
+      toast.error(e?.message || "Failed to remove link");
+    } finally {
+      setBusyFor(`telematics-del-${linkId}`, false);
+    }
+  }, [setBusyFor, reload]);
+
+  const prefillFromUnmapped = React.useCallback((vid) => {
+    setAddVehicleId(vid);
+  }, []);
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-3 md:col-span-2"
+      style={{ border: `1px solid ${colors.border}` }}
+      data-testid="tenant-integration-telematics-mappings"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm" style={{ color: colors.onSurface }}>
+            Vehicle → technician mapping
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: colors.onSurfaceSecondary }}>
+            Map each ``external_vehicle_id`` to a technician so pings
+            attribute to the right person.  Unmapped pings are stored
+            with a null technician and shown below.
+          </div>
+        </div>
+      </div>
+
+      <table className="w-full text-xs" data-testid="telematics-vehicle-links-table">
+        <thead>
+          <tr className="text-left" style={{ color: colors.onSurfaceSecondary }}>
+            <th className="py-1 pr-2">Vehicle ID</th>
+            <th className="py-1 pr-2">Technician</th>
+            <th className="py-1 pr-2">Last seen</th>
+            <th className="py-1 pr-2">Unmapped pings</th>
+            <th className="py-1"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {(vehicleLinks || []).map((row) => {
+            const tech = (technicians || []).find((t) => t.id === row.technician_user_id);
+            return (
+              <tr
+                key={row.id}
+                className="border-t"
+                style={{ borderColor: colors.border }}
+                data-testid={`telematics-vehicle-link-${row.id}`}
+              >
+                <td className="py-1 pr-2">{row.external_vehicle_id}</td>
+                <td className="py-1 pr-2">{tech?.name || row.technician_user_id}</td>
+                <td
+                  className="py-1 pr-2"
+                  data-testid={`telematics-vehicle-link-${row.id}-last-seen`}
+                >
+                  {row.last_seen_at ? new Date(row.last_seen_at).toLocaleString() : "—"}
+                </td>
+                <td
+                  className="py-1 pr-2"
+                  data-testid={`telematics-vehicle-link-${row.id}-unmapped-count`}
+                >
+                  {row.unmapped_pings_count}
+                </td>
+                <td className="py-1 text-right">
+                  <button
+                    type="button"
+                    onClick={() => deleteLink(row.id)}
+                    className="text-xs px-1.5 py-0.5 rounded border"
+                    style={{ borderColor: colors.border, color: colors.destructive }}
+                    data-testid={`telematics-vehicle-link-${row.id}-delete`}
+                    disabled={!canWrite || busy[`telematics-del-${row.id}`]}
+                    aria-label={`Remove link for ${row.external_vehicle_id}`}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          <tr className="border-t" style={{ borderColor: colors.border }}>
+            <td className="py-1 pr-2">
+              <input
+                type="text"
+                placeholder="external_vehicle_id"
+                value={addVehicleId}
+                onChange={(e) => setAddVehicleId(e.target.value)}
+                className="w-full text-xs px-1.5 py-1 rounded border"
+                style={{ borderColor: colors.border }}
+                data-testid="telematics-vehicle-link-add-input"
+              />
+            </td>
+            <td className="py-1 pr-2">
+              <select
+                value={addTech}
+                onChange={(e) => setAddTech(e.target.value)}
+                className="w-full text-xs px-1.5 py-1 rounded border"
+                style={{ borderColor: colors.border }}
+                data-testid="telematics-vehicle-link-add-tech-select"
+              >
+                <option value="">— select tech —</option>
+                {(technicians || []).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name || t.email || t.id}
+                  </option>
+                ))}
+              </select>
+            </td>
+            <td className="py-1 pr-2" colSpan={2}>
+              <label className="inline-flex items-center gap-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={backfill}
+                  onChange={(e) => setBackfill(!!e.target.checked)}
+                  data-testid="telematics-vehicle-link-add-backfill"
+                />
+                <span>Backfill historical pings</span>
+              </label>
+            </td>
+            <td className="py-1 text-right">
+              <button
+                type="button"
+                onClick={submitAdd}
+                className="text-xs px-2 py-1 rounded"
+                style={{
+                  backgroundColor: colors.brand,
+                  color: "#FFFFFF",
+                  opacity: (!canWrite || busy["telematics-add"]) ? 0.6 : 1,
+                }}
+                data-testid="telematics-vehicle-link-add-submit"
+                disabled={!canWrite || busy["telematics-add"]}
+              >
+                Add
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {(unmapped && unmapped.length > 0) ? (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1">
+            Unmapped vehicles (last 30 days)
+          </div>
+          <ul className="text-xs flex flex-col gap-1">
+            {unmapped.map((row) => (
+              <li
+                key={row.external_vehicle_id}
+                className="flex items-center justify-between gap-2"
+                data-testid={`telematics-unmapped-${row.external_vehicle_id}`}
+              >
+                <span>
+                  <code>{row.external_vehicle_id}</code>
+                  <span
+                    className="ml-2"
+                    style={{ color: colors.onSurfaceSecondary }}
+                  >
+                    {row.unmapped_pings_count} pings · last seen{" "}
+                    {row.last_seen_at
+                      ? new Date(row.last_seen_at).toLocaleString()
+                      : "—"}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => prefillFromUnmapped(row.external_vehicle_id)}
+                  className="text-xs px-1.5 py-0.5 rounded border"
+                  style={{ borderColor: colors.border }}
+                  data-testid={`telematics-unmapped-${row.external_vehicle_id}-assign`}
+                >
+                  Assign →
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
 export default function TenantIntegrationsCard() {
   const [rows, setRows] = useState(null);
   const [health, setHealth] = useState({}); // Phase I1.7.d — { provider_key: {status, ...} }
-  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [], calendars: [], payments: [] });
+  const [schemas, setSchemas] = useState({ sms: [], email: [], ai: [], maps: [], calendars: [], payments: [], telematics: [] });
   const [aiUsage, setAiUsage] = useState({});     // { openai: {...}, anthropic: {...}, gemini: {...} }
   const [mapsUsage, setMapsUsage] = useState({}); // { google: {...}, mapbox: {...} }
   const [paymentsUsage, setPaymentsUsage] = useState({}); // Phase I1.7.d — { square, paypal, authnet, lumino }
+  // Phase P39 · Feb-2026 — Telematics vehicle-links + unmapped-vehicles.
+  const [telematicsLinks, setTelematicsLinks] = useState([]);
+  const [telematicsUnmapped, setTelematicsUnmapped] = useState([]);
   // Phase I1.7.c.3 — Calendars per-tenant usage + per-technician
   // link summaries. ``calendarsLinks`` mirrors the shape returned by
   // ``GET /calendars/usage.technicians``.
@@ -1532,7 +1891,7 @@ export default function TenantIntegrationsCard() {
 
   const load = useCallback(async () => {
     try {
-      const [listRes, schemaRes, usageRes, mapsUsageRes, calUsageRes, payUsageRes, techListRes] = await Promise.all([
+      const [listRes, schemaRes, usageRes, mapsUsageRes, calUsageRes, payUsageRes, techListRes, telLinksRes, telUnmappedRes] = await Promise.all([
         api.get("/tenants/me/integrations"),
         api.get("/tenants/me/integrations/schemas"),
         api.get("/tenants/me/integrations/ai/usage").catch(() => ({ providers: [] })),
@@ -1543,6 +1902,9 @@ export default function TenantIntegrationsCard() {
         // which is fine (the connect button is only rendered for
         // admins anyway).
         api.get("/users?role=tech").catch(() => api.get("/users").catch(() => [])),
+        // Phase P39 · Feb-2026 — telematics vehicle links + unmapped.
+        api.get("/tenants/me/integrations/telematics/vehicle-links").catch(() => ({ links: [] })),
+        api.get("/tenants/me/integrations/telematics/unmapped-vehicles").catch(() => ({ vehicles: [] })),
       ]);
       const map = {};
       (listRes?.integrations || []).forEach((row) => { map[row.provider_key] = row; });
@@ -1555,6 +1917,7 @@ export default function TenantIntegrationsCard() {
         maps: schemaRes?.maps || [],
         calendars: schemaRes?.calendars || [],
         payments: schemaRes?.payments || [],
+        telematics: schemaRes?.telematics || [],
       });
       const usageByShort = {};
       (usageRes?.providers || []).forEach((u) => { usageByShort[u.provider] = u; });
@@ -1582,6 +1945,9 @@ export default function TenantIntegrationsCard() {
         name: t.name || t.full_name,
         email: t.email,
       })).filter((t) => t.id));
+      // Phase P39 · Feb-2026 — telematics.
+      setTelematicsLinks(Array.isArray(telLinksRes?.links) ? telLinksRes.links : []);
+      setTelematicsUnmapped(Array.isArray(telUnmappedRes?.vehicles) ? telUnmappedRes.vehicles : []);
     } catch (e) {
       setRows({});
       toast.error(e?.message || "Failed to load integrations");
@@ -1742,6 +2108,32 @@ export default function TenantIntegrationsCard() {
             />
           );
         })}
+
+        {/* Phase P39 · Feb-2026 — Telematics BYO cards (Mojio, Geotab). */}
+        {schemas.telematics.map((s) => (
+          <TelematicsCard
+            key={s.provider_key}
+            schema={s}
+          />
+        ))}
+
+        {/* Phase P39 · Feb-2026 — Tenant-level vehicle → tech mappings.
+              Renders once (not per provider) so testids on the add
+              row + delete buttons stay unique.  Only shows when the
+              tenant has ANY telematics provider registered — no
+              point in the mapping table without at least one source
+              of pings. */}
+        {schemas.telematics.length > 0 ? (
+          <TelematicsVehicleMappingsCard
+            technicians={technicians}
+            canWrite={canWrite}
+            busy={busy}
+            setBusyFor={setBusyFor}
+            vehicleLinks={telematicsLinks}
+            unmapped={telematicsUnmapped}
+            reload={load}
+          />
+        ) : null}
 
         {COMING_SOON.map((p) => (
           <div

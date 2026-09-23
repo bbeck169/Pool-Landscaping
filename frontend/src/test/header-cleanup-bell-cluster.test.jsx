@@ -78,11 +78,15 @@ describe("Header cleanup — single bell + cluster in row", () => {
     // Prop is destructured with a default so existing callers keep
     // the previous floating behavior.
     expect(UMENU).toMatch(/UniversalMenu\(\s*\{\s*variant\s*=\s*"floating"/);
-    // Inline branch uses non-fixed positioning; floating branch
-    // keeps ``fixed top-3 right-3``.
-    expect(UMENU).toMatch(/variant === "inline"[\s\S]{0,200}inline-flex/);
-    expect(UMENU).toContain("fixed top-3 right-3");
-    // The bell inside UniversalMenu picks its variant from the prop.
-    expect(UMENU).toMatch(/NotificationBell variant=\{variant === "inline" \? "inline" : "floating"\}/);
+    // Phase P38 · Feb-2026 — floating branch is wrapped in a single
+    // ``fixed top-3 right-3 z-40 flex items-center gap-2`` container
+    // holding the whole cluster.  Inline branch renders as loose
+    // siblings inside AdminTopBar's flex row (no wrapper).
+    expect(UMENU).toContain("fixed top-3 right-3 z-40 flex items-center gap-2");
+    // The bell renders in BOTH branches: <NotificationBell variant="floating" />
+    // in the floating branch, <NotificationBell variant="inline" /> in the
+    // inline branch.  Assert BOTH occurrences.
+    expect(UMENU).toMatch(/<NotificationBell\s+variant="floating"\s*\/>/);
+    expect(UMENU).toMatch(/<NotificationBell\s+variant="inline"\s*\/>/);
   });
 });

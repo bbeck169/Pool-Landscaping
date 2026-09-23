@@ -452,6 +452,15 @@ from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
 api_router.include_router(_feb2026_chem_costs.router)
 api_router.include_router(_p37d_gps_audit_report.router)
 
+# Phase P39 · Feb-2026 · Telematics BYO (Mojio, Geotab) — webhook
+# receiver + vehicle-link CRUD + unmapped-vehicles diagnostic +
+# signed webhook URL minting.  The provider REGISTRATION lives in
+# ``routers/tenant_integrations.py`` (extends the shared _KIND_
+# registry).  The Geotab POLLING adapter is wired into the lifespan
+# below (opt-in via ``TELEMATICS_GEOTAB_POLL_ENABLED``).
+from routers import telematics_webhooks as _p39_telematics  # noqa: E402
+api_router.include_router(_p39_telematics.router)
+
 # Phase A1 · Feb-2026 · Proactive Intelligence — alert bell store.
 api_router.include_router(intelligence_alerts.router)
 
@@ -3206,6 +3215,40 @@ async def _run_boot_sequence():
         _p30_idx_factory,
         must_succeed=False,
     )
+    # Phase P38 · Feb-2026 — backfill jobs.scheduled_date from
+    # scheduled_start for rows missing it.  Ships as ``execute=False``
+    # (dry-run) so the first deploy after the P38 PR does NOT auto-
+    # mutate prod — the boot log surfaces the scan count, the
+    # operator approves, and a follow-up PR flips
+    # ``STARTUP_EXECUTE_MODE = True`` in
+    # ``migrations/p38_backfill_scheduled_date.py``.  Once flipped +
+    # deployed, the marker in ``db.migrations_applied`` prevents
+    # re-execution on every boot (only the initial run mutates).
+    # Best-effort — boot never blocks on this pass; InitState stamps
+    # ERROR on failure so ops sees it on ``/api/health``.
+    async def _p38_factory():
+        from migrations.p38_backfill_scheduled_date import (
+            run as _p38_run,
+            STARTUP_EXECUTE_MODE as _p38_execute,
+        )
+        _res = await _p38_run(execute=bool(_p38_execute))
+        logger.info(
+            "[p38-scheduled-date-backfill] boot pass — "
+            "scanned=%s backfilled=%s utc_fallback=%s "
+            "dry_run=%s skipped_by_marker=%s",
+            _res.get("scanned"),
+            _res.get("backfilled"),
+            _res.get("backfilled_utc_fallback"),
+            _res.get("dry_run"),
+            _res.get("skipped_by_marker"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "p38_backfill_scheduled_date",
+        _p38_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py
@@ -5071,6 +5114,21 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
         ),
     ]
 
+    # Phase P39 · Feb-2026 — MyGeotab polling adapter.  Opt-in via
+    # ``TELEMATICS_GEOTAB_POLL_ENABLED``.  Default OFF so a fresh
+    # deploy without any Geotab tenants configured stays quiet.
+    try:
+        from services.telematics_geotab_poller import start_scheduler as _p39_start
+        _p39_started = _p39_start()
+        logger.info(
+            "[startup] phase=p39_geotab_poller started=%s",
+            _p39_started,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=p39_geotab_poller failed — poller disabled",
+        )
+
     try:
         yield
     finally:
@@ -5082,6 +5140,12 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             await asyncio.gather(
                 *app.state.bg_tasks, return_exceptions=True,
             )
+        # Phase P39 — cancel the Geotab poller task if it was started.
+        try:
+            from services.telematics_geotab_poller import stop_scheduler as _p39_stop
+            await _p39_stop()
+        except Exception:  # noqa: BLE001
+            logger.exception("[shutdown] p39 poller stop failed")
         await _p21_shutdown_sequence()
 
 

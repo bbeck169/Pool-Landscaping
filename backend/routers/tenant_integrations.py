@@ -206,6 +206,18 @@ from services.payments_byo.usage import (
     remove_provider_meta as _pay_remove_provider_meta,
     upsert_provider_meta as _pay_upsert_provider_meta,
 )
+# Phase P39 · Feb-2026 — Telematics BYO providers (Mojio, Geotab).
+from services.telematics import (
+    UnknownTelematicsProvider,
+    get_provider as _tel_get_provider,
+    list_registered_telematics_provider_keys,
+    short_name_for as _tel_short_name_for,
+    get_provider_field_schemas as _tel_provider_field_schemas,
+)
+from services.telematics.models import InvalidTelematicsProviderConfig
+from services.telematics._helpers import (
+    save_provider_config as save_tel_provider_config,
+)
 from services.provider_health import (
     get_health_map_for_tenant as _health_map_for_tenant,
     record_probe as _health_record_probe,
@@ -275,6 +287,8 @@ _AI_KEYS = set(list_registered_ai_provider_keys())
 _MAPS_KEYS = set(list_registered_maps_provider_keys())
 _CAL_KEYS = set(list_registered_calendar_provider_keys())
 _PAY_KEYS = set(list_registered_payments_byo_provider_keys())
+# Phase P39 · Feb-2026 — telematics kind (Mojio, Geotab).
+_TELEMATICS_KEYS = set(list_registered_telematics_provider_keys())
 
 
 def _kind_for(provider_key: str) -> str:
@@ -290,6 +304,8 @@ def _kind_for(provider_key: str) -> str:
         return "calendars"
     if provider_key in _PAY_KEYS:
         return "payments_byo"
+    if provider_key in _TELEMATICS_KEYS:
+        return "telematics"
     return "payments"
 
 
@@ -308,10 +324,12 @@ def _resolve_provider(provider_key: str):
             return kind, get_calendar_provider(provider_key)
         if kind == "payments_byo":
             return kind, get_payments_byo_provider(provider_key)
+        if kind == "telematics":
+            return kind, _tel_get_provider(provider_key)
         return kind, get_provider(provider_key)
     except (UnknownProvider, UnknownMessagingProvider, UnknownAIProvider,
              UnknownMapsProvider, UnknownCalendarProvider,
-             UnknownPaymentsProvider):
+             UnknownPaymentsProvider, UnknownTelematicsProvider):
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_key}")
 
 
@@ -455,6 +473,17 @@ async def delete_tenant_integration(
         short = _pay_short_name_for(provider_key) or provider_key
         try:
             await _pay_remove_provider_meta(tenant_id=tenant["id"], provider=short)
+        except Exception:
+            pass
+    # Phase P39 · Feb-2026 — Telematics cleanup: no sidecar collection
+    # (telematics has no per-provider meta row today).  We DO nuke the
+    # tenant's vehicle links + queued unmapped-pings marker so a
+    # disconnect fully closes the loop.  Best-effort — never throws.
+    if _kind_for(provider_key) == "telematics":
+        try:
+            await db.telematics_vehicle_links.delete_many(
+                {"tenant_id": tenant["id"]},
+            )
         except Exception:
             pass
     return DeleteResponse(removed=removed, provider_key=provider_key)
@@ -765,6 +794,32 @@ async def save_tenant_integration(
             provider_key=provider_key, saved=True,
             connected_account_id_masked=None,
         )
+    if kind == "telematics":
+        # Phase P39 · Feb-2026 — Telematics providers (Mojio, Geotab).
+        # Mirrors the Maps branch: encrypt config + no sidecar today
+        # (usage / caps not applicable — telematics doesn't have per-
+        # request cost).  ``webhook_secret`` is preserved on partial
+        # edits so a tenant can rotate ``api_key`` without losing the
+        # webhook binding.
+        _, tel_provider = _resolve_provider(provider_key)
+        schema = getattr(tel_provider, "config_fields", {}) or {}
+        merged_config = await _preserve_stored_secrets(
+            tenant_id=tenant["id"], provider_key=provider_key,
+            incoming_config=dict(body.config or {}),
+            schema=schema,
+        )
+        try:
+            await save_tel_provider_config(
+                tenant_id=tenant["id"], provider_key=provider_key,
+                config=merged_config, schema=schema,
+                primary_secret_field=getattr(tel_provider, "primary_secret_field", None),
+            )
+        except InvalidTelematicsProviderConfig as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return SaveIntegrationResponse(
+            provider_key=provider_key, saved=True,
+            connected_account_id_masked=None,
+        )
     if kind not in ("sms", "email"):
         # Every non-messaging key ends up here. ``stripe`` (payment
         # provider) uses OAuth; everything else is unknown.
@@ -853,6 +908,8 @@ class ProviderSchemasResponse(BaseModel):
     # its own /connect-link + /callback flow and lives under the
     # ``/integrations`` GET list with connection_type=oauth_connect.
     payments: List[ProviderSchema] = []
+    # Phase P39 · Feb-2026 — Telematics BYO providers (Mojio, Geotab).
+    telematics: List[ProviderSchema] = []
 
 
 def _to_field_entries(fields: Dict[str, Dict[str, Any]]) -> List[ProviderFieldSchemaEntry]:
@@ -924,10 +981,18 @@ async def integrations_schemas(
                           connection_type="api_key")
         for k, v in _pay_provider_field_schemas().items()
     ]
+    # Phase P39 · Feb-2026 — Telematics BYO providers.
+    tel_schemas = [
+        ProviderSchema(provider_key=k, kind="telematics",
+                          fields=_to_field_entries(v),
+                          connection_type="api_key")
+        for k, v in _tel_provider_field_schemas().items()
+    ]
     return ProviderSchemasResponse(
         sms=sms_schemas, email=email_schemas,
         ai=ai_schemas, maps=maps_schemas,
         calendars=cal_schemas, payments=pay_schemas,
+        telematics=tel_schemas,
     )
 
 

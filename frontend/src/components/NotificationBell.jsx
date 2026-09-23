@@ -99,8 +99,14 @@ export default function NotificationBell({ variant = "inline" }) {
     setRows((prev) => prev.map((r) => ({ ...r, read: true })));
   };
 
+  // Phase P38 · Feb-2026 — the ``floating`` variant no longer self-
+  // positions; its parent (``UniversalMenu`` floating cluster) wraps
+  // it in a single ``fixed top-3 right-3 z-40 flex`` container along
+  // with the Sign Out pill + hamburger trigger.  The bell now
+  // renders as an inline-flex sibling in both variants; only the
+  // sizing (10x10 for floating, 9x9 for inline) differs.
   const triggerStyle = variant === "floating"
-    ? "fixed top-3 right-14 z-40 inline-flex items-center justify-center w-10 h-10 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
+    ? "inline-flex items-center justify-center w-10 h-10 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
     : "relative inline-flex items-center justify-center w-9 h-9 rounded-lg hover:brightness-95 focus:outline-none";
 
   return (

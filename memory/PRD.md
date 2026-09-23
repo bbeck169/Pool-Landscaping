@@ -20143,3 +20143,278 @@ If future scale (e.g. bumping `pageSize` cap above 500) makes windowing meaningf
 
 **Status:** SHIPPED. Single source of truth for the Motor pool config lives in `backend/config.py` as two module-level constants (`_MONGO_MAX_POOL_SIZE=300`, `_MONGO_SERVER_SELECTION_TIMEOUT_MS=5000`) wired into the single `AsyncIOMotorClient(...)` call. `MONGO_URL` carries zero query-string params (audit-grep confirmed no `maxPoolSize` and no duplicates). New `serverSelectionTimeoutMS=5000` guards boot against Atlas hiccups (was Motor's 30s default). New startup log `[mongo] maxPoolSize=300 serverSelectionTimeoutMS=5000 (source=code)` grep-able from pod logs. `maxPoolSize=300` preserved from pre-P37.1 per the brief's "if intentional" clause — this is a deliberate concurrency budget for the multi-tenant API workload; do not lower without a load-test.
 
+
+
+---
+
+## P38 · Feb-2026 · UniversalMenu Container + Schedule Perf Indexes + `scheduled_date` Backfill (READY, awaiting user go-ahead on --execute)
+
+**Status:** SHIPPED (code + tests). Migration is **wired to boot in dry-run mode** — first deploy after this PR does NOT auto-mutate prod.  Operator approves the boot log count → follow-up single-line PR flips `STARTUP_EXECUTE_MODE = True` in `migrations/p38_backfill_scheduled_date.py`, marker in `db.migrations_applied` gates re-runs.
+
+### Item 1 — UniversalMenu container wrap
+
+`frontend/src/layouts/UniversalMenu.jsx` — floating variant now wraps its three cluster children in a single `<div data-testid="universal-menu-floating-wrap" class="fixed top-3 right-3 z-40 flex items-center gap-2">`.  Per-element `fixed top-3 right-*` classes stripped from the Sign Out pill, `NotificationBell` (`components/NotificationBell.jsx` — `triggerStyle` for `variant="floating"` dropped `fixed top-3 right-14 z-40`), and the hamburger `DropdownMenuTrigger`.  Inline variant unchanged (AdminTopBar already provides the flex row).  Every handler, aria label, testid, and NotificationBell popover behavior preserved.
+
+Two existing tests updated to match new structure: `portal-signout-header.test.jsx` (assertion on per-pill `fixed` positioning → now asserts pill has NO fixed classes + retains its destructive-red identity) and `header-cleanup-bell-cluster.test.jsx` (assertion on old `variant === "inline"` conditional + old ternary NotificationBell → now asserts the wrapper container + both `NotificationBell variant="floating"` and `NotificationBell variant="inline"` render).
+
+### Item 2 — Bare `scheduled_start` index — SKIPPED (per user's bias-skip after grep evidence)
+
+Grep evidence supporting skip:
+
+* `grep -rn "scheduled_start" backend/routers/ backend/services/ backend/migrations/ backend/scripts/ backend/server.py` — surfaced 15+ call sites.  **Every** `db.jobs.find(...)` reading `scheduled_start` goes through either `tenant_scoped_filter` / `_tsf` (route_optimization, recurring_jobs, portal_appointments), an explicit `tenant_id` in the query dict (dispatch_board, dispatch, ops, ai_employees, etc.), or is a per-job `find_one({"id": jid, "tenant_id": tid})` lookup.
+* Only "cross-tenant" job scan surfaced was `backend/routers/admin_s3_migrate.py` — `db.jobs.find(query, projection).sort("id", 1).limit(limit)` — but it sorts by `id`, NOT `scheduled_start`, and the `tenant_id` filter is only optionally applied.  This route does NOT read `scheduled_start` as a sort/filter key.
+
+The P34 compound `[(tenant_id, 1), (scheduled_start, 1)]` handles every real query via its `tenant_id` prefix; a bare `[(scheduled_start, 1)]` index would add write amplification on every job insert/update with zero read benefit.
+
+Verdict: skipped — matches P37.1's "single source of truth for perf indexes" posture.  Test `test_ensure_index_jobs_scheduled_start_bare` **NOT added** (would assert an index that doesn't exist).
+
+### Item 3 — `scheduled_date` backfill migration
+
+New file: `backend/migrations/p38_backfill_scheduled_date.py`.
+
+**Query:** narrow — `{"scheduled_start": {"$ne": null, "$exists": true}, "$or": [{"scheduled_date": null}, {"scheduled_date": {"$exists": false}}]}`.  Tenant filter opt-in via `--tenant=<id>`.
+
+**Timezone derivation:** row's `scheduled_start` (ISO datetime string, timezone-aware or UTC-naive) is parsed via `datetime.fromisoformat` → converted to the tenant's local timezone via `services.tenant_helpers.get_tenant_timezone` (Phoenix ultimate fallback) → `.date().isoformat()` → `YYYY-MM-DD` string.
+
+**UTC fallback semantics (Q2 answer applied):** When the tenant doc has NO tz field at all (top-level `timezone` empty AND legacy `settings.timezone` / `settings.tz` empty), the migration bypasses the helper (which would otherwise default to Phoenix), derives `scheduled_date` from `scheduled_start` in UTC, logs the WARN line:
+```
+[p38] utc fallback for tenant=<tid> job=<jid> — scheduled_date=<YYYY-MM-DD> derived from scheduled_start in UTC (tenant tz missing)
+```
+and counts the row under `backfilled_utc_fallback` in the summary (renamed from the brief's original `skipped_no_tz` — row IS backfilled, not skipped).
+
+**⚠️ Consistency concern flagged for future review:** The rest of the codebase's tz-aware call sites (`schedule`, `analytics_monthly`, `crew_productivity`, `weekly_digest`, etc.) use `America/Phoenix` as their ultimate fallback (via `services.tenant_helpers.get_tenant_timezone`).  P38's UTC-fallback branch fires only for tenants with genuinely NO tz field, but for those rows the resulting `scheduled_date` will differ by up to one calendar day from what the rest of the codebase would compute for the same row.  This is an accepted user-approved trade-off ("UTC-vs-local mismatch is ≤ 12 hours; recoverable in a follow-up sweep").  If any tenants without a tz field are found in prod, a follow-up phase should either backfill their `tenants.timezone` field first, or switch P38's fallback to Phoenix for cross-codebase consistency.
+
+**Idempotency (Q1 runner-guardrail applied):** hybrid approach.
+
+* Query narrowness handles the correctness case — a second run finds zero rows.
+* A lightweight marker doc in `db.migrations_applied` (upsert on `{"name": "p38_backfill_scheduled_date"}`) prevents the ~8k-row scan cost on every boot after the first successful execute.  Marker is:
+  - Stamped ONLY on successful full-scope `--execute` runs.
+  - NEVER stamped on `--dry-run` or on tenant-scoped runs.
+  - Bypassed by `--tenant=<id>` or `--force`.
+  - Grep evidence for pattern used: P29/P36 use "idempotent by design via query narrowness" with no marker collection.  P38 layers the marker on top of the same narrow query to save the scan cost, matching the user's guardrail intent.
+
+**Startup wiring:** `backend/server.py::_run_boot_sequence` — added a `_p38_factory` factory that imports `run` + `STARTUP_EXECUTE_MODE` from the migration module.  `STARTUP_EXECUTE_MODE = False` (dry-run) ships on this PR — the boot log will surface the scan count line
+```
+[p38-scheduled-date-backfill] boot pass — scanned=N backfilled=N utc_fallback=N dry_run=True skipped_by_marker=False
+```
+without mutating prod.  Post-approval, a follow-up PR flips the constant to `True`; the first boot after that mutates + stamps the marker; subsequent boots see `skipped_by_marker=True` and return in <5 ms.
+
+**CLI:** `python -m migrations.p38_backfill_scheduled_date [--dry-run|--execute] [--tenant=<id>] [--limit=<N>] [--force]`.  Batch size 500 with progress log per batch.  Emits a summary JSON.
+
+### Dry-run count (preview DB, executed under this task)
+
+```
+$ cd /app/backend && python -m migrations.p38_backfill_scheduled_date --dry-run
+INFO:pool_crm:[p38] done — scanned=0 backfilled=0 utc_fallback=0 duration_s=0.005 dry_run=True tenant=*
+{
+  "scanned": 0,
+  "backfilled": 0,
+  "backfilled_utc_fallback": 0,
+  "duration_s": 0.005,
+  "dry_run": true,
+  "skipped_by_marker": false,
+  "executed_at": null,
+  "tenant_filter": null,
+  "limit": null
+}
+```
+
+**Preview DB is clean — 0 rows need P38 backfill.**  The user's "~8k jobs" figure was likely a prod estimate; the preview only has 28 jobs total with a `scheduled_start`, and all 28 already carry `scheduled_date`.
+
+**Ancillary finding (out of P38 scope but worth surfacing):** preview DB has **2,374 jobs with `scheduled_date` set but NO `scheduled_start`** — the INVERSE of P38's problem.  If any prod endpoint filters on `scheduled_start` alone (grep suggests only `recurring_jobs`' bulk-hard-delete and `route_optimization`'s day-range scan do, both with `$or [scheduled_date, scheduled_start]` disjunctions), those rows are invisible to those queries.  Candidate for a future "P38.1 reverse backfill" phase — NOT executed this task.
+
+### Explicit confirmation
+
+**`--execute` was NOT invoked in this task.**  Only `--dry-run` (default) was run.  Marker doc in `migrations_applied` remains absent.
+
+### Test tails
+
+Backend (P34+P35+P36+P36.1+P37.1+P38):
+```
+$ python -m pytest tests/test_p34_launch_hardening.py tests/test_p35_photo_backfill.py tests/test_p36_nonpool_close_unlock.py tests/test_p37_1_mongo_pool_config.py tests/test_p38_scheduled_date_backfill.py -q
+92 passed, 2 skipped, 22 warnings in 7.35s
+```
+
+Frontend (P20+P30+P34+P37+P38 header-touching + new P38):
+```
+$ npx vitest run src/test/universal-menu-container.test.jsx src/test/portal-signout-header.test.jsx src/test/header-cleanup-bell-cluster.test.jsx src/test/header-signout-relocated.test.jsx src/test/phase30-3-portal-sign-out.test.jsx src/test/customer-details-pagination.test.jsx src/test/customers-list-virtualization.test.jsx src/test/p20-universal-menu-remove-confirm.test.jsx
+Test Files  8 passed (8)
+     Tests  50 passed (50)
+```
+
+### Diff table
+
+| File | Change |
+| --- | --- |
+| `backend/migrations/p38_backfill_scheduled_date.py` | NEW · 341 LOC · migration + CLI + marker |
+| `backend/tests/test_p38_scheduled_date_backfill.py` | NEW · 6 tests per brief |
+| `backend/server.py` | +37 LOC · `_p38_factory` wired into `_run_boot_sequence` after P30 |
+| `backend/tests/_f7_loop_fixture.py` | +1 LOC · added `migrations.p38_backfill_scheduled_date` to `_REBOUND_MODULES` |
+| `frontend/src/layouts/UniversalMenu.jsx` | REWRITE · floating variant wrapped, `sheetContent` extracted for DRY between variants |
+| `frontend/src/components/NotificationBell.jsx` | ‑1/+7 LOC · `triggerStyle` floating dropped `fixed top-3 right-14 z-40` |
+| `frontend/src/test/universal-menu-container.test.jsx` | NEW · 3 tests (wrapper classes + child classes + DOM order) |
+| `frontend/src/test/portal-signout-header.test.jsx` | ‑12/+16 LOC · one test replaced to reflect P38 wrapper structure |
+| `frontend/src/test/header-cleanup-bell-cluster.test.jsx` | ‑7/+13 LOC · UMENU regex/string assertions updated for new structure |
+
+### Grep evidence — landing verification
+
+`fixed top-3 right-3 z-40 flex items-center gap-2` present in `frontend/src/layouts/UniversalMenu.jsx` on the wrapper div (line ~404).  Bare `fixed top-3` no longer present on `portal-signout` button, `NotificationBell` floating trigger, or `web-menu-trigger` (P38 stripped all three).  All P38 tests pass.
+
+### Follow-ups (documented for next phase)
+
+* Flip `STARTUP_EXECUTE_MODE = True` in `backend/migrations/p38_backfill_scheduled_date.py` after user approves the boot-log count on a canary env (single-line PR).
+* P38.1 reverse backfill: `scheduled_start` from `scheduled_date` for the 2,374 preview-DB rows currently missing it (out of P38 scope; requires a heuristic — probably tenant local midnight as the ISO start).
+* If any prod tenants surface with `backfilled_utc_fallback > 0` on first `--execute`, follow-up to backfill their `tenants.timezone` field OR switch P38's UTC fallback to Phoenix for cross-codebase consistency (flagged concern above).
+
+
+
+---
+
+## P39 · Feb-2026 · Multi-Tenant Telematics Integration (Mojio + Geotab)
+
+**Status:** SHIPPED (code + 20 backend + 7 frontend tests). Poller is **opt-in** (env var `TELEMATICS_GEOTAB_POLL_ENABLED=false` default) so first deploy stays quiet. `TELEMATICS_URL_SIGNING_SECRET` MUST be set in `backend/.env` before webhooks can flow — endpoint refuses to mint/verify without it (safety refusal, HTTP 500, verified by the curl trace).
+
+### Scope upgrade applied
+
+* **Q1 (Geotab flow):** shipped the receiver **AND** the polling adapter — both surfaced in the settings UI.
+* **Q2 (URL token):** non-expiring URL-embedded HMAC-SHA256 as per user choice; rotation invalidates all existing webhook URLs.
+* **Q3 (unmapped):** stored with `user_id=null`, surfaced in the UI's unmapped-vehicles list.
+* **Q4 (mgmt table):** **Rich (b)** — table rows carry `last_seen_at` + `unmapped_pings_count`; Add row + Unmapped list carry a **backfill-on-map checkbox default CHECKED** that atomically re-attributes historical null-tech pings.
+
+### Backend files landed
+
+| File | Purpose |
+| --- | --- |
+| `backend/services/telematics/__init__.py` | Re-exports for the module's public surface. |
+| `backend/services/telematics/models.py` | `TelematicsProviderMeta` + exceptions. |
+| `backend/services/telematics/registry.py` | Mojio + Geotab provider metadata; `config_fields`; `short_name_for` / `get_provider` lookup. |
+| `backend/services/telematics/_helpers.py` | `save_provider_config` / `load_provider_config` — JSON-encode + `services.secrets.put_secret` AES-256-GCM. |
+| `backend/services/telematics/webhook_url.py` | `mint_token` / `verify_token` / `build_webhook_url` — HMAC-SHA256 URL signing over `tenant_id + provider_short`. |
+| `backend/services/telematics_geotab_poller.py` | 60-second multi-tenant JSON-RPC poller. Opt-in. In-memory cooldown map. |
+| `backend/routers/telematics_webhooks.py` | 5 endpoints (webhook receiver + vehicle-links CRUD + unmapped-vehicles diagnostic + webhook-url minter + rich mgmt stats). |
+| `backend/tests/test_p39_telematics.py` | 20 tests covering all scenarios in the brief. |
+
+### Backend files modified
+
+| File | Change |
+| --- | --- |
+| `backend/routers/tenant_integrations.py` | Registered `telematics` kind (imports + `_TELEMATICS_KEYS` + `_kind_for` + `_resolve_provider` + PUT save branch + DELETE cleanup + `ProviderSchemasResponse.telematics` + `/schemas` endpoint). |
+| `backend/scripts/ensure_indexes.py` | Two new indexes: `telematics_vehicle_links_dedup_bg` (unique `(tenant_id, external_vehicle_id)`) + `gps_pings_dedup_bg` (unique partial `(tenant_id, external_vehicle_id, captured_at)` filtered on `external_vehicle_id` type string so legacy mobile pings pass through). |
+| `backend/server.py` | `include_router(_p39_telematics.router)`, poller start on lifespan startup, poller stop on shutdown. Wrapped in try/except so a poller boot error never blocks bind. |
+| `backend/tests/_f7_loop_fixture.py` | Added `routers.telematics_webhooks`, `services.telematics*`, and `services.telematics_geotab_poller` to `_REBOUND_MODULES`. |
+| `backend/.env.example` | Added `TELEMATICS_URL_SIGNING_SECRET`, `PUBLIC_BACKEND_ORIGIN`, `TELEMATICS_GEOTAB_POLL_ENABLED`, `TELEMATICS_GEOTAB_POLL_INTERVAL_SEC` with docs. |
+
+### Frontend files
+
+| File | Change |
+| --- | --- |
+| `frontend/src/components/settings/TenantIntegrationsCard.jsx` | Added `TELEMATICS_PROVIDER_LABELS` constant, per-provider `TelematicsCard` (label + description + webhook URL with copy button), tenant-level `TelematicsVehicleMappingsCard` (mapping table + backfill checkbox + unmapped list), state + fetch wiring in the default export. |
+| `frontend/src/test/p39-telematics-card.test.jsx` | 7 tests covering renders + webhook URL + POST + DELETE + unmapped list + Change 2 stats + Change 2 backfill checkbox default+propagation. |
+
+### Schema notes (Q3 alignment)
+
+* **`gps_pings.user_id`** is the codebase's canonical "which user emitted this ping" field. The P39 brief referred to it as `technician_user_id`; we use the actual column name (`user_id`) so every existing `gps_*` reader continues to work. `user_id` is `None` for telematics pings whose vehicle isn't yet mapped.
+* **NEW columns** on `gps_pings` (only carried by telematics rows):
+  * `external_vehicle_id` — the provider's vehicle identifier.
+  * `telematics_provider` — `"mojio"` / `"geotab"` short-name.
+  * `telematics_event_id` — provider's event id (nullable) for observability.
+* **`gps_pings.source`** discriminator values added:
+  * `"telematics_mojio"` — Mojio webhook.
+  * `"telematics_geotab_webhook"` — Geotab notification-template webhook.
+  * `"telematics_geotab_poll"` — Geotab polling adapter.
+  Existing values (`"foreground"`, `"background"`) are untouched — mobile ingest continues to work.
+
+### Geotab constraint (documented in code + surfaces + PRD)
+
+MyGeotab lacks native signed webhooks; the receiver uses **shared-secret-in-header** (`X-Telematics-Secret`) OR `?secret=<value>` query fallback (MyGeotab notification templates support URL substitution but not custom headers reliably). This is documented in the code (`_geotab_verify_shared_secret` docstring in `telematics_webhooks.py`), in the Geotab tab's helper text (`TELEMATICS_PROVIDER_LABELS.telematics_geotab.desc`), and in the config-field label (`webhook_secret.label = "Notification-template shared secret"`).
+
+**Mitigation:** The Geotab polling adapter (JSON-RPC over `sessionId`) IS authenticated by MyGeotab's own credential model — so any tenant that wants true auth just runs the poller and treats the receiver as a "fast-path bonus". Both delivery paths land in the SAME `gps_pings` table with distinct `source` discriminators.
+
+### Multi-tenant scoping guarantee
+
+Every new query goes through the same tenant filter shape used elsewhere in the codebase (`{"tenant_id": tenant["id"], ...}`). Grep evidence: `grep -rn "tenant_id" backend/routers/telematics_webhooks.py backend/services/telematics_geotab_poller.py` → every DB touch includes the tenant filter. Test #12 (`test_vehicle_links_crud_tenant_scoped`) proves cross-tenant isolation on the CRUD path.
+
+### Encryption grep evidence
+
+Fresh save of `telematics_mojio` config with plaintext `api_key="ak_live_HUMAN_READABLE_SECRET_VALUE"` and `webhook_secret="whsec_HUMAN_READABLE_WEBHOOK_SECRET"`.  Raw `db.tenant_secrets` row (Mongo dump, this task):
+
+```
+{
+  "tenant_id": "grep-evidence-tenant",
+  "provider_key": "telematics_mojio",
+  "connection_type": "api_key",
+  "encrypted_blob": "0HxYice4rpUykhPv3pBrb2lpQfORa94+246Bpb1+Da6/MqJzmQqVVLKuhuO0UcgmnOUGDwXjfvk/Q90wyyL3fNzCDe53PTa/6vJIJ/XLecidAy7gHV6cWUFpesOz4sTcs+aaGLzA827Ti824U6iCJA30E+6PfS5uL07RFjV8dXv5p8s=",
+  "iv": "dqbPbWA5qUdGeK3D",
+  "auth_tag": "4eOInqHq639iqiEeA6WU1w==",
+  "dek_wrapped": null,
+  "last_4": "ALUE",
+  ...
+}
+```
+
+Assertions:
+* plaintext `api_key` in row?     **False**
+* plaintext `webhook_secret` in row? **False**
+* `encrypted_blob + iv + auth_tag` present? **True**
+* symmetric decrypt via `load_provider_config` round-trips? **True** (both fields)
+
+### Sample curl proof (5 endpoints live)
+
+```
+--- 1. Backend health ---
+HTTP 200 · /api/health
+--- 2. Webhook URL mint requires auth ---
+HTTP 401 · GET /webhook-url (unauth)  → {"detail":"Not authenticated"}
+--- 3. Webhook POST with bad tenant token returns 401 (or 500 when signing secret absent) ---
+HTTP 500 · POST webhook (bad token) →
+  {"detail":"TELEMATICS_URL_SIGNING_SECRET is not set — cannot mint or verify..."}
+--- 4. Vehicle-links CRUD requires auth ---
+HTTP 401 · GET /vehicle-links (unauth) → {"detail":"Not authenticated"}
+--- 5. Schemas endpoint surfaces telematics kind ---
+HTTP 401 · GET /schemas (unauth) — auth-gated, telematics kind present in response body when authenticated (proven by test #1).
+```
+
+Endpoint #3's 500 is the **intended safety refusal**: the receiver refuses to verify webhook URLs when `TELEMATICS_URL_SIGNING_SECRET` is unset (documented in `webhook_url.py::MissingSigningSecret`).  Ops MUST set this env var in `backend/.env` before webhooks can flow.
+
+### Test tails
+
+Backend (P34+P35+P36+P36.1+P37.1+P38+P39):
+```
+$ python -m pytest tests/test_p34_launch_hardening.py tests/test_p35_photo_backfill.py \
+    tests/test_p36_nonpool_close_unlock.py tests/test_p37_1_mongo_pool_config.py \
+    tests/test_p38_scheduled_date_backfill.py tests/test_p39_telematics.py -q
+112 passed, 2 skipped, 22 warnings in 7.84s
+```
+
+Frontend (P34+P37+P38+P39 header + card touching):
+```
+$ npx vitest run ...universal-menu-container ...portal-signout-header \
+    ...header-cleanup-bell-cluster ...customer-details-pagination \
+    ...customers-list-virtualization ...p39-telematics-card
+Test Files  6 passed (6)
+     Tests  34 passed (34)
+```
+
+### Env-var setup for ops
+
+Set these three in `backend/.env` on the target env (values NOT included in `.env.example`; only placeholders):
+
+```
+TELEMATICS_URL_SIGNING_SECRET=<32-byte base64 — generate: python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())">
+PUBLIC_BACKEND_ORIGIN=https://api.plofv.com     # optional; falls back to request headers
+TELEMATICS_GEOTAB_POLL_ENABLED=false            # flip to true after at least one Geotab tenant is configured
+TELEMATICS_GEOTAB_POLL_INTERVAL_SEC=60
+```
+
+After adding the URL signing secret + restarting the backend:
+1. Admin opens `/settings/integrations`, configures Mojio or Geotab (api_key + account_id + webhook_secret).
+2. UI shows the signed webhook URL — admin copies it, pastes into the provider's dashboard.
+3. Pings start flowing.  Unmapped vehicles show up in the diagnostic list.  Admin maps each one; the backfill checkbox re-attributes historical unmapped pings atomically.
+
+### Follow-ups (not P39)
+
+* **Rate limits** on the webhook receiver — noted in the P39 brief as "not required in P39".  Recommended future phase adds per-tenant token-bucket at the URL-signing-verify step so a compromised webhook secret can't burst-DoS us.
+* **Full Mojio HTTP client** for outbound calls (position history backfill, geofence sync).  P39 only implements the INBOUND webhook + Geotab polling.
+* **Route Mojio + Geotab pings through the P34 `gps_settings.enabled` gate** — currently telematics pings persist regardless of the tenant's `gps_settings.enabled` flag.  The current behavior is intentional (telematics is a separate signal source, not a per-tech gps opt-in) but may want a tenant-level toggle in a follow-up.
+* **`gps_settings.enabled` per-vehicle** — surface a "pause telematics for vehicle X" toggle in the mgmt UI (Change 2 raised the mgmt table to first-class; this would extend it).
+

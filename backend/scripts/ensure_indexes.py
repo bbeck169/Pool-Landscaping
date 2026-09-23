@@ -139,6 +139,69 @@ async def _resend_webhook_events_dedup_index() -> None:
         raise
 
 
+async def _telematics_vehicle_links_dedup_index() -> None:
+    """Phase P39 · Feb-2026 — unique compound index on
+    ``telematics_vehicle_links(tenant_id, external_vehicle_id)`` so
+    a tenant can never double-map the same vehicle to two techs.
+
+    Background build; idempotent via the OperationFailure(85) swallow
+    used by every P34+ index helper in this file.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.telematics_vehicle_links.create_indexes([
+            IndexModel(
+                [("tenant_id", 1), ("external_vehicle_id", 1)],
+                name="telematics_vehicle_links_dedup_bg",
+                unique=True,
+                background=True,
+            ),
+        ])
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
+async def _gps_pings_telematics_dedup_index() -> None:
+    """Phase P39 · Feb-2026 — unique partial compound index on
+    ``gps_pings(tenant_id, external_vehicle_id, captured_at)`` so:
+
+      * MyGeotab poller ticks return the same ``dateTime`` for a
+        stationary vehicle → second insert raises ``DuplicateKeyError``
+        and the receiver returns ``status="duplicate"`` instead of
+        stacking rows.
+      * Mojio webhook re-deliveries of the same event become no-ops.
+
+    Partial filter ``external_vehicle_id: {$type: "string"}`` keeps the
+    pre-P39 gps_pings rows (mobile / foreground ingest) out of the
+    unique constraint — they have no ``external_vehicle_id`` at all.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.gps_pings.create_indexes([
+            IndexModel(
+                [
+                    ("tenant_id", 1),
+                    ("external_vehicle_id", 1),
+                    ("captured_at", 1),
+                ],
+                name="gps_pings_dedup_bg",
+                unique=True,
+                background=True,
+                partialFilterExpression={
+                    "external_vehicle_id": {"$type": "string"},
+                },
+            ),
+        ])
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
 
 async def _customers_2dsphere() -> None:
     """Inline customers.service_location 2dsphere (originally in
@@ -254,6 +317,14 @@ async def main() -> int:
     results.append(await _step(
         "resend_webhook_events_dedup_bg",
         _resend_webhook_events_dedup_index(),
+    ))
+    results.append(await _step(
+        "telematics_vehicle_links_dedup_bg",
+        _telematics_vehicle_links_dedup_index(),
+    ))
+    results.append(await _step(
+        "gps_pings_dedup_bg",
+        _gps_pings_telematics_dedup_index(),
     ))
     results.append(await _step("customers_2dsphere",    _customers_2dsphere()))
     results.append(await _step(
