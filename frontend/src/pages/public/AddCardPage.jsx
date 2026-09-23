@@ -187,7 +187,7 @@ export default function AddCardPage() {
        * lands on the login page instead of the role-gated app root.
        */}
       <header
-        className="max-w-md mx-auto mb-6 flex items-center justify-center"
+        className="w-full max-w-md mx-auto mb-6 flex items-center justify-center"
         data-testid="add-card-page-brand-header"
       >
         <BrandLogo
@@ -196,7 +196,13 @@ export default function AddCardPage() {
           testId="add-card-page-brand-logo"
         />
       </header>
-      <div className="max-w-md mx-auto">
+      {/* Phase P43 · Feb-2026 — ``w-full`` so the card fills the
+          new ``max-w-5xl`` portal container on desktop while still
+          capping visually via ``max-w-md`` on narrow flows. */}
+      <div
+        className="w-full max-w-md mx-auto"
+        data-testid="phase47c-add-card-form-container"
+      >
         <Card>
           <CardHeader>
             <CardTitle data-testid="phase47c-add-card-title">

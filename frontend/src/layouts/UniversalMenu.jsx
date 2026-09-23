@@ -91,7 +91,10 @@ function useFlatEntries(sections, canFn, effectiveRole) {
   }, [sections, canFn, effectiveRole]);
 }
 
-export default function UniversalMenu({ variant = "floating" } = {}) {
+export default function UniversalMenu({
+  variant = "floating",
+  showSignOut = false,
+} = {}) {
   const { user, logout } = useAuth();
   const { can, effectiveRole } = usePermissions();
   const role = user?.role || effectiveRole || "";
@@ -443,7 +446,31 @@ export default function UniversalMenu({ variant = "floating" } = {}) {
         // Inline variant — mounted inside AdminTopBar which already
         // provides the flex row.  Bell + hamburger render as normal
         // inline-flex siblings; no wrapper needed.
+        //
+        // Phase P43 · Feb-2026 — the customer portal now mounts an
+        // inline UniversalMenu inside its sticky ``<header>`` (see
+        // ``AppLayout.jsx``). That caller passes ``showSignOut={true}``
+        // so the Sign-out pill renders alongside the Bell + hamburger.
+        // Admin/staff callers (AdminTopBar's three mount sites) omit
+        // the prop — they own their own ``header-signout`` sibling
+        // and would otherwise render a duplicate.
         <>
+          {showSignOut && user ? (
+            <button
+              type="button"
+              onClick={() => {
+                try { logout && logout(); } finally {
+                  nav("/portal/login", { replace: true });
+                }
+              }}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-semibold shadow-sm text-white bg-[#DC2626] hover:bg-[#B91C1C] active:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444] focus-visible:ring-offset-1 disabled:opacity-55"
+              data-testid="portal-signout"
+              aria-label="Sign out"
+            >
+              <LogOut size={14} />
+              <span className="hidden sm:inline">Sign out</span>
+            </button>
+          ) : null}
           <NotificationBell variant="inline" />
           <DropdownMenu open={open} onOpenChange={setOpen}>
             <DropdownMenuTrigger

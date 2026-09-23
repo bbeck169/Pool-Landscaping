@@ -21026,3 +21026,58 @@ Self-delete + orphan branches are covered by unit tests (require a caller identi
 - **First-class `invitations` collection.** Team invites are currently one-shot Resend emails only. If a persistent invites collection lands (magic-link portal invites in P32.1), extend `_p42_snapshot_and_delete` step 4 to purge those rows.
 - **Force-override for orphan block.** Some tenants may legitimately want a "delete last admin AND promote another user in the same call" flow. Out of scope for P42; would be a paired `promote_to` + `force` param on the endpoint.
 - **Restore-from-audit tool.** Because P42 physically deletes, the only recovery path is the `technicians_hard_delete` audit doc snapshot. An ops-only endpoint to "replay an audit" would harden the safety net.
+
+## Phase P43 · Feb-2026 — Portal Sticky Header + Responsive Layout Polish (SHIPPED preview)
+
+**Problem.** The customer-portal shell (`AppLayout.jsx`) was leaning on a P34/P38-era **floating** UniversalMenu cluster — three "pills" pinned in the top-right corner via `fixed top-3 right-3`. To keep body content from sliding under those pills, every portal page had to carry `mt-12 sm:mt-0` / `pt-16` compensation hacks. Meanwhile `PaymentMethodPromptBanner` rendered as a direct child of the outer `flex-row` alongside the sidebar → on desktop it competed horizontally for space and squashed the main content column at narrow widths.
+
+**Fix.** Replace the floating cluster with a real sticky `<header>` and move the banner INSIDE the outlet container so it stacks vertically above `<Outlet />`.
+
+### Backend
+- No changes. Pure frontend layout refactor.
+
+### Frontend
+1. **`frontend/src/layouts/AppLayout.jsx`**
+   - Customer-portal branch (`!["admin","super_admin","manager","technician"].includes(role)`) now mounts a real sticky header:
+     ```jsx
+     <header
+       className="sticky top-0 z-30 w-full flex items-center justify-end gap-2 h-14 bg-white border-b px-4"
+       data-testid="portal-sticky-header"
+     >
+       <UniversalMenu variant="inline" showSignOut />
+     </header>
+     ```
+     The `h-14` (56px) reserves its own vertical space natively — the outlet no longer needs `pt-16` compensation.
+   - Portal outlet wrapper simplified to `w-full max-w-5xl mx-auto px-4` (the old `pt-16` shim is gone).
+   - **`PaymentMethodPromptBanner` relocation.** Removed from its pre-P43 slot (a direct child of the outer `flex flex-col md:flex-row` — where it competed with the sidebar for horizontal space and squashed on narrow desktops). Banner now renders INSIDE `portal-outlet-wrapper`, ABOVE `<Outlet />`, so it stacks vertically inside the `max-w-5xl mx-auto` container on every breakpoint. Only one `<PaymentMethodPromptBanner />` render call exists in the file (regression-guarded by test 6).
+2. **`frontend/src/layouts/UniversalMenu.jsx`**
+   - Inline variant grew a `showSignOut` prop (defaults `false`). When truthy AND `user` is present, renders a red destructive-pill `<button data-testid="portal-signout">` alongside the Bell + hamburger in the header row. Admin/staff callers (AdminTopBar's three mount sites) omit the prop — they own their own `header-signout` sibling and would otherwise duplicate.
+   - Floating variant kept intact as defensive fallback (still wraps its cluster in `fixed top-3 right-3 z-40 flex items-center gap-2` per P38). No known caller passes the default variant anymore.
+3. **`frontend/src/pages/portal/PortalHome.jsx`**
+   - Stripped `mt-12 sm:mt-0` from the `portal-cta-row` classname. The sticky header now handles the vertical offset natively.
+4. **`frontend/src/pages/public/AddCardPage.jsx`** *(landed earlier in this phase)*
+   - Form container widened to `w-full max-w-md mx-auto` so it fills the new `max-w-5xl` portal frame gracefully on desktop while still capping visually on narrow flows.
+
+### Tests
+- `frontend/src/test/p43-portal-responsive-layout.test.jsx` — **9 file-inspection tests** (regex-checks against `AppLayout.jsx`, `UniversalMenu.jsx`, `PortalHome.jsx`), matching the fast `phase30-3-portal-sign-out.test.jsx` convention:
+  1. Customer-portal branch renders a sticky `<header data-testid="portal-sticky-header">` with `sticky top-0` + `h-14`.
+  2. Header mounts `<UniversalMenu variant="inline" showSignOut />`.
+  3. Portal outlet wrapper uses `w-full max-w-5xl mx-auto px-4` and NO `pt-16` compensation.
+  4. Portal outlet wrapper carries `data-testid="portal-outlet-wrapper"`.
+  5. **`PaymentMethodPromptBanner` renders INSIDE the portal outlet wrapper ABOVE `<Outlet />` in DOM order** (JSX comments stripped before position check to avoid false positives).
+  6. Legacy `PaymentMethodPromptBanner` render slot in outer `flex-row` is removed — exactly one render call remains.
+  7. `UniversalMenu` accepts `showSignOut` and renders the portal Sign-out pill inline when truthy.
+  8. Floating variant keeps the P38 cluster wrapper (defensive fallback).
+  9. `PortalHome` CTA row no longer carries `mt-12` / `sm:mt-0`.
+- Adjacent regression sweep also clean: `k11-payment-prompt`, `k13-impersonation-token-wiring`, `k35-portal-login`, `phase30-3-portal-sign-out`, `payment-method-tiles-portal-placement` — 42 tests, all passing.
+
+### Hard-rules compliance
+- No mobile files touched. No `backend/.env` changes. No route/gate changes.
+- Banner conditional-render logic + dismiss/CTA handlers preserved verbatim (pure DOM reorder).
+- Admin/staff outlet unchanged — the portal branch is the only one that got the layout refactor.
+
+### Ticket-worthy follow-ups (deferred)
+- **Kill dead code in `UniversalMenu` floating variant.** No known caller passes `variant="floating"` anymore. Once one release passes without regression tickets, the whole branch (~90 lines) can be deleted. Left in for one release as a defensive fallback.
+- **Portal breadcrumbs padding audit.** `<AppBreadcrumbs variant="portal">` still emits its own top-padding assumptions from the pre-sticky-header era. Not a visible bug today but worth normalising when the next portal-typography sweep lands.
+- **Sticky header brand mark.** Currently only Bell + hamburger + Sign-out live in the header. Adding a compact tenant `<BrandLogo variant="icon" />` on the left side would visually anchor the header. Deferred — needs design pass on multi-tenant logo aspect ratios.
+

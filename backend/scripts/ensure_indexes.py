@@ -203,6 +203,48 @@ async def _gps_pings_telematics_dedup_index() -> None:
 
 
 
+async def _invitations_indexes() -> None:
+    """Phase P32.1 · Feb-2026 — ``invitations`` collection indexes.
+
+    Two indexes:
+      1. ``invitations_dedup_bg`` — unique compound
+         ``(tenant_id, customer_id, status)`` partial index scoped
+         to ``status = "sent"`` so at most ONE live invite exists
+         per customer per tenant. Once a row flips to
+         ``accepted``/``revoked``/``expired`` the constraint no
+         longer applies to it, letting the admin re-invite.
+      2. ``invitations_token_hash_bg`` — non-unique index on the
+         SHA-256 hash used by the auto-login handler to look the
+         invitation row up on redemption. Non-unique because the
+         same hash may re-appear after a revoked → re-issued
+         cycle (rare but legal).
+
+    Idempotent via the OperationFailure(85) swallow used by every
+    P34+ index helper in this file.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.invitations.create_indexes([
+            IndexModel(
+                [("tenant_id", 1), ("customer_id", 1), ("status", 1)],
+                name="invitations_dedup_bg",
+                unique=True,
+                background=True,
+                partialFilterExpression={"status": "sent"},
+            ),
+            IndexModel(
+                [("token_hash", 1)],
+                name="invitations_token_hash_bg",
+                background=True,
+            ),
+        ])
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
 async def _customers_2dsphere() -> None:
     """Inline customers.service_location 2dsphere (originally in
     server.py sync-boot startup)."""
@@ -325,6 +367,11 @@ async def main() -> int:
     results.append(await _step(
         "gps_pings_dedup_bg",
         _gps_pings_telematics_dedup_index(),
+    ))
+    # Phase P32.1 · Feb-2026 — invitations collection indexes.
+    results.append(await _step(
+        "invitations_indexes",
+        _invitations_indexes(),
     ))
     results.append(await _step("customers_2dsphere",    _customers_2dsphere()))
     results.append(await _step(

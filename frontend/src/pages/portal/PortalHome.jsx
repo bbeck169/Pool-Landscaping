@@ -132,9 +132,16 @@ export default function PortalHome() {
           previously scattered further down the page (Call Now above the
           quick actions, Request Service after the ToS banner). We render
           them here now and remove those old inline instances below so
-          they're not duplicated. */}
+          they're not duplicated.
+          Phase P43 · Feb-2026 — the legacy ``mt-12 sm:mt-0`` top-offset
+          hack (which used to push the CTA row below the floating
+          UniversalMenu pill cluster) has been REMOVED.  The portal
+          shell now mounts a proper sticky ``<header data-testid=
+          "portal-sticky-header">`` (56px tall / ``h-14``) inside
+          ``AppLayout``, so the outlet no longer needs padding
+          compensation. */}
       <div
-        className="mt-12 sm:mt-0 mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
+        className="mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
         data-testid="portal-cta-row"
         data-tour-id="portal-cta-row"
       >

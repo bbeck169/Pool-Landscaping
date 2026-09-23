@@ -55,6 +55,8 @@ from services.portal_magic_links import (
     verify_invoice_pay_token,
     verify_estimate_view_token,
     verify_portal_home_token,
+    verify_portal_invite_token,
+    hash_portal_invite_token,
 )
 from services.service_records_link import (
     verify_service_records_token,
@@ -201,6 +203,106 @@ def _revoked_response() -> RedirectResponse:
     return RedirectResponse(url=_LOGIN_REVOKED_URL, status_code=302)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Phase P32.1 · Feb-2026 — Portal-invite redemption helpers.
+# ═══════════════════════════════════════════════════════════════════════
+_INVITE_ERROR_URL = "/portal/accept-invite?error={code}"
+
+
+def _invite_error(code: str) -> RedirectResponse:
+    """302 → the React ``AcceptInvite`` page with a specific error
+    code so the FE can render the right friendly copy. Codes used:
+    ``expired`` (invalid / tampered / outside 168h window),
+    ``used`` (status != ``sent`` — accepted / revoked / expired
+    lifecycle stamp)."""
+    return RedirectResponse(
+        url=_INVITE_ERROR_URL.format(code=code), status_code=302,
+    )
+
+
+async def _redeem_portal_invite(
+    payload: dict, *, raw_token: str, from_ip: Optional[str],
+) -> HTMLResponse | RedirectResponse:
+    """Single-use redemption of a P32.1 portal-invite JWT.
+
+    Steps:
+      1. Look up the ``invitations`` row by ``token_hash``. Absent
+         or ``status != "sent"`` → ``error=used`` bounce.
+      2. Resolve the customer + login user (tenant-scoped). Missing
+         either → ``error=used`` (existence-hiding for cross-tenant).
+      3. Flip the invitations row to ``status="accepted"``,
+         ``accepted_at=now``. Uses a conditional
+         ``update_one({..., status: "sent"})`` so a concurrent
+         double-click is rejected atomically.
+      4. Mint the session token via the same ``create_token``
+         helper the other scopes use.
+      5. Return the interstitial HTML that seeds ``localStorage``
+         and navigates to ``/portal/home``.
+    """
+    tenant_id = payload.get("tid")
+    customer_id = payload.get("cid")
+
+    # 1) Look up the invitations row by token hash (tenant-scoped).
+    inv = await db.invitations.find_one(
+        {"tenant_id": tenant_id,
+          "customer_id": customer_id,
+          "token_hash": hash_portal_invite_token(raw_token)},
+        {"_id": 0},
+    )
+    if not inv or inv.get("status") != "sent":
+        _log("invite_used_or_revoked", customer_id=customer_id,
+              resource_type="invite", from_ip=from_ip)
+        return _invite_error("used")
+
+    # 2) Confirm the customer + login user exist (tenant-scoped).
+    customer = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1},
+    )
+    if not customer:
+        _log("invite_customer_missing", customer_id=customer_id,
+              resource_type="invite", from_ip=from_ip)
+        return _invite_error("used")
+    cust_user = await db.users.find_one(
+        {"customer_id": customer_id, "role": "customer",
+          "tenant_id": tenant_id},
+        {"_id": 0, "password_hash": 0},
+    )
+    if not cust_user:
+        _log("invite_no_login_user", customer_id=customer_id,
+              resource_type="invite", from_ip=from_ip)
+        return _invite_error("used")
+
+    # 3) Atomically flip status "sent" → "accepted". Concurrent
+    #    double-click on the email link is rejected by the
+    #    conditional match — only ONE of the racing requests
+    #    performs the update.
+    now_iso_str = datetime.now(timezone.utc).isoformat()
+    res = await db.invitations.update_one(
+        {"id": inv["id"], "tenant_id": tenant_id, "status": "sent"},
+        {"$set": {"status": "accepted",
+                    "accepted_at": now_iso_str}},
+    )
+    if res.modified_count == 0:
+        _log("invite_race_lost", customer_id=customer_id,
+              resource_type="invite", from_ip=from_ip)
+        return _invite_error("used")
+
+    # 4) Mint the customer-scoped access token.
+    from utils import create_token
+    access_token = create_token(cust_user)
+    _log("invite_success", customer_id=customer_id,
+          resource_type="invite", resource_id=inv["id"],
+          from_ip=from_ip)
+    return HTMLResponse(
+        content=_interstitial_html(
+            access_token=access_token, redirect_to="/portal/home",
+        ),
+        status_code=200,
+    )
+
+
+
 def _interstitial_html(*, access_token: str, redirect_to: str) -> str:
     """One-shot HTML that seeds ``localStorage["token"]`` then
     ``window.location.replace``s to the portal target.  Kept dead
@@ -271,6 +373,32 @@ async def portal_auto_login(
         return _expired_response()
 
     # 1) Classify + verify token.
+    # Phase P32.1 · Feb-2026 — Portal-invite tokens are handled up
+    # here (BEFORE the generic classify-and-verify sweep) because
+    # they need one extra piece of state the other scopes don't:
+    # a lookup in the ``invitations`` collection to enforce SINGLE-
+    # USE redemption. Once the invitations row's ``status`` flips
+    # from ``sent`` to ``accepted``, every subsequent redemption of
+    # the same token — even inside the 168h window — is rejected
+    # with ``invitation_already_used_or_revoked``.
+    #
+    # Failure modes:
+    #   * expired / tampered / wrong-sub → 302 to
+    #     ``/portal/accept-invite?error=expired``.
+    #   * invitations row absent / status != ``sent`` → 302 to
+    #     ``/portal/accept-invite?error=used``.
+    #   * customer + login user resolved → interstitial HTML that
+    #     seeds the session (same as portal-home flow) + marks the
+    #     invitations row ``accepted``.
+    invite_payload = verify_portal_invite_token(t)
+    if invite_payload is not None:
+        return await _redeem_portal_invite(
+            invite_payload, raw_token=t, from_ip=from_ip,
+        )
+
+    # Feb-2026 · Slice 7 — invoice + estimate + job_view + portal_home
+    # + service_records scopes. Cross-scope replay guarded inside
+    # each verifier (see ``_classify_and_verify``).
     resource_type, payload = _classify_and_verify(t)
     if not payload:
         # Feb-2026 · P0 Pay-link routing fix — invoice-scoped tokens
@@ -283,6 +411,23 @@ async def portal_auto_login(
             _log("expired_invoice_to_public", from_ip=from_ip,
                   resource_type="invoice", resource_id=peek_id)
             return _invoice_expired_public_response(peek_id)
+        # Phase P32.1 · Feb-2026 — an expired/tampered
+        # ``portal_invite`` token must land the customer on the
+        # AcceptInvite page with ``error=expired`` (friendlier
+        # copy than the generic ``/portal/login?reason=link_expired``
+        # banner). Peek at the sub claim ignoring exp so we can
+        # route without letting the token itself authenticate.
+        try:
+            peek_payload = jwt.decode(
+                t, JWT_SECRET, algorithms=[JWT_ALGO],
+                options={"verify_exp": False},
+            )
+            if str(peek_payload.get("sub") or "") == "portal_invite":
+                _log("invite_expired", from_ip=from_ip,
+                      resource_type="invite")
+                return _invite_error("expired")
+        except Exception:  # noqa: BLE001
+            pass
         _log("expired", from_ip=from_ip)
         return _expired_response()
 

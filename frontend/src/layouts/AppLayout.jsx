@@ -444,10 +444,13 @@ function AppLayout() {
       {/* Phase K11 · Feb-2026 — Payment-method persistent banner.
           Portal-scoped; renders when the customer has no card or a
           card expiring within 30 days.  Distinct blue tint so it
-          never collides visually with the K13 impersonation banner. */}
-      {(location.pathname || "").startsWith("/portal") ? (
-        <PaymentMethodPromptBanner />
-      ) : null}
+          never collides visually with the K13 impersonation banner.
+          Phase P43 · Feb-2026 — banner was moved OUT of this
+          ``flex-row`` slot (where it competed horizontally with the
+          sidebar + main content and got squashed on narrow widths).
+          It now renders INSIDE the portal outlet wrapper below,
+          stacked ABOVE ``<Outlet />``, so it reads as a full-width
+          top-of-content block on every portal breakpoint. */}
 
       {/* Feb-2026 · Pivot — the 7 quick-access items move from the
           header row to a slim vertical rail in the same slot the
@@ -691,12 +694,27 @@ function AppLayout() {
             <UniversalMenu variant="inline" /> INSIDE <AdminTopBar>
             (bell + hamburger sit in the header row instead of
             floating in the top-right corner and overlapping
-            content). Only customer / customer-portal roles still
-            get the floating instance here, since they don't mount
-            <AdminTopBar>. */}
+            content).
+            Phase P43 · Feb-2026 — customer / customer-portal roles
+            now get a proper sticky header instead of the floating
+            pill cluster. The header reserves 56px (``h-14``) of
+            vertical space natively, so the outlet no longer needs
+            ``pt-16`` compensation. Sign-out + Bell + hamburger
+            render inline inside the header via
+            ``<UniversalMenu variant="inline" showSignOut />``.
+            The floating variant is now dead code — kept as a
+            fallback for defensive reasons; no caller passes the
+            default variant anywhere. */}
         {!["admin", "super_admin", "manager", "technician"].includes(
           effectiveRole || user.role
-        ) && <UniversalMenu />}
+        ) && (
+          <header
+            className="sticky top-0 z-30 w-full flex items-center justify-end gap-2 h-14 bg-white border-b px-4"
+            data-testid="portal-sticky-header"
+          >
+            <UniversalMenu variant="inline" showSignOut />
+          </header>
+        )}
 
         {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
             non-landscaping users. Mount-site gate: admin / super_admin
@@ -727,15 +745,20 @@ function AppLayout() {
               the outlet so pending pool + landscaping ToS acceptances
               block route interaction. Self-gates on role === "customer";
               no-op for admin / super_admin / technician / manager.
-              Phase P34 · Feb-2026 — customer-portal outlet gets a
-              ``pt-16`` (4rem, matches the fixed-header height) so
-              portal Home / Invoices / Estimates don't sit under the
-              header bar. Admin/staff routes keep their zero-padding
-              behavior (their layout owns its own header spacing). */}
+              Phase P43 · Feb-2026 — the portal wrapper now caps at
+              ``max-w-5xl`` and centers via ``mx-auto`` with ``px-4``
+              gutters + ``w-full``. Top-padding compensation (the
+              P34 ``pt-16`` hack) is GONE — the new sticky
+              ``portal-sticky-header`` above reserves its own h-14
+              (56px) of vertical space naturally. Admin/staff
+              outlet is intentionally untouched — its own layout
+              owns width + spacing. */}
           <OnboardingGate>
             <div
               className={
-                location.pathname.startsWith("/portal") ? "pt-16" : ""
+                location.pathname.startsWith("/portal")
+                  ? "w-full max-w-5xl mx-auto px-4"
+                  : ""
               }
               data-testid={
                 location.pathname.startsWith("/portal")
@@ -743,6 +766,17 @@ function AppLayout() {
                   : "admin-outlet-wrapper"
               }
             >
+              {/* Phase P43 · Feb-2026 — ``PaymentMethodPromptBanner``
+                  moved from the outer ``flex-row`` slot to sit HERE
+                  as a full-width block ABOVE ``<Outlet />`` inside
+                  the ``max-w-5xl mx-auto`` portal container.  This
+                  stacks the banner vertically instead of letting it
+                  race the sidebar for horizontal space (which caused
+                  content squashing at narrow widths).  Portal-only
+                  branch — admin/staff never render it. */}
+              {location.pathname.startsWith("/portal") ? (
+                <PaymentMethodPromptBanner />
+              ) : null}
               <Outlet />
             </div>
           </OnboardingGate>

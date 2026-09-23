@@ -350,3 +350,124 @@ def build_portal_home_url(
         preview=preview,
     )
     return f"{base_url.rstrip('/')}/api/portal/auto-login?t={token}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase P32.1 · Feb-2026 — Portal-invite signed magic-link.
+#
+# Emitted by the admin-driven portal-invite send path
+# (``routers/portal_admin.py::_do_portal_provision``). Distinct
+# ``sub`` claim (``portal_invite``) so a leaked estimate/invoice/
+# job_view/portal_home token can NEVER be replayed on the invite
+# flow, and vice versa.
+#
+# TTL is 168h (7 days) — unified across every magic-link surface
+# in P34. Do NOT diverge to 14d / 24h / anything else.
+#
+# ``invitation_id`` is the ``invitations`` collection's primary key.
+# The auto-login handler uses it to enforce SINGLE-USE redemption:
+# the invitations row's ``status`` starts as ``"sent"`` and flips
+# to ``"accepted"`` on redemption. Every subsequent redemption of
+# the same token — even inside the 168h window — is rejected with
+# ``invitation_already_used_or_revoked``. That single-use rule is
+# what makes the widened TTL safe.
+#
+# ``verify_portal_invite_token`` returns ``None`` on any failure
+# (expired, tampered, wrong ``sub``, malformed claims) rather than
+# raising HTTPException. The auto-login handler's error paths need
+# to distinguish between "invalid token" and "used token", and a
+# nullable return keeps that branching flat.
+# ═══════════════════════════════════════════════════════════════════════
+_TOKEN_SUB_PORTAL_INVITE = "portal_invite"
+_PORTAL_INVITE_TTL_HOURS = 168   # unified per P34 — do NOT diverge
+
+
+def mint_portal_invite_token(
+    tenant_id: str, customer_id: str, invited_by_user_id: str,
+    invitation_id: str,
+    *, ttl_hours: int = _PORTAL_INVITE_TTL_HOURS,
+) -> str:
+    """Mint a P32.1 portal-invite JWT. Claims: ``sub``, ``tid``
+    (tenant_id), ``cid`` (customer_id), ``iby`` (invited_by_user_id),
+    ``iid`` (invitation_id), ``iat``, ``exp``.
+
+    Claim key naming intentionally diverges from the other portal
+    scopes (short ``tid`` / ``cid`` / ``iby`` / ``iid`` instead of
+    ``tenant_id`` / ``customer_id`` / ...) to keep the URL length
+    tight — invite emails are more link-length-sensitive than the
+    resource-scoped magic-links used elsewhere. Verify + auto-login
+    handler read these short keys directly (see
+    ``verify_portal_invite_token``).
+    """
+    if not (tenant_id and customer_id and invited_by_user_id
+            and invitation_id):
+        raise ValueError(
+            "tenant_id, customer_id, invited_by_user_id, and "
+            "invitation_id are all required",
+        )
+    ttl = max(60, int(ttl_hours) * 3600)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": _TOKEN_SUB_PORTAL_INVITE,
+        "tid": tenant_id,
+        "cid": customer_id,
+        "iby": invited_by_user_id,
+        "iid": invitation_id,
+        "iat": now,
+        "exp": now + timedelta(seconds=ttl),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+def verify_portal_invite_token(token: str) -> Optional[dict]:
+    """Decode + validate a P32.1 portal-invite JWT.
+
+    Returns the claims dict on success. Returns ``None`` on ANY
+    failure (expired signature, tampered signature, wrong ``sub``,
+    missing required claim). Never raises — see the module comment
+    for the auto-login branching rationale.
+
+    Never logs the raw token in any error path (leak risk).
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.PyJWTError:
+        return None
+    if payload.get("sub") != _TOKEN_SUB_PORTAL_INVITE:
+        return None
+    for key in ("tid", "cid", "iby", "iid"):
+        if not payload.get(key):
+            return None
+    return payload
+
+
+def build_portal_invite_url(
+    base_url: str, tenant_id: str, customer_id: str,
+    invited_by_user_id: str, invitation_id: str,
+    *, ttl_hours: int = _PORTAL_INVITE_TTL_HOURS,
+) -> str:
+    """Return the customer-facing ``AcceptInvite`` URL. Routes to the
+    React ``/portal/accept-invite`` page which owns the friendly
+    error surface + kicks the browser to the interstitial auto-login
+    handler on success."""
+    token = mint_portal_invite_token(
+        tenant_id, customer_id, invited_by_user_id, invitation_id,
+        ttl_hours=ttl_hours,
+    )
+    return (
+        f"{base_url.rstrip('/')}/portal/accept-invite?token={token}"
+    )
+
+
+def hash_portal_invite_token(token: str) -> str:
+    """SHA-256 hex digest of the raw token. The ``invitations``
+    collection stores this hash — never the raw token — so a
+    database dump can't be replayed as a valid magic-link. The
+    auto-login handler recomputes the hash on redemption to look
+    the invitation row up."""
+    import hashlib
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
