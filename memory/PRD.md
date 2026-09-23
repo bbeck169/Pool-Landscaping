@@ -20136,3 +20136,10 @@ If future scale (e.g. bumping `pageSize` cap above 500) makes windowing meaningf
 - Consider adding a "500+" page-size option once we're comfortable the top-level rows are lean enough (would then justify virtualizing the top-level list too).
 - Backfill `scheduled_date` on any pre-P13 jobs that only stored `scheduled_start` — the DESC sort keys off `scheduled_date`, so rows without it sort as blank-string (empty at DESC tail). Non-blocking for P37 since Aquaterra's jobs all carry `scheduled_date` today.
 
+
+---
+
+## P37.1 · Feb-2026 · Mongo Pool Config Cleanup
+
+**Status:** SHIPPED. Single source of truth for the Motor pool config lives in `backend/config.py` as two module-level constants (`_MONGO_MAX_POOL_SIZE=300`, `_MONGO_SERVER_SELECTION_TIMEOUT_MS=5000`) wired into the single `AsyncIOMotorClient(...)` call. `MONGO_URL` carries zero query-string params (audit-grep confirmed no `maxPoolSize` and no duplicates). New `serverSelectionTimeoutMS=5000` guards boot against Atlas hiccups (was Motor's 30s default). New startup log `[mongo] maxPoolSize=300 serverSelectionTimeoutMS=5000 (source=code)` grep-able from pod logs. `maxPoolSize=300` preserved from pre-P37.1 per the brief's "if intentional" clause — this is a deliberate concurrency budget for the multi-tenant API workload; do not lower without a load-test.
+

@@ -21,7 +21,31 @@ load_dotenv(ROOT_DIR / '.env', override=False)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url, maxPoolSize=300)
+# Phase P37.1 · Feb-2026 — Mongo pool config cleanup.
+#
+# Single source of truth: the kwargs on this ``AsyncIOMotorClient``
+# call. ``MONGO_URL`` (see ``backend/.env``) intentionally carries
+# ZERO query-string params — audit-grep confirmed no duplicate
+# ``maxPoolSize`` etc. If a future secret rotation reintroduces a
+# ``?maxPoolSize=`` on the URL, the Motor kwarg below still wins
+# (Motor's kwarg takes precedence over the URL query string), but
+# ops should keep the URL cosmetically clean per the P37.1 brief.
+#
+# ``maxPoolSize=300`` — preserved from pre-P37.1 (deliberate high-
+# concurrency budget for the API-heavy multi-tenant workload; do NOT
+# drop to Motor's default 100 without a load-test).
+#
+# ``serverSelectionTimeoutMS=5000`` — new in P37.1. Motor's default
+# is 30_000 which meant a transient Atlas hiccup blocked boot for
+# 30s on every fresh pod spin-up. 5s is the accepted-practice guard
+# for a healthy Atlas region.
+_MONGO_MAX_POOL_SIZE = 300
+_MONGO_SERVER_SELECTION_TIMEOUT_MS = 5000
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=_MONGO_MAX_POOL_SIZE,
+    serverSelectionTimeoutMS=_MONGO_SERVER_SELECTION_TIMEOUT_MS,
+)
 db = client[os.environ['DB_NAME']]
 
 # SEC-P3-3 hotfix — fail loud if JWT_SECRET is missing / weak. Previously
@@ -54,6 +78,14 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pool_crm")
+
+# Phase P37.1 · Feb-2026 — one-shot startup log so ops can grep the
+# effective pool config from pod logs at boot. Line format:
+#   [mongo] maxPoolSize=300 serverSelectionTimeoutMS=5000 (source=code)
+logger.info(
+    "[mongo] maxPoolSize=%s serverSelectionTimeoutMS=%s (source=code)",
+    _MONGO_MAX_POOL_SIZE, _MONGO_SERVER_SELECTION_TIMEOUT_MS,
+)
 
 # Feb-2026 · Payments env hardening — placeholder-shape guard on
 # ``STRIPE_SECRET_KEY_LIVE``. Runs once at module load so the LOUD log
