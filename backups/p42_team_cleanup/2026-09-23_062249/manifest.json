@@ -1,0 +1,31 @@
+{
+  "tenant_id": "67752881-7a80-4a2c-a03e-5d1aff4861a4",
+  "taken_at": "2026-09-23T06:22:49.495927+00:00",
+  "db_name": "Pool_&_Landscaping_of_Vistancia",
+  "collections": {
+    "users": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_062249/users.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "technicians": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_062249/technicians.json",
+      "count": 2,
+      "bytes": 807,
+      "sha256": "ca0c755602b96a6508eecdef5514304f53397c94e59cb8a943d28f29528892d2"
+    },
+    "jobs": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_062249/jobs.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "invitations": {
+      "path": "/app/backups/p42_team_cleanup/2026-09-23_062249/invitations.json",
+      "count": 0,
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  }
+}
