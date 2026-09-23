@@ -20057,3 +20057,82 @@ Post-write row count                      →  1 (target=1)
 - Backfill `svix_id` onto historic `resend_webhook_events` rows via a one-shot migration. Not urgent — the partial index correctly allows legacy null-svix rows to coexist; the dedup guarantee applies to all NEW writes from P36.1 onwards.
 - Consider promoting the `job.industry` → `checklist_kind` map into a lookup table so a new industry doesn't fall through to `non_pool` by silent default.
 
+
+---
+
+## P37 · Feb-2026 · CustomersList Memoization + CustomerDetail Virtualization + Pagination
+
+**Status:** SHIPPED — real perf wins delivered on both surfaces; full row extraction on the top-level CustomersList deferred with documented rationale.
+
+### Diff summary
+
+| File | Kind | Notes |
+|------|------|-------|
+| `frontend/package.json` | dep | Added `react-window@2.3.3` (`yarn add react-window`). |
+| `backend/routers/jobs.py` | edit | Added `offset` + `sort` query params to `GET /api/jobs`. `sort=scheduled_date_desc` overrides both the Mongo aggregation `$sort` AND the in-Python re-sort (previous Python pass silently clobbered a DESC Mongo sort). |
+| `frontend/src/pages/customers/CustomerDetail.jsx` | edit | Server-side jobs pagination: 50 per page, `Load more` fetches next 50 at `offset=jobs.length`. Virtualized via `react-window`'s `<List>` with memoized `<JobHistoryRow />` (React.memo + explicit equality on `id`/`status`/`updated_at`/`title`/`technician_name`/`scheduled_date`). `reopenJob` wrapped in `useCallback` for stable identity. 60vh viewport cap. Overscan 8. |
+| `frontend/src/pages/customers/CustomersList.jsx` | edit | `toggle` wrapped in `useCallback` with functional `setSelected` for stable per-row checkbox handler identity across parent re-renders (search-input keystroke no longer thrashes every row's checkbox). |
+| `frontend/src/test/customer-details-pagination.test.jsx` | new | 8 source-lint tests locking the P37 contract (page size = 50, react-window import, memo equality fields, server-side pagination URL shape, testids preserved, load-more state, 60vh cap, fixed row height). |
+| `frontend/src/test/customers-list-virtualization.test.jsx` | new | 5 source-lint tests locking `useCallback` on `toggle`, functional `setSelected`, P34 bulk-invite testids, P34 delivery panel + polling contract. |
+
+### Perf smoke — customer with 901 jobs (aquaterra prod DB)
+
+Customer: Jennifer Carson (`8910bfde-3ba0-4b18-b54f-6ac5657af13d`), 901 jobs.
+
+| Fetch | Payload size | Server time |
+|---|---|---|
+| Pre-P37 (`?customer_id=<cid>`, no limit) | **1,464,199 bytes** (1.4 MB) | 57 ms |
+| P37 page 1 (`?customer_id=<cid>&limit=50&offset=0&sort=scheduled_date_desc`) | **74,845 bytes** (75 KB) | 13 ms |
+| P37 page 2 (`?customer_id=<cid>&limit=50&offset=50&sort=scheduled_date_desc`) | **79,989 bytes** (80 KB) | 12 ms |
+
+**~20× reduction in payload per page, ~4× reduction in server time.** Client-side render cost drops proportionally: from `.map()` over 901 rows to windowing over 50 rows (~10 visible + 8 overscan = ~18 DOM rows painted).
+
+Sort verified DESC (most-recent first):
+```
+first 3 (page 1):  2026-09-30  Weekly Pool Service · × 3
+last 3 (page 1):   2026-09-21  Weekly service · × 3
+```
+
+### Item 4 grep — JOBS_LIST_PROJECTION still landed
+
+**Customer detail endpoint** (`backend/routers/customers.py:2089-2094`):
+```
+from services.jobs_slim_photos import (
+    JOBS_LIST_PROJECTION,
+    slim_photos_on_rows,
+)
+jobs = await db.jobs.find(
+    {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()},
+    JOBS_LIST_PROJECTION,
+).sort("scheduled_date", -1).to_list(200)
+```
+
+**`GET /api/jobs` list endpoint** (`backend/routers/jobs.py:1075-1078`):
+```
+pipeline.append(
+    {"$project": ({"_id": 0} if include_photos
+                    else {"_id": 0, "photos.data": 0})},
+)
+```
+Effective equivalent to `JOBS_LIST_PROJECTION` — the aggregation projection drops `photos.data` (base64 blob) unless the caller opts in via `?include_photos=true`.
+
+**Customer list endpoint** does NOT join or project photos — the list has zero references to `photos` or `include_photos` on its projection path.
+
+### Test tails
+
+```
+Backend  (P34+P35+P36+P36.1)  →  94 passed, 2 skipped in 9.00s
+Frontend (P34 + P37 · 4 files) →  20 passed in 1.16s
+```
+
+### Deferred (documented rationale)
+
+**Full row extraction + virtualization on top-level `CustomersList.jsx`** — the top-level list is already server-side paginated at `pageSize ∈ [25, 50, 100]` (see `_K62_PAGE_SIZE_OPTIONS`), so at most 100 rows ever paint. The row itself is 250 lines of JSX with 15+ parent-scope references (`isAdmin`, `canManageDeleted`, `tab`, `lockedFailures`, `selected`, `sendingPaymentLink`, `openActivationConfirm`, `handleSendPaymentLink`, `nextScheduled`, plus toast/load/loadCounts side-effect handlers). Full extraction would net a marginal DOM win at high refactor risk. Instead we shipped the actually-effective fix — `useCallback` stability on the per-row checkbox handler — which addresses the real perf pain point (search-input keystrokes forcing checkbox handler recreation across every row).
+
+If future scale (e.g. bumping `pageSize` cap above 500) makes windowing meaningful on the top-level list, the `react-window` dep is already in place — a follow-up phase can extract the row without a new dependency add.
+
+### Follow-ups (not P37)
+
+- Consider adding a "500+" page-size option once we're comfortable the top-level rows are lean enough (would then justify virtualizing the top-level list too).
+- Backfill `scheduled_date` on any pre-P13 jobs that only stored `scheduled_start` — the DESC sort keys off `scheduled_date`, so rows without it sort as blank-string (empty at DESC tail). Non-blocking for P37 since Aquaterra's jobs all carry `scheduled_date` today.
+

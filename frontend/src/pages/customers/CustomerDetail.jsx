@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, X as XIcon } from "lucide-react";
 import { api } from "@/api";
@@ -141,6 +141,96 @@ import ResponsiveTabs from "@/components/ui/responsive-tabs";
 // (they stay in the tab bar for backwards-compat) and adds a new
 // consolidated "Documents" tab as the primary surface.
 import CustomerDocumentsTab from "@/components/customers/CustomerDocumentsTab";
+import { List } from "react-window";
+
+
+// Phase P37 · Feb-2026 — fixed row height for the virtualized jobs
+// history list. Measured against the pre-P37 DOM (rounded up from
+// the natural ~68px so the row content has breathing room + the
+// action buttons don't overflow). Kept module-scope so tests can
+// import it deterministically.
+const _P37_JOB_ROW_HEIGHT = 72;
+
+
+// Phase P37 · Feb-2026 — memoized row component for the virtualized
+// jobs history. Rendered by ``react-window``'s ``<List>`` (which
+// passes ``index``, ``style``, ``ariaAttributes`` and any keys from
+// ``rowProps``). Only re-renders when THIS row's job id / status /
+// updated_at flips — a search-input keystroke on the parent won't
+// force every windowed row through reconciliation.
+const JobHistoryRow = React.memo(
+  function JobHistoryRow({ index, style, ariaAttributes, jobs, reopenJob }) {
+    const j = jobs[index];
+    if (!j) return <div style={style} {...ariaAttributes} />;
+    return (
+      <div
+        style={{ ...style, padding: "6px 4px" }}
+        {...ariaAttributes}
+        data-testid={`cd-job-row-${j.id}`}
+      >
+        <div
+          className="flex items-center gap-3 p-3 rounded-xl transition hover:brightness-95 h-full"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+        >
+          <Link
+            to={`/jobs/${j.id}`}
+            className="flex-1 min-w-0"
+            data-testid={`cd-job-${j.id}`}
+          >
+            <div
+              className="text-sm font-semibold truncate"
+              style={{ color: colors.onSurface }}
+            >
+              {j.title}
+            </div>
+            <div className="text-xs" style={{ color: colors.muted }}>
+              {j.scheduled_date || "Unscheduled"} ·
+              {" " + (j.technician_name || "Unassigned")}
+            </div>
+          </Link>
+          <StatusPill status={j.status} />
+          {j.status === "completed" ? (
+            <button
+              onClick={() => reopenJob(j.id)}
+              className="text-xs font-semibold px-2 py-1 rounded"
+              style={{
+                color: colors.brand,
+                border: `1px solid ${colors.brandTertiary}`,
+              }}
+              data-testid={`cd-reopen-${j.id}`}
+            >
+              Reopen
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  },
+  (prev, next) => {
+    // Skip re-render unless THIS row's key data actually changed.
+    // ``jobs`` array reference AND handler references are stable
+    // via useCallback/useMemo at the parent — we can rely on
+    // index+id+status+updated_at for the equality check.
+    if (prev.index !== next.index) return false;
+    const pj = prev.jobs[prev.index];
+    const nj = next.jobs[next.index];
+    if (pj === nj) return true;
+    if (!pj || !nj) return false;
+    return (
+      pj.id === nj.id
+      && pj.status === nj.status
+      && pj.updated_at === nj.updated_at
+      && pj.title === nj.title
+      && pj.technician_name === nj.technician_name
+      && pj.scheduled_date === nj.scheduled_date
+      && prev.reopenJob === next.reopenJob
+    );
+  },
+);
+
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -194,6 +284,24 @@ export default function CustomerDetail() {
   const { user: authUser } = useAuth();
   const [customer, setCustomer] = useState(null);
   const [jobs, setJobs] = useState([]);
+  // Phase P37 · Feb-2026 — CustomerDetail jobs history pagination +
+  // virtualization. On profiles with 900+ jobs the browser was
+  // jank-rendering every row on first paint AND transporting the
+  // full array over the wire. New shape:
+  //   • Fetch the first ``_P37_JOBS_PAGE`` (50) via
+  //     ``GET /jobs?customer_id=&limit=50&offset=0&sort=scheduled_date_desc``.
+  //   • ``Load more`` button appends the next 50 via a follow-up
+  //     fetch (``offset = jobs.length``).
+  //   • The rendered list itself is windowed via ``react-window``'s
+  //     ``<List>`` so even 900 accumulated rows only paint the
+  //     visible ~10 + overscan.
+  //
+  // Sort switched to DESC (most-recent first) — matches the P37
+  // brief. The default endpoint sort (ASC) is preserved for every
+  // other caller.
+  const _P37_JOBS_PAGE = 50;
+  const [jobsLoadingMore, setJobsLoadingMore] = useState(false);
+  const [jobsHasMore, setJobsHasMore] = useState(false);
   // Feb-2026 · Customer profile — primary-property address line under
   // the name (see the header render). Fetched alongside customer +
   // jobs so the address can appear in the first paint.
@@ -273,9 +381,18 @@ export default function CustomerDetail() {
       //   • Cuts payload from "whole tenant" (MB in prod) to a single
       //     customer's history (KB) and eliminates the client-side
       //     `.filter(j.customer_id === id)` altogether.
+      // Phase P37 · Feb-2026 — server-side jobs pagination (DESC).
+      // Fetches ``_P37_JOBS_PAGE`` (50) rows at a time so a
+      // customer with 900+ jobs no longer transports the full
+      // history on first paint. See ``jobsHasMore`` + the
+      // ``Load more`` button below.
       const [c, myJobs, props] = await Promise.all([
         api.get(`/customers/${id}`),
-        api.get(`/jobs?customer_id=${encodeURIComponent(id)}`),
+        api.get(
+          `/jobs?customer_id=${encodeURIComponent(id)}`
+          + `&limit=${_P37_JOBS_PAGE}&offset=0`
+          + `&sort=scheduled_date_desc`,
+        ),
         // Feb-2026 · Customer profile — properties fetched for the
         // primary-address line under the customer name. Non-fatal:
         // if the call fails we still render the rest of the page and
@@ -283,7 +400,12 @@ export default function CustomerDetail() {
         api.get(`/customers/${id}/properties`).catch(() => []),
       ]);
       setCustomer(c);
-      setJobs(Array.isArray(myJobs) ? myJobs : []);
+      const firstPage = Array.isArray(myJobs) ? myJobs : [];
+      setJobs(firstPage);
+      // If we got a full page back, there's likely more. This is a
+      // truthy heuristic — the follow-up fetch handles the empty
+      // case + flips ``jobsHasMore`` to false when we hit the tail.
+      setJobsHasMore(firstPage.length >= _P37_JOBS_PAGE);
       setProperties(Array.isArray(props) ? props : []);
     } catch (e) {
       setToast({ tone: "error", message: e.message });
@@ -293,6 +415,35 @@ export default function CustomerDetail() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Phase P37 · Feb-2026 — Load-more handler. Fetches the next
+  // ``_P37_JOBS_PAGE`` (50) jobs at ``offset = jobs.length`` and
+  // appends. Guards against double-click via ``jobsLoadingMore``
+  // and flips ``jobsHasMore`` to false when we get a partial page
+  // (or empty) back, so the button hides at the tail.
+  const loadMoreJobs = useCallback(async () => {
+    if (jobsLoadingMore || !jobsHasMore) return;
+    setJobsLoadingMore(true);
+    try {
+      const next = await api.get(
+        `/jobs?customer_id=${encodeURIComponent(id)}`
+        + `&limit=${_P37_JOBS_PAGE}&offset=${jobs.length}`
+        + `&sort=scheduled_date_desc`,
+      );
+      const chunk = Array.isArray(next) ? next : [];
+      if (chunk.length === 0) {
+        setJobsHasMore(false);
+      } else {
+        setJobs((prev) => [...(prev || []), ...chunk]);
+        setJobsHasMore(chunk.length >= _P37_JOBS_PAGE);
+      }
+    } catch (e) {
+      setToast({ tone: "error",
+                    message: `Load more failed: ${e.message}` });
+    } finally {
+      setJobsLoadingMore(false);
+    }
+  }, [id, jobs.length, jobsHasMore, jobsLoadingMore]);
 
   const doDelete = async (mode) => {
     // Feb-2026 · Customer Delete UX overhaul — mode-aware delete.
@@ -339,7 +490,12 @@ export default function CustomerDetail() {
     }
   };
 
-  const reopenJob = async (jid) => {
+  // Phase P37 · Feb-2026 — stable ``reopenJob`` reference so the
+  // memoized ``<JobHistoryRow />`` doesn't invalidate its equality
+  // check every time the parent re-renders (e.g. on tab switch or
+  // toast dismiss). ``load`` is closed-over but is itself stable
+  // enough for this use — it references ``id`` from ``useParams``.
+  const reopenJob = useCallback(async (jid) => {
     try {
       await api.post(`/jobs/${jid}/reopen`);
       setToast({ tone: "success", message: "Job reopened" });
@@ -347,7 +503,8 @@ export default function CustomerDetail() {
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleVip = async (isVip, note) => {
     try {
@@ -894,41 +1051,52 @@ export default function CustomerDetail() {
                 }
               />
             ) : (
-              <ul className="space-y-2" data-testid="cd-jobs-list">
-                {jobs.map((j) => (
-                  <li
-                    key={j.id}
-                    className="flex items-center gap-3 p-3 rounded-xl transition hover:brightness-95"
+              /* Phase P37 · Feb-2026 — virtualized jobs history.
+                 The container caps at 60vh so react-window's ``List``
+                 has a bounded viewport to window against. Overscan
+                 8 rows. Each row is a memoized ``<JobHistoryRow />``
+                 (see the component at the bottom of this file) that
+                 skips re-renders unless its own job's ``id`` /
+                 ``updated_at`` / ``status`` change. */
+              <div data-testid="cd-jobs-list">
+                <List
+                  className="rounded-xl"
+                  rowComponent={JobHistoryRow}
+                  rowCount={jobs.length}
+                  rowHeight={_P37_JOB_ROW_HEIGHT}
+                  rowKey={(index) => jobs[index]?.id ?? `p37-idx-${index}`}
+                  rowProps={{ jobs, reopenJob }}
+                  overscanCount={8}
+                  defaultHeight={Math.min(600, jobs.length * _P37_JOB_ROW_HEIGHT + 4)}
+                  style={{
+                    maxHeight: "60vh",
+                    border: `1px solid ${colors.border}`,
+                    backgroundColor: colors.surface,
+                  }}
+                />
+                {/* Phase P37 · Feb-2026 — server-side ``Load more``.
+                    Fetches the next 50 rows via
+                    ``GET /jobs?offset=<jobs.length>``. Hidden at
+                    the tail. */}
+                {jobsHasMore ? (
+                  <button
+                    type="button"
+                    onClick={loadMoreJobs}
+                    disabled={jobsLoadingMore}
+                    className="w-full text-sm font-semibold py-2 mt-2 rounded"
                     style={{
                       backgroundColor: colors.surfaceSecondary,
+                      color: colors.brand,
                       border: `1px solid ${colors.border}`,
+                      opacity: jobsLoadingMore ? 0.6 : 1,
+                      cursor: jobsLoadingMore ? "not-allowed" : "pointer",
                     }}
+                    data-testid="cd-jobs-load-more"
                   >
-                    <Link to={`/jobs/${j.id}`} className="flex-1 min-w-0" data-testid={`cd-job-${j.id}`}>
-                      <div className="text-sm font-semibold truncate" style={{ color: colors.onSurface }}>
-                        {j.title}
-                      </div>
-                      <div className="text-xs" style={{ color: colors.muted }}>
-                        {j.scheduled_date || "Unscheduled"} · {j.technician_name || "Unassigned"}
-                      </div>
-                    </Link>
-                    <StatusPill status={j.status} />
-                    {j.status === "completed" ? (
-                      <button
-                        onClick={() => reopenJob(j.id)}
-                        className="text-xs font-semibold px-2 py-1 rounded"
-                        style={{
-                          color: colors.brand,
-                          border: `1px solid ${colors.brandTertiary}`,
-                        }}
-                        data-testid={`cd-reopen-${j.id}`}
-                      >
-                        Reopen
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+                    {jobsLoadingMore ? "Loading…" : `Load more (${_P37_JOBS_PAGE} at a time)`}
+                  </button>
+                ) : null}
+              </div>
             )
           ) : null}
 

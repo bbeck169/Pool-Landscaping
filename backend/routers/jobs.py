@@ -814,6 +814,8 @@ async def list_jobs(
     scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
     recurring_template_id: Optional[str] = Query(None, description="Phase 51.I: filter by recurring template origin"),
     limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
+    offset: int = Query(0, ge=0, le=100_000, description="Phase P37 · Feb-2026 — server-side offset pagination. Skips the first ``offset`` rows AFTER sorting. Composes with ``limit`` so a caller can page through by incrementing ``offset += limit``."),
+    sort: Optional[str] = Query(None, description="Phase P37 · Feb-2026 — override the default sort. Accepted: ``scheduled_date_asc`` (default, preserved for existing callers), ``scheduled_date_desc`` (used by CustomerDetail jobs history). Any other value is ignored + the default is applied."),
     include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
     include_photos: bool = Query(False, description="Feb-2026 · Slim-photos ship — opt back into the full ``photos`` array on list rows. Default (``false``) drops ``photos`` and returns only ``photo_count`` + ``photo_ids`` for cheap lazy-loading."),
     response: Response = None,
@@ -1054,13 +1056,26 @@ async def list_jobs(
     # branch keeps the full projection so downstream consumers
     # that legitimately need full photos over the wire still get
     # them. See ``services/jobs_slim_photos.py`` module comment.
+    # Phase P37 · Feb-2026 — server-side pagination + optional sort
+    # override. Default sort (scheduled_date ASC) is preserved for
+    # every legacy caller. ``sort=scheduled_date_desc`` flips it for
+    # CustomerDetail's "most-recent first" jobs history. ``offset``
+    # is inserted BETWEEN $sort and $limit so the skipped rows are
+    # deterministic + tenant-scoped.
+    _sort_stage: Dict[str, int] = {"scheduled_date": 1}
+    if sort == "scheduled_date_desc":
+        _sort_stage = {"scheduled_date": -1}
     pipeline: list[dict] = [
         {"$match": q},
-        {"$sort": {"scheduled_date": 1}},
-        {"$limit": int(limit)},
+        {"$sort": _sort_stage},
+    ]
+    if offset:
+        pipeline.append({"$skip": int(offset)})
+    pipeline.append({"$limit": int(limit)})
+    pipeline.append(
         {"$project": ({"_id": 0} if include_photos
                         else {"_id": 0, "photos.data": 0})},
-    ]
+    )
     docs = await db.jobs.aggregate(pipeline, allowDiskUse=True).to_list(limit)
     # P22 · Feb-2026 — truncation signal. When the read fills the cap
     # exactly, we flag it via a response header so the UI can surface
@@ -1081,6 +1096,13 @@ async def list_jobs(
     # (time portion), then by created_at.  Missing route_index
     # sinks to the end within its day (999999 sentinel matches the
     # prior aggregation ``$ifNull`` behaviour).
+    #
+    # Phase P37 · Feb-2026 — respect the caller's ``sort`` override.
+    # Pre-P37 this re-sort always applied ASC and silently clobbered
+    # the Mongo-side ``-1`` sort. New shape: flip ``reverse=True``
+    # when ``sort=scheduled_date_desc`` so the composite key is
+    # inverted end-to-end (day, route_index, ts, created_at all
+    # flip together).
     def _re_sort_key(d: dict) -> tuple:
         sd = d.get("scheduled_date") or ""
         day = sd[:10] if isinstance(sd, str) else ""
@@ -1088,7 +1110,7 @@ async def list_jobs(
         ri_val = ri if isinstance(ri, (int, float)) else 999999
         ca = d.get("created_at") or ""
         return (day, ri_val, sd, ca)
-    docs.sort(key=_re_sort_key)
+    docs.sort(key=_re_sort_key, reverse=(sort == "scheduled_date_desc"))
     # Feb-2026 · P0 — bulk read-time cascade for the ``technician_name``
     # denorm. The list surface historically returned the stored value
     # verbatim; jobs stamped before the Feb-2026 write-side denorm fix

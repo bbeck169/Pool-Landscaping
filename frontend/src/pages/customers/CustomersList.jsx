@@ -906,12 +906,19 @@ export default function CustomersList() {
     return out;
   }, [rows, missingCardOnly, candidateFilterActive, candidateIds]);
 
-  const toggle = (id) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelected(next);
-  };
+  // Phase P37 · Feb-2026 — stable ``toggle`` callback so the row
+  // checkbox reference doesn't churn on every parent re-render.
+  // Setting an item that already exists is a no-op via ``Set``, and
+  // functional ``setSelected`` avoids capturing a stale ``selected``
+  // in the closure.
+  const toggle = useCallback((id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   // Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — bulk-delete via
   // the new /customers/bulk-delete endpoint + locked-state pill.
