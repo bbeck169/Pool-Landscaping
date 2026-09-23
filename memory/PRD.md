@@ -20903,3 +20903,126 @@ POST   /api/autobilling-runs/hard-delete-bulk
 - Cascade support: if a future collection adds an `autobilling_run_id` FK, extend the handlers to purge orphans in the same transaction.
 - Rate-limit on the bulk endpoint (500-id cap is the only guard today).
 - Row menu "⋯" dropdown: current impl exposes the hard-delete as a distinct icon button. A proper compact dropdown menu (soft, hard, restore) would clean up wide-role rows.
+
+---
+
+## Phase P42 · Team Member Hard Delete (technicians surface)
+
+**Status:** ✅ Shipped Feb-2026 · preview verified (curl + 15 backend + 5 frontend tests) · 2 endpoints + 1 UI action + confirmation dialog.
+
+### Motivation
+Existing team-management delete flow was soft-only (`DELETE /users/{id}/soft-delete`, `DELETE /technicians/{id}` — both stamp `deleted_at`, both restorable). Ops task requested an in-app version of a physical purge for a specific tenant's stale technician records without dropping to a mongo-shell script. P42 provides that surface with the same guardrails P41 introduced for autobilling runs, extended for team-member cascades: linked user login, pending invitations, future job unassignment (never job deletion).
+
+### Backend endpoints
+- `DELETE /api/technicians/{tech_id}/hard-delete` → single hard delete.
+- `POST /api/technicians/hard-delete-bulk` → bulk hard delete; body `{"ids": [...]}`.
+
+Cascade per technician:
+1. **Snapshot** tech doc + linked user doc + pending invite ids into `db.audits` (kind `technicians_hard_delete`). Also mirrored into `deletion_audit` so the existing P23 forensic sweep surfaces P42 alongside soft-delete history.
+2. **Unassign FUTURE jobs**: tenant-scoped `update_many` on `db.jobs` where `technician_id == tech_id AND status IN {scheduled, pending} AND scheduled_start > now`. Sets `technician_id = null, technician_name = null, unassigned_reason = "technician_hard_deleted"`. Job records are **never deleted**. Past + in_progress + completed + cancelled jobs stay assigned.
+3. **Delete linked user row** if `technicians.user_id` matches a tenant-scoped `users` row. Reverse lookup via `users.technician_id == tech_id` covers legacy write paths.
+4. **Delete pending invitations** — a grep-confirmed no-op today (no `invitations` collection exists on the deployed schema; team invites are Resend one-shot emails logged to `communications_log` / `marketing_deliveries`). Response returns `pending_invitations_deleted: 0` when the collection is absent; extension point stays in the handler for when a first-class invites collection lands.
+5. **Physically delete** the technician row.
+6. Return per-tech counts: `{deleted, tech_id, linked_user_deleted, pending_invitations_deleted, future_jobs_unassigned, audit_id}`.
+
+### Security invariants (locked in code + tests)
+- **Tenant scoping** on every read + write. Cross-tenant tech id → **404 (existence-hiding)**, never 403. Verified by `test_hard_delete_returns_404_for_cross_tenant_id` + `test_bulk_hard_delete_tenant_scoping_excludes_other_tenant_ids` + the live curl proof.
+- **`require_admin`** gate on both endpoints. Technicians → 403.
+- **Self-delete protection** — 400 `{"code": "cannot_delete_self"}` when the caller resolves to the target tech's linked user OR carries `user.technician_id == tech_id`. Cannot be bypassed by a `?force=true` param — the guard is unconditional. Verified by `test_hard_delete_self_returns_400_cannot_delete_self`.
+- **Last-admin orphan protection** — 400 `{"code": "would_orphan_tenant_no_admin_remaining"}` when the linked user is `role in {admin, super_admin}` AND removing them would drop the tenant's admin count (excluding soft-deleted rows) to zero. In bulk mode this lands in `skipped[]` — the other techs proceed. Verified by `test_hard_delete_would_orphan_no_admin_returns_400` + the partial-success bulk test.
+- **In-progress-job protection** — no hard-block per user spec; ERROR log surfaced with `[p42] hard-delete of technician <id> tenant=<t> with in_progress jobs count=<N>` so ops can audit later. Verified by `test_hard_delete_in_progress_jobs_logs_error_but_still_deletes`.
+- **Bulk cap** — 500 ids per call. Dedupes repeated ids (single physical delete + single audit for a repeated id, `deleted_count` reflects the deduped work while `requested_count` reflects what the caller sent).
+
+### Frontend — `frontend/src/pages/ops/OpsHub.jsx` (TeamRoster + TeamRowKebab)
+- New kebab entry "Delete Permanently" (`AlertOctagon` icon, `data-testid=team-row-hard-delete-btn-{user_id}`). Rendered only when the row has a linked `technician_id` — pure admin users (no tech profile) still route through the existing soft-delete entry.
+- New confirmation dialog `HardDeleteTeamMemberDialog` (`data-testid=team-hard-delete-modal`) with:
+  - Title: `Permanently delete {name}?`
+  - Body: explicit consequence list (`technician profile`, `login account`, `pending invitations`, `future scheduled jobs`) + `This action cannot be undone.`
+  - Primary button (red danger): `Delete Permanently` (busy state renders `Deleting…` with spinner).
+  - Cancel preserved (disabled during busy state to prevent double-clicks).
+- Toast messaging via the shared ui-kit `Toast` (same channel the existing team actions use):
+  - Success: `{name} permanently deleted. {N} future jobs unassigned.`
+  - Self-delete 400: `You can't delete your own account. Ask another admin.`
+  - Orphan 400: `Can't delete — this would leave the tenant with no admin users.`
+  - Generic: `err.message || "Permanent delete failed"`.
+- Bulk-selection UI on this page is **deferred** (see follow-ups) — the roster has no selection primitive today; adding one is a bigger design change than fits P42. Backend bulk endpoint is fully wired + tested for programmatic use.
+
+### Tests
+- `backend/tests/test_p42_technician_hard_delete.py` — 15 tests, all pass:
+  1. Single delete removes tech + linked user, unassigns future job, preserves past job, writes audit.
+  2. Unknown id → 404.
+  3. Cross-tenant id → 404 + row still exists for its owner tenant.
+  4. `require_admin` rejects technicians.
+  5. Self-delete → 400 `cannot_delete_self`.
+  6. Last-admin orphan → 400 `would_orphan_tenant_no_admin_remaining` + nothing deleted.
+  7. Only future/pending/scheduled jobs get unassigned; past + in_progress + completed stay put. Zero jobs deleted.
+  8. Tech with no linked user → `linked_user_deleted: false`.
+  9. No `invitations` collection → `pending_invitations_deleted: 0`.
+  10. `in_progress` jobs → ERROR log with `[p42]` tag, tech still deleted.
+  11. Bulk partial success: mix of valid + self + orphan reports per-tech shape via `results` + `skipped[]`.
+  12. Bulk cross-tenant ids → 0 deleted + all leaked as `not_found`.
+  13. Bulk dedupes repeated ids (deleted_count=1, requested_count=3).
+  14. Bulk > 500 ids → 400.
+  15. Audit snapshot contains tech + linked user snapshots + pending_invite_ids + counts.
+- `frontend/src/test/p42-team-hard-delete.test.jsx` — 5 tests, all pass:
+  1. Kebab shows Delete Permanently only on rows with `technician_id`.
+  2. Row confirm → `api.del(/technicians/{id}/hard-delete)` + success toast with unassigned count.
+  3. Row cancel → no API call, row untouched.
+  4. 400 `cannot_delete_self` → specific toast copy.
+  5. 400 `would_orphan_tenant_no_admin_remaining` → specific toast copy.
+
+### Live curl proof (preview backend, aquaterra tenant JWT)
+```
+### 1) DELETE /api/technicians/p42_curl_valid/hard-delete (own tenant, linked user + future job)
+HTTP=200
+{
+  "deleted": true,
+  "tech_id": "p42_curl_valid",
+  "linked_user_deleted": true,
+  "pending_invitations_deleted": 0,
+  "future_jobs_unassigned": 1,
+  "audit_id": "5d324361-ab23-4e06-aee6-c34a787bf5e6"
+}
+Job after delete: {"id": "p42_curl_job", "technician_id": null,
+                    "unassigned_reason": "technician_hard_deleted"}
+
+### 2) DELETE /api/technicians/p42_curl_other/hard-delete (cross-tenant)
+HTTP=404
+{"detail": "Technician not found"}
+
+### 3) POST /api/technicians/hard-delete-bulk
+       body: {"ids": ["p42_bulk_a", "p42_curl_other", "p42_bulk_ghost", "p42_bulk_b"]}
+       — 2 valid, 1 cross-tenant, 1 ghost
+HTTP=200
+{
+  "requested_count": 4,
+  "deleted_count": 2,
+  "not_found": ["p42_curl_other", "p42_bulk_ghost"],
+  "skipped": [],
+  "results": [
+    {"deleted": true, "tech_id": "p42_bulk_a", "linked_user_deleted": false,
+     "future_jobs_unassigned": 0, "audit_id": "..."},
+    {"deleted": true, "tech_id": "p42_bulk_b", "linked_user_deleted": false,
+     "future_jobs_unassigned": 0, "audit_id": "..."}
+  ],
+  "future_jobs_unassigned_total": 0,
+  "linked_users_deleted_total": 0,
+  "pending_invitations_deleted_total": 0
+}
+```
+Self-delete + orphan branches are covered by unit tests (require a caller identity mismatch that curl-level testing against the super@aquaterra.com session can't easily simulate).
+
+### Hard-rules compliance
+- Tenant scoping on every read/write — cross-tenant delete always 404.
+- Jobs never deleted — future scheduled/pending unassigned, everything else preserved (test 7 asserts zero jobs deleted).
+- Self-delete + orphan protections are unconditional (no `?force=true` bypass).
+- Confirmation modal mandatory on the row action.
+- No `deleted_at` stamp — forensic snapshot lives in `audits`.
+- P23 soft-delete pathway preserved intact — hard delete lives alongside it, distinct paths + testids.
+- No mobile files touched. No `backend/.env` changes.
+
+### Ticket-worthy follow-ups (deferred)
+- **Bulk-selection UI on TeamRoster.** The roster is a flat `<ul>` today; adding checkboxes + a compact bulk action bar is a proper design task. Backend bulk endpoint stands ready.
+- **First-class `invitations` collection.** Team invites are currently one-shot Resend emails only. If a persistent invites collection lands (magic-link portal invites in P32.1), extend `_p42_snapshot_and_delete` step 4 to purge those rows.
+- **Force-override for orphan block.** Some tenants may legitimately want a "delete last admin AND promote another user in the same call" flow. Out of scope for P42; would be a paired `promote_to` + `force` param on the endpoint.
+- **Restore-from-audit tool.** Because P42 physically deletes, the only recovery path is the `technicians_hard_delete` audit doc snapshot. An ops-only endpoint to "replay an audit" would harden the safety net.

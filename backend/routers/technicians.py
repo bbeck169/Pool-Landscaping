@@ -689,3 +689,364 @@ async def soft_delete_technician(
         "bulk_op_id": bulk_op_id,
     }
 
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase P42 · Feb-2026 — Team Member HARD DELETE (single + bulk).
+#
+# Physical removal of a technician + their linked user login + any
+# pending invitation records. Coexists with the P23 soft-delete
+# surface above (``DELETE /technicians/{tid}``) — do NOT collapse.
+#
+# Cascade behaviour per technician id:
+#   1. Snapshot the tech + linked user + pending invites into an
+#      ``audits`` doc kind ``technicians_hard_delete`` (forensic
+#      recovery point — the rows themselves are gone after step 6).
+#   2. Unassign FUTURE scheduled/pending jobs from this tech
+#      (``technician_id=null, technician_name=null``). Job rows are
+#      NEVER deleted. Past + in_progress jobs stay assigned.
+#   3. delete_one the linked user row (if it belongs to the same
+#      tenant). Cross-tenant user linkage is a data-integrity bug
+#      that we surface but never act on — skipped + noted in the
+#      response.
+#   4. delete_many pending invitations for this tech's email /
+#      user_id. Grep of the backend on shipping day showed **no
+#      ``invitations`` collection exists** — team invites are one-
+#      shot Resend emails logged into ``communications_log`` /
+#      ``marketing_deliveries``. This step no-ops with count=0
+#      today; if a first-class ``invitations`` collection lands
+#      later, extend this block.
+#   5. delete_one the technician doc.
+#   6. Return per-tech counts.
+#
+# Security invariants (mirrored on the tests):
+#   * Tenant-scoped every read + write. Cross-tenant id → 404.
+#   * ``require_admin`` gate. Technician role → 403.
+#   * Self-delete protection — 400 ``cannot_delete_self`` when the
+#     caller resolves to the target tech.
+#   * Last-admin orphan protection — 400
+#     ``would_orphan_tenant_no_admin_remaining`` when the linked
+#     user is the last admin/super_admin left in the tenant.
+#   * In-progress-job protection — no hard-block per user spec,
+#     but ERROR-level log so ops can audit later.
+#   * Bulk cap: 500 ids per call. Deduplicates repeated ids.
+# ═════════════════════════════════════════════════════════════════════════
+_TECHNICIANS_HARD_DELETE_CAP = 500
+_JOB_FUTURE_STATUSES = ("scheduled", "pending")
+_JOB_IN_PROGRESS_STATUSES = ("in_progress",)
+
+
+class _TechniciansHardDeleteBulkIn(__import__("pydantic").BaseModel):
+    """Phase P42 · bulk-delete request body — a flat ``ids`` list."""
+    ids: List[str]
+
+
+async def _p42_snapshot_and_delete(
+    *, tenant_id: str, tech_doc: dict, actor: dict,
+    now_utc: str,
+) -> dict:
+    """Do the actual per-tech cascade + write the forensic audit.
+
+    Assumes tenant-scoping + admin gate already checked. Returns
+    the per-tech response payload dict.
+    """
+    from routers.deletion_audit import write_deletion_audit_entry
+    tech_id = tech_doc["id"]
+
+    # --- Snapshot linked user (tenant-scoped) ---
+    linked_user_doc: Optional[dict] = None
+    linked_user_id = tech_doc.get("user_id")
+    if linked_user_id:
+        linked_user_doc = await db.users.find_one(
+            {"id": linked_user_id, "tenant_id": tenant_id}, {"_id": 0},
+        )
+    else:
+        # Reverse-lookup fallback — ``users.technician_id == tech_id``.
+        linked_user_doc = await db.users.find_one(
+            {"tenant_id": tenant_id, "technician_id": tech_id}, {"_id": 0},
+        )
+
+    # --- Snapshot pending invites (schema-check — collection may not exist) ---
+    pending_invite_ids: List[str] = []
+    if "invitations" in await db.list_collection_names():
+        inv_q: dict = {
+            "tenant_id": tenant_id,
+            "status": {"$in": ["pending", "sent"]},
+        }
+        # Match by email or user_id (whichever the invitation carries).
+        or_clauses: List[dict] = []
+        if tech_doc.get("email"):
+            or_clauses.append({"email": tech_doc["email"]})
+        if linked_user_id:
+            or_clauses.append({"user_id": linked_user_id})
+        if or_clauses:
+            inv_q["$or"] = or_clauses
+        pending_docs = await db.invitations.find(
+            inv_q, {"_id": 0, "id": 1},
+        ).to_list(500)
+        pending_invite_ids = [d["id"] for d in pending_docs if d.get("id")]
+
+    # --- Snapshot in-progress + future jobs BEFORE any mutation ---
+    in_progress_count = await db.jobs.count_documents({
+        "tenant_id": tenant_id,
+        "technician_id": tech_id,
+        "status": {"$in": list(_JOB_IN_PROGRESS_STATUSES)},
+    })
+    if in_progress_count > 0:
+        # Per user spec — no hard-block, ERROR log so ops can audit.
+        logger.error(
+            "[p42] hard-delete of technician %s tenant=%s with "
+            "in_progress jobs count=%s (proceeding per no-blocker rule)",
+            tech_id, tenant_id, in_progress_count,
+        )
+
+    # --- Unassign FUTURE scheduled/pending jobs (do NOT delete) ---
+    future_q = {
+        "tenant_id": tenant_id,
+        "technician_id": tech_id,
+        "status": {"$in": list(_JOB_FUTURE_STATUSES)},
+        "scheduled_start": {"$gt": now_utc},
+    }
+    unassign_res = await db.jobs.update_many(
+        future_q,
+        {"$set": {"technician_id": None, "technician_name": None,
+                    "unassigned_at": now_utc,
+                    "unassigned_reason": "technician_hard_deleted"}},
+    )
+    future_jobs_unassigned = unassign_res.modified_count
+
+    # --- Write the forensic audit BEFORE the physical deletes ---
+    audit_id = new_id()
+    try:
+        await db.audits.insert_one({
+            "id": audit_id,
+            "kind": "technicians_hard_delete",
+            "tenant_id": tenant_id,
+            "target_id": tech_id,
+            "actor_user_id": actor.get("id"),
+            "actor_email": actor.get("email"),
+            "tech_snapshot": tech_doc,
+            "linked_user_snapshot": linked_user_doc,
+            "pending_invite_ids": pending_invite_ids,
+            "in_progress_job_count": in_progress_count,
+            "future_jobs_unassigned": future_jobs_unassigned,
+            "at": now_utc,
+        })
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning(
+            f"[p42] audit insert failed for tech={tech_id}: {e}",
+        )
+
+    # --- Also write a deletion_audit row so the P23 forensic sweep
+    #     surfaces this row alongside soft-delete history. ---
+    try:
+        await write_deletion_audit_entry(
+            tenant_id=tenant_id,
+            resource_type="technician",
+            resource_id=tech_id,
+            user=actor,
+            snapshot=tech_doc,
+            deletion_reason="technician_hard_deleted",
+            bulk_op_id=None,
+        )
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning(
+            f"[p42] deletion_audit write failed for tech={tech_id}: {e}",
+        )
+
+    # --- Cascade deletes ---
+    linked_user_deleted = False
+    if linked_user_doc:
+        res = await db.users.delete_one(
+            {"id": linked_user_doc["id"], "tenant_id": tenant_id},
+        )
+        linked_user_deleted = res.deleted_count == 1
+
+    pending_invitations_deleted = 0
+    if pending_invite_ids:
+        del_res = await db.invitations.delete_many({
+            "tenant_id": tenant_id, "id": {"$in": pending_invite_ids},
+        })
+        pending_invitations_deleted = del_res.deleted_count
+
+    await db.technicians.delete_one(
+        {"id": tech_id, "tenant_id": tenant_id},
+    )
+
+    return {
+        "deleted": True,
+        "tech_id": tech_id,
+        "linked_user_deleted": linked_user_deleted,
+        "pending_invitations_deleted": pending_invitations_deleted,
+        "future_jobs_unassigned": future_jobs_unassigned,
+        "audit_id": audit_id,
+    }
+
+
+async def _p42_pre_delete_checks(
+    *, tenant_id: str, tech_doc: dict, actor: dict,
+) -> Optional[dict]:
+    """Return ``None`` when clear-to-delete, else a dict describing
+    the block reason (used to build the 400 / skip-in-bulk responses).
+    """
+    tech_id = tech_doc["id"]
+    linked_user_id = tech_doc.get("user_id")
+
+    # --- Self-delete guard ---
+    # Actor is the ``users`` row of the caller. If the caller IS the
+    # linked user for this tech, block. Also block if the caller's
+    # own row carries a ``technician_id`` matching this tech.
+    if actor.get("id") and linked_user_id == actor.get("id"):
+        return {"code": "cannot_delete_self",
+                "tech_id": tech_id,
+                "message": ("You can't hard-delete your own technician "
+                             "profile. Ask another admin to do it.")}
+    if actor.get("technician_id") == tech_id:
+        return {"code": "cannot_delete_self",
+                "tech_id": tech_id,
+                "message": ("You can't hard-delete your own technician "
+                             "profile. Ask another admin to do it.")}
+
+    # --- Last-admin orphan guard ---
+    # If the linked user is admin/super_admin AND removing them would
+    # drop the tenant's admin-user count to zero → block.
+    if linked_user_id:
+        linked_user = await db.users.find_one(
+            {"id": linked_user_id, "tenant_id": tenant_id},
+            {"_id": 0, "role": 1, "deleted_at": 1},
+        )
+        if linked_user:
+            role = (linked_user.get("role") or "").lower()
+            if role in ("admin", "super_admin"):
+                # Count remaining admins in the tenant, excluding
+                # this one + soft-deleted ones.
+                remaining = await db.users.count_documents({
+                    "tenant_id": tenant_id,
+                    "role": {"$in": ["admin", "super_admin"]},
+                    "id": {"$ne": linked_user_id},
+                    "$or": [{"deleted_at": None},
+                             {"deleted_at": {"$exists": False}}],
+                })
+                if remaining <= 0:
+                    return {
+                        "code": "would_orphan_tenant_no_admin_remaining",
+                        "tech_id": tech_id,
+                        "message": (
+                            "Can't delete — this would leave the tenant "
+                            "with zero admin/super_admin users. Promote "
+                            "another user to admin first."
+                        ),
+                    }
+    return None
+
+
+@router.delete("/technicians/{tech_id}/hard-delete",
+                operation_id="technicians.hardDelete")
+async def hard_delete_technician(
+    tech_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P42 — physical removal of a technician + their linked
+    user login + pending invitations. Future jobs are unassigned;
+    job records are never deleted."""
+    tech_doc = await db.technicians.find_one(
+        {"id": tech_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not tech_doc:
+        raise HTTPException(404, "Technician not found")
+
+    block = await _p42_pre_delete_checks(
+        tenant_id=tenant["id"], tech_doc=tech_doc, actor=user,
+    )
+    if block:
+        raise HTTPException(400, block)
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    return await _p42_snapshot_and_delete(
+        tenant_id=tenant["id"], tech_doc=tech_doc, actor=user,
+        now_utc=now_utc,
+    )
+
+
+@router.post("/technicians/hard-delete-bulk",
+              operation_id="technicians.hardDeleteBulk")
+async def hard_delete_technicians_bulk(
+    body: _TechniciansHardDeleteBulkIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P42 — bulk hard delete. Response reports per-tech
+    outcomes so a caller can render a partial-success table. Ids
+    that don't exist for this tenant (or belong to another tenant)
+    land in ``not_found``. Self-delete + orphan blocks land in
+    ``skipped`` with a stable ``code`` for the FE to switch on.
+    """
+    ids = list(body.ids or [])
+    requested_count = len(ids)
+    if requested_count == 0:
+        return {"requested_count": 0, "deleted_count": 0,
+                "not_found": [], "skipped": [], "results": [],
+                "future_jobs_unassigned_total": 0,
+                "linked_users_deleted_total": 0,
+                "pending_invitations_deleted_total": 0}
+    if requested_count > _TECHNICIANS_HARD_DELETE_CAP:
+        raise HTTPException(
+            400,
+            "hard-delete-bulk capped at "
+            f"{_TECHNICIANS_HARD_DELETE_CAP} techs per call",
+        )
+
+    # Dedupe while preserving caller order.
+    seen: set = set()
+    deduped: List[str] = []
+    for rid in ids:
+        if rid not in seen:
+            seen.add(rid)
+            deduped.append(rid)
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    existing = await db.technicians.find(
+        {"tenant_id": tenant["id"], "id": {"$in": deduped}},
+        {"_id": 0},
+    ).to_list(_TECHNICIANS_HARD_DELETE_CAP)
+    existing_by_id = {d["id"]: d for d in existing}
+    not_found = [rid for rid in deduped if rid not in existing_by_id]
+
+    results: List[dict] = []
+    skipped: List[dict] = []
+    fut_total = users_total = inv_total = 0
+    for tech_id, tech_doc in existing_by_id.items():
+        block = await _p42_pre_delete_checks(
+            tenant_id=tenant["id"], tech_doc=tech_doc, actor=user,
+        )
+        if block:
+            skipped.append(block)
+            continue
+        try:
+            r = await _p42_snapshot_and_delete(
+                tenant_id=tenant["id"], tech_doc=tech_doc, actor=user,
+                now_utc=now_utc,
+            )
+        except Exception as e:                                        # noqa: BLE001
+            logger.exception(f"[p42] bulk delete failed for {tech_id}: {e}")
+            skipped.append({"code": "internal_error",
+                            "tech_id": tech_id,
+                            "message": "Internal error during delete."})
+            continue
+        results.append(r)
+        fut_total += r["future_jobs_unassigned"]
+        if r["linked_user_deleted"]:
+            users_total += 1
+        inv_total += r["pending_invitations_deleted"]
+
+    return {
+        "requested_count": requested_count,
+        "deleted_count": len(results),
+        "not_found": not_found,
+        "skipped": skipped,
+        "results": results,
+        "future_jobs_unassigned_total": fut_total,
+        "linked_users_deleted_total": users_total,
+        "pending_invitations_deleted_total": inv_total,
+    }
+

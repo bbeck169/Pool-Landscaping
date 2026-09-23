@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign, Pencil, FolderCog } from "lucide-react";
+import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign, Pencil, FolderCog, AlertOctagon } from "lucide-react";
 import { api } from "@/api";
 import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -730,6 +730,10 @@ function TeamRoster() {
   // Phase-Team · Feb-2026 — kebab-menu dialog targets.
   const [resetTarget, setResetTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  // Phase P42 · Feb-2026 — hard-delete (technician + linked user +
+  // pending invitations). Distinct from the P23 soft-delete above.
+  const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
+  const [hardDeleteBusy, setHardDeleteBusy] = useState(false);
 
   const myRole = (me?.role || "").toLowerCase();
   const isAdmin = myRole === "admin" || myRole === "super_admin";
@@ -927,7 +931,15 @@ function TeamRoster() {
                 : myRole === "admin" ? targetIsTech
                 : false);
               const canUndelete = isSuperAdmin && isDeleted;
-              const anyKebab = canReset || canDelete || canUndelete;
+              // Phase P42 · Feb-2026 — hard-delete is a strict
+              // superset of soft-delete: same admin gate + tech-
+              // role gate + not-self, and only when the row has a
+              // linked technician profile (``technician_id`` set).
+              // Rows without a tech id (pure admin users) can't be
+              // hard-deleted through this endpoint.
+              const canHardDelete = canDelete && !!r.technician_id;
+              const anyKebab = canReset || canDelete || canUndelete
+                || canHardDelete;
               return (
                 <li
                   key={r.id}
@@ -1042,8 +1054,10 @@ function TeamRoster() {
                       canReset={canReset}
                       canDelete={canDelete}
                       canUndelete={canUndelete}
+                      canHardDelete={canHardDelete}
                       onReset={() => setResetTarget(r)}
                       onDelete={() => setDeleteTarget(r)}
+                      onHardDelete={() => setHardDeleteTarget(r)}
                       onUndelete={async () => {
                         try {
                           await api.post(`/users/${r.id}/undelete`, {});
@@ -1083,6 +1097,52 @@ function TeamRoster() {
           refresh();
         }}
         onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
+
+      {/* Phase P42 · Feb-2026 — HARD DELETE confirmation dialog.
+          Physical delete of the technician + linked user + any
+          pending invitations; future scheduled/pending jobs get
+          unassigned (job rows preserved). Irreversible — modal is
+          mandatory. Specific 400-code branches surface friendlier
+          toasts for self-delete + orphan blocks. */}
+      <HardDeleteTeamMemberDialog
+        target={hardDeleteTarget}
+        busy={hardDeleteBusy}
+        onClose={() => { if (!hardDeleteBusy) setHardDeleteTarget(null); }}
+        onConfirm={async () => {
+          if (!hardDeleteTarget?.technician_id) return;
+          setHardDeleteBusy(true);
+          try {
+            const res = await api.del(
+              `/technicians/${hardDeleteTarget.technician_id}/hard-delete`,
+            );
+            setToast({
+              tone: "success",
+              message: `${hardDeleteTarget.name
+                || hardDeleteTarget.email} permanently deleted. `
+                + `${res?.future_jobs_unassigned || 0} future jobs unassigned.`,
+            });
+            setHardDeleteTarget(null);
+            refresh();
+          } catch (e) {
+            // Backend attaches a structured ``detail`` with ``code`` on
+            // 400s. ``api.del`` may forward as ``e.detail`` OR ``e.body``
+            // depending on the fetch wrapper; probe both.
+            const detail = e?.detail ?? e?.body?.detail ?? null;
+            const code = (detail && typeof detail === "object")
+              ? detail.code : null;
+            let msg = e?.message || "Permanent delete failed";
+            if (code === "cannot_delete_self") {
+              msg = "You can't delete your own account. Ask another admin.";
+            } else if (code === "would_orphan_tenant_no_admin_remaining") {
+              msg = "Can't delete — this would leave the tenant with "
+                + "no admin users.";
+            }
+            setToast({ tone: "error", message: msg });
+          } finally {
+            setHardDeleteBusy(false);
+          }
+        }}
       />
 
       <AddTeamMemberModal
@@ -1146,7 +1206,8 @@ function TeamRoster() {
  * is available — the roster mount decides visibility per-row.
  */
 function TeamRowKebab({ row, canReset, canDelete, canUndelete,
-                          onReset, onDelete, onUndelete }) {
+                          canHardDelete,
+                          onReset, onDelete, onUndelete, onHardDelete }) {
   const [open, setOpen] = useState(false);
   const btnRef = React.useRef(null);
   const menuRef = React.useRef(null);
@@ -1202,6 +1263,18 @@ function TeamRowKebab({ row, canReset, canDelete, canUndelete,
               data-testid={`team-row-delete-btn-${row.id}`}
             >
               <Trash2 size={13} /> Delete team member
+            </button>
+          ) : null}
+          {canHardDelete ? (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onHardDelete(); }}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-red-50"
+              style={{ color: "#7F1D1D" }}
+              data-testid={`team-row-hard-delete-btn-${row.id}`}
+              title="Physically remove technician + login + pending invites. Cannot be undone."
+            >
+              <AlertOctagon size={13} /> Delete Permanently
             </button>
           ) : null}
           {canUndelete ? (
@@ -1461,6 +1534,65 @@ function DeleteTeamMemberDialog({ target, onClose, onDone, onError }) {
           They will be hidden from all rosters and their active jobs will
           be reassigned to the "Unassigned" placeholder. This can be
           undone by a super_admin.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+
+/**
+ * Phase P42 · Feb-2026 — Hard-delete confirmation dialog for a
+ * technician-shaped team row.
+ *
+ * Distinct from ``DeleteTeamMemberDialog`` above (soft-delete):
+ * this one PHYSICALLY removes the technician profile, the linked
+ * login user, and any pending invitations. Future scheduled/
+ * pending jobs get unassigned; job rows are preserved. Confirmation
+ * is mandatory — no click-through, no swipe. The parent owns the
+ * ``onConfirm`` handler and the busy state so the toast messaging
+ * (self-delete, orphan, generic error) stays close to the roster's
+ * refresh cycle.
+ */
+function HardDeleteTeamMemberDialog({ target, busy, onClose, onConfirm }) {
+  if (!target) return null;
+  const label = target.name || target.email || target.id;
+  return (
+    <Modal
+      open={!!target}
+      onClose={busy ? undefined : onClose}
+      title={`Permanently delete ${label}?`}
+      testid="team-hard-delete-modal"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}
+                  testid="team-hard-delete-cancel">Cancel</Button>
+          <Button variant="danger" onClick={onConfirm} disabled={busy}
+                  testid="team-hard-delete-submit">
+            {busy
+              ? <><Loader2 size={13} className="animate-spin" /> Deleting…</>
+              : <><AlertOctagon size={13} /> Delete Permanently</>}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2 text-sm"
+            style={{ color: colors.onSurface }}
+            data-testid="team-hard-delete-body">
+        <p style={{ color: "#7F1D1D", fontWeight: 600 }}>
+          This will permanently:
+        </p>
+        <ul className="list-disc pl-5 space-y-1"
+             style={{ color: colors.onSurface }}>
+          <li>Delete <b>{label}</b>'s technician profile</li>
+          <li>Delete their login account</li>
+          <li>Cancel their pending invitations</li>
+          <li>Unassign them from future scheduled jobs
+              (job records stay)</li>
+        </ul>
+        <p style={{ color: colors.onSurfaceSecondary }}>
+          Past completed jobs will remain in reports.
+          This action cannot be undone.
         </p>
       </div>
     </Modal>
