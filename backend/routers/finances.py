@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
@@ -16,6 +18,18 @@ from models import (
     RepairUpdate,
     TenantSettingsUpdate,
     TermsSettingsIn,
+)
+
+# Feb-2026 · Income-by-Category label resolver — RFC-4122 UUID-shape
+# guard. Line item ``category`` fields sometimes carry a raw
+# income_categories id (legacy write path) or a pricebook item id
+# instead of the display name. ``compute_income_by_category`` below
+# resolves ids → names via per-tenant maps and, when unresolved,
+# emits a ``Uncategorized (…last-8)`` fallback label so admins can
+# trace the specific orphan.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
 
 router = APIRouter()
@@ -281,12 +295,34 @@ async def income_by_category(date_from: Optional[str] = Query(None),
 async def compute_income_by_category(tenant_id: str,
                                      date_from: Optional[str] = None,
                                      date_to: Optional[str] = None):
-    """Collected revenue attributed to line-item categories (tenant-scoped)."""
-    # Feb-2026 · P2 Item 2 follow-up — soft-deleted invoices MUST NOT
-    # feed ``income_by_category`` / ``income_total`` (both surfaced by
-    # ``/reports/business-summary``). Compose the existing status $or
-    # with the soft-delete guard $or via an explicit $and so neither
-    # clobbers the other.
+    """Collected revenue attributed to line-item categories (tenant-scoped).
+
+    Feb-2026 · Bug fix — mobile "Income by Category" was rendering
+    raw UUIDs when line items carried a category **id** instead of a
+    display name (legacy write path or via ``income_category_id``).
+    Resolution ladder per line item:
+
+      1. ``line_item.income_category_id`` → name (canonical newer
+         write path; wins over inline ``category`` when both set).
+      2. inline ``line_item.category`` — if UUID-shaped, resolve
+         via ``income_categories``; else pass through verbatim.
+      3. pricebook item ``category`` via ``line_item.item_id``
+         (matches ``revenue_by_category`` behaviour).
+      4. Unresolved UUIDs collapse to their own bucket labelled
+         ``Uncategorized (…last-8)`` so operators can pinpoint the
+         specific orphan id.
+      5. Otherwise ``"Pool"`` (preserved legacy default).
+
+    Response row shape (additive, backward-compatible):
+      - ``category`` — legacy alias == ``label`` (for older callers).
+      - ``label`` — canonical display string (never a UUID).
+      - ``category_id`` — resolved income_categories id when known,
+                          the raw UUID when the row is an orphan
+                          fallback, else ``None``.
+      - ``amount`` — float, rounded to 2 decimals.
+    """
+    # Feb-2026 · P2 Item 2 — merge status $or + soft-delete $or via
+    # an explicit $and so neither clobbers the other.
     q = {"tenant_id": tenant_id, "doc_type": "invoice",
          "$and": [
              {"$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]},
@@ -299,8 +335,37 @@ async def compute_income_by_category(tenant_id: str,
         if date_to:
             rng["$lte"] = date_to + "T23:59:59"
         q["created_at"] = rng
+
+    # Tenant-scoped id → name maps for the resolution ladder.
+    income_cat_by_id: Dict[str, str] = {}
+    ic_rows = await db.income_categories.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(5000)
+    for row in ic_rows:
+        rid = row.get("id")
+        name = (row.get("name") or "").strip()
+        if rid and name:
+            income_cat_by_id[rid] = name
+
+    # Pricebook fallback: item_id → category name.
+    item_id_to_category: Dict[str, str] = {}
+    pb_rows = await db.items.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "category": 1},
+    ).to_list(5000)
+    for row in pb_rows:
+        cat = (row.get("category") or "").strip()
+        if cat and row.get("id"):
+            item_id_to_category[row["id"]] = cat
+
     invoices = await db.quotes.find(q, {"_id": 0}).to_list(5000)
+
+    # Bucket = display label. Each bucket also tracks its resolved
+    # category_id (nullable) so the API can return a stable click-
+    # through key alongside the human label.
     buckets: dict = {}
+    bucket_ids: dict = {}
     for inv in invoices:
         lines = inv.get("line_items", [])
         subtotal = sum((li.get("quantity") or 0) * (li.get("unit_price") or 0) for li in lines)
@@ -315,9 +380,78 @@ async def compute_income_by_category(tenant_id: str,
             continue
         for li in lines:
             amt = (li.get("quantity") or 0) * (li.get("unit_price") or 0)
-            cat = li.get("category") or "Pool"
-            buckets[cat] = buckets.get(cat, 0.0) + paid * (amt / subtotal)
-    rows = [{"category": k, "amount": round(v, 2)} for k, v in buckets.items()]
+
+            # Resolution ladder (see docstring).
+            label: Optional[str] = None
+            resolved_cat_id: Optional[str] = None
+
+            ic_id = (li.get("income_category_id") or "").strip()
+            if ic_id:
+                name = income_cat_by_id.get(ic_id)
+                if name:
+                    label = name
+                    resolved_cat_id = ic_id
+                else:
+                    # Orphan id — surface it as its own bucket so
+                    # ops can trace the specific broken reference.
+                    tail = ic_id[-8:] if len(ic_id) >= 8 else ic_id
+                    label = f"Uncategorized ({tail})"
+                    resolved_cat_id = ic_id
+
+            if label is None:
+                inline = (li.get("category") or "").strip()
+                if inline:
+                    if _UUID_RE.match(inline):
+                        name = income_cat_by_id.get(inline)
+                        if name:
+                            label = name
+                            resolved_cat_id = inline
+                        else:
+                            tail = inline[-8:]
+                            label = f"Uncategorized ({tail})"
+                            resolved_cat_id = inline
+                    else:
+                        # Non-UUID strings pass through verbatim
+                        # (well-known enums like "Pool", "Landscape",
+                        # or a display-name that was written inline).
+                        label = inline
+
+            if label is None:
+                pb_cat = item_id_to_category.get(li.get("item_id"))
+                if pb_cat:
+                    label = pb_cat
+
+            if label is None:
+                # Preserved legacy default so the tile total stays
+                # stable when neither an id nor an inline category
+                # is set (older seed data).
+                label = "Pool"
+
+            buckets[label] = buckets.get(label, 0.0) + paid * (amt / subtotal)
+            # Prefer the first-seen id per label; a well-known
+            # display name may map back to a live income_categories
+            # id even if the invoice line carried no id itself.
+            if label not in bucket_ids:
+                bucket_ids[label] = resolved_cat_id
+
+    # For labels that resolved via pass-through / pricebook / default,
+    # try one last name → id lookup so the response carries a stable
+    # click-through key when the display name matches a live row.
+    name_to_id_ci: Dict[str, str] = {}
+    for cid, cname in income_cat_by_id.items():
+        name_to_id_ci.setdefault(cname.lower(), cid)
+
+    rows: List[Dict[str, Any]] = []
+    for label, amount in buckets.items():
+        cat_id = bucket_ids.get(label)
+        if not cat_id:
+            cat_id = name_to_id_ci.get(label.lower())
+        rows.append({
+            "category":    label,   # legacy alias — kept for older callers
+            "label":       label,   # canonical display string
+            "category_id": cat_id,  # nullable stable key
+            "amount":      round(amount, 2),
+        })
     rows.sort(key=lambda r: r["amount"], reverse=True)
     total = round(sum(r["amount"] for r in rows), 2)
     return {"total": total, "rows": rows, "invoice_count": len(invoices)}
