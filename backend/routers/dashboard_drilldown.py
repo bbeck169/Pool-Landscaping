@@ -369,7 +369,18 @@ async def income_by_category_rows(
             if resolved_cat != category:
                 continue
             recognised_any = True
-            svc_id = maps["item_id_to_service"].get(li.get("item_id") or "")
+            # P53 tail (Feb-2026) — service-category display uses the
+            # same PRECEDENCE as income_by_service_category:
+            # line.service_category_id first, pricebook fallback second.
+            # This row is for the income-category drilldown so bucket
+            # selection is by ``resolved_cat`` (already line-first via
+            # ``_resolve_line_category``); only the displayed
+            # ``svc_name`` benefits from this fix.
+            line_svc_id = li.get("service_category_id")
+            if line_svc_id:
+                svc_id = line_svc_id
+            else:
+                svc_id = maps["item_id_to_service"].get(li.get("item_id") or "")
             svc_name = maps["svc_id_to_name"].get(svc_id) if svc_id else None
             li_copy = {**li, "_index": idx}
             matched.append(_row_for_line_item(inv, li_copy, resolved_cat, svc_name))
@@ -476,8 +487,24 @@ async def income_by_service_rows(
         items = inv.get("line_items") or []
         recognised_any = False
         for idx, li in enumerate(items):
-            iid = li.get("item_id")
-            svc_id = maps["item_id_to_service"].get(iid) if iid else None
+            # P53 tail (Feb-2026) — resolution PRECEDENCE (mirrors
+            # dashboard_revenue.income_by_service_category):
+            # 1. line-item's own ``service_category_id`` (user
+            #    explicitly recategorized this line), overrides all
+            # 2. pricebook item's ``service_category_id`` (default
+            #    inherited from item_id lookup)
+            # 3. ``"Uncategorized"`` fallback
+            # Drilldown parity is REQUIRED — a line that buckets to
+            # "Pool Service" on the aggregate tile MUST appear in
+            # the drilldown modal for that bucket. Pre-P53 both
+            # handlers had the same bug (pricebook-first), so the
+            # bug hid via double-negation. Fixing both together.
+            line_svc_id = li.get("service_category_id")
+            if line_svc_id:
+                svc_id = line_svc_id
+            else:
+                iid = li.get("item_id")
+                svc_id = maps["item_id_to_service"].get(iid) if iid else None
             svc_name = (maps["svc_id_to_name"].get(svc_id) if svc_id
                         else "Uncategorized")
             if target_svc_id is None:
