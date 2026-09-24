@@ -196,3 +196,13 @@ frontend/node_modules/.cache/default-development/53.pack
 frontend/node_modules/.cache/default-development/6.pack_
 frontend/node_modules/.cache/default-development/7.pack_
 frontend/node_modules/.cache/default-development/10.pack_
+
+
+# Sep-2026 auto-commit sweep hardening — files getting swept in by the platform
+# auto-commit hook that must never be tracked. Rules for __pycache__/ and
+# .ruff_cache/ already exist above but were added after files were staged; the
+# git rm --cached pass in this same commit removes the tracked copies so the
+# rules can actually bite.
+backend/logs/integrity_dump_*.json
+frontend/node_modules/.vite/
+
