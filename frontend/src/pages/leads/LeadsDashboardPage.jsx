@@ -4,6 +4,7 @@
 // action calls existing POST /api/leads/{id}/convert.
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
@@ -83,6 +84,7 @@ const isReferral = (l) =>
 
 export default function LeadsDashboardPage() {
   const auth = useAuth() || {};
+  const { t } = useTranslation("leads");
   const isPrivileged = ["admin", "super_admin", "owner", "manager"].includes(auth.user?.role);
   // ── Phase P48 · URL-synced tab state ────────────────────────────
   // ``?tab=active|archive`` — persists across back/forward + hard
@@ -431,7 +433,7 @@ export default function LeadsDashboardPage() {
               }}
               data-testid={`leads-tab-${tabKey}`}
             >
-              {LEAD_TABS[tabKey].label}
+              {t(`tabs.${tabKey}`, LEAD_TABS[tabKey].label)}
             </button>
           );
         })}
@@ -457,7 +459,7 @@ export default function LeadsDashboardPage() {
           <Search size={14} style={{ color: colors.searchIcon }} />
           <input value={filters.search}
                  onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-                 placeholder="Search name, email, phone"
+                 placeholder={t("search_placeholder", "Search name, email, phone")}
                  className="outline-none text-sm bg-white w-56 text-[#0284C7] placeholder:text-[#0284C7]/55"
                  data-testid="lead-search-input" />
         </div>
@@ -480,13 +482,13 @@ export default function LeadsDashboardPage() {
                 className="text-sm px-2 py-1.5 rounded-lg outline-none"
                 style={{ border: `1px solid ${colors.nav.border}`, background: colors.nav.bg, color: colors.nav.fg }}
                 data-testid="lead-filter-status-select">
-          <option value="">All statuses</option>
+          <option value="">{t("filter_all_statuses", "All statuses")}</option>
           {/* Phase P48 · scoped to the current tab.  Archive tab
               lists Closed – Won / Closed – Lost only; Active tab
               lists New / Contacted / Quoted only. */}
           {tabScopedStatusOptions.map((o) => (
             <option key={o.value} value={o.value} data-testid={`lead-status-option-${o.value}`}>
-              {o.label}
+              {t(`status.${o.value}`, o.label)}
             </option>
           ))}
         </select>
@@ -563,20 +565,20 @@ export default function LeadsDashboardPage() {
                       a first-time user doesn't think closed leads are
                       permanently missing. */}
                   {activeTab === "archive"
-                    ? "No archived leads yet."
-                    : "No active leads yet."}
+                    ? t("empty.archive.title", "No archived leads yet.")
+                    : t("empty.active.title", "No active leads yet.")}
                 </div>
                 <div style={{ color: colors.muted }}>
                   {activeTab === "archive"
-                    ? "Leads move here when marked Closed – Won or Closed – Lost."
-                    : "New leads land here from the website form, chat widget, and manual entries."}
+                    ? t("empty.archive.subtitle", "Leads move here when marked Closed – Won or Closed – Lost.")
+                    : t("empty.active.subtitle", "New leads land here from the website form, chat widget, and manual entries.")}
                 </div>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-1"
                    data-testid="admin-leads-empty-search">
                 <div className="font-semibold" style={{ color: colors.onSurface }}>
-                  No leads match your filters
+                  {t("empty.search.title", "No leads match your filters")}
                 </div>
                 <button
                   type="button"
@@ -585,7 +587,7 @@ export default function LeadsDashboardPage() {
                   style={{ color: colors.brand }}
                   data-testid="admin-leads-clear-filters"
                 >
-                  Clear filters
+                  {t("empty.search.clear", "Clear filters")}
                 </button>
               </div>
             )}
@@ -732,7 +734,7 @@ export default function LeadsDashboardPage() {
                       background: (STATUS_COLORS[l.status] || STATUS_COLORS.new).bg,
                       color: (STATUS_COLORS[l.status] || STATUS_COLORS.new).fg,
                     }}>
-                {STATUS_LABEL(l.status)}
+                {t(`status.${l.status}`, STATUS_LABEL(l.status))}
               </span>
               {isPrivileged && (
                 <div
@@ -1039,6 +1041,7 @@ export default function LeadsDashboardPage() {
 
 
 function LeadDetailDrawer({ lead, onClose, onUpdated }) {
+  const { t } = useTranslation("leads");
   const [status, setStatus] = useState(lead.status || "new");
   const [notes, setNotes] = useState(lead.notes || "");
   const [busy, setBusy] = useState(false);
@@ -1316,7 +1319,7 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
             {LEAD_STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}
                         data-testid={`lead-status-edit-option-${o.value}`}>
-                {o.label}
+                {t(`status.${o.value}`, o.label)}
               </option>
             ))}
           </select>

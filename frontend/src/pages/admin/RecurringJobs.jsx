@@ -9,6 +9,7 @@
  */
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search, MoreVertical, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -41,6 +42,7 @@ function addDaysIso(iso, days) {
 }
 
 export default function RecurringJobs() {
+  const { t } = useTranslation("propertyselector");
   // Phase P3 · Feb-2026 — Destructive-action gate for the 3-dot
   // Actions menu (Edit / Pause-Resume / Delete permanently).
   // Delete permanently is admin-only; the rest of the menu is
@@ -1092,7 +1094,7 @@ export default function RecurringJobs() {
             type="search"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search by customer name…"
+            placeholder={t("search_customer_placeholder", "Search by customer name…")}
             aria-label="Search recurring jobs by customer"
             data-testid="recurring-search-input"
             className="w-full text-sm rounded-md py-1.5 pl-8 pr-8"
@@ -1423,7 +1425,7 @@ export default function RecurringJobs() {
                   {propsLoading ? (
                     <div className="text-xs" style={{ color: colors.muted }}
                           data-testid="recurring-jobs-property-loading">
-                      Loading properties…
+                      {t("loading", "Loading properties…")}
                     </div>
                   ) : customerProperties.length === 0 ? (
                     <div className="rounded-lg px-3 py-2 text-xs"
@@ -1433,14 +1435,12 @@ export default function RecurringJobs() {
                             border: `1px solid ${colors.warningBorder || "#FCD34D"}`,
                           }}
                           data-testid="recurring-jobs-property-empty-warning">
-                      This customer has no addresses on file. Add an
-                      address to the customer before scheduling
-                      recurring service.
+                      {t("empty_warning", "This customer has no addresses on file. Add an address to the customer before scheduling recurring service.")}
                     </div>
                   ) : customerProperties.length === 1 ? (
                     <label className="text-xs font-semibold"
                              style={{ color: colors.muted }}>
-                      Property
+                      {t("label_single", "Property")}
                       <div className="mt-1 rounded-lg px-3 py-2 text-sm"
                              style={{
                                backgroundColor: colors.surfaceMuted || colors.surface,
@@ -1459,7 +1459,7 @@ export default function RecurringJobs() {
                   ) : (
                     <label className="text-xs font-semibold"
                              style={{ color: colors.muted }}>
-                      Property *
+                      {t("label_multi", "Property *")}
                       <div className="mt-1">
                         <select
                           value={editing.property_id || ""}
@@ -1474,7 +1474,7 @@ export default function RecurringJobs() {
                           }}
                           data-testid="recurring-jobs-property-select"
                         >
-                          <option value="">Choose a property…</option>
+                          <option value="">{t("placeholder_choose", "Choose a property…")}</option>
                           {customerProperties.map((p) => (
                             <option key={p.id} value={p.id}
                                       data-testid={`recurring-jobs-property-option-${p.id}`}>
@@ -1489,7 +1489,7 @@ export default function RecurringJobs() {
                           <div className="text-xs mt-1"
                                  style={{ color: colors.danger }}
                                  data-testid="recurring-jobs-property-required">
-                            This customer has {customerProperties.length} properties — pick one.
+                            {t("validation_pick_one", "This customer has {{count}} properties — pick one.", { count: customerProperties.length })}
                           </div>
                         ) : null}
                       </div>
