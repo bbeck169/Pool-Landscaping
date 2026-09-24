@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
+import re
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
@@ -10,6 +11,9 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
 from models import ItemIn
 # Backlog #iii · Feb-2026 — rich suppliers[] validator + mirror rebuild.
 from services.pricebook.cost import rebuild_mirrors
+# Task G / P59 HIGH #1 · Feb-2026 — tenant-scoped read filter with
+# integral soft-delete + ValueError-on-empty-tenant guard.
+from services.query_scope import tenant_scoped_filter
 
 router = APIRouter()
 
@@ -87,12 +91,83 @@ def _validate_suppliers(suppliers) -> List[dict]:
 
 # ----------------------- Price Book -----------------------
 @router.get("/items")
-async def list_items(user: dict = Depends(require_admin)):
-    # BUG B fix (Feb-2026) — filter out soft-deleted rows.
-    return await db.items.find(
-        {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
-        {"_id": 0},
-    ).sort("name", 1).to_list(1000)
+async def list_items(
+    user: dict = Depends(require_admin),
+    search: Optional[str] = Query(None, description="Case-insensitive substring match on name + description. Regex-safe (re.escape)."),
+    active: bool = Query(True, description="When true (default), excludes soft-deleted rows. When false, includes tombstoned rows too."),
+    limit: int = Query(1000, ge=1, le=1000, description="Row cap. Default 1000 preserves backwards-compat with historical unbounded behavior clamped by the driver cap; new consumers should pass an explicit ``limit`` (recommended 50 for pickers, up to 200 for wider views)."),
+):
+    """List pricebook items — tenant-scoped, optionally search-filtered.
+
+    Task G · Feb-2026 — Powers K71's Pricebook picker on quote /
+    invoice line items via ``search=&active=true&limit=50``.
+    Existing full-list consumers (Pricebook page, JobNew) call
+    with no query params and get the default backwards-compat
+    behavior (up to 1000 non-soft-deleted rows, name-sorted).
+
+    P59 HIGH #1 · Feb-2026 (CLOSED here) — Prior handler ran
+    ``db.items.find({...deleted...})`` with NO tenant filter,
+    letting any admin enumerate cross-tenant pricebook rows.
+    This commit closes that leak by scoping every read to
+    ``user.get("tenant_id")`` via ``tenant_scoped_filter``, which
+    raises ``ValueError`` on empty / whitespace tenant_id (P57
+    guard pattern).
+
+    :param search: Optional case-insensitive substring. When set,
+        matches EITHER ``name`` OR ``description`` (``$or``).
+        Regex-hostile input (e.g. ``"foo.bar[baz]"``) is escaped
+        via ``re.escape`` so it's treated as a literal substring,
+        not a pattern.
+    :param active: When ``True`` (default), excludes rows carrying
+        a truthy ``deleted_at``. When ``False``, includes them
+        (admin tombstone views). See inline comment on the
+        active-false branch for the ``tenant_scoped_filter``
+        bypass rationale.
+    :param limit: Row cap (default 1000, max 1000). Sort is
+        ``("name", 1)`` ascending, unchanged from pre-Task-G.
+    """
+    tenant_id = (user.get("tenant_id") or "").strip()
+    if not tenant_id:
+        # P57 guard pattern — mirrors ``tenant_scoped_filter``'s
+        # own ValueError so the active=false manual-bypass branch
+        # can't slip past the guard.
+        raise ValueError("list_items requires a non-empty tenant_id on user")
+
+    # Regex-safe substring filter on ``name`` OR ``description``.
+    # Case-insensitive. ``re.escape`` neutralises PCRE meta-chars
+    # so user input like ``foo.bar[baz]`` is treated as a literal.
+    search_clauses: List[dict] = []
+    if search and search.strip():
+        safe = re.escape(search.strip())
+        pattern = {"$regex": safe, "$options": "i"}
+        search_clauses = [
+            {"name": pattern},
+            {"description": pattern},
+        ]
+
+    if active:
+        # Default branch — ``tenant_scoped_filter`` handles
+        # tenant scoping + soft-delete exclusion + ValueError
+        # guard on empty tenant_id. Search disjunction (if any)
+        # passes through as a positional or_clause.
+        scoped = tenant_scoped_filter(
+            tenant_id,
+            search_clauses if search_clauses else None,
+        )
+    else:
+        # active=false branch — ``tenant_scoped_filter``
+        # (services/query_scope.py L132) auto-appends the
+        # soft-delete filter with no opt-out. To honor the
+        # active=false contract (include tombstoned rows), we
+        # bypass the helper and build the filter inline. Tenant
+        # scoping + guard-on-empty-tenant are preserved (the
+        # ValueError above already caught empty tenant_id).
+        scoped: dict = {"tenant_id": tenant_id}
+        if search_clauses:
+            scoped["$or"] = search_clauses
+
+    return await db.items.find(scoped, {"_id": 0}) \
+        .sort("name", 1).to_list(limit)
 
 
 @router.post("/items")
