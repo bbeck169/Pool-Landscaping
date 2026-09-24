@@ -37,9 +37,12 @@
 import React, { useMemo } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, MenuIcon, LogOut, Plus as PlusIcon } from "lucide-react";
-// Phase D3 · Feb 2026 — language selector lives in the topbar's
-// right cluster next to the Sign-out button on every layout width.
-import LanguageSelector from "@/components/i18n/LanguageSelector";
+// Phase P52 · Feb 2026 — LanguageSelector removed from the topbar.
+// Tenant-scoped default locale is now driven by Global Settings
+// (see routers/finances.patch_tenant_settings + auth.jsx
+// hydration of localStorage.tenant_default_locale).  Personal user
+// pref still lives in ``localStorage.lang`` (Phase D3) and can be
+// changed from a settings surface — the top-bar globe is gone.
 import { ADMIN_NAV_V2, filterNavByIndustries } from "@/nav/adminNav";
 import { topNavForRole } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -424,7 +427,6 @@ export default function AdminTopBar() {
           data-testid="admin-topbar-tech-wrap"
         >
           <SettingsSprocket />
-          <LanguageSelector compact />
           <SignOutButton />
           <UniversalMenu variant="inline" />
         </div>
@@ -471,7 +473,6 @@ export default function AdminTopBar() {
               <RolePreviewSwitcher />
               <SettingsSprocket />
               <AdminBellSlot />
-              <LanguageSelector compact />
               <SignOutButton />
               <UniversalMenu variant="inline" />
             </div>
@@ -502,7 +503,6 @@ export default function AdminTopBar() {
               <CreditsBudgetChip />
               <SettingsSprocket />
               <AdminBellSlot />
-              <LanguageSelector />
               <SignOutButton />
               <UniversalMenu variant="inline" />
             </div>
