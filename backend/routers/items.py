@@ -192,8 +192,15 @@ async def _soft_delete_item(iid: str, actor_id: Optional[str], tenant_id: Option
             409,
             f"Item is used on {linked} active document(s) — deactivate via PATCH instead of deleting",
         )
+    # P57 · Feb-2026 — tenant-scope the internal write filter too.
+    # Defence in depth: if a future caller ever forgets tenant_id
+    # (or a race lets the row leak between find_one + update_one),
+    # the write MUST NOT reach a cross-tenant row.
+    _write_filter: dict = {"id": iid}
+    if tenant_id:
+        _write_filter["tenant_id"] = tenant_id
     await db.items.update_one(
-        {"id": iid},
+        _write_filter,
         {"$set": {"deleted_at": now_iso(),
                     "deleted_by_user_id": actor_id}},
     )
@@ -434,14 +441,22 @@ async def patch_item(iid: str, body: ItemPatch,
 async def delete_item(iid: str, user: dict = Depends(require_admin)):
     # BUG B fix — switched from hard delete to soft delete so history
     # rows (invoices/quotes referencing the item) stay intact.
-    return await _soft_delete_item(iid, user.get("id"))
+    # P57 · Feb-2026 — pass tenant_id so cross-tenant deletes hit
+    # the not-found branch. Before P57 a tenant-A admin could delete
+    # a tenant-B item just by knowing (or brute-forcing) its uuid;
+    # this call omitted the 3rd positional and _soft_delete_item's
+    # optional-tenant guard silently ran cross-tenant.
+    return await _soft_delete_item(iid, user.get("id"), user.get("tenant_id"))
 
 
 # Alias per the Item 8 spec — same collection, different URL surface.
 @router.delete("/pricebook/{iid}",
                 operation_id="pricebook.delete")
 async def delete_pricebook_item(iid: str, user: dict = Depends(require_admin)):
-    return await _soft_delete_item(iid, user.get("id"))
+    # P57 · Feb-2026 — same fix as the sibling ``/items/{iid}``
+    # DELETE above. Both endpoints route to _soft_delete_item and
+    # both were pre-P57 cross-tenant vulnerable.
+    return await _soft_delete_item(iid, user.get("id"), user.get("tenant_id"))
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -462,8 +477,17 @@ _PRICEBOOK_BULK_CAP = 400
 _PRICEBOOK_SELECTOR_KEYS = {"category", "search", "active"}
 
 
-async def _resolve_pricebook_ids(selector: dict, exclude: List[str]) -> List[str]:
+async def _resolve_pricebook_ids(selector: dict, exclude: List[str], tenant_id: Optional[str] = None) -> List[str]:
+    # P57 · Feb-2026 — selector-based entry query now tenant-scopes
+    # via a required-by-caller ``tenant_id`` arg. Pre-P57 an admin
+    # calling ``POST /pricebook/bulk-delete`` with a selector
+    # (e.g. ``{"query_selector": {"active": true}}``) enumerated
+    # rows across ALL tenants and passed them to _soft_delete_item
+    # (which then also didn't tenant-scope). Two levels of cross-
+    # tenant vulnerability compounded on the same call path.
     q: dict = {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
     clean = {k: v for k, v in (selector or {}).items()
               if k in _PRICEBOOK_SELECTOR_KEYS}
     if clean.get("category"):
@@ -487,9 +511,15 @@ async def _resolve_pricebook_ids(selector: dict, exclude: List[str]) -> List[str
               operation_id="pricebook.bulkDelete")
 async def bulk_delete_pricebook(body: _PricebookBulkDeleteIn,
                                   user: dict = Depends(require_admin)):
+    # P57 · Feb-2026 — bulk-delete now propagates tenant_id both
+    # into the selector-based entry query AND every per-row
+    # _soft_delete_item call. Pre-P57 both layers ran unscoped;
+    # this call site was the original H7 flag surfaced during
+    # the P56 grep pass.
+    _tenant_id = user.get("tenant_id")
     if body.query_selector is not None:
         ids = await _resolve_pricebook_ids(
-            body.query_selector, body.exclude_ids or [],
+            body.query_selector, body.exclude_ids or [], _tenant_id,
         )
     else:
         ids = list(body.ids or [])
@@ -503,7 +533,7 @@ async def bulk_delete_pricebook(body: _PricebookBulkDeleteIn,
     failed: List[dict] = []
     for iid in ids:
         try:
-            r = await _soft_delete_item(iid, user.get("id"))
+            r = await _soft_delete_item(iid, user.get("id"), _tenant_id)
             deleted.append(r["id"])
         except HTTPException as e:
             failed.append({"id": iid, "reason": str(e.detail),
