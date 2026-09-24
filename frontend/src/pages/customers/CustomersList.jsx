@@ -1380,8 +1380,15 @@ export default function CustomersList() {
             onClick={() => setTab(t.k)}
             className="flex-1 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition"
             style={{
-              backgroundColor: tab === t.k ? colors.brandTertiary : "transparent",
-              color: tab === t.k ? colors.onBrandTertiary : colors.muted,
+              // Phase P52 · Feb-2026 — saturated active state matches
+              // the customer-profile Chemistry-actions dropdown
+              // trigger (colors.brandPrimary + colors.onBrandPrimary).
+              // Inactive stays on the pre-P52 muted-on-transparent
+              // recede.  Active carries a soft glow so the current
+              // cohort is unmistakable in a dense header.
+              backgroundColor: tab === t.k ? colors.brandPrimary : "transparent",
+              color: tab === t.k ? colors.onBrandPrimary : colors.muted,
+              boxShadow: tab === t.k ? "0 0 12px 2px rgba(2,132,199,0.4)" : "none",
             }}
             data-testid={t.testid}
           >
@@ -1391,7 +1398,7 @@ export default function CustomersList() {
                 className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
                 style={{
                   backgroundColor: tab === t.k ? "rgba(255,255,255,0.35)" : colors.surfaceSecondary,
-                  color: tab === t.k ? colors.onBrandTertiary : colors.onSurfaceSecondary,
+                  color: tab === t.k ? colors.onBrandPrimary : colors.onSurfaceSecondary,
                 }}
                 data-testid={`${t.testid}-count`}
               >
