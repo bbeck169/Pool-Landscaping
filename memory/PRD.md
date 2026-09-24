@@ -21900,7 +21900,40 @@ The Portal Onboarding Health tile on `/customers` renders a 4-card snapshot of t
 
 All Fix C tests green: 21 passed backend in 0.45s, 15 passed frontend (7 P53-specific + 8 existing regression) in ~250ms combined.
 
+### Tail Fix D — Customer stats tile quick-filter interactivity (Feb-2026 · follow-up to Fix C)
+
+**Scope**: Complete the click-through interactivity contract on the Cards-on-file tile that Fix C shipped. The tile emits `/customers?has_payment_method=true&is_active=true`, but the `CustomersList` page only half-honored the URL: the Active tab landed correctly (by accident — the default is `"active"`) but the `has_payment_method=true` predicate was dropped on the floor because the P44 `noPaymentFilter` hydrator only read `false`/`0`, and neither the tab initializer nor the load path knew about `?is_active=`.
+
+**Design** — full-stack scope collapsed to frontend-only (~20 LOC):
+
+- Backend filter (`routers/customers.py` L816 + L1212–1224) already accepts `has_payment_method: Optional[bool]` and uses the `saved_payment_methods_count` denorm — identical join semantic to Fix C's tile-count.
+- **No new UI toggle** — the tile click IS the filter surface. New `hasCardFilter` state is URL-hydrated only.
+- **Cooperative param ownership** on the shared `?has_payment_method` URL param:
+  - `noPaymentFilter=true` → param = `"0"` (P44)
+  - `hasCardFilter=true` → param = `"1"` (Fix D)
+  - neither → param deleted
+- **Mount-time tie-break invariant**: for an ambiguous `?has_payment_method=true&has_payment_method=0`, tile signal wins via first-wins on the browser's `URLSearchParams.get()`. Documented in the state-init comment.
+- **State-level mutex**: P44 chip toggle handler clears `hasCardFilter` on ON-transition; More-filters "Clear" button clears both.
+- **Tab initializer** accepts `?is_active=1|0|true|false` as a third alias below `?tab=` and `?status=`. Same shorthand set as the existing `portal_activated` hydrator.
+
+**Test coverage** —
+- `frontend/src/test/tail-fix-d-customer-stats-tile-quick-filter.test.jsx` (7 new tests): `has_payment_method=true` hydration + wire request, `is_active=true` tab-init third-alias, 3 regressions for the pre-existing tile CTA params (`portal_invited`, `portal_activated`, `first_access`), combined-URL wire assertion, and the P44↔D mutex round-trip (tile landing → chip toggle → param flips `"1"`→`"0"` in one render).
+- `frontend/src/test/p44-no-payment-filter.test.jsx` — fixture-drift fix (isolated commit inside the D series). Phase P31 migrated the standalone-badge counts to `/customers/counts`; the P44 mock still only intercepted the retired `count_only=true` URL, so the "chip is OFF + count 12" test rendered `(0)`. Mock updated to intercept `/customers/counts` (bare + query-string variants) returning the P31 envelope shape with `no_payment_method` bucketed correctly. Legacy intercept preserved. **P44 file now 9/9 green.**
+
+**All Tail Fix D tests green**: 7/7 new file green, P44 9/9 green post-fix, 35/35 across the adjacent Customers-touching sweep (P31/P45/P53/portal-onboarding/chase-stalled + Tail Fix D).
+
+**Regression telemetry** (baseline `2ee7bbaa5..HEAD`, HEAD = `c09c94d05`):
+- HEAD-only failing files (isolated + full-sweep) = **∅**.
+- Pre-existing P31 fixture-drift orphans surfaced during Tail Fix D's sweep on `p43b-missing-address-filter.test.jsx`, `p43c-portal-status-filter.test.jsx`, `phase46-server-side-filters.test.jsx` — same class as P44 was, deferred as separate follow-up (single test case per file, all around the retired `count_only` mock pattern). Not blocking Tail Fix D. Fold these into a `test(p31-drift): update customer-list mocks post-consolidation` micro-phase when convenient.
+
+**Commit series** (4 commits inside Tail Fix D):
+1. `feat(tail-fix-d): hydrate has_payment_method + is_active on customer list with p44 mutex` — 8 code edits on `CustomersList.jsx` (66 insertions, 3 deletions).
+2. `test(tail-fix-d): customer stats tile quick-filter URL hydration coverage` — 7 new test cases (188 insertions).
+3. `test(tail-fix-d): update p44 mock to intercept post-P31 /customers/counts endpoint` — isolated fixture-drift fix (29 insertions, 3 deletions). Explicitly cross-referenced in commit body so future maintainers understand the P31 provenance.
+4. `docs(tail-fix-d): PRD addendum for Fix C click-through completion` (this section).
+
 ---
+
 
 ## Known gotchas (recorded here for future phases)
 
