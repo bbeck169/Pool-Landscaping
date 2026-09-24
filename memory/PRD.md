@@ -22793,3 +22793,277 @@ Documented so the next agent doesn't rediscover:
 * **No mobile parity.** The bulk-edit modal lives only in the
   OpsHub web surface — no mobile UI changes.
 
+
+---
+
+## P57 · Pricebook Soft-Delete Tenant Isolation (Feb-2026)
+
+### Motivation & scope
+
+Closes the H7 flag surfaced during the P56 grep pass — but the
+grep-first mandate for this phase revealed the blast radius was
+materially larger than the H7 note originally described:
+
+* **Not one** buggy caller of `_soft_delete_item` — **three**:
+  `delete_item` (`DELETE /api/items/{iid}`),
+  `delete_pricebook_item` (`DELETE /api/pricebook/{iid}`), and
+  `bulk_delete_pricebook` (`POST /api/pricebook/bulk-delete`).
+* **Two internal tenant-scope gaps** inside `_soft_delete_item`
+  itself: the `update_one` write filter wasn't scoped even if
+  the read filter was, and the sibling helper
+  `_resolve_pricebook_ids` (which feeds the primitive on the
+  selector-based bulk path) enumerated rows across all tenants.
+
+Every layer is closed in P57. The security phase also tightens
+the primitive's signature so a future caller that forgets
+`tenant_id` fails loudly at call time instead of silently
+running cross-tenant.
+
+### Root-cause post-mortem
+
+**Original defect** at `items.py :506` (as flagged in P56's H7
+subsection):
+
+```python
+r = await _soft_delete_item(iid, user.get("id"))
+# ↑ 3rd positional tenant_id omitted; _soft_delete_item's
+#   ``if tenant_id: q["tenant_id"] = tenant_id`` truthy guard
+#   silently passed on ``None``, so the read filter ran as
+#   ``{"id": iid}`` — matching cross-tenant rows.
+```
+
+**Blast radius (grep-verified):**
+
+| File · line | Endpoint | Vulnerability |
+|-|-|-|
+| `items.py :437` (pre-fix) | `DELETE /api/items/{iid}` | 3rd positional omitted; `_soft_delete_item` ran cross-tenant. Attacker: known/guessed uuid → soft-delete on tenant boundary. |
+| `items.py :444` (pre-fix) | `DELETE /api/pricebook/{iid}` | Alias route, same bug, same fix. |
+| `items.py :506` (pre-fix) | `POST /api/pricebook/bulk-delete` | Original H7 flag. Per-row `_soft_delete_item` call missing tenant_id. |
+| `items.py :196-199` inside `_soft_delete_item` | (all callers) | Internal `update_one` write filter was `{"id": iid}` even when the read filter was tenant-scoped. Race between find_one + update_one could still leak a write cross-tenant. |
+| `items.py :465-483` inside `_resolve_pricebook_ids` | selector-based bulk-delete | Entry query `db.items.find(q, ...)` with `q` built only from `_PRICEBOOK_SELECTOR_KEYS = {category, search, active}` — no tenant scope. Selector-based bulk-delete via `{"query_selector": {"active": true}}` enumerated cross-tenant rows and passed them to the primitive. Two compounded layers of the same class of vulnerability. |
+
+### Grep-pass findings
+
+**Grep 1 — All callers of `_soft_delete_item`**: three call sites,
+**all missing `tenant_id`** (see table above).
+
+**Grep 2 — Similar positional-omission patterns in other bulk
+endpoints**: Broad grep surfaced dozens of bulk endpoints
+across `bulk_crm.py`, `bulk_crm_p1.py`, `quotes.py`, `leads.py`,
+`citations.py`. **Not audited in P57** — the depth needed to
+prove each one is beyond this phase's charter. **Deferred to
+P58 · Bulk endpoint tenant-isolation audit** (see handoff
+below).
+
+**Grep 3 — Legitimate cross-tenant caller check**: **none
+found.** No migration, seeder, super-admin cleanup, or any
+other path calls `_soft_delete_item` unscoped by design. The
+`require_admin` role check accepts `super_admin` but the
+docblock at `utils.py :189` explicitly says "cross-tenant
+scoping is still enforced downstream via `get_current_tenant`
+on every mutating endpoint" — role widening was never meant to
+open cross-tenant writes. Signature tightening is
+compatibility-safe on the current tree.
+
+**Grep 3 (extended) — Test currently passing on the buggy
+behaviour**: `test_phase34_task_jj_kk_ee_digest.py`'s
+`_plant_item` helper seeded null-tenant items; two adjacent
+bulk-delete tests currently passed only because both the seed
+AND `_soft_delete_item` ran cross-tenant unscoped. Fixture is
+in the `test_phase34_task_*` CI-ignore glob (see
+`backend/pytest.ini :51`) so it's not in the P57 regression
+smoke set, but the fixture is fixed here (Q5/A · 1-line
+addition of a `tenant_id` parameter with default `None` for
+existing PATCH-endpoint callers + explicit `aq_tenant_id`
+propagation on the two bulk-delete callers).
+
+### Attack narratives (pre-fix, per endpoint)
+
+**Endpoint 1 — `DELETE /api/items/{iid}`:**
+> Attacker: tenant-A admin. Auth: `require_admin` gates on role
+> only. Payload: known or brute-forced uuid of a tenant-B item.
+> Pre-P57 result: item soft-deleted across the tenant boundary.
+> Every invoice / estimate / autobilling plan on tenant B that
+> referenced that item transitioned to `deleted_at`-present
+> state — visible in the tenant-B admin's reports as vanishing
+> history.
+
+**Endpoint 2 — `DELETE /api/pricebook/{iid}`:** Same shape as
+endpoint 1 — alias route routing to the same handler code path.
+Fixing only bulk-delete would have left this door open;
+attacker could iterate ids client-side to achieve the same
+result as a bulk call.
+
+**Endpoint 3 — `POST /api/pricebook/bulk-delete`:** Amplified
+severity — a single request soft-deletes many items across the
+tenant boundary. Two attack vectors:
+> (a) `{"ids": [...]}` payload with cross-tenant uuids
+>     (same as endpoints 1 + 2 but at scale).
+> (b) `{"query_selector": {"active": true}}` payload —
+>     `_resolve_pricebook_ids` enumerated ALL tenants' active
+>     items and passed them to the unscoped
+>     `_soft_delete_item`. A single request could soft-delete
+>     every active Pricebook item across every tenant in the
+>     pod — worst-case blast radius.
+
+### Fix architecture
+
+**Commit 1 · `fix(p57)` (`70cb0d822`)** — additive-only call-site
+propagation + internal filter tightening.
+* All three callers now pass `user.get("tenant_id")` as the
+  3rd positional to `_soft_delete_item`.
+* `_soft_delete_item` internal `update_one` filter now
+  tenant-scoped (defence in depth).
+* `_resolve_pricebook_ids` takes a new `tenant_id: Optional[str]`
+  parameter and adds it to the enumerate query.
+* Signature of `_soft_delete_item` unchanged — additive-only
+  so the security fix is reviewable in isolation.
+
+**Commit 2 · `feat(p57)` signature tightening (`38b573810`)** —
+locks the invariant into the primitive.
+* `_soft_delete_item.tenant_id: Optional[str] = None` →
+  `tenant_id: str` (positional-required).
+* `raise ValueError` at the top of the function on `None`,
+  empty string, or whitespace-only tenant_id — the diagnostic
+  message explicitly points reviewers at the correct
+  remediation ("introduce a separate helper — do NOT relax
+  this guard").
+* Sibling helper `_resolve_pricebook_ids` tightened for
+  symmetry (same non-empty-string ValueError guard). Extends
+  the "make the wrong thing hard" invariant one hop upstream
+  so the primitive never receives an untrustworthy tenant_id
+  from ITS caller either.
+
+If a legitimate cross-tenant delete path is ever needed
+(migration cleanup, GDPR erasure across accounts), the correct
+extension is a distinct helper (e.g.
+`_soft_delete_item_cross_tenant`) with an explicit name that
+signals the intent. The ValueError message points reviewers at
+this pattern.
+
+### Test coverage
+
+**Commit 3 · `test(p57)` (`273df516a`)** — 11 new tests in
+`test_p57_pricebook_bulk_delete_tenant_isolation.py` + 1-line
+fixture fix in `test_phase34_task_jj_kk_ee_digest.py`.
+
+Coverage matrix:
+
+| Group | Test | What it locks |
+|-|-|-|
+| Bulk-delete tenant isolation (3) | `cannot_reach_other_tenant_items` | Mixed [A, B, B] batch; A deleted, B rows in `failed[]` with 404 |
+| | `ids_all_cross_tenant_returns_empty_deleted` | Pure-B batch, zero deletions |
+| | `selector_based_stays_scoped` | `{active:true}` selector sweeps only A rows |
+| Single-item DELETE (3) | `delete_item_cannot_reach_other_tenant` | Most critical security test |
+| | `delete_pricebook_item_cannot_reach_other_tenant` | Alias route parity |
+| | `delete_item_happy_path_still_works` | Guards against tightening breaking legitimate deletes |
+| Primitive structural (5) | `requires_tenant_id` | Positional-required (TypeError on missing) |
+| | `raises_on_none_tenant_id` | Explicit None → ValueError |
+| | `raises_on_empty_string_tenant_id` | '' → ValueError (Q3 silent-pass state) |
+| | `raises_on_whitespace_tenant_id` | '   ' → ValueError (strip() check) |
+| | `resolve_pricebook_ids_requires_tenant_id` | Sibling helper covers same three bad states |
+
+Fake-DB fixture pattern (identical to P54/P56):
+* Handler functions invoked directly — motor-loop independent,
+  xdist-safe.
+* Fake extended with `_Cursor.limit(n)` for the selector
+  enumerate path.
+* `_match` extended with `$regex + $options` support for the
+  selector's `search` filter.
+* 11 tests run in 0.32s.
+
+**Fixture fix in `test_phase34_task_jj_kk_ee_digest.py`:**
+`_plant_item` now takes an optional `tenant_id` parameter. Two
+call sites propagate `aq_tenant_id`; three PATCH-endpoint call
+sites stay untouched (PATCH's own tenant-scope story is not
+part of P57's charter — see P58 handoff).
+
+### Regression triage
+
+71-file P57-adjacent smoke set (69 P54/56-adjacent + P56 file +
+new P57 file) run serially with `pytest -p no:xdist`:
+
+* **HEAD (P57 tip, `273df516a`)** — 67 failed, 4 errored, 470
+  passed, 24 skipped in 92.54s.
+* **Baseline (`c6fdb88c5`)** — 67 failed, 4 errored, 403 passed,
+  24 skipped in 91.90s.
+
+Set-diff of failing node ids: **∅ both ways.** No P57-caused
+regressions. Every failure in the HEAD set is the same
+pre-existing motor-loop / xdist / env-dependent flake list that
+P54's, P55's, and P56's triages already documented.
+
+Flake-ignore list unchanged
+(`test_recurring_quarterly_semiannual_p47.py` +
+`test_phase10_referrals.py`). Halt-and-report on any new
+pre-existing flake was NOT triggered.
+
+### File / commit inventory
+
+| Commit | Sha | Purpose |
+|-|-|-|
+| 1 | `70cb0d822` | `fix(p57): tenant-scope every _soft_delete_item call site + internal filters` |
+| 2 | `38b573810` | `feat(p57): tighten _soft_delete_item signature to require tenant_id` |
+| 3 | `273df516a` | `test(p57): pricebook bulk-delete + single-item DELETE tenant isolation coverage` (11 tests, 0.32s) |
+| 4 | (this doc)   | `docs(p57): PRD section for pricebook soft-delete tenant isolation fix` |
+
+Files touched:
+* `backend/routers/items.py` — call-site propagation + internal
+  filter tightening + signature tightening (+78 lines net).
+* `backend/tests/test_p57_pricebook_bulk_delete_tenant_isolation.py`
+  — new test file (+353 lines).
+* `backend/tests/test_phase34_task_jj_kk_ee_digest.py` — 1-line
+  fixture parameter addition + 2 call sites updated (+32 / -7).
+* `memory/PRD.md` — this section.
+
+### P58 handoff — Bulk endpoint tenant-isolation audit
+
+The P56/P57 grep passes surfaced a systemic pattern that
+extends beyond P57's scope. Recommend `P58 · Bulk endpoint
+tenant-isolation audit` as the next security phase — grep-first
+dispatch with proper per-endpoint tenant-scope proofs and
+regression tests.
+
+**Pre-mapped grep scope** (from P57 · Grep 2):
+
+| File | Endpoints to audit |
+|-|-|
+| `backend/routers/bulk_crm.py` | `/customers/bulk-{delete,update}`, `/jobs/bulk-{delete,update}`, `/tasks/bulk-{delete,update}`, `/communications/bulk-{archive,mark-read}`, `/email-templates/bulk-{delete,update}`, `/sms-templates/bulk-{delete,update}` |
+| `backend/routers/bulk_crm_p1.py` | `/reviews/bulk-{delete,update}`, `/users/bulk-{delete,update}`, `/customer-tags/bulk-{delete,update}`, `/service-reports/bulk-{delete,update}`, `/time-entries/bulk-{delete,update}` |
+| `backend/routers/quotes.py` | `/invoices/bulk-delete`, `/payments/bulk-delete` |
+| `backend/routers/leads.py` | `/leads/bulk-delete`, `/leads/bulk-hard-delete`, `/leads/bulk-update-status` |
+| `backend/routers/citations.py` | `/citations/tenant/bulk-mark-verified` |
+
+**Suggested P58 charter** (for the dispatch):
+1. Grep-first pass per file: does the endpoint depend on
+   `get_current_tenant`? Does its per-row filter include
+   `tenant_id`?
+2. For each buggy endpoint, mirror the P57 3-part fix:
+   caller-side tenant propagation + internal filter tightening +
+   signature tightening of any shared helper.
+3. Per-endpoint regression test asserting cross-tenant ids
+   land in `failed[]` (or 404 for single-item variants).
+4. Same halt-and-report + baseline-diff discipline as P57.
+
+**Adjacent audit surfaces flagged during P57 · Grep 3** (out of
+P58 scope; separate phases each):
+* `patch_item` at `items.py :337` uses `db.items.find_one({"id":
+  iid}, ...)` — NOT tenant-scoped. PATCH endpoint has its own
+  tenant-scope story; deserves its own phase.
+
+### Explicit "not done" list — P57 scope boundary
+
+* **Broader bulk-endpoint sweep NOT executed.** Deferred to P58
+  (see handoff above).
+* **`patch_item` tenant-scope gap NOT fixed.** Adjacent to P57
+  but outside its charter — this is a PATCH endpoint, not a
+  soft-delete path.
+* **No mobile parity.** P57 is backend-only.
+* **No frontend changes.** No UI affordance is affected by the
+  fix — the 404 the frontend already handles for missing items
+  is the same 404 it now receives for cross-tenant attempts.
+* **`_soft_delete_item_cross_tenant` helper NOT introduced.**
+  Grep 3 proved no legitimate cross-tenant caller exists today.
+  If one is ever needed, the ValueError diagnostic points
+  future authors at the correct pattern.
+
