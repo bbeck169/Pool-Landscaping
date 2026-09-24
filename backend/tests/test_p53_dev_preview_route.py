@@ -27,6 +27,10 @@ def preview_client(monkeypatch):
 
     def _make(env_val: str):
         monkeypatch.setenv("APP_ENV", env_val)
+        # Clear the ENABLE_DEV_EMAIL_PREVIEW override so the base
+        # APP_ENV gate is what's under test. Individual tests that
+        # want to exercise the override set it explicitly.
+        monkeypatch.delenv("ENABLE_DEV_EMAIL_PREVIEW", raising=False)
         # Fallback for callers that unset PUBLIC_APP_URL between tests.
         app = FastAPI()
         app.include_router(router, prefix="/api")
