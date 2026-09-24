@@ -319,20 +319,93 @@ def _media_summary(job: Dict[str, Any], *,
                     max_photos: int = 4, max_videos: int = 2) -> Dict[str, Any]:
     """Extract a compact media summary for the Workstream card:
     thumbnails (up to N images + N videos), counts, and the +extra
-    overflow badge count. Videos are filtered to non-deleted only."""
+    overflow badge count. Videos are filtered to non-deleted only.
+
+    Task L+P · Feb-2026 — SR photo merge.  When the caller pre-
+    stamps ``job._sr_photos`` (list of service-report photo
+    subdocs from
+    ``services.jobs_slim_photos.enrich_docs_with_sr_photos``),
+    those photos are merged into the pool alongside
+    ``job.photos[]``:
+
+      * Dedupe by ``id`` — SR wins on collision (mirrors
+        ``routers/workstream_service_log._media_items`` Commit-1
+        semantics).
+      * Sort by ``created_at`` DESC across both sources
+        (unified timeline); items lacking a reliable timestamp
+        fall back to insertion order (SR first, then legacy).
+      * Emitted thumb URL is the SR entry's stored ``url`` when
+        that's set (Phase-27 upload path pre-signs it at write
+        time); otherwise fall back to the legacy
+        ``/api/public/job-photo/{jid}/{pid}`` shape — which now
+        includes the Commit-3 SR fallback rung so it resolves
+        correctly for SR photos too.
+
+    Return shape UNCHANGED (backward compat — see Task L+P
+    Commit 4 spec: photos_count / videos_count / photo_thumbs /
+    video_thumbs / extra_count).  Rows without ``_sr_photos``
+    scratch key behave exactly as pre-Task-L+P.
+
+    NOTE — multi-tech SR aggregation still deferred; matches the
+    ``_media_items`` deferral.  Videos-in-SR merge is a follow-up
+    (Task L+P Commit 4 is photos-only per user spec).
+    """
     photos = job.get("photos") or []
     videos = [v for v in (job.get("videos") or []) if not v.get("is_deleted")]
     jid = job.get("id") or ""
+
+    # Task L+P — merge SR photos on top of jobs.photos.
+    sr_photos = job.get("_sr_photos") or []
+    seen_ids: set = set()
+    merged: List[Dict[str, Any]] = []
+    for p in sr_photos:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("id")
+        if not pid or pid in seen_ids:
+            continue
+        seen_ids.add(pid)
+        merged.append({"_p": p, "_source": "sr"})
+    for p in photos:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("id")
+        if not pid or pid in seen_ids:
+            continue
+        seen_ids.add(pid)
+        merged.append({"_p": p, "_source": "job"})
+
+    # Timestamp-desc partition (same rule as ``_media_items`` Commit 1).
+    def _created_at(entry: Dict[str, Any]) -> str:
+        p = entry["_p"]
+        return str(p.get("created_at") or p.get("uploaded_at") or "")
+
+    ts_entries = [e for e in merged if _created_at(e)]
+    no_ts_entries = [e for e in merged if not _created_at(e)]
+    ts_entries.sort(key=_created_at, reverse=True)
+    merged_ordered = ts_entries + no_ts_entries
+
     p_thumbs: List[Dict[str, Any]] = []
-    for p in photos[:max_photos]:
+    for entry in merged_ordered[:max_photos]:
+        p = entry["_p"]
         pid = p.get("id")
         if not pid:
             continue
+        # SR photos may carry a stored ``url`` from the Phase-27
+        # upload path — use it verbatim so the client renders the
+        # SR-native streaming route.  Legacy jobs.photos entries
+        # (and SR rows without ``url``) use the ``/api/public/
+        # job-photo/{jid}/{pid}`` route, which after Commit 3 has
+        # an SR fallback rung so it works either way.
+        thumb_url = p.get("url") if entry["_source"] == "sr" else None
+        if not thumb_url:
+            thumb_url = _photo_thumb(jid, pid)
         p_thumbs.append({
             "id": pid,
-            "url": _photo_thumb(jid, pid),
-            "label": p.get("label"),
+            "url": thumb_url,
+            "label": p.get("label") or p.get("caption"),
         })
+
     v_thumbs: List[Dict[str, Any]] = []
     for v in videos[:max_videos]:
         sp = v.get("storage_path")
@@ -344,10 +417,10 @@ def _media_summary(job: Dict[str, Any], *,
             "mime": v.get("mime"),
             "caption": v.get("caption"),
         })
-    total_media = len(photos) + len(videos)
+    total_media = len(merged_ordered) + len(videos)
     shown = len(p_thumbs) + len(v_thumbs)
     return {
-        "photos_count": len(photos),
+        "photos_count": len(merged_ordered),
         "videos_count": len(videos),
         "photo_thumbs": p_thumbs,
         "video_thumbs": v_thumbs,
@@ -480,6 +553,17 @@ async def list_workstream_jobs(
             {"_id": 0, "id": 1, "label": 1, "address": 1},
         ).to_list(len(pids) * 2)
         pmap = {p["id"]: p for p in prop_rows}
+
+    # Task L+P · Feb-2026 — batched SR photo pre-fetch.  ONE
+    # ``$in``-batched find call for the whole page (max 500 rows
+    # under this endpoint's fetch_cap), stamps ``_sr_photos``
+    # scratch key on each doc so ``_media_summary`` can merge SR
+    # photos + ``job.photos[]`` without a per-row N+1.  The scratch
+    # key is consumed by ``_media_summary`` and dropped from the
+    # response payload below (see the ``d.pop("_sr_photos", None)``
+    # after the row emit).
+    from services.jobs_slim_photos import enrich_docs_with_sr_photos
+    await enrich_docs_with_sr_photos(db, docs, tenant["id"])
 
     is_tech = role == "technician"
     rows: List[Dict[str, Any]] = []

@@ -88,6 +88,21 @@ function MediaStrip({ jid, media }) {
     ...(media.video_thumbs || []).map((v) => ({ ...v, kind: "video" })),
   ];
   const token = localStorage.getItem(TOKEN_KEY);
+  // Task L+P · Feb-2026 — Grid thumbnails render the ``/thumb``
+  // derivative to keep card scrolls snappy (S3 signed-URL redirect
+  // → pre-sized image). The lightbox on-click viewer still opens
+  // the full-size URL below (``t.url``) so click-to-enlarge is
+  // unchanged. SR photos returned with a stored ``url`` field
+  // (Phase-27 upload path) already point at the SR streaming
+  // route, which has no ``/thumb`` variant — treat those as
+  // already-thumb-sized and skip the suffix append.
+  const _thumbSrc = (u) => {
+    if (!u) return u;
+    if (u.includes("/api/public/job-photo/")) {
+      return u.endsWith("/thumb") ? u : `${u}/thumb`;
+    }
+    return u;
+  };
   return (
     <div
       className="flex items-center gap-1.5 mt-2"
@@ -114,7 +129,7 @@ function MediaStrip({ jid, media }) {
         >
           {t.kind === "photo" ? (
             <img
-              src={`${BACKEND}${t.url}`}
+              src={`${BACKEND}${_thumbSrc(t.url)}`}
               alt=""
               className="w-full h-full object-cover"
               loading="lazy"

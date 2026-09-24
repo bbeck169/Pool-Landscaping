@@ -293,3 +293,78 @@ async def enrich_docs_with_sr_photo_ids(
     for d in docs:
         if isinstance(d, dict) and d.get("id"):
             d["_sr_photo_ids"] = sr_map.get(d["id"], [])
+
+
+
+async def enrich_docs_with_sr_photos(
+    db: Any, docs: Iterable[Dict[str, Any]], tenant_id: str,
+) -> None:
+    """Batched SR **full-photo-subdoc** pre-fetch.  Sibling to
+    :func:`enrich_docs_with_sr_photo_ids`; the wider variant is
+    used by consumers that need per-photo metadata beyond just the
+    id — e.g. ``routers/workstream.py::_media_summary`` which
+    builds thumbnail entries with ``id`` + ``url`` + ``label`` +
+    ``created_at`` per photo.
+
+    Mutates ``docs`` in place by stamping a private
+    ``_sr_photos: list[dict]`` scratch key on every row (empty
+    list when the job has no SR photos).  Consumers strip the key
+    themselves after use.
+
+    Projection: ``{"_id": 0, "job_id": 1, "photos": 1, "deleted_at": 1}``
+    — includes every SR photo subdoc field written by
+    ``routers/service_report_media.py::upload_service_report_media``
+    (``id``, ``storage_path``, ``url``, ``mime``, ``uploaded_at``,
+    ``is_deleted``, etc.).  Per-photo ``data`` blob is normally
+    absent in the Phase-27 write path so the payload stays small;
+    legacy manually-seeded rows that do carry ``data`` pull it too
+    but those are rare.
+
+    Filters both tombstone shapes:
+      * SR-doc ``deleted_at`` — dropped at query time via
+        ``{"$in": [None, ""]}`` predicate.
+      * Per-photo ``is_deleted`` — filtered client-side after
+        fetch.
+
+    Single Mongo round-trip per page (batched via ``$in`` on
+    ``job_id``); same 5000-chunk defensive split as the id
+    variant.  ``docs`` empty → no-op.
+    """
+    if not tenant_id:
+        return
+    job_ids: List[str] = [
+        d.get("id") for d in docs
+        if isinstance(d, dict) and d.get("id")
+    ]
+    if not job_ids:
+        return
+
+    _CHUNK = 5000
+    sr_map: Dict[str, List[Dict[str, Any]]] = {}
+    for start in range(0, len(job_ids), _CHUNK):
+        chunk = job_ids[start:start + _CHUNK]
+        cursor = db.service_reports.find(
+            {
+                "tenant_id": tenant_id,
+                "job_id": {"$in": chunk},
+                "deleted_at": {"$in": [None, ""]},
+            },
+            {"_id": 0, "job_id": 1, "photos": 1, "deleted_at": 1},
+        )
+        async for sr in cursor:
+            jid = sr.get("job_id")
+            if not jid:
+                continue
+            live_photos = [
+                p for p in (sr.get("photos") or [])
+                if isinstance(p, dict)
+                and p.get("id") is not None
+                and not p.get("is_deleted")
+            ]
+            if not live_photos:
+                continue
+            sr_map.setdefault(jid, []).extend(live_photos)
+
+    for d in docs:
+        if isinstance(d, dict) and d.get("id"):
+            d["_sr_photos"] = sr_map.get(d["id"], [])
