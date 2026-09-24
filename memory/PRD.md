@@ -21345,16 +21345,18 @@ The dispatch referenced `ServiceReportView.jsx`; that file doesn't exist. `Porta
 15. (User addition) Composition: seed stale → cleanup marks missed → next-service is null (proves the two P47 items compose; no orphan pointers).
 16. (User addition) Portal Next-Service matches the calendar-view first row for the same customer with 3 upcoming jobs (locks the two surfaces stay in agreement post-P47).
 
-`frontend/src/test/p47-missed-status-badge.test.jsx` — **2 tests, 2 passing** (4ms):
+`frontend/src/test/p47-missed-status-badge.test.jsx` — **4 tests, 4 passing** (5ms):
 1. Missed status badge palette lock — `STATUS_PILL.missed` + `STATUS_COLORS.missed` regex-checked in `CalendarSchedule.jsx` source; `K50_JOB_STATUS_BG.missed === "#FCA5A5"` runtime-asserted from the exported map; `jobStatusColor("missed" | "MISSED" | "  Missed  ")` all return `"#FCA5A5"` (case-insensitive + trim); unknown/typo/empty/null/undefined statuses ALL return `null` — the "does NOT render for other statuses" contract.
-2. P43 layout invariants preservation — `portal-sticky-header` testid + `sticky top-0 z-30 h-14 bg-white border-b` classes present; `portal-outlet-wrapper` testid + `w-full max-w-5xl mx-auto px-4` classes present; `<PaymentMethodPromptBanner />` appears BEFORE the portal `<Outlet />` in source order (uses `lastIndexOf` for the outlet to skip the earlier technician-role early-return); banner is gated behind `location.pathname.startsWith("/portal")`; NO `pt-16` regression on the portal outlet wrapper.  **This test is the P51 preservation contract — any P51 change that drops the sticky header, moves the banner, re-adds the pt-16 hack, or ships the banner outside the portal-only branch will fail this test.**
+2. Portal Next-Service tile happy-path render contract — `PortalHome.jsx` regex-checked: `data-testid="tile-next-service"` anchor present; the `summary?.next_service ? fmtServiceDate(summary.next_service.date) : "None scheduled"` ternary is intact (locks both branches at once); service-type feeds the sub-line; click routes to `/portal/services/{job_id}` on happy path; hero card carries `data-testid="portal-hero"` + `data-tour-id="next-service-visit"` (P43 tour anchor).
+3. Portal Next-Service tile empty-state contract — the "None scheduled" literal + "No upcoming service on the calendar." tooltip present; the `fmtServiceDate` null-guard (`if (!iso) return "";`) present (this is what keeps the tile from throwing on a null `next_service` payload); empty-state click navigates to `/portal/request-service`.
+4. P43 layout invariants preservation — `portal-sticky-header` testid + `sticky top-0 z-30 h-14 bg-white border-b` classes present; `portal-outlet-wrapper` testid + `w-full max-w-5xl mx-auto px-4` classes present; `<PaymentMethodPromptBanner />` appears BEFORE the portal `<Outlet />` in source order (uses `lastIndexOf` for the outlet to skip the earlier technician-role early-return); banner is gated behind `location.pathname.startsWith("/portal")`; NO `pt-16` regression on the portal outlet wrapper OR on the PortalHome hero.  **This test is the P51 preservation contract — any P51 change that drops the sticky header, moves the banner, re-adds the pt-16 hack, or ships the banner outside the portal-only branch will fail this test.**
 
 ### Test results
 ```
 backend  · pytest tests/test_p47_portal_next_service_and_missed_cleanup.py -v
-         → 16 passed, 1 warning in 0.44s
+         → 16 passed, 1 warning in 0.42s
 frontend · yarn vitest run src/test/p47-missed-status-badge.test.jsx
-         → Test Files 1 passed (1) · Tests 2 passed (2) · Duration 661ms
+         → Test Files 1 passed (1) · Tests 4 passed (4) · Duration 667ms
 ```
 
 ### Bugs surfaced during test writing
