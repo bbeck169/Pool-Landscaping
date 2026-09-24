@@ -65,11 +65,27 @@ async def process_pricebook_writebacks(
     invoice_id: str,
     line_items: List[Dict[str, Any]],
     actor: Dict[str, Any],
+    origin: str = "pricebook_writeback",
 ) -> Dict[str, Any]:
     """Iterate line items with ``pricebook_writeback=True`` and
     reflect the invoice's ``unit_price`` / ``category`` back into the
     pricebook. Runs AFTER the invoice save transaction settles so a
     later invoice-save failure never mutates the pricebook.
+
+    P55 · Feb-2026 — also propagates the modern taxonomy fields
+    (``income_category_id`` / ``income_category_name`` /
+    ``service_category_id`` / ``service_category_name``) from the
+    invoice line onto the Pricebook row via ``$set``. Existing rows
+    that lacked the modern fields have them created (Q2/Option A).
+    The legacy scalar ``category`` is kept in lockstep with
+    ``income_category_id`` for backward-compat readers.
+
+    ``origin`` — call-graph marker passed through to any downstream
+    sync-orchestrator invocation from this path. Defaults to
+    ``"pricebook_writeback"``, which is the origin that
+    ``sync_invoice_line_to_pricebook`` short-circuits on (loop
+    prevention). Kept as a kwarg so an alternate caller (e.g. a
+    future bulk endpoint) can pass its own marker.
 
     Returns:
         ``{"processed": N, "updated": [item_ids],
@@ -118,6 +134,13 @@ async def process_pricebook_writebacks(
                 warnings.append(f"line {idx} has invalid unit_price — writeback skipped")
                 continue
             new_category = (li.get("category") or "").strip() or None
+            # P55 · Feb-2026 — modern taxonomy fields on the line
+            # item. Empty strings are treated as absent so an
+            # unset line doesn't nuke the Pricebook row's category.
+            _li_income_id = (li.get("income_category_id") or "").strip() or None
+            _li_income_nm = (li.get("income_category_name") or "").strip() or None
+            _li_service_id = (li.get("service_category_id") or "").strip() or None
+            _li_service_nm = (li.get("service_category_name") or "").strip() or None
 
             pb_id = li.get("item_id") or li.get("pricebook_item_id")
             existing: Optional[Dict[str, Any]] = None
@@ -153,6 +176,22 @@ async def process_pricebook_writebacks(
                 }
                 if new_category and new_category != existing.get("category"):
                     patch["category"] = new_category
+                # P55 · Feb-2026 — modern taxonomy fields. \$set
+                # creates them on rows that lacked them (Q2/Option
+                # A) and updates them where present. NEVER sets to
+                # None from an absent line — Pricebook is master;
+                # a downstream ephemeral clear must not wipe the
+                # master (Q · policy).
+                if _li_income_id and _li_income_id != existing.get("income_category_id"):
+                    patch["income_category_id"] = _li_income_id
+                    # Legacy \`category\` scalar in lockstep.
+                    patch["category"] = _li_income_id
+                if _li_income_nm and _li_income_nm != existing.get("income_category_name"):
+                    patch["income_category_name"] = _li_income_nm
+                if _li_service_id and _li_service_id != existing.get("service_category_id"):
+                    patch["service_category_id"] = _li_service_id
+                if _li_service_nm and _li_service_nm != existing.get("service_category_name"):
+                    patch["service_category_name"] = _li_service_nm
                 await db.items.update_one(
                     {"id": target_id, "tenant_id": tenant_id},
                     {"$set": patch},
@@ -176,13 +215,24 @@ async def process_pricebook_writebacks(
                     "name": desc,
                     "unit_price": new_price,
                     "unit": "each",
-                    "category": new_category or "Other",
+                    "category": _li_income_id or new_category or "Other",
                     "item_type": "service",  # created via writeback → service (unlocked pricing)
                     "created_at": _now().isoformat(),
                     "created_by_user_id": (actor or {}).get("id"),
                     "source": "invoice_writeback",
                     "source_invoice_id": invoice_id,
                 }
+                # P55 · Feb-2026 — modern taxonomy fields on
+                # freshly-created Pricebook rows. Omit keys with
+                # empty values so we never insert dead ``None``s.
+                if _li_income_id:
+                    doc["income_category_id"] = _li_income_id
+                if _li_income_nm:
+                    doc["income_category_name"] = _li_income_nm
+                if _li_service_id:
+                    doc["service_category_id"] = _li_service_id
+                if _li_service_nm:
+                    doc["service_category_name"] = _li_service_nm
                 await db.items.insert_one(dict(doc))
                 created.append(new_id_val)
                 await _write_audit(
