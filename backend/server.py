@@ -33,6 +33,8 @@ from routers import (
     tenants, workforce,
     business_os,
     time_off,
+    # Task D · Feb-2026 — Employee Benefits CRUD catalog.
+    benefits,
     schedule, social,
     service_reports,
     referrals,
@@ -1291,7 +1293,9 @@ for module in [notifications_router,
                communications_log,
                customer_categories,
                dispatch_board,
-               job_titles]:
+               job_titles,
+               # Task D · Feb-2026 — Employee Benefits CRUD catalog.
+               benefits]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
