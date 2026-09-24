@@ -100,7 +100,24 @@ async def my_referrals(user: dict = Depends(get_current_user)):
         {"_id": 0},
     ).sort("created_at", -1).to_list(200)
     total = len(rows)
-    conversions = sum(1 for r in rows if r.get("status") == "converted")
+    # Phase P53 · Feb-2026 — the ``conversions`` count means "friend
+    # actually became a customer" and MUST include every post-
+    # close-won status. The Phase-10 modern path never lands in
+    # ``converted`` (it jumps ``pending_paid_window`` →
+    # ``crediting_in_progress`` → ``credited``) so the pre-P53
+    # counter that filtered on ``status == "converted"`` was silently
+    # zero for Phase-10 tenants. The API field name stays
+    # ``conversions`` for backward compatibility; only the semantic
+    # widens.
+    _POST_CLOSE_WON_STATUSES = {
+        "converted",
+        "pending_paid_window",
+        "crediting_in_progress",
+        "credited",
+    }
+    conversions = sum(
+        1 for r in rows if r.get("status") in _POST_CLOSE_WON_STATUSES
+    )
     rewards = round(sum(float(r.get("reward_amount") or 0)
                          for r in rows if r.get("reward_applied_at")), 2)
     return {
