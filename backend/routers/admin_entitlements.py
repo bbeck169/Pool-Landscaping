@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict
 from config import db
 from routers.tenants import get_current_tenant
 from services.entitlements.check import (
-    BILLING_STATUS_CANCEL_IMMEDIATE, is_entitlement_active,
+    BILLING_STATUS_CANCEL_IMMEDIATE, BILLING_STATUS_MANUAL_OVERRIDE,
+    is_entitlement_active,
 )
 from services.entitlements.registry import FEATURE_REGISTRY
 from services.entitlements.stripe_ops import (
@@ -48,6 +49,19 @@ def _now_iso() -> str:
 
 class ForceOffIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    reason: Optional[str] = None
+
+
+class ForceOnIn(BaseModel):
+    """Task J · Commit 3 · Feb-2026 — super_admin force-on body.
+
+    ``bypass_billing`` is an acknowledgement gate: the caller must
+    explicitly pass ``true`` to proceed. This exists so an ops
+    engineer can never accidentally comp a feature without
+    signalling that they know they're bypassing the Stripe flow.
+    """
+    model_config = ConfigDict(extra="forbid")
+    bypass_billing: bool = False
     reason: Optional[str] = None
 
 
@@ -199,3 +213,117 @@ async def force_off_entitlement(
         "stripe_cleanup_detail":   cleanup.get("detail"),
         "entitlement":             doc,
     }
+
+
+@router.post(
+    "/admin/entitlements/{tenant_id}/{feature_key}/force-on",
+    operation_id="admin.entitlements.force_on",
+    summary="Task J · Immediate entitlement force-on (super_admin)",
+)
+async def force_on_entitlement(
+    tenant_id: str,
+    feature_key: str,
+    body: Optional[ForceOnIn] = None,
+    user: Dict[str, Any] = Depends(get_current_user),
+    _caller_tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    """Force an entitlement to immediate-on. Sets
+    ``enabled=true``, ``billing_status="manual_override"``,
+    ``enabled_at=now()``, ``enabled_by=<caller user_id>``, and
+    ``enabled_reason=<body.reason>``. Preserves any pre-existing
+    fields on the row (Stripe subscription IDs, etc.) — the write
+    uses ``$set`` only on the fields it owns.
+
+    Guardrail: the caller MUST pass ``bypass_billing=true`` in the
+    body. Any other value returns 400. This is an ops acknowledgement
+    gate — force-on side-steps the Stripe marketplace flow and the
+    caller is expected to know that.
+
+    Idempotent: calling twice on the same ``(tenant_id, feature_key)``
+    updates ``enabled_at`` + ``enabled_by`` but does NOT insert a
+    duplicate entitlement row. Each call writes ONE audit_log entry
+    (audit trail is intentionally NOT idempotent so ops history is
+    preserved).
+
+    Response:
+        ``{status, feature_key, tenant_id, entitlement}``
+    """
+    _require_super_admin(user)
+    if feature_key not in FEATURE_REGISTRY:
+        # Matches force-off's :124 behaviour. Symmetric API; the
+        # FEATURE_REGISTRY is source-of-truth for known features
+        # and writing arbitrary keys would produce ghost rows that
+        # no has_feature() check will ever consume.
+        raise HTTPException(status_code=404, detail={
+            "detail": "feature_not_found", "feature_key": feature_key,
+        })
+    payload = body or ForceOnIn()
+    if payload.bypass_billing is not True:
+        raise HTTPException(status_code=400, detail=(
+            "Force-on bypasses billing; pass bypass_billing=true "
+            "to acknowledge."
+        ))
+    target = await db.tenants.find_one(
+        {"id": tenant_id}, {"_id": 0, "id": 1},
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail={
+            "detail": "tenant_not_found", "tenant_id": tenant_id,
+        })
+    now = _now_iso()
+    set_doc = {
+        "tenant_id":       tenant_id,
+        "feature_key":     feature_key,
+        "enabled":         True,
+        "billing_status":  BILLING_STATUS_MANUAL_OVERRIDE,
+        "enabled_at":      now,
+        "enabled_by":      user.get("id"),
+        "enabled_reason":  payload.reason,
+        # Clear any stale cancel marker so the row is coherent
+        # after being flipped back on. is_entitlement_active
+        # doesn't consult cancels_at for MANUAL_OVERRIDE rows,
+        # but leaving a stale ISO string around is a footgun for
+        # ops dashboards.
+        "cancels_at":      None,
+        "updated_at":      now,
+    }
+    await db.feature_entitlements.update_one(
+        {"tenant_id": tenant_id, "feature_key": feature_key},
+        {
+            "$set":         set_doc,
+            "$setOnInsert": {
+                "id":         str(uuid.uuid4()),
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "id":              str(uuid.uuid4()),
+            "tenant_id":       tenant_id,
+            "event":           "feature_force_on",
+            "feature_key":     feature_key,
+            "actor_user_id":   user.get("id"),
+            "reason":          payload.reason,
+            "bypass_billing":  True,
+            "at":              now,
+            "created_at":      now,
+        })
+    except Exception as exc:  # pragma: no cover — audit is best-effort
+        log.warning(
+            "[admin-entitlements] audit insert (force-on) failed "
+            "tenant=%s feat=%s err=%s",
+            tenant_id, feature_key, exc,
+        )
+    doc = await db.feature_entitlements.find_one(
+        {"tenant_id": tenant_id, "feature_key": feature_key},
+        {"_id": 0},
+    )
+    return {
+        "status":       "forced_on",
+        "feature_key":  feature_key,
+        "tenant_id":    tenant_id,
+        "entitlement":  doc,
+    }
+

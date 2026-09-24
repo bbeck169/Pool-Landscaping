@@ -33,6 +33,13 @@ BILLING_STATUS_CANCEL_EOC = "cancelled_end_of_cycle"
 # revoked IMMEDIATELY (no grace window). The ``has_feature`` check
 # denies on this status regardless of any ``cancels_at`` value.
 BILLING_STATUS_CANCEL_IMMEDIATE = "cancelled_immediate"
+# Task J · Commit 3 · Feb-2026 — super_admin force-on marker.
+# Distinct from ``active`` so audit trails + ops dashboards can
+# tell Stripe-billed rows apart from manually flipped ones (Ops
+# uses this on preview tenants and on comped accounts). The
+# ``has_feature`` check treats this exactly like ``active``
+# — see :func:`is_entitlement_active` below.
+BILLING_STATUS_MANUAL_OVERRIDE = "manual_override"
 
 
 def _now_iso() -> str:
@@ -60,6 +67,12 @@ def is_entitlement_active(doc: Optional[Dict[str, Any]]) -> bool:
         return False
     status = str(doc.get("billing_status") or "").strip().lower()
     if status == BILLING_STATUS_ACTIVE:
+        return True
+    if status == BILLING_STATUS_MANUAL_OVERRIDE:
+        # Task J · Commit 3 · Feb-2026 — super_admin force-on
+        # grants access identically to ``active``. Kept as a
+        # separate branch (not a set membership) so audit + ops
+        # dashboards can see-through the constant on grep.
         return True
     if status == BILLING_STATUS_CANCEL_EOC:
         # Access continues until ``cancels_at``.
