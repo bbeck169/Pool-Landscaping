@@ -205,9 +205,20 @@ async def _media_items(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
     jid = job.get("id") or ""
 
     # ── Rung 1 — service_reports (tenant-scoped). ──
+    # Task L+P Commit 5 correctness bump: filter SR-doc-level
+    # ``deleted_at`` at query time so soft-deleted service reports
+    # never surface their photos.  Matches the read-path filter in
+    # ``routers/jobs.py::_find_sr_photo_by_job_and_id`` (Commit 3).
+    # Both tombstone shapes now honoured on this rung:
+    #   * SR-doc-level ``deleted_at`` filtered here (query-side).
+    #   * Per-photo ``is_deleted`` filtered inside
+    #     ``_serialize_service_report_media`` (client-side).
     sr_items: List[Dict[str, Any]] = []
     report = await db.service_reports.find_one(
-        {"tenant_id": tenant_id, "job_id": jid},
+        {
+            "tenant_id": tenant_id, "job_id": jid,
+            "deleted_at": {"$in": [None, ""]},
+        },
         {"_id": 0, "photos": 1, "videos": 1},
     )
     if report:

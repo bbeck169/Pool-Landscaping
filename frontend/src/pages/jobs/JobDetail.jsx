@@ -34,6 +34,14 @@ export default function JobDetail() {
   const [emailModal, setEmailModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  // Task L+P · Feb-2026 — independent lightbox state for the new
+  // Service Report Photos section.  Separate from ``lightbox``
+  // (which indexes into ``job.photos``) because SR photos are a
+  // different data source (``detail.service_report_photos``);
+  // keeping them independent preserves the existing ``jd-lightbox``
+  // testid contract on the legacy grid and gives the SR grid its
+  // own ``job-detail-sr-photos-lightbox`` testid.
+  const [srLightbox, setSrLightbox] = useState(null);
   // Feb-2026 · "+ New Scheduled Job" quick-action. Reuses <JobNew>
   // in ``renderMode="modal"`` so there is exactly one form
   // component in the codebase (no fork). Pre-fill defaults are
@@ -550,6 +558,47 @@ export default function JobDetail() {
         </div>
       ) : null}
 
+      {/* Task L+P · Feb-2026 — Service Report Photos section.
+          Renders photos uploaded via the SR flow (Phase-27 upload
+          path) that DON'T live on ``job.photos[]``.  Adjacent to
+          the existing Photos section (above) — deliberately NOT
+          merged so a user can distinguish "photos taken during the
+          service report" from "photos attached to the job".
+          Backend-side dedupe (SR wins on id collision) ensures the
+          same photo never appears in both grids.  Section is
+          suppressed entirely when the array is empty; render
+          semantics mirror the existing Photos section.
+       */}
+      {(detail?.service_report_photos || []).length ? (
+        <div
+          className="rounded-2xl p-6 mb-4"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          data-testid="job-detail-sr-photos"
+        >
+          <h3 className="text-lg font-bold mb-3" style={{ color: colors.onSurface }}>
+            Service Report Photos
+          </h3>
+          <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
+            {detail.service_report_photos.map((p, i) => (
+              <button
+                key={p.id || i}
+                onClick={() => setSrLightbox(i)}
+                className="aspect-square overflow-hidden rounded-lg"
+                style={{ border: `1px solid ${colors.border}` }}
+                data-testid={`job-detail-sr-photo-${i}`}
+                title={p.created_at || p.label || ""}
+              >
+                <img
+                  src={p.url}
+                  alt={p.label || ""}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* Videos — sits next to Photos in the Media section. Hidden for customers. */}
       {job.id && !isCustomer ? (
         <div
@@ -648,6 +697,35 @@ export default function JobDetail() {
               (job.photos[lightbox] || {}).data_url ||
               job.photos[lightbox]
             }
+            alt=""
+            className="max-h-[85vh] max-w-full rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+
+      {/* Task L+P · Feb-2026 — Service Report Photos lightbox.
+          Independent from the ``jd-lightbox`` above because it
+          indexes into a different data source
+          (``detail.service_report_photos``).  Keeps the existing
+          ``jd-lightbox`` testid + click-to-enlarge contract on
+          the legacy grid intact and gives the SR grid its own
+          scoped testid for tester scripts. */}
+      {srLightbox !== null && (detail?.service_report_photos || []).length ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
+          onClick={() => setSrLightbox(null)}
+          data-testid="job-detail-sr-photos-lightbox"
+        >
+          <button
+            className="absolute top-4 right-4 text-white"
+            onClick={() => setSrLightbox(null)}
+          >
+            <XIcon size={28} />
+          </button>
+          <img
+            src={(detail.service_report_photos[srLightbox] || {}).url}
             alt=""
             className="max-h-[85vh] max-w-full rounded-lg"
             onClick={(e) => e.stopPropagation()}

@@ -40,6 +40,9 @@ from routers.workstream import (
     _photo_thumb,
     _video_url,
 )
+# Task L+P · Feb-2026 — reuse Commit-1's ``_media_items`` merge for
+# the new ``service_report_photos`` slice of the JobDetail response.
+from routers.workstream_service_log import _media_items as _wsl_media_items
 # Feb-2026 · Phase F1 — crew-aware tech authorization helper. Same
 # helper as ``routers/jobs.py`` so this endpoint (which powers the
 # JobDetail UI) matches the schedule/list authorization semantics.
@@ -298,6 +301,48 @@ async def _build_timeline(job: dict, tenant_id: str) -> Dict[str, Any]:
     return {"events": events, "count": len(events)}
 
 
+async def _build_service_report_photos(
+    job: dict, tenant_id: str,
+) -> List[Dict[str, Any]]:
+    """Task L+P · Feb-2026 — Service Report photos slice for the
+    JobDetail aggregator.
+
+    Reuses ``routers/workstream_service_log._media_items`` (the
+    Commit-1 merge) and filters the result to entries with
+    ``source == "service_report"`` and ``kind == "image"``.  This
+    surfaces the SR-side photos as a separate section on the
+    JobDetail page (rendered ADJACENT to the existing
+    ``media.photos`` grid — NOT merged into it).
+
+    Dedupe policy (inherited from ``_media_items``): a photo id
+    present in BOTH ``jobs.photos`` AND ``service_reports.photos``
+    ends up in the SR-source slot (SR wins on collision), so the
+    same photo never appears in both sections of the response.
+
+    Return shape: ``[{"id", "kind", "url", "label", "created_at",
+    "source"}]``.  Empty list when the job has no SR photos.  Never
+    ``None``.
+
+    Videos are intentionally excluded — SR videos surface via the
+    existing ``media.videos`` grid on the JobDetail response and
+    the SR-photos section is photos-only per the Commit-5 spec.
+    """
+    try:
+        merged = await _wsl_media_items(job, tenant_id)
+    except Exception as exc:  # pragma: no cover — never break parent
+        logger.warning(
+            "[task-lp] _build_service_report_photos merge failed "
+            "job=%s tenant=%s err=%s",
+            job.get("id"), tenant_id, exc,
+        )
+        return []
+    return [
+        i for i in merged
+        if i.get("source") == "service_report" and i.get("kind") == "image"
+    ]
+
+
+
 @router.get("/jobs/{jid}/detail")
 async def get_job_detail(
     jid: str,
@@ -332,6 +377,19 @@ async def get_job_detail(
     checklist = _build_checklist(job)
     forms = await _build_forms(job, tenant["id"])
     timeline = await _build_timeline(job, tenant["id"])
+    # Task L+P · Feb-2026 — new ``service_report_photos`` slice.
+    # Reuses Commit-1's ``_media_items`` merge (both sources,
+    # deduped by id with SR winning on collision, timestamp-desc)
+    # and filters to ``source == "service_report"`` + ``kind ==
+    # "image"``.  Rendered as a new "Service Report Photos" grid
+    # section on the JobDetail page — adjacent to the existing
+    # ``media.photos`` (``jobs.photos``) grid, NOT merged into it.
+    # Empty array when the job has no SR photos.  See
+    # ``frontend/src/pages/jobs/JobDetail.jsx`` for the render
+    # site.
+    service_report_photos = await _build_service_report_photos(
+        job, tenant["id"],
+    )
 
     payload: Dict[str, Any] = {
         "header": header,
@@ -341,6 +399,7 @@ async def get_job_detail(
         "checklist": checklist,
         "forms": forms,
         "timeline": timeline,
+        "service_report_photos": service_report_photos,
     }
 
     # Belt-and-braces: recursively scrub every admin-only field from
