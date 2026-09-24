@@ -200,8 +200,39 @@ async def list_leads(user: dict = Depends(get_current_user),
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     # Phase 34 · Task BB · Feb 2026 — hide soft-deleted leads by default.
     q["$and"] = [{"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}]
+    # ── Phase P48 · Feb-2026 · multi-status CSV support ────────────
+    # Pre-P48 this branch only accepted a single canonical status.
+    # The Leads page now ships an Active/Archive tab switcher that
+    # queries multi-value groups (Active tab → new,contacted,quoted;
+    # Archive tab → closed_won,closed_lost).  Accept a
+    # comma-separated list; each token normalises through the same
+    # ``_normalize_status`` helper.  Unknown tokens are silently
+    # dropped (a typo shouldn't surface ``new`` leads).  When no
+    # valid tokens survive, treat as no-status-filter — same
+    # semantics as ``status="all"``.  Single-value callers keep
+    # working byte-identically because a single token has no commas.
+    # ──────────────────────────────────────────────────────────────
     if status and status != "all":
-        q["status"] = _normalize_status(status)
+        raw_tokens = [t.strip() for t in str(status).split(",") if t.strip()]
+        # ``_normalize_status`` maps unknowns to ``"new"`` — that's
+        # WRONG for a multi-status filter (it would pollute the
+        # Active tab with matches for a typo).  Filter through
+        # ``_STATUS_ALIASES`` explicitly + ``_VALID_STATUSES`` set
+        # so unknowns get dropped.  De-dupe with dict.fromkeys to
+        # preserve insertion order for stable test output.
+        canonical = []
+        for tok in raw_tokens:
+            mapped = _STATUS_ALIASES.get(tok) or (
+                tok if tok in _CANONICAL_STATUSES else None
+            )
+            if mapped:
+                canonical.append(mapped)
+        canonical = list(dict.fromkeys(canonical))
+        if len(canonical) == 1:
+            q["status"] = canonical[0]
+        elif len(canonical) > 1:
+            q["status"] = {"$in": canonical}
+        # else: fall through to "no status filter" — same as "all".
     elif not status:
         # Phase 16 · Addition E · Feb-2026 — exclude rejected leads
         # from the default inbox view. Callers who want the reject

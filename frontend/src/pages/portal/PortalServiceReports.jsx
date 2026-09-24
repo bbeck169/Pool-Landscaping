@@ -24,9 +24,17 @@ import {
   Calendar,
   User,
   MapPin,
+  Image as ImageIcon,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+// Phase P49 · Feb-2026 — tenant branding lookup for the portal
+// service-report detail header.  ``useTenantBrand`` returns
+// ``{ logo_url, name, ... }`` — ``logo_url`` may be null for tenants
+// that haven't uploaded a logo (the render branch handles that case
+// by falling back to a text-only header, no ``<BrandLogo />`` sub-
+// component required).
+import { useTenantBrand } from "@/hooks/useTenantBrand";
 // Feb-2026 hotfix — client-side band derivation.  Mirrors backend
 // ``services/chemistry_bands.py`` exactly so a portal load with a
 // stale server payload (no ``label`` attached) still classifies the
@@ -527,7 +535,19 @@ export function PortalServiceReportDetail() {
                          || BODY_TYPE_LABELS[bodies[0]?.body_type]
                          || "Pool");
 
+  // ── Phase P49 · Feb-2026 · brand logo for the header card ────
+  // Reads the tenant's uploaded logo (falls back to null when the
+  // tenant hasn't uploaded one — render branch below handles that
+  // by omitting the img element entirely and keeping the header
+  // text-only).  Uses ``useTenantBrand`` — the shared portal hook
+  // that pulls ``branding.logo_url`` off the tenant summary cache.
+  const { logo_url: brandLogoUrl, name: brandName } = useTenantBrand();
+
   return (
+    <div
+      className="bg-slate-50 min-h-screen"
+      data-testid="portal-service-report-detail-root"
+    >
     <div
       className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
       data-testid="portal-service-report-detail"
@@ -541,14 +561,33 @@ export function PortalServiceReportDetail() {
         <ArrowLeft size={14} /> Service reports
       </button>
 
-      {/* Header card */}
+      {/* Header card
+          Phase P49 · Feb-2026 · brand-logo row + branded badges.
+          The tenant logo (from ``useTenantBrand`` above) mounts at
+          the TOP-LEFT of the header card.  Renders as a plain
+          ``<img>`` sized ``h-8 sm:h-10 w-auto`` so it reads on
+          mobile without dominating the card; the alt text uses the
+          tenant name so screen readers still announce which brand
+          is speaking to the customer.  Fallback branch (``brandLogoUrl``
+          falsy) omits the img entirely — keeping the pre-P49
+          header layout on tenants that haven't uploaded a logo. */}
       <div
-        className="rounded-2xl p-6 mb-4"
+        className="rounded-2xl p-6 mb-4 shadow-sm"
         style={{
           backgroundColor: colors.surface,
           border: `1px solid ${colors.border}`,
         }}
       >
+        {brandLogoUrl ? (
+          <div className="mb-4">
+            <img
+              src={brandLogoUrl}
+              alt={brandName || "Tenant logo"}
+              className="h-8 sm:h-10 w-auto"
+              data-testid="portal-service-report-brand-logo"
+            />
+          </div>
+        ) : null}
         <div className="flex items-start gap-3">
           <div
             className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
@@ -558,8 +597,34 @@ export function PortalServiceReportDetail() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <KindChip kind={kind} />
-              <StatusPill status="completed" />
+              {/* Phase P49 · Feb-2026 · branded chips.
+                  Pre-P49 these used the shared ``<KindChip>`` +
+                  ``<StatusPill status="completed">`` from ``ui-kit``
+                  which paint pastel green.  User wants the primary
+                  brand colour (``colors.brand`` — #0284C7 sky-600).
+                  Rebuilt inline here rather than adding a new tone
+                  to ``ui-kit`` — that would leak the recolor into
+                  every other surface that reads ``tone="brand"``.
+                  ``report-kind`` + ``status-pill-completed`` test
+                  ids preserved so downstream selectors keep
+                  working (P44 wire-shape rule).  Fallback text
+                  labels match what ``<KindChip>`` renders. */}
+              <span
+                className="text-xs font-semibold px-2 py-0.5 rounded-full text-white"
+                style={{ backgroundColor: colors.brand }}
+                data-testid="report-kind"
+              >
+                {kind === "pool" ? "Pool service"
+                  : kind === "landscape" ? "Landscape service"
+                  : "Service"}
+              </span>
+              <span
+                className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap text-white"
+                style={{ backgroundColor: colors.brand }}
+                data-testid="status-pill-completed"
+              >
+                Completed
+              </span>
               {/*
                 Feb-2026 · Repair-mode marker on the portal card.
                 Small orange chip so customers can quickly see the
@@ -1023,7 +1088,7 @@ export function PortalServiceReportDetail() {
           it renders inline without any auth handshake. */}
       {jobPhotos.length > 0 ? (
         <Section
-          icon={Waves}
+          icon={ImageIcon}
           title="Job Photos"
           testid="service-report-job-photos-section"
         >
@@ -1049,7 +1114,7 @@ export function PortalServiceReportDetail() {
       {/* Customer-safe photos (backend already filtered internal/issue tags) */}
       {photos.length > 0 ? (
         <Section
-          icon={Waves}
+          icon={ImageIcon}
           title="Visit photos"
           testid="portal-service-report-photos"
         >
@@ -1112,6 +1177,7 @@ export function PortalServiceReportDetail() {
         </Section>
       ) : null}
     </div>
+    </div>
   );
 }
 
@@ -1119,7 +1185,7 @@ export function PortalServiceReportDetail() {
 function Section({ icon: Icon, title, testid, children }) {
   return (
     <div
-      className="rounded-2xl p-5 mb-4"
+      className="rounded-2xl p-5 mb-4 shadow-sm"
       style={{
         backgroundColor: colors.surface,
         border: `1px solid ${colors.border}`,
@@ -1128,9 +1194,7 @@ function Section({ icon: Icon, title, testid, children }) {
     >
       <div className="flex items-center gap-2 mb-3">
         {Icon ? (
-          <span style={{ color: colors.brand }}>
-            <Icon size={16} />
-          </span>
+          <Icon className="w-5 h-5 text-slate-700 shrink-0" />
         ) : null}
         <h3
           className="text-sm font-bold uppercase tracking-wide"
@@ -1145,23 +1209,31 @@ function Section({ icon: Icon, title, testid, children }) {
 }
 
 
-// Feb-2026 · Slice 3C · Chemistry band chip.  Colour hint per spec:
-// below=blue · average=green · above=amber · elevated=red.
+// Feb-2026 · Slice 3C · Chemistry band chip.
+// Phase P49 · Feb-2026 palette refresh — bumped from pastel bg/fg
+// combos to full-saturation Tailwind swatches per user spec.  All
+// three main bands paint white text on a saturated brand-primary-
+// adjacent hue: amber-500 (above), emerald-500 (average), sky-500
+// (below).  The pre-P49 ``bg`` / ``fg`` inline-style keys are gone;
+// the new ``className`` string flows straight into the chip's
+// ``className``.  ``elevated`` keeps the red-on-red pastel because
+// it's a distinct WARN bucket, not part of the three-band trio the
+// user restyled.
 const CHEM_BAND_STYLES = {
-  below:    { bg: "#DBEAFE", fg: "#1E3A8A", label: "Below" },
-  average:  { bg: "#DCFCE7", fg: "#166534", label: "Average" },
-  above:    { bg: "#FEF3C7", fg: "#92400E", label: "Above Avg" },
-  elevated: { bg: "#FEE2E2", fg: "#991B1B", label: "Elevated" },
+  below:    { className: "bg-sky-500 text-white",     label: "Below" },
+  average:  { className: "bg-emerald-500 text-white", label: "Average" },
+  above:    { className: "bg-amber-500 text-white",   label: "Above Avg" },
+  elevated: { className: "bg-red-500 text-white",     label: "Elevated" },
 };
 
 function ChemChip({ band, testid }) {
   const style = CHEM_BAND_STYLES[band] || CHEM_BAND_STYLES.average;
   return (
     <span
-      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold shrink-0"
-      style={{ backgroundColor: style.bg, color: style.fg }}
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0 ${style.className}`}
       data-testid={testid}
       data-band={band}
+      aria-label={`Chemistry level: ${style.label}`}
     >
       {style.label}
     </span>

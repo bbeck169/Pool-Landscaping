@@ -117,12 +117,57 @@ async def get_portal_summary(
             # Overpayment → treat the absolute difference as customer credit.
             credit += -remaining
 
-    # Next-service — earliest scheduled job that is still open.
+    # ── Phase P47 · Feb-2026 · Next-service query fix ────────────
+    # Pre-P47 this used ``find_one`` with sort
+    # ``(scheduled_start ASC, scheduled_date ASC)`` and a Python
+    # post-filter ``if str(scheduled)[:10] >= today``.  BSON sorts
+    # nulls FIRST in ascending order, so a customer with any stale
+    # ``status=scheduled`` row (past-dated, never marked completed)
+    # would see the stalest row surfaced by the sort and then DROPPED
+    # by the Python guard — with no fallthrough to the actual next
+    # upcoming job.  Portal "Next Service" tile went blank.
+    #
+    # Fix: push the date guard into the DB query itself.  Two OR
+    # branches:
+    #   1) ``scheduled_start >= now_iso`` — has a specific ISO ts
+    #      and it's in the future.
+    #   2) ``scheduled_start`` null/missing AND
+    #      ``scheduled_date >= today`` (YYYY-MM-DD compare is safe
+    #      even against legacy full-ISO ``scheduled_date`` values
+    #      because ``2026-09-24`` < ``2026-09-24T…`` lexicographically
+    #      still evaluates the truth correctly for same-day
+    #      comparisons — see P47 test 3 for the invariant lock).
+    #
+    # The ``deleted_at`` guard uses ``$and`` explicitly so the two
+    # top-level ``$or`` clauses don't collide (Mongo query grammar
+    # only allows one ``$or`` at a level).
+    now_iso = datetime.now(timezone.utc).isoformat()
+    today_ymd = today  # already computed above as ``YYYY-MM-DD``
     next_job = await db.jobs.find_one(
         {
             "tenant_id": tenant["id"],
             "customer_id": cid,
-            "status": {"$in": ["scheduled", "active", "pending", "requested"]},
+            "status": {"$in": ["scheduled", "active", "pending",
+                                 "requested"]},
+            "$and": [
+                {"$or": [
+                    {"deleted_at": None},
+                    {"deleted_at": {"$exists": False}},
+                ]},
+                {"$or": [
+                    # Rung 1 — has a real scheduled_start ≥ now.
+                    {"scheduled_start": {"$gte": now_iso}},
+                    # Rung 2 — no scheduled_start; date ≥ today.
+                    {"$and": [
+                        {"$or": [
+                            {"scheduled_start": None},
+                            {"scheduled_start": ""},
+                            {"scheduled_start": {"$exists": False}},
+                        ]},
+                        {"scheduled_date": {"$gte": today_ymd}},
+                    ]},
+                ]},
+            ],
         },
         {"_id": 0},
         sort=[("scheduled_start", 1), ("scheduled_date", 1)],
@@ -134,8 +179,9 @@ async def get_portal_summary(
             or next_job.get("scheduled_date")
             or next_job.get("scheduled_at")
         )
-        # Only return if it's today-or-future — a stale scheduled job
-        # (e.g. never marked completed) shouldn't be dressed up as "next".
+        # Defensive belt — the query guard should have already
+        # excluded past rows, but leave the check so a schema drift
+        # can't sneak one through.
         if scheduled and str(scheduled)[:10] >= today:
             next_service = {
                 "job_id": next_job.get("id"),

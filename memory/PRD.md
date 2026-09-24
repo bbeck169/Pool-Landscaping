@@ -21224,3 +21224,69 @@ Test loop convention mirrors `test_heatmap_cooldown_cache.py`: seeding + cleanup
 - **P0 comment cleanup.** The pre-P46 comments in `invoices_bulk_charge.py` still reference "P0 · Feb-2026" as the origin phase for the index swap. Cosmetic; a future sweep can renumber to P46 for consistency.
 - **`STARTUP_EXECUTE_MODE = True` follow-up.** If any future migration needs to ship dry-run first, revisit whether P46's auto-execute-on-boot posture sets the wrong precedent.
 
+
+## Phase P49 · Feb-2026 — Portal Service Report Visual Restyle (SHIPPED preview)
+
+**Goal.** Make the customer-facing service-report detail view feel on-brand + premium without touching a byte of business logic. Restyle-only refresh on a single file.
+
+**Target file.** User's dispatch said `ServiceReportView.jsx`; that filename doesn't exist in the tree. The correct file is `frontend/src/pages/portal/PortalServiceReports.jsx` — the detail-view branch (starts at line ~530).
+
+### Frontend
+`frontend/src/pages/portal/PortalServiceReports.jsx`
+1. **Page-root wrapper** — outer `<div className="bg-slate-50 min-h-screen">` with `data-testid="portal-service-report-detail-root"` mounts BEFORE the existing `max-w-3xl` container so the whole detail view sits on a slate-tinted canvas instead of the browser default white.
+2. **Branded header card** — reads `useTenantBrand()` (existing hook — no new plumbing). `logo_url` renders as an `<img className="h-8 sm:h-10 w-auto">` at the top-left with `data-testid="portal-service-report-brand-logo"`. Falls back to a bare header when the tenant hasn't uploaded a logo.
+3. **Primary-brand chips** — the "Pool service" / "Landscape service" / "Service" chip AND the "Completed" status pill both now paint `colors.brand` (#0284C7) with `text-white`. Inlined at the render site so the shared `<Chip tone="brand">` / `<StatusPill status="completed">` from `ui-kit` keep their pastel semantics on every other surface. Test-ids `report-kind` + `status-pill-completed` preserved verbatim so downstream selectors don't drift.
+4. **Section icons** —
+   - Pool primary-chemistry sections → `Droplet` (unchanged).
+   - Checklist section → `ClipboardCheck` (unchanged).
+   - **Photos sections** (both "Job Photos" and "Visit photos") → **`Image`** (aliased `ImageIcon` at import time to avoid shadowing the DOM `Image` constructor). Was `Waves` pre-P49.
+   - Section icon paints `w-5 h-5 text-slate-700 shrink-0` — fixed size on every breakpoint per the user's hard rule (no `sm:` shrinkage).
+5. **Chemistry-band chips** — `CHEM_BAND_STYLES` refactored from inline pastel `{bg, fg}` to full-saturation Tailwind class strings on white text:
+   - `above` → `bg-amber-500 text-white`
+   - `average` → `bg-emerald-500 text-white`
+   - `below` → `bg-sky-500 text-white`
+   - `elevated` stays red-on-red (distinct WARN bucket, not part of the three-band trio the user restyled).
+   - `<ChemChip>` now flows `style.className` into the `<span>` via template literal + carries an `aria-label={`Chemistry level: ${style.label}`}` for a11y.
+   - `font-bold` → `font-medium` — user's stated palette specifies medium weight on saturated backgrounds.
+6. **Card depth** — `<Section>` shell gains `shadow-sm`. Header card gains `shadow-sm`. Existing `border` + `rounded-2xl` classes untouched.
+
+### Tests
+`frontend/src/test/p49-service-report-restyle.test.jsx` — **11 tests, all passing** (9ms):
+1. Page root has `bg-slate-50 min-h-screen` on the new detail-root wrapper.
+2. Brand logo renders from `useTenantBrand().logo_url` with responsive sizing.
+3. Pool-service chip paints `colors.brand` + white text; fallback labels intact.
+4. Completed status pill paints `colors.brand` + white text.
+5. Pool section uses `Droplet` icon.
+6. Checklist section uses `ClipboardCheck` icon.
+7. Photos sections use `ImageIcon` (both "Job Photos" and "Visit photos") — `Waves` is regression-guarded out.
+8. Chem-band chips use `bg-sky-500` / `bg-emerald-500` / `bg-amber-500` with `text-white` + `<ChemChip>` template literal passes `style.className` through + `aria-label` present.
+9. Section shell + header card carry `rounded-2xl shadow-sm`.
+10. **Testid preservation** — 27 double-quoted testids present pre-P49 all remain; 4 new testids added (`portal-service-report-detail-root`, `portal-service-report-brand-logo`, `report-kind`, `status-pill-completed`) — the last two were previously *runtime-injected* by shared ui-kit components and are now inlined; runtime set is byte-identical.
+11. Section icons paint `w-5 h-5 text-slate-700` with no responsive shrinkage.
+
+### Screenshot description
+Desktop **1280×800**:
+- Slate-50 background fills the viewport; the max-3xl content column sits centred with breathing room.
+- Header card: tenant logo top-left (h-10, w-auto). Below, the kind + completed pills paint solid sky-blue on white text — bold and unified with the app's primary brand hue.
+- Section cards: white surfaces with subtle drop-shadow-sm, `w-5 h-5` slate-700 icons inline with each section title.
+- Chemistry rail: three saturated pill colors (amber / emerald / sky) with white text — reads at a glance without needing to squint at pastel gradients.
+
+Mobile **375×667**:
+- Header card padding intact, logo scales to `h-8`. Kind + completed pills wrap onto a second line when needed via the existing `flex-wrap`. Icons stay `w-5 h-5` (no shrink).
+- Cards stack full-width with `p-5` padding — no horizontal overflow.
+
+### Hard-rules compliance
+- Zero business-logic changes; only styling + one new `useTenantBrand()` hook call.
+- All 27 pre-P49 testids preserved verbatim.
+- No mobile files touched. No new dependencies. No `.env` writes.
+- P44 photo read path untouched (the img `src` still flows through `useTenantBrand.logo_url`, which is a tenant-level pointer, not a P44 media URL).
+- `useTenantBrand` was already the canonical hook for portal branding — no new context provider introduced.
+- Elevated chem-band chip left red-on-red — distinct WARN semantics not covered by the user's three-band restyle spec.
+
+### Filename note (for the user)
+The dispatch referenced `ServiceReportView.jsx`; that file doesn't exist. `PortalServiceReports.jsx` was the intended target — the detail branch starts at line ~530 and hosts the header card + all `<Section>` sub-elements the user described. If a future rename is desired we can split the list view and detail view into separate files, but P51's dispatch also uses `ServiceReportView.jsx` — worth reconciling naming in a future cleanup slice.
+
+### Deferred (not P49 scope)
+- **P47 test suite** — the P47 code (portal next-service query fix + missed-job auto-cleanup poller + frontend badge palette + `.env.example` keys) all landed. Tests + PRD entry not written before the user pivoted to P48 → P49. Marked deferred; the P47 fix is live in preview.
+- **P48 tests + PRD** — P48 backend multi-CSV filter + frontend tab switcher landed as code diffs (`backend/routers/leads.py` + `frontend/src/pages/leads/LeadsDashboardPage.jsx`). Tests + curl proof + PRD not written before the user paused P48 for P49. Marked paused-with-partial-diff; the leads-tab UX + server-side filter are functional in preview.
+

@@ -4003,6 +4003,33 @@ async def _run_boot_sequence():
             logger.warning(f"invoice_line_cost_backfill crashed: {e}")
     asyncio.create_task(_bg_invoice_line_cost_backfill())
 
+    # ── Phase P47 · Feb-2026 · missed-job auto-cleanup poller ─────
+    # Long-running loop that promotes any stale ``scheduled/pending/
+    # active/requested`` job whose effective schedule datetime is
+    # older than ``MISSED_JOB_STALENESS_HOURS`` (default 48) to
+    # ``status="missed"``.  Fault-tolerant: any per-iteration
+    # exception is logged and swallowed so the backend can never be
+    # taken down by a poller crash.  See
+    # ``services/missed_job_scheduler.py`` for full contract.
+    async def _bg_p47_missed_job_cleanup():
+        try:
+            from services.missed_job_scheduler import (
+                missed_job_cleanup_loop,
+            )
+            await missed_job_cleanup_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            # Belt-and-braces — the loop already has its own
+            # per-iteration try/except; this outer catch guards
+            # module-import failures so a bad import doesn't kill
+            # boot.
+            logger.error(
+                "[p47] missed-job cleanup poller crashed on start "
+                "err=%s — will NOT restart until next boot", e,
+            )
+    asyncio.create_task(_bg_p47_missed_job_cleanup())
+
     # Feb-2026 · P0 fix — Invoice number backfill. Heals invoice
     # docs persisted with a null / missing / empty
     # ``invoice_number`` field so operators never see "Invoice #: -"

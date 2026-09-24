@@ -35,6 +35,13 @@ export const K50_JOB_STATUS_BG = Object.freeze({
                            // redder than ``completed`` so day/week views
                            // separate the two at a glance
   skipped:     "#FED7AA",  // light orange (Tailwind orange-200)
+  // Phase P47 · Feb-2026 — ``missed`` is written by the auto-
+  // cleanup poller when a job stayed open past
+  // ``MISSED_JOB_STALENESS_HOURS`` without a completion.  Slightly
+  // deeper red than ``cancelled`` so the two are visually
+  // separable on the Schedule surface — cancelled is operator
+  // intent, missed is "the system flagged this as unfinished".
+  missed:      "#FCA5A5",  // Tailwind red-300
 });
 
 /**

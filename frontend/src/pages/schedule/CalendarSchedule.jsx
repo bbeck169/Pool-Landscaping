@@ -233,6 +233,12 @@ const STATUS_PILL = {
   reopened:   { bg: "#FEE2E2", fg: "#991B1B", label: "Reopened" },
   cancelled:  { bg: "#F3F4F6", fg: "#4B5563", label: "Cancelled" },
   on_hold:    { bg: "#FFEDD5", fg: "#9A3412", label: "On hold" },
+  // Phase P47 · Feb-2026 — the ``missed`` bucket is written by the
+  // auto-cleanup poller (``services/missed_job_scheduler.py``) when
+  // a job stays open past ``MISSED_JOB_STALENESS_HOURS``.  Muted
+  // red-orange fill + darker fg so it reads as "attention needed,
+  // but not the same fire as reopened".
+  missed:     { bg: "#FEE2E2", fg: "#B91C1C", label: "Missed" },
 };
 
 const jobHours = (j) => {
@@ -270,6 +276,11 @@ const STATUS_COLORS = {
   reopened:   "#DC2626",
   cancelled:  "#9CA3AF",
   on_hold:    "#F97316",
+  // Phase P47 · Feb-2026 — muted red-orange for the ``missed``
+  // bucket.  Distinct from ``reopened`` (bright red) and
+  // ``cancelled`` (grey) so the calendar dot map still reads at a
+  // glance.
+  missed:     "#B91C1C",
 };
 
 const RANGE_PRESETS = [

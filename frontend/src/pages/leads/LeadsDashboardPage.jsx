@@ -3,6 +3,7 @@
 // Table + drawer detail. Filters (source, status, date range). Convert
 // action calls existing POST /api/leads/{id}/convert.
 import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
@@ -41,6 +42,21 @@ const LEAD_STATUS_OPTIONS = [
   { value: "closed_lost",   label: "Closed – Lost" },
 ];
 
+// ── Phase P48 · Feb-2026 · Active / Archive tab groupings ───────────
+// The default landing view surfaces only "still working" leads
+// (Active tab).  Closed rows collapse into the Archive tab so the
+// primary list doesn't get cluttered by every historical win / loss.
+// Server-side filtering — the backend endpoint accepts a
+// comma-separated ``status`` value (P48 extension); this map drives
+// what gets sent on the wire per tab.
+const LEAD_TABS = {
+  active:  { label: "Active",  statuses: ["new", "contacted", "quoted"] },
+  archive: { label: "Archive", statuses: ["closed_won", "closed_lost"] },
+};
+const LEAD_TAB_ORDER = ["active", "archive"];
+const LEAD_TAB_DEFAULT = "active";
+const _isValidLeadTab = (t) => LEAD_TAB_ORDER.includes(t);
+
 const STATUS_COLORS = {
   new:          { bg: "#DBEAFE", fg: "#1E3A8A" },
   contacted:    { bg: "#FEF3C7", fg: "#854D0E" },
@@ -68,6 +84,20 @@ const isReferral = (l) =>
 export default function LeadsDashboardPage() {
   const auth = useAuth() || {};
   const isPrivileged = ["admin", "super_admin", "owner", "manager"].includes(auth.user?.role);
+  // ── Phase P48 · URL-synced tab state ────────────────────────────
+  // ``?tab=active|archive`` — persists across back/forward + hard
+  // refresh.  Unknown / missing values fall back to
+  // ``LEAD_TAB_DEFAULT`` ("active").
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const activeTab = _isValidLeadTab(rawTab) ? rawTab : LEAD_TAB_DEFAULT;
+  const setActiveTab = (t) => {
+    const next = _isValidLeadTab(t) ? t : LEAD_TAB_DEFAULT;
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  };
+  const tabStatuses = LEAD_TABS[activeTab].statuses;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -104,7 +134,19 @@ export default function LeadsDashboardPage() {
 
   const refresh = () => {
     setLoading(true);
-    api.get("/leads?include_archived=1&page_size=200")
+    // ── Phase P48 · server-side status filter ───────────────────
+    // Send the current tab's status set (or the specific status
+    // when the user narrows via the dropdown).  Pre-P48 this
+    // route fetched every lead + sliced in Python — that made the
+    // Archive tab impossible to isolate cleanly and kept 200
+    // rows in memory even when the user only wanted 3 open leads.
+    const effectiveStatuses = (
+      filters.status ? [filters.status] : tabStatuses
+    );
+    const statusParam = effectiveStatuses.join(",");
+    const url = "/leads?include_archived=1&page_size=200"
+      + `&status=${encodeURIComponent(statusParam)}`;
+    api.get(url)
       .then((r) => {
         // Phase 8 · Feb 2026 — the endpoint now returns
         // {rows,total,page,page_size}. Legacy callers get an array
@@ -115,12 +157,35 @@ export default function LeadsDashboardPage() {
       .catch((e) => setError(e?.message || "Failed to load"))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { refresh(); }, []);
+  // Phase P48 · re-fetch when the tab changes OR the user narrows
+  // the status via the dropdown.  The dropdown value is a subset of
+  // the current tab's status set — see ``tabScopedStatusOptions``
+  // below — so switching tabs while a specific status is selected
+  // is forbidden by construction (the dropdown resets when the
+  // ``activeTab`` effect below runs).
+  useEffect(() => { refresh(); }, [activeTab, filters.status]);
+
+  // Phase P48 · reset the specific-status dropdown whenever the tab
+  // switches so a stale "Contacted" filter can't leak into the
+  // Archive tab.  Search + source persist because they're
+  // orthogonal to the Active/Archive split.
+  useEffect(() => {
+    setFilters((f) => ({ ...f, status: "" }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const visible = useMemo(() => {
     const q = filters.search.toLowerCase().trim();
     return rows.filter((l) => {
+      // ── Phase P48 · status filter moved to the server ──────────
+      // ``filters.status`` is sent on the wire (see ``refresh()``)
+      // so the client-side ``l.status !== filters.status`` guard
+      // is redundant — but keep a defensive belt for the milliseconds
+      // between a tab-switch and the next fetch settling.
       if (filters.status && l.status !== filters.status) return false;
+      // Defensive belt for the tab boundary — even if the server
+      // ever returned a mis-scoped row, hide it here.
+      if (!tabStatuses.includes(l.status)) return false;
       if (filters.source) {
         if (filters.source === "chat_widget" && l.source !== "chat_widget") return false;
         if (filters.source === "form" && !(l.source || "").startsWith("form:")) return false;
@@ -134,7 +199,17 @@ export default function LeadsDashboardPage() {
       }
       return true;
     });
-  }, [rows, filters]);
+  }, [rows, filters, tabStatuses]);
+
+  // Phase P48 · dropdown options are scoped to the current tab —
+  // the Archive tab dropdown lists only Closed – Won / Closed – Lost;
+  // the Active tab lists only New / Contacted / Quoted.  Prevents
+  // the "select Contacted while on the Archive tab" no-op that
+  // pre-P48 would have surfaced 0 rows silently.
+  const tabScopedStatusOptions = useMemo(
+    () => LEAD_STATUS_OPTIONS.filter((o) => tabStatuses.includes(o.value)),
+    [tabStatuses],
+  );
 
   const sources = useMemo(() => {
     const s = new Set();
@@ -323,6 +398,45 @@ export default function LeadsDashboardPage() {
         </p>
       </div>
 
+      {/* ── Phase P48 · Feb-2026 · Active / Archive tab switcher ─────
+          Sits ABOVE the filter strip so the user always sees which
+          bucket they're in.  URL-synced via ``?tab=`` so a hard
+          refresh preserves the selection.  Server-side filter — the
+          selected tab drives the ``status=`` query param on the
+          ``/leads`` GET.  Empty state per tab lands in the table
+          body below when ``visible.length === 0``. */}
+      <div
+        className="mb-3 inline-flex rounded-lg p-1 gap-1"
+        style={{
+          border: `1px solid ${colors.nav.border}`,
+          background: colors.nav.bg,
+        }}
+        role="tablist"
+        aria-label="Lead status tab"
+        data-testid="leads-tab-switcher"
+      >
+        {LEAD_TAB_ORDER.map((tabKey) => {
+          const isActive = activeTab === tabKey;
+          return (
+            <button
+              key={tabKey}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tabKey)}
+              className="px-3 py-1.5 text-sm font-semibold rounded-md transition-colors"
+              style={{
+                color: isActive ? colors.onSurface : colors.nav.fg,
+                backgroundColor: isActive ? "#FFFFFF" : "transparent",
+              }}
+              data-testid={`leads-tab-${tabKey}`}
+            >
+              {LEAD_TABS[tabKey].label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Filter strip — Phase K52.1 · Feb-2026: promoted from a
           bare flex row to a proper navy K52 strip. */}
       <div
@@ -367,7 +481,10 @@ export default function LeadsDashboardPage() {
                 style={{ border: `1px solid ${colors.nav.border}`, background: colors.nav.bg, color: colors.nav.fg }}
                 data-testid="lead-filter-status-select">
           <option value="">All statuses</option>
-          {LEAD_STATUS_OPTIONS.map((o) => (
+          {/* Phase P48 · scoped to the current tab.  Archive tab
+              lists Closed – Won / Closed – Lost only; Active tab
+              lists New / Contacted / Quoted only. */}
+          {tabScopedStatusOptions.map((o) => (
             <option key={o.value} value={o.value} data-testid={`lead-status-option-${o.value}`}>
               {o.label}
             </option>
@@ -437,13 +554,22 @@ export default function LeadsDashboardPage() {
           <div className="p-10 text-sm text-center" style={{ color: colors.muted }}
                data-testid="admin-leads-empty">
             {rows.length === 0 ? (
-              <div className="flex flex-col items-center gap-1">
+              <div className="flex flex-col items-center gap-1"
+                   data-testid={`admin-leads-empty-${activeTab}`}>
                 <div className="font-semibold" style={{ color: colors.onSurface }}>
-                  No leads yet
+                  {/* Phase P48 · tab-scoped empty state.  Active tab
+                      falls through to the historical copy ("No leads
+                      yet.").  Archive tab gets a distinct message so
+                      a first-time user doesn't think closed leads are
+                      permanently missing. */}
+                  {activeTab === "archive"
+                    ? "No archived leads yet."
+                    : "No active leads yet."}
                 </div>
                 <div style={{ color: colors.muted }}>
-                  New leads land here from the website form, chat widget,
-                  and manual entries.
+                  {activeTab === "archive"
+                    ? "Leads move here when marked Closed – Won or Closed – Lost."
+                    : "New leads land here from the website form, chat widget, and manual entries."}
                 </div>
               </div>
             ) : (
