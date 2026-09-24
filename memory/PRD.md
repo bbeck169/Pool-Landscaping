@@ -21360,6 +21360,75 @@ frontend · yarn vitest run src/test/p47-missed-status-badge.test.jsx
 ```
 
 ### Bugs surfaced during test writing
+
+## Phase P48 · Feb-2026 — Leads Active / Archive Tabs + Multi-Status CSV Filter (SHIPPED preview · tests + PRD entry backfilled Preflight B)
+
+**Goal.** Split the Leads inbox into two default views so operators don't have to squint past every historical win/loss to see the deals they're actually working:
+
+1. **Active tab** — leads in `{new, contacted, quoted}`.
+2. **Archive tab** — leads in `{closed_won, closed_lost}`.
+
+Both tabs are URL-synced (`?tab=active|archive`) so hard refresh + back/forward preserve selection.  Server-side filtering — the tab's status set is sent on the wire as a comma-separated `?status=` value, and the shipped `list_leads` endpoint accepts a multi-token CSV in addition to the pre-P48 single-value form.
+
+### Backend
+
+`backend/routers/leads.py::list_leads`
+- Extended the `?status=` handling from single-value to multi-token CSV:
+  - Single token → `q["status"] = "new"` (scalar — byte-identical to pre-P48 callers).
+  - Multi-token → `q["status"] = {"$in": [canonical...]}`.
+  - Unknown / typo tokens dropped through `_STATUS_ALIASES` + `_CANONICAL_STATUSES` guard (a typo shouldn't pollute the Active tab with matches for a stale alias fallback).
+  - All-unknown OR empty → falls through to "no status filter" (matches `?status=all` semantics).
+  - No `status` param at all → adds `q["status"] = {"$ne": "rejected"}` (Phase 16 · Addition E default-inbox behaviour — rejected tab is opt-in via `?status=rejected`).
+- No other filter contract changed — `source`, `service_interest`, `search`, `date_from`, `date_to`, `include_archived`, `page`, `page_size` all keep the pre-P48 behaviour.
+
+### Frontend
+
+`frontend/src/pages/leads/LeadsDashboardPage.jsx`
+- Introduced `LEAD_TABS = { active: {…}, archive: {…} }` map — the single source of truth for the tab-scoped canonical status sets.
+- Tab switcher renders above the K52.1 filter strip; testids `leads-tab-switcher` + `leads-tab-active` + `leads-tab-archive`; each button carries `role="tab"` + `aria-selected` for a11y.
+- `useSearchParams()` drives the active-tab state — `?tab=active|archive` is the URL contract; invalid / missing values fall back to `LEAD_TAB_DEFAULT = "active"`.
+- `refresh()` composes the wire URL: `/leads?include_archived=1&page_size=200&status=<csv>` where the CSV is either the current tab's full status set OR the specific-status dropdown value (a subset of the tab's set).
+- Specific-status dropdown is scoped to the current tab (`tabScopedStatusOptions`) — Archive tab dropdown lists only `Closed – Won` / `Closed – Lost`; Active tab dropdown lists only `New` / `Contacted` / `Quoted`.  Prevents the "select Contacted while on the Archive tab" no-op that would silently surface 0 rows.
+- `filters.status` resets to `""` on tab switch so a stale specific-status filter can't leak into the next tab.  Search + source persist because they're orthogonal to the Active/Archive split.
+- Empty-state anchors are tab-scoped (`admin-leads-empty-active` / `admin-leads-empty-archive`) so the copy per tab can diverge without coupling.
+
+### Tests
+
+`backend/tests/test_p48_leads_status_filter.py` — **7 tests, 7 passing** (0.38s):
+1. `?status=new,contacted,quoted` (Active tab CSV) returns only rows in those three states via the `$in` path.
+2. `?status=closed_won,closed_lost` (Archive tab CSV) returns only closed rows.
+3. Single-value `?status=new` backward compat — scalar filter path returns only new leads (byte-identical to pre-P48).
+4. No `status` param excludes `rejected` (Phase 16 · Addition E default-inbox contract — rejected tab is opt-in).
+5. Tenant scoping — cross-tenant leaks impossible under scalar / `$in` / no-filter code paths.
+6. Unknown tokens in CSV are silently dropped (`?status=new,bogus_status,another_typo` filters to `new` only).
+7. Empty result returns `{"rows": [], "total": 0, "page": 1, "page_size": 50}` with 200 — no 404, no crash.
+
+`frontend/src/test/p48-leads-active-archive-tabs.test.jsx` — **8 tests, 8 passing** (354ms):
+1. Tab switcher renders both Active + Archive tabs with canonical labels + testid anchors + `role="tablist"` container.
+2. Default landing → Active tab is `aria-selected="true"`; the wire-side `apiGet` fires with `status=new,contacted,quoted`.
+3. Clicking Archive flips `aria-selected` + syncs `?tab=archive` to the URL + fires `apiGet` with `status=closed_won,closed_lost`.
+4. Hard-refresh with `/leads?tab=archive` lands on the Archive tab and fires the closed CSV — URL is the source of truth for the active tab.
+5. Empty-state per tab — Active with 0 rows renders `admin-leads-empty-active`; clicking Archive (also 0 rows) renders `admin-leads-empty-archive`.
+6. Row scoping — mixed 5-lead payload (one per canonical status) renders only the 3 Active-scoped rows on the Active tab; switching to Archive flips the visible set to the 2 closed rows.
+7. (User addition) Search value survives a tab switch — typing "acme" on Active and clicking Archive keeps the input value + the P48 comment in `refresh()` confirms search + source are orthogonal to the tab split.
+8. (User addition) Status dropdown scoping per tab — Active tab dropdown lists ONLY `new` / `contacted` / `quoted`; Archive tab dropdown lists ONLY `closed_won` / `closed_lost`.  Prevents the "select Contacted while on the Archive tab" no-op.
+
+### Test results
+```
+backend  · pytest tests/test_p48_leads_status_filter.py -v
+         → 7 passed, 1 warning in 0.38s
+frontend · yarn vitest run src/test/p48-leads-active-archive-tabs.test.jsx
+         → Test Files 1 passed (1) · Tests 8 passed (8) · Duration 1.04s
+```
+
+### Bugs surfaced during test writing
+None in shipped P48 code.  Zero production diff — every test passed on first shot against the shipped implementation.
+
+### Hard-rules compliance
+- No mobile files touched.  No `.env` writes.  No `AI_TESTMODE_MOCK` / `CALENDARS_TESTMODE_MOCK` / `ZILLOW_TESTMODE_MOCK` toggling.  No new dependencies.
+- Every `TAG="P48_"`-prefixed seed row cleaned up on teardown.  Frontend tests mount inside `<MemoryRouter>` so `useSearchParams` resolves cleanly; heavy children mocked via `vi.mock` for `@/api`, `sonner`, `@/components/ui/confirm-dialog`.
+
+
 None in shipped P47 code.  One bug in the test author's expectation for the env-toggle helper (`""` was expected to disable, but the resolver's `or "true"` fallback short-circuits before the disabled-set check).  Test expectation corrected; the shipped resolver behaviour is the documented / correct one.
 
 ### Hard-rules compliance
