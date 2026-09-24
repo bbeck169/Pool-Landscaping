@@ -10,7 +10,7 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search, MoreVertical, Pencil } from "lucide-react";
+import { CalendarClock, Plus, Pause, Play, Trash2, RefreshCw, X, Ban, Sparkles, Search, MoreVertical, Pencil, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -104,6 +104,22 @@ export default function RecurringJobs() {
   // so the "Bulk Activate" toolbar button gates on its own in-flight
   // state independently of the destructive "Delete permanently" flow.
   const [bulkActivateBusy, setBulkActivateBusy] = useState(false);
+  // Phase P54 · Feb-2026 — Bulk-Edit-Categories modal state.
+  //   ``bulkEditOpen``       — gate the modal.
+  //   ``bulkEditServiceCat`` / ``bulkEditIncomeCat`` —
+  //     dropdown value; empty string ``""`` is the "Unchanged"
+  //     sentinel (do NOT send in the POST payload — the handler
+  //     omits fields whose value is empty so the backend's
+  //     ``model_fields_set`` check keeps them out of the write).
+  //   ``bulkEditBusy``       — Apply-button spinner + double-submit
+  //     guard.
+  //   ``bulkEditError``      — inline error string (payload-level
+  //     422 codes rendered next to the offending dropdown).
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkEditServiceCat, setBulkEditServiceCat] = useState("");
+  const [bulkEditIncomeCat, setBulkEditIncomeCat] = useState("");
+  const [bulkEditBusy, setBulkEditBusy] = useState(false);
+  const [bulkEditError, setBulkEditError] = useState("");
   // Feb-2026 P0 · Orphan-backfill state. Populated lazily on mount
   // so operators see a "Missing N template(s)" banner without
   // running the mutating backfill first.
@@ -771,6 +787,99 @@ export default function RecurringJobs() {
     }
   };
 
+  // Phase P54 · Feb-2026 — Bulk Edit Categories.
+  //
+  // Posts every selected template id to
+  // ``POST /api/recurring-jobs/bulk-update-categories``.  Payload
+  // includes ONLY dropdowns the user changed away from
+  // "Unchanged" — empty-string sentinels are omitted so the
+  // backend's ``model_fields_set`` check keeps them out of the
+  // write set.
+  //
+  // Batch cap: 100 (backend constant ``_BULK_UPDATE_CATEGORIES_
+  // MAX``).  Payloads > 100 are sliced in place so the operator
+  // never sees a raw 400.  Aggregate counts across slices drive
+  // the toast.
+  const BULK_UPDATE_CATEGORIES_BATCH = 100;
+  const bulkEditApply = async () => {
+    if (selectedIds.size === 0) return;
+    if (bulkEditBusy) return;
+    // Guard against submit with both dropdowns still "Unchanged"
+    // — matches the backend's payload-level 400 but we short-circuit
+    // client-side so the user never sees a raw error toast.
+    if (!bulkEditServiceCat && !bulkEditIncomeCat) {
+      setBulkEditError(
+        "Pick at least one category to apply before Apply.",
+      );
+      return;
+    }
+    setBulkEditError("");
+    setBulkEditBusy(true);
+    try {
+      const allIds = Array.from(selectedIds);
+      let updated = 0;
+      let already = 0;
+      let failed = 0;
+      let childInv = 0;
+      for (let i = 0; i < allIds.length; i += BULK_UPDATE_CATEGORIES_BATCH) {
+        const slice = allIds.slice(i, i + BULK_UPDATE_CATEGORIES_BATCH);
+        const payload = { ids: slice };
+        // Only include dropdowns the user changed. "Unchanged"
+        // (empty string) MUST NOT be sent — the backend distinguishes
+        // JSON-absent from JSON-null via ``model_fields_set``.
+        if (bulkEditServiceCat) {
+          payload.service_category_id = bulkEditServiceCat;
+        }
+        if (bulkEditIncomeCat) {
+          payload.income_category_id = bulkEditIncomeCat;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await api.post(
+          "/recurring-jobs/bulk-update-categories", payload,
+        );
+        updated += Number(res?.updated || 0);
+        already += Number(res?.already_current || 0);
+        failed += Number(res?.failed || 0);
+        childInv += Number(
+          res?.sync_result_summary?.child_invoices_updated || 0,
+        );
+      }
+      const parts = [`${updated} updated`];
+      if (already > 0) parts.push(`${already} already current`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      const tail = childInv > 0
+        ? ` · ${childInv} invoice${childInv === 1 ? "" : "s"} synced`
+        : "";
+      const line = `${parts.join(", ")}${tail}`;
+      if (failed > 0) {
+        toast.warning(line);
+      } else {
+        toast.success(line);
+      }
+      setSelectedIds(new Set());
+      setBulkEditOpen(false);
+      setBulkEditServiceCat("");
+      setBulkEditIncomeCat("");
+      await load();
+    } catch (e) {
+      // Backend payload-level 422s carry {code, field, attempted,
+      // collection}.  Render the code inline so the user sees the
+      // specific failure instead of a generic toast.
+      const raw = e?.response?.data?.detail || e?.data?.detail || e?.detail;
+      if (raw && typeof raw === "object" && raw.code) {
+        setBulkEditError(
+          `${raw.code}${raw.field ? ` (${raw.field})` : ""}`,
+        );
+      } else if (raw && typeof raw === "object" && raw.error) {
+        setBulkEditError(String(raw.error));
+      } else {
+        toast.error(e?.message || "Bulk edit failed");
+      }
+    } finally {
+      setBulkEditBusy(false);
+    }
+  };
+
   // Header "select all on page" checkbox.  Respects the R2 client-
   // side search filter — bulk-select on page = every row currently
   // visible under the active search query.
@@ -878,6 +987,38 @@ export default function RecurringJobs() {
           <Play size={14} />{" "}
           {bulkActivateBusy ? "Activating…" :
             `Bulk Activate${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
+        </button>
+        {/* Phase P54 · Feb-2026 — Bulk Edit Categories toolbar
+             button. Sits between the green "Bulk Activate" and
+             the destructive red "Delete permanently" — neutral
+             indigo affordance so it visually reads as an
+             *editing* action, not activating or destroying.
+             Always rendered so testid is queryable; disabled +
+             semi-opaque when no rows are checked. */}
+        <button
+          type="button"
+          onClick={() => {
+            setBulkEditServiceCat("");
+            setBulkEditIncomeCat("");
+            setBulkEditError("");
+            setBulkEditOpen(true);
+          }}
+          disabled={selectedIds.size === 0 || bulkEditBusy}
+          className="inline-flex items-center gap-1 text-sm font-bold px-3 py-2 rounded-md ml-2"
+          style={{
+            background: selectedIds.size === 0 ? "#E0E7FF" : "#4F46E5",
+            color: selectedIds.size === 0 ? "#3730A3" : "#FFFFFF",
+            border: 0,
+            opacity: (selectedIds.size === 0 || bulkEditBusy) ? 0.5 : 1,
+            cursor: (selectedIds.size === 0 || bulkEditBusy)
+              ? "not-allowed" : "pointer",
+          }}
+          aria-disabled={selectedIds.size === 0 || bulkEditBusy}
+          data-testid="recurring-bulk-edit-categories"
+        >
+          <Tag size={14} />{" "}
+          {bulkEditBusy ? "Applying…" :
+            `Bulk Edit Categories${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
         </button>
         {/* Phase R1 · Feb-2026 — bulk hard-delete toolbar button.
              Always rendered so its testid is queryable by unit
@@ -2096,6 +2237,142 @@ export default function RecurringJobs() {
                                  cursor: (!bulkAcked || bulkBusy) ? "not-allowed" : "pointer" }}
                        data-testid="recurring-bulk-hard-delete-confirm">
                 {bulkBusy ? "Deleting…" : "Permanently Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {/* Phase P54 · Feb-2026 — Bulk Edit Categories modal.
+           Two dropdowns (Service, Income); each carries an
+           "Unchanged" sentinel first-option (empty string) that
+           the Apply handler OMITS from the POST payload. Apply is
+           disabled when both dropdowns are still "Unchanged", the
+           selection is empty, or the request is in-flight. Inline
+           error slot picks up backend 422 codes so the operator
+           sees the specific failure without a raw toast. */}
+      {bulkEditOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              data-testid="recurring-bulk-edit-categories-modal">
+          <div className="w-full max-w-md rounded-2xl"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between px-5 py-3"
+                  style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <h2 className="text-lg font-bold"
+                  style={{ color: colors.onSurface }}>
+                Bulk Edit Categories · {selectedIds.size} template{selectedIds.size === 1 ? "" : "s"}
+              </h2>
+              <button type="button"
+                       onClick={() => { setBulkEditOpen(false); }}
+                       aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 text-sm space-y-3"
+                 style={{ color: colors.onSurface }}>
+              <p style={{ color: colors.muted }}>
+                Pick a new category for every selected recurring
+                template. Fields left as <span className="font-semibold">Unchanged</span>
+                stay at their current value — only the fields you
+                change are written.
+              </p>
+              <label className="block">
+                <span className="block text-xs font-semibold mb-1"
+                      style={{ color: colors.muted }}>
+                  New Service Category
+                </span>
+                <select
+                  value={bulkEditServiceCat}
+                  onChange={(e) => setBulkEditServiceCat(e.target.value)}
+                  aria-label="New service category for bulk edit"
+                  data-testid="recurring-bulk-edit-service-cat-select"
+                  className="w-full text-sm rounded-md py-1.5 px-2"
+                  style={{
+                    backgroundColor: colors.surface,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                >
+                  <option value="">Unchanged</option>
+                  {serviceCats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-xs font-semibold mb-1"
+                      style={{ color: colors.muted }}>
+                  New Income Category
+                </span>
+                <select
+                  value={bulkEditIncomeCat}
+                  onChange={(e) => setBulkEditIncomeCat(e.target.value)}
+                  aria-label="New income category for bulk edit"
+                  data-testid="recurring-bulk-edit-income-cat-select"
+                  className="w-full text-sm rounded-md py-1.5 px-2"
+                  style={{
+                    backgroundColor: colors.surface,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                >
+                  <option value="">Unchanged</option>
+                  {incomeCats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+              {bulkEditError ? (
+                <div
+                  className="rounded-md px-3 py-2 text-xs"
+                  style={{
+                    background: "#FEF2F2",
+                    border: "1px solid #FECACA",
+                    color: "#B91C1C",
+                  }}
+                  data-testid="recurring-bulk-edit-error"
+                >
+                  {bulkEditError}
+                </div>
+              ) : null}
+            </div>
+            <div className="px-5 py-3 flex items-center justify-end gap-2"
+                  style={{ borderTop: `1px solid ${colors.border}` }}>
+              <button type="button"
+                       onClick={() => { setBulkEditOpen(false); }}
+                       className="text-sm font-semibold px-3 py-1.5 rounded"
+                       style={{ border: `1px solid ${colors.border}`,
+                                 background: colors.surface,
+                                 color: colors.onSurface }}
+                       data-testid="recurring-bulk-edit-cancel">
+                Cancel
+              </button>
+              <button type="button"
+                       onClick={bulkEditApply}
+                       disabled={
+                         bulkEditBusy ||
+                         selectedIds.size === 0 ||
+                         (!bulkEditServiceCat && !bulkEditIncomeCat)
+                       }
+                       aria-disabled={
+                         bulkEditBusy ||
+                         selectedIds.size === 0 ||
+                         (!bulkEditServiceCat && !bulkEditIncomeCat)
+                       }
+                       className="text-sm font-bold px-4 py-1.5 rounded"
+                       style={{
+                         background: "#4F46E5", color: "#FFFFFF",
+                         border: 0,
+                         opacity: (bulkEditBusy ||
+                                    (!bulkEditServiceCat && !bulkEditIncomeCat))
+                                    ? 0.5 : 1,
+                         cursor: (bulkEditBusy ||
+                                    (!bulkEditServiceCat && !bulkEditIncomeCat))
+                                    ? "not-allowed" : "pointer",
+                       }}
+                       data-testid="recurring-bulk-edit-apply">
+                {bulkEditBusy ? "Applying…" : "Apply"}
               </button>
             </div>
           </div>
