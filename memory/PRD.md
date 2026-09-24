@@ -21929,3 +21929,240 @@ The pollution manifests only when the full 82-test P53 subset runs.  Root cause 
 
 Do not add these three test names to the flake ignore list — the underlying test code is correct.  Future fix: locate the polluting fixture (probably a global monkeypatch on `routers.referral_watcher` that leaks between tests).
 
+
+---
+
+## P55 · Category Sync Orchestrator (Feb-2026)
+
+### Motivation & scope
+
+The customer-stats "Income by Service Category" tile + drilldown (P53 · Fix A) surfaced a longer-lived structural gap: an admin editing a Recurring Template's `service_category_id` or `income_category_id` updated the template row only.  Every downstream invoice generated from that template kept the OLD taxonomy id on its line items.  Reports therefore lagged behind the source of truth until each invoice was manually re-saved.  A symmetric problem existed in reverse: recategorizing an invoice line via the "Uncategorized Items" workflow updated only the invoice line, leaving the master Pricebook row stale.
+
+P55's charter: introduce a **single choke-point** for cross-record propagation of the income + service category taxonomy fields, so category edits at ANY tier (template, invoice line, pricebook) converge without cascading write sprawl across seven+ routers.
+
+### Grep-pass findings (Section 5 · pre-commit paranoia mandate)
+
+Ran the full grep for existing sync/fan-out code before writing a line.  Zero pre-existing orchestrators found.  Field usage across collections was inconsistent:
+
+| Collection | modern id fields | modern name fields | legacy scalar | notes |
+|-|-|-|-|-|
+| `recurring_job_templates` | ✔ income_category_id · service_category_id | ✔ income_category_name · service_category_name | ✘ | 4-tuple modern-only |
+| `jobs` | ✘ | ✘ | ✘ | NO category fields today |
+| `quotes.line_items[]` (invoice) | ✔ income_category_id · service_category_id | ✔ income_category_name · service_category_name | ✔ `category` + `category_name` (aliases for income pair) | Service pair has NO legacy alias |
+| `items` (pricebook) | mixed — some rows have modern, some don't | mixed | ✔ `category` scalar | Q2/Option A introduces the modern fields to rows that lack them |
+
+Grep-verified read-side contracts (must be preserved by any write path):
+* **unpaid guard** — `payment_status != "paid"` used by every read that filters "editable invoices"; also re-applied on write to guard against paid-transition race between read and write.
+* **doc_type guard** — `db.quotes` collection carries BOTH invoices and quotes; every touch requires `doc_type == "invoice"`.
+* **template → invoice hop** — no direct FK.  Two-hop path: `recurring_job_templates.id` → `jobs.recurring_template_id` → `quotes.job_id`.
+
+### Policy decisions (user-approved)
+
+* **Q1 / Option B — Jobs are DELIBERATELY NOT touched.**  `db.jobs` docs don't carry category fields today.  Introducing them here would be write-only dead code (no reader).  The `sync_recurring_template_to_children` orchestrator READS `db.jobs` to enumerate the invoice universe but never writes to it.  This is asserted by `test_recurring_sync_does_not_update_jobs`.  A `db.jobs` schema change is explicitly OUT OF SCOPE for P55.
+* **Q2 / Option A — Pricebook gets 4 modern fields via `$set`.**  Rows that lack the modern fields have them created; existing values are overwritten.  Legacy `category` scalar is kept in lockstep with `income_category_id`.
+* **Q3 — Invoice line items write 6 fields in lockstep.**  See "Field write shapes" below.
+* **Q4 — Reserved skip-table slot.**  A skip-table entry for `sync_recurring_template_to_children` was reserved for a hypothetical future invoice → template arrow.  Original implementation populated the slot with a plausible-looking origin string (`"recurring_template_edit"`) — this collided with the PATCH-handler entry origin and became the Commit-6 shipping bug (details below).
+* **Q5 — Single audit event (`category.sync_from_template`) per orchestrator invocation, bounded payload.**  See "Audit contract" below.
+* **Direction-dependent `None`/clear semantics.**  Distinct behaviour per entry point — see "Clear-propagation policy" below.
+
+### Entry-point signatures (grep-verified · lockstep with `services/category_sync.py`)
+
+```python
+# services/category_sync.py
+
+async def sync_recurring_template_to_children(
+    tenant_id: str,
+    recurring_job_id: str,
+    *,
+    origin: str,                              # required — call-graph loop marker
+    service_category_id: Any = _UNSET,        # str | None | _UNSET
+    income_category_id: Any = _UNSET,         # str | None | _UNSET
+    actor_id: Optional[str] = None,
+) -> SyncResult: ...
+
+async def sync_invoice_line_to_pricebook(
+    tenant_id: str,
+    invoice_id: str,
+    line_item_id: str,
+    *,
+    origin: str,                              # required — call-graph loop marker
+    service_category_id: Any = _UNSET,        # str | None | _UNSET
+    income_category_id: Any = _UNSET,         # str | None | _UNSET
+    actor_id: Optional[str] = None,
+) -> SyncResult: ...
+
+@dataclass(frozen=True)
+class SyncResult:
+    updated_count: int = 0            # docs whose modified_count > 0
+    skipped_paid_count: int = 0       # informational — paid invoices in the chain
+    skipped_loop_count: int = 0       # 1 if the call short-circuited on _SKIP_TABLE
+    errors_by_id: Dict[str, str] = {} # invoice_id → error string on per-doc failures
+```
+
+Both entry points sit in `backend/services/category_sync.py`.  The 3-arg `_UNSET` sentinel (distinct from `None`) is what enables the partial-payload semantics — a caller that omits a pair leaves it untouched on child docs, while explicitly passing `None` triggers the clear-propagation direction policy (below).
+
+### Wire callers (grep-verified · Feb-2026)
+
+Only two live callers.  Any future addition MUST be added to `test_entry_point_origin_is_not_in_skip_set` (Commit 7 guard).
+
+| Callee | Caller | Entry origin | Trigger |
+|-|-|-|-|
+| `sync_recurring_template_to_children` | `backend/routers/recurring_jobs.py :997` (`PATCH /api/recurring-jobs/{tpl_id}`) | `"recurring_template_edit"` | Template's `income_category_id` or `service_category_id` in the PATCH payload. |
+| `sync_invoice_line_to_pricebook` | `backend/routers/income_categories.py :1005` (recategorize handler under the uncategorized-items workflow) | `"invoice_line_edit"` | Invoice line's category recategorized AND the line has a `pricebook_item_id`/`item_id` FK. |
+
+### `_SKIP_TABLE` and the `_RESERVED_SELF_LOOP` sentinel
+
+```python
+# services/category_sync.py
+
+_RESERVED_SELF_LOOP = "__reserved_self_loop_do_not_pass__"
+
+_SKIP_TABLE = {
+    "sync_invoice_line_to_pricebook": {
+        "pricebook_writeback",           # real caller — services/pricebook/writeback.py
+    },
+    "sync_recurring_template_to_children": {
+        _RESERVED_SELF_LOOP,             # sentinel — no real caller passes this
+    },
+}
+```
+
+The `pricebook_writeback` entry is a **real active** short-circuit — `services/pricebook/writeback.py` sets `origin="pricebook_writeback"` when it processes lines with `pricebook_writeback=True`, and the orchestrator's short-circuit correctly prevents that flow from looping back into a second Pricebook write.
+
+The `_RESERVED_SELF_LOOP` entry is a **documentation anchor**.  No real caller passes the sentinel — its purpose is to preserve a greppable slot for a hypothetical future invoice → template arrow.  See the Commit-6 shipping-bug section below for the rationale on why this slot uses a sentinel instead of a plausible-looking origin string.
+
+### Field write shapes
+
+**Invoice line items — 6 fields in lockstep** (`quotes.line_items[<idx>]`).  Set only when the corresponding pair kwarg is non-`_UNSET`:
+
+| Field | Category kwarg it tracks | Class |
+|-|-|-|
+| `income_category_id` | `income_category_id` | modern id |
+| `income_category_name` | `income_category_id` | modern name (resolved via `_resolve_category_name`) |
+| `category` | `income_category_id` | legacy alias for the income id |
+| `category_name` | `income_category_id` | legacy alias for the income name |
+| `service_category_id` | `service_category_id` | modern id |
+| `service_category_name` | `service_category_id` | modern name |
+
+The idempotency guard filters `set_ops` to fields whose target differs from the current value.  When every field on every line is already at the target, the whole `update_one` call is skipped — no DB touch, no `updated_at` bump, no `modified_count`.
+
+**Pricebook items — 4 modern fields + 1 legacy scalar** (`items` row).  Same idempotency filter.
+
+| Field | Category kwarg | Notes |
+|-|-|-|
+| `income_category_id` | `income_category_id` | modern id |
+| `income_category_name` | `income_category_id` | modern name |
+| `category` | `income_category_id` | legacy scalar — in lockstep with income modern id |
+| `service_category_id` | `service_category_id` | modern id |
+| `service_category_name` | `service_category_id` | modern name |
+
+### Clear-propagation policy (direction-dependent)
+
+The `None`/clear direction is asymmetric because the two entry points sit in different tiers of the data hierarchy.
+
+* **`sync_recurring_template_to_children` — CLEAR PROPAGATES.**  Template is the source of truth for the chain; when an admin removes a category from a template, that intent must reach every downstream invoice.  Passing `income_category_id=None` writes `None` to all 4 income-alias fields on every unpaid child invoice's line items; same for service.
+  * Test: `test_template_clear_propagates_to_unpaid_invoices`.
+
+* **`sync_invoice_line_to_pricebook` — CLEAR IS SKIPPED.**  Pricebook is the master row for the item; a downstream ephemeral clear on ONE invoice line must NOT wipe the master row's category — that would poison every future invoice generated from that item.  Passing `income_category_id=None` results in NO write to the Pricebook `items` row.
+  * Test: `test_invoice_line_clear_does_not_clear_pricebook`.
+
+The `_UNSET` sentinel is distinct from either direction — it means "the caller didn't touch this pair, leave it alone".  Only `None` triggers the direction-specific policy.
+
+### 55.5 halt-and-report: `CategorySyncNameLookupError` → HTTP 422
+
+If a caller passes a non-empty `category_id` that doesn't resolve to an active (non-archived) category row on the current tenant, the orchestrator's `_resolve_category_name` helper raises `CategorySyncNameLookupError` BEFORE any child doc is touched.  Both wire callers catch it and translate to HTTP 422 with the exact shape:
+
+```json
+{
+  "code": "category_deleted_after_source_write",
+  "category_id": "<the-id-that-didn-t-resolve>",
+  "collection": "income_categories" | "service_categories"
+}
+```
+
+The response body is emitted verbatim from `HTTPException(422, {...})`.  Callers get enough context to distinguish "you typed a stale id" from "your payload was malformed" and to retry with the correct id.
+
+Tests: `test_name_lookup_failure_raises_no_silent_null_write` (template path) and `test_name_lookup_failure_on_pricebook_sync_no_silent_write` (pricebook path).  Both assert that the raise happens BEFORE any write reaches `db.quotes` / `db.items` — no silent null-write path exists.
+
+### Audit contract — `category.sync_from_template` (single event per invocation)
+
+One row written to `db.audit_logs` per orchestrator invocation.  Bounded shape — deliberately does NOT enumerate the full updated-id list, to keep the row size predictable regardless of fan-out breadth (a template with 500 unpaid invoices produces the same-size audit row as one with 5).
+
+```python
+{
+    "id": "<uuid4>",
+    "event": "category.sync_from_template",
+    "tenant_id": "<tenant>",
+    "actor_id": "<admin user id or None>",
+    "source": {
+        "type": "recurring_template" | "invoice_line",
+        "id": "<template id>" | "<invoice_id>:<line_item_id>",
+    },
+    "origin_marker": "<the origin string passed at entry>",
+    "diff_summary": {
+        # Present only for pairs the caller touched (non-_UNSET).
+        "income_category_id":  {"to": "<new id>" or None},
+        "service_category_id": {"to": "<new id>" or None},
+    },
+    "updated_count":      <int>,
+    "skipped_paid_count": <int>,
+    "skipped_loop_count": <int>,   # 0 or 1
+    "errors_by_id_count": <int>,   # length of errors_by_id, not the errors themselves
+    "created_at": "<iso8601>",
+}
+```
+
+Audit failures are best-effort — a write exception logs and returns without raising.  The sync outcome is preserved for the caller.
+
+### Explicit "not done" list — P55 scope boundary
+
+Documented here so the next agent doesn't rediscover these by hitting them:
+
+* **`db.jobs` schema NOT updated.**  Jobs remain category-field-free.  If a future reader needs a job-level category, this is a new phase, not a P55 follow-up.
+* **`quotes.line_items[].category_name` legacy alias write is included** (per Q3 lockstep), but the drilldown reads still use the modern `income_category_id` — no read-side flip is planned in P55.  The legacy write is defensive-in-depth for downstream consumers not yet audited.
+* **Bulk endpoints NOT added.**  P54 / P56 (future phases) will introduce a `POST /api/recurring-jobs/bulk-recategorize` and its invoice-side sibling; P55 is single-record only.
+* **Frontend NOT touched.**  No new UI, no toast, no confirmation modal for the fan-out.  The existing PATCH handler's happy-path response is unchanged in shape.
+* **P44.1 door-hanger email path NOT extended** to read the modern service_category_id — deferred.
+* **`--force --normalize-scheduled-date` retro-cleanup NOT run.**  Standalone P2 script.
+
+### Shipping bug — Feb-2026 · Commit 6 · Option C fix
+
+**Root cause.**  P55 landed as 5 commits (`a4eb9673a` orchestrator, `cb6112383` recurring wire, `ca3e9df2e` invoice wire, `e6a658ae7` pricebook writeback marker, `b8f6c154a` tests).  The grep-pass Section 5 reserved a self-loop skip slot for `sync_recurring_template_to_children` and populated it with the string `"recurring_template_edit"`.  Section 4's PATCH-handler wire used the SAME string as its entry origin.  Result: every real PATCH-time fan-out short-circuited on itself.  The template → invoice propagation was inert in production despite the code path being wired.
+
+**Detection.**  Discovered while writing this PRD section, NOT by the P55-specific test suite.  The pre-Commit-6 test suite passed 15/15 in isolation because every test that exercised propagation used the ad-hoc bypass string `"recurring_template_edit_NOT_SELF"`.  No test fired the orchestrator with the LITERAL PATCH origin string.  The one test that DID (`test_template_self_origin_short_circuits_children_sync`) asserted the short-circuit behaviour — which was the whole bug.
+
+**Alternatives considered:**
+* **Option A — rename PATCH origin** (e.g. to `"recurring_template_patch"`): keeps the plausible-looking string in the skip set but adds a second name for the same trigger with a cross-referencing comment.  Cognitive overhead — two names for one thing.
+* **Option B — remove the reserved slot entirely**: cleanest by LoC, but loses the Q4 design-intent anchor.
+* **Option C (shipped) — sentinel in the reserved slot.**  Keeps the reserved slot (design intent preserved) but uses a namespaced marker (`"__reserved_self_loop_do_not_pass__"`) that no real caller can plausibly pass.  The PATCH handler keeps its `"recurring_template_edit"` origin.  Collision is now impossible by construction — double-underscore prefix + `_do_not_pass_` suffix.
+
+**Fix commit** — `3418eca48 fix(p55): use sentinel for reserved self-loop slot to prevent PATCH origin collision`.
+
+**Regression guards** (Commit 7 · `a0507a6af test(p55): guard entry-point origins against _SKIP_TABLE collision`):
+
+* `test_entry_point_origin_is_not_in_skip_set` — **static contract guard.**  Iterates the (call-site, callee, entry-origin) tuple table and asserts each entry origin is NOT in its callee's `_SKIP_TABLE`.  Would have failed at Commit-1 review time.
+* `test_recurring_template_patch_wire_actually_fires_sync` — **behavioural guard.**  Fires the orchestrator with the LITERAL string the recurring-jobs PATCH handler passes at runtime (`"recurring_template_edit"`) and asserts `updated_count == 2` on a 2-unpaid-invoice fixture + full 6-field lockstep write.  Sanity-verified pre-commit: monkeypatched `_SKIP_TABLE['sync_recurring_template_to_children'] = {'recurring_template_edit'}` — both new tests failed with the expected diagnostic; restored the fix; both pass.
+
+### Regression triage — targeted smoke test (Feb-2026)
+
+Ran a 68-file P55-adjacent regression smoke set serially with `pytest -p no:xdist`:
+
+* **HEAD (`b8f6c154a` · P55 test tip)** — 66 failed, 4 errored, 419 passed, 24 skipped in 90.67s.
+* **Baseline (`c6fdb88c5` · immediately pre-P55)** — 67 failed, 4 errored, 403 passed, 24 skipped in 90.30s.
+
+Set-diff of failing node ids:
+* In baseline but NOT HEAD: `test_recurring_is_active_and_hard_delete::test_migration_backfilled_existing_records_to_is_active_true` (1 test — order-dependent pass on HEAD).
+* In HEAD but NOT baseline: **∅ (empty).**
+
+Zero new failures introduced by P55.  Every failure in the 66F+4E HEAD set is a pre-existing baseline flake (motor `attached to a different loop` errors, `test_stripe_webhook_invoice_events.py` env-dependent 4 errors, `test_invoice_edit.py` 14-test setup pollution, `test_pricebook_suppliers.py` 11-test setup pollution, etc.).  P55-adjacent files `test_recurring_jobs_category_patch.py` + `test_recurring_jobs_category_patch_audit.py` were the highest a-priori risk; their 5 failures reproduced identically on baseline.
+
+Followed the strict flake-ignore list (only `test_recurring_quarterly_semiannual_p47.py` + `test_phase10_referrals.py`).  Did NOT expand it.
+
+### File / commit inventory
+
+* **Orchestrator** — `backend/services/category_sync.py` (`a4eb9673a` orchestrator · `3418eca48` sentinel fix).
+* **Recurring-template PATCH wire** — `backend/routers/recurring_jobs.py :986-1019` (`cb6112383`).
+* **Invoice-line recategorize wire** — `backend/routers/income_categories.py :982-1024` (`ca3e9df2e`).
+* **Pricebook writeback augmentation** — `backend/services/pricebook/writeback.py` (`e6a658ae7`).
+* **Tests** — `backend/tests/test_p55_category_sync.py` (`b8f6c154a` original 15 · `3418eca48` sentinel-marker update · `a0507a6af` 2 regression guards).  Final tally: 17/17 green in 0.13s.
+
