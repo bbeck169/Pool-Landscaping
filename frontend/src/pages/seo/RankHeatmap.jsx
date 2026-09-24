@@ -24,6 +24,19 @@ export default function RankHeatmap() {
   const [current, setCurrent] = useState(null);
   const [starting, setStarting] = useState(false);
   const [selectedCell, setSelectedCell] = useState(null);
+  // Task J · Commit 1 · Feb-2026 — client-side empty-field guard on
+  // the Generate button. Bounds mirror ``RankHeatmapIn`` Pydantic
+  // ``Field(...)`` constraints (routers/seo_agentic.py :759-764)
+  // so the client-side validator can't disagree with the server:
+  //   * keyword    — non-blank trimmed string
+  //   * center_lat — finite ∈ [-90, 90]
+  //   * center_lng — finite ∈ [-180, 180]
+  //   * grid_size  — finite ∈ [2, 9]
+  //   * radius_mi  — finite ∈ (0, 25]
+  // A single form-level banner above Generate carries the copy;
+  // this matches the ask-approved "one banner over per-field
+  // errors" non-blocker decision. Cleared on every Generate click.
+  const [validationError, setValidationError] = useState("");
 
   const loadList = () => api.get("/seo/rank-heatmaps").then(setRows);
   useEffect(() => { loadList(); }, []);
@@ -39,7 +52,29 @@ export default function RankHeatmap() {
   }, [current?.status, current?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'current' intentionally omitted (mount-only or stable-ref)
 
   const start = async () => {
-    if (!form.keyword.trim()) return;
+    // Task J · Commit 1 · Feb-2026 — reset any prior banner up-
+    // front so a fresh click on Generate always starts from a
+    // clean slate.
+    setValidationError("");
+    // Empty-field / out-of-bounds guard. Runs BEFORE the fetch so
+    // an invalid form never touches the network. Bounds mirror
+    // the backend ``RankHeatmapIn`` Pydantic ``Field(...)`` limits
+    // so client + server agree on legality.
+    const kw = String(form.keyword || "").trim();
+    const lat = Number(form.center_lat);
+    const lng = Number(form.center_lng);
+    const grid = Number(form.grid_size);
+    const rad = Number(form.radius_miles);
+    const invalid =
+      !kw
+      || !Number.isFinite(lat) || lat < -90 || lat > 90
+      || !Number.isFinite(lng) || lng < -180 || lng > 180
+      || !Number.isFinite(grid) || grid < 2 || grid > 9
+      || !Number.isFinite(rad) || rad <= 0 || rad > 25;
+    if (invalid) {
+      setValidationError("Please fill all fields.");
+      return;
+    }
     setStarting(true);
     try {
       const r = await api.post("/seo/rank-heatmaps", form);
@@ -164,6 +199,23 @@ export default function RankHeatmap() {
                   data-testid="rank-heatmap-run">
             <Play size={14}/> {starting ? "Running…" : "Generate heatmap"}
           </button>
+          {/* Task J · Commit 1 · Feb-2026 — inline validation banner.
+              Rendered ONLY when the client-side guard trips (never
+              from a server response — that's Commit 2's error
+              surface). Copy is fixed to "Please fill all fields."
+              per the ask-approved non-blocker decision. */}
+          {validationError ? (
+            <div
+              className="mt-2 p-2 rounded-lg text-xs flex items-start gap-2"
+              role="alert"
+              style={{ backgroundColor: "#FEE2E2", color: "#7F1D1D",
+                        border: "1px solid #FCA5A5" }}
+              data-testid="rank-heatmap-validation-error"
+            >
+              <Info size={12} style={{ marginTop: 1 }}/>
+              <span className="font-semibold">{validationError}</span>
+            </div>
+          ) : null}
         </div>
 
         {/* Heatmap render */}
