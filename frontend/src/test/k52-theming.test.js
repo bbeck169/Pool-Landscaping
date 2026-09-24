@@ -337,12 +337,18 @@ describe("K52 · Slice D — Active nav item styling (K64 supersedes on main-nav
 
 /**
  * Contract per swept page: the filter strip container is marked
- * ``data-k52-navy-strip="true"`` and its inline ``style`` prop
- * carries ``backgroundColor: colors.nav.bg`` (or ``background:
- * colors.nav.bg``).  Two assertions per page — that's the
- * paint-only pass contract; deeper input/select recolouring is
- * covered by the source-level ``colors.nav.fg`` /
- * ``colors.nav.border`` refs already present in each file's diff.
+/**
+ * Assert that ``sourceText`` contains a filter strip carrying the
+ * ``data-k52-navy-strip="true"`` marker AND that its container
+ * paints the navy fill.  Two migration shapes are accepted:
+ *
+ *   • Legacy inline: a raw ``<div>`` whose ``style`` prop carries
+ *     ``backgroundColor: colors.nav.bg`` (pre-Task-E).
+ *   • Delegated: the marker sits on a ``<NavyFilterBar>`` compound
+ *     component (Task E · Feb-2026), which internally paints the
+ *     navy fill via the shared ``ui/NavyFilterBar.jsx`` primitive.
+ *     The shared primitive's paint contract is covered by the
+ *     Task-E suite (``task-e-navy-filter-bar.test.jsx``).
  */
 function assertNavyStripPresent(sourceText, pageLabel) {
   const idx = sourceText.indexOf('data-k52-navy-strip="true"');
@@ -351,8 +357,8 @@ function assertNavyStripPresent(sourceText, pageLabel) {
   // wrap onto multiple lines; the ``style`` prop typically opens
   // ~4–8 lines above the marker attribute).
   const block = sourceText.slice(Math.max(0, idx - 800), idx + 80);
-  expect(block, `${pageLabel} — filter strip paints navy`).toMatch(
-    /(?:background|backgroundColor):\s*colors\.nav\.bg/
+  expect(block, `${pageLabel} — filter strip paints navy (inline or via <NavyFilterBar>)`).toMatch(
+    /(?:(?:background|backgroundColor):\s*colors\.nav\.bg|<NavyFilterBar)/
   );
 }
 
@@ -363,7 +369,16 @@ describe("K52.1 · Filter row navy sweep", () => {
     // chips → active paints the K52 gradient (matches K52 Slice A
     // preset-chip pattern).  Regression guard against the pre-K52
     // ``colors.brandTertiary`` teal-mint active fill.
-    expect(CUSTOMERS).toMatch(/scope\s*===\s*s\.k\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    //
+    // Task E · Feb-2026 — chips now render via
+    // ``<NavyFilterBar.Chip active={scope === s.k} …>`` and the
+    // shared primitive resolves the gradient internally; assert
+    // the compound-child pattern instead of the inline ternary.
+    // Coverage of the ``active → colors.gradient.css`` paint on
+    // the shared primitive lives in the Task-E suite.
+    expect(CUSTOMERS).toMatch(
+      /<NavyFilterBar\.Chip[\s\S]{0,200}active=\{scope\s*===\s*s\.k\}/
+    );
     expect(CUSTOMERS).not.toMatch(/scope\s*===\s*s\.k\s*\?\s*colors\.brandTertiary/);
   });
 

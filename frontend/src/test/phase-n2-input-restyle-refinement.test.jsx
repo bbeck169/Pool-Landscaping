@@ -200,8 +200,16 @@ describe("Phase N2 · D · search-icon token coverage", () => {
 });
 
 describe("Phase N2 · E · K52.1 navy strip pages match sitewide theme", () => {
+  // Task E · Feb-2026 — CustomersList's search input migrated
+  // into ``<NavyFilterBar.Search>``, which per Task E decision #1
+  // uses navy TEXT (``#1B1F5C``) on a solid-white card with a
+  // PERMANENT blue border (``colors.inputBorder = #3B82F6``).
+  // That styling supersedes Phase N2's brand-blue-text contract
+  // for the Customers page.  ``LeadsDashboardPage`` and
+  // ``CalendarSchedule`` remain on the N2 contract — they are NOT
+  // Task-E-migrated pages.  When Invoices lands (Task E · Commit
+  // 3), it too will move out of this list.
   const K52_FILES = [
-    ["pages/customers/CustomersList.jsx", "customers-search"],
     ["pages/leads/LeadsDashboardPage.jsx", "lead-search-input"],
     ["pages/schedule/CalendarSchedule.jsx", "calendar-search"],
   ];

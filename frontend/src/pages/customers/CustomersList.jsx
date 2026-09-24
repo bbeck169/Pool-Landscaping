@@ -15,6 +15,7 @@ import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 
 
 // Feb-2026 · P28 — tiny relative-time formatter for the Muted saved
@@ -1514,35 +1515,26 @@ export default function CustomersList() {
         </div>
       ) : null}
 
-      {/* Filter row — Phase K52.1 · Feb-2026: navy chrome strip. */}
-      <div
-        className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
-        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+      {/* Filter row — Task E · Feb-2026: NavyFilterBar migration.
+          Supersedes the inline Phase K52.1 navy strip.  Every
+          data-testid and controlled-state hook preserved verbatim;
+          the Phase K52.1 marker attribute is passed through
+          NavyFilterBar's ``...rest`` spread so external smoke
+          tests keep resolving. Search input now paints navy
+          text on solid white with a permanent ``#3B82F6`` border
+          (per Task E spec decision #1); the City select loses its
+          light-legacy exception and joins the uniform navy palette
+          (decision #5). */}
+      <NavyFilterBar
         data-testid="customers-filters"
         data-k52-navy-strip="true"
       >
-        <div className="relative flex-1 min-w-[220px]">
-          {/*
-           * Phase N1 · Feb-2026 — Universal input restyle.
-           * Search icon + input paint the sitewide navy-on-white
-           * theme even inside the K52.1 navy chrome strip so the
-           * app-wide input styling stays coherent. The strip
-           * container keeps its navy accent — the input reads as a
-           * white card resting on it.
-           */}
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: colors.searchIcon }}
-          />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, email, phone, address…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm bg-white text-[#0284C7] placeholder:text-[#0284C7]/55 border border-slate-200 transition-colors focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            data-testid="customers-search"
-          />
-        </div>
+        <NavyFilterBar.Search
+          value={q}
+          onChange={setQ}
+          placeholder="Search name, email, phone, address…"
+          data-testid="customers-search"
+        />
         <div className="flex items-center gap-1">
           <Filter size={14} style={{ color: colors.nav.fgMuted }} />
           {[
@@ -1550,78 +1542,53 @@ export default function CustomersList() {
             { k: "unscheduled", label: "Unscheduled" },
             { k: "waitlist", label: "Waitlist" },
           ].map((s) => (
-            <button
+            <NavyFilterBar.Chip
               key={s.k}
+              active={scope === s.k}
               onClick={() => setScope(s.k)}
-              className="text-xs font-semibold px-3 py-1.5 rounded-full transition"
-              style={{
-                // Phase K52.1 · Feb-2026 — scope is a filter-state
-                // chip → active = K52 gradient, idle = transparent
-                // w/ white outline (matches K52 Slice A pattern).
-                background: scope === s.k ? colors.gradient.css : "transparent",
-                color: colors.nav.fg,
-                border: `1px solid ${scope === s.k ? "transparent" : colors.nav.fgMuted}`,
-                textShadow: scope === s.k ? colors.gradient.textShadow : undefined,
-              }}
               data-testid={`customers-scope-${s.k}`}
             >
               {s.label}
-            </button>
+            </NavyFilterBar.Chip>
           ))}
         </div>
-        <select
+        <NavyFilterBar.Select
           value={tag}
-          onChange={(e) => setTag(e.target.value)}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-          style={{
-            backgroundColor: colors.nav.bg,
-            color: colors.nav.fg,
-            border: `1px solid ${colors.nav.border}`,
-          }}
+          onChange={setTag}
           data-testid="customers-filter-tag"
         >
           <option value="">All tags</option>
           {TAG_PRESETS.map((t) => (
             <option key={t}>{t}</option>
           ))}
-        </select>
-        {/* Feb 2026 · Sort dropdown — Newest→Oldest default, persisted
-            to localStorage. Change triggers a re-fetch via the load()
-            effect (sortBy in dep-array) and resets to page 1. */}
-        <select
+        </NavyFilterBar.Select>
+        {/* Feb 2026 · Sort dropdown — Newest→Oldest default,
+            persisted to localStorage. Change triggers a re-fetch
+            via the load() effect (sortBy in dep-array) and resets
+            to page 1. */}
+        <NavyFilterBar.Select
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value)}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-          style={{
-            backgroundColor: colors.nav.bg,
-            color: colors.nav.fg,
-            border: `1px solid ${colors.nav.border}`,
-          }}
-          aria-label="Sort customers by"
+          onChange={setSortBy}
           data-testid="customers-filter-sort"
+          ariaLabel="Sort customers by"
         >
           {_SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
-        </select>
-        {/* Phase G4a · Feb-2026 — Portal-activation filter dropdown.
-            Stacks with the segmented cohort tabs (Active | Inactive |
-            Muted | All). Persists via ``customerListFilter.portalStatus``
-            in localStorage. Selecting a non-default value resets to
-            page 1 via the ``portalStatus`` effect above. */}
-        <select
+        </NavyFilterBar.Select>
+        {/* Phase G4a · Feb-2026 — Portal-activation filter
+            dropdown. Stacks with the segmented cohort tabs
+            (Active | Inactive | Muted | All). Persists via
+            ``customerListFilter.portalStatus`` in localStorage.
+            Selecting a non-default value resets to page 1 via
+            the ``portalStatus`` effect above. */}
+        <NavyFilterBar.Select
           value={portalStatus}
-          onChange={(e) => setPortalStatus(e.target.value)}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-          style={{
-            backgroundColor: colors.nav.bg,
-            color: colors.nav.fg,
-            border: `1px solid ${colors.nav.border}`,
-          }}
-          aria-label="Filter customers by portal activation status"
+          onChange={setPortalStatus}
           data-testid="customers-filter-portal-status"
+          ariaLabel="Filter customers by portal activation status"
         >
           {_PORTAL_STATUS_OPTIONS.map((o) => (
             <option
@@ -1632,28 +1599,26 @@ export default function CustomersList() {
               {o.label}
             </option>
           ))}
-        </select>
+        </NavyFilterBar.Select>
         {cities.length ? (
-          <select
+          <NavyFilterBar.Select
             value={city}
-            onChange={(e) => setCity(e.target.value)}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg"
-            style={{
-              backgroundColor: colors.surfaceSecondary,
-              color: colors.onSurfaceSecondary,
-              border: `1px solid ${colors.border}`,
-            }}
+            onChange={setCity}
             data-testid="customers-filter-city"
           >
             <option value="">All cities</option>
             {cities.map((c) => (
               <option key={c}>{c}</option>
             ))}
-          </select>
+          </NavyFilterBar.Select>
         ) : null}
         {/* Phase 12 · Feb 2026 — "Missing card" filter chip. Admin +
             manager only. Server-side filter (requires the
-            missing_card=true query param). */}
+            missing_card=true query param). Kept as a raw
+            ``<button>`` (not a ``NavyFilterBar.Chip``) because its
+            active state uses a yellow warning tint, distinct from
+            the gradient active tone the shared Chip primitive
+            renders. */}
         {isAdminOrManager && (
           <button
             onClick={() => setMissingCardOnly((v) => !v)}
@@ -2241,7 +2206,7 @@ export default function CustomersList() {
             ) : null}
           </div>
         </div>
-      </div>
+      </NavyFilterBar>
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
       {selected.size > 0 ? (

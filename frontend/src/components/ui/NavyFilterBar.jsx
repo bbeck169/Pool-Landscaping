@@ -9,16 +9,16 @@
  *
  * Compound-children API (matches shadcn ``<Select>`` / ``<Card>``):
  *
- *   <NavyFilterBar testid="foo-filters">
+ *   <NavyFilterBar data-testid="foo-filters">
  *     <NavyFilterBar.Search
  *       value={q} onChange={setQ}
  *       placeholder="Search…"
- *       testid="foo-search"
+ *       data-testid="foo-search"
  *       onClear={() => setQ("")}
  *     />
  *     <NavyFilterBar.Select
  *       value={status} onChange={setStatus}
- *       testid="foo-filter-status"
+ *       data-testid="foo-filter-status"
  *       ariaLabel="Filter by status"
  *     >
  *       <option value="">All statuses</option>
@@ -26,24 +26,33 @@
  *     </NavyFilterBar.Select>
  *     <NavyFilterBar.Chip
  *       active={onlyMine} onClick={() => setOnlyMine((v) => !v)}
- *       testid="foo-filter-mine"
+ *       data-testid="foo-filter-mine"
  *     >
  *       Mine only
  *     </NavyFilterBar.Chip>
  *     <NavyFilterBar.DatePicker
  *       label="Since"
  *       value={since} onChange={setSince}
- *       testid="foo-filter-since"
+ *       data-testid="foo-filter-since"
  *     />
  *     <NavyFilterBar.Combobox label="Customer" minWidth={180}>
  *       <CustomerCombobox … />
  *     </NavyFilterBar.Combobox>
  *   </NavyFilterBar>
  *
- * Every sub-primitive supports an optional ``label`` prop.  When
- * passed, a small uppercase caption renders above the control
- * (Work Stream layout parity).  When omitted, the control renders
- * bare (Customers/Invoices layout parity).
+ * Prop conventions
+ * ----------------
+ *   • Every sub-primitive spreads ``...rest`` onto its internal
+ *     control (native ``<input>`` / ``<select>`` / ``<button>``),
+ *     so callers write native attributes (``data-testid``,
+ *     ``aria-*``, etc.) directly in the JSX.  This preserves
+ *     source-body grep tests that assert ``data-testid="…"``
+ *     literals on the migrated pages, AND ships identical DOM to
+ *     the pre-migration inline strip.
+ *   • Every sub-primitive supports an optional ``label`` prop.
+ *     When passed, a 10-px uppercase caption renders above the
+ *     control (Work Stream layout parity).  When omitted, the
+ *     control renders bare (Customers/Invoices layout parity).
  *
  * Styling contract (per Task E spec, decided in the halt-and-
  * report round):
@@ -87,7 +96,7 @@ function _LabelWrap({ label, children }) {
 }
 
 
-export default function NavyFilterBar({ children, testid, className = "" }) {
+export default function NavyFilterBar({ children, className = "", ...rest }) {
   return (
     <div
       className={`rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center ${className}`}
@@ -95,8 +104,12 @@ export default function NavyFilterBar({ children, testid, className = "" }) {
         backgroundColor: colors.nav.bg,
         border: `1px solid ${colors.nav.border}`,
       }}
-      data-testid={testid}
       data-navy-filter-bar="true"
+      // ``...rest`` forwards data-testid, legacy marker attributes
+      // (e.g. ``data-k52-navy-strip="true"`` on Customers/
+      // Invoices), and arbitrary ARIA hooks without widening the
+      // primitive's typed prop surface.
+      {...rest}
     >
       {children}
     </div>
@@ -108,12 +121,13 @@ NavyFilterBar.Search = function NavyFilterBarSearch({
   value,
   onChange,
   placeholder,
-  testid,
   ariaLabel,
   onClear,
   className = "",
   minWidth = 220,
+  ...rest
 }) {
+  const inputTestid = rest["data-testid"];
   const showClear = typeof onClear === "function" && !!value;
   return (
     <div
@@ -132,20 +146,20 @@ NavyFilterBar.Search = function NavyFilterBarSearch({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        data-testid={testid}
         className="w-full pl-9 pr-8 py-2.5 rounded-lg outline-none text-sm"
         style={{
           backgroundColor: colors.surface,
           border: `1px solid ${colors.inputBorder}`,
           color: colors.nav.bg,
         }}
+        {...rest}
       />
       {showClear ? (
         <button
           type="button"
           onClick={onClear}
           aria-label="Clear search"
-          data-testid={testid ? `${testid}-clear` : undefined}
+          data-testid={inputTestid ? `${inputTestid}-clear` : undefined}
           className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:opacity-70"
         >
           <XIcon size={13} style={{ color: colors.nav.bg }} />
@@ -160,18 +174,17 @@ NavyFilterBar.Select = function NavyFilterBarSelect({
   value,
   onChange,
   label,
-  testid,
   ariaLabel,
   children,
   minWidth,
   className = "",
+  ...rest
 }) {
   const control = (
     <select
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      data-testid={testid}
       className={`text-xs font-semibold px-3 py-2 rounded-lg outline-none ${className}`}
       style={{
         backgroundColor: colors.nav.bg,
@@ -180,6 +193,7 @@ NavyFilterBar.Select = function NavyFilterBarSelect({
         minWidth: minWidth || undefined,
         colorScheme: "dark",
       }}
+      {...rest}
     >
       {children}
     </select>
@@ -191,11 +205,11 @@ NavyFilterBar.Select = function NavyFilterBarSelect({
 NavyFilterBar.Chip = function NavyFilterBarChip({
   active,
   onClick,
-  testid,
   ariaLabel,
   children,
   label,
   className = "",
+  ...rest
 }) {
   const control = (
     <button
@@ -203,7 +217,6 @@ NavyFilterBar.Chip = function NavyFilterBarChip({
       onClick={onClick}
       aria-pressed={active ? "true" : "false"}
       aria-label={ariaLabel}
-      data-testid={testid}
       className={`text-xs font-semibold px-3 py-1.5 rounded-full transition inline-flex items-center gap-1.5 ${className}`}
       style={{
         background: active ? colors.gradient.css : "transparent",
@@ -211,6 +224,7 @@ NavyFilterBar.Chip = function NavyFilterBarChip({
         border: `1px solid ${active ? "transparent" : colors.nav.fgMuted}`,
         textShadow: active ? colors.gradient.textShadow : undefined,
       }}
+      {...rest}
     >
       {children}
     </button>
@@ -223,9 +237,9 @@ NavyFilterBar.DatePicker = function NavyFilterBarDatePicker({
   value,
   onChange,
   label,
-  testid,
   ariaLabel,
   className = "",
+  ...rest
 }) {
   const control = (
     <input
@@ -233,7 +247,6 @@ NavyFilterBar.DatePicker = function NavyFilterBarDatePicker({
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      data-testid={testid}
       className={`text-sm px-3 py-1.5 rounded-lg outline-none ${className}`}
       style={{
         backgroundColor: colors.nav.bg,
@@ -241,6 +254,7 @@ NavyFilterBar.DatePicker = function NavyFilterBarDatePicker({
         border: `1px solid ${colors.nav.border}`,
         colorScheme: "dark",
       }}
+      {...rest}
     />
   );
   return <_LabelWrap label={label}>{control}</_LabelWrap>;

@@ -122,11 +122,17 @@ describe("K64 · non-nav gradient consumers left untouched", () => {
   // Guards the user's constraint — K64 scope is main nav only.
   // A future scatter-refactor must not accidentally retire the
   // gradient on badges / filter pills.
+  //
+  // Task E · Feb-2026 — CustomersList delegated its filter-chip
+  // gradient render to ``components/ui/NavyFilterBar.jsx``. The
+  // shared primitive is the canonical gradient consumer for every
+  // Task-E-migrated filter bar (Customers first, then Invoices,
+  // Pricebook, Recurring Jobs, Work Stream, Payments Ledger).
   const OK_TO_KEEP_GRADIENT = [
     "src/pages/invoices/InvoicesList.jsx",
     "src/pages/os/BusinessOS.jsx",
     "src/pages/schedule/CalendarSchedule.jsx",
-    "src/pages/customers/CustomersList.jsx",
+    "src/components/ui/NavyFilterBar.jsx",
   ];
 
   for (const rel of OK_TO_KEEP_GRADIENT) {
