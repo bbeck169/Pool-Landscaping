@@ -8,6 +8,7 @@ import { formatCustomerName } from "@/utils/formatCustomerName";
 import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import {
   PageHeader,
   Button,
@@ -424,53 +425,49 @@ export default function InvoicesList() {
         />
       </div>
 
-      {/* Filters — Phase K52.1 · Feb-2026: navy chrome strip. */}
-      <div
-        className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
-        style={{ backgroundColor: colors.nav.bg, border: `1px solid ${colors.nav.border}` }}
+      {/* Filters — Task E · Feb-2026: NavyFilterBar migration.
+          Supersedes the inline Phase K52.1 navy strip. Every
+          data-testid and controlled-state hook preserved verbatim;
+          the Phase K52.1 marker attribute is forwarded via
+          NavyFilterBar's ``...rest`` spread. Search input now
+          paints navy text on a solid-white card with a permanent
+          ``#3B82F6`` border (per Task E spec decision #1),
+          superseding the pre-migration translucent-white overlay.
+          The "Has late fee" chip becomes pill-shaped to match the
+          shared ``NavyFilterBar.Chip`` primitive (rounded-full),
+          uniform with Customers' scope chips. */}
+      <NavyFilterBar
         data-testid="invoices-filters"
         data-k52-navy-strip="true"
       >
-        <div className="relative flex-1 min-w-[220px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.searchIcon }} />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search title, customer…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-white/70"
-            style={{ backgroundColor: "rgba(255,255,255,0.10)", border: `1px solid ${colors.nav.border}`, color: colors.nav.fg }}
-            data-testid="inv-search"
-          />
-        </div>
-        <select
+        <NavyFilterBar.Search
+          value={q}
+          onChange={setQ}
+          placeholder="Search title, customer…"
+          data-testid="inv-search"
+        />
+        <NavyFilterBar.Select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="text-xs font-semibold px-3 py-2 rounded-lg"
-          style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
+          onChange={setStatus}
           data-testid="inv-filter-status"
         >
           <option value="">All statuses</option>
           <option value="unpaid">Unpaid</option>
           <option value="partial">Partial</option>
           <option value="paid">Paid</option>
-        </select>
-        <button
+        </NavyFilterBar.Select>
+        <NavyFilterBar.Chip
+          active={hasLateFee}
           onClick={() => setLateFeeFilter(!hasLateFee)}
-          className="text-xs font-semibold px-3 py-2 rounded-lg transition"
-          style={{
-            // Phase K52.1 · Feb-2026 — "Has late fee" is a filter
-            // state chip.  Active = gradient (matches K52 active
-            // affordance).  Idle = transparent w/ white outline.
-            background: hasLateFee ? colors.gradient.css : "transparent",
-            color: colors.nav.fg,
-            border: `1px solid ${hasLateFee ? "transparent" : colors.nav.fgMuted}`,
-            textShadow: hasLateFee ? colors.gradient.textShadow : undefined,
-          }}
           data-testid="inv-filter-late-fee"
         >
           Has late fee{hasLateFee ? " ✓" : ""}
-        </button>
-        {/* Phase C · Feb-2026 — Has-declined-items filter chip. */}
+        </NavyFilterBar.Chip>
+        {/* Phase C · Feb-2026 — Has-declined-items filter chip.
+             Kept as a raw ``<button>`` (not a
+             ``NavyFilterBar.Chip``) because its active state uses
+             a red warning tint, distinct from the gradient active
+             tone the shared Chip primitive renders. */}
         <button
           onClick={() => setHasDeclined(!hasDeclined)}
           className="text-xs font-semibold px-3 py-2 rounded-lg transition"
@@ -484,30 +481,33 @@ export default function InvoicesList() {
           Has declined items{hasDeclined ? " ✓" : ""}
         </button>
         {/* Bulk-pay iteration 1 · card-on-file filter */}
-        <select
+        <NavyFilterBar.Select
           value={cardFilter}
-          onChange={(e) => setCardFilter(e.target.value)}
-          className="text-xs font-semibold px-3 py-2 rounded-lg"
-          style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
+          onChange={setCardFilter}
           data-testid="inv-filter-card"
         >
           <option value="any">Card on file: Any</option>
           <option value="yes">Card on file: Yes</option>
           <option value="no">Card on file: No</option>
-        </select>
+        </NavyFilterBar.Select>
 
-        {/* Phase 14b · Feb-2026 — Category multi-select. Renders as a dropdown
-            + selected-chip strip. Populated from /api/invoices/line-item-categories. */}
+        {/* Phase 14b · Feb-2026 — Category multi-select. Renders
+            as a dropdown + selected-chip strip. Populated from
+            /api/invoices/line-item-categories.
+
+            Task E · Feb-2026 — The whole cluster (select + chips
+            + Clear) stays as a raw ``<div data-testid=
+            "inv-filter-category">`` child of NavyFilterBar so the
+            three sibling controls read as a single logical group.
+            Only the inner ``<select>`` is delegated to
+            ``NavyFilterBar.Select``; the selected-category chips
+            and the Clear underline keep their unique gradient +
+            underline treatments. */}
         {categoryOptions.length > 0 ? (
           <div className="flex items-center gap-2" data-testid="inv-filter-category">
-            <select
+            <NavyFilterBar.Select
               value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v) toggleCategory(v);
-              }}
-              className="text-xs font-semibold px-3 py-2 rounded-lg"
-              style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg, border: `1px solid ${colors.nav.border}` }}
+              onChange={(v) => { if (v) toggleCategory(v); }}
               data-testid="inv-filter-category-select"
             >
               <option value="">Add category…</option>
@@ -518,7 +518,7 @@ export default function InvoicesList() {
                     {c}
                   </option>
                 ))}
-            </select>
+            </NavyFilterBar.Select>
             {selectedCategories.map((c) => (
               <span
                 key={c}
@@ -557,7 +557,7 @@ export default function InvoicesList() {
             ) : null}
           </div>
         ) : null}
-      </div>
+      </NavyFilterBar>
 
       {rows === null ? (
         <Skeleton style={{ height: 240 }} />

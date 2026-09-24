@@ -402,7 +402,16 @@ describe("K52.1 · Filter row navy sweep", () => {
     assertNavyStripPresent(INVOICES, "InvoicesList");
     // ``Has late fee`` toggle is a filter-state chip: active paints
     // the K52 gradient.
-    expect(INVOICES).toMatch(/hasLateFee\s*\?\s*colors\.gradient\.css\s*:\s*"transparent"/);
+    //
+    // Task E · Feb-2026 — chip is now rendered via
+    // ``<NavyFilterBar.Chip active={hasLateFee} …>``; the gradient
+    // paint lives inside the shared primitive (covered by the
+    // Task-E suite).  Assert the compound-child shape here so
+    // the K52-active semantic contract still gets a regression
+    // guard at the InvoicesList source-body level.
+    expect(INVOICES).toMatch(
+      /<NavyFilterBar\.Chip[\s\S]{0,200}active=\{hasLateFee\}/
+    );
     // Selected-category chips also render on the gradient.  Use a
     // simpler forward-scan pattern — the chip's testid uses JSX
     // string interpolation which makes an inline regex tricky.
@@ -412,6 +421,10 @@ describe("K52.1 · Filter row navy sweep", () => {
     expect(catChipBlock).toMatch(/background:\s*colors\.gradient\.css/);
     // Regression guard — pre-K52 red-fee-tint (``#FEE2E2``) and
     // blue-category-tint (``#DBEAFE``) fills on chips MUST be gone.
+    // The regex targets ``backgroundColor: "#..."`` literal always-
+    // on fills — a ternary form (``hasDeclined ? "#FEE2E2" :
+    // "transparent"``) is out of scope and legitimately retained
+    // by the Has-declined-items chip.
     const stripStart = INVOICES.indexOf('data-testid="invoices-filters"');
     const stripEnd = INVOICES.indexOf('data-testid="inv-search"');
     // The whole filter strip ends after the category chip block —

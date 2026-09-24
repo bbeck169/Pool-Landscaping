@@ -123,11 +123,15 @@ describe("K64 · non-nav gradient consumers left untouched", () => {
   // A future scatter-refactor must not accidentally retire the
   // gradient on badges / filter pills.
   //
-  // Task E · Feb-2026 — CustomersList delegated its filter-chip
-  // gradient render to ``components/ui/NavyFilterBar.jsx``. The
-  // shared primitive is the canonical gradient consumer for every
-  // Task-E-migrated filter bar (Customers first, then Invoices,
-  // Pricebook, Recurring Jobs, Work Stream, Payments Ledger).
+  // Task E · Feb-2026 — CustomersList + InvoicesList delegated
+  // their filter-chip gradient renders to
+  // ``components/ui/NavyFilterBar.jsx``. The shared primitive is
+  // the canonical gradient consumer for every Task-E-migrated
+  // filter bar (Customers, Invoices, Pricebook, Recurring Jobs,
+  // Work Stream, Payments Ledger).  InvoicesList still directly
+  // references ``colors.gradient.*`` on the selected-category
+  // chips + kept a separate reference on the sticky bulk-charge
+  // toolbar — kept in the list.
   const OK_TO_KEEP_GRADIENT = [
     "src/pages/invoices/InvoicesList.jsx",
     "src/pages/os/BusinessOS.jsx",
