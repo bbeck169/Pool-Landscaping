@@ -1,0 +1,9 @@
+{
+  "loading": "Chargement des propriétés…",
+  "empty_warning": "Ce client n'a aucune adresse enregistrée. Ajoutez une adresse au client avant de planifier un service récurrent.",
+  "label_single": "Propriété",
+  "label_multi": "Propriété *",
+  "placeholder_choose": "Choisir une propriété…",
+  "validation_pick_one": "Ce client a {{count}} propriétés — choisissez-en une.",
+  "search_customer_placeholder": "Rechercher par nom de client…"
+}

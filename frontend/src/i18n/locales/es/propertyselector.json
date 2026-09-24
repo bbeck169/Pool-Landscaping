@@ -1,0 +1,9 @@
+{
+  "loading": "Cargando propiedades…",
+  "empty_warning": "Este cliente no tiene direcciones registradas. Agrega una dirección al cliente antes de programar un servicio recurrente.",
+  "label_single": "Propiedad",
+  "label_multi": "Propiedad *",
+  "placeholder_choose": "Elige una propiedad…",
+  "validation_pick_one": "Este cliente tiene {{count}} propiedades — elige una.",
+  "search_customer_placeholder": "Buscar por nombre de cliente…"
+}

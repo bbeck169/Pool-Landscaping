@@ -1,0 +1,9 @@
+{
+  "loading": "Loading properties…",
+  "empty_warning": "This customer has no addresses on file. Add an address to the customer before scheduling recurring service.",
+  "label_single": "Property",
+  "label_multi": "Property *",
+  "placeholder_choose": "Choose a property…",
+  "validation_pick_one": "This customer has {{count}} properties — pick one.",
+  "search_customer_placeholder": "Search by customer name…"
+}

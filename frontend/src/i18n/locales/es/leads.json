@@ -1,0 +1,29 @@
+{
+  "tabs": {
+    "active": "Activos",
+    "archive": "Archivados"
+  },
+  "search_placeholder": "Buscar nombre, correo o teléfono",
+  "filter_all_statuses": "Todos los estados",
+  "status": {
+    "new": "Nuevo",
+    "contacted": "Contactado",
+    "quoted": "Cotizado",
+    "closed_won": "Cerrado – Ganado",
+    "closed_lost": "Cerrado – Perdido"
+  },
+  "empty": {
+    "active": {
+      "title": "Aún no hay clientes potenciales activos.",
+      "subtitle": "Los nuevos clientes potenciales llegan aquí desde el formulario del sitio web, el widget de chat y las entradas manuales."
+    },
+    "archive": {
+      "title": "Aún no hay clientes potenciales archivados.",
+      "subtitle": "Los clientes potenciales pasan aquí cuando se marcan como Cerrado – Ganado o Cerrado – Perdido."
+    },
+    "search": {
+      "title": "Ningún cliente potencial coincide con tus filtros",
+      "clear": "Borrar filtros"
+    }
+  }
+}

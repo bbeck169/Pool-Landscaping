@@ -1,0 +1,29 @@
+{
+  "tabs": {
+    "active": "Active",
+    "archive": "Archive"
+  },
+  "search_placeholder": "Search name, email, phone",
+  "filter_all_statuses": "All statuses",
+  "status": {
+    "new": "New",
+    "contacted": "Contacted",
+    "quoted": "Quoted",
+    "closed_won": "Closed – Won",
+    "closed_lost": "Closed – Lost"
+  },
+  "empty": {
+    "active": {
+      "title": "No active leads yet.",
+      "subtitle": "New leads land here from the website form, chat widget, and manual entries."
+    },
+    "archive": {
+      "title": "No archived leads yet.",
+      "subtitle": "Leads move here when marked Closed – Won or Closed – Lost."
+    },
+    "search": {
+      "title": "No leads match your filters",
+      "clear": "Clear filters"
+    }
+  }
+}
