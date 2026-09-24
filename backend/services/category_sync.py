@@ -44,6 +44,18 @@ Short-circuit returns ``SyncResult.no_op()`` with
 ``skipped_loop_count=1`` for observability. This is call-graph
 loop breaking, NOT database CAS.
 
+For ``sync_recurring_template_to_children`` the reserved slot is
+populated with the ``_RESERVED_SELF_LOOP`` sentinel — a marker
+string suffixed ``_do_not_pass_`` that no real caller ever
+passes. Real callers use ``"recurring_template_edit"`` (from the
+recurring-jobs PATCH handler). Keeping the reserved slot with a
+sentinel — instead of a plausible-looking origin string — is
+what prevents the Feb-2026 shipping bug (Commit 6, Option C):
+before the fix, the reserved slot held the same string the PATCH
+handler passed, silently disabling the entire template → invoice
+fan-out. See PRD § P55 Category Sync Orchestrator for the full
+recount.
+
 ## Price protection (55.5)
 
 The SET clauses in both entry points are HARD-CODED WHITELISTS
@@ -164,15 +176,40 @@ class SyncResult:
 # ══════════════════════════════════════════════════════════════════
 # Loop-prevention table (55.4)
 # ══════════════════════════════════════════════════════════════════
+# ``_RESERVED_SELF_LOOP`` — sentinel documenting where a future
+# self-loop protection origin would slot in for
+# ``sync_recurring_template_to_children``. Not a real origin: no
+# caller ever passes this string, and the double-underscore +
+# ``_do_not_pass_`` suffix make accidental adoption impossible.
+#
+# The reserved slot exists because the P55 grep-pass (Q4 · policy)
+# committed to keeping a documented anchor for a hypothetical
+# future "invoice → template" arrow. If such a path is ever
+# introduced (e.g. an audit path that re-fires the template sync
+# from an invoice mutation), its origin string is added to the
+# ``sync_recurring_template_to_children`` skip set alongside this
+# sentinel — the sentinel itself is left in place so the design
+# intent is greppable from a single anchor.
+#
+# Shipping-bug context (Feb-2026, P55 · Commit 6 · Option C):
+# Commits 1 + 2 landed with the string ``"recurring_template_edit"``
+# used simultaneously as (a) the PATCH-time entry-point origin AND
+# (b) the reserved short-circuit slot. Result: every real PATCH
+# fan-out short-circuited on itself and the template → invoice
+# propagation was inert in production. Option C fixes it by using
+# the sentinel here so the entry origin (still
+# ``"recurring_template_edit"``) can never collide.
+_RESERVED_SELF_LOOP = "__reserved_self_loop_do_not_pass__"
+
 _SKIP_TABLE: Dict[str, Set[str]] = {
     "sync_invoice_line_to_pricebook": {
         # Already came FROM the pricebook — don't loop back.
         "pricebook_writeback",
     },
     "sync_recurring_template_to_children": {
-        # Self-origin — reserved to prevent hypothetical
-        # re-fire on sibling writes (Q4 · policy).
-        "recurring_template_edit",
+        # Reserved slot for future self-loop protection.
+        # See ``_RESERVED_SELF_LOOP`` docblock above.
+        _RESERVED_SELF_LOOP,
     },
 }
 
@@ -632,4 +669,5 @@ __all__ = [
     "sync_invoice_line_to_pricebook",
     "_UNSET",
     "_SKIP_TABLE",
+    "_RESERVED_SELF_LOOP",
 ]

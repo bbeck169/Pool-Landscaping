@@ -598,14 +598,22 @@ def test_pricebook_writeback_origin_short_circuits_invoice_sync(fake_db):
 
 
 def test_template_self_origin_short_circuits_children_sync(fake_db):
-    from services.category_sync import sync_recurring_template_to_children
+    """The reserved self-loop sentinel short-circuits the entry
+    point (loop-prevention contract). Uses the module-exported
+    ``_RESERVED_SELF_LOOP`` marker — the string that populates
+    the ``sync_recurring_template_to_children`` skip set post
+    Commit 6 · Option C."""
+    from services.category_sync import (
+        sync_recurring_template_to_children,
+        _RESERVED_SELF_LOOP,
+    )
     _seed_categories(fake_db)
     job_ids = _seed_jobs(fake_db, 1)
     _seed_invoices(fake_db, job_ids)
 
     r = _run(sync_recurring_template_to_children(
         tenant_id=TID_A, recurring_job_id=TPL_ID,
-        origin="recurring_template_edit",  # SELF marker
+        origin=_RESERVED_SELF_LOOP,  # sentinel — always short-circuits
         income_category_id=INC_NEW,
     ))
     assert r.skipped_loop_count == 1
