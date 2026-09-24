@@ -21741,12 +21741,12 @@ New:
 - `backend/routers/dev_email_preview.py` — `GET /api/dev/email-preview/referral-reward` route + `render_boom_preview_html()` helper (reused by the CLI).
 - `backend/scripts/send_referral_reward_preview.py` — Argparse-driven CLI with `--dry-run`, `--confirm`, `--tenant <tid>`.
 
-New tests (five files, **45 tests total**, all green):
+New tests (five files, **48 tests total**, all green):
 - `backend/tests/test_p53_boom_email_render.py` (20 tests) — hero gradient stops, badge color, pill radius, headline text, CTA label, sign-off, badge font-size, drop shadow, merge var substitution + no leaks, amount not hardcoded ($25 + $55 both render), company name not hardcoded, zero external CSS, CTA href shape (path-only + absolute variants), version marker, subject line, legacy prior body preserved.
-- `backend/tests/test_p53_portal_my_referrals_count.py` (7 tests) — counter includes each of the four post-close-won states individually + excludes `voided` and pre-close-won states + mixed-bag tally + cross-tenant isolation.
-- `backend/tests/test_p53_marketing_templates_upsert.py` (8 tests) — fresh insert stamps `body_version`, idempotent second run, legacy Phase-10 body upgraded in place, tenant-customized row preserved under normal upsert, `force_upgrade=True` overwrites customized row, `system=False` row never touched even under force, SMS row insert-if-missing (P53 out of scope).
+- `backend/tests/test_p53_portal_my_referrals_count.py` (8 tests) — counter includes each of the four post-close-won states individually + excludes `voided` and pre-close-won states + mixed-bag tally + cross-tenant isolation.
+- `backend/tests/test_p53_marketing_templates_upsert.py` (7 tests) — fresh insert stamps `body_version`, idempotent second run, legacy Phase-10 body upgraded in place, tenant-customized row preserved under normal upsert, `force_upgrade=True` overwrites customized row, `system=False` row never touched even under force, SMS row insert-if-missing (P53 out of scope).
 - `backend/tests/test_p53_dev_preview_route.py` (8 tests) — dev env 200 with BOOM markers + no placeholder leaks + HTML content-type + APP_ENV missing defaults to preview + prod env 404 across PRODUCTION/Production/production case variants + `ENABLE_DEV_EMAIL_PREVIEW=true` unlocks prod-gated route + override accepts truthy variants (1/true/yes) + override does not leak when unset.
-- `backend/tests/test_p53_phase10_behavior_lock.py` (5 tests) — close-won hook default status is `pending_paid_window`, watcher CAS-guard is intact, refund/dispute guard intact, ledger primitive unchanged (`customer_credits` + `source="referral_credit"`), `PAID_WINDOW_DAYS == 30`.
+- `backend/tests/test_p53_phase10_behavior_lock.py` (5 tests) — close-won hook default status is `pending_paid_window`, watcher CAS-guard is intact, refund/dispute guard intact, ledger primitive unchanged (`customer_credits` + `source="referral_credit"`), `PAID_WINDOW_DAYS == 30`.  **Disclosure**: these five are source-string grep guards via `inspect.getsource()`, not real state-transition behavior contracts. They catch "flow deleted" or "constant renamed" but not "semantics changed while string kept". Upgrade path (if requested): drive `_try_credit_referral` / `fire_referral_conversion_hook` against seeded referrals + assert on Mongo state.
 
 ### Test result summary
 
