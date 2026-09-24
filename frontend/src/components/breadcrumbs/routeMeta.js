@@ -27,10 +27,19 @@
 
 // Landing paths that should NOT render breadcrumbs.
 // Phase K2 · Feb-2026 — added the actual landing routes for the
-// admin (``/dashboard``), portal (``/portal/home``), and tech
-// (``/tech/dashboard``) shells; the pre-K2 set only had the raw
-// ``/portal`` string (which the app rewrites to ``/portal/home``
-// via a ``<Navigate>`` redirect).
+// admin (``/`` — via ``RoleAwareIndex`` in App.js), portal
+// (``/portal/home``), and tech (``/tech/dashboard``) shells; the
+// pre-K2 set only had the raw ``/portal`` string (which the app
+// rewrites to ``/portal/home`` via a ``<Navigate>`` redirect).
+//
+// P53 tail (Feb-2026) — ``/dashboard`` KEPT in this skip set even
+// though it is NOT a mounted route in ``App.js`` (admin home is
+// ``/``, resolved via ``RoleAwareIndex``). Defensive: if a user
+// hits a legacy bookmark / stale link to ``/dashboard``, the 404
+// shell should NOT render a misleading "Dashboard > ..." trail.
+// The paired fix (see ``ROUTE_META`` comment on line ~50)
+// re-parents every admin breadcrumb from ``/dashboard`` to ``/``
+// so the Home link actually works.
 export const CRUMB_SKIP = new Set([
   "/", "/portal", "/portal/", "/portal/home",
   "/dashboard", "/tech/dashboard",
@@ -40,37 +49,45 @@ export const CRUMB_SKIP = new Set([
 
 // Explicit metadata map. Keys are literal paths OR the resolver falls
 // back to slug-derived labels when a path is not listed here.
+//
+// P53 tail (Feb-2026) — Home key is ``"/"`` (was ``"/dashboard"``).
+// The admin landing is served by ``RoleAwareIndex`` in App.js at
+// path ``/`` — no route is ever mounted at ``/dashboard`` (the
+// string ``/dashboard`` in Dashboard.jsx is an API path, not a
+// frontend route). Every ``parent: "/dashboard"`` below was
+// producing a dead-link breadcrumb; all updated to
+// ``parent: "/"``.
 export const ROUTE_META = {
   // ── Admin surfaces ────────────────────────────────
-  "/dashboard":         { label: "Home", parent: null },
-  "/workstream":        { label: "Workstream", parent: "/dashboard" },
-  "/schedule":          { label: "Schedule", parent: "/dashboard" },
-  "/customers":         { label: "Customers", parent: "/dashboard" },
+  "/":                  { label: "Home", parent: null },
+  "/workstream":        { label: "Workstream", parent: "/" },
+  "/schedule":          { label: "Schedule", parent: "/" },
+  "/customers":         { label: "Customers", parent: "/" },
   "/customers/:id":     { label: "Customer", parent: "/customers",
                               dynamic: "customer" },
-  "/jobs":              { label: "Jobs", parent: "/dashboard" },
+  "/jobs":              { label: "Jobs", parent: "/" },
   "/jobs/new":          { label: "New Job", parent: "/jobs" },
   "/jobs/:id":          { label: "Job Details", parent: "/jobs",
                               dynamic: "job" },
-  "/leads":             { label: "Leads", parent: "/dashboard" },
+  "/leads":             { label: "Leads", parent: "/" },
   "/leads/:id":         { label: "Lead", parent: "/leads",
                               dynamic: "lead" },
-  "/quotes":            { label: "Quotes", parent: "/dashboard" },
+  "/quotes":            { label: "Quotes", parent: "/" },
   "/quotes/:id":        { label: "Quote", parent: "/quotes",
                               dynamic: "quote" },
-  "/estimates":         { label: "Estimates", parent: "/dashboard" },
+  "/estimates":         { label: "Estimates", parent: "/" },
   "/estimates/:id":     { label: "Estimate", parent: "/estimates",
                               dynamic: "estimate" },
-  "/invoices":          { label: "Invoices", parent: "/dashboard" },
+  "/invoices":          { label: "Invoices", parent: "/" },
   "/invoices/:id":      { label: "Invoice", parent: "/invoices",
                               dynamic: "invoice" },
-  "/payments":          { label: "Payments", parent: "/dashboard" },
-  "/analytics":         { label: "Analytics", parent: "/dashboard" },
-  "/reports":           { label: "Reports", parent: "/dashboard" },
-  "/reviews":           { label: "Reviews", parent: "/dashboard" },
+  "/payments":          { label: "Payments", parent: "/" },
+  "/analytics":         { label: "Analytics", parent: "/" },
+  "/reports":           { label: "Reports", parent: "/" },
+  "/reviews":           { label: "Reviews", parent: "/" },
   "/reviews/:id":       { label: "Review", parent: "/reviews",
                               dynamic: "review" },
-  "/marketing":         { label: "Marketing", parent: "/dashboard" },
+  "/marketing":         { label: "Marketing", parent: "/" },
   "/marketing/sequences":         { label: "Sequences", parent: "/marketing" },
   "/marketing/sequences/:id":     { label: "Sequence", parent: "/marketing/sequences",
                                             dynamic: "sequence" },
@@ -82,7 +99,7 @@ export const ROUTE_META = {
   "/marketing/analytics":         { label: "Analytics", parent: "/marketing" },
 
   // Admin nested surfaces (analytics, ops, integrations, etc.)
-  "/admin":                       { label: "Admin", parent: "/dashboard" },
+  "/admin":                       { label: "Admin", parent: "/" },
   "/admin/analytics":             { label: "Analytics", parent: "/admin" },
   "/admin/analytics-monthly":     { label: "Analytics · Monthly", parent: "/admin" },
   "/admin/ops":                   { label: "Ops", parent: "/admin" },
@@ -94,7 +111,7 @@ export const ROUTE_META = {
   "/admin/soshie":                { label: "Soshie", parent: "/admin" },
   "/admin/queue":                 { label: "Queue", parent: "/admin" },
 
-  "/settings":                    { label: "Settings", parent: "/dashboard" },
+  "/settings":                    { label: "Settings", parent: "/" },
   "/settings/tenant":             { label: "Tenant", parent: "/settings" },
   "/settings/tenant/hq":          { label: "HQ Location", parent: "/settings/tenant" },
   "/settings/billing":            { label: "Billing", parent: "/settings" },
