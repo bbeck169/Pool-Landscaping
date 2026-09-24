@@ -972,6 +972,51 @@ async def patch_recurring(tpl_id: str, body: RecurringJobPatch,
             tenant_id=tenant["id"], tpl_id=tpl_id,
             actor=user, before=_pre_image, updates=updates,
         )
+    # ── P55 · Feb-2026 — Category sync fan-out ──
+    # When a category field was in the write set, propagate the
+    # new value to every linked UNPAID Invoice via the
+    # ``sync_recurring_template_to_children`` orchestrator. Jobs
+    # are DELIBERATELY NOT updated (Q1/Option B in P55 · they
+    # don't carry category fields today). If a category id was
+    # deleted after the PATCH validation but before the
+    # orchestrator's own name-resolve, the orchestrator raises
+    # ``CategorySyncNameLookupError`` — we translate to HTTP 422
+    # with a specific code so the caller can retry with the
+    # correct id.
+    if _needs_category_pre and res.matched_count > 0:
+        from services.category_sync import (
+            sync_recurring_template_to_children,
+            CategorySyncNameLookupError,
+        )
+        _sync_kwargs: Dict[str, Any] = {"origin": "recurring_template_edit"}
+        if "income_category_id" in updates:
+            _sync_kwargs["income_category_id"] = updates.get("income_category_id")
+        if "service_category_id" in updates:
+            _sync_kwargs["service_category_id"] = updates.get("service_category_id")
+        try:
+            await sync_recurring_template_to_children(
+                tenant_id=tenant["id"],
+                recurring_job_id=tpl_id,
+                actor_id=(user or {}).get("id"),
+                **_sync_kwargs,
+            )
+        except CategorySyncNameLookupError as _cs_exc:
+            raise HTTPException(
+                422,
+                {"code": "category_deleted_after_source_write",
+                 "category_id": _cs_exc.category_id,
+                 "collection": _cs_exc.collection},
+            )
+        except Exception as _cs_exc:                       # noqa: BLE001
+            # Best-effort fan-out — the template write itself
+            # succeeded; a fan-out crash is logged and swallowed
+            # so the PATCH response reflects the source-of-truth
+            # state. Ops can re-run via a bulk backfill if the
+            # sync repeatedly fails on a specific tenant.
+            logger.warning(
+                "[category_sync.recurring→invoices.failed] "
+                "template=%s error=%s", tpl_id, _cs_exc,
+            )
     _final = await db.recurring_job_templates.find_one(
         {"id": tpl_id, "tenant_id": tenant["id"]}, {"_id": 0}
     )
