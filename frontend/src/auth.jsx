@@ -57,6 +57,28 @@ export function AuthProvider({ children }) {
               }
             } catch { /* i18n hydration is best-effort */ }
           }
+          // Phase P52 · Feb-2026 — mirror the same hydration for the
+          // tenant-scoped default locale.  The value lands in
+          // ``localStorage.tenant_default_locale`` so the i18n
+          // detector chain's tenant rung fires on the NEXT boot
+          // (cold-start reads localStorage synchronously; the
+          // current boot has already picked its language above).
+          // Wrapped in its own try so a stale null / missing field
+          // never bounces the auth boot.
+          try {
+            const tenantLocale = fresh.tenant_default_locale;
+            if (tenantLocale && ["en", "es", "fr"].includes(tenantLocale)) {
+              const stored = localStorage.getItem("tenant_default_locale");
+              if (stored !== tenantLocale) {
+                localStorage.setItem("tenant_default_locale", tenantLocale);
+              }
+            } else if (tenantLocale === null) {
+              // Explicit null in the payload — clear any stale
+              // cache so an admin who un-set the tenant default
+              // sees the detector chain fall through cleanly.
+              localStorage.removeItem("tenant_default_locale");
+            }
+          } catch { /* tenant-locale hydration is best-effort */ }
         }
       } catch (e) {
         // Feb-2026 · Zombie-session hotfix — if /auth/me itself returned

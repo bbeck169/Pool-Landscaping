@@ -841,6 +841,31 @@ async def me(user: dict = Depends(get_current_user)):
     payload["active_tenant_id"] = (user.get("active_tenant_id")
                                     or user.get("tenant_id"))
     payload["tenant_memberships"] = user.get("tenant_memberships") or []
+
+    # Phase P52 · Feb-2026 — surface ``tenant.default_locale`` in the
+    # /auth/me payload so ``auth.jsx`` can hydrate
+    # ``localStorage.tenant_default_locale`` on boot.  The frontend
+    # i18n detector chain then reads that value as the tenant-scoped
+    # fallback between the user's personal ``localStorage.lang`` and
+    # the browser navigator.  Falls silently to ``None`` when the
+    # tenant record is missing / hasn't been migrated yet — the
+    # frontend treats null as "no tenant fallback" and skips that
+    # rung of the detector chain.
+    tid = payload.get("active_tenant_id") or user.get("tenant_id")
+    tenant_default_locale = None
+    if tid:
+        try:
+            t_doc = await db.tenants.find_one(
+                {"id": tid}, {"_id": 0, "default_locale": 1},
+            )
+            if t_doc and t_doc.get("default_locale") in ("en", "es", "fr"):
+                tenant_default_locale = t_doc["default_locale"]
+        except Exception:                                       # noqa: BLE001
+            # Never let the tenant lookup take down /auth/me — auth
+            # is a hot path.  A null value degrades gracefully at
+            # the frontend detector chain.
+            tenant_default_locale = None
+    payload["tenant_default_locale"] = tenant_default_locale
     return payload
 
 

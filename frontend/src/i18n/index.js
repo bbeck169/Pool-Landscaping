@@ -65,22 +65,22 @@ const resources = {
 };
 
 
-// Detector reads ``localStorage.lang`` first (set by the selector),
-// falling back to the browser navigator. We deliberately DO NOT
-// persist the detected value back to localStorage — the language
-// selector is the single source of truth for that key.
-//
-// TODO(P52): once tenant.default_locale ships, thread the current
-// tenant's ``default_locale`` INTO the detection chain here as a
-// sibling detector.  Order will become:
-//   1. ``lang-localstorage`` (user pref — still highest priority).
-//   2. ``lang-tenant-default`` (tenant admin's chosen default).
-//   3. ``navigator``.
+// Detector chain (P52-wired, Feb-2026):
+//   1. ``lang-localstorage``        — user personal pref (LanguageSelector).
+//   2. ``lang-tenant-default``      — tenant admin's chosen default,
+//                                     hydrated to localStorage by
+//                                     ``auth.jsx`` after ``/auth/me``
+//                                     returns the tenant record.  On a
+//                                     cold-boot with no cache the rung
+//                                     returns undefined and the chain
+//                                     falls through cleanly.
+//   3. ``navigator``                — browser language.
 //   4. ``fallbackLng`` ("en").
-// The tenant-default detector will read from an in-memory context
-// hydrated by ``AppLayout`` after ``/api/tenants/me`` resolves.  DO
-// NOT hardcode a fetch here — that would trigger a network call
-// during i18n init before ``<App />`` even mounts.
+//
+// We deliberately do NOT persist the detected value back to
+// localStorage — the LanguageSelector is the single source of truth
+// for ``lang``, and ``auth.jsx`` is the single source of truth for
+// ``tenant_default_locale``.  No hidden writes from the detector.
 const detector = new LanguageDetector();
 detector.addDetector({
   name: "lang-localstorage",
@@ -94,6 +94,25 @@ detector.addDetector({
   },
   cacheUserLanguage() { /* no-op — selector owns writes */ },
 });
+detector.addDetector({
+  name: "lang-tenant-default",
+  lookup() {
+    try {
+      const raw = (typeof window !== "undefined" && window.localStorage
+        ? window.localStorage.getItem("tenant_default_locale")
+        : "") || "";
+      if (!raw) return undefined;
+      const normalized = String(raw).toLowerCase().slice(0, 2);
+      // Belt: only return locales we actually bundle.  A stale value
+      // (e.g. from a future ``de`` rollout that got rolled back)
+      // must NOT crash the detector — fall through cleanly.
+      return ["en", "es", "fr"].includes(normalized)
+        ? normalized
+        : undefined;
+    } catch { return undefined; }
+  },
+  cacheUserLanguage() { /* no-op — auth.jsx owns writes */ },
+});
 
 
 i18n
@@ -106,8 +125,8 @@ i18n
     ns: ["common", "industries", "checklist", "leads", "propertyselector"],
     defaultNS: "common",
     detection: {
-      order: ["lang-localstorage", "navigator"],
-      caches: [],   // selector owns writes.
+      order: ["lang-localstorage", "lang-tenant-default", "navigator"],
+      caches: [],   // selector + auth.jsx own writes.
     },
     interpolation: { escapeValue: false },   // React already escapes.
     returnNull: false,
