@@ -15,6 +15,56 @@ function rankColor(rank) {
   return "#DC2626";                          // red
 }
 
+// Task J · Commit 2 · Feb-2026 — map a thrown ``api`` error into
+// user-facing copy. Precedence per the ask-approved matrix:
+//   1. Server-crafted ``detail.message`` on rich dict shape
+//      (this is what ``require_feature`` puts on the 402 —
+//      services/entitlements/deps.py :54-63).
+//   2. Plain-string ``detail`` when the server uses the shorter
+//      ``raise HTTPException(400, "text")`` form.
+//   3. Status-code fallback matrix.
+//   4. Last-resort "Something went wrong. Please try again."
+//      for network errors + 500s + anything without a status.
+//
+// Pydantic 422 details are LISTS (``[{loc, msg, ...}, ...]``) —
+// they intentionally fall through the two server-message branches
+// and land on the 422 fallback so the user sees friendly copy
+// instead of "Input should be less than or equal to 9" noise.
+//
+// Never surfaces raw stack traces or JSON blobs; the branches
+// above emit strings only.
+function _mapHeatmapError(e) {
+  const status = Number(e?.status || 0);
+  const detail = e?.data?.detail;
+  let serverMessage = "";
+  if (
+    detail && typeof detail === "object" && !Array.isArray(detail)
+    && typeof detail.message === "string"
+    && detail.message.trim()
+  ) {
+    serverMessage = detail.message.trim();
+  } else if (typeof detail === "string" && detail.trim()) {
+    serverMessage = detail.trim();
+  }
+  if (serverMessage) return serverMessage;
+  if (status === 402) {
+    return (
+      "Feature not enabled — contact your admin to activate "
+      + "SEO Rank Heatmap."
+    );
+  }
+  if (status === 422) {
+    return (
+      "Invalid map values — check your latitude, longitude, "
+      + "grid size, and radius."
+    );
+  }
+  if (status === 400) return "Invalid request.";
+  if (status === 401 || status === 403) return "Not authorized.";
+  if (status === 429) return "Rate limit hit — try again in a moment.";
+  return "Something went wrong. Please try again.";
+}
+
 export default function RankHeatmap() {
   const [form, setForm] = useState({
     keyword: "", center_lat: 33.6, center_lng: -112.2,
@@ -37,6 +87,13 @@ export default function RankHeatmap() {
   // this matches the ask-approved "one banner over per-field
   // errors" non-blocker decision. Cleared on every Generate click.
   const [validationError, setValidationError] = useState("");
+  // Task J · Commit 2 · Feb-2026 — server-error banner. Distinct
+  // from ``validationError`` (client-side guard) so both surfaces
+  // can coexist without stomping each other, though in practice
+  // the ``start`` handler clears both at the top of every click.
+  //   * ``rank-heatmap-validation-error`` — client empty-field.
+  //   * ``rank-heatmap-error``           — server or network.
+  const [error, setError] = useState("");
 
   const loadList = () => api.get("/seo/rank-heatmaps").then(setRows);
   useEffect(() => { loadList(); }, []);
@@ -56,6 +113,9 @@ export default function RankHeatmap() {
     // front so a fresh click on Generate always starts from a
     // clean slate.
     setValidationError("");
+    // Task J · Commit 2 · Feb-2026 — parallel clear of the server
+    // error banner. Both banners reset on every click.
+    setError("");
     // Empty-field / out-of-bounds guard. Runs BEFORE the fetch so
     // an invalid form never touches the network. Bounds mirror
     // the backend ``RankHeatmapIn`` Pydantic ``Field(...)`` limits
@@ -82,6 +142,11 @@ export default function RankHeatmap() {
       const fresh = await api.get(`/seo/rank-heatmaps/${r.heatmap_id}`);
       setCurrent(fresh);
       loadList();
+    } catch (e) {
+      // Task J · Commit 2 · Feb-2026 — surface any thrown ``api``
+      // error via the mapped copy. NEVER leak raw stack traces or
+      // JSON blobs; ``_mapHeatmapError`` emits strings only.
+      setError(_mapHeatmapError(e));
     } finally { setStarting(false); }
   };
 
@@ -201,9 +266,9 @@ export default function RankHeatmap() {
           </button>
           {/* Task J · Commit 1 · Feb-2026 — inline validation banner.
               Rendered ONLY when the client-side guard trips (never
-              from a server response — that's Commit 2's error
-              surface). Copy is fixed to "Please fill all fields."
-              per the ask-approved non-blocker decision. */}
+              from a server response — that's the ``rank-heatmap-
+              error`` sibling below). Copy is fixed to "Please fill
+              all fields." per the ask-approved non-blocker decision. */}
           {validationError ? (
             <div
               className="mt-2 p-2 rounded-lg text-xs flex items-start gap-2"
@@ -214,6 +279,24 @@ export default function RankHeatmap() {
             >
               <Info size={12} style={{ marginTop: 1 }}/>
               <span className="font-semibold">{validationError}</span>
+            </div>
+          ) : null}
+          {/* Task J · Commit 2 · Feb-2026 — server-error banner.
+              Populated by ``_mapHeatmapError`` in the ``start``
+              catch branch. Same destructive palette + role="alert"
+              as the sibling above so screen readers announce
+              either. Two separate blocks (not a merged one) so
+              testids stay orthogonal for granular assertions. */}
+          {error ? (
+            <div
+              className="mt-2 p-2 rounded-lg text-xs flex items-start gap-2"
+              role="alert"
+              style={{ backgroundColor: "#FEE2E2", color: "#7F1D1D",
+                        border: "1px solid #FCA5A5" }}
+              data-testid="rank-heatmap-error"
+            >
+              <Info size={12} style={{ marginTop: 1 }}/>
+              <span className="font-semibold">{error}</span>
             </div>
           ) : null}
         </div>
