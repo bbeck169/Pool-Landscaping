@@ -150,8 +150,17 @@ def _plant_item(db, name: str = "KK-item", tenant_id: Optional[str] = None) -> s
     return iid
 
 
-def test_pricebook_patch_happy(db, super_headers):
-    iid = _plant_item(db)
+def test_pricebook_patch_happy(db, super_headers, aq_tenant_id):
+    # P58 · Feb-2026 — pass aq_tenant_id explicitly so the seed
+    # item carries the caller's tenant scope. Pre-P58 this test
+    # passed only because ``patch_item`` was NOT tenant-scoped
+    # (a null-tenant seed and any caller's tenant would still
+    # match on the ``id`` filter alone). Post-P58 the handler
+    # requires ``tenant_id`` on both find + update, so the seed
+    # MUST plant a tenant-scoped row or the PATCH hits the
+    # ``not_found`` branch. Precedent: P57's identical
+    # ``_plant_item`` treatment for the bulk-delete path.
+    iid = _plant_item(db, tenant_id=aq_tenant_id)
     r = http.patch(
         f"{API}/items/{iid}",
         headers={**super_headers, "Content-Type": "application/json"},
@@ -172,8 +181,13 @@ def test_pricebook_patch_role_gate(db, customer_headers):
     assert r.status_code == 403
 
 
-def test_pricebook_patch_rejects_negative(db, super_headers):
-    iid = _plant_item(db)
+def test_pricebook_patch_rejects_negative(db, super_headers, aq_tenant_id):
+    # P58 · Feb-2026 — same fixture fix as
+    # ``test_pricebook_patch_happy`` above. The -1 assertion is
+    # what the test proves; the seed just needs to be
+    # tenant-scoped so the PATCH gets past the tenant filter and
+    # actually reaches the negative-check branch.
+    iid = _plant_item(db, tenant_id=aq_tenant_id)
     r = http.patch(
         f"{API}/items/{iid}",
         headers={**super_headers, "Content-Type": "application/json"},
