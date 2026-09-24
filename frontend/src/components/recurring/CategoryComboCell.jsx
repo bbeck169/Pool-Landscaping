@@ -1,14 +1,18 @@
 /**
- * Feb-2026 · Recurring Jobs · inline category combobox cell.
+ * Feb-2026 · Inline category combobox cell.
  *
- * Click-to-edit combobox for the two new taxonomy columns on the
- * Recurring Jobs table (`income_category`, `service_category`).
+ * Click-to-edit combobox for taxonomy columns (`income_category`,
+ * `service_category`) on any row-oriented table that stores an
+ * item's category-id as ``{axis}_category_id``. Originally shipped
+ * for Recurring Jobs (Feb-2026); parameterized in Task C
+ * (Feb-2026) so the Pricebook rows in ``OpsHub.jsx`` can consume
+ * the same component without an intermediate wrapper.
  *
  * Flow on save:
  *   1. `POST /api/{axis}-categories/resolve-or-create` returns a
  *      canonical ``id`` for the typed value (creates a new master
  *      row on first use).
- *   2. `PATCH /api/recurring-jobs/{id}` with
+ *   2. `PATCH ${patchUrl}` with
  *      ``{ [axis + "_category_id"]: id }``. Row updates optimistically.
  *
  * Keys:
@@ -29,15 +33,29 @@ const _AXIS_TO_URL = {
 /**
  * @param {Object} props
  * @param {"income"|"service"} props.axis
- * @param {Object} props.row  Recurring template row (must carry `id`).
+ * @param {Object} props.row  Table row (must carry ``id``). Some
+ *   callers use the row for the ``patchUrl`` builder; others only
+ *   need the id for the testid default.
  * @param {string} [props.value]  Current denorm name on the row.
+ *   For rows without a denorm (e.g. Pricebook items), callers
+ *   resolve the name from the master category list and pass it in.
+ * @param {string | ((row: object) => string)} props.patchUrl
+ *   Required. String URL (e.g. ``/items/${row.id}``) or builder
+ *   function (row) → string. Task C · Feb-2026 — no default. Prior
+ *   to Task C the URL was hardcoded to ``/recurring-jobs/${row.id}``;
+ *   callers now pass it explicitly so ``CategoryComboCell`` stays a
+ *   pure parameterized component.
  * @param {(patch: object) => void} props.onPatched  Called with
  *   ``{ [axis + "_category_id"]: id, [axis + "_category_name"]: name }``
- *   so the parent can update the table row without a full reload.
- * @param {string} [props.dataTestidBase]
+ *   so the parent can update the table row (or, for callers that
+ *   prefer a whole-list refetch, ignore the payload and call their
+ *   own ``refresh()``).
+ * @param {string} [props.dataTestidBase]  Overrides the default
+ *   ``recurring-cat-${axis}-${row.id}`` prefix. Task C uses
+ *   ``pb-cat-${axis}-${row.id}`` on the Pricebook rows.
  */
 export default function CategoryComboCell({
-  axis, row, value, onPatched, dataTestidBase,
+  axis, row, value, patchUrl, onPatched, dataTestidBase,
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value || "");
@@ -99,7 +117,17 @@ export default function CategoryComboCell({
         categoryName = cat.name;
       }
       const patchKey = `${axis}_category_id`;
-      await api.patch(`/recurring-jobs/${row.id}`, { [patchKey]: categoryId || "" });
+      // Task C · Feb-2026 — resolve the caller-provided patchUrl.
+      // String (e.g. ``/items/${row.id}``) OR builder (row) => string.
+      // No default: callers MUST supply it. Guarded so a missing
+      // prop fails loud in dev rather than silently no-op'ing.
+      const resolvedUrl = typeof patchUrl === "function"
+        ? patchUrl(row)
+        : patchUrl;
+      if (typeof resolvedUrl !== "string" || !resolvedUrl) {
+        throw new Error("CategoryComboCell: patchUrl prop is required");
+      }
+      await api.patch(resolvedUrl, { [patchKey]: categoryId || "" });
       onPatched && onPatched({
         [patchKey]: categoryId,
         [`${axis}_category_name`]: categoryName,

@@ -1446,6 +1446,7 @@ export default function RecurringJobs() {
                       axis="service"
                       row={r}
                       value={r.service_category_name || ""}
+                      patchUrl={`/recurring-jobs/${r.id}`}
                       onPatched={(patch) => setItems((prev) =>
                         prev.map((x) => x.id === r.id ? { ...x, ...patch } : x))}
                     />
@@ -1456,6 +1457,7 @@ export default function RecurringJobs() {
                       axis="income"
                       row={r}
                       value={r.income_category_name || ""}
+                      patchUrl={`/recurring-jobs/${r.id}`}
                       onPatched={(patch) => setItems((prev) =>
                         prev.map((x) => x.id === r.id ? { ...x, ...patch } : x))}
                     />

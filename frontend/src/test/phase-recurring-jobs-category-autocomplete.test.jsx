@@ -42,6 +42,7 @@ describe("CategoryComboCell · autocomplete typeahead", () => {
         axis="income"
         row={{ id: "tpl-A" }}
         value=""
+        patchUrl="/recurring-jobs/tpl-A"
         onPatched={() => {}}
       />,
     );
@@ -69,6 +70,7 @@ describe("CategoryComboCell · autocomplete typeahead", () => {
         axis="income"
         row={{ id: "tpl-B" }}
         value=""
+        patchUrl="/recurring-jobs/tpl-B"
         onPatched={() => {}}
       />,
     );
@@ -93,6 +95,7 @@ describe("CategoryComboCell · autocomplete typeahead", () => {
         axis="income"
         row={{ id: "tpl-C" }}
         value=""
+        patchUrl="/recurring-jobs/tpl-C"
         onPatched={() => {}}
       />,
     );

@@ -42,6 +42,7 @@ describe("CategoryComboCell · inline edit render", () => {
         axis="income"
         row={{ id: "tpl-1" }}
         value="Pool"
+        patchUrl="/recurring-jobs/tpl-1"
         onPatched={() => {}}
       />,
     );
@@ -59,6 +60,7 @@ describe("CategoryComboCell · inline edit render", () => {
         axis="income"
         row={{ id: "tpl-2" }}
         value=""
+        patchUrl="/recurring-jobs/tpl-2"
         onPatched={() => {}}
       />,
     );
@@ -85,6 +87,7 @@ describe("CategoryComboCell · inline edit render", () => {
         axis="service"
         row={{ id: "tpl-3" }}
         value=""
+        patchUrl="/recurring-jobs/tpl-3"
         onPatched={onPatched}
       />,
     );
@@ -114,6 +117,7 @@ describe("CategoryComboCell · inline edit render", () => {
         axis="income"
         row={{ id: "tpl-4" }}
         value="Pool"
+        patchUrl="/recurring-jobs/tpl-4"
         onPatched={() => {}}
       />,
     );
