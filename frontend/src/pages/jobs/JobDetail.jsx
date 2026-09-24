@@ -48,6 +48,12 @@ export default function JobDetail() {
   // derived from the current job so scheduling another visit for
   // the same customer/property/technician is a one-tap flow.
   const [createOpen, setCreateOpen] = useState(false);
+  // Task M+P · Feb-2026 — optimistic in-flight disable for the
+  // ``jd-reopen`` button. Prevents double-clicks from racing the
+  // idempotency envelope on the backend + gives the UI an
+  // immediate visual acknowledgement while the reopen POST is
+  // pending.  Reset on success/error.
+  const [reopening, setReopening] = useState(false);
 
   const isTech = user?.role === "technician";
   // Feb-2026 · admin-gate parity with mobile — ``super_admin`` has
@@ -72,6 +78,31 @@ export default function JobDetail() {
     !isCustomer
     && K6_UNLOCK_ROLES.has(user?.role || "")
     && (job?.status === "completed");
+
+  // Task M+P · Feb-2026 — Tech-visible Reopen.
+  //   * ``isAssignedTech`` is a **client-side approximation** of
+  //     the F1 crew-aware gate the backend enforces
+  //     (``services.authz.is_tech_authorized_on_job``). We can
+  //     only cheaply compare the job's denormalised
+  //     ``technician_id`` against the caller's tech id here —
+  //     crew membership isn't part of the JobDetail payload, so
+  //     a crew-only tech may not see the button even though the
+  //     server would authorise them.  The server 403 is the
+  //     authoritative gate; this heuristic just hides the
+  //     button in the common (direct-assignment) case where we
+  //     can already tell the user isn't the owner. UX-only
+  //     approximation — NOT a security boundary.
+  //   * ``canReopen`` = admin (completed OR cancelled) OR
+  //     assigned tech (completed ONLY — E2 keeps ``cancelled``
+  //     admin-only, matching the backend allowlist).
+  const isAssignedTech =
+    isTech
+    && !!job?.technician_id
+    && job.technician_id === (user?.technician_id || user?.id);
+  const canReopen = (
+    (isAdmin && ["completed", "cancelled"].includes(job?.status))
+    || (isAssignedTech && job?.status === "completed")
+  );
 
   const load = async () => {
     try {
@@ -119,7 +150,51 @@ export default function JobDetail() {
 
   const onArrive = () => act(`/jobs/${id}/arrive`, { lat: 0, lng: 0 });
   const onOnMyWay = () => act(`/jobs/${id}/on-my-way`, { lat: 0, lng: 0 });
-  const onReopen = () => act(`/jobs/${id}/reopen`);
+  // Task M+P · Feb-2026 — tech-visible reopen with rich error
+  // toasts, optimistic in-flight disable, and success-refetch so
+  // the checklist auto-unlocks (backend cleared the SR
+  // ``submitted_at`` in Commit 1). Server ``detail.message`` wins
+  // over any client fallback copy (mirrors the Task J
+  // precedence pattern) so backend-authored context (e.g.
+  // "Only completed jobs can be reopened") always surfaces
+  // verbatim.
+  const onReopen = async () => {
+    if (reopening) return;
+    setReopening(true);
+    try {
+      await api.post(`/jobs/${id}/reopen`);
+      setToast({ tone: "success", message: "Job reopened" });
+      await load();
+    } catch (e) {
+      const status = e?.status;
+      // ``err.data.detail`` shape reference — backend emits
+      //   403 → {"code": "reopen_forbidden", "detail": <msg>}
+      //   400 → "Only completed [or cancelled] jobs can be reopened"
+      //         (plain string — surfaces via ``e.message``)
+      //   409 → idempotency envelope conflict (rare; user retry)
+      const detail = e?.data?.detail;
+      const serverMsg =
+        (detail && typeof detail === "object" && (detail.detail || detail.msg || detail.message))
+        || (typeof detail === "string" ? detail : null)
+        || e?.message;
+      let toastMsg = serverMsg;
+      if (status === 403) {
+        toastMsg = "You aren't authorized to reopen this job.";
+      } else if (status === 409) {
+        toastMsg = "Cannot reopen — job is not in a reopenable state.";
+      } else if (status === 400) {
+        // Server-provided precondition string wins (e.g.
+        // "Only completed jobs can be reopened"); fallback if
+        // absent.
+        toastMsg = serverMsg || "This job can't be reopened right now.";
+      } else if (!status || status >= 500) {
+        toastMsg = "Something went wrong. Please try again.";
+      }
+      setToast({ tone: "error", message: toastMsg });
+    } finally {
+      setReopening(false);
+    }
+  };
   const onComplete = async () => {
     try {
       await api.put(`/jobs/${id}`, { status: "completed" });
@@ -283,15 +358,24 @@ export default function JobDetail() {
                   <Check size={14} /> Complete
                 </Button>
               ) : null}
-              {["completed", "cancelled"].includes(job.status) ? (
-                <Button onClick={onReopen} testid="jd-reopen">
-                  <RotateCw size={14} /> Reopen
-                </Button>
-              ) : null}
               {job.status !== "cancelled" ? (
                 <Button variant="ghost" onClick={onCancel} testid="jd-cancel">Cancel</Button>
               ) : null}
             </>
+          ) : null}
+          {/* Task M+P · Feb-2026 — Reopen surfaces for admin
+              (completed OR cancelled) AND assigned technician
+              (completed only, per E2).  Hoisted out of the admin
+              branch so techs can self-serve a "missed reading /
+              missed photo" fix; the backend F1 crew-aware gate
+              is authoritative — 403 falls through to the toast
+              matrix in ``onReopen``.  ``jd-reopen`` testid
+              preserved verbatim so Task M+P Commit 2 pytest and
+              downstream vitest continue to key off it. */}
+          {canReopen ? (
+            <Button onClick={onReopen} disabled={reopening} testid="jd-reopen">
+              <RotateCw size={14} /> {reopening ? "Reopening…" : "Reopen"}
+            </Button>
           ) : null}
           {isTech && canAct ? (
             <>
