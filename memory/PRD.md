@@ -21441,3 +21441,107 @@ None in shipped P47 code.  One bug in the test author's expectation for the env-
 - **`seed_frozen.py` fix** — stop the demo seeds from writing full-ISO `scheduled_date` values on boot (lines 43, 47 use `.isoformat()` where `.date().isoformat()` is intended).
 
 
+
+## Phase P50 · Feb-2026 — i18n Coverage Expansion (SHIPPED preview · Leads + Property Selector translated, backend audit-locked)
+
+**Goal.** Land translations for two high-visibility surfaces (the Leads dashboard + the Recurring-Jobs Property Selector), register two new i18n namespaces, and lock the backend notification-template fallback contract so a future template migration can't silently drop a locale.
+
+### Ground-truth surprises
+
+Two scope-compression discoveries at exploration time (halt-and-report round-trip captured in Preflight Q&A):
+
+1. **i18n framework already installed + initialised.**  `frontend/package.json` carries `i18next ^26.4.2`, `react-i18next ^17.0.14`, `i18next-browser-languagedetector`.  `frontend/src/i18n/index.js` (Phase D3, 90 lines) already boots EN/ES/FR at three namespaces (`common`, `industries`, `checklist`) and wires the detector chain `localStorage.lang → navigator → en`.  Wired at app root in `src/index.js` before `<App />` mounts.  P50 50a "install + init" contracted to: register the two new namespaces + add the P52 tenant-fallback TODO slot.
+2. **Backend template ES/FR variants already fully populated.**  `services/email_body_i18n.py` (Phase D6) catalogues **131 keys × 3 locales at 100% parity** (zero missing, zero orphans).  `services/notification_templates/{en,es,fr}/` carries **20 template files × 3 locales at 100% parity**.  `services/i18n_notifications.py` (Phase D5) already implements the `requested → en → TemplateNotFoundError` fallback contract.  P50 50c "add ES/FR templates" contracted to: write the parity lockdown test + the resolver-fallback lockdown test.
+
+Both compressions confirmed with the user before execution; scope adjusted to reflect shipped state.
+
+### 50a — namespaces + P52 slot
+
+`frontend/src/i18n/index.js`
+- Registered two new namespaces: `leads`, `propertyselector`.  Imported the six new bundles (EN + ES + FR × 2 namespaces).  Extended the `resources` map + the `ns: [...]` init option.
+- Added a `TODO(P52)` comment at the detector-chain block calling out the tenant `default_locale` insertion point (between `lang-localstorage` and `navigator`).  The comment names the future detector (`lang-tenant-default`) so the P52 phase has a grep anchor.
+- No other lines touched in `i18n/index.js`; `src/index.js` untouched.
+
+### 50b — Leads + Property Selector translations
+
+**New locale bundles (6 files, 3 languages × 2 namespaces):**
+- `frontend/src/i18n/locales/{en,es,fr}/leads.json` — tab labels, search placeholder, "All statuses", 5 canonical status labels (new/contacted/quoted/closed_won/closed_lost), tab-scoped empty states (active + archive title/subtitle), empty-search title + clear-filters CTA.
+- `frontend/src/i18n/locales/{en,es,fr}/propertyselector.json` — loading state, no-address warning, single-property label, multi-property label, "Choose a property…" placeholder, validation copy with `{{count}}` interpolation, customer-search placeholder.
+
+**Translation quality note.** All strings translated with attention to standard CRM terminology (Spanish "clientes potenciales" / French "prospects" for leads; formal `usted` / `vous` register in ES/FR to match the D6 email body pattern).  No `TODO_TRANSLATE` placeholders — every key has a fully translated value.
+
+**LeadsDashboardPage.jsx refactor** (5 surgical edits, zero data-testid changes):
+- Added `useTranslation("leads")` hook to both `LeadsDashboardPage` and its nested `LeadDetailDrawer`.
+- Tab label render: `{t(\`tabs.${tabKey}\`, LEAD_TABS[tabKey].label)}` — English fallback via second-arg guarantees the tabs still render even if i18n singleton fails to boot.
+- Search placeholder: `t("search_placeholder", "Search name, email, phone")`.
+- Status filter dropdown: "All statuses" + tab-scoped status options both wired via `t()`.
+- Tab-scoped empty state block + empty-search title + clear-filters CTA wired.
+- Row status badge (`STATUS_LABEL(l.status)`) + LeadDetailDrawer status `<select>` options wired for consistency — status labels are in-spec regardless of render surface.
+- Explicit **out-of-scope preservations** (per user's Q2b clarification): source dropdown, density toggle, table headers, bulk-action bar copy, bulk-status confirm modal, bulk-delete confirm modals — all left as English literals for a future phase.
+
+**RecurringJobs.jsx property-selector refactor** (2 surgical edits + hook add):
+- Added `useTranslation("propertyselector")` hook to `RecurringJobs`.
+- Customer-search placeholder (~line 1095): `t("search_customer_placeholder", "Search by customer name…")`.
+- Property-selector block (~lines 1420-1500): 6 strings wired through `t()` — loading, empty warning, single-property label, multi-property label, dropdown "Choose a property…" placeholder, and the `{{count}}`-interpolated pick-one validation copy.
+
+### 50c — Backend audit + lockdown (no template additions needed)
+
+**No production changes.**  The user's spec asked to "add ES + FR sibling templates for each existing EN template", but the ES + FR variants were already fully populated in a prior D6 phase.  P50 instead adds the **regression lockdown** so a future template migration can't silently drop a locale.
+
+### 50e — Tests
+
+`backend/tests/test_p50_notification_template_locale_fallback.py` — **9 tests, 9 passing** (0.10s):
+1. `email_body_i18n` parity across locales — EN keys must have ES + FR mirrors, no orphans.
+2. `SUPPORTED_LOCALES == {en, es, fr}` + `FALLBACK_LOCALE == "en"`.
+3. Spot-check that a shipped key resolves DISTINCTLY per locale (guards against accidental EN aliasing).
+4. Unsupported locale falls back to EN variant.
+5. Missing key under ES falls back to the EN variant (synthetic key injected + torn down).
+6. Missing key under EN raises `KeyError` (bug signal, not silent fallback).
+7. Notification template file parity — every EN template file has ES + FR siblings at the exact same filename; no orphans in either direction.
+8. `resolve_notification_body` unsupported-locale → EN branch (result identity check).
+9. `resolve_notification_body` unknown template → `TemplateNotFoundError`.
+
+`frontend/src/test/p50-i18n-init-and-fallback.test.jsx` — **12 tests, 12 passing** (13ms):
+1. i18n singleton initialises without throwing; `SUPPORTED_LOCALES = ["en", "es", "fr"]`.
+2. All 5 namespaces registered (`common`, `industries`, `checklist`, `leads`, `propertyselector`).
+3. P52 TODO comment present in `i18n/index.js` (grep anchor for the future tenant-fallback slot).
+4-7. Leads namespace resolves in each locale — Active label, Archive label, 5-status matrix × 3 locales, empty-state titles.
+8-9. Propertyselector namespace resolves in each locale — loading + labels + `{{count}}` interpolation.
+10. Missing-key returns key literal (contract that lets `t(k, fallbackEN)` pattern work).
+11. Unsupported locale short-circuits to `resolvedLanguage === "en"` via `fallbackLng`.
+12. Missing key under ES falls back to EN (synthetic key injected + torn down).
+
+`frontend/src/test/p50-leads-tabs-translated.test.jsx` — **4 tests, 4 passing** (259ms):
+1-3. LeadsDashboardPage mount in each of EN/ES/FR — asserts tab labels, search placeholder, "All statuses", `lead-status-option-new` copy, and the Active-tab empty-state title all render the translated string.  Every P48 `data-testid` is asserted (`leads-tab-active`, `leads-tab-archive`, `lead-search-input`, `lead-filter-status-select`, `lead-status-option-new`, `admin-leads-empty-active`).
+4. Runtime locale switch — mount EN, flip to ES via `i18n.changeLanguage`, assert tab labels flip in situ without a remount (react-i18next `languageChanged` re-render contract).
+
+### Test results
+```
+backend  · pytest tests/test_p50_notification_template_locale_fallback.py -v
+         → 9 passed in 0.10s
+frontend · yarn vitest run src/test/p50-i18n-init-and-fallback.test.jsx
+         → Test Files 1 passed (1) · Tests 12 passed (12) · Duration 725ms
+frontend · yarn vitest run src/test/p50-leads-tabs-translated.test.jsx
+         → Test Files 1 passed (1) · Tests 4 passed (4) · Duration 987ms
+```
+
+### P47 + P48 smoke re-run (post-P50)
+```
+backend  · P47 (16 tests) + P48 (7 tests) → 23 passed, 1 warning in 0.63s
+frontend · P47 (4 tests) + P48 (8 tests) → 12 passed, 2 test files
+```
+No P47/P48 regressions.  P48 emits a `NO_I18NEXT_INSTANCE` stderr warning under the new i18n-wired `useTranslation` call in LeadsDashboardPage — cosmetic only; the fallback second-arg pattern (`t(key, "English default")`) keeps the assertions green even when the singleton isn't attached to the test-render tree.
+
+### Bugs surfaced during P50 execution
+None in shipped production code.  Two test-author bugs corrected in test files only:
+- Frontend `test_missing_key_returns_key_literal` — expected `"leads:foo.bar"` but i18next returns just `"foo.bar"` (namespace prefix stripped).  Test corrected.
+- Backend `test_notification_template_resolver_falls_back_to_en_on_unsupported_locale` — visit_summary_email template required 4 merge vars (business_name, customer_first_name, portal_link, visit_date), initial context supplied unrelated keys.  Test context corrected.
+
+### Explicitly OUT OF SCOPE (deferred to P52 per user brief)
+- Tenant `default_locale` field.
+- Global Settings "Default Language" dropdown.
+- Removing `<LanguageSelector>` from top bars.
+- Wiring tenant fallback into the i18n detection chain (TODO(P52) grep anchor in place).
+- Bonus sweep of the other 30+ hardcoded strings in `LeadsDashboardPage.jsx` (source dropdown, density toggle, table headers, bulk-action bar, confirm modals) — user's Q2b explicitly said future phase.
+
+
