@@ -359,6 +359,41 @@ def _build_legacy_doc(raw: dict, tenant_id: str, normalize_phone):
 
 @router.post("/import/items")
 async def import_items(body: CsvIn, user: dict = Depends(require_admin)):
+    """Phase P58 · Feb-2026 — tenant-scope hardening.
+
+    Prior to this fix, ``import_items`` performed three unscoped
+    ``db.items`` operations:
+      * L382 ``find_one({\"name\": ...})`` — no tenant_id filter.
+      * L384 ``update_one({\"id\": match[\"id\"]}, ...)`` — no
+        tenant_id filter, could OVERWRITE a cross-tenant row when
+        two tenants happened to have items with the same name.
+      * L388 ``insert_one(doc)`` — the new doc had no ``tenant_id``
+        field, creating an orphaned / globally-visible row.
+
+    Impact: admin in tenant A uploading a CSV with an item name
+    that collides with tenant B's item name would silently rewrite
+    tenant B's row (case-insensitive regex match). Cross-tenant
+    mutation breach + orphaned-row hygiene bug.
+
+    Fix mirrors the P58 ``patch_item`` hardening + established
+    ``import_customers`` pattern in the same file:
+      * Read tenant_id from ``user.get(\"tenant_id\")`` (matches
+        ``import_customers`` at L83 which uses
+        ``Depends(get_current_tenant)``; keeping ``user.get`` here
+        for consistency with the rest of items.py's P57 pattern).
+      * P57-style ValueError guard on empty/whitespace tenant_id.
+      * Every ``db.items`` mutation filters by tenant_id.
+      * Insert path stamps ``tenant_id`` on the new doc.
+      * Update path stamps ``tenant_id`` on the ``$set`` too so
+        legacy pre-P58 orphan rows (which lack tenant_id) are
+        backfilled to the actor's tenant if they happen to match
+        by name.
+    """
+    tenant_id = user.get("tenant_id")
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError(
+            "import_items requires a non-empty tenant_id on the caller"
+        )
     rows = _read_rows(body.csv)
     created = updated = skipped = 0
     errors = []
@@ -379,12 +414,22 @@ async def import_items(body: CsvIn, user: dict = Depends(require_admin)):
             "unit_price": price,
             "taxable": _parse_bool(r.get("taxable")) if r.get("taxable") not in (None, "") else True,
         }
-        match = await db.items.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}})
+        match = await db.items.find_one({
+            "name": {"$regex": f"^{name}$", "$options": "i"},
+            "tenant_id": tenant_id,
+        })
         if match:
-            await db.items.update_one({"id": match["id"]}, {"$set": doc})
+            await db.items.update_one(
+                {"id": match["id"], "tenant_id": tenant_id},
+                # Stamp tenant_id in the $set too so any legacy row
+                # missing the field gets backfilled to the actor's
+                # tenant on the way through.
+                {"$set": {**doc, "tenant_id": tenant_id}},
+            )
             updated += 1
         else:
-            doc.update({"id": new_id(), "created_at": now_iso()})
+            doc.update({"id": new_id(), "tenant_id": tenant_id,
+                          "created_at": now_iso()})
             await db.items.insert_one(doc)
             created += 1
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:20]}
