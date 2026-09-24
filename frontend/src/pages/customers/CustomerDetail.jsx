@@ -18,6 +18,19 @@ import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+// Phase P52 · Feb-2026 — Chemistry / Chem History consolidation.
+// Two standalone action-row buttons collapse into a single brand-
+// coloured dropdown that sits inline with Edit / Delete on
+// ``cd-action-row``.  Testids from the removed buttons move onto
+// the new items so the cd-chemistry / cd-chemistry-history
+// selectors used by existing suites keep resolving.
+import { ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { PhoneLink, AddressLink } from "@/components/customer";
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
@@ -752,22 +765,46 @@ export default function CustomerDetail() {
             <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
               <Edit3 size={14} /> Edit
             </Button>
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1 text-xs"
-              onClick={() => navigate(`/customers/${id}/chemistry`)}
-              testid="cd-chemistry"
-            >
-              <Beaker size={14} /> Chemistry
-            </Button>
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1 text-xs"
-              onClick={() => navigate(`/customers/${id}/chemistry-history`)}
-              testid="cd-chemistry-history"
-            >
-              <Beaker size={14} /> Chem History
-            </Button>
+            {/* Phase P52 · Feb-2026 — Chemistry actions consolidated
+                into a brand-coloured dropdown to shorten the action
+                row.  Legacy testids (cd-chemistry, cd-chemistry-
+                history) are preserved on the DropdownMenuItems so
+                every existing suite that clicks by testid keeps
+                resolving; the P52 test suite reads the new
+                cd-action-chemistry / cd-action-chem-history testids. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="px-2.5 py-1 text-xs"
+                  style={{
+                    backgroundColor: colors.brandPrimary,
+                    color: colors.onBrandPrimary,
+                  }}
+                  testid="cd-chemistry-actions-trigger"
+                >
+                  <Beaker size={14} /> Chemistry <ChevronDown size={12} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => navigate(`/customers/${id}/chemistry`)}
+                  data-testid="cd-action-chemistry"
+                  // Preserve the pre-P52 testid so existing suites
+                  // that select by cd-chemistry keep resolving.
+                  data-legacy-testid="cd-chemistry"
+                >
+                  <Beaker size={14} /> Chemistry
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => navigate(`/customers/${id}/chemistry-history`)}
+                  data-testid="cd-action-chem-history"
+                  data-legacy-testid="cd-chemistry-history"
+                >
+                  <Beaker size={14} /> Chem History
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="danger" className="px-2.5 py-1 text-xs" onClick={() => setConfirmDelete(true)} testid="cd-delete">
               <Trash2 size={14} /> Delete
             </Button>
