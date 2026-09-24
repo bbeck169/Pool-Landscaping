@@ -125,10 +125,19 @@ NavyFilterBar.Search = function NavyFilterBarSearch({
   onClear,
   className = "",
   minWidth = 220,
+  clearTestid,
   ...rest
 }) {
   const inputTestid = rest["data-testid"];
   const showClear = typeof onClear === "function" && !!value;
+  // Consumers can override the derived Clear-button testid via
+  // ``clearTestid`` when the page's legacy testid diverges from
+  // the ``{data-testid}-clear`` convention (e.g. RecurringJobs
+  // ships ``recurring-search-clear`` alongside
+  // ``recurring-search-input``).
+  const resolvedClearTestid = clearTestid !== undefined
+    ? clearTestid
+    : (inputTestid ? `${inputTestid}-clear` : undefined);
   return (
     <div
       className={`relative flex-1 ${className}`}
@@ -159,7 +168,7 @@ NavyFilterBar.Search = function NavyFilterBarSearch({
           type="button"
           onClick={onClear}
           aria-label="Clear search"
-          data-testid={inputTestid ? `${inputTestid}-clear` : undefined}
+          data-testid={resolvedClearTestid}
           className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:opacity-70"
         >
           <XIcon size={13} style={{ color: colors.nav.bg }} />

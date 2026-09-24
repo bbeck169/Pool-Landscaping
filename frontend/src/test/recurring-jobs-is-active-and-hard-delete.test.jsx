@@ -36,6 +36,13 @@ vi.mock("@/theme", () => ({
     brand: "#0B4A6F", onBrand: "#FFFFFF", onSurface: "#111827",
     muted: "#6B7280", border: "#E5E7EB", surface: "#FFFFFF",
     surfaceSecondary: "#F8FAFC",
+    // Task E · Feb-2026 — NavyFilterBar tokens.  RecurringJobs
+    // imports the shared filter-strip primitive; the primitive
+    // reads ``nav.*`` + ``gradient.*`` + ``inputBorder`` off the
+    // ``colors`` object at render.
+    nav: { bg: "#1B1F5C", border: "rgba(255,255,255,0.10)", fg: "#FFFFFF", fgMuted: "rgba(255,255,255,0.72)" },
+    gradient: { css: "linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%)", fg: "#FFFFFF", textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)" },
+    inputBorder: "#3B82F6",
   },
 }));
 

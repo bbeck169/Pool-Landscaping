@@ -59,6 +59,10 @@ vi.mock("@/theme", () => ({
     surfaceSecondary: "#F8FAFC",
     searchIcon: "#0284C7",
     error: "#B91C1C",
+    // Task E · Feb-2026 — NavyFilterBar tokens.
+    nav: { bg: "#1B1F5C", border: "rgba(255,255,255,0.10)", fg: "#FFFFFF", fgMuted: "rgba(255,255,255,0.72)" },
+    gradient: { css: "linear-gradient(90deg, #22C55E 0%, #1B1F5C 100%)", fg: "#FFFFFF", textShadow: "0 1px 2px rgba(0, 0, 0, 0.25)" },
+    inputBorder: "#3B82F6",
   },
 }));
 vi.mock("@/components/customers/CustomerCombobox", () => ({

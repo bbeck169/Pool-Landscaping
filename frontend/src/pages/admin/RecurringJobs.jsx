@@ -22,6 +22,8 @@ import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CategoryComboCell from "@/components/recurring/CategoryComboCell";
 import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import { CustomerLink, PhoneLink } from "@/components/customer";
+// Task E · Feb-2026 — Shared navy filter/search strip primitive.
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -1262,52 +1264,36 @@ export default function RecurringJobs() {
              now sits alongside the search input.  Both filters
              AND together (search AND category) and drive the same
              ``filteredItems`` memo so bulk-select "on page" scopes
-             to the intersection. */}
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="relative max-w-md flex-1 min-w-[220px]">
-            <Search
-              size={14}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: colors.searchIcon }}
-            />
-            <input
-              type="search"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder={t("search_customer_placeholder", "Search by customer name…")}
-              aria-label="Search recurring jobs by customer"
-              data-testid="recurring-search-input"
-              className="w-full text-sm rounded-md py-1.5 pl-8 pr-8"
-              style={{
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-                border: `1px solid ${colors.border}`,
-              }}
-            />
-            {searchInput ? (
-              <button
-                type="button"
-                onClick={() => setSearchInput("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
-                aria-label="Clear customer search"
-                data-testid="recurring-search-clear"
-              >
-                <X size={12} style={{ color: colors.muted }} />
-              </button>
-            ) : null}
-          </div>
-          <select
+             to the intersection.
+
+             Task E · Feb-2026 — Bare filter row → NavyFilterBar
+             navy chrome. Search input paints solid-white +
+             permanent ``#3B82F6`` border + navy text (decision
+             #1); service-category select goes navy w/ white text.
+             The Clear-X inside the search reuses the legacy
+             ``recurring-search-clear`` testid via NavyFilterBar
+             .Search's ``clearTestid`` override so the P54 vitest
+             wiring stays intact. */}
+        <NavyFilterBar
+          data-testid="recurring-jobs-filters"
+          data-k52-navy-strip="true"
+        >
+          <NavyFilterBar.Search
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder={t("search_customer_placeholder", "Search by customer name…")}
+            ariaLabel="Search recurring jobs by customer"
+            data-testid="recurring-search-input"
+            onClear={() => setSearchInput("")}
+            clearTestid="recurring-search-clear"
+            className="max-w-md"
+          />
+          <NavyFilterBar.Select
             value={serviceCategoryFilter}
-            onChange={(e) => setServiceCategoryFilter(e.target.value)}
-            aria-label="Filter recurring jobs by service category"
+            onChange={setServiceCategoryFilter}
+            ariaLabel="Filter recurring jobs by service category"
             data-testid="recurring-jobs-service-category-filter"
-            className="text-sm rounded-md py-1.5 px-2"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-              minWidth: "180px",
-            }}
+            minWidth={180}
           >
             <option value="">All categories</option>
             {serviceCats.map((c) => (
@@ -1315,8 +1301,8 @@ export default function RecurringJobs() {
                 {c.name}
               </option>
             ))}
-          </select>
-        </div>
+          </NavyFilterBar.Select>
+        </NavyFilterBar>
         <div className="rounded-2xl overflow-x-auto"
              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
           <table className="w-full text-sm" data-testid="recurring-jobs-table">
