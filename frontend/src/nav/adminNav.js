@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store, Scale, KanbanSquare } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store, Scale, KanbanSquare, Gift } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -195,6 +195,12 @@ export const ADMIN_NAV_V2 = [
     { to: "/coverage",          label: "Coverage",         icon: ShieldCheck, feature: "jobs", subsection: "Workforce" },
     { to: "/time-off",          label: "Time Off",         icon: Clock,       feature: "jobs", subsection: "Workforce" },
     { to: "/admin/time-off",    label: "Time Off Approvals", icon: ShieldCheck, hard_rule: "admin_only", subsection: "Workforce" },
+    // Task D · Feb-2026 — Employee Benefits catalog. Every
+    // authenticated user can VIEW; admin/super_admin CRUD controls
+    // self-gate inside the component. No ``hard_rule`` so
+    // technicians still see the sidebar link (same posture as
+    // ``Team`` above).
+    { to: "/workforce/benefits", label: "Employee Benefits", icon: Gift, feature: "dashboard", subsection: "Workforce" },
     { to: "/workforce/timesheets", label: "Workyard Timesheets", icon: Clock,      feature: "jobs", subsection: "Workforce" },
     { to: "/workforce/crew-map",   label: "Crew Map",            icon: MapPinIcon, feature: "jobs", subsection: "Workforce" },
     { to: "/checkins",          label: "Check-ins",        icon: MapPin,      feature: "jobs", subsection: "Workforce" },

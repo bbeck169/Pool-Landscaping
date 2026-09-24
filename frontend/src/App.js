@@ -489,6 +489,10 @@ import {
   TimesheetsPage as WorkforceTimesheets, CrewMapPage as WorkforceCrewMap,
   JobCostingPage as WorkforceJobCosting, MileagePage as WorkforceMileage,
 } from "@/pages/workforce/WorkforcePages";
+// Task D · Feb-2026 — Employee Benefits page (tenant-managed CRUD
+// catalog of workforce perks). Route open to every authenticated
+// user; CRUD controls self-gate on ``admin`` / ``super_admin``.
+const EmployeeBenefits = React.lazy(() => import(/* webpackChunkName: "p-workforce-benefits" */ "@/pages/workforce/EmployeeBenefits"));
 import {
   BusinessOSLayout, OverviewPage as OsOverview, SopsPage as OsSops,
   RolesPage as OsRoles, ScorecardsPage as OsScorecards, HuddlesPage as OsHuddles,
@@ -1098,6 +1102,10 @@ export default function App() {
             {/* Phase 16A — Workforce Ops */}
             <Route path="workforce/timesheets" element={<AdminOnly><WorkforceTimesheets /></AdminOnly>} />
             <Route path="workforce/crew-map" element={<AdminOnly><WorkforceCrewMap /></AdminOnly>} />
+            {/* Task D · Feb-2026 — every authenticated user can VIEW
+                 the benefits catalog; admin/super_admin CRUD controls
+                 self-gate inside the component. No route wrapper. */}
+            <Route path="workforce/benefits" element={<EmployeeBenefits />} />
             <Route path="workforce/job-costing" element={<AdminOnly><WorkforceJobCosting /></AdminOnly>} />
             <Route path="workforce/mileage" element={<AdminOnly><WorkforceMileage /></AdminOnly>} />
 
