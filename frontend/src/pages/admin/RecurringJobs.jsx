@@ -164,19 +164,41 @@ export default function RecurringJobs() {
     const t = setTimeout(() => setSearchQuery(searchInput.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
   }, [searchInput]);
+  // Phase P54 · Feb-2026 — Service-category filter dropdown state.
+  //   Empty string ``""`` is the "All categories" sentinel (default).
+  //   Any non-empty value is an ``id`` matched against
+  //   ``row.service_category_id`` in the ``filteredItems`` memo.
+  //   The dropdown's <option> list comes from the same
+  //   ``serviceCats`` state already populated by ``_loadCategories``
+  //   (which now also fires on mount — see the useEffect right
+  //   below the definition — so the filter has data before the
+  //   Edit modal is ever opened).
+  const [serviceCategoryFilter, setServiceCategoryFilter] = useState("");
   // Filtered view — kept as a memo so ``_visibleIds`` and the
   // table render share the exact same result set (bulk-select "on
   // page" must scope to the filtered rows, not the raw list).
   const filteredItems = useMemo(() => {
-    if (!searchQuery) return items;
-    return items.filter((r) => {
-      const hay = [
-        r.customer_name, r.customer_company_name,
-        r.customer_email, r.customer_phone,
-      ].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(searchQuery);
-    });
-  }, [items, searchQuery]);
+    let vis = items;
+    if (searchQuery) {
+      vis = vis.filter((r) => {
+        const hay = [
+          r.customer_name, r.customer_company_name,
+          r.customer_email, r.customer_phone,
+        ].filter(Boolean).join(" ").toLowerCase();
+        return hay.includes(searchQuery);
+      });
+    }
+    if (serviceCategoryFilter) {
+      // P54 · exact-match filter on service_category_id. Rows with
+      // no denorm still hit the "All categories" bucket (default);
+      // an explicit filter pick MUST match the id — legacy rows
+      // predating the P4 taxonomy naturally drop out here.
+      vis = vis.filter(
+        (r) => r.service_category_id === serviceCategoryFilter,
+      );
+    }
+    return vis;
+  }, [items, searchQuery, serviceCategoryFilter]);
 
   const load = async () => {
     setLoading(true);
@@ -353,6 +375,17 @@ export default function RecurringJobs() {
     setCatSaveErr({ service: "", income: "" });
     _loadCategories();
   }, [modalOpen, _loadCategories]);
+
+  // Phase P54 · Feb-2026 — Category taxonomy also loads on MOUNT
+  // so the service-category filter dropdown at the top of the
+  // page + the "Bulk Edit Categories" modal have their options
+  // populated before the user ever opens the row-Edit modal.
+  // Fires once per mount; the Edit-modal effect above still
+  // re-fetches on every modal open for freshness.
+  useEffect(() => {
+    _loadCategories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
   // Phase P3 · Feb-2026 — `stopThen` wraps existing per-row
@@ -1083,38 +1116,65 @@ export default function RecurringJobs() {
           })}
         </div>
         {/* Phase R2 · Feb-2026 — customer search.  Client-side
-             filter; bulk-select "on page" scopes to filtered rows. */}
-        <div className="mb-3 relative max-w-md">
-          <Search
-            size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: colors.searchIcon }}
-          />
-          <input
-            type="search"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder={t("search_customer_placeholder", "Search by customer name…")}
-            aria-label="Search recurring jobs by customer"
-            data-testid="recurring-search-input"
-            className="w-full text-sm rounded-md py-1.5 pl-8 pr-8"
+             filter; bulk-select "on page" scopes to filtered rows.
+             Phase P54 · Feb-2026 — service-category filter dropdown
+             now sits alongside the search input.  Both filters
+             AND together (search AND category) and drive the same
+             ``filteredItems`` memo so bulk-select "on page" scopes
+             to the intersection. */}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="relative max-w-md flex-1 min-w-[220px]">
+            <Search
+              size={14}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ color: colors.searchIcon }}
+            />
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder={t("search_customer_placeholder", "Search by customer name…")}
+              aria-label="Search recurring jobs by customer"
+              data-testid="recurring-search-input"
+              className="w-full text-sm rounded-md py-1.5 pl-8 pr-8"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+            />
+            {searchInput ? (
+              <button
+                type="button"
+                onClick={() => setSearchInput("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
+                aria-label="Clear customer search"
+                data-testid="recurring-search-clear"
+              >
+                <X size={12} style={{ color: colors.muted }} />
+              </button>
+            ) : null}
+          </div>
+          <select
+            value={serviceCategoryFilter}
+            onChange={(e) => setServiceCategoryFilter(e.target.value)}
+            aria-label="Filter recurring jobs by service category"
+            data-testid="recurring-jobs-service-category-filter"
+            className="text-sm rounded-md py-1.5 px-2"
             style={{
               backgroundColor: colors.surface,
               color: colors.onSurface,
               border: `1px solid ${colors.border}`,
+              minWidth: "180px",
             }}
-          />
-          {searchInput ? (
-            <button
-              type="button"
-              onClick={() => setSearchInput("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
-              aria-label="Clear customer search"
-              data-testid="recurring-search-clear"
-            >
-              <X size={12} style={{ color: colors.muted }} />
-            </button>
-          ) : null}
+          >
+            <option value="">All categories</option>
+            {serviceCats.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="rounded-2xl overflow-x-auto"
              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
