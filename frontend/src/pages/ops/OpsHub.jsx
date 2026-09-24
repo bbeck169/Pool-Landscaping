@@ -13,6 +13,11 @@ import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, 
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 import EditItemModal from "@/components/pricebook/EditItemModal";
+// Task C · Feb-2026 — Pricebook rows now embed a click-to-edit
+// category combobox parameterized against ``PATCH /api/items/{id}``.
+// Same component the Recurring Jobs table uses (parameterized in
+// Task C · Commit 1 to accept a ``patchUrl`` prop).
+import CategoryComboCell from "@/components/recurring/CategoryComboCell";
 // Feb-2026 · Live-Tech-Map · Phase 2 — Team colors ship. Replaces
 // the free-form ``<input type="color">`` + hex-input pickers with
 // the 12-chip palette picker so the UI can only produce colors
@@ -2794,6 +2799,54 @@ export function PriceBook() {
                     </div>
                   </>
                 ) : null}
+                {/* Task C · Feb-2026 — Inline category cells.
+                    Service is always visible; Income is hidden
+                    with an inert ``—`` placeholder when the item
+                    is typed ``service`` (services carry no income
+                    category per the P56 modal contract). Names
+                    are resolved from ``serviceCats`` /
+                    ``incomeCats`` because ``/api/items`` returns
+                    only the category-id fields, not denorm names.
+                    ``onPatched={refresh}`` refetches the whole
+                    list so the row's persisted state replaces the
+                    typed draft (matches the P56 bulk-edit sibling
+                    pattern). */}
+                <div className="w-32"
+                      data-testid={`pb-cell-service-category-${r.id}`}>
+                  <CategoryComboCell
+                    axis="service"
+                    row={r}
+                    value={(Array.isArray(serviceCats)
+                      ? (serviceCats.find(
+                          (c) => c.id === r.service_category_id,
+                        )?.name)
+                      : "") || ""}
+                    patchUrl={`/items/${r.id}`}
+                    onPatched={() => refresh()}
+                    dataTestidBase={`pb-cat-service-${r.id}`}
+                  />
+                </div>
+                <div className="w-32"
+                      data-testid={`pb-cell-income-category-${r.id}`}>
+                  {r.item_type === "service" ? (
+                    <div className="w-full text-left px-2 py-1 text-xs"
+                          style={{ color: colors.muted }}
+                          data-testid={`pb-cat-income-${r.id}-na`}>
+                      —
+                    </div>
+                  ) : (
+                    <CategoryComboCell
+                      axis="income"
+                      row={r}
+                      value={((incomeCats || []).find(
+                        (c) => c.id === r.income_category_id,
+                      )?.name) || ""}
+                      patchUrl={`/items/${r.id}`}
+                      onPatched={() => refresh()}
+                      dataTestidBase={`pb-cat-income-${r.id}`}
+                    />
+                  )}
+                </div>
                  <button onClick={() => openEditModal(r, "general")}
                             className="text-xs font-semibold underline"
                             style={{ color: colors.muted }}
