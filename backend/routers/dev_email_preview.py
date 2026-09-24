@@ -57,6 +57,38 @@ _STUB_CTX = {
 }
 
 
+# ─── P53.1 hardening (Feb-2026) ─────────────────────────────────────
+# Grep-friendly WARNING signature emitted on the drift condition
+# (``APP_ENV=production`` + ``ENABLE_DEV_EMAIL_PREVIEW=true``). Ops
+# should wire log alerting to catch this string on prod pods.
+DEV_PREVIEW_DRIFT_WARNING = (
+    "ENABLE_DEV_EMAIL_PREVIEW=true AND APP_ENV=production — dev email "
+    "preview route is EXPOSED at /api/dev/email-preview/referral-reward. "
+    "This is intended for the preview pod's legacy APP_ENV "
+    "config-drift only. If you see this on the prod pod, unset "
+    "ENABLE_DEV_EMAIL_PREVIEW immediately."
+)
+
+
+def check_dev_preview_env_drift() -> bool:
+    """Returns True IFF the drift condition
+    (``APP_ENV=production`` AND ``ENABLE_DEV_EMAIL_PREVIEW`` truthy)
+    is currently active. ``server.py`` calls this at boot after
+    mounting the router; a True return means the escape hatch is
+    exposed on a production pod and ops should be alerted.
+
+    Kept pure (no logging inside) so tests can assert the
+    condition without capturing side effects. ``server.py`` handles
+    the actual ``logger.warning`` emission using the
+    ``DEV_PREVIEW_DRIFT_WARNING`` constant above."""
+    app_env = (os.environ.get("APP_ENV") or "").strip().lower()
+    force = (
+        (os.environ.get("ENABLE_DEV_EMAIL_PREVIEW") or "").strip().lower()
+        in ("1", "true", "yes")
+    )
+    return app_env == "production" and force
+
+
 def _is_prod() -> bool:
     """Runtime env detection — matches the codebase-wide
     ``APP_ENV == "production"`` convention (grep-verified against

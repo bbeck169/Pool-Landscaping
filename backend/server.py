@@ -550,6 +550,17 @@ _p53_force_preview = (
 if _p53_app_env != "production" or _p53_force_preview:
     from routers import dev_email_preview as _p53_dev_email_preview  # noqa: E402
     api_router.include_router(_p53_dev_email_preview.router)
+    # P53.1 hardening (Feb-2026) — foot-gun alarm. If someone
+    # accidentally sets ``ENABLE_DEV_EMAIL_PREVIEW=true`` on a
+    # PRODUCTION pod (e.g., via a preview-to-prod .env copy during
+    # deploy), the escape hatch would silently activate the dev
+    # preview route in prod. The route body is synthetic-only (no
+    # PII, no auth) but it is still a foot-gun. Emit a WARNING with
+    # a grep-friendly signature (see ``DEV_PREVIEW_DRIFT_WARNING``
+    # in ``routers/dev_email_preview.py``) so ops can wire it to
+    # their log alerting stack.
+    if _p53_dev_email_preview.check_dev_preview_env_drift():
+        logger.warning(_p53_dev_email_preview.DEV_PREVIEW_DRIFT_WARNING)
 
 # Feb-2026 · Diag-Timeout Task 2 — client-side 30s-timeout telemetry.
 from routers import client_telemetry as _feb2026_client_telemetry  # noqa: E402
