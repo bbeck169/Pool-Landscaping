@@ -2089,6 +2089,7 @@ async def get_customer(cid: str,
     from services.jobs_slim_photos import (
         JOBS_LIST_PROJECTION,
         slim_photos_on_rows,
+        enrich_docs_with_sr_photo_ids,
     )
     jobs = await db.jobs.find(
         {"customer_id": cid, "tenant_id": tenant["id"], **_nd_cust()},
@@ -2105,6 +2106,13 @@ async def get_customer(cid: str,
     # takes no query params for its embedded lists — callers that
     # need full photos fetch ``GET /jobs/{id}`` per row.
     # See /app/memory/PERF_SLIM_PHOTOS_WORKSTREAM_AND_CUSTOMER.md.
+    #
+    # Task L+P · Feb-2026 — batched SR photo-id pre-fetch (same
+    # pattern as ``routers/jobs.py::list_jobs``).  Runs BEFORE
+    # ``slim_photos_on_rows`` so a single ``$in`` query widens
+    # ``photo_ids[]`` to include service_reports.photos ids on
+    # every embedded-jobs row.
+    await enrich_docs_with_sr_photo_ids(db, jobs, tenant["id"])
     slim_photos_on_rows(jobs, include_photos=False)
     doc["jobs"] = jobs
     # Phase 12 · Feb 2026 — derive card-on-file fields at read time.

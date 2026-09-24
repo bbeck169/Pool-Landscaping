@@ -1482,7 +1482,16 @@ async def list_jobs(
     # loop was extracted into ``services.jobs_slim_photos`` so the
     # embedded-jobs list on ``GET /customers/{cid}`` can reuse the
     # same shape without duplicating the loop.
-    from services.jobs_slim_photos import slim_photos_on_rows
+    #
+    # Task L+P · Feb-2026 — batched SR photo-id pre-fetch.  Runs
+    # BEFORE ``slim_photos_on_rows`` so a single ``$in`` query
+    # widens ``photo_ids[]`` / ``photo_thumb_urls[]`` to include
+    # service_reports.photos ids for every row on the page.  See
+    # ``services/jobs_slim_photos.py::enrich_docs_with_sr_photo_ids``.
+    from services.jobs_slim_photos import (
+        slim_photos_on_rows, enrich_docs_with_sr_photo_ids,
+    )
+    await enrich_docs_with_sr_photo_ids(db, docs, tenant["id"])
     slim_photos_on_rows(docs, include_photos=bool(include_photos))
     # Phase P2 · Feb-2026 — read-path safety net.  Coerce any legacy
     # dict-address rows to strings BEFORE ship so the schedule /
@@ -2732,7 +2741,26 @@ async def public_job_photo(jid: str, pid: str):
     if not job:
         raise HTTPException(404, "Not found")
     photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
+    # Task L+P · Feb-2026 — SR fallback branch.
+    # Before Task L+P this endpoint only saw ``jobs.photos``, which
+    # meant Phase-27-era jobs (whose techs uploaded via
+    # ``POST /api/service-reports/{report_id}/media`` and therefore
+    # bypassed the ``jobs.photos`` mirror) rendered as broken 404
+    # ``<img>`` tags on every list surface that used this URL shape
+    # (Workstream MediaStrip, JobsList Photos column). Fallback rung:
+    #   * Look up the SR photo scoped to
+    #     ``(tenant_id, job_id, photo_id)`` — same tenant we just
+    #     derived from the job doc, so no new attack surface.
+    #   * Serve via the shared ``_serve_sr_photo`` cascade (below).
+    # Magic-token auth model preserved: caller still needs BOTH jid
+    # AND pid, and the merge only succeeds if the photo genuinely
+    # belongs to that job.
     if not photo:
+        sr_photo = await _find_sr_photo_by_job_and_id(
+            jid, pid, job.get("tenant_id") or "",
+        )
+        if sr_photo:
+            return await _serve_sr_photo(sr_photo, kind="full")
         raise HTTPException(404, "Not found")
     # ─── Feb-2026 · Photos-in-S3 Phase 1 · read via presigned URL ───
     # When the photo carries an ``s3_key`` AND the feature flag is
@@ -2819,6 +2847,158 @@ async def public_job_photo(jid: str, pid: str):
 
 
 # ─────────────────────────────────────────────────────────────────
+# Task L+P · Feb-2026 — Service-report photo fallback helpers.
+#
+# The three ``/api/public/job-photo/{jid}/{pid}[/thumb|/preview]``
+# routes historically read ``jobs.photos`` only.  Phase 27 (Feb
+# 2026) added the SR upload path (``POST /service-reports/
+# {report_id}/media``) which writes to ``service_reports.photos``
+# and bypasses ``jobs.photos`` entirely.  Every consumer of the
+# public URL shape (Workstream MediaStrip, JobsList Photos column,
+# door-hanger email body, portal service view) therefore 404'd on
+# Phase-27-era photos.  These helpers close the gap by extending
+# each of the three routes with an SR fallback rung.
+#
+# Auth model unchanged: caller must supply BOTH ``jid`` and ``pid``
+# and the SR match filter includes ``job_id`` — so the endpoint
+# only returns a photo that genuinely belongs to that job.  The
+# tenant filter is derived from the job doc that step 1 already
+# fetched (same as legacy jobs.photos serving); no new attack
+# surface.
+# ─────────────────────────────────────────────────────────────────
+async def _find_sr_photo_by_job_and_id(
+    jid: str, pid: str, tenant_id: str,
+) -> Optional[dict]:
+    """Return the SR photo subdoc matching (tenant_id, job_id,
+    photo_id), or ``None`` when the SR doc is missing, soft-deleted
+    (``deleted_at`` set on the SR doc), the photo id is not in the
+    SR's ``photos[]`` array, or the individual photo is
+    ``is_deleted``.  Uses the ``photos.$`` positional projection so
+    only the matching subdoc crosses the wire, not every photo on
+    the report.
+    """
+    if not (jid and pid and tenant_id):
+        return None
+    sr = await db.service_reports.find_one(
+        {"tenant_id": tenant_id, "job_id": jid, "photos.id": pid},
+        {"_id": 0, "photos.$": 1, "deleted_at": 1},
+    )
+    if not sr or sr.get("deleted_at"):
+        return None
+    photos = sr.get("photos") or []
+    if not photos:
+        return None
+    p = photos[0]
+    if not isinstance(p, dict) or p.get("is_deleted"):
+        return None
+    return p
+
+
+async def _serve_sr_photo(photo: dict, *, kind: str):
+    """Serve a service-report photo. ``kind`` in
+    ``("full", "thumb", "preview")``.
+
+    Serving cascade for the derivative variants (thumb/preview):
+      1. ``s3_thumb_key`` / ``s3_preview_key`` present on the SR
+         photo → 302 redirect to a short-TTL presigned URL.  These
+         keys are NOT written by the Phase-27 upload path today
+         (proper SR-thumb synthesis is a deferred follow-up); the
+         branch is here so a later migration that backfills them
+         works without a code change.
+      2. Otherwise fall through to the full-size cascade below.
+
+    Full-size cascade:
+      1. ``storage_path`` present → stream bytes via
+         ``services.object_storage.get_object`` (the canonical SR
+         upload output; see ``routers/service_report_media.py``).
+      2. ``s3_key`` present → 302 redirect to a presigned URL
+         (legacy migration path — SR docs pre-object_storage).
+      3. ``data`` present (base64 or ``data:`` URI) → decode +
+         return inline.  Rare — only fires on legacy manual seeds.
+      4. Otherwise → 404 with a structured detail body.  Kept
+         parallel to the ``jobs.photos`` 404 shape so downstream
+         consumers can log-grep the same code.
+    """
+    from fastapi.responses import RedirectResponse
+    # Rung 1 — derivative-key redirect (thumb / preview only).
+    if kind == "thumb":
+        deriv_key = photo.get("s3_thumb_key")
+    elif kind == "preview":
+        deriv_key = photo.get("s3_preview_key")
+    else:
+        deriv_key = None
+    if deriv_key:
+        try:
+            from services.aws_s3.photos import generate_signed_url
+            signed = generate_signed_url(deriv_key)
+            if signed:
+                return RedirectResponse(url=signed, status_code=302)
+        except Exception as _s3_exc:
+            logger.warning(
+                "[task-lp] SR deriv serve soft-fail pid=%s kind=%s err=%s",
+                photo.get("id"), kind, _s3_exc,
+            )
+
+    # Rung 2 — full-size via object_storage (canonical Phase-27 path).
+    storage_path = photo.get("storage_path")
+    if storage_path:
+        try:
+            from services import object_storage as _storage
+            data, ctype = _storage.get_object(storage_path)
+            return Response(
+                content=data,
+                media_type=(
+                    ctype or photo.get("content_type")
+                    or photo.get("mime") or "image/jpeg"
+                ),
+            )
+        except Exception as _stor_exc:
+            logger.warning(
+                "[task-lp] SR storage_path serve failed pid=%s path=%s err=%s",
+                photo.get("id"), storage_path, _stor_exc,
+            )
+
+    # Rung 3 — s3_key legacy redirect.
+    sr_s3_key = photo.get("s3_key")
+    if sr_s3_key:
+        try:
+            from services.aws_s3.photos import generate_signed_url
+            signed = generate_signed_url(sr_s3_key)
+            if signed:
+                return RedirectResponse(url=signed, status_code=302)
+        except Exception as _s3_exc:
+            logger.warning(
+                "[task-lp] SR s3_key serve soft-fail pid=%s err=%s",
+                photo.get("id"), _s3_exc,
+            )
+
+    # Rung 4 — inline base64 fallback.
+    inline = photo.get("data")
+    if isinstance(inline, str) and inline:
+        if "," in inline:
+            header, b64 = inline.split(",", 1)
+            media = header.split(";")[0].replace("data:", "") or (
+                photo.get("mime") or "image/jpeg"
+            )
+        else:
+            b64 = inline
+            media = photo.get("mime") or "image/jpeg"
+        try:
+            import base64 as _b64
+            return Response(content=_b64.b64decode(b64), media_type=media)
+        except Exception as _dec_exc:
+            logger.warning(
+                "[task-lp] SR base64 decode failed pid=%s err=%s",
+                photo.get("id"), _dec_exc,
+            )
+
+    raise HTTPException(
+        status_code=404,
+        detail={"code": "photo_not_found", "photo_id": photo.get("id")},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────
 # Feb-2026 · Thumbnails ship — derivative read endpoints.
 #
 # Same auth model as the parent ``/public/job-photo/{jid}/{pid}``
@@ -2832,11 +3012,22 @@ async def public_job_photo(jid: str, pid: str):
 async def _serve_derivative(jid: str, pid: str, kind: str):
     if kind not in ("thumb", "preview"):
         raise HTTPException(404, "Not found")
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1, "tenant_id": 1})
     if not job:
         raise HTTPException(404, "Not found")
     photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
+    # Task L+P · Feb-2026 — SR fallback branch (mirrors the
+    # ``public_job_photo`` base route). When the pid does not
+    # resolve in jobs.photos, look up the SR photo and serve via
+    # the shared ``_serve_sr_photo`` cascade. Auth model preserved:
+    # caller must supply both jid+pid; SR match filter includes
+    # ``job_id`` so no cross-job leakage possible.
     if not photo:
+        sr_photo = await _find_sr_photo_by_job_and_id(
+            jid, pid, job.get("tenant_id") or "",
+        )
+        if sr_photo:
+            return await _serve_sr_photo(sr_photo, kind=kind)
         raise HTTPException(404, "Not found")
     # 1. S3 path — signed sibling URL when the derivative key is stamped.
     deriv_key = photo.get("s3_thumb_key" if kind == "thumb" else "s3_preview_key")

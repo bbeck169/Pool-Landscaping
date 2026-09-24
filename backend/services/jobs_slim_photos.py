@@ -77,28 +77,70 @@ def slim_photos_on_rows(docs: Iterable[Dict[str, Any]],
     """Mutate + return ``docs`` in place with the slim-photos shape.
     Safe to call multiple times (idempotent). Returns the same list
     for chained-call ergonomics.
+
+    Task L+P · Feb-2026 — SR-photo widening. When the caller
+    pre-fetches service-report photo IDs (batched via
+    ``$in`` on ``job_id`` — see
+    ``routers/jobs.py::list_jobs`` and
+    ``routers/customers.py::customer_detail_jobs``) and stamps
+    them on each row as a private ``_sr_photo_ids`` scratch key,
+    this helper UNIONs them into ``photo_ids[]`` (dedupe by id;
+    SR wins on collision — matches
+    ``routers/workstream_service_log._media_items`` merge
+    semantics) and recomputes ``photo_count`` +
+    ``photo_thumb_urls[]`` accordingly.  The scratch key is
+    stripped before returning so it never crosses the wire.
+
+    Rows without the scratch key behave exactly as pre-Task-L+P —
+    ``photo_count``/``photo_ids``/``photo_thumb_urls`` populated
+    from ``photos[]`` only.
     """
     out: List[Dict[str, Any]] = list(docs) if not isinstance(docs, list) else docs
     for d in out:
         plist = d.get("photos") or []
         if not isinstance(plist, list):
             plist = []
-        d["photo_count"] = len(plist)
-        d["photo_ids"] = [
+        # Base ids from ``jobs.photos``.
+        base_ids: List[str] = [
             str(p.get("id")) for p in plist
             if isinstance(p, dict) and p.get("id") is not None
         ]
+        # Task L+P — SR ids pre-stamped by the caller.  SR wins on
+        # id collision: we prepend SR ids and skip duplicates from
+        # base_ids.  Preserves insertion order (SR first, then
+        # legacy) for consumers that iterate the list.
+        sr_ids_raw = d.get("_sr_photo_ids") or []
+        sr_ids: List[str] = [
+            str(x) for x in sr_ids_raw
+            if isinstance(x, (str, int)) and x is not None
+        ]
+        seen: set = set()
+        merged_ids: List[str] = []
+        for i in sr_ids + base_ids:
+            if i in seen:
+                continue
+            seen.add(i)
+            merged_ids.append(i)
+
+        d["photo_count"] = len(merged_ids)
+        d["photo_ids"] = merged_ids
         # Feb-2026 · Thumbnails ship — additive per-photo thumb URL
         # so list-view clients can lazy-load without knowing s3 keys.
         # The route resolves to a 302 signed URL (S3 path) OR an
         # embedded base64 blob (flag-off path) depending on the
         # write-time state of the doc.
+        # Task L+P — the endpoint at ``/api/public/job-photo/{jid}/
+        # {pid}/thumb`` also falls back to service_reports.photos
+        # when a pid is missing from jobs.photos, so URLs generated
+        # for SR ids resolve correctly.
         jid = d.get("id")
         d["photo_thumb_urls"] = [
-            f"/api/public/job-photo/{jid}/{p['id']}/thumb"
-            for p in plist
-            if isinstance(p, dict) and p.get("id") is not None
+            f"/api/public/job-photo/{jid}/{pid}/thumb"
+            for pid in merged_ids
         ] if jid else []
+        # Drop the scratch key so it never leaks into the wire
+        # payload.  Safe on rows that never had it (``.pop`` no-op).
+        d.pop("_sr_photo_ids", None)
         if include_photos:
             # Superset — keep the full ``photos`` array. Coerce
             # missing/null to ``[]`` so every row carries the key.
@@ -156,3 +198,98 @@ def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dic
             for p in plist
         ]
     return doc
+
+
+
+# ─────────────────────────────────────────────────────────────────
+# Task L+P · Feb-2026 — Batched SR-photo id enricher.
+#
+# Callers with a page of job docs (``list_jobs`` in
+# ``routers/jobs.py``, ``customer_detail_jobs`` in
+# ``routers/customers.py``) invoke this BEFORE ``slim_photos_on_rows``
+# so a single ``$in`` query fetches every SR photo id for the whole
+# page in one round-trip instead of the naive N+1 pattern (which
+# would issue up to 5000 ``find_one`` calls per list load on the
+# default ``limit`` cap).
+#
+# Wire pattern (canonical two-line adoption at each call site):
+#   await enrich_docs_with_sr_photo_ids(db, docs, tenant_id)
+#   slim_photos_on_rows(docs, include_photos=…)
+#
+# The enricher stamps a private ``_sr_photo_ids`` scratch key on
+# each doc; ``slim_photos_on_rows`` reads it, unions into
+# ``photo_ids[]`` / ``photo_thumb_urls[]``, and drops the scratch
+# key before returning so it never crosses the wire.
+# ─────────────────────────────────────────────────────────────────
+async def enrich_docs_with_sr_photo_ids(
+    db: Any, docs: Iterable[Dict[str, Any]], tenant_id: str,
+) -> None:
+    """Batched SR photo-id pre-fetch.  Mutates ``docs`` in place by
+    stamping a private ``_sr_photo_ids: list[str]`` scratch key on
+    every row (empty list when the job has no SR photos).
+
+    * Single ``db.service_reports.find({...})`` per call — indexed
+      on ``(tenant_id, job_id)`` which is the SR primary lookup
+      pattern used everywhere else in the codebase.
+    * Projection is minimal (``photos.id`` + ``photos.is_deleted``
+      + ``deleted_at``) so the payload stays tiny even when a job
+      has 10+ SR photos.
+    * Filters both tombstone shapes: the SR doc's own
+      ``deleted_at`` (SR-level soft delete) AND each photo's
+      per-item ``is_deleted`` flag (photo-level soft delete).
+    * ``job_ids`` empty → no-op, returns immediately (zero-row list
+      loads never issue a round-trip).
+    * Defensive batching: if a caller ever exceeds 5000 job ids in
+      a single call, we split into chunks so the ``$in`` predicate
+      never grows unbounded.  The default list-jobs cap is 5000
+      today (see ``routers/jobs.py::list_jobs``), so this is a
+      no-op guard in practice — kept as a code comment for future
+      readers.
+    """
+    if not tenant_id:
+        return
+    job_ids: List[str] = [
+        d.get("id") for d in docs
+        if isinstance(d, dict) and d.get("id")
+    ]
+    if not job_ids:
+        return
+
+    # Chunk defensively at 5000 ids per query (matches the outer
+    # list-jobs cap).  In practice this loop runs exactly once.
+    _CHUNK = 5000
+    sr_map: Dict[str, List[str]] = {}
+    for start in range(0, len(job_ids), _CHUNK):
+        chunk = job_ids[start:start + _CHUNK]
+        cursor = db.service_reports.find(
+            {
+                "tenant_id": tenant_id,
+                "job_id": {"$in": chunk},
+                # Drop SR-level soft-deleted docs at query time.
+                "deleted_at": {"$in": [None, ""]},
+            },
+            {
+                "_id": 0, "job_id": 1,
+                "photos.id": 1, "photos.is_deleted": 1,
+            },
+        )
+        async for sr in cursor:
+            jid = sr.get("job_id")
+            if not jid:
+                continue
+            live_pids = [
+                p.get("id") for p in (sr.get("photos") or [])
+                if isinstance(p, dict)
+                and p.get("id") is not None
+                and not p.get("is_deleted")
+            ]
+            if not live_pids:
+                continue
+            sr_map.setdefault(jid, []).extend(live_pids)
+
+    # Stamp scratch key on every doc — empty list when no SR
+    # photos so ``slim_photos_on_rows`` doesn't have to double-
+    # check for missing keys.
+    for d in docs:
+        if isinstance(d, dict) and d.get("id"):
+            d["_sr_photo_ids"] = sr_map.get(d["id"], [])
