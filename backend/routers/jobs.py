@@ -1749,12 +1749,35 @@ async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin
 @router.post("/jobs/{jid}/reopen")
 async def reopen_job(jid: str,
                      request: Request,
-                     user: dict = Depends(require_admin),
+                     user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)):
-    """Flip a completed job back to 'active' and log an activity entry."""
-    # Phase O4 · Feb-2026 — Idempotency wiring.  An offline mobile
-    # "reopen" queued while flaky can retry with the same
-    # ``X-Idempotency-Key`` and the second call is a no-op replay.
+    """Flip a completed (or, for admins, cancelled) job back to
+    ``active`` and clear the service-report ``submitted_at``
+    lock so downstream edits accept new writes.
+
+    Task M+P · Feb-2026 — Access model.
+      * ``admin`` / ``super_admin`` → allowed on ``completed`` OR
+        ``cancelled`` jobs. Clears ``submitted_at`` on **every**
+        service_reports doc for the job.
+      * ``technician`` → allowed on ``completed`` jobs ONLY (per
+        Task M+P decision E2 — cancelled remains admin-only).
+        Must be authorised via the F1 crew-aware gate
+        (``services.authz.is_tech_authorized_on_job``); non-
+        assigned techs → 403.  Clears ``submitted_at`` on ONLY
+        the caller's own SR (``tech_id`` derived via
+        ``user.technician_id or user.id`` — matches the pattern
+        used by every other tech-scoped SR endpoint).
+      * ``customer`` / other roles → 403.
+
+    Cross-collection write on ``service_reports`` is tenant-
+    scoped at every rung and matches the P44 multi-SR shape
+    (one SR per tech, keyed ``(tenant_id, job_id, tech_id)``).
+
+    Idempotency envelope preserved (``replay_or_reserve`` via
+    ``X-Idempotency-Key``) so an offline retry replays the same
+    response.
+    """
+    # Phase O4 · Feb-2026 — Idempotency wiring.
     from utils_idempotency import replay_or_reserve, store_response
     idem_body: Dict[str, Any] = {}  # endpoint takes no body
     idem_key, cached = await replay_or_reserve(
@@ -1762,29 +1785,119 @@ async def reopen_job(jid: str,
     )
     if cached is not None:
         return cached
-    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
+
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "photos.data": 0},
+    )
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.get("status") not in ("completed", "cancelled"):
-        raise HTTPException(400, "Only completed or cancelled jobs can be reopened")
+
+    # ── Role gate — Task M+P widening ────────────────────────
+    role = (user.get("role") or "").lower()
+    is_admin = role in ("admin", "super_admin")
+    is_tech = role in ("technician", "tech")
+
+    if not (is_admin or is_tech):
+        # Customers + every other non-staff role — locked out.
+        raise HTTPException(
+            403,
+            {"code": "reopen_forbidden", "detail": "Role not permitted"},
+        )
+
+    if is_tech:
+        # F1 crew-aware gate — direct assignment OR crew
+        # membership.  Non-authorised techs get the same 403
+        # shape used by every tech-scoped SR endpoint.
+        authorised = await is_tech_authorized_on_job(
+            user, job, db, tenant_id=tenant["id"],
+        )
+        if not authorised:
+            raise HTTPException(
+                403,
+                {"code": "reopen_forbidden",
+                 "detail": "Not your job"},
+            )
+
+    # ── Status precondition ──────────────────────────────────
+    # Task M+P E2 — techs may reopen only ``completed`` jobs;
+    # ``cancelled`` remains admin-only.
+    status = job.get("status")
+    allowed_statuses = (
+        ("completed", "cancelled") if is_admin else ("completed",)
+    )
+    if status not in allowed_statuses:
+        # Preserve the pre-Task-M+P 400 contract (Task M+P C1).
+        # Techs on a ``cancelled`` job also land here → 400 with
+        # a status message that names the allowed set, so the
+        # UI can surface a clear error without needing role
+        # awareness.
+        allowed_list = " or ".join(allowed_statuses)
+        raise HTTPException(
+            400,
+            f"Only {allowed_list} jobs can be reopened",
+        )
+
+    # ── Cross-collection: clear service_reports.submitted_at ──
+    # A2 — role-aware scope:
+    #   * admin → all SRs on the job (full reopen).
+    #   * tech  → only the caller's own SR (fix your own report).
+    sr_filter: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "job_id": jid,
+    }
+    cleared_scope: str
+    if is_admin:
+        cleared_scope = "all"
+    else:
+        # Same tech id derivation pattern as
+        # ``routers/service_reports.py`` (grep evidence:
+        # L340 / L1707 / L2836).
+        tech_id = user.get("technician_id") or user.get("id")
+        sr_filter["tech_id"] = tech_id
+        cleared_scope = "own"
+
+    sr_result = await db.service_reports.update_many(
+        sr_filter,
+        {
+            "$set": {"submitted_at": None},
+            "$unset": {"submitted_by": ""},
+        },
+    )
+    cleared_sr_count = int(getattr(sr_result, "modified_count", 0) or 0)
+
+    # ── Job status flip ──────────────────────────────────────
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "active", "reopened_at": now_iso()}, "$unset": {"completed_at": ""}},
+        {"$set": {"status": "active", "reopened_at": now_iso()},
+         "$unset": {"completed_at": ""}},
     )
+
+    # ── Audit trail — Task M+P adds cleared-scope metadata ──
     try:
+        actor_role_label = "admin" if is_admin else "tech"
         await db.activity_logs.insert_one({
             "id": new_id(),
             "tenant_id": tenant["id"],
             "job_id": jid,
             "type": "reopen",
-            "actor_id": user["id"],
+            "actor_id": user.get("id"),
             "actor_name": user.get("name", ""),
+            "actor_role": actor_role_label,
             "at": now_iso(),
-            "note": "Job reopened by admin",
+            "note": f"Job reopened by {actor_role_label}",
+            "metadata": {
+                "cleared_sr_scope": cleared_scope,
+                "cleared_sr_count": cleared_sr_count,
+            },
         })
     except Exception:
         pass
-    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
+
+    updated = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "photos.data": 0},
+    )
     if idem_key:
         await store_response(idem_key, "POST /jobs/{jid}/reopen",
                               tenant["id"], updated, idem_body)
