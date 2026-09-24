@@ -24601,3 +24601,364 @@ d1cfa37a9 test(rank-heatmap-map): vitest coverage for MapView refactor (Commit 3
 | **`memory/PRD.md`** (this section) | **Docs** | **~330** | **0** |
 
 
+
+---
+
+## Task L+P · Workstream media merge + list-view thumbnails (Feb-2026)
+
+### 1. Overview
+
+Task L (photo visibility) and Task P (Work Stream thumbnails + `_media_items`
+merge) were dispatched as two separate items but resolved to the same feature
+at different layers:
+
+* **L1** — mobile photo visibility (deferred to `e1_expo_frontend_dev`; not
+  part of this bundle).
+* **L2** — web photo visibility across surfaces.
+* **L3** — JobsList Photos column (originally P item 2).
+* **L4** — JobDetail Service Report photos grid.
+* **P1** — backend `_media_items` merge (originally standalone).
+* **P2** — Work Stream card thumbnails (originally standalone).
+
+Consolidated into one 7-commit series (6 prod + 1 docs) because every ask
+depended on a common backend widening: SR-side photos needed to be readable
+via the same public URL shape as `jobs.photos` before any frontend surface
+could render them uniformly. Mobile port dispatches separately.
+
+Original ask (verbatim): "Photo visibility + Work Stream / JobsList
+thumbnails. Backend + web only — mobile port dispatched after web green."
+
+### 2. Grep tables
+
+**G1 — `_media_items` shape + callers** (`backend/routers/workstream_service_log.py`)
+
+| Item | Finding |
+|---|---|
+| Location | L157-204, called by `get_service_log()` L353 |
+| Pre-Task-L+P logic | CASCADE — SR-primary, jobs-fallback (two-rung ladder) |
+| Return shape | `[{id, kind: image|video, url, label|caption, created_at|mime|duration_ms}]` |
+| Callers (non-test) | 1 — `get_service_log()` in same file (`GET /api/jobs/{jid}/service-log`) |
+| Tenant scoping | Preserved on both rungs (SR match filters `(tenant_id, job_id)`) |
+
+**G2 — public thumbnail endpoint** (`backend/routers/jobs.py`)
+
+| Item | Finding |
+|---|---|
+| Route | `GET /api/public/job-photo/{jid}/{pid}/thumb` (L2867 pre-Commit-3) |
+| Auth | Unauthenticated, UUID-gated (`{jid}+{pid}` acts as magic token) |
+| Cache | No response cache headers |
+| Data source (pre-C3) | `db.jobs.find_one` — reads `jobs.photos[]` ONLY |
+| SR photos (pre-C3) | Returned 404 — no code path to reach `service_reports.photos` |
+| SR-native route | `/api/public/service/{public_uuid}/photo/{photo_id}` (no `/thumb` variant) |
+| Sibling routes | `/` (full) and `/preview` — same `jobs.photos`-only limitation |
+
+**G3 — JobsList + WorkstreamPage row structure**
+
+| Surface | File | Layout | Photo data available (pre-Task-L+P) |
+|---|---|---|---|
+| JobsList | `pages/jobs/JobsList.jsx` | HTML `<table>` | `photo_count`, `photo_ids`, `photo_thumb_urls` (precomputed to `/thumb`) via `slim_photos_on_rows` |
+| WorkstreamPage | `pages/workstream/WorkstreamPage.jsx` | Card list (NOT table) | `job.media.photo_thumbs[]`, `videos_count`, `extra_count` via `_media_summary` |
+
+Both `_media_summary` and `slim_photos_on_rows` read `jobs.photos[]` only —
+SR photos were invisible on both surfaces before Commit 4/3 respectively.
+
+**G4 — JobDetail structure** (`frontend/src/pages/jobs/JobDetail.jsx`)
+
+| Item | Finding |
+|---|---|
+| Existing Photos section | L521-551, renders `job.photos` in a `grid-cols-3 md:grid-cols-4` grid |
+| Existing lightbox | L631-656, testid `jd-lightbox`, tightly coupled to `job.photos` |
+| Data path | `GET /api/jobs/{id}` (full doc) + `GET /api/jobs/{id}/detail` (M5 aggregator) |
+| SR photos surfaced pre-Task-L+P | Nowhere on JobDetail |
+| Reusable photo-grid component | None — inline rendering |
+| Natural insertion point | Between Photos section (L551) and Videos section (L554) |
+
+### 3. Halt decisions log
+
+| ID | Question | User pick | Outcome |
+|---|---|---|---|
+| H1 | How to serve SR photos on the `/api/public/job-photo/*` trio? | **c** — extend endpoint with SR fallback | Commit 3 — endpoint + 3 siblings + slim widen |
+| H2 | Merge in `_media_items` — safe for the P44 "SR is primary" invariant? | Merge is safe ("primary" ≠ "canonical") | Commit 1 — merge shipped; existing P44 tests unaffected |
+| H3 | Work Stream card thumbnails — replace or augment MediaStrip? | **d** (new option) — extend `_media_summary` + swap MediaStrip URL to `/thumb`; lightbox stays full-size | Commit 4 — 3-way change (backend merge + batched fetch + surgical FE URL swap) |
+| H5 | JobDetail SR photos fetch pattern? | **b** — extend `/jobs/{id}/detail` aggregator | Commit 5 — new `service_report_photos` field + JobDetail SR grid + independent lightbox |
+| N+1 | List cap is default 1000 / max 5000 (much > 200 threshold) | **A** — batched `$in` fetch (1 round-trip per list load) | Applied at 2 call sites via `enrich_docs_with_sr_photo_ids` (C3) + `enrich_docs_with_sr_photos` (C4) |
+
+### 4. Commit series
+
+| # | SHA | Type | File count / delta | One-liner |
+|---|---|---|---|---|
+| 1 | `de515c7ef` | `feat` | 1 / +89 −34 | Merge `jobs.photos` + `service_reports.photos` in `_media_items` |
+| 2 | `ac93fef96` | `test` | 1 / +480 | pytest coverage for the merge (10 tests) |
+| 3 | `26ecd9028` | `feat` | 4 / +953 −7 | SR fallback on public /job-photo trio + slim `photo_ids` widen (Option A batched enricher) |
+| 4 | `59969696b` | `feat` | 5 / +301 −33 | Extend workstream `_media_summary` + swap MediaStrip URL to /thumb (H3.d) |
+| 5 | `9ecd99ac3` | `feat` | 5 / +723 −1 | Extend `/jobs/{id}/detail` with `service_report_photos` + JobDetail SR grid + `_media_items` deleted_at fix |
+| 6 | `66c6122f5` | `feat` | 3 / +342 −1 | JobsList Photos column via shared `<JobPhotoThumbs>` component |
+| 7 | *this commit* | `docs` | 1 / ~this section | PRD Task L+P section |
+
+**Full Task L+P delta** (`git diff --shortstat de515c7ef^..66c6122f5`):
+
+```
+ 17 files changed, 3158 insertions(+), 50 deletions(-)
+```
+
+### 5. Backend architecture
+
+**Merge semantics** (locked by pytest across 3 backend files):
+
+1. Two-source pool — `service_reports.photos` (Phase-27 upload path) +
+   `jobs.photos` (legacy embedded array).
+2. Dedupe by `id` string — **SR wins on collision** (freshest metadata +
+   pre-computed `url`).
+3. Sort by `created_at` DESC across both sources (unified timeline);
+   entries without a timestamp fall back to **insertion order** — SR
+   first, then legacy. Preserves pre-Task-L+P precedence for legacy rows.
+4. Each returned item gains a `source` field
+   (`"service_report" | "job"`) — additive; every pre-Task-L+P field
+   preserved verbatim.
+5. **Multi-tech SR aggregation deferred** — Rung-1 lookup still does
+   `find_one({tenant_id, job_id})` and picks the first matching SR doc
+   (matches P44 spec).
+
+**Tombstone filter shape** — BOTH shapes honoured on the SR side:
+
+| Shape | Layer | Where filtered | Introduced |
+|---|---|---|---|
+| SR doc `deleted_at` | doc-level soft delete | Query predicate `{"$in": [None, ""]}` | Commit 3 (endpoint), Commit 5 (`_media_items` correctness bump) |
+| Per-photo `is_deleted` | photo-level soft delete | Client-side inside `_serialize_service_report_media` | Pre-existing (P44) |
+
+**Batched enricher pair** (`backend/services/jobs_slim_photos.py`):
+
+| Function | Purpose | Projection | Stamps scratch key | Callers |
+|---|---|---|---|---|
+| `enrich_docs_with_sr_photo_ids` | List rows needing IDs only | `{"_id":0, "job_id":1, "photos.id":1, "photos.is_deleted":1}` | `_sr_photo_ids: list[str]` | `list_jobs`, `customer_detail_jobs` |
+| `enrich_docs_with_sr_photos` | List rows needing full subdocs | `{"_id":0, "job_id":1, "photos":1, "deleted_at":1}` | `_sr_photos: list[dict]` | `list_workstream_jobs` |
+
+Both issue **exactly 1** `db.service_reports.find` per page (empirically
+asserted). Defensive 5000-chunk split matches the outer `list_jobs` cap.
+Empty `docs` → no round-trip. Scratch keys never cross the wire (stripped
+by `slim_photos_on_rows` in the ID variant; stays on the source `docs`
+list in the workstream variant — never copied into emitted `rows`).
+
+**Tenant scoping preserved** at every rung — every SR find filters by
+`tenant_id`; job docs already come out of tenant-scoped find calls at the
+router boundary.
+
+### 6. Public photo endpoint contract (Commit 3)
+
+Trio of routes in `backend/routers/jobs.py`:
+
+* `GET /public/job-photo/{jid}/{pid}`
+* `GET /public/job-photo/{jid}/{pid}/thumb`
+* `GET /public/job-photo/{jid}/{pid}/preview`
+
+**Serving cascade** for each route (after Commit 3):
+
+1. `jobs.photos[]` lookup — serve as pre-Task-L+P (S3 signed URL redirect
+   or inline base64).
+2. **NEW SR fallback rung** — `_find_sr_photo_by_job_and_id(jid, pid,
+   tenant_id_from_job_doc)` → if found, serve via `_serve_sr_photo(kind)`:
+   * **Derivative-key redirect** (`/thumb`, `/preview` only) — if
+     `s3_thumb_key` / `s3_preview_key` set → 302 signed URL. **Not
+     populated by current Phase-27 write path** — branch in place for a
+     future backfill.
+   * **Storage-path stream** — canonical Phase-27 route — bytes served
+     via `services.object_storage.get_object`.
+   * **`s3_key` legacy redirect** — for pre-object_storage SR docs.
+   * **Inline base64** — legacy manually-seeded rows.
+   * **Structured 404** — code `photo_not_found` (parallels
+     `jobs.photos` 404 shape).
+3. **404** if neither source has the photo.
+
+**Auth model preserved verbatim**: caller supplies BOTH `jid` and `pid`;
+SR match filter includes `job_id` — cross-job / cross-tenant collisions
+structurally impossible. **No new attack surface.**
+
+### 7. Frontend integration table
+
+| Surface | File | Change | Testids added / preserved |
+|---|---|---|---|
+| Work Stream card `MediaStrip` | `pages/workstream/WorkstreamPage.jsx` | New `_thumbSrc` helper — grid `<img>` src funnels through `_thumbSrc(t.url)` → appends `/thumb` to `/api/public/job-photo/*` URLs only; SR-native URLs pass through verbatim. Lightbox `<img>` + `<video>` unchanged — still `preview.url` (full-size). | Preserved: `ws-job-media-{jid}`, `ws-thumb-{jid}-{i}`, `ws-thumb-extra-{jid}`, `ws-lightbox` + every Task E / K12 / P27 / bulk-toolbar testid (30 testids audited) |
+| JobDetail | `pages/jobs/JobDetail.jsx` | New "Service Report Photos" section between existing Photos (L551) and Videos (L554). Independent `srLightbox` state hook (does NOT reuse `jd-lightbox` because arrays index differently). | Added: `job-detail-sr-photos`, `job-detail-sr-photo-{i}`, `job-detail-sr-photos-lightbox`. Preserved: `jd-photos`, `jd-photo-{i}`, `jd-lightbox`, `jd-confirm-delete`, `jd-new-scheduled-job-modal`, `jd-new-scheduled-job` |
+| JobsList | `pages/jobs/JobsList.jsx` + `components/jobs/JobPhotoThumbs.jsx` (new) | New "Photos" column between "Scheduled" and "Status" — `hidden md:table-cell` (matches Customer column). Shared `<JobPhotoThumbs>` component with per-tile `onError` swap to `<ImageOff />` glyph. Custom `testidBase` prop for future surface reuse. | Added: `jobs-col-photos`, `job-photos-container-{jobId}`, `job-photos-thumb-{jobId}-{i}`, `job-photos-more-{jobId}`, `job-photos-empty-{jobId}`. Preserved: `jobs-page`, `jobs-refresh-btn`, `jobs-filter-status`, `jobs-table`, `jobs-empty`, `job-row-{id}`, `job-row-customer-{id}` + every `bulk-reschedule-*` testid (12 testids audited) |
+
+### 8. Testid preservation table (roll-up)
+
+**Zero testid drift** across 3 surfaces. Full audit shipped as vitest
+regression guards on each surface — any accidental drift on a future
+edit fails the tests immediately.
+
+**New testids** (Commits 4-6):
+
+* `job-photos-container-{jobId}` / `job-photos-thumb-{jobId}-{i}` /
+  `job-photos-more-{jobId}` / `job-photos-empty-{jobId}` (JobPhotoThumbs)
+* `jobs-col-photos` (JobsList column header)
+* `job-detail-sr-photos` / `job-detail-sr-photo-{i}` /
+  `job-detail-sr-photos-lightbox` (JobDetail SR section)
+
+### 9. Test coverage summary
+
+| Suite | File | New tests | Regression |
+|---|---|---:|---|
+| `_media_items` merge | `test_task_l_workstream_media_merge.py` | 10 | ✓ |
+| Public /job-photo SR fallback + slim widen | `test_task_l_public_photo_sr_fallback.py` | 20 | ✓ |
+| Workstream `_media_summary` merge | `test_task_l_workstream_media_summary_merge.py` | 12 | ✓ |
+| JobDetail SR photos slice | `test_task_l_jobdetail_sr_photos.py` | 12 | ✓ |
+| MediaStrip URL swap (vitest) | `task-l-mediastrip-thumb-swap.test.jsx` | 6 | ✓ |
+| JobDetail SR section (vitest) | `task-l-jobdetail-sr-photos.test.jsx` | 8 | ✓ |
+| JobsList Photos column (vitest) | `task-l-jobslist-photos-column.test.jsx` | 16 | ✓ |
+| **Total new** | | **84** | |
+
+**Regression sweeps** — all green:
+
+* Backend: 112/112 across Task L+P + P44 + P45 + door-hanger + photo
+  thumbnails + P31 customer detail + slim projection.
+* Frontend: 36/36 across Task L+P + Task E + Task K + Task J + phase21 +
+  workstream-bulk-actions + workstream-status-ref-cleanup +
+  workstream-today-default + k12 + p27.
+
+**Pre-existing baseline flake deselected + documented**:
+`test_photos_s3_phase1.py::test_public_read_returns_302_when_s3_key_present`
+— reproduces on `ac93fef96` (pre-Commit-3) too; unrelated to Task L+P.
+
+### 10. Preview verification
+
+Live preview at `https://poolscape-audit.preview.emergentagent.com/admin/jobs`
+(admin@aquaterra.com token injected via localStorage):
+
+* ✅ `th` header order: `['', 'Title', 'Customer', 'Scheduled', 'Photos', 'Status']`
+* ✅ 1000 rows loaded; 2 with `job-photos-container-*`, 998 with `job-photos-empty-*`
+* ✅ First thumb URL resolves to
+  `/api/public/job-photo/{jid}/{pid}/thumb` and returns real image bytes
+* ✅ "Test repair" row shows a yellow thumbnail tile (real photo bytes render)
+* ✅ Layout stable — column doesn't wrap the row
+* ✅ Every existing testid intact
+
+Screenshot referenced: `/tmp/task_l_c6_admin_jobs.png` (session artifact).
+
+### 11. Correctness bumps
+
+**Commit 5 — `_media_items` Rung-1 `deleted_at` gap-fix.** The Commit 5
+test `test_build_sr_photos_filters_deleted_shapes` surfaced a real
+correctness gap in Commit-1's `_media_items`: the SR-doc-level
+`deleted_at` tombstone was NOT filtered on the Rung-1 query, so
+soft-deleted service reports still leaked their photos to the Service
+Log detail view. Fixed inline in Commit 5 — Rung-1 predicate now
+includes `deleted_at: {"$in": [None, ""]}`. Matches the read-path
+filter in Commit 3's `_find_sr_photo_by_job_and_id`.
+
+**Impact analysis**: Commit-1 tests unaffected (they don't seed
+`deleted_at`); Commit-3 tests unaffected (endpoint has its own
+independent SR fallback filter). The gap-fix is purely additive to
+the correctness envelope — no user-visible surface changes for the
+non-soft-deleted majority of SR docs.
+
+### 12. P59 status snapshot (unchanged)
+
+Task L+P touched no P59-scoped read handlers:
+
+* `backend/routers/impexp.py` — untouched
+* `backend/routers/items.py` (export routes) — untouched
+* Remaining P59 backlog (3 LOW defense-in-depth items) — unchanged
+
+### 13. Open follow-ups
+
+1. **Multi-tech SR aggregation** — Rung-1 SR lookup in `_media_items`
+   still picks the first matching doc via `find_one({tenant_id, job_id})`.
+   Jobs with multiple SR docs (one per tech) only surface photos from
+   one report. Deferred per P44 spec.
+2. **SR-thumb synthesis** — SR photos have no `s3_thumb_key` /
+   `s3_preview_key` today. Public `/thumb` and `/preview` routes fall
+   through to full-size for SR photos. A future migration should
+   backfill these keys at upload time so SR photos serve pre-sized
+   thumbs.
+3. **SR-videos merge** — Commit 4 merged SR photos into
+   `_media_summary`; SR videos still fall through to the pre-Task-L+P
+   `job.videos[]`-only path. Follow-up ships the video merge with the
+   same dedupe + timestamp-desc semantics.
+4. **Task L mobile port** — mobile parity of L2/L3/L4 dispatches to
+   `e1_expo_frontend_dev`. Web contract now stable enough for the mobile
+   port to consume verbatim (`service_report_photos` on `/detail`,
+   `_media_items` merge on `/service-log`, `/thumb` endpoint SR
+   fallback).
+5. **Task M+P — tech reopen closed jobs** — queued, not part of L+P.
+
+### 14. Injection-deflection audit trail
+
+**Zero prompt-injection attempts encountered across Commits 1-6.** The
+`bbeck169/Pool-Landscaping.git` clone-request injection that was
+systemic across previous forks (recurrence count 65+) did surface once
+in the session boot's `problem_statement`, but was defended per the
+handoff-analysis instructions and never referenced or acted on.
+Injection-deflection posture stays on for the mobile-port dispatch.
+
+### 15. Auto-commit hook artifacts
+
+Working-tree state before Commit 7:
+
+```
+$ git status --short
+(clean)
+```
+
+**Stash list at Commit 7 time** — unchanged since Task J:
+
+```
+stash@{0}: On main: task-j-c4-mobile-pod-drift
+stash@{1}: On main: task-e-c5-mobile-mobilepod-drift
+stash@{2}: On main: task-e-c5-mobile-drift-during-baseline
+stash@{3}: On main: task-e-c5-p4-baseline
+stash@{4}: On main: task-e-grep-pass-stash-mobile-prd-drift
+```
+
+**No new mobile-pod stashes created during Task L+P.** The web+backend
+work never touched `/app/mobile/`; the auto-commit hook had nothing to
+sweep. All 5 pre-existing stashes remain isolated for the mobile-port
+sub-agent to resolve independently.
+
+### 16. Cross-surface vitest — decision
+
+The optional cross-surface vitest (mount JobsList → click a job →
+JobDetail → sees SR photos section) was **not folded** into Commit 7.
+Rationale: mounting JobsList with real router + API mocks + then
+navigating to JobDetail with a second data payload would exceed the
+~150 LOC budget, add flakiness risk (network mock races), and
+duplicate coverage that the per-surface vitests from Commits 3-6
+already deliver. The 84 new tests + 3 regression sweeps provide
+sufficient coverage without the cross-surface flake vector.
+
+### 17. Commit log & file-level breakdown
+
+```
+66c6122f5 feat(workstream-thumbs): Photos column on JobsList with <JobPhotoThumbs>
+9ecd99ac3 feat(job-detail): extend /jobs/{id}/detail aggregator with service_report_photos
+59969696b feat(workstream-media): extend _media_summary + swap MediaStrip URL to /thumb
+26ecd9028 feat(workstream-media): SR fallback on public /job-photo trio + slim widen
+ac93fef96 test(workstream-media): pytest coverage for _media_items merge
+de515c7ef feat(workstream-media): merge job.photos + service-report photos in _media_items
+<this commit — docs>
+```
+
+**File-level breakdown** (Commits 1-6):
+
+| File | Layer | Insertions | Deletions |
+|---|---|---:|---:|
+| `backend/routers/workstream_service_log.py` | Backend prod | 102 | 34 |
+| `backend/routers/jobs.py` | Backend prod | 195 | 14 |
+| `backend/routers/customers.py` | Backend prod | 8 | 0 |
+| `backend/routers/workstream.py` | Backend prod | 96 | 33 |
+| `backend/routers/workstream_job_detail.py` | Backend prod | 59 | 1 |
+| `backend/services/jobs_slim_photos.py` | Backend prod | 222 | 14 |
+| `frontend/src/pages/workstream/WorkstreamPage.jsx` | Frontend prod | 17 | 3 |
+| `frontend/src/pages/jobs/JobDetail.jsx` | Frontend prod | 78 | 0 |
+| `frontend/src/pages/jobs/JobsList.jsx` | Frontend prod | 18 | 1 |
+| `frontend/src/components/jobs/JobPhotoThumbs.jsx` | Frontend prod (new) | 126 | 0 |
+| `backend/tests/test_task_l_workstream_media_merge.py` | Backend tests (new) | 480 | 0 |
+| `backend/tests/test_task_l_public_photo_sr_fallback.py` | Backend tests (new) | 610 | 0 |
+| `backend/tests/test_task_l_workstream_media_summary_merge.py` | Backend tests (new) | 298 | 0 |
+| `backend/tests/test_task_l_jobdetail_sr_photos.py` | Backend tests (new) | 476 | 0 |
+| `frontend/src/test/task-l-mediastrip-thumb-swap.test.jsx` | Frontend tests (new) | 92 | 0 |
+| `frontend/src/test/task-l-jobdetail-sr-photos.test.jsx` | Frontend tests (new) | 98 | 0 |
+| `frontend/src/test/task-l-jobslist-photos-column.test.jsx` | Frontend tests (new) | 198 | 0 |
+| **`memory/PRD.md`** (this section) | **Docs** | **~this section** | **0** |
+
+
