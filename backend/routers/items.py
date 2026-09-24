@@ -513,3 +513,373 @@ async def bulk_delete_pricebook(body: _PricebookBulkDeleteIn,
     return {"ok": True, "deleted_count": len(deleted),
               "deleted": deleted, "failed": failed}
 
+
+# ═════════════════════════════════════════════════════════════════════════
+# P56 · Feb-2026 — Pricebook Bulk-Update-Categories (P55 sync consumer).
+#
+# NOTE — Sibling ``bulk_delete_pricebook`` shape diverged materially
+# from the P54/P55-consumer pattern (see P56 grep-pass Q1). We
+# INTENTIONALLY do NOT mirror it here: the P54 shape wins for
+# cross-file P55-consumer consistency. Namely:
+#
+#   * Request payload: bare ``ids`` list (no ``query_selector`` /
+#     ``exclude_ids`` — the frontend already knows its checked-row
+#     ids; the selector shape is a bulk-delete-only affordance).
+#   * Batch cap: new in-file constant (100), matches the P54 cap
+#     and reflects the P55 fan-out cost per row (each row fires
+#     ``sync_pricebook_to_invoice_lines`` which touches every
+#     linked unpaid invoice).
+#   * Response: ``{updated, already_current, failed,
+#     sync_result_summary, results: [{id, status, error?}]}`` —
+#     same as ``bulk_activate_recurring`` / P54.
+#   * Validation: inline HTTP 422 pattern with
+#     ``{code, field, attempted, collection}`` (Q2/A · cross-file
+#     P55-consumer consistency). NOT the ``validate_service_category``
+#     HTTP 400 shape that the single-item PATCH still uses — the
+#     PATCH's contract is preserved unchanged; only the new bulk
+#     endpoint uses the 422 shape.
+#   * Tenant scoping: explicit ``user.get("tenant_id")`` filter on
+#     the per-row ``find_one`` (Q6/yes). Sibling bulk-delete's
+#     pre-existing tenant-isolation gap is documented in the P56
+#     PRD § "Pre-existing security defect flagged during P56 grep"
+#     for a future dispatch (recommend name: P57 · Pricebook
+#     bulk-delete tenant isolation).
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class _PricebookBulkUpdateCategoriesIn(BaseModel):
+    """P56 · Feb-2026 — Bulk category-edit payload for pricebook.
+
+    Both category fields are ``Optional`` at the type level.
+    Semantics for each field use Pydantic v2 ``model_fields_set``
+    to distinguish JSON-absent from JSON-null:
+
+      * field NOT in ``model_fields_set`` (JSON key absent)   → unchanged
+      * field present with a non-empty string value           → validate + apply
+      * field present with ``None`` or an empty string        → unchanged
+    """
+    ids: List[str]
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
+
+
+# Batch cap for the P56 bulk endpoint. Kept adjacent to
+# ``_PRICEBOOK_BULK_CAP`` so the per-endpoint constant pattern used
+# by ``items.py`` is preserved. The 100 ceiling matches the P54
+# cap and reflects the P55 fan-out cost per row (each bulk-update-
+# categories row fires ``sync_pricebook_to_invoice_lines`` which
+# walks every linked unpaid invoice for that item).
+_PRICEBOOK_BULK_UPDATE_CATEGORIES_MAX = 100
+
+
+@router.post("/pricebook/bulk-update-categories",
+              operation_id="pricebook.bulkUpdateCategories")
+async def bulk_update_categories_pricebook(
+    body: _PricebookBulkUpdateCategoriesIn,
+    user: dict = Depends(require_admin),
+):
+    """Phase P56 · Feb-2026 — Bulk-edit service + income category
+    across many Pricebook items in one call. Consumes the P55
+    ``sync_pricebook_to_invoice_lines`` orchestrator per updated
+    row so every linked unpaid invoice line item picks up the new
+    taxonomy id.
+
+    Per-id status (mirrors P54 / bulk_activate_recurring
+    honest-telemetry):
+      * ``updated``          — every touched category field
+        differed from the on-disk value; the write landed; the
+        P55 sync fan-out fired successfully.
+      * ``already_current``  — every incoming field already matched
+        the on-disk value. Idempotent no-op: no write, no sync,
+        no audit row.
+      * ``failed``           — item not found under caller's tenant
+        (out-of-tenant + typo + soft-deleted all land here), OR
+        service item received an ``income_category_id`` (rejected
+        per the item.py :367-378 single-item PATCH rule), OR the
+        P55 sync raised ``CategorySyncNameLookupError``, OR a
+        generic sync exception. Row's ``error`` field carries the
+        specific string.
+
+    Rejects with 400:
+      * ``ids_empty`` when ``len(ids) == 0`` (post-dedupe).
+      * ``batch_too_large`` when ``len(ids) > 100``.
+      * ``no_category_fields_set`` when neither category field
+        resolves to a non-empty value.
+
+    Rejects with 422 (payload-level, before the per-row loop
+    starts — mirrors P54 · Q2/A cross-file P55-consumer contract):
+      * ``<field>_too_long`` when the id string is > 80 chars.
+      * ``<field>_no_html`` when the id string contains ``<`` /
+        ``>``.
+      * ``service_category_invalid`` / ``income_category_invalid``
+        when the id doesn't resolve to an active row on the
+        caller's tenant. Payload: ``{code, field, attempted,
+        collection}``.
+
+    Response envelope (identical to P54 for cross-file P55-
+    consumer consistency):
+      ``{"updated": int, "already_current": int, "failed": int,
+         "sync_result_summary": {"child_invoices_updated": int,
+                                  "child_invoices_skipped_paid": int,
+                                  "child_invoices_skipped_loop": int,
+                                  "child_error_rows": int},
+         "results": [{"id", "status", "error"?}]}``
+    """
+    tenant_id = (user.get("tenant_id") or "") or ""
+
+    # Normalize + dedupe.
+    ids_seen: set = set()
+    ordered_ids: List[str] = []
+    for iid in body.ids:
+        if iid and iid not in ids_seen:
+            ids_seen.add(iid)
+            ordered_ids.append(iid)
+    if not ordered_ids:
+        raise HTTPException(400, {"error": "ids_empty"})
+    if len(ordered_ids) > _PRICEBOOK_BULK_UPDATE_CATEGORIES_MAX:
+        logger.warning(
+            "[pricebook.bulk_update_categories.batch_too_large] "
+            "tenant=%s received=%d cap=%d",
+            tenant_id, len(ordered_ids),
+            _PRICEBOOK_BULK_UPDATE_CATEGORIES_MAX,
+        )
+        raise HTTPException(400, {
+            "error": "batch_too_large",
+            "max": _PRICEBOOK_BULK_UPDATE_CATEGORIES_MAX,
+            "received": len(ordered_ids),
+        })
+
+    # Pydantic v2 — distinguish JSON-absent from JSON-null.
+    _sent_fields = body.model_fields_set
+
+    _CATEGORY_KEYS = {
+        "income_category_id": "income_categories",
+        "service_category_id": "service_categories",
+    }
+    # Resolve up-front — mirrors the P54 endpoint's payload-level
+    # rejection so the caller sees a 422 before the loop starts,
+    # not deep into a partially-applied batch.
+    resolved_by_field: dict = {}
+    for _field, _coll in _CATEGORY_KEYS.items():
+        if _field not in _sent_fields:
+            continue
+        _val = getattr(body, _field)
+        if _val is None:
+            continue
+        _val = str(_val).strip()
+        if not _val:
+            continue
+        if len(_val) > 80:
+            raise HTTPException(
+                422, {"error": f"{_field}_too_long", "max_len": 80},
+            )
+        if "<" in _val or ">" in _val:
+            raise HTTPException(
+                422, {"error": f"{_field}_no_html"},
+            )
+        _cat = await db[_coll].find_one(
+            {"id": _val, "tenant_id": tenant_id,
+              "is_archived": {"$ne": True}},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+        if not _cat:
+            _code = ("service_category_invalid"
+                     if _field == "service_category_id"
+                     else "income_category_invalid")
+            raise HTTPException(
+                422,
+                {"code": _code, "field": _field,
+                  "attempted": _val, "collection": _coll},
+            )
+        resolved_by_field[_field] = _cat
+
+    if not resolved_by_field:
+        raise HTTPException(
+            400, {"error": "no_category_fields_set",
+                    "hint": ("at least one of ``service_category_id`` "
+                            "or ``income_category_id`` must be "
+                            "present with a non-empty value")},
+        )
+
+    # Import once — the P56 fan-out uses the new P55 direction
+    # ``sync_pricebook_to_invoice_lines``. Origin marker
+    # ``bulk_pricebook_edit`` is grep-verified NOT in
+    # ``_SKIP_TABLE`` (guarded by
+    # ``test_bulk_pricebook_edit_origin_not_in_skip_set``).
+    from services.category_sync import (
+        sync_pricebook_to_invoice_lines,
+        CategorySyncNameLookupError,
+    )
+
+    updated_count = 0
+    already_current_count = 0
+    failed_count = 0
+    child_updated = 0
+    child_paid_skipped = 0
+    child_loop_skipped = 0
+    child_error_rows = 0
+    results: List[dict] = []
+
+    for iid in ordered_ids:
+        item = await db.items.find_one(
+            # Q6/yes — explicit tenant scope on the read filter.
+            # Also excludes soft-deleted rows so a bulk edit on a
+            # stale UI never re-touches an archived item.
+            {"id": iid, "tenant_id": tenant_id,
+              "$or": [{"deleted_at": None},
+                       {"deleted_at": {"$exists": False}}]},
+            {"_id": 0, "id": 1, "item_type": 1,
+              "income_category_id": 1, "income_category_name": 1,
+              "service_category_id": 1, "service_category_name": 1,
+              "category": 1},
+        )
+        if not item:
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed", "error": "not_found",
+            })
+            continue
+
+        # Q5/A — service items reject income_category_id per the
+        # single-item PATCH rule at items.py :367-378. Honest
+        # per-row telemetry: this row fails, the batch continues.
+        effective_type = (
+            (item.get("item_type") or "product").lower()
+        )
+        if (effective_type == "service"
+                and "income_category_id" in resolved_by_field):
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed",
+                "error": "services_cannot_have_income_category_id",
+            })
+            continue
+
+        # Build the write set — idempotency guard: only include
+        # fields whose resolved target differs from the current
+        # on-disk value. Denorm name stays in lockstep with the id.
+        # Legacy ``category`` scalar keeps lockstep with the modern
+        # income_category_id (Q2 · P55 lockstep contract).
+        updates: dict = {}
+        for _field, _cat in resolved_by_field.items():
+            _denorm = _field.replace("_id", "_name")
+            if item.get(_field) != _cat["id"]:
+                updates[_field] = _cat["id"]
+            if item.get(_denorm) != _cat.get("name"):
+                updates[_denorm] = _cat.get("name")
+            if _field == "income_category_id":
+                # Keep legacy scalar in lockstep.
+                if item.get("category") != _cat["id"]:
+                    updates["category"] = _cat["id"]
+
+        if not updates:
+            already_current_count += 1
+            results.append({"id": iid, "status": "already_current"})
+            continue
+
+        updates["updated_at"] = now_iso()
+        updates["updated_by_user_id"] = user.get("id")
+        try:
+            r = await db.items.update_one(
+                {"id": iid, "tenant_id": tenant_id},
+                {"$set": updates},
+            )
+        except Exception as _upd_exc:                             # noqa: BLE001
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed",
+                "error": f"update_failed: {_upd_exc}",
+            })
+            continue
+
+        if r.matched_count == 0:
+            # Race — item deleted between find_one + update_one.
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed", "error": "not_found",
+            })
+            continue
+
+        # Audit — mirror the sibling patch_item audit shape
+        # (event ``pricebook.patch``, actor_user_id / actor_email,
+        # target_id, changed_fields, at). Distinct collection
+        # (``audit_log`` singular) from the recurring path's
+        # ``audit_logs`` — kept orthogonal per audit-ledger
+        # consumer contract. Fail-open on audit failure.
+        try:
+            await db.audit_log.insert_one({
+                "id": new_id(),
+                "actor_user_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "action": "pricebook.patch",
+                "target_id": iid,
+                "changed_fields": sorted(updates.keys()),
+                "at": now_iso(),
+            })
+        except Exception as _aud_exc:                              # noqa: BLE001
+            logger.warning(
+                "[pricebook.bulk_update_categories.audit] "
+                "failed target=%s error=%s", iid, _aud_exc,
+            )
+
+        # P55 fan-out. Origin ``bulk_pricebook_edit`` — grep-
+        # verified NOT in ``_SKIP_TABLE`` (test guard in the P56
+        # backend suite). Fail-open below: the item's own write
+        # already landed, so a sync failure classifies the row as
+        # per-row failed (partial-apply state — same semantics as
+        # P54).
+        _sync_kwargs: dict = {"origin": "bulk_pricebook_edit"}
+        if "income_category_id" in updates:
+            _sync_kwargs["income_category_id"] = (
+                updates["income_category_id"]
+            )
+        if "service_category_id" in updates:
+            _sync_kwargs["service_category_id"] = (
+                updates["service_category_id"]
+            )
+        try:
+            _sync_result = await sync_pricebook_to_invoice_lines(
+                tenant_id=tenant_id, item_id=iid,
+                actor_id=user.get("id"),
+                **_sync_kwargs,
+            )
+            child_updated += _sync_result.updated_count
+            child_paid_skipped += _sync_result.skipped_paid_count
+            child_loop_skipped += _sync_result.skipped_loop_count
+            child_error_rows += len(_sync_result.errors_by_id)
+        except CategorySyncNameLookupError as _cs_exc:
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed",
+                "error": ("category_deleted_after_source_write "
+                            f"({_cs_exc.category_id})"),
+            })
+            continue
+        except Exception as _cs_exc:                             # noqa: BLE001
+            logger.warning(
+                "[category_sync.bulk_pricebook_edit.failed] "
+                "item=%s error=%s", iid, _cs_exc,
+            )
+            failed_count += 1
+            results.append({
+                "id": iid, "status": "failed",
+                "error": f"sync_failed: {_cs_exc}",
+            })
+            continue
+
+        updated_count += 1
+        results.append({"id": iid, "status": "updated"})
+
+    return {
+        "updated": updated_count,
+        "already_current": already_current_count,
+        "failed": failed_count,
+        "sync_result_summary": {
+            "child_invoices_updated": child_updated,
+            "child_invoices_skipped_paid": child_paid_skipped,
+            "child_invoices_skipped_loop": child_loop_skipped,
+            "child_error_rows": child_error_rows,
+        },
+        "results": results,
+    }
+
