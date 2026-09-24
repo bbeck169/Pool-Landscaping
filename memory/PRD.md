@@ -23393,3 +23393,255 @@ P58 scope; separate phases each):
   If one is ever needed, the ValueError diagnostic points
   future authors at the correct pattern.
 
+
+## Task E — Unify filter/search bars across 6 pages via shared `NavyFilterBar` component (Feb-2026 · SHIPPED preview · web-only)
+
+### Motivation & scope
+
+Extract the Phase K52.1 navy filter strip that shipped inline on
+Customers + Invoices into a shared `NavyFilterBar` compound-
+children component, then migrate 4 more list pages onto it
+(Pricebook, Recurring Jobs, Work Stream, Payments Ledger) so all
+six read as visually identical filter surfaces. The migration is
+structural + visual, not behavioural — every data-testid, every
+controlled-state hook, every filter-effect side-channel stays
+wired identically.
+
+Web-only. Mobile untouched. Backend untouched. P58 charter
+(bulk-endpoint tenant-isolation audit) unchanged; the deferred
+P59 read-side audit is still open on the same charter.
+
+### Design decision log (5 halt-item resolutions + composition API)
+
+| # | Decision | Outcome |
+|---|----------|---------|
+| 1 | Search input styling conflict — user spec (navy text + permanent `#3B82F6` border) vs. Phase N1 sitewide `<Input>` (brand-blue text + gray border w/ focus-blue) vs. "zero visual diff on Customer" | **(a) apply spec verbatim**. Customer's search input visibly changes: border gray→permanent `#3B82F6`; text `#0284C7`→`#1B1F5C`. Sitewide shadcn `<Input>` (Phase N1) NOT touched — the new styling lives ONLY inside `NavyFilterBar.Search`. |
+| 2 | Work Stream Status filter — spec item stale (Phase 5A.2 removed Status from WS in prior work) | **Skip that spec item**. WS carries the navy container + white-text restyle on the 4 remaining controls (Since, Until, Tech, Customer, Sort). Explicit test assertion pins the removal. |
+| 3 | Work Stream stacked labels — WS has `<label>` above every control; Customer/Invoices don't | **(a) optional `label` prop on sub-primitives**. `.Select`, `.Chip`, `.DatePicker`, `.Combobox` accept optional `label` that renders a 10-px `font-bold uppercase` caption above the control. Label color = `colors.nav.fg` (white). When omitted, control renders bare (Customer/Invoices layout). |
+| 4 | Pricebook header row structure — filter controls embedded in the `flex justify-between` Items·N + checkbox + buttons header | **(b) new row above existing header**. `<NavyFilterBar>` sits as Row 1 above the existing "Items · N + checkbox + Manage Categories + Add new item" row (Row 2), which stays untouched. Zero risk to bulk-select / count / button behaviour. |
+| 5 | Customer City `<select>` legacy light styling inside the navy strip | **(a) uniform navy**. City select loses its `surfaceSecondary` exception and joins the uniform navy palette. Visual diff on Customer, accepted per decision #1. |
+| — | Composition API — compound children vs. slots-via-props array | **Compound children** (`<NavyFilterBar.Search/>`, `.Select`, `.Chip`, `.DatePicker`, `.Combobox`). Matches shadcn `<Select>` / `<Card>` idiom; models varied per-page control shapes without an awkward slot array; supports conditional-render children natively (isAdmin ternary on WS's Technician). |
+| — | Export-CSV button placement on Payments Ledger | **Right slot inside the navy strip** (`ml-auto`). One-row cohesion — table Card starts directly with the table body, no border-top search/export row above. |
+| — | CustomerCombobox integration on Work Stream | **Passthrough shell** (`.Combobox`). `.Combobox` only applies the label + `minWidth` wrapping and renders `{children}` inside; child CustomerCombobox keeps its type-ahead behaviour + own testid intact. Reads as a solid-white pill inside the navy strip — accepted trade-off (Task E doesn't restyle unrelated shared components). |
+
+### Grep-pass findings (pre-commit paranoia mandate)
+
+**Reference filter bar — Customers**
+* File: `src/pages/customers/CustomersList.jsx` lines 1517-~1735.
+* Container: `rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center`; navy paint via `colors.nav.bg`; K52.1 marker `data-k52-navy-strip="true"`.
+* Controls (10 total): search input, 3 scope chips, Tag / Sort / Portal-status / City selects, Missing-card chip (admin/manager only, yellow warning tint — divergent from gradient), More-filters dropdown trigger.
+
+**5 target filter bars**
+| Page | File | Pre-migration shape | Migration target |
+|------|------|---------------------|------------------|
+| Invoices | `pages/invoices/InvoicesList.jsx` lines 427-560 | Already Phase K52.1 navy strip; translucent white search overlay; late-fee gradient chip; declined-items red chip; card select; category cluster | Swap translucent search → solid white; pill-shape late-fee chip; keep raw declined-items + category cluster |
+| Pricebook | `pages/ops/OpsHub.jsx` `PriceBook()` 2127-2660 | Bare — filter controls embedded in the Items·N + checkbox + buttons header row | New navy strip as Row 1 above existing header |
+| Recurring Jobs | `pages/admin/RecurringJobs.jsx` 1266-1319 | Bare flex row w/ search + Clear-X + service-category select | Wrap in navy chrome; permanent-blue search; navy select |
+| Work Stream | `pages/workstream/WorkstreamPage.jsx` 612-719 | Bare surface w/ stacked labels; Since/Until dates, Tech select (admin), Customer combobox, Sort select; NO search, NO Status | Wrap in navy chrome; keep 4 controls; NO Status re-add |
+| Payments Ledger | `pages/finance/FinancePages.jsx` `PaymentsLedger()` 69-440 | Method + Status inside Card stat wrappers (no summary display in those two cards); search + Export-CSV in table-header row | Method+Status cards removed; consolidate all 3 filter surfaces into 1 navy strip; Export-CSV in right slot |
+
+**Theme + tokens audit**
+* `src/theme.js` uses **nested** shape (`colors.nav.bg`, `colors.gradient.css`, `colors.accent.violet.500`).
+* `colors.nav.bg = "#1B1F5C"` ALREADY EXISTS (Phase K50). Reused as-is.
+* `colors.inputBorder = "#3B82F6"` DID NOT EXIST — added by Task E as an additive token. Scoped by comment to `NavyFilterBar.Search`; not a sitewide `<Input>` (Phase N1) revision.
+* Hardcoded `#1B1F5C` occurrences: 111 hits in 35 files — all report/dashboard/layout/test files. No sweep needed.
+* Hardcoded `#3B82F6` occurrences: 42 hits in 14 files — tech color palette, teardrop pins, CSV import step, "team color" default. **Unrelated to filter bars. No sweep needed.**
+
+**Existing shared UI components**
+* No `NavyFilterBar` / `FilterBar` collision in `src/components/ui/`.
+* Codebase idiom = compound children (shadcn `<Select>` / `<Card>`).
+* Shipped `<Input>` primitive (Phase N1) NOT touched.
+* Shipped `<Select>` primitive (Phase K52 Slice B — Radix navy popover) NOT touched.
+
+### Composition report (final)
+
+`<NavyFilterBar>` compound-children API:
+
+    <NavyFilterBar data-testid="…" data-k52-navy-strip="true">
+      <NavyFilterBar.Search value onChange placeholder data-testid onClear clearTestid? />
+      <NavyFilterBar.Select value onChange label? data-testid ariaLabel? minWidth?>
+        <option ... />
+      </NavyFilterBar.Select>
+      <NavyFilterBar.Chip active onClick data-testid label?>...</NavyFilterBar.Chip>
+      <NavyFilterBar.DatePicker value onChange label? data-testid />
+      <NavyFilterBar.Combobox label? minWidth?>{children}</NavyFilterBar.Combobox>
+    </NavyFilterBar>
+
+Every sub-primitive spreads `...rest` onto its internal control
+so callers write `data-testid="…"` / `aria-*` directly in the
+JSX. Container also `...rest`-spreads the K52.1 marker + any
+legacy data attributes.
+
+**Location:** `src/components/ui/NavyFilterBar.jsx` (240 lines).
+
+**Styling contract (source of truth):**
+* Container — `rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center` + navy fill (`colors.nav.bg`) + 1-px subtle border (`colors.nav.border`).
+* Search — solid white card (`colors.surface`); permanent blue border (`colors.inputBorder = #3B82F6`); navy text (`colors.nav.bg` as fg).
+* Select / DatePicker — navy bg, white text, white/10 border, `color-scheme: dark` on the native picker.
+* Chip — pill-shaped; active = K52 gradient (`colors.gradient.css`); idle = transparent + white/72% outline.
+* Label — 10-px `font-bold uppercase mb-0.5`; color `colors.nav.fg` (white).
+
+### Testid delta table — full 6-page audit
+
+| Page | Root data-testid | Preserved controls (verbatim) | New | Dropped |
+|------|------------------|-------------------------------|-----|---------|
+| Customers | `customers-filters` | `customers-search`, `customers-scope-{all,unscheduled,waitlist}`, `customers-filter-{tag,sort,portal-status,city,missing-card}`, `customers-more-filters-dropdown`, `portal-status-option-{value}` | — | — |
+| Invoices | `invoices-filters` | `inv-search`, `inv-filter-{status,late-fee,card,category,category-select}`, `docs-filter-has-declined-items`, `inv-category-chip-{c}`, `inv-category-chip-remove-{c}`, `inv-category-clear` | — | — |
+| Pricebook | `pricebook-filters` (NEW) | `pricebook-search-input`, `pb-supplier-filter`, `bulk-select-all`, `pricebook-manage-categories-link`, `pb-new`, `pricebook-search-empty`, `pricebook-search-clear`, `pb-cell-service-category-${r.id}`, `pb-cell-income-category-${r.id}` | `pricebook-filters` | — |
+| Recurring Jobs | `recurring-jobs-filters` (NEW) | `recurring-search-input`, `recurring-search-clear`, `recurring-jobs-service-category-filter`, `recurring-cell-service-category-${r.id}`, `recurring-cell-income-category-${r.id}` | `recurring-jobs-filters` | — |
+| Work Stream | `workstream-filter-bar` (retained) | `ws-filter-since`, `ws-filter-until`, `ws-filter-tech`, `ws-filter-customer`, `ws-sort` | — | — |
+| Payments Ledger | `payments-filters` (NEW) | `payments-search`, `payments-filter-method`, `payments-filter-status`, `payments-export`, `payments-total-count`, `payments-total-amount`, `payments-filter-customer`, `payments-table` | `payments-filters` | `method-select`, `status-select` |
+
+**Dropped testids justification (Payments Ledger)**
+* `method-select` / `status-select` were INNER `<select>` testids nested under the outer `payments-filter-method` / `payments-filter-status` Card wrappers. Grep confirmed **zero external references** in any test file (only the source itself). The outer testids migrate onto the new `NavyFilterBar.Select` controls verbatim, so the semantic role is preserved at the DOM level.
+
+### Task C safety-net evidence (Pricebook + Recurring Jobs)
+
+Task C's `CategoryComboCell` inline category cells (Commits
+`5120940e7`..`b83b80507`) live in Pricebook + Recurring Jobs
+row bodies. The header migrations for both pages include
+explicit test assertions:
+
+* `test/task-e-c4-pricebook-migration.test.jsx` — Test #4
+  "keeps both Task C row-body category cells intact":
+    - `import CategoryComboCell from ...` still present.
+    - `data-testid={\`pb-cell-service-category-${r.id}\`}` present.
+    - `data-testid={\`pb-cell-income-category-${r.id}\`}` present.
+    - Both cells still resolve through the parameterised
+      `CategoryComboCell` primitive (not an inline copy-paste).
+* `test/task-e-c5-recurring-jobs-migration.test.jsx` — Test #4
+  same assertion shape for `recurring-cell-service-category-` +
+  `recurring-cell-income-category-`.
+
+### Test coverage summary
+
+| Test file | Cases | Purpose |
+|-----------|-------|---------|
+| `task-e-navy-filter-bar.test.jsx` | 17 | Shared primitive — root + 5 sub-primitives + compound composition |
+| `task-e-cross-page-symmetry.test.jsx` | 5 | Source-body scan — all 6 pages carry K52.1 marker + unique root testid + full control testid roster |
+| `task-e-c4-pricebook-migration.test.jsx` | 4 | Two-row header contract + Task C row-body guard |
+| `task-e-c5-recurring-jobs-migration.test.jsx` | 4 | Bar mount + delegation + Task C row-body guard |
+| `task-e-c6-workstream-migration.test.jsx` | 6 | Bar mount + 4-control delegation + Status-removed guard |
+| `task-e-c7-payments-ledger-migration.test.jsx` | 5 | 2-tile summary grid + strip consolidation + date-range preservation |
+| **Total new** | **41** | |
+
+Plus in-file updates:
+* `test/k52-theming.test.js` — `assertNavyStripPresent` helper now accepts EITHER inline `backgroundColor: colors.nav.bg` (legacy) OR delegated `<NavyFilterBar` proximity (Task E). CustomersList + InvoicesList assertions rewritten for compound-child shape.
+* `test/k64-nav-active-hover-unify.test.jsx` — `OK_TO_KEEP_GRADIENT` list refreshed (CustomersList → NavyFilterBar; Invoices stays because of raw chip gradient inline).
+* `test/phase-n2-input-restyle-refinement.test.jsx` — `K52_FILES` list drops CustomersList (Task E decision #1 supersedes Phase N2 for that page).
+* 6 pre-existing `vi.mock('@/theme')` mock objects — appended `nav.*` + `gradient.*` + `inputBorder` tokens so RecurringJobs' new NavyFilterBar consumer renders under jsdom.
+
+### Baseline drift bucket (non-Task-E flakes explicitly enumerated)
+
+These test failures existed on baseline `4a412176b` (pre-Task-E)
+and STILL exist after Task E. They are NOT Task-E regressions.
+Logged for a separate cleanup phase.
+
+| Test | Failure | Root cause |
+|------|---------|------------|
+| `k52-theming.test.js` > K52 · Slice A — CalendarSchedule "search box white on navy" | `expect(searchBlock).toMatch(/background:\s*"rgba\(255,255,255,0.10\)"/)` fails; shipped code uses solid-white (Phase N1 restyle) | Fixture drift — assertion never updated when CalendarSchedule migrated to Phase N1. |
+| `phase-n2-input-restyle-refinement.test.jsx` > D1 · every `<Search>` element uses `colors.searchIcon` | Off-by-one Search icon somewhere in the sitewide sweep | Fixture drift — one `<Search>` consumer diverges from the Phase N2 D1 contract. |
+| `phase35-mobile-finance-parity.test.jsx` > Mobile Recurring Jobs backend endpoint check | `expect(spec.paths).toHaveProperty("/recurring-jobs")` false | Mobile-related regression not owned by Task E. |
+| `p4-recurring-jobs-category-dropdowns.test.jsx` > 4 modal-open tests | `Test timed out in 5000ms` on modal render | Suspected fixture drift or a Radix-modal timing regression; timing out on baseline too. |
+
+### Preview screenshot manifest
+
+| Commit | Page | Screenshot path |
+|--------|------|-----------------|
+| C2 | Customers | `/app/task_e_c2_customers_filter_bar.png` |
+| C3 | Invoices | `/app/task_e_c3_invoices_filter_bar.png` |
+| C4 | Pricebook | `/app/task_e_c4_pricebook_filter_bar.png` |
+| C5 | Recurring Jobs | `/app/task_e_c5_recurring_jobs_filter_bar.png` |
+| C6 | Work Stream | `/app/task_e_c6_workstream_filter_bar.png` |
+| C7 | Payments Ledger | `/app/task_e_c7_payments_ledger.png` |
+
+Each preview was captured against
+`https://poolscape-audit.preview.emergentagent.com/` (the same
+host used for Task D live smoke) after login as
+`admin@aquaterra.com`.
+
+### Commit inventory (8-commit series)
+
+    57e8ad9dc  feat(navy-filter-bar): theme token + shared NavyFilterBar component with compound children
+    afc1a7e40  refactor(navy-filter-bar): migrate Customers page (Phase K52.1 supersede)
+    a0e880dd2  refactor(navy-filter-bar): migrate Invoices — swap translucent search for solid white card
+    2eb1e8e52  refactor(navy-filter-bar): migrate Pricebook — new navy strip above item-list header
+    cc97911ff  refactor(navy-filter-bar): migrate Recurring Jobs
+    3cfab89fa  refactor(navy-filter-bar): migrate Work Stream — navy chrome on 4 controls (no Status filter, per 5A.2)
+    e471ca757  refactor(navy-filter-bar): migrate Payments Ledger — consolidate stat-card filters into navy strip
+    7ef6f3292  test(navy-filter-bar): shared primitive coverage + cross-page symmetry regression guard
+    <this commit>  docs(navy-filter-bar): PRD Task E section
+
+Shortstat (working set, excluding docs commit): 24 files
+changed, 1639 insertions(+), 374 deletions(-).
+
+### Task B disposition
+
+Task E absorbed the `colors.inputBorder` token drop. Global
+input-border sweep (any residual `#3B82F6` hardcodes across
+the 42 non-filter-bar occurrences) remains **deferred as Task B
+revival**. Grep enumerated the 14 files carrying the hex
+literal — none related to filter bars; the sweep is a follow-on
+polish pass, not a Task E dependency.
+
+### P59 handoff — still valid, unchanged
+
+Task E did not touch backend. The Phase P58 handoff that opened
+P59 (read-side tenant-isolation audit — `GET /items`,
+`GET /export/customers`, `GET /export/items` HIGH-leak
+enumeration; `_email_tpl_locked` / `_sms_tpl_locked` /
+`_soft_delete_item` cross-collection lock-check counts LOW
+defense-in-depth) is unchanged. P59 remains queued.
+
+### Mobile-pod drift note
+
+Task E is web-only for every commit I authored (Commits 1-7 +
+Commit 8a + Commit 8b). Two mobile-drift events during the
+Task E window:
+
+1. **Pre-Commit-1 stash** — `mobile/.expo/types/router.d.ts`
+   modified + `mobile/src/lib/absolutizeUrl.ts` untracked +
+   `mobile/app/benefits.tsx` untracked (a Task D mobile-port
+   in-progress). All isolated under stash
+   `task-e-grep-pass-stash-mobile-prd-drift` before starting
+   the grep pass.
+2. **During Commit-5 baseline check** — mobile-pod hot-reload
+   re-touched `mobile/.expo/types/router.d.ts` mid-check.
+   Isolated under stash `task-e-c5-mobile-mobilepod-drift`.
+3. **Between Commit 5 and Commit 6** — a platform auto-commit
+   hook (`d3f42dec9`) swept a reply-turned-message onto a
+   `mobile/.expo/types/router.d.ts` diff into git history.
+   Not part of any Task E commit I authored. Task E code
+   itself did not touch the mobile tree.
+
+Task E remains web-only end-to-end for the code it owns; the
+mobile-side commits during the window are attributable to the
+mobile pod (e1_expo_frontend_dev) + the platform auto-commit
+hook.
+
+### Explicit "not done" list — Task E scope boundary
+
+* **Sitewide `<Input>` restyle (Phase N1)** — untouched. The
+  permanent `#3B82F6` border lives only inside
+  `NavyFilterBar.Search`.
+* **`<CustomerCombobox>` navy variant** — the passthrough
+  shell wraps the existing white-pill CustomerCombobox on Work
+  Stream. A component-level navy variant is out of scope; if
+  wanted, it lives in a separate component-shell pass.
+* **Global `#1B1F5C` / `#3B82F6` hardcode sweep** — deferred
+  as Task B revival.
+* **Payments Ledger visible date-range pickers** — the range
+  comes from `<DateRangePicker />` inside `<Header right={…} />`
+  and stays there. No `payments-filter-start` / `-end` pickers
+  added to the navy strip.
+* **Work Stream Status filter** — remains removed per Phase
+  5A.2 (decision #2).
+* **Task C `CategoryComboCell` cells** — row-body cells are
+  untouched; only their host pages' filter strips migrated.
+  Explicit test assertions on Pricebook + Recurring Jobs pin
+  the wiring.
+* **Baseline drift** — CalendarSchedule + N2 D1 + phase35
+  mobile Recurring Jobs + p4 category-dropdowns modal timeouts
+  remain non-Task-E flakes. Logged in the baseline-drift bucket
+  above.
+
