@@ -528,6 +528,16 @@ api_router.include_router(_batch_b_routing_telemetry.router)
 from routers import email_preview as _batch_b_email_preview  # noqa: E402
 api_router.include_router(_batch_b_email_preview.router)
 
+# Phase P53 · Feb-2026 — Dev-only BOOM referral email preview route.
+# Gated at REGISTRATION time on ``APP_ENV != "production"`` (the
+# stronger of the two guards; the handler itself also 404s on prod
+# as a belt-and-suspenders defense). Deliberately mounted next to
+# the existing Batch B preview endpoint so the two live together.
+_p53_app_env = (os.environ.get("APP_ENV") or "preview").strip().lower()
+if _p53_app_env != "production":
+    from routers import dev_email_preview as _p53_dev_email_preview  # noqa: E402
+    api_router.include_router(_p53_dev_email_preview.router)
+
 # Feb-2026 · Diag-Timeout Task 2 — client-side 30s-timeout telemetry.
 from routers import client_telemetry as _feb2026_client_telemetry  # noqa: E402
 api_router.include_router(_feb2026_client_telemetry.router)
