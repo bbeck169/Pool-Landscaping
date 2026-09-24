@@ -21290,3 +21290,83 @@ The dispatch referenced `ServiceReportView.jsx`; that file doesn't exist. `Porta
 - **P47 test suite** — the P47 code (portal next-service query fix + missed-job auto-cleanup poller + frontend badge palette + `.env.example` keys) all landed. Tests + PRD entry not written before the user pivoted to P48 → P49. Marked deferred; the P47 fix is live in preview.
 - **P48 tests + PRD** — P48 backend multi-CSV filter + frontend tab switcher landed as code diffs (`backend/routers/leads.py` + `frontend/src/pages/leads/LeadsDashboardPage.jsx`). Tests + curl proof + PRD not written before the user paused P48 for P49. Marked paused-with-partial-diff; the leads-tab UX + server-side filter are functional in preview.
 
+
+## Phase P47 · Feb-2026 — Portal Next-Service Fix + Missed-Job Auto-Cleanup (SHIPPED preview · tests + PRD entry backfilled Preflight A)
+
+**Goal.** Two portal-adjacent items that ship together:
+
+1. **Portal Next-Service query fix** — customers whose only `status=scheduled` rows are past-dated (never marked completed) were seeing a blank "Next Service" tile on `/portal/home`.  Pre-P47 the endpoint used `find_one` with sort `(scheduled_start ASC, scheduled_date ASC)` and a Python post-filter — BSON's null-first ascending sort surfaced the stalest row first, which the Python guard then dropped instead of falling through to the actual next upcoming job.
+2. **Missed-job auto-cleanup poller** — an asyncio background task (P39 lifespan pattern, no Celery / APScheduler) that sweeps open-status rows (`scheduled | pending | active | requested`) whose effective schedule datetime is older than `MISSED_JOB_STALENESS_HOURS` and flips them to `status="missed"` with a forensic audit doc.  `in_progress` is intentionally EXCLUDED — a tech mid-visit needs operator attention, not auto-cleanup.
+
+### Backend
+
+`backend/routers/customer_portal.py::get_portal_summary`
+- Pushed the `>= today` date guard into the DB query itself via two OR branches:
+  - Rung 1 — `scheduled_start >= now_iso` (has a specific ISO ts in the future).
+  - Rung 2 — `scheduled_start` null/missing/empty-string AND `scheduled_date >= today` (YYYY-MM-DD lexical compare — safe even against legacy full-ISO `scheduled_date` values for same-day boundaries).
+- Wrapped both `deleted_at` guard + date guards in an explicit `$and` block so the two top-level `$or` clauses don't collide (Mongo query grammar only allows one `$or` at a level).
+- Kept the Python belt (`str(scheduled)[:10] >= today`) as a defensive check in case schema drift ever sneaks a past row past the DB guard.
+
+`backend/services/missed_job_scheduler.py` (NEW · 279 lines)
+- `_resolve_enabled` / `_resolve_interval_sec` / `_resolve_staleness_hours` — env resolvers with sane defaults + a 300s floor on the interval so a runaway loop can't hammer Mongo.
+- `_effective_scheduled_iso(job)` — resolves the effective schedule ts.  Preference order matches the portal Next-Service query: `scheduled_start` → `scheduled_date + T08:00:00 UTC` (matches the P38.1 default-time helper convention).
+- `run_once(*, staleness_hours=None, db_client=None)` — one sweep.  Tenant-scoped atomic `update_one` with `status ∈ OPEN_STATUSES` filter guards a race where a tech flipped the job to `completed` between our `find` and `update_one`.  Audit doc goes into `db.audits` with `kind="job_auto_marked_missed"` (mirrors P42's `technicians_hard_delete` forensic pattern).  `db_client` lets tests inject a Motor db handle bound to a per-test loop.
+- `missed_job_cleanup_loop()` — long-running poller, exits cleanly on `asyncio.CancelledError`, swallows per-iteration exceptions so a Mongo blip / index misconfig can never take down the backend.
+
+`backend/.env.example`
+- Added `MISSED_JOB_CLEANUP_ENABLED=true`, `MISSED_JOB_CLEANUP_INTERVAL_SEC=3600`, `MISSED_JOB_STALENESS_HOURS=48` (defaults documented alongside).
+
+### Frontend
+
+`frontend/src/lib/jobStatus.js`
+- Added `missed: "#FCA5A5"` (Tailwind red-300) to the K50 job-card background map.  Slightly deeper red than `cancelled` — cancelled is operator intent, missed is "the system flagged this as unfinished".
+
+`frontend/src/pages/schedule/CalendarSchedule.jsx`
+- `STATUS_PILL.missed = { bg: "#FEE2E2", fg: "#B91C1C", label: "Missed" }` — muted red-orange pill for the admin Schedule surface.
+- `STATUS_COLORS.missed = "#B91C1C"` — calendar-dot colour, distinct from `reopened` (bright red) and `cancelled` (grey).
+
+### Tests
+
+`backend/tests/test_p47_portal_next_service_and_missed_cleanup.py` — **16 tests, 16 passing** (0.44s):
+1. Next-service returns upcoming `scheduled_start`.
+2. Next-service returns upcoming `scheduled_date`-only (OR fallback branch).
+3. Next-service ignores past `scheduled_start` (P47 primary bug repro).
+4. Next-service ignores past `scheduled_date`.
+5. Next-service OR-branch picks `scheduled_date` when `scheduled_start=""` (empty string, not just null).
+6. Next-service returns null when no upcoming jobs (past-dated + completed-in-future both correctly excluded).
+7. Next-service is tenant-scoped (same customer_id in another tenant does NOT leak).
+8. Next-service excludes soft-deleted + terminal statuses (deleted_at, cancelled, missed).
+9. Cleanup marks stale `scheduled_start` job → `status="missed"` + writes forensic fields (`missed_at`, `missed_by`, `missed_prior_status`, `missed_effective_scheduled_at`).
+10. Cleanup marks stale `scheduled_date`-only job → uses the `T08:00:00 UTC` default-time.
+11. Cleanup skips `in_progress` (intentional).
+12. Cleanup skips `completed`, `cancelled`, already-`missed` (idempotency invariant).
+13. Cleanup is tenant-scoped + writes a matching-tenant audit doc for every marked row.
+14. `_resolve_enabled` env-toggle contract — truthy / falsy variants + empty-string → default-enabled short-circuit.
+15. (User addition) Composition: seed stale → cleanup marks missed → next-service is null (proves the two P47 items compose; no orphan pointers).
+16. (User addition) Portal Next-Service matches the calendar-view first row for the same customer with 3 upcoming jobs (locks the two surfaces stay in agreement post-P47).
+
+`frontend/src/test/p47-missed-status-badge.test.jsx` — **2 tests, 2 passing** (4ms):
+1. Missed status badge palette lock — `STATUS_PILL.missed` + `STATUS_COLORS.missed` regex-checked in `CalendarSchedule.jsx` source; `K50_JOB_STATUS_BG.missed === "#FCA5A5"` runtime-asserted from the exported map; `jobStatusColor("missed" | "MISSED" | "  Missed  ")` all return `"#FCA5A5"` (case-insensitive + trim); unknown/typo/empty/null/undefined statuses ALL return `null` — the "does NOT render for other statuses" contract.
+2. P43 layout invariants preservation — `portal-sticky-header` testid + `sticky top-0 z-30 h-14 bg-white border-b` classes present; `portal-outlet-wrapper` testid + `w-full max-w-5xl mx-auto px-4` classes present; `<PaymentMethodPromptBanner />` appears BEFORE the portal `<Outlet />` in source order (uses `lastIndexOf` for the outlet to skip the earlier technician-role early-return); banner is gated behind `location.pathname.startsWith("/portal")`; NO `pt-16` regression on the portal outlet wrapper.  **This test is the P51 preservation contract — any P51 change that drops the sticky header, moves the banner, re-adds the pt-16 hack, or ships the banner outside the portal-only branch will fail this test.**
+
+### Test results
+```
+backend  · pytest tests/test_p47_portal_next_service_and_missed_cleanup.py -v
+         → 16 passed, 1 warning in 0.44s
+frontend · yarn vitest run src/test/p47-missed-status-badge.test.jsx
+         → Test Files 1 passed (1) · Tests 2 passed (2) · Duration 661ms
+```
+
+### Bugs surfaced during test writing
+None in shipped P47 code.  One bug in the test author's expectation for the env-toggle helper (`""` was expected to disable, but the resolver's `or "true"` fallback short-circuits before the disabled-set check).  Test expectation corrected; the shipped resolver behaviour is the documented / correct one.
+
+### Hard-rules compliance
+- No mobile files touched.  No `.env` writes (only `.env.example` documentation).  All tests hermetic — sync pymongo seed + fresh asyncio loop + Motor client per test, `_orig_db_for_test` save/restore around `routers.customer_portal.db` and `services.missed_job_scheduler.db` monkey-patches.  Every `TAG="P47_"`-prefixed row cleaned up on teardown.
+
+### Deferred (not P47 scope, tracked forward)
+- **P44.1** — extend the SR-primary read to the door-hanger email path (`resolve_photo_items` in `services/service_report_view.py:339` still reads legacy `job.photos`).
+- **Retro-cleanup pass** — `--force --normalize-scheduled-date` one-shot to truncate remaining ISO-shape `scheduled_date` values back to `YYYY-MM-DD`.  Not blocking Next-Service (the query tolerates both shapes) but worth a scheduled hygiene sweep.
+- **Pydantic V2 field validator on `scheduled_date`** — regex-check `^\d{4}-\d{2}-\d{2}$` at write-time to prevent future schema drift.
+- **`seed_frozen.py` fix** — stop the demo seeds from writing full-ISO `scheduled_date` values on boot (lines 43, 47 use `.isoformat()` where `.date().isoformat()` is intended).
+
+
