@@ -21678,4 +21678,10 @@ frontend · yarn vitest run src/test/p52-*.test.jsx
 
 Deferred until user decides Option A (add new field beside `timezone`) vs Option B (reuse existing `timezone` with curated-list validator).
 
+### Tail addendum (Feb-2026 · same P52 cycle)
+
+Two small follow-ups landed after the main P52 report:
+
+1. **P50 TODO-anchor test inversion** (user Option i).  The pre-P52 assertion (`expect(src).toMatch(/TODO\(P52\)[\s\S]*tenant\.default_locale/)`) inverted to `expect(src).not.toMatch(/TODO\(P52\)/)`.  Renamed the test to "P52 tenant.default_locale anchor was consumed and detector is wired — post-P52 negative-space check".  Guards against two future regressions: (a) a re-added TODO anchor that never gets cleaned up, (b) somebody deleting the `lang-tenant-default` detector.  P50 suite back to **12/12 green**.
+2. **Customers cohort tabs restyle.**  `CustomersList.jsx` `customers-cohort-tabs`: active tab picks up the saturated brand-primary bg (`#0284C7`) + white fg + `rgba(2,132,199,0.4)` glow, matching the P52 chemistry-actions dropdown trigger on `CustomerDetail`.  Inactive tabs keep the pre-P52 transparent-on-muted recede.  Six-test suite (`p52-cohort-tabs-active-glow.test.jsx`) — baseline mount + one test per tab — all green.
 
