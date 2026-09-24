@@ -979,6 +979,49 @@ async def _apply_line_item_recategorize(
             resolved_income and resolved_income["id"],
             resolved_service and resolved_service["id"],
         )
+        # ── P55 · Feb-2026 — Category sync fan-out to Pricebook ──
+        # Propagate the new category to the master pricebook row
+        # (db.items) via ``sync_invoice_line_to_pricebook`` if the
+        # invoice line carries a pricebook FK. Origin marker
+        # ``invoice_line_edit`` prevents cascading back into this
+        # same handler through a future hook. Q · policy: ``None``
+        # skips (pricebook is master; downstream ephemeral clears
+        # must NOT wipe the master row) — the orchestrator
+        # honours this.
+        line_item_id = (li.get("id") or "")
+        if line_item_id:
+            from services.category_sync import (
+                sync_invoice_line_to_pricebook,
+                CategorySyncNameLookupError,
+            )
+            _sync_kwargs: Dict[str, Any] = {
+                "origin": "invoice_line_edit",
+            }
+            if income_category_id:
+                _sync_kwargs["income_category_id"] = income_category_id
+            if service_category_id:
+                _sync_kwargs["service_category_id"] = service_category_id
+            try:
+                await sync_invoice_line_to_pricebook(
+                    tenant_id=tenant_id,
+                    invoice_id=invoice_id,
+                    line_item_id=line_item_id,
+                    actor_id=(actor or {}).get("id"),
+                    **_sync_kwargs,
+                )
+            except CategorySyncNameLookupError as _cs_exc:
+                raise HTTPException(
+                    422,
+                    {"code": "category_deleted_after_source_write",
+                     "category_id": _cs_exc.category_id,
+                     "collection": _cs_exc.collection},
+                )
+            except Exception as _cs_exc:                   # noqa: BLE001
+                logger.warning(
+                    "[category_sync.invoice_line→pricebook.failed] "
+                    "invoice=%s line=%s error=%s",
+                    invoice_id, line_item_id, _cs_exc,
+                )
     return {
         "ok": True, "changed": changed,
         "invoice_id": invoice_id,
