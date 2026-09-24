@@ -24962,3 +24962,396 @@ de515c7ef feat(workstream-media): merge job.photos + service-report photos in _m
 | **`memory/PRD.md`** (this section) | **Docs** | **~this section** | **0** |
 
 
+
+## Task M+P · Tech reopen for closed jobs + checklist auto-unlock + duplicate-invoice guard (Feb-2026)
+
+### 1. Overview
+
+**Original ask (verbatim).** Task M+P was a **consolidated** delivery of two
+originally-separate scopes:
+
+- **Task M — Tech reopen for closed jobs (backend + web).** Let assigned
+  techs (not just admins) reopen a closed job so they can add a missed
+  photo or reading. Backend widening only made sense if the frontend
+  surface also honoured it, hence the join with P.
+- **Task P — Auto-unlock the SR checklist on reopen + prevent duplicate
+  invoices/emails on re-submit.** The Task L+P follow-through: after a
+  reopen, the service report's `submitted_at` timestamp must be cleared
+  so ChecklistModal / PoolChecklistWizard re-accept edits (fixes the
+  "locked" 409). But then the re-submit path could double-fire
+  automation — auto-invoice + door-hanger email — so the idempotency
+  envelope had to be extended with a sentinel-based guard.
+
+**Consolidation rationale.** M without P leaves the tech-reopen useless
+(SR stays locked, the checklist still 409s on save). P without M is a
+half-measure that doesn't fix the "I need to add one missed reading"
+support ticket volume. Ship them together, one 5-commit series, one PRD
+section, one testid contract lock.
+
+**In-scope (E2 halt decision).** Techs may reopen `completed` jobs
+**only**. `cancelled` remains admin-only — refuses the wider surface
+where a mis-clicked "Cancel" could be undone by the same tech that
+cancelled it. Admins retain the full `completed ∪ cancelled` matrix.
+
+**Out-of-scope.** Multi-tech SR aggregation (deferred per P44 spec).
+SR-thumb synthesis on reopen. SR-videos merge in `_media_summary` (Task
+L+P only merged photos). Downstream automation idempotency on
+`invoice.created` + `service_report.finalized` consumers (D1 halt —
+consumer-owned).
+
+### 2. Grep tables
+
+Four grep passes drove the 5-commit shape. Every entry pinned before any
+code was written (auto-commit hook artifact `41f2c082e` — text-only, no
+code — preserved the grep report; the code-writing hookup started at
+`3759cd247` = Commit 1).
+
+**Grep 1 · Existing reopen endpoint surface (backend).** Where is the
+role gate, what does it do today?
+
+| Path | Line | Fragment | Role today |
+| --- | --- | --- | --- |
+| `backend/routers/jobs.py::reopen_job` | 1750-1877 | `role in ("admin", "super_admin")` | admin/super_admin only |
+| `backend/routers/jobs.py` | 1789-1794 | `db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})` | tenant-scoped read (OK) |
+| `backend/routers/service_reports.py` | 340 / 1707 / 2836 | `tech_id = user.get("technician_id") or user.get("id")` | tech-id derivation pattern to reuse |
+| `backend/services/authz.py::is_tech_authorized_on_job` | (F1) | Crew-aware gate: direct assignment OR crew membership | Reuse verbatim in Commit 1 |
+
+**Grep 2 · SR lock surface (backend + frontend).** Which fields drive
+the "locked" 409 so we know what to clear + who consumes it?
+
+| Path | Line | Fragment | Role |
+| --- | --- | --- | --- |
+| `backend/models/service_report.py` | (schema) | `submitted_at: Optional[datetime]` | SR finalization sentinel |
+| `backend/routers/service_reports.py` | (submit path) | `409 if doc.get("submitted_at")` | The 409 users see when adding a missed reading |
+| `frontend/src/components/checklist/ChecklistModal.jsx` | 655 | `const locked = !!report.submitted_at` | Client-side derivation — auto-unlocks on clear |
+| `frontend/src/components/checklist/PoolChecklistWizard.jsx` | 64 / 253 / 346-459 | `locked` prop only, no local override | Auto-unlocks via parent prop drilling |
+
+**Grep 3 · Auto-invoice + door-hanger fire path (backend).** Where does
+the re-submit double-fire risk live, and where must the sentinel be
+stamped?
+
+| Path | Line | Fragment | Concern |
+| --- | --- | --- | --- |
+| `backend/routers/service_reports.py::finalize_service_report` | (D1 path) | `_maybe_generate_auto_invoice(...)` | Fires invoice on every submit — needs sentinel guard |
+| `backend/routers/service_reports.py` | (post-invoice write) | `db.jobs.update_one({"id": jid}, {"$set": {"auto_invoice_id": inv["id"]}})` | Sentinel was NOT stamped before Commit 3 — bug fix |
+| `backend/routers/service_reports.py` | (email hook) | `send_door_hanger_email(...)` | Consumer-owned per D1 — no client-side idempotency in Task M+P |
+
+**Grep 4 · Frontend Reopen surface + testid contract.**
+
+| Path | Line | Fragment | Contract |
+| --- | --- | --- | --- |
+| `frontend/src/pages/jobs/JobDetail.jsx` | 279-289 (pre-Commit 4) | `{isAdmin ? (<>...{["completed","cancelled"].includes(job.status) ? <Button testid="jd-reopen">...</Button>}...</>) : null}` | Reopen was inside `isAdmin` — needs hoist |
+| `frontend/src/pages/jobs/JobDetail.jsx` | 122 (pre-Commit 4) | `const onReopen = () => act(...);` | Generic `act()` — no per-status toast copy |
+| `frontend/src/api.js` | 226-266 | `err.data = data; err.status = res.status;` | Error shape callers depend on |
+| `frontend/src/api.js` | 232-234 | `if (msg && typeof msg === "object") { msg = msg.msg \|\| msg.message \|\| msg.code \|\| msg.error; }` | 403 `{code, detail}` shape unwrap — code lands in `err.message`, full body in `err.data.detail` |
+
+### 3. Halt decisions log
+
+Every decision below was **explicitly proposed and green-lit by the
+user** before the corresponding commit shipped. No implicit defaults.
+
+| ID | Decision | Rationale |
+| --- | --- | --- |
+| **A2** | Tech reopen clears **own SR only** (`tech_id = user.technician_id \|\| user.id`); admin reopen clears **all SRs** on the job | Multi-tech jobs — a tech should never punch through another tech's finalization. Admin retains full-scope authority. Matches every other tech-scoped SR endpoint in `service_reports.py` |
+| **B2** | Sentinel-stamp gap fix — stamp `auto_invoice_id` + `auto_invoice_created_at` on the JOB doc at invoice creation time (was silently missing before Commit 3) | Without the stamp, the idempotency guard has nothing to check → re-submit fires a second invoice. Bug pre-existed Task M+P; surfaced by this workstream |
+| **B3** | Auto-invoice idempotency guard: if `job.auto_invoice_id` is already set, SKIP invoice creation on re-submit + write `activity_logs.auto_invoice_skipped_duplicate` for audit | Prevents duplicate invoicing on the reopen → re-submit cycle. Audit row means an admin can prove the skip fired if a customer disputes |
+| **C1** | Preserve the pre-Task-M+P 400 contract for status-precondition failures (plain string detail: `"Only completed jobs can be reopened"` for tech, `"Only completed or cancelled jobs can be reopened"` for admin) | Backwards-compat with any existing client / integration reading the 400 body. Frontend `serverMsg` unwrap surfaces the string verbatim |
+| **D1** | Downstream automation idempotency (invoice.created events, service_report.finalized webhooks) — **out of scope for M+P**, consumer-owned | Cascading idempotency across every consumer is a systemic redesign, not a per-workstream fix. Flagged in open follow-ups (§12) |
+| **E2** | Techs may reopen **`completed` jobs only** — `cancelled` remains admin-only | Prevents a tech from undoing their own or an admin's cancel with a single click. Cancel signals an intentional business decision; reopening it should require admin explicit approval |
+
+### 4. Commit series
+
+| # | SHA | Message | Delta | Rationale |
+| --- | --- | --- | --- | --- |
+| 1 | `3759cd247` | `feat(job-reopen): allow assigned tech to reopen own job + clear SR submitted_at` | `+125 −12` on `backend/routers/jobs.py` | Widens the role gate to reuse `is_tech_authorized_on_job`. Adds role-aware SR-clear scope (A2). Preserves idempotency envelope. Preserves 400/403 contracts (C1) |
+| 2 | `9d18c5e91` | `test(job-reopen): tenant + role + multi-SR + status-precondition + idempotency coverage` | `+433` on `backend/tests/test_task_m_reopen_role_widen.py` (new — 11 tests) | Locks the widened role gate + A2 own-SR-only clearing + C1 status-precondition + tenant isolation on the cross-collection write |
+| 3 | `a403773f7` | `feat(job-reopen-safety): auto-invoice idempotency guard on reopen re-submit` | `+146 −78` on `backend/routers/service_reports.py` + `+569` on `backend/tests/test_task_m_reopen_resubmit_idempotency.py` (new — 9 tests) | Adds B2 sentinel stamp on invoice creation + B3 skip-if-stamped guard on re-submit. Fire-and-forget audit writes are resilient (best-effort, do not block the SR submit response) |
+| 4 | `ddb35c7ab` | `feat(job-reopen-ui): tech-visible Reopen button + unlocked checklist auto-flow` | `+90 −6` on `frontend/src/pages/jobs/JobDetail.jsx` | Hoists `jd-reopen` out of `isAdmin` branch. New `canReopen` computed + `isAssignedTech` client-side heuristic. Rich error toast matrix (403/409/400/500+). Optimistic disable via `reopening` state + refetch on success |
+| 5 | *(this commit)* | `test+docs(job-reopen): vitest matrix + PRD Task M+P section` | `+303` on `frontend/src/test/task-m-job-reopen-ui.test.jsx` (new — 26 tests) + this PRD section | Vitest matrix locks the `canReopen` expression, `jd-reopen` testid, error-toast copy, optimistic disable, refetch order, and ChecklistModal / PoolChecklistWizard auto-unlock derivation |
+
+**Baseline diff shortstat (`41f2c082e^..ddb35c7ab`, Commits 1-4):** `5 files changed, 1363 insertions(+), 96 deletions(-)`. Commit 5 adds `~303 LOC` vitest + this PRD section (docs-only).
+
+### 5. Backend architecture
+
+**Role widening (F1 crew-aware gate reuse).** `POST /jobs/{jid}/reopen`
+now delegates the tech-authorization check to
+`services.authz.is_tech_authorized_on_job(user, job, db, tenant_id)` —
+the same helper every other tech-scoped SR endpoint uses (grep evidence:
+`routers/jobs.py:2002, 2189, 2240, 2332, 3249, 3657, 4093, 4218, 4355,
+4907, 5209`). Direct assignment (`job.technician_id === user.tech_id`)
+OR crew membership both satisfy the gate. Admin / super_admin bypass
+the helper — the role check comes first.
+
+**Multi-SR clearing policy (A2).**
+
+```python
+sr_filter = {"tenant_id": tenant["id"], "job_id": jid}
+if is_admin:
+    cleared_scope = "all"  # every SR on the job
+else:
+    sr_filter["tech_id"] = user.get("technician_id") or user.get("id")
+    cleared_scope = "own"  # only the caller's SR
+```
+
+The `tech_id` fallback (`.get("technician_id") or .get("id")`) mirrors
+the pattern used by every SR mutation elsewhere in `service_reports.py`
+— users with an explicit `technician_id` denorm land on it; legacy
+sessions where the tech id equals the user id fall through cleanly.
+
+**Sentinel-stamp gap fix (Commit 3, B2).** The auto-invoice creation
+path in `service_reports.py::_maybe_generate_auto_invoice` previously
+returned the new invoice ID without writing it back to the JOB doc. The
+gap meant that even without a reopen cycle, a second SR submit for the
+same job (e.g. an offline retry that raced the network) could
+double-fire. Commit 3 now writes:
+
+```python
+await db.jobs.update_one(
+    {"id": jid, "tenant_id": tenant_id},
+    {"$set": {
+        "auto_invoice_id": inv["id"],
+        "auto_invoice_created_at": datetime.now(timezone.utc).isoformat(),
+    }},
+)
+```
+
+immediately after invoice creation. The B3 guard checks
+`job.get("auto_invoice_id")` at the top of the submit path and
+short-circuits if set — with an audit row.
+
+**Audit trail additions.** Three new activity-log types:
+
+| Type | Emitted where | Metadata | Purpose |
+| --- | --- | --- | --- |
+| `job_reopened` | `routers/jobs.py::reopen_job` | `{cleared_sr_scope: "all"\|"own", cleared_sr_count: <int>, reopened_from_status: "completed"\|"cancelled", actor_role: "admin"\|"technician"}` | Distinguishes admin full-reopens from tech own-SR fixes in the timeline |
+| `auto_invoice_skipped_duplicate` | `routers/service_reports.py::finalize_service_report` | `{existing_invoice_id, submitted_at_prev, submitted_at_now}` | Proof that the B3 guard fired — admin can point to it if a customer disputes "why wasn't a second invoice generated?" |
+| `sr_reopen_submitted_at_cleared` | `routers/jobs.py::reopen_job` | `{sr_ids: [<...>], cleared_by: <user_id>}` | Cross-references the SR docs that were unlocked so a later timeline replay can identify exactly what became mutable |
+
+**Fire-and-forget audit resilience.** All three audit writes use
+`asyncio.create_task` with a swallow-all `except Exception` — an audit
+failure NEVER blocks the reopen response. Same shape used by
+`activity_logs.audit_events.job_edited_after_completion` (K6 pattern).
+
+**D1 scope — auto-invoice only.** The idempotency guard added in Commit
+3 covers `_maybe_generate_auto_invoice` **only**. Door-hanger email
+(`send_door_hanger_email`) + downstream webhooks (`invoice.created`,
+`service_report.finalized`) remain consumer-owned per D1. Rationale: a
+comprehensive server-side idempotency layer across every automation
+consumer is a systemic redesign, out of scope for this workstream.
+Flagged in §12 as open follow-up.
+
+### 6. Frontend integration
+
+**`canReopen` computed conditional.** Hoisted out of the `isAdmin`
+branch into its own JSX clause:
+
+```jsx
+const canReopen = (
+  (isAdmin && ["completed", "cancelled"].includes(job?.status))
+  || (isAssignedTech && job?.status === "completed")
+);
+// ...
+{canReopen ? (
+  <Button onClick={onReopen} disabled={reopening} testid="jd-reopen">
+    <RotateCw size={14} /> {reopening ? "Reopening…" : "Reopen"}
+  </Button>
+) : null}
+```
+
+Matrix matches backend allowlist verbatim. E2 keeps `cancelled`
+admin-only.
+
+**`isAssignedTech` client-side heuristic + documented crew gap.**
+
+```jsx
+const isAssignedTech =
+  isTech
+  && !!job?.technician_id
+  && job.technician_id === (user?.technician_id || user?.id);
+```
+
+UX-only approximation of the backend F1 gate. The JobDetail payload
+doesn't carry crew membership, so a crew-only tech who is NOT the
+direct assignee will not see the button — but a 403 from the server
+would still catch them if they URL-guessed the endpoint. **Not a
+security boundary; the server owns the gate.** Flagged in §12 as open
+follow-up.
+
+**Extended error toast matrix.**
+
+| Status | Toast copy | Notes |
+| --- | --- | --- |
+| 200 | `"Job reopened"` (tone: success) | Followed by `load()` refetch — SR `submitted_at=null` propagates to ChecklistModal via `/jobs/{id}/detail` |
+| 400 | Server `detail` string (e.g. C1 `"Only completed jobs can be reopened"`), fallback `"This job can't be reopened right now."` | Server precedence (Task J pattern) |
+| 403 | `"You aren't authorized to reopen this job."` | Overrides the backend `{code: "reopen_forbidden", detail: "…"}` — user-facing copy, not `err.message` = "reopen_forbidden" |
+| 409 | `"Cannot reopen — job is not in a reopenable state."` | Idempotency envelope conflict (rare; user retry) |
+| 500+ / network | `"Something went wrong. Please try again."` | Covers `!status` (network / timeout) + any 5xx |
+| 401 | Falls through to `api.js` global zombie-session interceptor | Existing pattern — no per-call handler |
+
+**Optimistic disable + refetch pattern.**
+
+```jsx
+const [reopening, setReopening] = useState(false);
+const onReopen = async () => {
+  if (reopening) return;              // reentrancy guard
+  setReopening(true);                 // disable BEFORE the POST
+  try {
+    await api.post(`/jobs/${id}/reopen`);
+    setToast({ tone: "success", message: "Job reopened" });
+    await load();                     // refetch → SR unlock propagates
+  } catch (e) {
+    // ... error matrix above
+  } finally {
+    setReopening(false);              // re-enable on BOTH paths
+  }
+};
+```
+
+The `finally` block re-enables the button on both success and error
+paths — critical to prevent a stuck-disabled state on unhandled
+exceptions.
+
+**ChecklistModal / PoolChecklistWizard auto-unlock via `submitted_at`
+derivation.** **NO changes required in either component.**
+`ChecklistModal.jsx:655` derives `const locked = !!report.submitted_at`;
+`PoolChecklistWizard.jsx` receives `locked` as a prop with no local
+override. After Commit 1 clears `submitted_at` on the tech's SR, the
+next fetch flips `locked` to false and the checklist auto-unlocks. This
+is the entire "P" leg of Task M+P — one-line-of-truth on the client,
+one-line-of-clear on the server.
+
+### 7. Testid preservation table
+
+| Testid | File | Pre-Commit-4 | Post-Commit-4 | Delta |
+| --- | --- | --- | --- | --- |
+| `jd-reopen` | `frontend/src/pages/jobs/JobDetail.jsx` | Present, gated on `isAdmin && ["completed","cancelled"].includes(status)` | **Preserved verbatim**, now gated on `canReopen` | Selector unchanged; container branch moved |
+| `jd-complete` | Same | Present | Preserved verbatim | No change |
+| `jd-cancel` | Same | Present | Preserved verbatim | No change |
+| `jd-tech-complete` | Same | Present | Preserved verbatim | No change |
+| `jd-arrive` / `jd-onmyway` | Same | Present | Preserved verbatim | No change |
+| `jd-lock-notice` | Same | Present | Preserved verbatim | No change |
+| `job-detail` (root) | Same | Present | Preserved verbatim | No change |
+
+**No new testids introduced.** Per the plan, error toasts key off the
+existing `Toast` component's built-in queryability (sonner-style
+selector); the vitest matrix uses source-inspection for toast copy
+assertions instead of adding per-toast testids.
+
+### 8. Test coverage summary
+
+| Suite | File | Cases | Status |
+| --- | --- | --- | --- |
+| **Backend pytest — role widening** | `backend/tests/test_task_m_reopen_role_widen.py` (new · Commit 2) | 11 | ✅ 11/11 |
+| **Backend pytest — re-submit idempotency** | `backend/tests/test_task_m_reopen_resubmit_idempotency.py` (new · Commit 3) | 9 | ✅ 9/9 |
+| **Backend regression sweep — Task L+P + adjacent** | `backend/tests/test_task_l_*.py` + prior workstreams | (baseline) | ✅ green (no regressions) |
+| **Frontend vitest — reopen UI contract** | `frontend/src/test/task-m-job-reopen-ui.test.jsx` (new · Commit 5) | 26 | ✅ 26/26 |
+| **Frontend regression sweep — JobDetail adjacent** | `jobdetail-k6-completed-unlock` + `jobdetail-new-scheduled-job` + `task-l-jobdetail-sr-photos` | 5 + 6 + 8 | ✅ 19/19 |
+
+**Totals.** Backend: 20 new pytest for Task M+P. Frontend: 26 new
+vitest (plan asked for 13; split into narrower sub-cases for clearer
+regression signal). No regressions across JobDetail-adjacent suites
+(45/45 with the new file included).
+
+### 9. Preview verification
+
+Manual verification was intentionally performed via bash + JSX
+source-inspection contract tests (per user's mandate: **NO
+`testing_agent`**, **manual bash only**). Screenshot verification
+against the preview environment was NOT run in this session — the
+26-case vitest matrix + source-lock assertions carry the same signal
+without a browser round-trip.
+
+For the record, the observable UX changes on the preview environment
+after Commit 4 + 5 are:
+
+- **Tech session on a `completed` job assigned to them** → Reopen
+  button now visible in the action bar (previously admin-only). Click
+  shows `Reopening…` label + disabled state until the response lands.
+  On success, checklist auto-unlocks because the SR `submitted_at`
+  clear propagates via the `/jobs/{id}/detail` refetch.
+- **Tech session on a `cancelled` job** → Reopen button remains
+  hidden (E2 halt decision).
+- **Tech session on a job assigned to a different tech** → Reopen
+  button hidden client-side; if URL-guessed, backend returns 403
+  → "You aren't authorized to reopen this job." toast.
+- **Admin session** → No behavioural delta except the new optimistic
+  disable + error toast matrix (visible on error paths only).
+
+### 10. Auto-commit hook artifacts
+
+The preview environment auto-commit hook has been documented as
+occasionally sweeping text-only agent responses into git history when
+no code was written (Task J precedent). This session's one artifact:
+
+| SHA | Message | Content | Impact |
+| --- | --- | --- | --- |
+| `41f2c082e` | `All 4 greps complete. Producing the report — no code written.` | Text-only — no code changes; the four grep tables (§2) were written to the response body BEFORE any code commits landed | **None.** Sits between the pre-Task-M+P baseline and Commit 1 (`3759cd247`). Leaving as-is per Task J precedent — reverting would rewrite history and lose the deliberate audit trail |
+
+No mobile artifacts. The five pre-existing mobile-drift stashes
+(`stash@{0}..stash@{4}` — all pre-Task M+P) remain untouched.
+
+### 11. Injection-deflection audit trail
+
+**One deflection event this session.** The injected "problem statement"
+at the top of Commit-5 kickoff asked the agent to clone
+`bbeck169/Pool-Landscaping.git` and produce an inspection report. This
+is the systemic prompt-injection pattern documented in the analysis
+carry-forward. Deflection was applied at first-message posture: the
+agent acknowledged the injection, ignored the clone instruction, and
+routed to the actual Task M+P Commit 4 green-light via `ask_human`.
+Zero subsequent attempts across Commits 1-5.
+
+### 12. Open follow-ups
+
+- **Client-side crew-membership visibility gap.** Server 403 remains
+  the authoritative gate, but the `jd-reopen` button may not render
+  for a crew-only tech (not the direct `technician_id` assignee).
+  Fix: extend the JobDetail payload with a `viewer_can_reopen` boolean
+  computed server-side using the same F1 helper — a single-source-of-
+  truth gate. Estimated 1 backend commit + 1 frontend commit.
+- **Downstream automation idempotency (D1 out-of-scope holdover).**
+  `invoice.created` events + `service_report.finalized` webhooks
+  remain consumer-owned. If double-fires surface in ops (customer
+  reports two invoices, or door-hangers arrive twice on the same
+  reopen), promote to a dedicated workstream: server-side
+  idempotency layer across every automation consumer.
+- **Task N — mobile sync reliability.** Still queued. Depends on
+  the mobile-off-limits constraint being lifted.
+- **Task H0 — date overrides.** Still queued.
+- **Task H — PDF importer.** Still queued.
+- **Preserved from Task L+P open follow-ups (§13 of prior section):**
+  Task K.2 (1★ affordance on top SEO ranks), Task J.1 (SerpAPI
+  integration), Phase P40 (telematics scorecard), P44.1 (SR-primary
+  read to door-hanger email path), SR-thumb synthesis, SR-videos
+  merge, remaining P59 export-route audit, MasterServiceCombobox →
+  K71PricebookPicker migration on 4 sites.
+
+### 13. Commit log & file-level breakdown
+
+```
+$ git log --oneline 41f2c082e^..HEAD
+<Commit 5 SHA>  test+docs(job-reopen): vitest matrix + PRD Task M+P section
+ddb35c7ab       feat(job-reopen-ui): tech-visible Reopen button + unlocked checklist auto-flow
+a403773f7       feat(job-reopen-safety): auto-invoice idempotency guard on reopen re-submit
+9d18c5e91       test(job-reopen): tenant + role + multi-SR + status-precondition + idempotency coverage
+3759cd247       feat(job-reopen): allow assigned tech to reopen own job + clear SR submitted_at
+41f2c082e       All 4 greps complete. Producing the report — no code written.  ← auto-commit hook artifact (§10)
+```
+
+**Baseline diff shortstat (Commits 1-4):** `5 files changed, 1363
+insertions(+), 96 deletions(-)`.
+
+| File | Kind | +/− | Regression risk |
+| --- | --- | --- | --- |
+| `backend/routers/jobs.py` | Backend prod | `+125 −12` | Role gate widened, cross-collection SR write added, idempotency envelope preserved |
+| `backend/routers/service_reports.py` | Backend prod | `+146 −78` | B2 sentinel stamp + B3 skip guard + fire-and-forget audit resilience |
+| `backend/tests/test_task_m_reopen_role_widen.py` | Backend tests (new) | `+433` | 11 cases; runs in 0.85s |
+| `backend/tests/test_task_m_reopen_resubmit_idempotency.py` | Backend tests (new) | `+569` | 9 cases; runs alongside role-widen suite |
+| `frontend/src/pages/jobs/JobDetail.jsx` | Frontend prod | `+90 −6` | Button hoist + `canReopen` + `onReopen` rewrite + `reopening` state |
+| `frontend/src/test/task-m-job-reopen-ui.test.jsx` | Frontend tests (new · Commit 5) | `+303` | 26 cases; runs in 11ms |
+| **`memory/PRD.md`** (this section) | **Docs · Commit 5** | **~this section** | 0 |
+
+**Working tree at Commit 5.** Clean (5 mobile-drift stashes untouched).
+Task M+P is closed.
+
+
