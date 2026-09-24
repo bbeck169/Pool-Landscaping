@@ -61,6 +61,13 @@ export default function BusinessSettings() {
   const [saving, setSaving] = React.useState(false);
   const [savingTz, setSavingTz] = React.useState(false);
   const [tenantTz, setTenantTz] = React.useState("America/Phoenix");
+  // Phase P52 · Feb-2026 — tenant-scoped default UI locale.  Shares
+  // the same PATCH /tenants/mine/settings endpoint as the timezone
+  // picker; the field lands on ``db.tenants.default_locale`` which
+  // is also the field Phase D5 uses for outbound email/SMS locale
+  // selection.  One source of truth.
+  const [savingLocale, setSavingLocale] = React.useState(false);
+  const [tenantLocale, setTenantLocale] = React.useState("en");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
   const [fields, setFields] = React.useState({
@@ -139,6 +146,15 @@ export default function BusinessSettings() {
       try {
         const tenantDoc = await api.get("/tenants/mine/settings");
         setTenantTz(tenantDoc?.timezone || "America/Phoenix");
+        // Phase P52 · Feb-2026 — hydrate the language dropdown from
+        // the same tenant doc so both pickers show the current
+        // saved value on first render.
+        const loc = tenantDoc?.default_locale;
+        if (loc && ["en", "es", "fr"].includes(loc)) {
+          setTenantLocale(loc);
+        } else {
+          setTenantLocale("en");
+        }
       } catch {
         // Non-fatal — page still renders with the default TZ shown
         // in the picker; the picker's save path will still work.
@@ -365,6 +381,85 @@ export default function BusinessSettings() {
                   }
                 }}
               />
+            </div>
+            {/* Phase P52 · Feb-2026 — Tenant-scoped default UI language.
+                Wired through the same PATCH /tenants/mine/settings
+                endpoint as the timezone picker above.  Frontend
+                dropdown is constrained to en/es/fr so a stale value
+                can't reach the backend.  auth.jsx re-hydrates
+                localStorage.tenant_default_locale on the next
+                /auth/me tick so the i18n detector chain reflects the
+                new selection on the following boot. */}
+            <div className="mt-4 pt-4"
+                  style={{ borderTop: "1px solid #E5E7EB" }}>
+              <label className="block text-xs font-semibold mb-1"
+                        style={{ color: colors.muted }}
+                        htmlFor="settings-default-locale-select">
+                {t("locale.label", "Default Language")}
+              </label>
+              <select
+                id="settings-default-locale-select"
+                data-testid="settings-default-locale-select"
+                value={tenantLocale}
+                disabled={savingLocale}
+                onChange={async (e) => {
+                  const nextLoc = e.target.value;
+                  if (savingLocale) return;
+                  if (!["en", "es", "fr"].includes(nextLoc)) return;
+                  setSavingLocale(true);
+                  try {
+                    const doc = await api.patch("/tenants/mine/settings",
+                                                  { default_locale: nextLoc });
+                    const savedLoc = doc?.default_locale || nextLoc;
+                    setTenantLocale(savedLoc);
+                    // Mirror the timezone success-toast copy pattern.
+                    toast.success(t("locale.saved", "Default language updated"));
+                    // Optimistically prime the frontend cache so the
+                    // detector chain reflects the new tenant default
+                    // on the CURRENT boot too (not just after the
+                    // next /auth/me refresh).  auth.jsx still owns
+                    // the authoritative write on next boot.
+                    try {
+                      window.localStorage.setItem(
+                        "tenant_default_locale", savedLoc,
+                      );
+                    } catch { /* localStorage unavailable — skip */ }
+                    try {
+                      window.dispatchEvent(new CustomEvent(
+                        "tenant:settings-updated",
+                        { detail: { default_locale: savedLoc } },
+                      ));
+                    } catch { /* ignore in jsdom */ }
+                  } catch (err) {
+                    toast.error(err?.message || "Save failed");
+                  } finally {
+                    setSavingLocale(false);
+                  }
+                }}
+                className="w-full max-w-xs px-3 py-2 rounded-lg text-sm outline-none"
+                style={{ border: `1px solid ${colors.border}`,
+                          background: colors.surface,
+                          color: colors.onSurface }}
+              >
+                <option value="en"
+                          data-testid="settings-default-locale-option-en">
+                  English
+                </option>
+                <option value="es"
+                          data-testid="settings-default-locale-option-es">
+                  Español
+                </option>
+                <option value="fr"
+                          data-testid="settings-default-locale-option-fr">
+                  Français
+                </option>
+              </select>
+              <div className="text-xs mt-1" style={{ color: colors.muted }}>
+                {t(
+                  "locale.helper",
+                  "Sets the default UI language for everyone on your team who hasn't picked a personal language yet. Personal preferences always win.",
+                )}
+              </div>
             </div>
           </section>
 
