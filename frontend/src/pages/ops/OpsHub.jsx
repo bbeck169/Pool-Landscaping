@@ -18,6 +18,10 @@ import EditItemModal from "@/components/pricebook/EditItemModal";
 // Same component the Recurring Jobs table uses (parameterized in
 // Task C · Commit 1 to accept a ``patchUrl`` prop).
 import CategoryComboCell from "@/components/recurring/CategoryComboCell";
+// Task E · Feb-2026 — Shared navy filter/search strip primitive
+// consumed by six list pages (Customers, Invoices, Pricebook,
+// Recurring Jobs, Work Stream, Payments Ledger).
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 // Feb-2026 · Live-Tech-Map · Phase 2 — Team colors ship. Replaces
 // the free-form ``<input type="color">`` + hex-input pickers with
 // the 12-chip palette picker so the UI can only produce colors
@@ -2585,6 +2589,40 @@ export function PriceBook() {
   const closeEditModal = () => setEditModalItem(null);
   return (
     <Card testid="pricebook-page">
+      {/* Task E · Feb-2026: NavyFilterBar migration.
+          Fresh row above the existing "Items · N + checkbox +
+          Manage Categories + Add new item" header (per Task E
+          decision #4).  Existing header stays intact — no
+          restructuring of its checkbox / count / link / button
+          shape. Only the supplier <select> and the search <input>
+          moved out of the header and into the navy strip. */}
+      <NavyFilterBar
+        data-testid="pricebook-filters"
+        data-k52-navy-strip="true"
+      >
+        <NavyFilterBar.Search
+          value={search}
+          onChange={setSearch}
+          placeholder="Search name, category, unit..."
+          ariaLabel="Search pricebook items"
+          data-testid="pricebook-search-input"
+        />
+        <NavyFilterBar.Select
+          value={supplierFilter}
+          onChange={setSupplierFilter}
+          data-testid="pb-supplier-filter"
+        >
+          <option value="all">All suppliers</option>
+          <option value="manual">Manual (no supplier)</option>
+          {Object.keys(SUPPLIER_METADATA)
+            .filter((slug) => !SUPPLIER_METADATA[slug].coming_in)
+            .map((slug) => (
+              <option key={slug} value={slug}>
+                {SUPPLIER_METADATA[slug].display_name}
+              </option>
+            ))}
+        </NavyFilterBar.Select>
+      </NavyFilterBar>
       <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-3">
           <input
@@ -2605,40 +2643,6 @@ export function PriceBook() {
               </span>
             )}
           </div>
-          <select
-            value={supplierFilter}
-            onChange={(e) => setSupplierFilter(e.target.value)}
-            className="ml-2 px-2 py-1 rounded-md text-xs"
-            style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
-            data-testid="pb-supplier-filter"
-          >
-            <option value="all">All suppliers</option>
-            <option value="manual">Manual (no supplier)</option>
-            {Object.keys(SUPPLIER_METADATA)
-              .filter((slug) => !SUPPLIER_METADATA[slug].coming_in)
-              .map((slug) => (
-                <option key={slug} value={slug}>
-                  {SUPPLIER_METADATA[slug].display_name}
-                </option>
-              ))}
-          </select>
-          {/* Feb 2026 · Pricebook client-side search — matches on
-              name / category / unit, stacks with the supplier
-              filter above. */}
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, category, unit..."
-            aria-label="Search pricebook items"
-            data-testid="pricebook-search-input"
-            className="ml-2 px-2 py-1 rounded-md text-xs"
-            style={{
-              border: `1px solid ${colors.border}`,
-              backgroundColor: colors.surface,
-              minWidth: 220,
-            }}
-          />
         </div>
         <div className="flex items-center gap-2">
           {/* Pricebook × Profit-Reporting Phase 1 · Feb-2026 —
