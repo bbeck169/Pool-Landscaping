@@ -165,6 +165,30 @@ def _match(doc: Dict[str, Any], filt: Dict[str, Any]) -> bool:
             if not all(_match(doc, sub) for sub in v):
                 return False
             continue
+        # Mongo dot-notation over array-of-subdocs. Example:
+        # ``{"line_items.pricebook_item_id": "pb-1"}`` matches
+        # when ANY element of the ``line_items`` array has that
+        # field equal to "pb-1". P56 · Feb-2026 — the new
+        # ``sync_pricebook_to_invoice_lines`` direction relies on
+        # this filter shape; before the addition the fake matched
+        # via ``doc.get("line_items.pricebook_item_id")`` which
+        # always returned ``None`` on nested keys.
+        if "." in k:
+            parts = k.split(".")
+            first = doc.get(parts[0])
+            rest = ".".join(parts[1:])
+            if isinstance(first, list):
+                # Any element matches the residual path.
+                if not any(_match(el, {rest: v}) for el in first
+                            if isinstance(el, dict)):
+                    return False
+                continue
+            if isinstance(first, dict):
+                if not _match(first, {rest: v}):
+                    return False
+                continue
+            # Not a list or dict — key path can't resolve.
+            return False
         actual = doc.get(k)
         if isinstance(v, dict):
             for op, arg in v.items():
@@ -922,6 +946,311 @@ def test_recurring_template_patch_wire_actually_fires_sync(fake_db):
             assert li["category_name"] == "New Income Cat"
             assert li["service_category_id"] == SVC_NEW
             assert li["service_category_name"] == "New Service Cat"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 11. Pricebook → invoice-lines direction (P56 · Feb-2026)
+# ══════════════════════════════════════════════════════════════════
+# The new direction reuses the recurring-template semantic pack
+# (None = propagate clear, _UNSET = leave untouched, str = resolve
+# name + write) with a different linkage rule: match by the line
+# item's ``pricebook_item_id`` (or legacy alias ``item_id``)
+# instead of the template → jobs → job_id chain.
+def test_pricebook_propagates_to_unpaid_invoice_lines(fake_db):
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 3)
+    # 3 unpaid invoices, each with 1 line item linked to pb-1
+    # (the default FK on ``_line_item`` seed).
+    _seed_invoices(fake_db, job_ids,
+                    unpaid_per_job=1, paid_per_job=0)
+    _seed_pricebook(fake_db, "pb-1")
+
+    result = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+        income_category_id=INC_NEW,
+    ))
+    assert result.updated_count == 3, result
+    for inv in fake_db.quotes.rows:
+        li = inv["line_items"][0]
+        assert li["income_category_id"] == INC_NEW
+        assert li["income_category_name"] == "New Income Cat"
+        assert li["category"] == INC_NEW               # legacy alias
+        assert li["category_name"] == "New Income Cat"  # legacy alias
+        assert li["service_category_id"] == SVC_NEW
+        assert li["service_category_name"] == "New Service Cat"
+
+
+def test_pricebook_only_updates_matched_line_items(fake_db):
+    """Multi-line invoice: only lines whose FK matches the source
+    item_id are mutated. Sibling lines linked to other pricebook
+    items stay at their OLD values byte-for-byte."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    # Custom invoice with 2 line items — one linked to pb-1, one
+    # to pb-2. We drive the sync against pb-1 only.
+    inv_row = {
+        "id": "inv-multi", "tenant_id": TID_A,
+        "doc_type": "invoice", "job_id": job_ids[0],
+        "payment_status": "unpaid",
+        "line_items": [
+            {**_line_item(0), "pricebook_item_id": "pb-1"},
+            {**_line_item(1), "pricebook_item_id": "pb-2"},
+        ],
+    }
+    fake_db.quotes.rows.append(inv_row)
+    _seed_pricebook(fake_db, "pb-1")
+    _seed_pricebook(fake_db, "pb-2")
+
+    result = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+    ))
+    assert result.updated_count == 1
+    inv = _first(fake_db.quotes, id="inv-multi")
+    assert inv is not None
+    # Line 0 linked to pb-1 → NEW value.
+    assert inv["line_items"][0]["service_category_id"] == SVC_NEW
+    # Line 1 linked to pb-2 → OLD value untouched.
+    assert inv["line_items"][1]["service_category_id"] == SVC_OLD
+
+
+def test_pricebook_supports_legacy_item_id_fk(fake_db):
+    """Legacy invoices predating the ``pricebook_item_id`` rename
+    still carry the ``item_id`` FK. The new direction supports
+    both keys — mirrors the P55 ``sync_invoice_line_to_pricebook``
+    dual-key precedent."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    # Legacy line: only ``item_id`` key, no ``pricebook_item_id``.
+    legacy_line = {**_line_item(0), "item_id": "pb-1"}
+    legacy_line.pop("pricebook_item_id", None)
+    fake_db.quotes.rows.append({
+        "id": "inv-legacy", "tenant_id": TID_A,
+        "doc_type": "invoice", "job_id": job_ids[0],
+        "payment_status": "unpaid",
+        "line_items": [legacy_line],
+    })
+    _seed_pricebook(fake_db, "pb-1")
+
+    result = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+    ))
+    assert result.updated_count == 1
+    inv = _first(fake_db.quotes, id="inv-legacy")
+    assert inv["line_items"][0]["service_category_id"] == SVC_NEW
+
+
+def test_pricebook_paid_invoice_skipped_and_counted(fake_db):
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 2)
+    _seed_invoices(fake_db, job_ids[:1],
+                    unpaid_per_job=1, paid_per_job=0)
+    _seed_invoices(fake_db, job_ids[1:],
+                    unpaid_per_job=0, paid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    result = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+    ))
+    assert result.updated_count == 1
+    assert result.skipped_paid_count == 1
+
+
+def test_pricebook_clear_propagates_to_unpaid_invoice_lines(fake_db):
+    """Direction policy match with recurring→children: Pricebook
+    is master for the item, so passing ``None`` for a category
+    id CLEARS that pair on every linked unpaid line item."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, job_ids,
+                    unpaid_per_job=1, paid_per_job=0)
+    _seed_pricebook(fake_db, "pb-1")
+
+    result = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        income_category_id=None,          # explicit clear
+    ))
+    assert result.updated_count == 1
+    inv = fake_db.quotes.rows[0]
+    li = inv["line_items"][0]
+    assert li["income_category_id"] is None
+    assert li["income_category_name"] is None
+    assert li["category"] is None
+    assert li["category_name"] is None
+    # Service pair MUST NOT be touched (_UNSET).
+    assert li["service_category_id"] == SVC_OLD
+    assert li["service_category_name"] == "Old Service Cat"
+
+
+def test_pricebook_second_run_is_idempotent(fake_db):
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 2)
+    _seed_invoices(fake_db, job_ids, unpaid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW, income_category_id=INC_NEW,
+    ))
+    # Second run — target already at NEW values.
+    calls_before = len(fake_db.quotes.update_calls)
+    r2 = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW, income_category_id=INC_NEW,
+    ))
+    assert r2.updated_count == 0
+    # Zero DB touches on the second run — idempotency guard fires
+    # BEFORE the update_one call.
+    assert len(fake_db.quotes.update_calls) == calls_before
+
+
+def test_pricebook_sentinel_origin_short_circuits(fake_db):
+    """The reserved self-loop sentinel short-circuits the new
+    direction just as it does the recurring-template one."""
+    from services.category_sync import (
+        sync_pricebook_to_invoice_lines, _RESERVED_SELF_LOOP,
+    )
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, job_ids, unpaid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    r = _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin=_RESERVED_SELF_LOOP,
+        income_category_id=INC_NEW,
+    ))
+    assert r.skipped_loop_count == 1
+    assert r.updated_count == 0
+    assert fake_db.quotes.update_calls == []
+    # No audit row on short-circuit — mirrors the recurring path.
+    assert fake_db.audit_logs.insert_calls == []
+
+
+def test_pricebook_name_lookup_failure_raises_before_any_write(fake_db):
+    from services.category_sync import (
+        sync_pricebook_to_invoice_lines,
+        CategorySyncNameLookupError,
+    )
+    _seed_categories(fake_db)  # only INC/SVC_NEW + INC/SVC_OLD
+    job_ids = _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, job_ids, unpaid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    with pytest.raises(CategorySyncNameLookupError) as exc_info:
+        _run(sync_pricebook_to_invoice_lines(
+            tenant_id=TID_A, item_id="pb-1",
+            origin="bulk_pricebook_edit",
+            income_category_id="phantom-id-not-in-db",
+        ))
+    assert exc_info.value.category_id == "phantom-id-not-in-db"
+    assert exc_info.value.collection == "income_categories"
+    # NO write reached any invoice — halt-and-report guard fired
+    # BEFORE the update loop.
+    assert fake_db.quotes.update_calls == []
+
+
+def test_pricebook_tenant_isolation(fake_db):
+    """Cross-tenant invoices linked to the same item_id (a stale
+    row on another tenant) MUST NOT be touched. Same tenant guard
+    as the recurring direction."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db, tenant_id=TID_A)
+    _seed_categories(fake_db, tenant_id=TID_B)
+    _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, ["job-tpl-A-1-0"], unpaid_per_job=1)
+    # Stale doc on tenant B with the same pb-1 FK (should never
+    # happen in production but the tenant guard should prevent
+    # any propagation even if it does).
+    fake_db.quotes.rows.append({
+        "id": "inv-b", "tenant_id": TID_B,
+        "doc_type": "invoice", "job_id": "job-b",
+        "payment_status": "unpaid",
+        "line_items": [{**_line_item(0), "pricebook_item_id": "pb-1"}],
+    })
+    _seed_pricebook(fake_db, "pb-1", tenant_id=TID_A)
+
+    _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+    ))
+    # Tenant B invoice untouched.
+    inv_b = _first(fake_db.quotes, id="inv-b")
+    assert inv_b["line_items"][0]["service_category_id"] == SVC_OLD
+
+
+def test_pricebook_price_snapshot_protection(fake_db):
+    """The SET clause is a HARD-CODED WHITELIST of category
+    fields. No price/quantity/tax/snapshot field is ever emitted.
+    Mirrors the P55 ``test_price_snapshot_protection`` for the
+    recurring-template direction."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, job_ids, unpaid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW, income_category_id=INC_NEW,
+    ))
+    # Inspect the recorded update calls — no price fields anywhere.
+    price_keys = {
+        "unit_price", "quantity", "subtotal", "tax_amount",
+        "total", "discount_amount", "unit_price_snapshot",
+    }
+    for call in fake_db.quotes.update_calls:
+        set_ops = call["update"].get("$set") or {}
+        for key in set_ops:
+            # SET keys look like ``line_items.<idx>.<field>`` on
+            # this path; extract the trailing field name.
+            leaf = key.split(".")[-1]
+            assert leaf not in price_keys, (
+                f"price-protection violation: SET included {key!r}"
+            )
+
+
+def test_pricebook_audit_row_uses_pricebook_item_source_type(fake_db):
+    """The audit row emitted by the new direction MUST carry
+    ``source.type == "pricebook_item"`` and ``source.id ==
+    <item_id>`` so ledger consumers can distinguish the three
+    sync directions from one another."""
+    from services.category_sync import sync_pricebook_to_invoice_lines
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 1)
+    _seed_invoices(fake_db, job_ids, unpaid_per_job=1)
+    _seed_pricebook(fake_db, "pb-1")
+
+    _run(sync_pricebook_to_invoice_lines(
+        tenant_id=TID_A, item_id="pb-1",
+        origin="bulk_pricebook_edit",
+        service_category_id=SVC_NEW,
+    ))
+    assert len(fake_db.audit_logs.insert_calls) == 1
+    audit = fake_db.audit_logs.insert_calls[0]["doc"]
+    assert audit["source"] == {
+        "type": "pricebook_item", "id": "pb-1",
+    }
+    assert audit["origin_marker"] == "bulk_pricebook_edit"
+    assert audit["updated_count"] == 1
 
 
 # ══════════════════════════════════════════════════════════════════

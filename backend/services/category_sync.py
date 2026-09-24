@@ -1,7 +1,7 @@
 """P55 · Category sync orchestrator (Feb-2026).
 
 Central choke-point for cross-record propagation of the
-income + service category taxonomy fields. Two entry points:
+income + service category taxonomy fields. Three entry points:
 
   1. ``sync_recurring_template_to_children(...)`` — fans out a
      Recurring Template's category change to all *linked unpaid*
@@ -13,6 +13,12 @@ income + service category taxonomy fields. Two entry points:
   2. ``sync_invoice_line_to_pricebook(...)`` — writes an invoice
      line's category back to the master Pricebook item
      (``db.items`` row).
+
+  3. ``sync_pricebook_to_invoice_lines(...)`` — P56 · Feb-2026.
+     Fans out a Pricebook item's category change to every
+     linked unpaid invoice line item on the same tenant.
+     Line-item linkage is via ``line_items[].pricebook_item_id``
+     (or legacy alias ``item_id``).
 
 ## Field write shapes (grep-verified · Feb-2026)
 
@@ -209,6 +215,16 @@ _SKIP_TABLE: Dict[str, Set[str]] = {
     "sync_recurring_template_to_children": {
         # Reserved slot for future self-loop protection.
         # See ``_RESERVED_SELF_LOOP`` docblock above.
+        _RESERVED_SELF_LOOP,
+    },
+    "sync_pricebook_to_invoice_lines": {
+        # Reserved slot for future self-loop protection on the
+        # P56 direction. Follows the same sentinel pattern as
+        # ``sync_recurring_template_to_children`` — see the
+        # ``_RESERVED_SELF_LOOP`` docblock above. A hypothetical
+        # future arrow that re-fires this callee from a Pricebook
+        # mutation surface (e.g. an audit path) would add its
+        # origin string here alongside the sentinel.
         _RESERVED_SELF_LOOP,
     },
 }
@@ -644,6 +660,222 @@ async def sync_invoice_line_to_pricebook(
 
 
 # ══════════════════════════════════════════════════════════════════
+# Entry point 3 — Pricebook item → linked unpaid invoice line items
+# ══════════════════════════════════════════════════════════════════
+# P56 · Feb-2026 · Bulk pricebook category edit consumer.
+async def sync_pricebook_to_invoice_lines(
+    tenant_id: str,
+    item_id: str,
+    *,
+    origin: str,
+    service_category_id: Any = _UNSET,     # str | None | _UNSET
+    income_category_id: Any = _UNSET,      # str | None | _UNSET
+    actor_id: Optional[str] = None,
+) -> SyncResult:
+    """Propagate a Pricebook item's category change to every
+    linked unpaid invoice line item on the same tenant.
+
+    Line-item linkage: an invoice line item is considered linked
+    to the Pricebook row when its ``pricebook_item_id`` (or
+    legacy alias ``item_id``) equals the source ``item_id``. Both
+    keys are supported for the same reason
+    ``sync_invoice_line_to_pricebook`` supports both (Feb-2026
+    grep · legacy invoices predating the ``pricebook_item_id``
+    rename still carry the ``item_id`` FK).
+
+    Semantic per field kwarg (mirrors
+    ``sync_recurring_template_to_children`` — Pricebook is
+    master for the item, so explicit clears cascade DOWN to
+    every unpaid invoice line):
+      * ``_UNSET`` (default) → don't touch that pair on child
+        docs.
+      * ``None`` → CLEAR that pair (write None to id + name +
+        legacy alias where present).
+      * non-empty ``str`` → resolve name, write id + name.
+
+    Field write shape per matched line item — the SAME 6-field
+    lockstep write used by
+    ``sync_recurring_template_to_children`` (Q3 lockstep):
+        income modern:  income_category_id, income_category_name
+        income legacy:  category, category_name  (aliases)
+        service modern: service_category_id, service_category_name
+
+    Read-side contracts (grep-verified with the sibling
+    ``sync_recurring_template_to_children``):
+      * ``payment_status != "paid"`` guard on both the read
+        AND the write filter — paid-transition race protection.
+      * ``doc_type == "invoice"`` — never touch quotes.
+      * ``tenant_id`` — cross-tenant propagation impossible by
+        construction.
+
+    Returns SyncResult with:
+      * updated_count       — # invoices whose line_items were
+                               modified (Mongo modified_count).
+      * skipped_paid_count — # paid invoices linked to this item
+                               (informational).
+      * skipped_loop_count — 1 if the call short-circuited on
+                               the loop-prevention table.
+      * errors_by_id       — invoice_id → error string on
+                               per-doc failures.
+    """
+    # 55.4 · loop prevention.
+    if origin in _SKIP_TABLE["sync_pricebook_to_invoice_lines"]:
+        logger.info(
+            "[category_sync.pricebook→invoice_lines] short-circuit "
+            "origin=%s item=%s", origin, item_id,
+        )
+        return SyncResult.no_op()
+
+    # Nothing to sync?
+    if _is_unset(service_category_id) and _is_unset(income_category_id):
+        return SyncResult()
+
+    # 55.5 · resolve names UP-FRONT so a lookup failure raises
+    # before any child doc is touched. Direction policy: None =
+    # explicit clear (propagates), so only resolve when the id is
+    # a non-empty string.
+    income_name: Optional[str] = None
+    service_name: Optional[str] = None
+    if not _is_unset(income_category_id) and income_category_id:
+        income_name = await _resolve_category_name(
+            tenant_id, income_category_id,
+            collection="income_categories",
+        )
+    if not _is_unset(service_category_id) and service_category_id:
+        service_name = await _resolve_category_name(
+            tenant_id, service_category_id,
+            collection="service_categories",
+        )
+
+    # Find every unpaid invoice whose line_items contain a
+    # reference to this Pricebook item (either FK key). Tenant +
+    # doc_type + payment_status guards baked in.
+    _fk_or = {"$or": [
+        {"line_items.pricebook_item_id": item_id},
+        {"line_items.item_id": item_id},
+    ]}
+    unpaid = await db.quotes.find(
+        {"tenant_id": tenant_id,
+         "doc_type": "invoice",
+         "payment_status": {"$ne": "paid"},
+         **_fk_or},
+        {"_id": 0, "id": 1, "line_items": 1},
+    ).to_list(5000)
+
+    # Informational paid count — same $or so the counter reflects
+    # the same universe as the read set.
+    paid_count = await db.quotes.count_documents({
+        "tenant_id": tenant_id,
+        "doc_type": "invoice",
+        "payment_status": "paid",
+        **_fk_or,
+    })
+
+    updated_count = 0
+    errors: Dict[str, str] = {}
+    for inv in unpaid:
+        line_items = inv.get("line_items") or []
+        if not line_items:
+            continue
+        set_ops: Dict[str, Any] = {}
+        for idx, li in enumerate(line_items):
+            # Only mutate lines linked to THIS pricebook item.
+            _li_fk = (li.get("pricebook_item_id")
+                        or li.get("item_id"))
+            if _li_fk != item_id:
+                continue
+
+            # Compute target values — same _UNSET / None / str
+            # trichotomy as ``sync_recurring_template_to_children``.
+            new_income_id = (
+                (income_category_id or None)
+                if not _is_unset(income_category_id) else None
+            )
+            new_income_name = (
+                (income_name if income_category_id else None)
+                if not _is_unset(income_category_id) else None
+            )
+            new_service_id = (
+                (service_category_id or None)
+                if not _is_unset(service_category_id) else None
+            )
+            new_service_name = (
+                (service_name if service_category_id else None)
+                if not _is_unset(service_category_id) else None
+            )
+
+            # Idempotency guard — only emit SET ops where the
+            # target differs from the current value.
+            if not _is_unset(income_category_id):
+                if li.get("income_category_id") != new_income_id:
+                    set_ops[
+                        f"line_items.{idx}.income_category_id"
+                    ] = new_income_id
+                if li.get("income_category_name") != new_income_name:
+                    set_ops[
+                        f"line_items.{idx}.income_category_name"
+                    ] = new_income_name
+                # Income legacy aliases (Q3 lockstep).
+                if li.get("category") != new_income_id:
+                    set_ops[
+                        f"line_items.{idx}.category"
+                    ] = new_income_id
+                if li.get("category_name") != new_income_name:
+                    set_ops[
+                        f"line_items.{idx}.category_name"
+                    ] = new_income_name
+            if not _is_unset(service_category_id):
+                if li.get("service_category_id") != new_service_id:
+                    set_ops[
+                        f"line_items.{idx}.service_category_id"
+                    ] = new_service_id
+                if li.get("service_category_name") != new_service_name:
+                    set_ops[
+                        f"line_items.{idx}.service_category_name"
+                    ] = new_service_name
+
+        if not set_ops:
+            # Every matched line is already at the target values —
+            # true idempotency no-op. No DB touch on this doc.
+            continue
+
+        set_ops["updated_at"] = _now_iso()
+        try:
+            # ``payment_status != paid`` re-guard on the write
+            # filter — protects against a paid-transition race
+            # between the read and the write.
+            r = await db.quotes.update_one(
+                {"id": inv["id"], "tenant_id": tenant_id,
+                 "doc_type": "invoice",
+                 "payment_status": {"$ne": "paid"}},
+                {"$set": set_ops},
+            )
+            if r.modified_count > 0:
+                updated_count += 1
+        except Exception as e:                             # noqa: BLE001
+            errors[inv["id"]] = str(e)
+
+    result = SyncResult(
+        updated_count=updated_count,
+        skipped_paid_count=paid_count,
+        errors_by_id=errors,
+    )
+    diff_summary = _build_diff_summary(
+        income_category_id, service_category_id,
+    )
+    await _write_sync_audit(
+        tenant_id=tenant_id,
+        source_type="pricebook_item",
+        source_id=item_id,
+        origin_marker=origin,
+        diff_summary=diff_summary,
+        result=result,
+        actor_id=actor_id,
+    )
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════
 # Diff-summary shape (Q5 audit contract)
 # ══════════════════════════════════════════════════════════════════
 def _build_diff_summary(
@@ -667,6 +899,7 @@ __all__ = [
     "CategorySyncNameLookupError",
     "sync_recurring_template_to_children",
     "sync_invoice_line_to_pricebook",
+    "sync_pricebook_to_invoice_lines",
     "_UNSET",
     "_SKIP_TABLE",
     "_RESERVED_SELF_LOOP",
