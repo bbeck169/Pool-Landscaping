@@ -46,6 +46,59 @@ from services.chemistry_bands import (
 )
 
 
+# ── Phase P45 · Feb-2026 · absolute-URL helper for email HTML ──────
+# Email clients (Gmail, Outlook, Apple Mail) block or fail to
+# resolve relative image URLs — the email is rendered outside the
+# app's origin.  Every ``<img src="…">`` and CSS
+# ``background-image:url(…)`` in the outgoing HTML must be an
+# absolute URL with a scheme + host.  ``_absolute_url`` is the
+# single choke point that prepends the public origin.
+#
+# Env-var precedence (per P45 spec):
+#   1. PUBLIC_FRONTEND_ORIGIN   — canonical (P34 rollout)
+#   2. APP_PUBLIC_URL            — codebase-legacy fallback
+#   3. Hardcoded ``https://app.plofv.com`` — last-resort default,
+#      one WARN emitted the first time it fires if both env vars
+#      are absent.
+
+_P45_HARDCODED_ORIGIN = "https://app.plofv.com"
+_P45_WARNED_HARDCODE = False
+
+
+def _absolute_url(path):
+    """Prepend the public origin to a relative path so email
+    clients can resolve the URL.  Already-absolute URLs pass
+    through unchanged.  ``None`` / empty inputs return
+    unchanged (caller filters empties).
+    """
+    global _P45_WARNED_HARDCODE
+    if not path:
+        return path
+    if isinstance(path, str) and path.startswith(
+        ("http://", "https://", "data:", "cid:"),
+    ):
+        # Already absolute — or a data:/cid: inline URL that email
+        # clients handle natively.  Nothing to prepend.
+        return path
+    base = (
+        os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+        or os.environ.get("APP_PUBLIC_URL")
+        or _P45_HARDCODED_ORIGIN
+    ).rstrip("/")
+    if (base == _P45_HARDCODED_ORIGIN
+            and not os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+            and not os.environ.get("APP_PUBLIC_URL")
+            and not _P45_WARNED_HARDCODE):
+        logger.warning(
+            "[p45] _absolute_url falling back to hardcoded %s — "
+            "set PUBLIC_FRONTEND_ORIGIN or APP_PUBLIC_URL to override",
+            _P45_HARDCODED_ORIGIN,
+        )
+        _P45_WARNED_HARDCODE = True
+    return f"{base}/{str(path).lstrip('/')}"
+
+
+
 AUTO_EMAIL_KEY = "auto_visit_email"
 
 
@@ -340,10 +393,14 @@ def _photos_grid(
         url = p.get("url") or p.get("uri") or ""
         if not url:
             continue
+        # Phase P45 · Feb-2026 — absolute URL for email-client
+        # compatibility (Gmail/Outlook can't resolve relative
+        # paths); already-absolute URLs pass through unchanged.
+        abs_url = _absolute_url(url)
         grid_cells.append(
             f'<td style="width:33.33%;padding:6px" valign="top" align="center">'
             f'<a href="{portal_link}" style="text-decoration:none;">'
-            f'<img src="{url}" alt="Visit photo" '
+            f'<img src="{abs_url}" alt="Visit photo" '
             f'style="max-width:180px;width:100%;height:auto;border-radius:8px;'
             f'border:1px solid #E5E7EB;display:block" />'
             f'</a></td>'
@@ -455,7 +512,14 @@ def render_email(
     include_reviews = _include_reviews_cta(tenant) and bool(review_link)
     custom_footer = _footer_text(tenant)
     app_url = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
-    portal_link = f"{app_url}/portal/service-reports" if app_url else "/portal/service-reports"
+    # Phase P45 · Feb-2026 — portal_link is EMBEDDED IN <a href> tags
+    # in email HTML; absolute is mandatory or Gmail/Outlook will
+    # rewrite the ``/portal/service-reports`` bare path to their own
+    # domain.  Route through ``_absolute_url`` so PUBLIC_FRONTEND_ORIGIN
+    # takes precedence over the legacy APP_PUBLIC_URL when both are
+    # set; falls back to hardcoded ``https://app.plofv.com`` if
+    # neither is configured.
+    portal_link = _absolute_url("/portal/service-reports")
 
     # ─── HTML ───────────────────────────────────────────────────────
     # Phase COMM1 · Feb-2026 — header uses the tenant primary color
@@ -468,8 +532,12 @@ def render_email(
         f'<tr><td>'
     )
     if logo:
+        # Phase P45 · Feb-2026 — absolute URL for email-client
+        # compatibility (Gmail/Outlook can't resolve relative
+        # paths); already-absolute URLs pass through unchanged.
+        abs_logo = _absolute_url(logo)
         header_html += (
-            f'<img src="{logo}" alt="{company}" '
+            f'<img src="{abs_logo}" alt="{company}" '
             f'style="max-height:48px;margin-bottom:8px;display:block" />'
         )
     header_html += (

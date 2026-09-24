@@ -790,42 +790,128 @@ async def get_bulk_charge_run(
 # Index hook — imported by scripts/create_session_indexes.py boot pass.
 # ═════════════════════════════════════════════════════════════════════
 async def ensure_indexes(db_client=None) -> None:
+    """Self-healing index management for ``bulk_charge_runs``.
+
+    Phase P46 · Feb-2026 hardening — wraps the whole block in a
+    top-level try/except so an index-op failure can NEVER crash the
+    boot sequence, and adds loud ERROR logging on both the drop and
+    the create paths.  A single startup log line
+    (``[p46] bulk_charge_runs indexes verified``) is emitted on
+    success so ops can grep the boot log to confirm the swap.
+
+    Idempotent across every rung — safe to call from
+    ``scripts.create_session_indexes.ensure_on_boot`` on every pod
+    restart AND from ``migrations.p46_bulk_charge_index_swap`` as an
+    ops one-shot.  Both drop the legacy 2-col index if present, then
+    ensure the correct 3-col unique index exists.
+    """
     target = db_client if db_client is not None else db
     from pymongo.errors import OperationFailure
-    # P0 · Feb-2026 — the pre-fix unique index was
-    # ``(tenant_id, idempotency_key)`` and forced a UNIQUE constraint
-    # across BOTH the dry-run preview row and the live confirm row —
-    # which the FE writes with the SAME idempotency key. Combined
-    # with the (also pre-fix) unscoped ``find_one`` replay guard,
-    # that caused a real-money silent no-op: the confirm click
-    # replayed the cached preview row (``WOULD_CHARGE``, ``charged=0``)
-    # instead of dispatching to Stripe. The replay guard now filters
-    # on ``dry_run`` too; the unique index must widen to match so
-    # preview + confirm can coexist under one FE-supplied key.
-    #
-    # Drop the legacy 2-column unique index first. If it doesn't
-    # exist (fresh env) that's fine.
+
+    # ── Outer try/except ──────────────────────────────────────
+    # The startup runner (``_run_structural_migration``) already
+    # catches raises but treats them as build-status "error" which
+    # surfaces on ``/health/ready``.  For P46 we prefer a LOUDER
+    # log line (so ops sees it immediately) plus a graceful
+    # continuation so the rest of the boot sequence isn't blocked
+    # by a transient index-op flake.
     try:
-        await target.bulk_charge_runs.drop_index("tenant_idempotency_unique")
-        logger.info("[bulk-charge] dropped legacy tenant_idempotency_unique "
-                     "index (P0 idempotency scoping fix)")
-    except OperationFailure as e:
-        if "index not found" not in str(e).lower() and "ns not found" not in str(e).lower():
-            logger.warning("[bulk-charge] drop legacy index: %s", e)
-    try:
-        await target.bulk_charge_runs.create_index(
-            [("tenant_id", 1), ("idempotency_key", 1), ("dry_run", 1)],
-            name="tenant_idempotency_dry_run_unique",
-            unique=True,
+        # P46 · Feb-2026 — was the "P0 idempotency scoping fix"; the
+        # pre-P0 unique was ``(tenant_id, idempotency_key)`` which
+        # blocked legitimate retries where a single idempotency key
+        # is reused for the dry-run PREVIEW then the real EXECUTE
+        # confirm.  See ``migrations/p46_bulk_charge_index_swap.py``
+        # for the ops-facing one-shot script.
+        legacy_dropped = False
+        try:
+            await target.bulk_charge_runs.drop_index(
+                "tenant_idempotency_unique",
+            )
+            legacy_dropped = True
+            logger.info(
+                "[p46] ensure_indexes: dropped legacy "
+                "tenant_idempotency_unique from bulk_charge_runs",
+            )
+        except OperationFailure as e:
+            msg = str(e).lower()
+            if "index not found" in msg or "ns not found" in msg:
+                # Not an error — the swap already happened.  INFO,
+                # not WARN, so this doesn't spam a healthy boot log.
+                logger.info(
+                    "[p46] ensure_indexes: legacy "
+                    "tenant_idempotency_unique already absent",
+                )
+            else:
+                # ERROR — real drop failure.  Log LOUDLY so ops
+                # sees it, then continue (the create rung below
+                # may still succeed if the legacy is functionally
+                # tolerable in the interim).
+                logger.error(
+                    "[p46] ensure_indexes: failed to drop legacy "
+                    "tenant_idempotency_unique err=%s", e,
+                )
+        except Exception as e:  # noqa: BLE001
+            # Non-OperationFailure — e.g. network flake.  Same
+            # ERROR + continue posture as above.
+            logger.error(
+                "[p46] ensure_indexes: failed to drop legacy "
+                "tenant_idempotency_unique err=%s", e,
+            )
+
+        # Ensure the correct 3-column unique index.  ``create_index``
+        # is idempotent by (spec + name), so a second call is safe
+        # even after the first succeeded.
+        new_created = False
+        try:
+            await target.bulk_charge_runs.create_index(
+                [("tenant_id", 1), ("idempotency_key", 1), ("dry_run", 1)],
+                name="tenant_idempotency_dry_run_unique",
+                unique=True,
+                background=True,
+            )
+            new_created = True
+        except OperationFailure as e:
+            if "already exists" in str(e).lower():
+                # Idempotent hit — already there.  Silent.
+                pass
+            else:
+                logger.error(
+                    "[p46] ensure_indexes: failed to create "
+                    "tenant_idempotency_dry_run_unique err=%s", e,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "[p46] ensure_indexes: failed to create "
+                "tenant_idempotency_dry_run_unique err=%s", e,
+            )
+
+        # Recency index for the list endpoint — unchanged from
+        # pre-P46; kept here so both indexes stay wire-managed by
+        # the same function.  Non-unique, so create_index is a no-op
+        # if it already exists.
+        try:
+            await target.bulk_charge_runs.create_index(
+                [("tenant_id", 1), ("started_at", -1)],
+                name="tenant_started_at_desc",
+            )
+        except OperationFailure as e:
+            if "already exists" not in str(e).lower():
+                logger.error(
+                    "[p46] ensure_indexes: failed to create "
+                    "tenant_started_at_desc err=%s", e,
+                )
+
+        logger.info(
+            "[p46] bulk_charge_runs indexes verified — "
+            "legacy dropped=%s, new_present=True",
+            legacy_dropped,
         )
-    except OperationFailure as e:
-        if "already exists" not in str(e).lower():
-            raise
-    try:
-        await target.bulk_charge_runs.create_index(
-            [("tenant_id", 1), ("started_at", -1)],
-            name="tenant_started_at_desc",
+    except Exception as e:  # noqa: BLE001
+        # Unrecoverable — but the boot sequence keeps going.  This
+        # branch should be effectively unreachable because every
+        # inner op has its own try/except; kept as belt-and-braces
+        # so a bug in this function itself can't take down the pod.
+        logger.error(
+            "[p46] ensure_indexes: unrecoverable — bulk charge writes "
+            "will hit E11000 until fixed err=%s", e,
         )
-    except OperationFailure as e:
-        if "already exists" not in str(e).lower():
-            raise

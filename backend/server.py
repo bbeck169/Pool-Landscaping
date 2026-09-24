@@ -3278,6 +3278,36 @@ async def _run_boot_sequence():
         _p38_1_factory,
         must_succeed=False,
     )
+    # ── Phase P46 · Feb-2026 · bulk_charge_runs index swap ────────
+    # One-shot ops equivalent of the hardened ``ensure_indexes`` in
+    # ``routers/invoices_bulk_charge.py``.  Runs alongside P38 /
+    # P38.1 in the structural bucket so pods that come up with the
+    # legacy 2-column unique index still get self-healed on boot,
+    # not just by the ``create_session_indexes`` path.  Idempotent
+    # via ``migrations_applied[name="p46_bulk_charge_index_swap"]``.
+    async def _p46_factory():
+        from migrations.p46_bulk_charge_index_swap import (
+            run as _p46_run,
+            STARTUP_EXECUTE_MODE as _p46_execute,
+        )
+        _res = await _p46_run(execute=bool(_p46_execute))
+        logger.info(
+            "[p46-bulk-charge-index-swap] boot pass — "
+            "dropped_legacy=%s created_new=%s already_correct=%s "
+            "dry_run=%s skipped_by_marker=%s",
+            _res.get("dropped_legacy"),
+            _res.get("created_new"),
+            _res.get("already_correct"),
+            _res.get("dry_run"),
+            _res.get("skipped_by_marker"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "p46_bulk_charge_index_swap",
+        _p46_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py

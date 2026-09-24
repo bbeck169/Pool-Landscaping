@@ -7,6 +7,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
+// Phase P45 · Feb-2026 — client-side idempotency-key belt to the
+// backend atomic-stamp gate.  Same UUID on every submit for one
+// form session; regenerates on success so a reopen-and-resubmit
+// flow is treated as a new action.
+import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 import { colors, gradients } from "@/theme";
 import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2, Video, Upload } from "lucide-react";
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
@@ -54,6 +59,12 @@ const useElapsed = (startIso) => {
 export default function ServiceReport() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Phase P45 · idempotency-key.  Stable across the session and
+  // across retries after network errors.  ``regenerate()`` is
+  // called on submit SUCCESS so a reopen-and-resubmit is treated
+  // as a distinct action.
+  const { headers: idempotencyHeaders, regenerate: regenerateIdempotencyKey } =
+    useIdempotencyKey();
 
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -312,7 +323,15 @@ export default function ServiceReport() {
     try {
       // Flush any pending edits first
       if (dirtyRef.current) await autosave();
-      const submitted = await api.post(`/jobs/${id}/service-report/submit`);
+      // Phase P45 · pass X-Idempotency-Key via api.request so the
+      // backend replay guard treats a network-retry as a dedupe hit.
+      const submitted = await api.request(
+        `/jobs/${id}/service-report/submit`,
+        { method: "POST", headers: idempotencyHeaders },
+      );
+      // Regenerate for the NEXT submission — a new action gets a
+      // new key so a reopened form isn't blocked as a replay.
+      regenerateIdempotencyKey();
       setReport({ ...report, ...submitted, submitted_at: submitted.submitted_at });
       // Clock out best-effort (may already be clocked out if user is manually testing)
       try {

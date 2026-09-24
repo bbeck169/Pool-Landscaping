@@ -747,10 +747,52 @@ async def submit_service_report(
         except Exception as _mi1_e:                              # noqa: BLE001
             logger.warning(f"[mi1] required-items gate errored: {_mi1_e}")
     now = now_iso()
+    # ── Phase P45 · Feb-2026 · atomic claim gate ──────────────────
+    # The atomic gate is the ONLY writer of ``submitted_at`` on the
+    # service-report row.  Prior to P45 the write below at line
+    # ``_submit_updates`` set ``submitted_at`` unconditionally,
+    # which produced a TOCTOU race between the ``rep.get("submitted_at")``
+    # read at ~L667 and the write here — two concurrent submits could
+    # both pass the read + both write, then both enqueue email/SMS
+    # background tasks (double customer email).  The gate below
+    # replaces that unconditional write with a
+    # ``findOneAndUpdate`` that only matches when ``submitted_at`` is
+    # null/empty; the second concurrent submit gets ``claim=None``
+    # and is short-circuited as idempotent — exactly the response
+    # shape the historic ``if rep.get("submitted_at"): return rep``
+    # branch produced.  Also stamps ``email_pending_at`` +
+    # ``sms_pending_at`` in the same write for the notification
+    # enqueue gate later in the handler.
+    from services.service_report_submit_gate import claim_submit_or_none
+    _p45_claim = await claim_submit_or_none(
+        tenant_id=tenant["id"],
+        report_id=rep.get("id"),
+        job_id=jid, tech_id=tech_id,
+        now_iso=now,
+    )
+    if _p45_claim is None:
+        logger.info(
+            "[p45] concurrent-submit idempotency: job=%s tech=%s tenant=%s"
+            " — returning cached report shape",
+            jid, tech_id, tenant["id"],
+        )
+        # Return the current row so callers get a coherent response.
+        _cached = await db.service_reports.find_one(
+            {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
+            {"_id": 0},
+        )
+        if idem_key and _cached:
+            await store_response(idem_key,
+                                  "POST /jobs/{jid}/service-report/submit",
+                                  tenant["id"], _cached, idem_body)
+        return _cached or rep
+    # ── /Phase P45 ────────────────────────────────────────────────
     # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for
     # reports that were bootstrapped before the field existed. Safe
     # for freshly-bootstrapped reports too (idempotent when set).
-    _submit_updates: Dict[str, Any] = {"submitted_at": now, "updated_at": now}
+    # NB (P45): ``submitted_at`` is intentionally NOT in
+    # ``_submit_updates`` anymore — the atomic gate above owns it.
+    _submit_updates: Dict[str, Any] = {"updated_at": now}
     if not rep.get("public_uuid"):
         _submit_updates["public_uuid"] = new_id()
         rep["public_uuid"] = _submit_updates["public_uuid"]
@@ -817,29 +859,18 @@ async def submit_service_report(
             f"[job_timers.auto_close] job={jid} failed: {_tc_exc}",
         )
     # Feb-2026 · Door-hanger auto-send on completion transition.
-    # Fire-and-forget so the submit response returns immediately.
-    # Only fires when this submit actually FLIPPED the status to
-    # completed (idempotent re-submits are already blocked above by
-    # the ``rep.get("submitted_at")`` check, but the extra guard keeps
-    # the transition semantics obvious).
-    #
-    # Feb-2026 · P16D — verified inline-safe: the underlying
-    # ``schedule_auto_send_door_hanger`` at
-    # ``routers/workstream_service_log.py:1234`` is a thin
-    # ``asyncio.create_task(maybe_auto_send_door_hanger(...))``
-    # wrapper — it schedules on the running loop and returns
-    # immediately.  The scheduled coroutine itself handles ALL
-    # external work (ledger lookup, customer fetch, email adapter
-    # call) after the response has been sent, and swallows any
-    # exception via its own try/except.  Kept in the sync path.
-    if _prev_status != "completed":
-        try:
-            from routers.workstream_service_log import (
-                schedule_auto_send_door_hanger,
-            )
-            schedule_auto_send_door_hanger(jid, tenant["id"])
-        except Exception as _dh:
-            logger.warning(f"door-hanger auto-send schedule failed: {_dh}")
+    # ── Phase P45 · Feb-2026 · SUPERSEDED ─────────────────────────
+    # The auto ``schedule_auto_send_door_hanger`` call that used to
+    # live here fired IN ADDITION to ``_bg_send_visit_summary_email``
+    # (below at ~L1306), producing TWO customer-facing emails per
+    # submit.  P45 kills the auto door-hanger schedule; the manual
+    # ``POST /api/jobs/{jid}/email-door-hanger`` endpoint keeps
+    # ``schedule_auto_send_door_hanger`` as its send helper.
+    # The atomic gate ``claim_submit_or_none`` (invoked at the
+    # bg-tasks enqueue block below) now guarantees exactly-once
+    # notification enqueue across concurrent submit/completion
+    # races.
+    # ──────────────────────────────────────────────────────────────
     # Mandatory clock-out when the entry originated from GPS auto-clock-in;
     # best-effort for manual entries (unchanged behavior for that case).
     clock_out_summary = None
@@ -1238,6 +1269,20 @@ async def submit_service_report(
                             ) else None,
                     }},
                 )
+                # ── Phase P45 · Feb-2026 · sent-marker migration ──
+                # Move ``email_pending_at`` → ``email_sent_at`` so
+                # the atomic gate's pending queue drains as sends
+                # complete.  Best-effort; a stamp failure MUST NOT
+                # crash the bg task.
+                if email_row.get("status") in (
+                    "sent", "queued", "dry_run", "mocked",
+                ):
+                    from services.service_report_submit_gate import (
+                        stamp_email_sent,
+                    )
+                    await stamp_email_sent(
+                        tenant_id=_tid, job_id=_jid, tech_id=_uid,
+                    )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[p12a-bg] auto visit-summary email failed: {e}")
             await db.service_reports.update_one(
@@ -1247,6 +1292,16 @@ async def submit_service_report(
 
     async def _bg_send_completion_sms(_tenant=tenant, _job=job, _tid=_tenant_id,
                                           _jid=jid, _uid=_tech_uid):
+        # ── Phase P45 · Feb-2026 · SMS-body defensive contract ────
+        # The SMS path MUST NOT include any image, logo, HTML tag,
+        # or asset URL.  SMS is plain text only — logo/branding
+        # lives EXCLUSIVELY in the email path
+        # (``services.auto_visit_email``).  The body is composed by
+        # ``services.completion_sms_template.build_completion_sms_body``,
+        # which is enforced plain-text by
+        # ``test_sms_body_contains_no_html_or_image_references`` in
+        # ``test_p45_visit_summary_dedup_and_absolute_urls.py``.
+        # ──────────────────────────────────────────────────────────
         try:
             customer = await db.customers.find_one(
                 {"id": _job.get("customer_id"), "tenant_id": _tid},
@@ -1295,6 +1350,15 @@ async def submit_service_report(
                         ) else None,
                 }},
             )
+            # ── Phase P45 · Feb-2026 · sent-marker migration ──
+            # Move ``sms_pending_at`` → ``sms_sent_at`` on success.
+            if provider_status in ("sent", "queued", "dry_run", "mocked"):
+                from services.service_report_submit_gate import (
+                    stamp_sms_sent,
+                )
+                await stamp_sms_sent(
+                    tenant_id=_tid, job_id=_jid, tech_id=_uid,
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[task-u] completion SMS failed: {e}")
             await db.service_reports.update_one(
@@ -1303,6 +1367,14 @@ async def submit_service_report(
             )
 
     if auto_send_completion and not already_notified.get("email_sent_at"):
+        # ── Phase P45 · Feb-2026 · notification enqueue ────────────
+        # The atomic gate at the top of this handler already claimed
+        # ``submitted_at`` + ``email_pending_at`` + ``sms_pending_at``;
+        # since we're past that gate the current caller IS the
+        # canonical winner — safe to enqueue.  The bg tasks below
+        # will migrate ``_pending_at`` → ``_sent_at`` on success
+        # (see ``services.service_report_submit_gate.stamp_email_sent``
+        # + ``stamp_sms_sent``).
         background_tasks.add_task(_bg_send_visit_summary_email)
         email_result_status = "queued"
     else:
@@ -1312,6 +1384,10 @@ async def submit_service_report(
     # template if present; otherwise a sensible default. Runs through
     # the guarded RC adapter so preview only sends live to allow-
     # listed recipients.
+    # Phase P45 · Feb-2026 — SMS enqueue is protected by the same
+    # atomic gate that ran at the top of this handler.  We reach
+    # here only when the current caller won the claim, so it's
+    # safe to enqueue without a second gate check.
     if auto_send_completion and not already_notified.get("sms_sent_at"):
         background_tasks.add_task(_bg_send_completion_sms)
         sms_result_status = "queued"

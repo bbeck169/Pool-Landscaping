@@ -64,6 +64,11 @@ import { Loader2, Save, ShieldCheck, X } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { getChecklistType } from "@/lib/checklistType";
+// Phase P45 · Feb-2026 — client-side idempotency-key belt to the
+// backend atomic-stamp gate.  Same UUID sits on every submit
+// attempt for one form session; regenerates on success so a
+// reopen-and-resubmit flow is treated as a new action.
+import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 import { AddressLink } from "@/components/customer";
 // Phase MI1.1 · Feb 2026 — non-pool / non-landscape jobs are routed
 // through the industry-aware form so HVAC / Pest / Cleaning / Solar
@@ -118,6 +123,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const { user } = useAuth();
   const role = user?.role || "";
   const canWrite = role === "admin" || role === "super_admin" || role === "technician";
+  // Phase P45 · idempotency-key.  Stable across the session and
+  // across retries after network errors.  ``regenerate()`` is
+  // called on submit SUCCESS below so a reopen-and-resubmit is
+  // treated as a distinct action.
+  const { headers: idempotencyHeaders, regenerate: regenerateIdempotencyKey } =
+    useIdempotencyKey();
 
   const [job, setJob] = useState(null);
   const [report, setReport] = useState(null);
@@ -382,7 +393,16 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       dirtyRef.current = true;
       await flushSave();
       // 2) Submit / close.
-      const submitted = await api.post(`/jobs/${jobId}/service-report/submit`, {});
+      // Phase P45 · pass X-Idempotency-Key via api.request so the
+      // backend replay guard treats a network-retry as a dedupe hit.
+      const submitted = await api.request(
+        `/jobs/${jobId}/service-report/submit`,
+        { method: "POST", body: JSON.stringify({}),
+          headers: idempotencyHeaders },
+      );
+      // Regenerate for the NEXT submission (e.g. if the user
+      // reopens the form and edits) — a new action gets a new key.
+      regenerateIdempotencyKey();
       // 3) Fire workstream event — best effort.
       const template = getChecklistType(job);
       try {

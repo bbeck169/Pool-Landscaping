@@ -1457,6 +1457,18 @@ async def email_door_hanger(
     ``marketing_deliveries`` still protects against accidental
     double-clicks on the button."""
     _require_admin_or_403(user)
+    # ── Phase P45 · Feb-2026 · manual-trigger audit log ────────────
+    # After P45, ALL auto ``schedule_auto_send_door_hanger`` call
+    # sites (service_reports.submit + jobs.py PUT status=completed)
+    # were removed to fix the double-email bug.  This endpoint is
+    # now the ONLY legitimate path for a door-hanger send.  Emit a
+    # WARN line so ops can grep prod logs and confirm every future
+    # door-hanger send was human-initiated.
+    logger.warning(
+        "[p45] door-hanger sent via manual trigger by user=%s"
+        " tenant=%s job=%s",
+        user.get("id"), tenant.get("id"), jid,
+    )
     job = await db.jobs.find_one(
         {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0},
     )

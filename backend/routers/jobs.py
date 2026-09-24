@@ -2485,15 +2485,30 @@ async def update_job(jid: str, body: JobUpdate,
             await notify_customer(cid, "Service complete",
                                   f"Your {job.get('service_type', 'service')} is complete. View your report in the app.", job_id=jid)
             fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0})
-            await send_completion_email(fresh)
-            # Feb-2026 · Door-hanger auto-send on completion transition.
-            # Fire-and-forget so the PUT response returns immediately.
-            # Idempotency + skip rules live inside the helper.
-            try:
-                from routers.workstream_service_log import schedule_auto_send_door_hanger
-                schedule_auto_send_door_hanger(jid, tenant["id"])
-            except Exception as _dh:
-                logger.warning(f"door-hanger auto-send schedule failed: {_dh}")
+            # ── Phase P45 · Feb-2026 · atomic single-writer gate ──
+            # Claim the notification enqueue window BEFORE firing
+            # ``send_completion_email``.  If a concurrent tech-submit
+            # (via ``service_reports.submit``) already claimed the
+            # gate, this branch is a no-op — no duplicate emails.
+            # The pre-P45 auto ``schedule_auto_send_door_hanger``
+            # call was removed here for the same reason (see P45
+            # notes).  The manual "Email Door Hanger" endpoint at
+            # ``workstream_service_log.email_door_hanger`` remains
+            # the only authorised path for door-hanger sends.
+            from services.service_report_submit_gate import (
+                claim_submit_or_none,
+            )
+            _p45_claim = await claim_submit_or_none(
+                tenant_id=tenant["id"], job_id=jid,
+            )
+            if _p45_claim is not None:
+                await send_completion_email(fresh)
+            else:
+                logger.info(
+                    "[p45] jobs.status=completed skipped completion email"
+                    " — gate already claimed for job=%s tenant=%s",
+                    jid, tenant["id"],
+                )
             # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
             from routers.maintenance import create_recurring_maintenance
             await create_recurring_maintenance(fresh)

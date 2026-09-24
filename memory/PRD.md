@@ -21133,3 +21133,94 @@ Test loop convention mirrors `test_heatmap_cooldown_cache.py`: seeding + cleanup
 - **`resolve_photo_items` in `services/service_report_view.py:339`** still reads only `job.get("photos")`. That helper is currently used by the **door-hanger email** send path (`workstream_service_log.py:1310 email-door-hanger`) — the same bug applies there. Extending P44 to the door-hanger path needs an async refactor of that helper AND its call sites. Deferred to a P44.1 slice.
 - **`service_reports.photos[]` initial-empty mirror comment stale.** `service_reports.py:315` says `# mirror; canonical photo store stays on jobs.photos`, which contradicts the Phase-27 media route that writes directly. The comment should be re-worded to reflect the "job.photos = legacy; service_reports.photos = Phase-27 upload target; readers must consult both" reality. No behavior change.
 
+
+## Phase P45 · Feb-2026 — De-dupe Visit Summary Emails + Absolute Photo URLs (SHIPPED preview)
+
+**Bugs.**
+1. **Duplicate customer emails on job complete.** Two writer paths converge on the same completion transition — `service_reports.submit` and `jobs.py PUT status=completed` — and BOTH fired `schedule_auto_send_door_hanger` alongside the visit-summary/completion email. A single completion produced two customer-facing emails.
+2. **Broken photos in Gmail/Outlook.** The visit-summary email HTML used relative image URLs (`/api/public/service/…/photo/…`) that email clients rendered outside the app origin can't resolve → broken image tiles.
+
+**Fix.**
+
+### Backend — atomic single-writer gate
+- `backend/services/service_report_submit_gate.py` — **NEW** module. `claim_submit_or_none(...)` runs one atomic `findOneAndUpdate` that stamps `submitted_at` + `email_pending_at` + `sms_pending_at` in the same write. The filter matches `submitted_at ∈ {None, ""}` OR absent → guaranteed exactly-one winner across concurrent submits. Motor's `ReturnDocument.BEFORE` semantics: `None` return = "already claimed" → callers skip enqueue. Companion helpers `stamp_email_sent` / `stamp_sms_sent` migrate `_pending_at` → `_sent_at` inside the background-task success branches so the pending queue drains as sends complete.
+- `backend/routers/service_reports.py::submit_service_report` — replaced the pre-P45 unconditional `submitted_at = now` write with the gate. If the gate returns `None`, return the current row as idempotent (byte-compatible with the pre-P45 `if rep.get("submitted_at"): return rep` branch) and also cache the response via the existing `utils_idempotency` layer. Removed the auto `schedule_auto_send_door_hanger(jid, tenant["id"])` call (root cause of duplicate email). `_bg_send_visit_summary_email` + `_bg_send_completion_sms` closures both stamp `_sent_at` on success. Added the P45 SMS-defensive-contract comment at the top of `_bg_send_completion_sms` locking the plain-text-only invariant.
+- `backend/routers/jobs.py::PUT jobs/{jid}` (status=completed branch) — gated `send_completion_email(fresh)` behind the same `claim_submit_or_none`. Removed the auto `schedule_auto_send_door_hanger` call. When the gate returns `None`, the completion email is skipped and an INFO log records the reason.
+- `backend/routers/workstream_service_log.py::email_door_hanger` — added a WARN log line at handler entry (`[p45] door-hanger sent via manual trigger by user=%s tenant=%s job=%s`) so ops can grep and confirm every future door-hanger send was human-initiated (the only legitimate path after P45).
+
+### Backend — absolute photo URLs for email HTML
+- `backend/services/auto_visit_email.py` — new `_absolute_url(path)` helper. Env-var precedence: `PUBLIC_FRONTEND_ORIGIN` → `APP_PUBLIC_URL` → hardcoded `https://app.plofv.com` (one WARN on first hardcode fallback). Already-absolute `http://`, `https://`, `data:`, `cid:` URLs pass through byte-identical. Wired around every `<img src=...>` — visit-photo grid tiles + tenant logo — and around `portal_link` so the "View report" CTA `<a href>` is absolute too.
+
+### Frontend — client-side idempotency-key belt
+- `frontend/src/hooks/useIdempotencyKey.js` — **NEW** React hook. Mints a stable `crypto.randomUUID()` on mount (fallback UUID for jsdom via `getRandomValues`); exposes `key`, `headers` (`{ "X-Idempotency-Key": key }`), and `regenerate()`. Same key survives retries after network errors; consumers call `regenerate()` on submit SUCCESS so a reopen-and-resubmit flow is treated as a distinct action.
+- `frontend/src/components/checklist/ChecklistModal.jsx` + `frontend/src/pages/tech/ServiceReport.jsx` — swapped `api.post(...)` for `api.request(..., { method: "POST", headers: idempotencyHeaders })` on the `POST /jobs/{id}/service-report/submit` calls; regenerate the key on success. The existing `utils_idempotency.replay_or_reserve` at the backend handler already reads `X-Idempotency-Key` and returns cached responses on replay — no backend server-side wiring needed.
+
+### Tests
+- `backend/tests/test_p45_visit_summary_dedup_and_absolute_urls.py` — **16 tests, all passing** (0.35s):
+  - **Atomic gate (A)**: all-three-stamps-together, second-call-returns-none, 3-way concurrency test asserts exactly-one winner via `asyncio.gather`, legacy empty-string `submitted_at` still claimable, `stamp_email_sent` / `stamp_sms_sent` marker migration.
+  - **Manual endpoint audit (B)**: WARN log present in the handler body, zero remaining `schedule_auto_send_door_hanger(` calls in `service_reports.py` + `jobs.py`, the function itself is kept for the manual endpoint.
+  - **Absolute URLs (C)**: PUBLIC_FRONTEND_ORIGIN precedence, APP_PUBLIC_URL fallback when PFO absent, hardcoded fallback + WARN when both absent, already-absolute passthrough (`http://`, `https://`, `data:`, `cid:`), grep-based check that photo `<img src>` + logo `<img src>` use the `abs_*` variants.
+  - **SMS guard (D)**: real `build_completion_sms_body` output contains no HTML tag / no `.jpg|.png|.svg|logo` / but DOES contain the portal `https://` link; defensive contract comment present at the top of `_bg_send_completion_sms`.
+- `frontend/src/test/p45-idempotency-key.test.jsx` — **5 tests, all passing** (16ms):
+  - Hook mints stable UUID, exposes `X-Idempotency-Key` header shape.
+  - `regenerate()` mints a fresh UUID.
+  - Both `ServiceReport.jsx` and `ChecklistModal.jsx` import the hook, thread `idempotencyHeaders` into `api.request(...)`, and call `regenerateIdempotencyKey()` on success.
+  - Hook source contains both `crypto.randomUUID` and `getRandomValues` fallback for jsdom.
+
+### Hard-rules compliance
+- No `backend/.env` writes. Tenant scoping preserved on every gate query (all filters include `tenant_id`). Manual endpoint's `schedule_auto_send_door_hanger` path untouched. P44 read path + P35 renderer untouched. No mobile files touched.
+
+### Ticket-worthy follow-ups
+- **Multi-tech aggregation in the gate.** `claim_submit_or_none` currently claims a single service_reports row per call. In a multi-tech scenario where two techs submit separate reports for the same job in quick succession, both submissions would win their own gate — producing two visit-summary emails (one per tech, which is arguably desired but should be locked with a wire-shape test).
+- **Idempotency-key backend caching hook.** The FE now sends `X-Idempotency-Key` on every submit; the existing `utils_idempotency.replay_or_reserve` cache captures the response. Follow-up: verify the cache actually replays byte-identically for the current submit response shape (audit-log ts, invoice_id) and add a wire-shape lock test.
+- **Deferred `_bg_send_visit_summary_email` on the jobs.py path.** Currently jobs.py PUT completed sends `send_completion_email` only; the visit-summary email path only fires from the service_reports submit route. Wiring the visit summary onto the jobs.py path (gated) would give admins who manually flip status via the jobs endpoint the same customer email — but that's an expansion, not a bug.
+
+
+## Phase P46 · Feb-2026 — Bulk Charge Index Swap + Startup Hardening (SHIPPED preview)
+
+**Bug.** `bulk_charge_runs` shipped with a legacy 2-column unique index `tenant_idempotency_unique` on `(tenant_id, idempotency_key)`. That constraint blocks the legitimate reuse of one idempotency key across a `dry_run=True` PREVIEW and the corresponding `dry_run=False` EXECUTE — the second write hits E11000, silently no-ops the confirm click, and produces the "cached preview replayed instead of Stripe dispatch" real-money bug we saw in P0.
+
+**Fix.** Two-track: migration script (ops escape hatch) + hardened boot-time `ensure_indexes` (self-heals on every restart / Republish).
+
+### Backend
+1. **`backend/migrations/p46_bulk_charge_index_swap.py`** — **NEW** one-shot migration script mirroring the P38 / P38.1 pattern:
+   - Two idempotent phases in one script:
+     * DROP legacy `tenant_idempotency_unique` (INFO if already absent).
+     * CREATE new `tenant_idempotency_dry_run_unique` on `(tenant_id, idempotency_key, dry_run)`, `unique=True`, `background=True`. If a same-name index exists with a WRONG spec, drop + recreate (WARN).
+   - Marker: stamps `migrations_applied[name="p46_bulk_charge_index_swap"]` on execute; second execute short-circuits with `skipped_by_marker=True`. `--force` bypasses.
+   - CLI: `--dry-run` (default), `--execute`, `--force`, `--verbose`. Summary JSON has keys `dropped_legacy`, `created_new`, `already_correct`, `skipped_by_marker`, `duration_s`, `dry_run`, `executed_at`.
+2. **`backend/routers/invoices_bulk_charge.py::ensure_indexes`** — hardened:
+   - Broad top-level try/except so an index-op flake can never crash the boot sequence.
+   - Both drop + create rungs have their own try/except with **loud ERROR logging** on real failures (`[p46] ensure_indexes: failed to drop legacy tenant_idempotency_unique err=...` / `[p46] ensure_indexes: failed to create tenant_idempotency_dry_run_unique err=...`). "index not found" / "already exists" are still silent no-ops.
+   - Success log line: `[p46] bulk_charge_runs indexes verified — legacy dropped=<bool>, new_present=True`.
+   - Existing `tenant_started_at_desc` (recency index for the list endpoint) still managed by the same function.
+3. **`backend/server.py`** — new `_p46_factory` wired into the `_run_structural_migration` bucket alongside P38 / P38.1. Ships with `STARTUP_EXECUTE_MODE = True` (unlike P38 which ships dry-run) — the fix is safe to auto-apply since the script inspects state first and every rung is idempotent.
+
+### Tests
+- `backend/tests/test_p46_bulk_charge_index_swap.py` — **12 tests, all passing** (0.67s):
+  1. Migration drops legacy when present.
+  2. Migration creates new when absent.
+  3. Migration idempotent when correct index already present (`already_correct=True`).
+  4. Dry-run reports actions without mutating.
+  5. Second execute short-circuits by marker.
+  6. `--force` bypasses marker.
+  7. `ensure_indexes` drops legacy then creates new + emits verification log line.
+  8. `ensure_indexes` survives drop failure with loud ERROR log (mocked `OperationFailure`, function does NOT re-raise).
+  9. `ensure_indexes` survives create failure with loud ERROR log.
+  10. `ensure_indexes` idempotent on second call.
+  11. New index allows same idempotency-key across dry_run boundary (`dry_run=True` + `dry_run=False` with same `(tenant_id, key)` both insertable — proves the fix works).
+  12. New index still blocks same key within one dry_run mode (E11000 on second insert — proves invariant is preserved).
+- Test isolation: per-test scratch collection name via `_DbWrapper` (cached collection so `patch.object(coll, "drop_index", ...)` reaches the SUT); pre-delete of the boot-stamped P46 marker at fixture start.
+
+### Deployment verification (preview)
+- Preview `bulk_charge_runs` was already on the correct 3-col index before P46 shipped (P0 boot-time ensure_indexes had already run). The P46 migration + hardened boot pass validated this: dry-run → `already_correct=true`; execute → `skipped_by_marker=true` (boot factory stamped the marker); second execute → same.
+- Final `list_indexes()` on preview: `_id_`, `tenant_started_at_desc`, `tenant_idempotency_dry_run_unique` (unique, 3-col). Legacy absent. Marker present with `applied_at=2026-09-24T03:12:35Z`.
+
+### Hard-rules compliance
+- Index management is collection-level (not tenant-scoped); DATA writes in the router remain `_tsf`-scoped. No `backend/.env` writes. Legacy migration script kept for ops re-use. No mobile files touched. `--execute` was run against preview only — user decides whether to run it against prod OR just Republish (the hardened `ensure_indexes` self-heals on any pod boot).
+
+### Deferred follow-ups
+- **Prod rollout.** Two options: (a) Republish preview → the P46 boot factory runs against prod on first pod restart, auto-heals, and stamps the marker; (b) Manual `python -m migrations.p46_bulk_charge_index_swap --execute` against prod shell. Both idempotent; option (a) is safer because it validates the whole build.
+- **P0 comment cleanup.** The pre-P46 comments in `invoices_bulk_charge.py` still reference "P0 · Feb-2026" as the origin phase for the index swap. Cosmetic; a future sweep can renumber to P46 for consistency.
+- **`STARTUP_EXECUTE_MODE = True` follow-up.** If any future migration needs to ship dry-run first, revisit whether P46's auto-execute-on-boot posture sets the wrong precedent.
+
