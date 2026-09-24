@@ -1494,6 +1494,316 @@ async def bulk_activate_recurring(
     }
 
 
+# Feb-2026 · P54 · Recurring Jobs · Bulk-Update Categories.
+# Batch cap kept in-file next to ``_BULK_ACTIVATE_MAX`` (=100) per
+# the discovered per-endpoint constant pattern. The 100 ceiling
+# reflects the P55 fan-out cost — each bulk-update-categories row
+# fires ``sync_recurring_template_to_children`` which walks every
+# linked unpaid child invoice for that template. Raising the cap
+# without also load-testing the fan-out would risk long-running
+# request handlers on tenants with dense recurring schedules.
+_BULK_UPDATE_CATEGORIES_MAX = 100
+
+
+class _BulkUpdateCategoriesIn(BaseModel):
+    """P54 · Feb-2026 — Bulk category-edit payload.
+
+    Both category fields are ``Optional`` at the type level so the
+    payload can carry only one, only the other, or both.  Semantics
+    for each field (using Pydantic v2 ``model_fields_set`` to
+    distinguish JSON-absent from JSON-null):
+
+      * field NOT in ``model_fields_set`` (JSON key absent)   → unchanged
+      * field present with a non-empty string value           → validate + apply
+      * field present with ``None`` or an empty string        → unchanged
+        (belt-and-suspenders — the FE omits the key for "Unchanged"
+         but we defend against a stale client that sends ``null``)
+    """
+    ids: List[str] = Field(..., min_length=1)
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
+
+
+@router.post("/recurring-jobs/bulk-update-categories")
+async def bulk_update_categories_recurring(
+    body: _BulkUpdateCategoriesIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase P54 · Feb-2026 — Bulk-edit service + income category
+    across many recurring templates in one call.
+
+    Consumes the P55 ``sync_recurring_template_to_children``
+    orchestrator per updated row so every linked unpaid child
+    invoice picks up the new taxonomy id without a manual PATCH per
+    template.
+
+    Per-id status (mirroring ``bulk_activate_recurring`` telemetry):
+      * ``updated``          — the template's category fields
+        differed from the incoming target; the write landed; the
+        P55 sync fan-out fired successfully.
+      * ``already_current``  — every incoming field already matched
+        the on-disk value. Idempotent no-op: no write, no sync, no
+        audit row.
+      * ``failed``           — the template couldn't be found under
+        the caller's tenant (out-of-tenant ids land here too, per
+        the Q2 honest-telemetry precedent), OR the P55 sync raised
+        ``CategorySyncNameLookupError`` (a category was deleted
+        between our validation and the orchestrator's own
+        name-resolve — the template write already landed, so the
+        caller sees a partial-apply state on that row).
+
+    Rejects with 400:
+      * ``batch_too_large`` when ``len(ids) > 100``.
+      * ``no_category_fields_set`` when neither category field
+        resolves to a non-empty value.
+
+    Rejects with 422 (payload-level, before any per-row loop starts):
+      * ``<field>_too_long`` when the id string is > 80 chars.
+      * ``<field>_no_html`` when the id string contains ``<`` or ``>``.
+      * ``service_category_invalid`` / ``income_category_invalid``
+        when the id doesn't resolve to an active row on the caller's
+        tenant. Payload-level so the FE can key on ``code`` before
+        any partial writes happen — matches the single-item PATCH
+        contract at ``recurring_jobs.py :828-849``.
+
+    Response:
+      ``{"updated": int, "already_current": int, "failed": int,
+         "sync_result_summary": {"child_invoices_updated": int,
+                                  "child_invoices_skipped_paid": int,
+                                  "child_invoices_skipped_loop": int,
+                                  "child_error_rows": int},
+         "results": [{"id", "status", "error"?}]}``
+    """
+    # Normalize + dedupe the incoming ids so a repeat id in one call
+    # can't double-count summary numbers or fire the sync twice.
+    ids_seen: set = set()
+    ordered_ids: List[str] = []
+    for tid in body.ids:
+        if tid and tid not in ids_seen:
+            ids_seen.add(tid)
+            ordered_ids.append(tid)
+
+    # Batch cap — mirror bulk-activate's WARNING log + 400 shape.
+    if len(ordered_ids) > _BULK_UPDATE_CATEGORIES_MAX:
+        logger.warning(
+            "[recurring_job.bulk_update_categories.batch_too_large] "
+            "tenant=%s received=%d cap=%d",
+            tenant.get("id"), len(ordered_ids),
+            _BULK_UPDATE_CATEGORIES_MAX,
+        )
+        raise HTTPException(400, {
+            "error": "batch_too_large",
+            "max": _BULK_UPDATE_CATEGORIES_MAX,
+            "received": len(ordered_ids),
+        })
+
+    # Which fields did the caller explicitly send? Pydantic v2 —
+    # ``model_fields_set`` reflects the JSON keys present at parse
+    # time so we can distinguish "omitted" from "sent as null".
+    _sent_fields = body.model_fields_set
+
+    _CATEGORY_KEYS = {
+        "income_category_id": "income_categories",
+        "service_category_id": "service_categories",
+    }
+    # Resolve each caller-sent field ONCE up-front before the
+    # per-row loop begins. This mirrors the single-item PATCH
+    # (recurring_jobs.py :809-851) — validation raises payload-level
+    # 422 on the first bad id so we never enter the loop with a
+    # half-usable payload.
+    resolved_by_field: Dict[str, Dict[str, Any]] = {}
+    for _field, _coll in _CATEGORY_KEYS.items():
+        if _field not in _sent_fields:
+            continue
+        _val = getattr(body, _field)
+        if _val is None:
+            # JSON ``null`` on this field — treat as "unchanged"
+            # (Q3/A · belt-and-suspenders vs a stale client).
+            continue
+        _val = str(_val).strip()
+        if not _val:
+            # Empty string — unchanged; no clear support in bulk.
+            continue
+        if len(_val) > 80:
+            raise HTTPException(
+                422, {"error": f"{_field}_too_long", "max_len": 80},
+            )
+        if "<" in _val or ">" in _val:
+            raise HTTPException(
+                422, {"error": f"{_field}_no_html"},
+            )
+        _cat = await db[_coll].find_one(
+            {"id": _val, "tenant_id": tenant["id"],
+              "is_archived": {"$ne": True}},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+        if not _cat:
+            _code = ("service_category_invalid"
+                     if _field == "service_category_id"
+                     else "income_category_invalid")
+            raise HTTPException(
+                422,
+                {"code": _code, "field": _field,
+                  "attempted": _val, "collection": _coll},
+            )
+        resolved_by_field[_field] = _cat
+
+    if not resolved_by_field:
+        raise HTTPException(
+            400, {"error": "no_category_fields_set",
+                    "hint": ("at least one of ``service_category_id`` "
+                            "or ``income_category_id`` must be present "
+                            "with a non-empty value")},
+        )
+
+    # Import the P55 orchestrator once — the per-row loop fires it
+    # per updated template. Origin marker ``bulk_recurring_edit`` is
+    # verified NOT in ``_SKIP_TABLE`` by the P54 test suite's
+    # ``test_bulk_edit_origin_not_in_skip_set`` guard.
+    from services.category_sync import (
+        sync_recurring_template_to_children,
+        CategorySyncNameLookupError,
+    )
+
+    updated_count = 0
+    already_current_count = 0
+    failed_count = 0
+    child_updated = 0
+    child_paid_skipped = 0
+    child_loop_skipped = 0
+    child_error_rows = 0
+    results: List[Dict[str, Any]] = []
+
+    for tid in ordered_ids:
+        tpl = await db.recurring_job_templates.find_one(
+            {"id": tid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1,
+              "income_category_id": 1, "income_category_name": 1,
+              "service_category_id": 1, "service_category_name": 1},
+        )
+        if not tpl:
+            # Q2/A — out-of-tenant + typo + deleted all land in the
+            # same failure bucket. Same honest-telemetry policy as
+            # bulk-activate.
+            failed_count += 1
+            results.append({
+                "id": tid, "status": "failed", "error": "not_found",
+            })
+            continue
+
+        # Build the write set — idempotency guard: only include
+        # fields whose resolved target differs from the current
+        # value. Denormalized name stays in lockstep with the id.
+        updates: Dict[str, Any] = {}
+        for _field, _cat in resolved_by_field.items():
+            _denorm = _field.replace("_id", "_name")
+            if tpl.get(_field) != _cat["id"]:
+                updates[_field] = _cat["id"]
+            if tpl.get(_denorm) != _cat.get("name"):
+                updates[_denorm] = _cat.get("name")
+
+        if not updates:
+            already_current_count += 1
+            results.append({"id": tid, "status": "already_current"})
+            continue
+
+        updates["updated_at"] = now_iso()
+        try:
+            res = await db.recurring_job_templates.update_one(
+                {"id": tid, "tenant_id": tenant["id"]},
+                {"$set": updates},
+            )
+        except Exception as _upd_exc:                             # noqa: BLE001
+            failed_count += 1
+            results.append({
+                "id": tid, "status": "failed",
+                "error": f"update_failed: {_upd_exc}",
+            })
+            continue
+
+        if res.matched_count == 0:
+            # Race — template deleted between find_one + update_one.
+            # Classify same as not_found for parity.
+            failed_count += 1
+            results.append({
+                "id": tid, "status": "failed", "error": "not_found",
+            })
+            continue
+
+        # Audit — reuse the existing writer (Q3/A · one row per
+        # updated template, same event/diff shape as the
+        # single-item PATCH). The writer's own no-op guard drops
+        # the write if the diff is empty; here we've already
+        # gated on ``updates`` non-empty so it will fire.
+        await _write_recurring_category_audit(
+            tenant_id=tenant["id"], tpl_id=tid, actor=user,
+            before=tpl, updates=updates,
+        )
+
+        # P55 sync fan-out. Origin ``bulk_recurring_edit`` — grep-
+        # verified NOT in ``_SKIP_TABLE`` (test guard in the P54
+        # backend suite). Fail-open below: the template write
+        # already landed, so a sync failure gets classified as a
+        # per-row ``failed`` so the caller can see the partial-
+        # apply state and ops can re-run a bulk backfill later.
+        _sync_kwargs: Dict[str, Any] = {"origin": "bulk_recurring_edit"}
+        if "income_category_id" in updates:
+            _sync_kwargs["income_category_id"] = (
+                updates["income_category_id"]
+            )
+        if "service_category_id" in updates:
+            _sync_kwargs["service_category_id"] = (
+                updates["service_category_id"]
+            )
+        try:
+            _sync_result = await sync_recurring_template_to_children(
+                tenant_id=tenant["id"],
+                recurring_job_id=tid,
+                actor_id=(user or {}).get("id"),
+                **_sync_kwargs,
+            )
+            child_updated += _sync_result.updated_count
+            child_paid_skipped += _sync_result.skipped_paid_count
+            child_loop_skipped += _sync_result.skipped_loop_count
+            child_error_rows += len(_sync_result.errors_by_id)
+        except CategorySyncNameLookupError as _cs_exc:
+            failed_count += 1
+            results.append({
+                "id": tid, "status": "failed",
+                "error": ("category_deleted_after_source_write "
+                            f"({_cs_exc.category_id})"),
+            })
+            continue
+        except Exception as _cs_exc:                             # noqa: BLE001
+            logger.warning(
+                "[category_sync.bulk_recurring_edit.failed] "
+                "template=%s error=%s", tid, _cs_exc,
+            )
+            failed_count += 1
+            results.append({
+                "id": tid, "status": "failed",
+                "error": f"sync_failed: {_cs_exc}",
+            })
+            continue
+
+        updated_count += 1
+        results.append({"id": tid, "status": "updated"})
+
+    return {
+        "updated": updated_count,
+        "already_current": already_current_count,
+        "failed": failed_count,
+        "sync_result_summary": {
+            "child_invoices_updated": child_updated,
+            "child_invoices_skipped_paid": child_paid_skipped,
+            "child_invoices_skipped_loop": child_loop_skipped,
+            "child_error_rows": child_error_rows,
+        },
+        "results": results,
+    }
+
+
 @router.delete("/recurring-jobs/{tpl_id}")
 async def delete_recurring(tpl_id: str,
                              hard: bool = Query(False),
