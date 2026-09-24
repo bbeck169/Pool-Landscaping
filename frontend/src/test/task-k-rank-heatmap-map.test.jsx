@@ -66,9 +66,16 @@ vi.mock("@/components/MapView", () => ({
             data-color={p.color}
             data-lat={p.lat}
             data-lng={p.lng}
+            // Task K.1 · Feb-2026 — surface pinLabel to the vitest
+            // boundary so assertions can prove the on-pin numeric
+            // is flowing through. ``pinLabel`` absent (existing
+            // MapView consumers) leaves this attribute undefined
+            // → getAttribute() returns null in the backward-compat
+            // regression case.
+            data-pin-label={p.pinLabel}
             onClick={() => (p.onClick ? p.onClick(p) : null)}
           >
-            {p.label}
+            {p.pinLabel != null ? p.pinLabel : p.label}
           </button>
         ))}
       </div>
@@ -222,6 +229,99 @@ describe("Task K · RankHeatmap MapView refactor", () => {
     expect(
       screen.getByTestId("rank-heatmap-marker-2").getAttribute("data-color"),
     ).toBe("#DC2626");
+  });
+
+  // ══ (5b) Task K.1 · on-pin rank number ═══════════════════════
+  it("(5b) each marker's pinLabel matches the rank convention (integer / '20+' / em-dash)", async () => {
+    // Extend the standard 3-point fixture with 2 edge cases so
+    // every pinLabel branch is exercised:
+    //   * rank == null       → "—"
+    //   * rank <= 20         → String(rank)
+    //   * rank > 20          → "20+"
+    const edgeCase = {
+      ..._DONE_HEATMAP,
+      points: [
+        ..._DONE_HEATMAP.points,                      // ranks 2, 12, 22
+        { lat: 33.63, lng: -112.23, rank: null,       top_10_urls: [] },
+        { lat: 33.64, lng: -112.24, rank: 99,         top_10_urls: [] },
+      ],
+    };
+    await _mountAndFinishRun(edgeCase);
+    // Rank 2  → "2"      (integer)
+    expect(
+      screen.getByTestId("rank-heatmap-marker-0").getAttribute("data-pin-label"),
+    ).toBe("2");
+    // Rank 12 → "12"     (integer, still <= 20)
+    expect(
+      screen.getByTestId("rank-heatmap-marker-1").getAttribute("data-pin-label"),
+    ).toBe("12");
+    // Rank 22 → "20+"    (over the 20 threshold)
+    expect(
+      screen.getByTestId("rank-heatmap-marker-2").getAttribute("data-pin-label"),
+    ).toBe("20+");
+    // Rank null → "—"    (em-dash, no rank found)
+    expect(
+      screen.getByTestId("rank-heatmap-marker-3").getAttribute("data-pin-label"),
+    ).toBe("—");
+    // Rank 99 → "20+"    (large ranks collapse to the "20+" bucket)
+    expect(
+      screen.getByTestId("rank-heatmap-marker-4").getAttribute("data-pin-label"),
+    ).toBe("20+");
+  });
+
+  // ══ (5c) Task K.1 · color regression guard ══════════════════
+  it("(5c) pinLabel presence does NOT change rankColor()-derived fills", async () => {
+    // Duplicate of case (5), re-run after (5b)'s pinLabel logic
+    // lands, to prove the color axis is independent from the
+    // label axis. If a future refactor accidentally couples them,
+    // this test flags it immediately.
+    await _mountAndFinishRun(_DONE_HEATMAP);
+    const colors = [
+      screen.getByTestId("rank-heatmap-marker-0").getAttribute("data-color"),
+      screen.getByTestId("rank-heatmap-marker-1").getAttribute("data-color"),
+      screen.getByTestId("rank-heatmap-marker-2").getAttribute("data-color"),
+    ];
+    expect(colors).toEqual(["#059669", "#EAB308", "#DC2626"]);
+  });
+
+  // ══ (5d) Task K.1 · MapView backward-compat for the 3 existing
+  //          consumers (Dispatch/Schedule/D2D) ═════════════════
+  it("(5d) MapView coloredIcon() preserves the 14px solid-dot branch when pinLabel is absent", () => {
+    // Real Leaflet is jsdom-hostile so we can't mount MapView
+    // and inspect the rendered SVG. Fall back to a source-based
+    // static assertion (same pattern as Task J Commit 5's
+    // fallback-preservation grep at test_seo_heatmap_live_key_
+    // branch.py :244-252).
+    //
+    // Two contracts locked:
+    //   1. The pinLabel-absent branch STILL returns the exact
+    //      14x14 solid-dot divIcon HTML — pixel-identical for
+    //      Dispatch / Schedule / D2D consumers who never set
+    //      pinLabel.
+    //   2. The pinLabel-present branch returns the 28x28 pin
+    //      with a centered white numeric — the Task K.1 shape.
+    //
+    // ``vi`` is running under Vite so ``import.meta`` works;
+    // fs is available via node's built-in.
+    // eslint-disable-next-line global-require
+    const fs = require("fs");
+    // eslint-disable-next-line global-require
+    const path = require("path");
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), "src/components/MapView.jsx"),
+      "utf-8",
+    );
+    // Backward-compat 14px branch preserved.
+    expect(src).toMatch(/width:14px;height:14px;border-radius:50%/);
+    expect(src).toMatch(/iconSize: \[14, 14\], iconAnchor: \[7, 7\]/);
+    // New 28px labeled branch present — width+height are on one
+    // line, border-radius wraps to the next template-literal
+    // chunk, so we assert them independently.
+    expect(src).toMatch(/width:28px;height:28px/);
+    expect(src).toMatch(/iconSize: \[28, 28\], iconAnchor: \[14, 14\]/);
+    // Guard clause routes pinLabel=null|undefined|"" → 14px
+    // branch (regression guard against dropping the null-check).
+    expect(src).toMatch(/pinLabel == null \|\| pinLabel === ""/);
   });
 
   // ══ (6) Click a marker → setSelectedCell → detail panel ════

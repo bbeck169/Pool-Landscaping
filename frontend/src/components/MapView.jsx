@@ -18,11 +18,41 @@ const DOT_COLORS = {
   purple: "#7C3AED", gray: "#71717A", orange: "#EA580C",
 };
 
-function coloredIcon(hex) {
+function coloredIcon(hex, pinLabel) {
+  // Task K.1 · Feb-2026 — optional on-pin numeric label.
+  //
+  // Backward compat: when ``pinLabel`` is ``null`` / ``undefined``
+  // / empty, we return the ORIGINAL 14px solid dot. The 3
+  // existing MapView consumers (Dispatch, Schedule, D2D) don't
+  // pass ``pinLabel`` and get pixel-identical markers.
+  //
+  // When ``pinLabel`` IS provided (Rank Heatmap use case), the
+  // pin scales up to 28px with a centered white numeric so the
+  // rank is legible without hovering.
+  //
+  // ``pinLabel`` is HTML-escape guarded even though today's only
+  // caller passes a rank integer + '"—"' / '"20+"'. Cheap belt-
+  // and-braces against a future caller passing user-provided
+  // text.
+  if (pinLabel == null || pinLabel === "") {
+    return L.divIcon({
+      className: "custom-pin",
+      html: `<div style="background:${hex};width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>`,
+      iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -7],
+    });
+  }
+  const safe = String(pinLabel).replace(/[<>&"']/g, "");
   return L.divIcon({
     className: "custom-pin",
-    html: `<div style="background:${hex};width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>`,
-    iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -7],
+    html:
+      `<div style="background:${hex};width:28px;height:28px;`
+      + `border-radius:50%;border:2px solid #fff;`
+      + `box-shadow:0 1px 3px rgba(0,0,0,.4);color:#fff;`
+      + `font-weight:700;font-size:13px;`
+      + `font-family:system-ui,-apple-system,sans-serif;`
+      + `display:flex;align-items:center;justify-content:center;`
+      + `line-height:1">${safe}</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14],
   });
 }
 
@@ -75,7 +105,7 @@ function LeafletMapView({
                 <Marker
                   key={`${L2.key}-${p.id}`}
                   position={[p.lat, p.lng]}
-                  icon={coloredIcon(DOT_COLORS[p.color] || p.color || DOT_COLORS.blue)}
+                  icon={coloredIcon(DOT_COLORS[p.color] || p.color || DOT_COLORS.blue, p.pinLabel)}
                   eventHandlers={p.onClick ? { click: () => p.onClick(p) } : undefined}
                 >
                   {(p.label || p.subtitle) && (
@@ -148,12 +178,31 @@ function GoogleMapView({ center, zoom, height, layers, testid }) {
                   onClick={() => { setSelected({ key: `${L2.key}-${p.id}`, p }); p.onClick?.(p); }}
                   icon={{
                     path: window.google.maps.SymbolPath.CIRCLE,
-                    scale: 7,
+                    // Task K.1 · Feb-2026 — scale up when we're
+                    // rendering an on-pin label so the numeric
+                    // fits legibly (matches the 28px Leaflet pin).
+                    scale: p.pinLabel != null && p.pinLabel !== "" ? 12 : 7,
                     fillColor: DOT_COLORS[p.color] || p.color || DOT_COLORS.blue,
                     fillOpacity: 1,
                     strokeColor: "#ffffff",
                     strokeWeight: 2,
                   }}
+                  // Task K.1 · Feb-2026 — on-pin numeric label
+                  // (Google marker's own ``label`` prop, distinct
+                  // from the InfoWindow tooltip below). Omitted
+                  // when ``pinLabel`` is falsy so existing
+                  // consumers get pixel-identical dots.
+                  label={
+                    (p.pinLabel != null && p.pinLabel !== "")
+                      ? {
+                          text:       String(p.pinLabel),
+                          color:      "#ffffff",
+                          fontSize:   "12px",
+                          fontWeight: "700",
+                          fontFamily: "system-ui, -apple-system, sans-serif",
+                        }
+                      : undefined
+                  }
                 />
               ))}
             {L2.polyline && L2.polyline.length > 1 && (

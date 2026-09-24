@@ -384,6 +384,20 @@ export default function RankHeatmap() {
                       lat:      p.lat,
                       lng:      p.lng,
                       color:    rankColor(p.rank),
+                      // Task K.1 · Feb-2026 — visible on-pin rank
+                      // number per user-referenced heatmap visual.
+                      // Matches the pre-Task-K grid convention:
+                      //   * null      -> em-dash "—"
+                      //   * rank <=20 -> the integer
+                      //   * rank  >20 -> "20+" (3-char, still fits
+                      //                        in a 28px pin)
+                      // Star-for-#1 affordance deferred as future
+                      // enhancement — see commit body.
+                      pinLabel: p.rank == null
+                        ? "—"
+                        : p.rank <= 20
+                            ? String(p.rank)
+                            : "20+",
                       label:    `Rank ${p.rank == null ? "—" : p.rank}`,
                       subtitle: `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`,
                       onClick:  () => setSelectedCell(p),
