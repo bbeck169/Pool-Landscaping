@@ -20,6 +20,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, fontSize, font } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { useAuth } from "@/src/auth";
+import { absolutizeUrl } from "@/src/lib/absolutizeUrl";
 
 const STYLES = [
   { v: "side_by_side", label: "Side by side" },
@@ -215,7 +216,7 @@ export default function BeforeAfterMobile() {
               <ShareUrl token={pair.share_token} />
             </View>
             {pair.generated_card_url && (
-              <Image source={{ uri: pair.generated_card_url }}
+              <Image source={{ uri: absolutizeUrl(pair.generated_card_url) }}
                      style={styles.resultImg}
                      resizeMode="contain" />
             )}
@@ -238,7 +239,7 @@ export default function BeforeAfterMobile() {
                         style={styles.galleryItem}
                         testID={`ba-mobile-gallery-${p.id}`}>
               {p.generated_card_url ? (
-                <Image source={{ uri: p.generated_card_url }}
+                <Image source={{ uri: absolutizeUrl(p.generated_card_url) }}
                         style={styles.galleryImg}
                         resizeMode="cover" />
               ) : (

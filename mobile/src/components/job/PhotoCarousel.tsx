@@ -3,6 +3,7 @@ import { View, ScrollView, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { spacing } from "@/src/theme";
 import { styles } from "./styles";
+import { absolutizeUrl } from "@/src/lib/absolutizeUrl";
 
 export default function PhotoCarousel({ photos }: { photos: any[] }) {
   const { width } = useWindowDimensions();
@@ -24,7 +25,7 @@ export default function PhotoCarousel({ photos }: { photos: any[] }) {
       >
         {photos.map((p: any) => (
           <View key={p.id} style={[styles.carouselSlide, { width: cardWidth }]} testID={`carousel-photo-${p.id}`}>
-            <Image source={{ uri: p.data }} style={styles.carouselImg} contentFit="cover" />
+            <Image source={{ uri: absolutizeUrl(p.url || p.data) }} style={styles.carouselImg} contentFit="cover" />
           </View>
         ))}
       </ScrollView>

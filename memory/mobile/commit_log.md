@@ -2541,3 +2541,21 @@
 - **Files modified**: `app/income-by-category.tsx`
 - **Web files referenced**: N/A (backend contract change only)
 - **Verified**: Screenshot confirms labels show "Service Revenue (Demo)" and "Pool" (not UUIDs), amounts right-aligned on one line. Lint clean.
+
+## Iteration — Task L · Photo visibility merge (SR + job.photos)
+- **Commit**: a785a1ba89f1206128abe8947fe0fc63e36f6fce
+- **Date**: 2026-09-24
+- **Changes**:
+  - Recreated `src/lib/absolutizeUrl.ts` (lost by intervening git stash)
+  - Added parallel fire-and-forget `GET /jobs/{id}/detail` fetch in job detail `load()` to extract `service_report_photos`
+  - Added `srPhotos` state + `allPhotos` useMemo that merges SR photos + job.photos (backend pre-deduplicates)
+  - Each SR photo tagged with `_source: "service_report"` for conditional delete button + "SR" badge
+  - PhotoCarousel.tsx updated: `source={{ uri: absolutizeUrl(p.url || p.data) }}` — handles both cloud URLs and base64 data URIs
+  - Service images strip updated: uses `allPhotos` with `absolutizeUrl()`, SR photos show "SR" badge, delete restricted to job-source photos only
+  - Display count header uses `displayPhotoCount` (all photos + pending), upload cap still based on `job.photos` only
+  - Re-applied Task I fix to `before-after.tsx` (absolutizeUrl for generated_card_url, also stash-reverted)
+- **Files added**: `src/lib/absolutizeUrl.ts` (recreated)
+- **Files modified**: `app/job/[id].tsx`, `src/components/job/PhotoCarousel.tsx`, `app/(app)/before-after.tsx`
+- **Verified**: App compiles + renders job detail with photo section showing "PHOTOS 0/10" for jobs with no photos. Metro bundle clean. No console errors.
+- **Note**: `business.tsx` still has local `toAbsolute()` — dedup to shared helper is a low-priority follow-up (not breaking).
+

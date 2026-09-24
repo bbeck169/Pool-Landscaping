@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, Linking, StyleSheet, Alert } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -47,6 +47,7 @@ import SmartBriefCard from "@/src/components/job/SmartBriefCard";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { CustomerLink, AddressLink } from "@/src/components/customer";
+import { absolutizeUrl } from "@/src/lib/absolutizeUrl";
 
 // P0 fix — hard timeout so the detail screen never hangs on slow networks.
 const LOAD_TIMEOUT_MS = 20_000;
@@ -88,6 +89,8 @@ export default function JobDetail() {
   const [onWaySending, setOnWaySending] = useState(false);
   const [onWaySent, setOnWaySent] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState<SyncPendingPhoto[]>([]);
+  // Task L — service-report photos fetched from /detail endpoint.
+  const [srPhotos, setSrPhotos] = useState<any[]>([]);
   // Feb-2026 MP2 UI — property info displayed alongside customer.
   const [property, setProperty] = useState<any>(null);
   // lineItems state removed — LineItemsSection component manages its own data
@@ -151,6 +154,11 @@ export default function JobDetail() {
       }
       // Line items fetching moved to LineItemsSection component
       setPendingPhotos(await getPhotosForEntity(id as string));
+      // Task L — fire-and-forget /detail fetch for service_report_photos.
+      // Non-blocking: failure silently leaves srPhotos empty.
+      api.get(`/jobs/${id}/detail`).then((d: any) => {
+        setSrPhotos(d?.service_report_photos || []);
+      }).catch(() => setSrPhotos([]));
     } catch (e: any) {
       // Phase 1 Offline Read — try SQLite read_cache first (hydrator-populated),
       // then AsyncStorage caches as fallback.
@@ -256,6 +264,15 @@ export default function JobDetail() {
   const videoCount = job?.videos?.length || 0;
   const photoCapHit = photoCount >= MAX_PHOTOS;
   const videoCapHit = videoCount >= MAX_VIDEOS;
+
+  // Task L — merge job.photos + service_report_photos for unified display.
+  // Backend deduplicates (SR wins on ID collision), so concat is safe.
+  const allPhotos = useMemo(() => {
+    const jp = (job?.photos || []).map((p: any) => ({ ...p, _source: "job" }));
+    const sr = srPhotos.map((p: any) => ({ ...p, _source: "service_report" }));
+    return [...sr, ...jp];
+  }, [job?.photos, srPhotos]);
+  const displayPhotoCount = allPhotos.length + pendingPhotos.length;
 
   const pickPhoto = async (source: "camera" | "library") => {
     try {
@@ -638,7 +655,7 @@ export default function JobDetail() {
           ) : null}
 
           <View style={styles.photosHeader}>
-            <Text style={styles.photosTitle}>Service Images ({photoCount}/{MAX_PHOTOS})</Text>
+            <Text style={styles.photosTitle}>Service Images ({displayPhotoCount}/{MAX_PHOTOS})</Text>
             {canManage && !photoCapHit ? (
               <Pressable style={styles.addPhotoBtn} onPress={() => setPhotoSheet(true)} testID="add-photo-button">
                 <Ionicons name="camera" size={16} color={colors.brand} />
@@ -650,18 +667,24 @@ export default function JobDetail() {
               </Text>
             ) : null}
           </View>
-          {(job.photos?.length || pendingPhotos.length) ? (
+          {(allPhotos.length || pendingPhotos.length) ? (
             isCustomer ? (
-              <PhotoCarousel photos={job.photos || []} />
+              <PhotoCarousel photos={allPhotos} />
             ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-              {job.photos?.map((p: any) => (
+              {allPhotos.map((p: any) => (
                 <View key={p.id} style={styles.photoThumb} testID={`job-photo-${p.id}`}>
-                  <Image source={{ uri: p.data }} style={styles.photoImg} contentFit="cover" />
-                  {canManage ? (
+                  <Image source={{ uri: absolutizeUrl(p.url || p.data) }} style={styles.photoImg} contentFit="cover" />
+                  {canManage && p._source !== "service_report" ? (
                     <Pressable style={styles.photoDelete} onPress={() => removePhoto(p.id)} testID={`delete-photo-${p.id}`} hitSlop={6}>
                       <Ionicons name="close" size={14} color="#fff" />
                     </Pressable>
+                  ) : null}
+                  {p._source === "service_report" ? (
+                    <View style={styles.photoPendingBadge}>
+                      <Ionicons name="document-text-outline" size={11} color="#fff" />
+                      <Text style={styles.photoLabelText}>SR</Text>
+                    </View>
                   ) : null}
                 </View>
               ))}
