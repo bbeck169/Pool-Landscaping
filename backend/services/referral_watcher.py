@@ -52,6 +52,21 @@ def _fmt_pretty(iso: Optional[str]) -> str:
             return str(iso)
 
 
+def _absolute_portal_referrals_url() -> str:
+    """Best-effort absolute URL for the ``/portal/referrals`` deep-link.
+    Mirrors ``routers.marketing_review_requests._absolute_portal_url``:
+    reads ``PUBLIC_APP_URL`` from the environment when available,
+    otherwise returns the path-only value so email clients still
+    resolve it relative to the recipient's browser context.
+
+    Phase P53 · Feb-2026 — consumed by the BOOM email CTA via the
+    ``{{PORTAL_REFERRALS_URL}}`` merge tag (populated in
+    ``_fire_credit_notifications``)."""
+    import os as _os
+    base = (_os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    return f"{base}/portal/referrals" if base else "/portal/referrals"
+
+
 # ─── Public entry point (scheduler) ──────────────────────────────────
 async def hourly_scan() -> Dict[str, Any]:
     tenants = await db.tenants.find(
@@ -333,6 +348,11 @@ async def _fire_credit_notifications(
             "eligible_at_pretty": _fmt_pretty(eligible_at_dt.isoformat()),
             "promo_code": promo["code"],
         }
+        # Phase P53 · Feb-2026 — flat merge tag consumed by the BOOM
+        # email template's CTA. Absolute when ``PUBLIC_APP_URL`` is
+        # set; otherwise the path-only value works for portal readers
+        # opening the email in their logged-in browser context.
+        ctx["PORTAL_REFERRALS_URL"] = _absolute_portal_referrals_url()
         # Load the seeded templates.
         email_tpl = await db.marketing_templates.find_one({
             "tenant_id": tenant["id"], "system_key": "referral_credit_earned_email",
@@ -346,6 +366,25 @@ async def _fire_credit_notifications(
         if email_tpl and cust.get("email"):
             subject, _ = render_template(email_tpl.get("subject") or "", ctx)
             body, _ = render_template(email_tpl.get("body") or "", ctx)
+            # Phase P53 · Feb-2026 — wrap the rendered BOOM body in
+            # the shared brand shell (same helper the quote/invoice
+            # senders use). ``branding=None`` renders with default
+            # tenant branding on shell-resolve failure (fail-open —
+            # never blocks credit issuance).
+            try:
+                from services.email.theming import wrap_html_in_shell
+                from services.tenants.business_settings import (
+                    get_effective_business_settings,
+                )
+                try:
+                    branding = await get_effective_business_settings(
+                        db, tenant["id"], absolutize=True,
+                    )
+                except Exception:
+                    branding = None
+                body = wrap_html_in_shell(body, branding)
+            except Exception as exc:  # pragma: no cover
+                logger.warning(f"[p53] shell wrap failed: {exc}")
             try:
                 from services.email.resend_adapter import send as _send_email
                 res = await _send_email(
@@ -406,8 +445,127 @@ async def _fire_credit_notifications(
 
 
 # ─── Boot-time seed of the referral credit templates ─────────────────
-_REFERRAL_EMAIL_SUBJECT = "You earned a {{REFERRAL_CREDIT_AMOUNT}} credit!"
+# Phase P53 (Feb 2026) — BOOM celebration redesign of the credit-
+# earned email body. Preserves the five Phase-10 merge variables
+# (``{{CUSTOMER_FIRST_NAME}}``, ``{{REFERRAL_FRIEND_NAME}}``,
+# ``{{REFERRAL_CREDIT_AMOUNT}}``, ``{{CUSTOMER_CREDIT_BALANCE}}``,
+# ``{{COMPANY_NAME}}``) and introduces one new tag
+# ``{{PORTAL_REFERRALS_URL}}`` populated by ``_fire_credit_notifications``
+# with the tenant-agnostic ``/portal/referrals`` deep-link (absolute
+# when ``PUBLIC_APP_URL`` is set — same helper pattern as
+# ``routers.marketing_review_requests._absolute_portal_url``).
+#
+# Design (spec P53.53.2 · body_version = "p53_v1"):
+#   • Hero band with 135deg gradient (#1B1F5C → #16A34A)
+#   • Reward badge — pill (#10B981), 48px bold amount, soft drop shadow
+#   • Headline: "BOOM! 🚀 You just earned {{REFERRAL_CREDIT_AMOUNT}}!"
+#   • CTA button to ``/portal/referrals`` — "Refer another friend"
+#   • Sign-off: "Keep sharing the love! — {{COMPANY_NAME}} Team"
+#
+# Idempotent template upsert (see ``seed_referral_credit_templates``)
+# only overwrites rows whose current body matches a known-canonical
+# prior body (currently the Phase-10 body preserved as
+# ``_REFERRAL_EMAIL_BODY_LEGACY_P10``). Rows with tenant-customized
+# copy are left untouched.
+_REFERRAL_EMAIL_BODY_VERSION = "p53_v1"
+
+_REFERRAL_EMAIL_SUBJECT = "BOOM! 🚀 You just earned {{REFERRAL_CREDIT_AMOUNT}}!"
+
 _REFERRAL_EMAIL_BODY = (
+    '<table role="presentation" cellspacing="0" cellpadding="0" '
+    'border="0" width="100%" '
+    'style="border-collapse:collapse;max-width:640px;margin:0 auto;">'
+    # Hero band — gradient + reward badge + headline + intro copy
+    '<tr>'
+    '<td align="center" '
+    'style="padding:0;'
+    'background:#16A34A;'
+    'background-image:linear-gradient(135deg,#1B1F5C 0%,#16A34A 100%);'
+    'background-color:#1B1F5C;'
+    'border-radius:16px;">'
+    '<table role="presentation" cellspacing="0" cellpadding="0" '
+    'border="0" width="100%" style="border-collapse:collapse;">'
+    # Reward badge
+    '<tr>'
+    '<td align="center" style="padding:48px 24px 20px 24px;">'
+    '<div style="display:inline-block;background:#10B981;'
+    'color:#FFFFFF;font-weight:800;font-size:48px;line-height:1.05;'
+    "padding:18px 44px;border-radius:999px;"
+    "box-shadow:0 4px 16px rgba(16,185,129,0.35);"
+    'letter-spacing:-0.5px;'
+    'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\','
+    'Roboto,sans-serif;">'
+    "{{REFERRAL_CREDIT_AMOUNT}}"
+    "</div>"
+    "</td>"
+    "</tr>"
+    # Headline
+    '<tr>'
+    '<td align="center" style="padding:8px 24px 8px 24px;">'
+    '<h1 style="margin:0;color:#FFFFFF;font-size:32px;line-height:1.15;'
+    "font-weight:800;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    'Roboto,sans-serif;">'
+    "BOOM! 🚀 You just earned {{REFERRAL_CREDIT_AMOUNT}}!"
+    "</h1>"
+    "</td>"
+    "</tr>"
+    # Hero body copy
+    '<tr>'
+    '<td align="center" style="padding:20px 32px 48px 32px;">'
+    '<p style="margin:0;color:#FFFFFF;font-size:16px;line-height:1.55;'
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    'Roboto,sans-serif;">'
+    "Hi {{CUSTOMER_FIRST_NAME}}, a huge thanks for referring "
+    "<strong>{{REFERRAL_FRIEND_NAME}}</strong>. We've dropped a "
+    "<strong>{{REFERRAL_CREDIT_AMOUNT}}</strong> credit into your "
+    "account balance for your next visit."
+    "</p>"
+    "</td>"
+    "</tr>"
+    "</table>"
+    "</td>"
+    "</tr>"
+    # Balance + CTA row (outside the hero, on the shell background)
+    '<tr>'
+    '<td align="center" style="padding:36px 24px 8px 24px;">'
+    '<p style="margin:0 0 28px 0;color:#0F172A;font-size:15px;'
+    "line-height:1.55;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    'Roboto,sans-serif;">'
+    "Your new credit balance: "
+    "<strong>{{CUSTOMER_CREDIT_BALANCE}}</strong>. We'll auto-apply "
+    "it on your next invoice."
+    "</p>"
+    '<a href="{{PORTAL_REFERRALS_URL}}" '
+    'style="display:inline-block;background:#1B1F5C;color:#FFFFFF;'
+    "padding:14px 32px;border-radius:999px;text-decoration:none;"
+    "font-weight:700;font-size:16px;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    "Roboto,sans-serif;"
+    'box-shadow:0 4px 12px rgba(27,31,92,0.25);">'
+    "Refer another friend"
+    "</a>"
+    "</td>"
+    "</tr>"
+    # Sign-off
+    '<tr>'
+    '<td align="center" style="padding:32px 24px 16px 24px;">'
+    '<p style="margin:0;color:#475569;font-size:14px;line-height:1.55;'
+    "font-style:italic;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    'Roboto,sans-serif;">'
+    "Keep sharing the love! — {{COMPANY_NAME}} Team"
+    "</p>"
+    "</td>"
+    "</tr>"
+    "</table>"
+)
+
+# Phase-10 canonical body — retained as the ONLY known prior body so
+# the P53 upsert can distinguish "system row not tenant-customized"
+# (safe to upgrade) from "tenant edited the copy" (must leave alone).
+_REFERRAL_EMAIL_BODY_LEGACY_P10 = (
     "<p>Hi {{CUSTOMER_FIRST_NAME}},</p>"
     "<p>Great news — your referral of <strong>{{REFERRAL_FRIEND_NAME}}</strong> "
     "is officially credited. <strong>{{REFERRAL_CREDIT_AMOUNT}}</strong> "
@@ -416,6 +574,7 @@ _REFERRAL_EMAIL_BODY = (
     "We'll auto-apply it on your next invoice.</p>"
     "<p>Thanks for spreading the word,<br/>The {{COMPANY_NAME}} team</p>"
 )
+
 _REFERRAL_SMS_BODY = (
     "Hi {{CUSTOMER_FIRST_NAME}} — {{REFERRAL_FRIEND_NAME}}'s referral "
     "earned you {{REFERRAL_CREDIT_AMOUNT}}. New balance: "
@@ -423,37 +582,126 @@ _REFERRAL_SMS_BODY = (
 )
 
 
-async def seed_referral_credit_templates() -> None:
-    """Boot hook — idempotent seed of the two credit-earned templates
-    for every tenant. Missing rows are inserted; existing rows are
-    left alone (tenant may have customised the copy)."""
+async def seed_referral_credit_templates(
+    *, force_upgrade: bool = False,
+) -> Dict[str, int]:
+    """Boot hook — idempotent seed + P53 BOOM upgrade of the two
+    credit-earned templates for every tenant.
+
+    Behavior per row:
+      * Row missing → INSERT with the current bodies + tagged with
+        ``body_version = _REFERRAL_EMAIL_BODY_VERSION``.
+      * Row present, ``system_key=referral_credit_earned_email``,
+        ``system=True``, ``body_version`` not yet the current version:
+        - If the body matches a known-canonical prior (currently just
+          the Phase-10 body ``_REFERRAL_EMAIL_BODY_LEGACY_P10``) OR
+          ``force_upgrade=True`` — UPGRADE the body/subject and stamp
+          ``body_version``.
+        - Otherwise — tenant customized the copy; SKIP.
+      * Row present, ``system=False`` → tenant fully overrode; SKIP.
+      * Row present, ``body_version`` already current → idempotent
+        SKIP.
+      * SMS row (``referral_credit_earned_sms``) keeps
+        insert-if-missing behavior (no P53 redesign).
+
+    Returns a counts dict for the caller/CLI to log.
+    """
     from utils import new_id, now_iso
+    counts = {
+        "inserted": 0,
+        "upgraded": 0,
+        "skipped_current": 0,
+        "skipped_customized": 0,
+        "skipped_non_system": 0,
+        "sms_inserted": 0,
+        "sms_skipped": 0,
+    }
     async for t in db.tenants.find({}, {"_id": 0, "id": 1}):
-        for system_key, channel, subject, body in (
-            ("referral_credit_earned_email", "email",
-             _REFERRAL_EMAIL_SUBJECT, _REFERRAL_EMAIL_BODY),
-            ("referral_credit_earned_sms", "sms", "", _REFERRAL_SMS_BODY),
-        ):
-            existing = await db.marketing_templates.find_one({
-                "tenant_id": t["id"], "system_key": system_key,
-            }, {"_id": 0, "id": 1})
-            if existing:
-                continue
+        # ── SMS row (insert-if-missing, no upgrade logic) ──
+        sms_key = "referral_credit_earned_sms"
+        sms_existing = await db.marketing_templates.find_one(
+            {"tenant_id": t["id"], "system_key": sms_key},
+            {"_id": 0, "id": 1},
+        )
+        if sms_existing:
+            counts["sms_skipped"] += 1
+        else:
             await db.marketing_templates.insert_one({
                 "id": new_id(),
                 "tenant_id": t["id"],
-                "system_key": system_key,
-                "name": ("Referral credit earned — "
-                          + ("Email" if channel == "email" else "SMS")),
-                "channel": channel,
+                "system_key": sms_key,
+                "name": "Referral credit earned — SMS",
+                "channel": "sms",
                 "category": "referral",
-                "subject": subject,
-                "body": body,
+                "subject": "",
+                "body": _REFERRAL_SMS_BODY,
                 "active": True,
                 "system": True,
                 "created_at": now_iso(),
                 "updated_at": now_iso(),
             })
+            counts["sms_inserted"] += 1
+
+        # ── Email row (P53 version-aware upsert) ──
+        email_key = "referral_credit_earned_email"
+        existing = await db.marketing_templates.find_one(
+            {"tenant_id": t["id"], "system_key": email_key}, {"_id": 0},
+        )
+        if not existing:
+            await db.marketing_templates.insert_one({
+                "id": new_id(),
+                "tenant_id": t["id"],
+                "system_key": email_key,
+                "name": "Referral credit earned — Email",
+                "channel": "email",
+                "category": "referral",
+                "subject": _REFERRAL_EMAIL_SUBJECT,
+                "body": _REFERRAL_EMAIL_BODY,
+                "body_version": _REFERRAL_EMAIL_BODY_VERSION,
+                "active": True,
+                "system": True,
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            })
+            counts["inserted"] += 1
+            continue
+
+        if not existing.get("system"):
+            counts["skipped_non_system"] += 1
+            continue
+
+        if existing.get("body_version") == _REFERRAL_EMAIL_BODY_VERSION:
+            counts["skipped_current"] += 1
+            continue
+
+        # Detect customization — body must match a known canonical
+        # prior body (only Phase-10 today) OR force_upgrade=True.
+        existing_body = existing.get("body") or ""
+        known_priors = {_REFERRAL_EMAIL_BODY_LEGACY_P10}
+        if not force_upgrade and existing_body not in known_priors:
+            counts["skipped_customized"] += 1
+            continue
+
+        await db.marketing_templates.update_one(
+            {"tenant_id": t["id"], "system_key": email_key},
+            {"$set": {
+                "subject": _REFERRAL_EMAIL_SUBJECT,
+                "body": _REFERRAL_EMAIL_BODY,
+                "body_version": _REFERRAL_EMAIL_BODY_VERSION,
+                "updated_at": now_iso(),
+            }},
+        )
+        counts["upgraded"] += 1
+
+    logger.info(
+        "[p53] referral email template upsert — inserted=%d upgraded=%d "
+        "skipped_current=%d skipped_customized=%d skipped_non_system=%d "
+        "sms_inserted=%d sms_skipped=%d",
+        counts["inserted"], counts["upgraded"], counts["skipped_current"],
+        counts["skipped_customized"], counts["skipped_non_system"],
+        counts["sms_inserted"], counts["sms_skipped"],
+    )
+    return counts
 
 
 # ─── Back-migration for legacy immediate-credit path ─────────────────
