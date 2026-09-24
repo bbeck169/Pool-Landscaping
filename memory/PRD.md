@@ -21081,3 +21081,55 @@ Self-delete + orphan branches are covered by unit tests (require a caller identi
 - **Portal breadcrumbs padding audit.** `<AppBreadcrumbs variant="portal">` still emits its own top-padding assumptions from the pre-sticky-header era. Not a visible bug today but worth normalising when the next portal-typography sweep lands.
 - **Sticky header brand mark.** Currently only Bell + hamburger + Sign-out live in the header. Adding a compact tenant `<BrandLogo variant="icon" />` on the left side would visually anchor the header. Deferred — needs design pass on multi-tenant logo aspect ratios.
 
+
+## Phase P44 · Feb-2026 — Service Log Media Read Path Fix (SHIPPED preview)
+
+**Bug.** The admin Service Log view (`/api/jobs/{jid}/service-log`) rendered **"No service images uploaded"** even when photos existed. Root cause: `backend/routers/workstream_service_log.py::_media_items` only inspected `job.get("photos")` (the legacy embedded `jobs.photos` array). Since Phase 27 (Feb 2026), techs upload service-report media via `POST /api/service-reports/{report_id}/media` — that route writes directly to `db.service_reports.photos` / `.videos` via `$push`, bypassing the `jobs.photos` mirror. Result: every Phase-27-era job showed an empty media rail on the workstream Service Log page.
+
+**Fix.** Two-rung read cascade with tenant scoping on every rung.
+
+### Backend
+`backend/routers/workstream_service_log.py`
+- `_media_items(job, tenant_id)` is now **async** and takes a `tenant_id`.
+  1. **Rung 1 (primary)** — `service_reports`. `find_one({"tenant_id": tenant_id, "job_id": job.id}, {"_id":0, "photos":1, "videos":1})`. If the report exists and has photos OR videos, serialise via `_serialize_service_report_media` (which passes the stored `url` field through verbatim — no re-signing, no concat).
+  2. **Rung 2 (legacy fallback)** — jobs-embedded arrays. Fires when either no `service_reports` doc exists OR the doc has empty photos AND empty videos. Serialised via `_serialize_job_embedded_media` (byte-identical output to the pre-P44 helper, so any caller depending on the old wire shape keeps working). URLs continue to go through the P35 renderer at `/api/public/job-photo/{jid}/{pid}`.
+- New helpers:
+  - `_serialize_service_report_media(photos, videos)` — passes stored `url` through; skips `is_deleted` rows; uses `_signed_url_for_photo(photo)` only when `url` is absent.
+  - `_serialize_job_embedded_media(job)` — the pre-P44 loop, extracted so both rungs share a shape.
+  - `_signed_url_for_photo(photo)` — 3-rung fallback (`s3_key` → `generate_signed_url` from `services.aws_s3.photos`; else `data` URL as-is; else `None` → skip). This is the ONLY site that calls `generate_signed_url` in this module; the P35 renderer at `jobs.py:2713–2803` still owns S3 signing for the legacy `/api/public/job-photo/…` endpoint.
+- Single caller updated to `await _media_items(job, tenant["id"])` (line 486 in the aggregator response).
+
+### Wire shape preserved
+- Photos still emit `"kind": "image"` (not the spec's `"photo"`) — the frontend `ServiceLogPage.jsx` MediaCarousel branches only on `kind === "video"`, so keeping `"image"` avoids any wire-shape drift.
+- No new keys added that consumers ignore. Kept minimal: `{id, kind, url, label, created_at}` for photos; `{id, kind, url, mime, duration_ms, caption}` for videos.
+
+### Tests
+`backend/tests/test_p44_service_log_media_read_path.py` — **8 tests, all passing** (0.38s):
+1. `test_service_log_reads_photos_from_service_reports_when_present` — SR primary rung fires, stored `url` passed through verbatim.
+2. `test_service_log_falls_back_to_job_photos_when_no_service_report` — legacy rung 2 when no SR doc.
+3. `test_service_log_falls_back_to_job_photos_when_service_report_has_empty_photos` — legacy rung 2 when SR doc has empty `photos` AND `videos`.
+4. `test_service_log_uses_stored_url_field_verbatim` — external CDN URLs pass through byte-identical, no rewrite.
+5. `test_service_log_falls_back_to_generate_signed_url_when_url_missing` — mocked `generate_signed_url` gets called with the exact `s3_key` for legacy SR photos.
+6. `test_service_log_tenant_scoping` — tenant A querying tenant B's job returns `[]`; the SR-rung `tenant_id` filter blocks cross-tenant leak.
+7. `test_service_log_empty_result_returns_empty_list_not_none` — no photos anywhere → `[]`, never `None`.
+8. `test_service_log_serializes_videos_alongside_photos` — mixed media, correct `kind` per item, `duration_seconds → duration_ms` conversion.
+
+Test loop convention mirrors `test_heatmap_cooldown_cache.py`: seeding + cleanup via `pymongo.MongoClient` (sync — dodges Motor's module-cached-loop trap); the SUT call runs on a fresh `asyncio` loop with a Motor client freshly bound to that loop and monkey-patched into `routers.workstream_service_log.db`, restored after the test.
+
+### Curl smoke (live endpoint, admin JWT, preview backend)
+1. **SR-only** — `service_images` len=1, url = `/api/public/service/…/photo/…` (stored URL passthrough). ✅
+2. **Legacy `jobs.photos` only** — `service_images` len=1, url = `/api/public/job-photo/{jid}/{pid}` (P35 renderer path). ✅
+3. **No photos anywhere** — `service_images = []` (never `null`). ✅
+
+### Hard-rules compliance
+- Tenant scoping mandatory on both rungs — SR rung filters by `(tenant_id, job_id)`; legacy rung reads from the `job` arg already tenant-scoped by the caller `get_service_log` at line 224.
+- Write path untouched — no changes to `service_report_media.py`, `service_reports.py`, or the `jobs.photos` push at `jobs.py:4804`.
+- P35 renderer at `jobs.py:2713–2803` untouched — grep-verified identical line range, log strings, and 404 semantics.
+- Frontend untouched — `ServiceLogPage.jsx` consumer already handled the wire shape correctly; the bug was purely a wrong-collection read.
+- No mobile files touched. No `backend/.env` changes.
+
+### Deferred follow-ups
+- **Multi-tech aggregation.** Multiple `service_reports` can exist per job (one per tech). The current fix picks the FIRST matching doc via `find_one`. Follow-up: aggregate photos + videos across ALL matching reports (`find(...).to_list(N)` + de-dupe by media id). Requires locking the wire order and updating the frontend media carousel to handle >10 items smoothly. Filed as ticket-worthy.
+- **`resolve_photo_items` in `services/service_report_view.py:339`** still reads only `job.get("photos")`. That helper is currently used by the **door-hanger email** send path (`workstream_service_log.py:1310 email-door-hanger`) — the same bug applies there. Extending P44 to the door-hanger path needs an async refactor of that helper AND its call sites. Deferred to a P44.1 slice.
+- **`service_reports.photos[]` initial-empty mirror comment stale.** `service_reports.py:315` says `# mirror; canonical photo store stays on jobs.photos`, which contradicts the Phase-27 media route that writes directly. The comment should be re-worded to reflect the "job.photos = legacy; service_reports.photos = Phase-27 upload target; readers must consult both" reality. No behavior change.
+

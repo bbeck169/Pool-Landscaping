@@ -154,7 +154,115 @@ async def _chemicals_used_source(job: dict, tenant_id: str) -> List[Dict[str, An
     return await resolve_chemicals_used_raw(db, job, tenant_id)
 
 
-def _media_items(job: dict) -> List[Dict[str, Any]]:
+async def _media_items(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
+    """Return the renderable media list (photos + videos) for the
+    Service Log detail view.
+
+    Phase P44 · Feb-2026 — read-path fix.  Prior to P44 this helper
+    only inspected ``job.get("photos")`` (the legacy embedded array
+    on the ``jobs`` collection).  Since Phase 27 (Feb 2026), techs
+    upload service-report media via ``POST /api/service-reports/
+    {report_id}/media`` which writes directly to
+    ``db.service_reports.photos`` / ``.videos`` via ``$push``,
+    bypassing the ``jobs.photos`` mirror.  That left the Service
+    Log view rendering "No service images uploaded" for every
+    Phase-27-era job.
+
+    Read cascade (tenant-scoped at every rung):
+      1. **service_reports** — primary.  Match ``(tenant_id,
+         job_id)`` and use the report's ``photos`` + ``videos``
+         arrays as-is.  These carry a pre-computed ``url`` field
+         (streaming endpoint) so no S3 signing happens here.
+      2. **jobs.photos / jobs.videos** — legacy fallback.  Fires
+         when either (a) no service_reports doc exists for the
+         job, or (b) the service_report exists but its
+         ``photos`` array is empty (partial write, template
+         bootstrap, or the tenant hasn't migrated to the new
+         media route yet).  URLs go through the P35 renderer at
+         ``/api/public/job-photo/{jid}/{pid}`` which owns the
+         S3-signed-URL fallback ladder.
+
+    NOTE — multi-tech aggregation is deferred.  Multiple
+    ``service_reports`` docs can exist per job (one per tech, keyed
+    by ``(tenant_id, job_id, tech_id)``).  This helper picks the
+    first matching doc per the P44 spec; a follow-up will collect
+    across all techs when we lock the wire shape.
+    """
+    jid = job.get("id") or ""
+
+    # Rung 1 — service_reports (P44 primary).
+    report = await db.service_reports.find_one(
+        {"tenant_id": tenant_id, "job_id": jid},
+        {"_id": 0, "photos": 1, "videos": 1},
+    )
+    if report and (report.get("photos") or report.get("videos")):
+        return _serialize_service_report_media(
+            report.get("photos") or [], report.get("videos") or [],
+        )
+
+    # Rung 2 — legacy jobs.photos / jobs.videos fallback.
+    return _serialize_job_embedded_media(job)
+
+
+def _serialize_service_report_media(photos: List[dict],
+                                     videos: List[dict]) -> List[Dict[str, Any]]:
+    """Serialise Phase-27 service_report media (has stored ``url``).
+
+    Photos and videos on ``service_reports`` carry a pre-computed
+    ``url`` field written at upload time (see
+    ``service_report_media.upload_service_report_media``).  Use it
+    verbatim — do NOT re-mint, do NOT string-concat.  When ``url``
+    is somehow absent (partial write / manual seed), fall back to
+    ``_signed_url_for_photo`` which re-uses the P35 signed-URL
+    helper for legacy ``s3_key`` rows.
+    """
+    out: List[Dict[str, Any]] = []
+    for p in photos:
+        if not isinstance(p, dict) or p.get("is_deleted"):
+            continue
+        pid = p.get("id")
+        if not pid:
+            continue
+        stored_url = p.get("url") or _signed_url_for_photo(p)
+        if not stored_url:
+            # No renderable URL at all — skip rather than emit a
+            # broken tile.  Rare; only fires on partial uploads.
+            continue
+        out.append({
+            "id": pid,
+            "kind": "image",
+            "url": stored_url,
+            "label": p.get("label"),
+            "created_at": p.get("created_at") or p.get("uploaded_at"),
+        })
+    for v in videos:
+        if not isinstance(v, dict) or v.get("is_deleted"):
+            continue
+        vid = v.get("id")
+        if not vid:
+            continue
+        stored_url = v.get("url")
+        if not stored_url:
+            # Videos have no P35-style fallback — a video without
+            # a URL is unrenderable, so skip.
+            continue
+        dur_s = v.get("duration_seconds") or 0
+        out.append({
+            "id": vid,
+            "kind": "video",
+            "url": stored_url,
+            "mime": v.get("mime") or v.get("content_type"),
+            "duration_ms": int(dur_s * 1000) or None,
+            "caption": v.get("caption"),
+        })
+    return out
+
+
+def _serialize_job_embedded_media(job: dict) -> List[Dict[str, Any]]:
+    """Legacy fallback — serialise the embedded ``jobs.photos`` /
+    ``jobs.videos`` arrays.  Byte-identical output to the pre-P44
+    ``_media_items`` implementation so callers depending on the
+    old wire shape keep working."""
     photos = job.get("photos") or []
     videos = [v for v in (job.get("videos") or []) if not v.get("is_deleted")]
     jid = job.get("id") or ""
@@ -183,6 +291,35 @@ def _media_items(job: dict) -> List[Dict[str, Any]]:
             "caption": v.get("caption"),
         })
     return out
+
+
+def _signed_url_for_photo(photo: dict) -> Optional[str]:
+    """Fallback URL resolver for service_report photos that lack a
+    stored ``url``.  Only fires for legacy / partially-migrated
+    rows — the normal Phase-27 upload path always writes ``url``.
+
+    Cascade:
+      1. ``s3_key`` present → mint a signed URL via the P35 helper.
+      2. ``data`` present (base64 data URL) → return as-is.
+      3. Neither → ``None`` (client renders as a broken tile /
+         skipped by the caller).
+    """
+    s3_key = photo.get("s3_key")
+    if s3_key:
+        try:
+            from services.aws_s3.photos import generate_signed_url
+            signed = generate_signed_url(s3_key)
+            if signed:
+                return signed
+        except Exception as _s3_exc:
+            logger.warning(
+                "[p44] signed-url fallback soft-fail photo=%s err=%s",
+                photo.get("id"), _s3_exc,
+            )
+    data = photo.get("data")
+    if data:
+        return data  # already a data:URL, renderable inline
+    return None
 
 
 async def _previous_service(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
@@ -346,7 +483,7 @@ async def get_service_log(
         "materials_used": [
             li for li in (job.get("line_items") or []) if li.get("material")
         ] if kind == "landscape" else [],
-        "service_images": _media_items(job),
+        "service_images": await _media_items(job, tenant["id"]),
         "previous_service": await _previous_service(job, tenant["id"]),
     }
     return payload
