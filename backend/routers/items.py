@@ -162,10 +162,25 @@ async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     return doc
 
 
-async def _soft_delete_item(iid: str, actor_id: Optional[str], tenant_id: Optional[str] = None) -> dict:
-    q: dict = {"id": iid}
-    if tenant_id:
-        q["tenant_id"] = tenant_id
+async def _soft_delete_item(iid: str, actor_id: Optional[str], tenant_id: str) -> dict:
+    # P57 · Feb-2026 — signature tightened (Commit 2). ``tenant_id``
+    # is now positional-required and MUST be a non-empty string.
+    # ``None`` and empty-string both raise ValueError at call time
+    # so a future caller that forgets to propagate tenant scope
+    # fails loudly instead of silently running cross-tenant (which
+    # is what the pre-P57 optional-tenant + truthy-guard shape
+    # allowed — see H7 flag in the P56 PRD section for the attack
+    # narrative). Any future legitimate cross-tenant delete path
+    # (migration / superadmin cleanup) MUST introduce its own
+    # helper with an explicit name — do NOT relax this guard.
+    if not tenant_id or not str(tenant_id).strip():
+        raise ValueError(
+            "_soft_delete_item requires a non-empty tenant_id; "
+            f"got {tenant_id!r}. If you need a legitimate cross-"
+            "tenant delete path, introduce a separate helper — "
+            "do NOT relax this guard."
+        )
+    q: dict = {"id": iid, "tenant_id": tenant_id}
     row = await db.items.find_one(q, {"_id": 0})
     if not row:
         raise HTTPException(404, "Item not found")
@@ -192,15 +207,12 @@ async def _soft_delete_item(iid: str, actor_id: Optional[str], tenant_id: Option
             409,
             f"Item is used on {linked} active document(s) — deactivate via PATCH instead of deleting",
         )
-    # P57 · Feb-2026 — tenant-scope the internal write filter too.
-    # Defence in depth: if a future caller ever forgets tenant_id
-    # (or a race lets the row leak between find_one + update_one),
-    # the write MUST NOT reach a cross-tenant row.
-    _write_filter: dict = {"id": iid}
-    if tenant_id:
-        _write_filter["tenant_id"] = tenant_id
+    # P57 · Feb-2026 — internal write filter is unconditionally
+    # tenant-scoped now that the signature guarantees a real
+    # tenant_id. Defence in depth against a paid-transition-style
+    # race between find_one + update_one.
     await db.items.update_one(
-        _write_filter,
+        {"id": iid, "tenant_id": tenant_id},
         {"$set": {"deleted_at": now_iso(),
                     "deleted_by_user_id": actor_id}},
     )
@@ -477,17 +489,24 @@ _PRICEBOOK_BULK_CAP = 400
 _PRICEBOOK_SELECTOR_KEYS = {"category", "search", "active"}
 
 
-async def _resolve_pricebook_ids(selector: dict, exclude: List[str], tenant_id: Optional[str] = None) -> List[str]:
-    # P57 · Feb-2026 — selector-based entry query now tenant-scopes
-    # via a required-by-caller ``tenant_id`` arg. Pre-P57 an admin
-    # calling ``POST /pricebook/bulk-delete`` with a selector
-    # (e.g. ``{"query_selector": {"active": true}}``) enumerated
-    # rows across ALL tenants and passed them to _soft_delete_item
-    # (which then also didn't tenant-scope). Two levels of cross-
-    # tenant vulnerability compounded on the same call path.
-    q: dict = {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}
-    if tenant_id:
-        q["tenant_id"] = tenant_id
+async def _resolve_pricebook_ids(selector: dict, exclude: List[str], tenant_id: str) -> List[str]:
+    # P57 · Feb-2026 — signature tightened (Commit 2). Sibling of
+    # ``_soft_delete_item``'s tightening: helper that feeds the
+    # primitive must enforce the same non-empty-tenant_id
+    # invariant, otherwise the "make the wrong thing hard"
+    # guarantee only lives on the leaf function. A future caller
+    # that enumerates via this helper without tenant scope is now
+    # a call-time ValueError, not a silent cross-tenant read.
+    if not tenant_id or not str(tenant_id).strip():
+        raise ValueError(
+            "_resolve_pricebook_ids requires a non-empty "
+            f"tenant_id; got {tenant_id!r}."
+        )
+    q: dict = {
+        "tenant_id": tenant_id,
+        "$or": [{"deleted_at": None},
+                 {"deleted_at": {"$exists": False}}],
+    }
     clean = {k: v for k, v in (selector or {}).items()
               if k in _PRICEBOOK_SELECTOR_KEYS}
     if clean.get("category"):
