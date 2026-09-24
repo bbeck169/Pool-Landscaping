@@ -22455,3 +22455,341 @@ Documented so the next agent doesn't rediscover:
   only in the admin web surface (`frontend/`) — no mobile UI
   changes.
 
+
+---
+
+## P56 · Pricebook Bulk Category Edit (Feb-2026)
+
+### Motivation & scope
+
+P56 is the second live P55 orchestrator consumer. Admins who
+need to re-taxonomize a batch of Pricebook items (typical when
+splitting an income bucket or reorganizing a service line)
+previously had to open each item's Edit modal, flip the
+dropdown, save, and rely on the sibling PATCH's audit trail —
+with no propagation of the change to any linked unpaid invoice
+line item. P56 wraps that per-row loop into a single
+`POST /api/pricebook/bulk-update-categories` call AND adds the
+missing P55 sync direction so the taxonomy change fans out to
+every linked unpaid invoice line.
+
+### Grep-pass findings (Section 5 · pre-commit paranoia mandate)
+
+Grep pass surfaced **six material discrepancies** with the P56
+spec. Each halted for user decision (Q1–Q6). Findings tabulated
+so future phases don't re-do the grep:
+
+| Discovery | Spec assumed | Grep proved | Resolution |
+|-|-|-|-|
+| `bulk_delete_pricebook` shape | Direct mirror ok | Payload shape diverges materially: selector-based `{ids \| query_selector \| exclude_ids}`, cap 400, response `{ok, deleted_count, deleted[], failed[{id, reason, status_code}]}`. Auth: `require_admin` (no manager). No `get_current_tenant` dep. | Q1/A · mirror **P54 shape** (`{updated, already_current, failed, sync_result_summary, results[{id, status, error?}]}`) for cross-file P55-consumer consistency. Sibling shape preserved unchanged. |
+| Validation helper reuse (Q3-C carryover from P54) | Extract shared helper | `patch_item` at `items.py :356-358` uses `validate_service_category` returning HTTP 400 with `{error, field, available_categories}` — **incompatible** with P54/P55's inline HTTP 422 `{code, field, attempted, collection}`. Q3-C extraction premise: **false**. Also: no `validate_income_category` helper anywhere. | Q2/A · mirror the P54/P55 inline HTTP 422 pattern for cross-file P55-consumer consistency. Single-item PATCH's HTTP 400 shape stays untouched (callers depend on it). Q3-C extraction stays **permanently killed** per H2's grep truth. |
+| P55 sync direction for Pricebook | `sync_invoice_line_to_pricebook` mirror | `sync_pricebook_to_invoice_lines` **does not exist** in P55. Only two directions were shipped: template→invoice and invoice→pricebook. Neither fires FROM a direct Pricebook edit. | Q3/yes · add new sync direction `sync_pricebook_to_invoice_lines` to `category_sync.py` as **Commit 1** before consuming it in Commit 2. Test coverage lives in `test_p55_category_sync.py` (11 new tests extending the P55 suite). |
+| Testid convention | `pricebook-bulk-*` or similar | OpsHub PriceBook uses **`bulk-*`** with NO page qualifier (`bulk-delete-button`, `bulk-delete-confirm-modal`, `bulk-action-bar`, etc.) — different from RecurringJobs.jsx's `recurring-bulk-*`. | Q4/A · adopt `bulk-*` convention. No `pricebook-bulk-*` namespace introduced. |
+| Service+income policy | Not spec'd | Single-item PATCH at `items.py :367-378` rejects `income_category_id` on `item_type == "service"` items with HTTP 400 `services_cannot_have_supplier_pricing`. `income_category_id` is treated as a supplier-only field on services. | Q5/A · per-row failure. Mixed batches: service items with `income_category_id` in payload classify as `{status: "failed", error: "services_cannot_have_income_category_id"}`. Products in same batch proceed. Honest-per-row telemetry matches P54 precedent. |
+| Tenant scoping | Implicit | `bulk_delete_pricebook` uses NO `get_current_tenant` dep AND passes `_soft_delete_item(iid, user.get("id"))` at line 506 without the 3rd positional `tenant_id` — this is a pre-existing cross-tenant bulk-delete vulnerability (H7 flag). | Q6/yes · P56 explicitly tenant-scopes via `user.get("tenant_id")` on the per-row `find_one` + `update_one` filters. Does NOT fix the sibling pre-existing bug (documented in the "Pre-existing security defect flagged during P56 grep" subsection below for a future dispatch — recommend `P57 · Pricebook bulk-delete tenant isolation`). |
+
+### Design contract (final)
+
+**Endpoint:** `POST /api/pricebook/bulk-update-categories` —
+admin, tenant-scoped via `user.get("tenant_id")`.
+
+**Payload:**
+
+```python
+class _PricebookBulkUpdateCategoriesIn(BaseModel):
+    ids: List[str]
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
+```
+
+Uses Pydantic v2 `model_fields_set` to distinguish JSON-absent
+from JSON-null. Only non-empty stripped-string values trigger
+the resolve + apply path. Any other case (unset, null, empty
+string) → "unchanged" (belt-and-suspenders vs stale clients).
+
+**Payload-level rejections:**
+
+| HTTP | Code / error | Trigger |
+|-|-|-|
+| 400 | `ids_empty` | `len(ids) == 0` post-dedupe |
+| 400 | `batch_too_large` | `len(ids) > 100` |
+| 400 | `no_category_fields_set` | neither category field resolves to a non-empty value |
+| 422 | `<field>_too_long` | id string > 80 chars |
+| 422 | `<field>_no_html` | id contains `<` or `>` |
+| 422 | `service_category_invalid` / `income_category_invalid` | id doesn't resolve to active row on tenant. Shape: `{code, field, attempted, collection}` |
+
+**Per-row outcomes** (HTTP 200; each id gets its own `results[]` entry):
+
+| status | Meaning |
+|-|-|
+| `updated` | Item found, at least one field differed, write landed, P55 sync fanned out successfully. |
+| `already_current` | Every incoming field's target already matches on-disk value. Idempotent no-op: no write, no sync, no audit row. |
+| `failed` | Item not found under tenant (out-of-tenant, typo, soft-deleted all here), OR service item received `income_category_id` (`services_cannot_have_income_category_id`), OR P55 sync raised `CategorySyncNameLookupError` (partial-apply state — item write already landed), OR generic sync exception. `error` field carries specific string. |
+
+**Response envelope** (identical to P54 for cross-file consistency):
+
+```json
+{
+  "updated": 0, "already_current": 0, "failed": 0,
+  "sync_result_summary": {
+    "child_invoices_updated": 0,
+    "child_invoices_skipped_paid": 0,
+    "child_invoices_skipped_loop": 0,
+    "child_error_rows": 0
+  },
+  "results": [{"id": "...", "status": "...", "error": "..."}]
+}
+```
+
+### New P55 sync direction — `sync_pricebook_to_invoice_lines`
+
+Third and final P55 entry point (Commit 1 · `f00373995`).
+Signature:
+
+```python
+async def sync_pricebook_to_invoice_lines(
+    tenant_id: str,
+    item_id: str,
+    *,
+    origin: str,
+    service_category_id: Any = _UNSET,   # str | None | _UNSET
+    income_category_id: Any = _UNSET,    # str | None | _UNSET
+    actor_id: Optional[str] = None,
+) -> SyncResult: ...
+```
+
+**Linkage rule:** an invoice line is linked to the Pricebook
+row when `line_items[].pricebook_item_id == item_id` OR (legacy)
+`line_items[].item_id == item_id`. Dual-key support mirrors the
+existing `sync_invoice_line_to_pricebook` precedent.
+
+**None-propagation direction:** matches
+`sync_recurring_template_to_children` — Pricebook is master for
+the item, so an explicit `None` on a category cascades DOWN to
+every linked unpaid invoice line (**not** the master-preserve
+semantics used by `sync_invoice_line_to_pricebook`, which is
+the opposite direction).
+
+**6-field lockstep write** on matched lines (identical to
+`sync_recurring_template_to_children`): modern income pair +
+legacy `category`/`category_name` aliases + modern service pair.
+
+**Read/write guards** (grep-verified with the sibling):
+
+* `payment_status != "paid"` on BOTH read filter AND write
+  filter (paid-transition race protection).
+* `doc_type == "invoice"` — never touches quotes.
+* `tenant_id` on every filter — cross-tenant propagation
+  impossible.
+
+**Audit event:** `source.type = "pricebook_item"`,
+`source.id = <item_id>`. Event name still
+`"category.sync_from_template"` — inherited P55 quirk (all three
+directions emit that event name; `source.type` disambiguates).
+Documented so future dispatches don't rediscover.
+
+**SKIP_TABLE entry:** new `{_RESERVED_SELF_LOOP}` sentinel entry
+for the new callee, following the same forward-compat pattern
+as `sync_recurring_template_to_children`.
+
+### Cross-file origin/skip-set inventory (kept in lockstep across P54/P55/P56)
+
+| Callee | Real caller | Entry origin | Where guarded |
+|-|-|-|-|
+| `sync_recurring_template_to_children` | `PATCH /api/recurring-jobs/{tpl_id}` | `"recurring_template_edit"` | `test_entry_point_origin_is_not_in_skip_set` (P55) |
+| `sync_recurring_template_to_children` | `POST /api/recurring-jobs/bulk-update-categories` | `"bulk_recurring_edit"` | `test_bulk_edit_origin_not_in_skip_set` (P54) |
+| `sync_invoice_line_to_pricebook` | uncategorized-items recategorize handler | `"invoice_line_edit"` | `test_entry_point_origin_is_not_in_skip_set` (P55) |
+| **`sync_pricebook_to_invoice_lines`** | **`POST /api/pricebook/bulk-update-categories`** (P56) | **`"bulk_pricebook_edit"`** | **`test_bulk_pricebook_edit_origin_not_in_skip_set` (P56)** |
+
+Any future phase adding a caller MUST land its own regression
+guard mirroring this pattern.
+
+### Frontend surface
+
+**`OpsHub.jsx` PriceBook tab changes** (all under the discovered
+`bulk-*` convention — no `pricebook-bulk-*` namespace):
+
+* **"Bulk Edit Categories" toolbar button** — inside the
+  existing `selectedCount > 0` toolbar conditional, next to
+  "Delete selected". Neutral indigo affordance (`#4F46E5`).
+  Disabled during `bulkEditBusy`.
+  testid: `bulk-edit-categories-button`.
+
+* **Bulk Edit Categories modal**:
+    * Two `<select>` dropdowns (Service, Income) with
+      "Unchanged" (value `""`) as the first option. Handler
+      OMITS empty-string dropdowns from the POST body.
+    * Apply disabled when both dropdowns are still Unchanged.
+    * Inline error slot for backend 422 codes (dropdown-adjacent
+      instead of a raw toast).
+    * Batch cap `_BULK_UPDATE_CATEGORIES_BATCH = 100` matches
+      the backend `_PRICEBOOK_BULK_UPDATE_CATEGORIES_MAX`.
+      Payloads > 100 sliced in place — operator never sees a
+      raw 400.
+    * Aggregate toast uses `setToast({tone, message})` (NOT
+      sonner `toast.*` — file-context convention).
+    * testids: `bulk-edit-categories-modal`,
+      `bulk-edit-service-cat-select`,
+      `bulk-edit-income-cat-select`,
+      `bulk-edit-apply`, `bulk-edit-cancel`, `bulk-edit-error`.
+
+Reuses the existing `serviceCats` + `incomeCats` state (both
+already loaded for the Edit modal — no additional fetch needed).
+
+### Audit-per-item vs audit-per-batch decision
+
+**Chose audit-per-item.** Same rationale as P54:
+
+* The sibling single-item `patch_item` writes one
+  `pricebook.patch` audit row per PATCH. Bulk = admin
+  dispatching many equivalent PATCHes; each conceptual PATCH
+  deserves its own audit row so ledger queries return uniformly
+  whether the taxonomy edit came through the single Edit modal
+  or the new bulk toolbar.
+* The P55 orchestrator writes its OWN
+  `category.sync_from_template` audit row per orchestrator
+  invocation. Bulk-batching THAT event would defeat the "bounded
+  row per fan-out" design; keeping the two audit streams
+  orthogonal means a bulk edit of 20 items produces 20
+  `pricebook.patch` rows on `db.audit_log` (singular) + 20
+  `category.sync_from_template` rows on `db.audit_logs` (plural)
+  — one per item, one per fan-out, cleanly composable across
+  the two collections.
+* `already_current` rows write NO audit row (idempotency).
+
+### Partial-apply state
+
+Same as P54: `update_one` + audit write + P55 sync call is NOT
+atomic. `CategorySyncNameLookupError` mid-batch → the item's
+write already landed but the row classifies as `failed` with
+the specific error string `category_deleted_after_source_write
+(<category_id>)`. Idempotent retry via `already_current` is the
+recovery path.
+
+Test `test_bulk_update_partial_apply_on_p55_sync_failure` locks
+this — asserts the item write persists on disk AND the row's
+`results[]` entry carries the specific error string.
+
+### Pre-existing security defect flagged during P56 grep (H7 · Feb-2026)
+
+`bulk_delete_pricebook` at `items.py :506` calls
+`_soft_delete_item(iid, user.get("id"))` — the 3rd positional
+`tenant_id` parameter is unset, so `_soft_delete_item` (at line
+165) runs its `find_one` filter as `{"id": iid}` WITHOUT the
+`tenant_id` clause (verified: `if tenant_id: q["tenant_id"] =
+tenant_id`). Auth is `require_admin` (no `get_current_tenant`
+dep on the endpoint either).
+
+**Concrete impact:** an admin from tenant A can craft a
+`POST /api/pricebook/bulk-delete` request with a body containing
+item IDs from tenant B (e.g. `{"ids": ["tenant-b-item-uuid"]}`)
+and the endpoint will soft-delete those tenant B items. The
+missing tenant scope means IDs from any tenant will match.
+
+**NOT fixed in P56.** Rationale: a fix touching the shared
+`_soft_delete_item` code path OR the `bulk_delete_pricebook`
+handler needs a full security-adjacent test pass. Riding it on
+a bulk-edit feature phase would:
+
+  * Blur the git-blame narrative for both the feature and the
+    security fix.
+  * Trigger a full regression on the existing bulk-delete flow
+    that would need re-verification under load.
+  * Delay the P56 feature ship.
+
+**Recommend future dispatch:** `P57 · Pricebook bulk-delete
+tenant isolation`. Suggested scope for that phase:
+
+  * Add `get_current_tenant` Depends to `bulk_delete_pricebook`
+    (matching P56's Q6/yes pattern).
+  * Pass `tenant_id` positional to every `_soft_delete_item`
+    call inside the loop.
+  * Add a `db.items.find_one({"id": iid, "tenant_id": ...})`
+    guard before the soft-delete so cross-tenant ids classify
+    as `failed` with `error: "not_found"` (honest telemetry
+    matching P54/P56).
+  * Test: `test_bulk_delete_cross_tenant_ids_appear_in_failed`
+    with a mixed same-tenant + cross-tenant batch — must
+    assert 0 cross-tenant deletes.
+  * Also audit adjacent endpoints in `items.py` that use
+    `require_admin` without `get_current_tenant` for the same
+    class of gap.
+
+### Regression triage — targeted smoke test (Feb-2026)
+
+70-file P56-adjacent smoke set (69 P54-adjacent files +
+`test_p56_pricebook_bulk_update_categories.py`) run serially
+with `pytest -p no:xdist`:
+
+* **HEAD (P56 tip, `a360c76f0`)** — 67 failed, 4 errored, 459
+  passed, 24 skipped in 89.89s.
+* **Baseline (`c6fdb88c5`)** — 67 failed, 4 errored, 403 passed,
+  24 skipped in 90.09s.
+
+Set-diff of failing node ids: **∅ both ways.** No P56-caused
+regressions. Every failure in the HEAD set is the same
+pre-existing motor-loop / xdist / env-dependent flake list that
+P55's and P54's triages already documented.
+
+Flake-ignore list unchanged
+(`test_recurring_quarterly_semiannual_p47.py` +
+`test_phase10_referrals.py`). Halt-and-report on any new
+pre-existing flake was NOT triggered.
+
+### File / commit inventory
+
+| Commit | Sha | Purpose |
+|-|-|-|
+| 1 | `f00373995` | `feat(p56): sync_pricebook_to_invoice_lines direction on category_sync` (+11 tests in the P55 suite) |
+| 2 | `bfdf6b4c5` | `feat(p56): backend bulk-update-categories endpoint with p55 sync` |
+| 3 | `c8955599a` | `feat(p56): pricebook bulk-edit categories modal` |
+| 4 | `a360c76f0` | `test(p56): backend + frontend coverage + skip-set regression guard` (16 backend + 18 frontend) |
+| 5 | (this doc)   | `docs(p56): PRD section for pricebook bulk category edit (includes H7 flag)` |
+
+Files touched:
+* `backend/services/category_sync.py` — new sync direction (+235 lines).
+* `backend/routers/items.py` — new bulk endpoint (+370 lines).
+* `backend/tests/test_p55_category_sync.py` — 11 new pricebook-direction tests + fake-DB `_match` extension for Mongo-style dot-notation over array subdocs (+329 lines).
+* `backend/tests/test_p56_pricebook_bulk_update_categories.py` — new test file (+540 lines).
+* `frontend/src/pages/ops/OpsHub.jsx` — modal + toolbar button (+219 lines).
+* `frontend/src/test/p56-pricebook-bulk-edit.test.jsx` — new test file (+228 lines).
+* `memory/PRD.md` — this section.
+
+### Explicit "not done" list — P56 scope boundary
+
+Documented so the next agent doesn't rediscover:
+
+* **Bulk clear NOT supported.** Passing `null` / omitting a
+  field means "unchanged", NOT "clear to null". Bulk-clearing
+  a category from N items would need a distinct UI affordance
+  (a "Clear" toggle) + a distinct sentinel — deferred.
+* **No async task offloading.** Bulk endpoint runs synchronously
+  in the request handler. At the 100 cap this is bounded by the
+  P55 fan-out cost per row.
+* **Loop invariant preserved via sentinel.** The P56 origin
+  `"bulk_pricebook_edit"` is a REAL caller — putting it in
+  `_SKIP_TABLE` would recreate the P55 · Commit 6 shipping
+  bug's class of defect on the new direction. The
+  `test_bulk_pricebook_edit_origin_not_in_skip_set` static
+  guard enforces this permanently.
+* **Single-item PATCH validation shape NOT touched.** Q2/A
+  decision — bulk endpoint uses HTTP 422 inline, PATCH stays
+  on HTTP 400 `validate_service_category`. Deliberate wire
+  drift between single vs bulk on the same resource; documented
+  here so future audit doesn't flag it as a bug.
+* **H7 pre-existing bulk-delete tenant-isolation defect NOT
+  fixed.** See "Pre-existing security defect flagged during P56
+  grep" subsection above.
+* **No filter dropdown on the PriceBook page.** P54 added a
+  service-category filter to the RecurringJobs list; P56 does
+  NOT add the same filter to the PriceBook page (the PriceBook
+  page already has its own category filter — grep-verified;
+  reusing that surface would be a separate phase).
+* **`sync_pricebook_to_invoice_lines` audit event name reuses
+  `"category.sync_from_template"`.** Inherited P55 quirk — all
+  three directions emit that event name; `source.type`
+  disambiguates. Changing it now would break existing ledger
+  consumers.
+* **No mobile parity.** The bulk-edit modal lives only in the
+  OpsHub web surface — no mobile UI changes.
+
