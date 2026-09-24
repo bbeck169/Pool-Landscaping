@@ -21545,3 +21545,137 @@ None in shipped production code.  Two test-author bugs corrected in test files o
 - Bonus sweep of the other 30+ hardcoded strings in `LeadsDashboardPage.jsx` (source dropdown, density toggle, table headers, bulk-action bar, confirm modals) — user's Q2b explicitly said future phase.
 
 
+
+## Phase P52 · Feb-2026 — Customer Profile Header consolidation + Tenant Global Language (locale-only slice · SHIPPED preview · timezone deferred pending user Q1)
+
+**Sequencing note.** User's original P52 dispatch bundled Language + Timezone + Customer Profile Header. During ground-truth I discovered `TenantSettingsUpdate.timezone` (Phase 56.17, IANA-validated, actively used in scheduling + paid-date math) already exists — user's Q1 held for a design decision (Option A: new field alongside vs Option B: reuse existing).  This PRD entry covers the locale + profile-header slice; timezone lands in a P52-followup or folds into P53 depending on the Q1 answer.
+
+### Ground-truth surprises
+
+Two scope compressions caught during exploration:
+
+1. **`db.tenants.default_locale` already exists.**  `routers/tenants.py:935` defines `default_locale: Optional[str]` on the Phase D5 `TenantSettingsUpdate` model — the same PATCH `/tenants/mine/settings` endpoint the timezone picker already uses.  D5 wired this for outbound customer email + SMS locale selection.  P52's UI-language requirement collapses onto the same field: one source of truth for "the tenant's default language" — the notification stack and the frontend detector chain both read it.  My initial addition to `backend/models.py::TenantSettingsUpdate` (finances.py handler) was redundant and got reverted.
+2. **LanguageSelector only rendered from AdminTopBar.**  Grep confirmed zero usages in `AppLayout.jsx` or `UniversalMenu.jsx` — user's spec listed those speculatively.  Removal scope trimmed to AdminTopBar (3 render sites at lines 427 / 477 / 508).
+
+### Piece A — Customer Profile Header consolidation
+
+`frontend/src/pages/customers/CustomerDetail.jsx`
+- Removed two standalone `<Button>` elements (Chemistry, Chem History) from the `cd-action-row` flex container.
+- Added a `<DropdownMenu>` inline with Edit / Delete carrying:
+  - Trigger: brand-coloured (`backgroundColor: colors.brandPrimary` + `color: colors.onBrandPrimary`), `<Beaker>` icon, "Chemistry" label, `<ChevronDown>` indicator, `data-testid="cd-chemistry-actions-trigger"`.
+  - Two items — Chemistry (→ `/customers/{id}/chemistry`) and Chem History (→ `/customers/{id}/chemistry-history`).  Each carries the new P52 testid (`cd-action-chemistry`, `cd-action-chem-history`) AND preserves the pre-P52 testid via `data-legacy-testid` so existing suites that select by `cd-chemistry` / `cd-chemistry-history` keep resolving.
+- Uses the shipped DropdownMenu primitives from `@/components/ui/dropdown-menu` (Radix under the hood).  No new deps.
+
+### Piece B1 — Tenant `default_locale` migration
+
+`backend/migrations/p52_tenant_default_locale.py` (NEW · 218 lines)
+- Backfills every tenant document missing `default_locale` or carrying an out-of-bundle value (anything outside `{en, es, fr}`).  Coerces bad values to `en` — counted separately from missing-field backfills so the summary tells ops which drift path they inherited.
+- Idempotent — writes to `migrations_applied[name="p52_tenant_default_locale"]` and subsequent runs short-circuit unless `--force`.
+- `run_at_startup` hook mirrors P46's pattern (`STARTUP_EXECUTE_MODE = True`) so a fresh pod self-heals; failure is caught + logged, never blocks the boot.
+- CLI supports `--dry-run` (inspect only) and `--execute --force` (bypass marker).
+
+**Migration run (real DB, 408 tenants):**
+```
+--dry-run:  {"backfilled": 408, "already_set": 0, "coerced_bad_value": 0, "duration_s": 0.008}
+--execute:  {"backfilled": 408, "already_set": 0, "coerced_bad_value": 0, "duration_s": 0.129,
+             "executed_at": "2026-09-24T04:48:29.758605+00:00"}
+re-run:     {"skipped_by_marker": true, "duration_s": 0.003}
+```
+
+Backend model + PATCH handler for `default_locale` are already shipped (Phase D5 at `routers/tenants.py:935` + `:1002`).  No net-new code — my job was audit + lockdown.
+
+### Piece B2 — Global Settings Default Language dropdown
+
+`frontend/src/pages/settings/BusinessSettings.jsx`
+- Added `tenantLocale` / `savingLocale` state alongside the existing `tenantTz` / `savingTz`.
+- Extended the tenant-doc load to hydrate `tenantLocale` from `default_locale` (falling back to `"en"` on missing/invalid).
+- Rendered a `<select data-testid="settings-default-locale-select">` under the Timezone picker with three options — `en` / `es` / `fr` — each carrying its own `settings-default-locale-option-<code>` testid.
+- On change: PATCH `/tenants/mine/settings` with `{default_locale: <code>}`, prime `localStorage.tenant_default_locale` optimistically so the current boot's detector reflects the new value, dispatch `tenant:settings-updated` CustomEvent for Dashboard + Schedule listeners (P15 pattern).
+- Save failure surfaces via `toast.error` — same UX as the timezone picker.
+
+### Piece B3 — i18n tenant fallback wire
+
+`backend/routers/auth.py::me`
+- Extended the `/auth/me` payload to include `tenant_default_locale` — read from `db.tenants[active_tenant_id].default_locale`, guarded to the `{en, es, fr}` set (any other value / missing field returns `None`).  Exception-safe: a Mongo blip never takes down the auth hot path.
+
+`frontend/src/auth.jsx`
+- Extended the existing Phase D3 hydration block (lines 46-58) with a mirror block that writes `localStorage.tenant_default_locale` from `fresh.tenant_default_locale`.  Explicit `null` in the payload clears the cache so an admin who un-set the tenant default sees the detector chain fall through cleanly.
+
+`frontend/src/i18n/index.js`
+- Replaced the `TODO(P52)` comment block (planted in P50 as a grep anchor) with the actual detector implementation.
+- Added `lang-tenant-default` detector — reads `localStorage.tenant_default_locale`, normalises + gates against the `{en, es, fr}` allow-list, returns `undefined` on stale/missing values so the chain falls through.
+- Detection order becomes `["lang-localstorage", "lang-tenant-default", "navigator"]`.
+- `caches: []` preserved — the LanguageSelector + `auth.jsx` are the only writers.
+
+### Piece B4 — LanguageSelector removed from AdminTopBar
+
+`frontend/src/layouts/AdminTopBar.jsx`
+- Removed the `import LanguageSelector` line (replaced with a P52 rationale comment block).
+- Removed all three `<LanguageSelector ... />` render sites (lines 430, 477, 508).
+- `LanguageSelector.jsx` file itself preserved — still consumed by `phase-d3-language-selector.test.jsx` and `settings-sprocket-visibility.test.jsx` (personal-language-pref surface).
+
+### Tests
+
+`backend/tests/test_p52_tenant_default_locale.py` — **10 tests, 10 passing** (0.52s):
+1. Migration backfills missing `default_locale` → `en`.
+2. Migration leaves already-valid `es` untouched (`already_set` counter).
+3. Migration coerces out-of-bundle value (`de`) to `en` and counts it under `coerced_bad_value`.
+4. Migration dry-run inspects but never writes.
+5. Migration stamps the `migrations_applied` marker on execute.
+6. Marker short-circuits re-runs (no `--force`).
+7. PATCH `/tenants/mine/settings` accepts valid `default_locale` (row + response both reflect the update).
+8. PATCH rejects unknown locale with **422** (Phase D5 shape — not the 400 the P52 spec speculated, since the shipped handler was already validating).
+9. PATCH gated behind admin / super_admin — 403 for member role.
+10. PATCH scoped to `user.tenant_id` — cross-tenant leaks impossible.
+
+`frontend/src/test/p52-customer-profile-header-dropdown.test.jsx` — **4 tests, 4 passing** (5ms):
+1. Standalone `<Button testid="cd-chemistry">` + `<Button testid="cd-chemistry-history">` no longer render.
+2. DropdownMenu primitives + `ChevronDown` icon imported.
+3. Trigger renders with brand-colour inline styling on `cd-action-row`, positioned between the row marker and `cd-delete`.
+4. Two DropdownMenuItems render with new P52 testids AND preserve pre-P52 testids via `data-legacy-testid`; each carries the correct `onClick` route.
+
+`frontend/src/test/p52-global-settings-language.test.jsx` — **4 tests, 4 passing** (251ms):
+1. Dropdown renders with exactly 3 options (en/es/fr) + individual option testids.
+2. Hydrates from tenant document (landing on `es` shows `es` selected).
+3. Selecting FR fires PATCH `/tenants/mine/settings` with `{default_locale: "fr"}`, primes `localStorage.tenant_default_locale`, broadcasts `tenant:settings-updated` CustomEvent.
+4. Dropdown constrains choices to the 3 bundle locales — no path to submit an unsupported value.
+
+`frontend/src/test/p52-i18n-tenant-fallback.test.jsx` — **5 tests, 5 passing** (6ms):
+1. `lang-tenant-default` detector wired in source with the correct `order:` slot + `TODO(P52)` comment consumed.
+2. USER PREF WINS — `localStorage.lang` beats tenant + navigator.
+3. TENANT DEFAULT WINS OVER NAVIGATOR — no user pref, tenant cached → tenant wins.
+4. COLD BOOT FALLTHROUGH — neither cached, falls through to navigator/EN cleanly.
+5. STALE TENANT VALUE IGNORED — out-of-bundle `de` returns `undefined` from the guard so the chain falls to navigator.
+
+`frontend/src/test/p52-topbar-language-selector-removed.test.jsx` — **3 tests, 3 passing** (3ms):
+1. No `import LanguageSelector` line; P52 rationale comment present.
+2. Zero JSX renders of `<LanguageSelector />`; the word `LanguageSelector` appears exactly once (in the rationale comment).
+3. Neighbour components (`SettingsSprocket`, `SignOutButton`, `UniversalMenu`) still render — regression guard.
+
+### Test results
+```
+backend  · pytest tests/test_p52_tenant_default_locale.py -v
+         → 10 passed, 4 warnings in 0.52s
+frontend · yarn vitest run src/test/p52-*.test.jsx
+         → Test Files 4 passed (4) · Tests 16 passed (16) · Duration 1.18s
+```
+
+### Regression status (post-P52)
+
+**Backend — 42/42 green** across P47 (16) + P48 (7) + P50 (9) + P52 (10).
+
+**Frontend — 43/44 green** across P47 (4) + P48 (8) + P50 (16) + P52 (16), with **one intentional break flagged as halt-and-report**:
+
+- `p50-i18n-init-and-fallback.test.jsx` — test 3 (`carries the P52 tenant.default_locale slot TODO comment`) now fails because P52 consumed the `TODO(P52)` grep anchor it was designed to lock.  The second assertion in that same test (`lang-tenant-default` detector name present) passes — the P52 implementation IS wired.  Awaiting user's call on whether to retire the TODO-comment assertion or keep it as the pre-P52 snapshot.  **Not patching until user approves — per the halt-and-report rule.**
+
+### Deferred (Q1 timezone hold)
+
+- `default_timezone` field on the Tenant model.
+- Curated ~40-zone list in `backend/constants/timezones.py`.
+- Global Settings Default Timezone dropdown.
+- Migration bump to backfill `default_timezone`.
+- Test extension for timezone slice.
+
+Deferred until user decides Option A (add new field beside `timezone`) vs Option B (reuse existing `timezone` with curated-list validator).
+
+
