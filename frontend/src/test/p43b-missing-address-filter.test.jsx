@@ -46,6 +46,24 @@ function _installMockGet({ missingAddressCount = 7 } = {}) {
     if (path === "/customers?count_only=true&missing_address=true") {
       return Promise.resolve({ count: missingAddressCount });
     }
+    // Feb-2026 · Tail Fix E — Phase P31 migrated standalone-badge
+    // counts to a consolidated ``/customers/counts`` envelope
+    // (routers/customers.py L521-L670). ``loadCounts()`` now
+    // hydrates ``missingAddressCount`` from the envelope's
+    // ``missing_address`` bucket. Intercept both the bare endpoint
+    // (no chips active) and any query-string variant. Legacy
+    // ``count_only`` intercept above retained for the two other
+    // tests in this file that don't hit the badge-rendering path.
+    // Precedent: c09c94d05 (P44 fix in Tail Fix D).
+    if (path === "/customers/counts"
+          || path.startsWith("/customers/counts?")) {
+      return Promise.resolve({
+        active: 0, inactive: 0, muted: 0, waitlist: 0,
+        missing_address: missingAddressCount,
+        portal_activated: 0, portal_not_activated: 0,
+        no_payment_method: 0, never_logged_in: 0,
+      });
+    }
     if (path.includes("count_only=true")) {
       return Promise.resolve({ count: 0 });
     }
@@ -82,11 +100,15 @@ describe("CustomersList · P43b missing-address chip", () => {
       const badge = screen.getByTestId("customers-missing-address-count");
       expect(badge.textContent).toMatch(/\(?\s*42\s*\)?/);
     });
-    // Correct endpoint was hit.
+    // Feb-2026 · Tail Fix E — standalone-badge counts now hydrate
+    // from the consolidated ``/customers/counts`` envelope (Phase
+    // P31 migration). Legacy ``count_only=true`` fanout is retired,
+    // so the assertion checks the new endpoint was called. Same
+    // pattern as c09c94d05 (P44 fix in Tail Fix D).
     const calls = mockGet.mock.calls.map((c) => c[0]);
-    expect(calls).toContain(
-      "/customers?count_only=true&missing_address=true",
-    );
+    expect(calls.some((p) =>
+      p === "/customers/counts" || p.startsWith("/customers/counts?"),
+    )).toBe(true);
   });
 
   it("clicking the chip fires a fetch with missing_address=true", async () => {
