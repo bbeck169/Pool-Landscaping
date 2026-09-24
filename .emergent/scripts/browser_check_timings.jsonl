@@ -1,0 +1,1 @@
+{"ts": "2026-09-24T05:34:51", "name": "home-crumb-404-check", "mode": "ran-inline", "url": "http://localhost:3000/dashboard", "passed": false, "total_ms": 706, "pw_import_ms": 346, "launch_ms": null, "first_goto_ms": null, "body_ms": null, "body_gotos": []}
