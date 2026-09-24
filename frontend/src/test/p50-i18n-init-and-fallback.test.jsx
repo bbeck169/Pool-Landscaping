@@ -58,11 +58,22 @@ describe("P50 · i18n init contract", () => {
     expect(ns).toContain("propertyselector");
   });
 
-  it("carries the P52 tenant.default_locale slot TODO comment in " +
-     "i18n/index.js — the next phase's wire-in point must stay " +
-     "visible so nobody has to grep for it", () => {
+  it("P52 tenant.default_locale anchor was consumed and detector " +
+     "is wired — post-P52 negative-space check.  This test's role " +
+     "evolved during the P50→P52 bridge: originally it locked the " +
+     "presence of a TODO(P52) grep-anchor comment planted in " +
+     "i18n/index.js so the next phase (P52) had a visible wire-in " +
+     "point.  Now that P52 has landed and consumed that anchor by " +
+     "replacing it with the actual lang-tenant-default detector, " +
+     "the test inverts to guard against two regressions:\n" +
+     "  (a) somebody re-adding a TODO(P52) comment for a future " +
+     "      phase and forgetting to remove it after that phase ships;\n" +
+     "  (b) somebody deleting the lang-tenant-default detector.", () => {
     const src = _readIndex();
-    expect(src).toMatch(/TODO\(P52\)[\s\S]*tenant\.default_locale/);
+    // (a) TODO(P52) anchor must NOT be present — its job is done.
+    expect(src).not.toMatch(/TODO\(P52\)/);
+    // (b) The detector name still lives in the file, gated + wired
+    //     in the detection order.
     expect(src).toMatch(/lang-tenant-default/);
   });
 });
