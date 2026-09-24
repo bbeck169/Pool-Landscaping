@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { MapPin, Play, Info } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
+import MapView from "@/components/MapView";
 
 function rankColor(rank) {
   if (rank == null) return "#F3F4F6";
@@ -13,6 +14,33 @@ function rankColor(rank) {
   if (rank <= 15)  return "#EAB308";        // yellow
   if (rank <= 20)  return "#F97316";        // orange
   return "#DC2626";                          // red
+}
+
+// Task K · Commit 1 (folded into Commit 2) · Feb-2026 — Web
+// Mercator half-earth heuristic for picking a Leaflet zoom
+// level from a heatmap's radius in miles.
+//
+// Earth circumference ≈ 24 902 mi. At zoom Z one map tile spans
+// ``EARTH_CIRCUM / 2 ** Z`` miles on the equator. Solve for Z
+// so a target radius (times two for diameter) fits comfortably
+// in a tile: ``zoom = round(log2(EARTH_CIRCUM / (radius * 2)))``.
+//
+// Clamped to Leaflet's practical range [8, 16] so a stray input
+// (0.1mi or 200mi) can't blow past useful tile density.
+//
+// Lookup table (do NOT re-derive on every read):
+//   1 mi  -> zoom 14   (neighborhood)
+//   3 mi  -> zoom 12   (small city sector)
+//   5 mi  -> zoom 11   (metro suburb — Task J preview default)
+//   10 mi -> zoom 10   (full metro)
+//   25 mi -> zoom  9   (metro + collar)
+//   50 mi -> zoom  8   (regional)
+const _EARTH_CIRCUM_MI = 24902;
+function _zoomForRadiusMiles(radiusMi) {
+  const r = Number(radiusMi);
+  if (!Number.isFinite(r) || r <= 0) return 13;
+  const raw = Math.log2(_EARTH_CIRCUM_MI / (r * 2));
+  return Math.min(16, Math.max(8, Math.round(raw)));
 }
 
 // Task J · Commit 2 · Feb-2026 — map a thrown ``api`` error into
@@ -149,8 +177,6 @@ export default function RankHeatmap() {
       setError(_mapHeatmapError(e));
     } finally { setStarting(false); }
   };
-
-  const grid = current?.grid_size || form.grid_size;
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6" data-testid="rank-heatmap-page">
@@ -301,7 +327,17 @@ export default function RankHeatmap() {
           ) : null}
         </div>
 
-        {/* Heatmap render */}
+        {/* Heatmap render — Task K · Feb-2026:
+              the legacy synthetic 5×5 grid was replaced by a real
+              Leaflet/Google MapView with colored dot markers per
+              point. Placeholder + generating branches preserved
+              verbatim inside the same ``rank-heatmap-grid-view``
+              wrapper (Task J's vitest keys on the wrapper's text
+              content for the placeholder assertion). The map is
+              only rendered when ``current.status === 'done'`` AND
+              there is at least one point — otherwise Leaflet gets
+              handed an empty ``layers`` array on cold-boot which
+              still mounts an empty tile viewport (undesirable). */}
         <div className="rounded-2xl p-4 md:col-span-2"
              style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
              data-testid="rank-heatmap-grid-view">
@@ -315,49 +351,81 @@ export default function RankHeatmap() {
                  style={{ color: colors.muted }}>
               Generating grid… (status: {current.status})
             </div>
+          ) : (current.points || []).length === 0 ? (
+            <div className="h-full flex items-center justify-center text-sm py-16"
+                 style={{ color: colors.muted }}>
+              Heatmap completed but returned no points.
+            </div>
           ) : (
             <>
-              <div className="grid gap-1 mb-3"
-                   style={{ gridTemplateColumns: `repeat(${grid}, minmax(0, 1fr))` }}>
-                {(current.points || []).map((p, i) => (
-                  <button key={i}
-                          onClick={() => setSelectedCell(p)}
-                          className="aspect-square rounded transition hover:scale-105"
-                          style={{ backgroundColor: rankColor(p.rank) }}
-                          title={`Rank ${p.rank} · ${p.lat},${p.lng}`}
-                          data-testid={`rank-heatmap-cell-${i}`}>
-                    <div className="text-xs font-bold text-white">
-                      {p.rank <= 20 ? p.rank : "20+"}
-                    </div>
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-xs" style={{ color: colors.muted }}>
+              {/* Task K · Feb-2026 — replace the 25-button synthetic
+                   grid with a real Leaflet/Google MapView. MapView's
+                   ``points`` channel is used (not ``circles``) —
+                   idiomatic per Dispatch / D2D / Ops consumers, and
+                   the only channel that renders in both provider
+                   modes (see components/MapView.jsx :140-158 for
+                   the Google path). Each marker carries the full
+                   point object as ``payload`` so the click handler
+                   can hydrate ``selectedCell`` verbatim, including
+                   ``url_found`` and any future fields Task J or a
+                   later task adds. */}
+              <MapView
+                center={[current.center.lat, current.center.lng]}
+                zoom={_zoomForRadiusMiles(current.radius_miles)}
+                height={520}
+                testid="rank-heatmap-map"
+                layers={[{
+                  key: "rank-heatmap-points",
+                  points: (current.points || [])
+                    .filter((p) =>
+                      Number.isFinite(p.lat) && Number.isFinite(p.lng))
+                    .map((p, i) => ({
+                      id:       `rh-${i}`,
+                      lat:      p.lat,
+                      lng:      p.lng,
+                      color:    rankColor(p.rank),
+                      label:    `Rank ${p.rank == null ? "—" : p.rank}`,
+                      subtitle: `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`,
+                      onClick:  () => setSelectedCell(p),
+                      payload:  p,
+                    })),
+                }]}
+              />
+              <div className="grid grid-cols-3 gap-2 text-xs mt-3"
+                    style={{ color: colors.muted }}>
                 <div>Avg rank: <b style={{ color: colors.onSurface }}>{current.avg_rank}</b></div>
                 <div>Top-10 cells: <b style={{ color: colors.onSurface }}>{current.top_position_count}</b></div>
                 <div>Grid: {current.grid_size}×{current.grid_size}</div>
               </div>
-              {selectedCell && (
-                <div className="mt-3 p-3 rounded-lg text-xs"
-                     style={{ backgroundColor: colors.background,
-                              border: `1px solid ${colors.border}` }}
-                     data-testid="rank-heatmap-selected-cell">
-                  <div className="font-bold" style={{ color: colors.onSurface }}>
-                    Rank {selectedCell.rank} at {selectedCell.lat}, {selectedCell.lng}
-                  </div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider mt-2 mb-1"
-                       style={{ color: colors.muted }}>Top 10</div>
-                  <ol className="ml-4 space-y-0.5" style={{ color: colors.brand }}>
-                    {(selectedCell.top_10_urls || []).slice(0, 10).map((u, i) => (
-                      <li key={i}>{i + 1}. {u}</li>
-                    ))}
-                  </ol>
-                </div>
-              )}
             </>
           )}
         </div>
       </div>
+
+      {/* Task K · Feb-2026 — Detail panel hoisted OUT of the
+           ``current.status === 'done'`` branch so a click that
+           lands right before a status flip (e.g. user re-generates
+           over an existing done heatmap) still renders. Testid +
+           payload shape preserved verbatim from the pre-Task-K
+           grid renderer (rank-heatmap-selected-cell) so Task J's
+           consumer contract survives. */}
+      {selectedCell && (
+        <div className="mt-3 p-3 rounded-2xl text-xs"
+             style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+             data-testid="rank-heatmap-selected-cell">
+          <div className="font-bold" style={{ color: colors.onSurface }}>
+            Rank {selectedCell.rank} at {selectedCell.lat}, {selectedCell.lng}
+          </div>
+          <div className="text-[10px] font-bold uppercase tracking-wider mt-2 mb-1"
+               style={{ color: colors.muted }}>Top 10</div>
+          <ol className="ml-4 space-y-0.5" style={{ color: colors.brand }}>
+            {(selectedCell.top_10_urls || []).slice(0, 10).map((u, i) => (
+              <li key={i}>{i + 1}. {u}</li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div className="rounded-2xl p-4"
