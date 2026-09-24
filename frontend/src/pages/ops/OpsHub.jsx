@@ -2239,6 +2239,15 @@ export function PriceBook() {
   // Bulk-select state + inline row edit state.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Phase P56 · Feb-2026 — Bulk Edit Categories modal state
+  // (mirrors P54's RecurringJobs bulk-edit modal semantic — empty
+  // string "" is the "Unchanged" sentinel; NEVER sent in the POST
+  // payload).
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkEditServiceCat, setBulkEditServiceCat] = useState("");
+  const [bulkEditIncomeCat, setBulkEditIncomeCat] = useState("");
+  const [bulkEditBusy, setBulkEditBusy] = useState(false);
+  const [bulkEditError, setBulkEditError] = useState("");
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
@@ -2277,6 +2286,93 @@ export function PriceBook() {
     } catch (e) {
       setToast({ tone: "error", message: e.message || "Bulk delete failed" });
     } finally { setBusy(false); }
+  };
+
+  // Phase P56 · Feb-2026 — Bulk Edit Categories.
+  //
+  // Posts every selected item id to
+  // ``POST /api/pricebook/bulk-update-categories``. Payload includes
+  // ONLY dropdowns the user changed off "Unchanged" — empty-string
+  // sentinels are omitted so the backend's ``model_fields_set``
+  // check keeps them out of the write set.
+  //
+  // Batch cap 100 (backend constant _PRICEBOOK_BULK_UPDATE_
+  // CATEGORIES_MAX). Payloads > 100 are sliced in place so the
+  // operator never sees a raw 400. Aggregate counts across slices
+  // drive the toast.
+  const _BULK_UPDATE_CATEGORIES_BATCH = 100;
+  const doBulkEditCategories = async () => {
+    if (selectedIds.size === 0) return;
+    if (bulkEditBusy) return;
+    if (!bulkEditServiceCat && !bulkEditIncomeCat) {
+      setBulkEditError(
+        "Pick at least one category to apply before Apply.",
+      );
+      return;
+    }
+    setBulkEditError("");
+    setBulkEditBusy(true);
+    try {
+      const allIds = Array.from(selectedIds);
+      let updated = 0;
+      let already = 0;
+      let failed = 0;
+      let childInv = 0;
+      for (let i = 0; i < allIds.length; i += _BULK_UPDATE_CATEGORIES_BATCH) {
+        const slice = allIds.slice(i, i + _BULK_UPDATE_CATEGORIES_BATCH);
+        const payload = { ids: slice };
+        if (bulkEditServiceCat) {
+          payload.service_category_id = bulkEditServiceCat;
+        }
+        if (bulkEditIncomeCat) {
+          payload.income_category_id = bulkEditIncomeCat;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await api.post(
+          "/pricebook/bulk-update-categories", payload,
+        );
+        updated += Number(res?.updated || 0);
+        already += Number(res?.already_current || 0);
+        failed += Number(res?.failed || 0);
+        childInv += Number(
+          res?.sync_result_summary?.child_invoices_updated || 0,
+        );
+      }
+      const parts = [`${updated} updated`];
+      if (already > 0) parts.push(`${already} already current`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      const tail = childInv > 0
+        ? ` · ${childInv} invoice${childInv === 1 ? "" : "s"} synced`
+        : "";
+      const line = `${parts.join(", ")}${tail}`;
+      setToast({
+        tone: failed > 0 ? "warning" : "success",
+        message: line,
+      });
+      clearSelection();
+      setBulkEditOpen(false);
+      setBulkEditServiceCat("");
+      setBulkEditIncomeCat("");
+      refresh();
+    } catch (e) {
+      // Backend payload-level 422s carry {code, field, attempted,
+      // collection}. Render code inline next to the dropdowns.
+      const raw = e?.response?.data?.detail || e?.data?.detail || e?.detail;
+      if (raw && typeof raw === "object" && raw.code) {
+        setBulkEditError(
+          `${raw.code}${raw.field ? ` (${raw.field})` : ""}`,
+        );
+      } else if (raw && typeof raw === "object" && raw.error) {
+        setBulkEditError(String(raw.error));
+      } else {
+        setToast({
+          tone: "error",
+          message: e?.message || "Bulk edit failed",
+        });
+      }
+    } finally {
+      setBulkEditBusy(false);
+    }
   };
   const startEdit = (row) => {
     setEditingId(row.id);
@@ -2746,6 +2842,27 @@ export function PriceBook() {
                     data-testid="bulk-delete-button">
             <Trash2 size={12} /> Delete selected
           </button>
+          {/* Phase P56 · Feb-2026 — Bulk Edit Categories button.
+               Neutral indigo affordance so it reads as *editing*,
+               not activating or destroying. Always rendered inside
+               the toolbar so testid is queryable when the bar is
+               visible. */}
+          <button type="button"
+                    onClick={() => {
+                      setBulkEditServiceCat("");
+                      setBulkEditIncomeCat("");
+                      setBulkEditError("");
+                      setBulkEditOpen(true);
+                    }}
+                    disabled={bulkEditBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#4F46E5", color: "#FFFFFF",
+                              opacity: bulkEditBusy ? 0.5 : 1,
+                              cursor: bulkEditBusy ? "not-allowed" : "pointer" }}
+                    aria-disabled={bulkEditBusy}
+                    data-testid="bulk-edit-categories-button">
+            {bulkEditBusy ? "Applying…" : "Bulk Edit Categories"}
+          </button>
           <button type="button" onClick={clearSelection}
                     className="text-xs font-semibold underline"
                     style={{ color: "rgba(255,255,255,0.85)" }}
@@ -2778,6 +2895,108 @@ export function PriceBook() {
                         style={{ backgroundColor: "#DC2626" }}
                         data-testid="bulk-delete-confirm-btn">
                 {busy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase P56 · Feb-2026 — Bulk Edit Categories modal.
+           Two dropdowns (Service, Income) each with an
+           "Unchanged" sentinel first-option (empty string) that
+           the Apply handler OMITS from the POST payload. Apply is
+           disabled when both dropdowns are still "Unchanged" or
+           the request is in-flight. Inline error slot picks up
+           backend 422 codes so the operator sees the specific
+           failure without a raw toast. */}
+      {bulkEditOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setBulkEditOpen(false); }}
+              data-testid="bulk-edit-categories-modal">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl bg-white">
+            <h2 className="text-lg font-bold">
+              Bulk Edit Categories · {selectedCount} item{selectedCount === 1 ? "" : "s"}
+            </h2>
+            <p className="text-sm mt-1" style={{ color: colors.muted }}>
+              Pick a new category for every selected Pricebook
+              item. Fields left as <span className="font-semibold">Unchanged</span>
+              {" "}stay at their current value — only the fields you
+              change are written. Service items reject Income
+              Category and land in the failed list.
+            </p>
+            <label className="block mt-4">
+              <span className="block text-xs font-semibold mb-1"
+                    style={{ color: colors.muted }}>
+                New Service Category
+              </span>
+              <select
+                value={bulkEditServiceCat}
+                onChange={(e) => setBulkEditServiceCat(e.target.value)}
+                aria-label="New service category for bulk edit"
+                data-testid="bulk-edit-service-cat-select"
+                className="w-full text-sm rounded-md py-2 px-2 border"
+              >
+                <option value="">Unchanged</option>
+                {(serviceCats || []).map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block mt-3">
+              <span className="block text-xs font-semibold mb-1"
+                    style={{ color: colors.muted }}>
+                New Income Category
+              </span>
+              <select
+                value={bulkEditIncomeCat}
+                onChange={(e) => setBulkEditIncomeCat(e.target.value)}
+                aria-label="New income category for bulk edit"
+                data-testid="bulk-edit-income-cat-select"
+                className="w-full text-sm rounded-md py-2 px-2 border"
+              >
+                <option value="">Unchanged</option>
+                {incomeCats.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+            {bulkEditError ? (
+              <div
+                className="mt-3 rounded-md px-3 py-2 text-xs"
+                style={{
+                  background: "#FEF2F2",
+                  border: "1px solid #FECACA",
+                  color: "#B91C1C",
+                }}
+                data-testid="bulk-edit-error"
+              >
+                {bulkEditError}
+              </div>
+            ) : null}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button"
+                       onClick={() => setBulkEditOpen(false)}
+                       className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100"
+                       data-testid="bulk-edit-cancel">
+                Cancel
+              </button>
+              <button type="button"
+                       onClick={doBulkEditCategories}
+                       disabled={
+                         bulkEditBusy ||
+                         selectedCount === 0 ||
+                         (!bulkEditServiceCat && !bulkEditIncomeCat)
+                       }
+                       aria-disabled={
+                         bulkEditBusy ||
+                         selectedCount === 0 ||
+                         (!bulkEditServiceCat && !bulkEditIncomeCat)
+                       }
+                       className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                       style={{ backgroundColor: "#4F46E5" }}
+                       data-testid="bulk-edit-apply">
+                {bulkEditBusy ? "Applying…" : "Apply"}
               </button>
             </div>
           </div>
