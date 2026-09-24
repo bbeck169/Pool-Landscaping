@@ -22043,6 +22043,81 @@ Same P58 fix pattern applies to all three HIGH items: introduce `tenant_id = use
 
 ---
 
+## Task C — Pricebook inline category cells (Feb-2026)
+
+**Scope**: Enable admins to edit an item's **Service Category** and **Income Category** directly from each row of the Pricebook list in `OpsHub.jsx` — no modal open, auto-save on selection, resolve-or-create in a single UX gesture. Web-only; mobile port is a separate task. Reuses the Recurring Jobs `CategoryComboCell` component by parameterizing it in the same series.
+
+### Grep 1 — `CategoryComboCell.jsx` audit
+
+- **Path**: `src/components/recurring/CategoryComboCell.jsx` (194 lines).
+- **Pre-task PATCH URL**: hardcoded to `/recurring-jobs/${row.id}` at L102.
+- **Resolve-or-create UX**: inline single gesture — typing a name that isn't in the master list → `POST /api/{axis}-categories/resolve-or-create` at save time (blur 400ms debounce OR Enter) → PATCH follows. No modal, no explicit "Create" button. Enter/blur commits, ESC cancels.
+- **Production callsites**: **1** — `src/pages/admin/RecurringJobs.jsx` (2 JSX instances on the same row: service axis L1445, income axis L1455).
+- **Test callsites**: 2 (`phase-recurring-jobs-inline-edit-render.test.jsx`, `phase-recurring-jobs-category-autocomplete.test.jsx`).
+
+### Grep 2 — PriceBook component in `OpsHub.jsx`
+
+- Component at L2122; row rendering at L2686–2827 (li flex layout, non-editing branch at L2760–2825).
+- **`serviceCats`** declared at L2148, populated from `GET /api/service-categories`.
+- **`incomeCats`** declared at L2163, populated from `GET /api/income-categories`.
+- **`refresh`** from `useList("/items")` at L2123 — directly available for `onPatched`.
+- **Row shape**: `id`, `service_category_id`, `income_category_id`, `item_type`. **No denorm name fields** — cell display resolves the name via `serviceCats.find(...)` / `incomeCats.find(...)`.
+
+### Grep 3 — Backend contract
+
+- **`ItemPatch`** (backend/routers/items.py L222): already carries both `service_category_id: Optional[str] = None` (L236) and `income_category_id: Optional[str] = None` (L246) — no pydantic widening needed.
+- **`PATCH /api/items/{iid}`**: post-P58 tenant-scoped, accepts both category id fields.
+- **`POST /api/service-categories/resolve-or-create`** and **`POST /api/income-categories/resolve-or-create`**: both exist, both return the same `{category: {id, name, ...}}` shape `CategoryComboCell` consumes.
+
+### Design decisions
+
+- **No `patchUrl` default** — required prop. Migrates both Recurring Jobs production callsites + 7 test callsites to pass it explicitly in the same commit. Prevents future "forgot the prop → accidental hardcoded URL" bugs.
+- **`onPatched={() => refresh()}`** — whole-list refetch. Ignores the patch payload since a `/items` refetch is simpler than surgical row-merging and guarantees consistency. Matches the P56 bulk-edit sibling pattern in the same file.
+- **`item_type === 'service'` guard** — Income cell renders an inert `<div>—</div>` placeholder with matching column width instead of `null`-ing out, so column alignment stays clean across mixed rows.
+- **Testid convention** — `pb-cat-${axis}-${row.id}` for the combobox instance (via `dataTestidBase`), `pb-cell-${axis}-category-${row.id}` on the outer wrapper div, `pb-cat-income-${row.id}-na` on the placeholder.
+
+### Test coverage delivered
+
+- **`task-c-pricebook-inline-category-cells.test.jsx`** (Commit 3 · `fe25781a5`) — **5 tests**:
+  1. Non-service item — both cells render with resolved current-name from `serviceCats` / `incomeCats`.
+  2. Service-typed item — Income cell renders `—` placeholder (parent-side guard).
+  3. Selecting an existing category → PATCH `/items/{id}` fires with the correct payload → `refresh()` called once.
+  4. Typing a brand-new category name → resolve-or-create → PATCH → `refresh()`.
+  5. **RecurringJobs callsite regression** — safety-margin guard for Commit 1's refactor. Same component, different `patchUrl` → PATCH routes correctly; `onPatched` payload shape preserved.
+- **RecurringJobs test files** (Commit 1) — 7/7 green after fixture-migration to explicit `patchUrl`. No behavior change; the tests now pass the prop that the component's runtime requires.
+- **P56 bulk-edit sibling test suite** (regression guard on the same file) — 18/18 green.
+
+### Backend curl sanity (post-P58 contract verification)
+
+- `POST /api/service-categories/resolve-or-create` with fresh name `task-c-svc-1790271122` → 200; returned `{created: true, category: {id, name, tenant_id, ...}}`.
+- `POST /api/income-categories/resolve-or-create` with fresh name → 200; same shape.
+- `PATCH /api/items/{iid}` with `{service_category_id: <fresh-id>}` → 200; response payload confirms `service_category_id` on the row and `tenant_id` preserved (P58 tenant scoping intact).
+- Follow-up `GET /api/items` re-fetch confirms the category id persisted server-side.
+
+### Regression telemetry (baseline `b391721d2..HEAD`)
+
+- **New tests**: 5 (Task C · Commit 3).
+- **Migrated tests**: 7 (Recurring Jobs · Commit 1 — explicit `patchUrl` prop).
+- **Adjacent regression sweep**: P56 bulk-edit 18/18 green, Recurring Jobs inline-edit 7/7 green.
+- **Regressions introduced**: **0**.
+
+### Commit series (Task C · 5 commits inside main branch)
+
+1. `5120940e7` · `feat(pricebook-inline-cats): parameterize CategoryComboCell with patchUrl prop` — 55 lines changed (46 additions, 9 deletions). Removes hardcoded `/recurring-jobs/${row.id}`; migrates 2 production callsites + 7 test callsites.
+2. `f53bb155e` · `feat(pricebook-inline-cats): add Service + Income category cells to PriceBook rows` — 53 additions on `OpsHub.jsx`.
+3. `fe25781a5` · `test(pricebook-inline-cats): vitest coverage for the two new cells` — 263 additions (new test file, 5 cases).
+4. Backend curl sanity check (captured in the deliverable pack; no code artifact).
+5. `docs(pricebook-inline-cats): Task C PRD section` (this section).
+
+### Non-goals
+
+- No mobile changes (mobile port is a separate task).
+- No inline-edit (Quick edit) branch changes — different UX surface.
+- No backend changes.
+
+---
+
+
 
 
 
