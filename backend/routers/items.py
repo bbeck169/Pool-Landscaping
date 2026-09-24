@@ -340,8 +340,28 @@ async def patch_item(iid: str, body: ItemPatch,
     """Phase 34 · Task KK · Feb 2026 — partial update of a pricebook
     item. Validates numeric ranges (unit_price ≥ 0, cost ≥ 0,
     tax_rate 0-100). Emits an ``audit_log`` row with the changed
-    field set for later auditing."""
-    row = await db.items.find_one({"id": iid}, {"_id": 0})
+    field set for later auditing.
+
+    Phase P58 · Feb-2026 — tenant-scope hardening. Every find/update
+    call now filters by ``tenant_id`` alongside the row id, mirroring
+    the P57 hardening of ``_soft_delete_item``. Prior to this fix an
+    admin from tenant A could PATCH tenant B's pricebook item just by
+    knowing (or brute-forcing) the item id — a cross-tenant mutation
+    breach. Same commit also closes an adjacent audit-trail integrity
+    gap: the ``audit_log`` row previously omitted ``tenant_id``, so
+    audit queries scoped to a tenant would miss pricebook.patch rows.
+    """
+    tenant_id = user.get("tenant_id")
+    # Phase P58 · Feb-2026 — mirror the P57 ``_soft_delete_item`` guard.
+    # An empty / whitespace / None tenant_id would silently collapse the
+    # tenant filter (``{tenant_id: None}`` returns nothing, but a fall-
+    # back path that skipped the filter would leak). Fail-loud instead.
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError(
+            "patch_item requires a non-empty tenant_id on the caller"
+        )
+    row = await db.items.find_one({"id": iid, "tenant_id": tenant_id},
+                                    {"_id": 0})
     if not row:
         raise HTTPException(404, "Item not found")
     if row.get("deleted_at"):
@@ -433,10 +453,15 @@ async def patch_item(iid: str, body: ItemPatch,
         # are immutable, so empty suppliers[] never affects them.
     upd["updated_at"] = now_iso()
     upd["updated_by_user_id"] = user.get("id")
-    await db.items.update_one({"id": iid}, {"$set": upd})
+    await db.items.update_one({"id": iid, "tenant_id": tenant_id},
+                                {"$set": upd})
     try:
         await db.audit_log.insert_one({
             "id": new_id(),
+            # Phase P58 · Feb-2026 — audit-trail integrity fix. This
+            # row previously omitted tenant_id, so audit queries
+            # scoped to a tenant would miss ``pricebook.patch`` rows.
+            "tenant_id": tenant_id,
             "actor_user_id": user.get("id"),
             "actor_email": user.get("email"),
             "action": "pricebook.patch",
@@ -446,7 +471,8 @@ async def patch_item(iid: str, body: ItemPatch,
         })
     except Exception as e:                                        # noqa: BLE001
         logger.warning(f"pricebook.patch audit failed: {e}")
-    return await db.items.find_one({"id": iid}, {"_id": 0})
+    return await db.items.find_one({"id": iid, "tenant_id": tenant_id},
+                                     {"_id": 0})
 
 
 @router.delete("/items/{iid}")
