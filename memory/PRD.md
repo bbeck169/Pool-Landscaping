@@ -24359,3 +24359,245 @@ All 5 stashes contain mobile-pod drift only (`memory/mobile/`, `mobile/.expo/`, 
 5 pre-existing stashes (mobile-pod drift, untouched — §9).
 
 
+
+## Task K — Rank Heatmap UI refactor · replace grid card with interactive MapView (Feb-2026 · SHIPPED preview)
+
+Replace `RankHeatmap.jsx`'s synthetic 25-button grid on the right-
+side card with a real interactive `MapView` (Leaflet or Google
+Maps per tenant config). Circular colored-dot markers overlay the
+map at each point's lat/lng, tinted by `rankColor()`. Click a
+marker → detail panel unfolds with the full point payload
+(rank + top 10 URLs). Task J's polling loop + validation/error
+banners + left sidebar all preserved verbatim.
+
+3 atomic commits · 2 files touched · +465 / -36. Frontend-only.
+No backend, no mobile.
+
+### 1. Grep pass — 4 reports before any code
+
+#### 1a. `MapView.jsx` interface (`frontend/src/components/MapView.jsx`, 187 LOC)
+
+| Prop | Shape | Default | Notes |
+|---|---|---|---|
+| `center` | `[lat, lng]` **array** | Vistancia coords | NOT the `{lat, lng}` object form; convert on integration |
+| `zoom` | `number` | 13 | No `minZoom`/`maxZoom` props; Leaflet default 0-18; `scrollWheelZoom` on |
+| `height` | `number` | 560 | px |
+| `layers` | `[{ key, points, polyline?, polylineColor?, dashed?, circles? }]` | `[]` | Primary data channel |
+| `testid` | string | `"map-view"` | Stamped on outer wrapper div |
+
+Point shape: `{id, lat, lng, color, label, subtitle, onClick, actions}`. Color resolution (`L78`): `DOT_COLORS[p.color] || p.color || DOT_COLORS.blue` — accepts named color KEYS **and** raw hex strings. Two provider paths — `LeafletMapView` (default) and `GoogleMapView` (when `REACT_APP_GOOGLE_API_KEY` set AND `/public/map-settings` returns `map_provider: "google"`). Both render `points` identically as small colored circles; `polyline` also cross-mode. **`circles` (native `<CircleMarker>`) is Leaflet-only.**
+
+#### 1b. `rankColor()` function (`RankHeatmap.jsx :9-15`)
+
+Pure function, returns raw hex strings — directly consumable via MapView's `p.color` fallback. No conversion needed:
+
+```
+rank == null → #F3F4F6 (gray-100)
+rank <=   3  → #059669 (emerald-600)
+rank <=  10  → #65A30D (lime-600)
+rank <=  15  → #EAB308 (yellow-500)
+rank <=  20  → #F97316 (orange-500)
+rank >   20  → #DC2626 (red-600)
+```
+
+#### 1c. Current grid renderer + `selectedCell` (`RankHeatmap.jsx :304-359` pre-Task-K)
+
+* Outer wrapper: `data-testid="rank-heatmap-grid-view"` (Task J's vitest queries the wrapper `textContent` for the placeholder assertion).
+* 3 branches: `!current` (placeholder) → `status !== "done"` (generating) → 5×5 grid of 25 buttons.
+* Per-cell button: `data-testid="rank-heatmap-cell-{i}"` — removed by Task K's refactor.
+* Metrics row: `avg_rank`, `top_position_count`, `grid_size` — pulled directly from `current.*`, decoupled.
+* Detail panel: `data-testid="rank-heatmap-selected-cell"` — reads only `selectedCell.{rank,lat,lng,top_10_urls}`. Fully reusable verbatim.
+* `selectedCell` state on `L76` (pre-Task-K numbering). Payload shape: `{lat, lng, rank, top_10_urls, url_found?}` — Task J confirmed the `url_found` bonus field.
+
+#### 1d. Miles → zoom helper
+
+**Did not exist pre-Task-K.** No `milesToZoom` / `radiusToZoom` / `zoomFromMiles` matches. No `lib/mapHelpers.js` or `lib/geo.js` files.
+
+Added inline in `RankHeatmap.jsx` (K71-style feature-local helper) as `_zoomForRadiusMiles(radiusMi)`. Web Mercator half-earth heuristic, clamped `[8, 16]`. Lookup table documented in-place — future readers should never need to re-derive the math. See §3b for the table.
+
+### 2. Design decisions
+
+**Halt-and-report items — none tripped:**
+
+* MapView supports both `points` (visual circles via `divIcon`) AND `circles` (native SVG `<CircleMarker>`) — both first-class.
+* `rankColor()` returns hex directly consumable by MapView.
+* Detail panel decoupled from grid testids/state.
+* Miles→zoom helper trivial to derive; no projection utilities missing.
+
+**Non-blocker decisions (all 6 approved by user before code):**
+
+1. **Marker channel → `points`** (not `circles`). Rationale: idiomatic (Dispatch / D2D / Ops all use `points`); works in BOTH Leaflet + Google modes (`circles` is Leaflet-only per `MapView.jsx :98-105` vs. `:117-186`). `circles` deferred as a future enhancement if a Leaflet-primary rollout ever emerges (truer heatmap coverage look; SVG scales with zoom).
+
+2. **Testid migration** — old `rank-heatmap-cell-{i}` (25 grid buttons) → new `rank-heatmap-marker-{i}` (asserted via mocked MapView boundary; real DOM does not stamp per-marker testids). Rationale: attaching per-marker testids to real Leaflet/Google markers requires mutating `MapView.jsx`'s props contract, which affects the 3 existing consumers (Dispatch, D2D, Ops).
+
+3. **Outer container testid** — keep `rank-heatmap-grid-view` on the wrapping `<div>`, pass `testid="rank-heatmap-map"` INTO MapView. Rationale: Task J's `_mount()` + placeholder tests key on the wrapper's `textContent`; preserving the outer testid keeps Task J's 9/9 vitest green with zero churn.
+
+4. **Detail panel hoisted OUT of the `status === 'done'` branch** — now renders whenever `selectedCell` is truthy, regardless of `current.status`. Safer under fast-user-click + status-flip races (a user clicking right before a re-generate no longer loses the panel). Testid + payload shape preserved verbatim.
+
+5. **Placeholder + generating states** preserved verbatim inside the outer wrapper. Map only renders when `current.status === 'done'` AND `current.points.length > 0`. Added a NEW safety branch: `done + zero points → "Heatmap completed but returned no points."` — prevents an empty MapView mount (Leaflet would still render an empty tile viewport).
+
+6. **Commit split** — folded Commit 1 (helper) into Commit 2 (refactor). Helper is 12 LOC inline, single consumer — no atomic value in a lonely helper commit.
+
+**In-line decisions I made during the write:**
+
+* **Center prop shape** — `[current.center.lat, current.center.lng]` array (not `{lat, lng}` object) — matches MapView convention.
+* **Marker payload** — sets `payload: p` to the FULL original `current.points[i]` object so `setSelectedCell(m.payload)` gets `url_found` and any future fields for free.
+* **Marker label + subtitle** — `"Rank {r}"` and `"{lat}, {lng}"` shown on hover popup (Leaflet mode). Cheap semantic enrichment.
+* **Marker id** — `"rh-{i}"` — stable across re-renders since it's tied to array index.
+* **Cleanup** — removed unused `const grid = current?.grid_size || form.grid_size` at pre-Task-K L181; only served the old renderer's `gridTemplateColumns`.
+
+### 3. Frontend contract deltas
+
+#### 3a. State + hooks
+
+| State | Change |
+|---|---|
+| `selectedCell`, `setSelectedCell` | UNCHANGED — same signature, same payload shape |
+| `current`, `starting`, `error`, `validationError`, `form`, `rows` | UNCHANGED — all Task J state hooks preserved |
+| `grid` (component-scoped) | REMOVED — was only used by the old grid renderer's `gridTemplateColumns` |
+
+#### 3b. New helper — `_zoomForRadiusMiles(radiusMi)`
+
+Formula: `zoom = round(log2(24902 / (radiusMi * 2)))` clamped to `[8, 16]`. Guards non-finite / non-positive input to a safe default of `13`.
+
+| `radius_miles` | Raw log2 | Rounded | Clamped |
+|---:|---:|---:|---:|
+| 1  | 13.60 | 14 | 14 |
+| 3  | 12.02 | 12 | 12 |
+| 5  | 11.28 | 11 | 11 |
+| 10 | 10.28 | 10 | 10 |
+| 25 |  8.96 |  9 |  9 |
+| 50 |  7.96 |  8 |  8 |
+
+Vitest case 8 parametrises this table exactly (6 rows, 6 subtests).
+
+#### 3c. MapView props at the call site
+
+```jsx
+<MapView
+  center={[current.center.lat, current.center.lng]}
+  zoom={_zoomForRadiusMiles(current.radius_miles)}
+  height={520}
+  testid="rank-heatmap-map"
+  layers={[{
+    key: "rank-heatmap-points",
+    points: current.points
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      .map((p, i) => ({
+        id: `rh-${i}`,
+        lat: p.lat, lng: p.lng,
+        color: rankColor(p.rank),
+        label: `Rank ${p.rank ?? "—"}`,
+        subtitle: `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`,
+        onClick: () => setSelectedCell(p),
+        payload: p,
+      })),
+  }]}
+/>
+```
+
+#### 3d. Testid diff table
+
+| Status | Testid | Element | Notes |
+|---|---|---|---|
+| PRESERVED | `rank-heatmap-grid-view` | Outer wrapper `<div>` | Task J vitest keys the placeholder assertion here |
+| PRESERVED | `rank-heatmap-selected-cell` | Detail panel | Now lives OUTSIDE the `done` branch |
+| PRESERVED | Task J's `-kw`, `-lat`, `-lng`, `-grid`, `-radius`, `-run`, `-validation-error`, `-error`, `-mocked-banner` | All left sidebar + banner elements | Task J vitest 9/9 stays green |
+| NEW | `rank-heatmap-map` | MapView outer div | Task K refactor surface |
+| NEW (mock-only) | `rank-heatmap-marker-{i}` | Mocked MapView stub in vitest | See §2.2 rationale — real DOM has no per-marker testids |
+| REMOVED | `rank-heatmap-cell-{i}` | The 25 grid buttons | Replaced by `rank-heatmap-marker-{i}` mock testids |
+
+#### 3e. Branch shape inside `rank-heatmap-grid-view`
+
+| Predicate | Renders |
+|---|---|
+| `!current` | `"Run a keyword to see the heatmap."` placeholder |
+| `current.status !== "done"` | `"Generating grid… (status: {status})"` placeholder |
+| `current.points.length === 0` | **NEW** · `"Heatmap completed but returned no points."` safety copy |
+| Else | `<MapView>` + metrics row (Avg rank / Top-10 cells / Grid: N×N) |
+
+### 4. Test coverage summary
+
+**Frontend — 17 new vitest cases**, `frontend/src/test/task-k-rank-heatmap-map.test.jsx`:
+
+1. Placeholder branch renders + no map mounted.
+2. Generating branch renders + no map mounted.
+3. Done + zero points → safety copy + no map mounted.
+4. Done + points → `<MapView>` props: `center=[33.6,-112.2]`, `zoom=11`, layer key + point count verified.
+5. Marker fills match `rankColor()` (`#059669` / `#EAB308` / `#DC2626`).
+6. Click marker 0 → detail panel hydrated (rank + top-10 URLs).
+7. Click marker 2 → panel content swaps.
+8. Miles → zoom parametric table (6 rows: 1/3/5/10/25/50 mi → 14/12/11/10/9/8).
+9. Payload preserves the FULL point object (`url_found` + future fields).
+10. **Task J regression guard** — empty-form Generate still surfaces `rank-heatmap-validation-error` "Please fill all fields.", `api.post` never called.
+11. Metrics row (Avg rank / Top-10 cells / Grid) still renders.
+12. Detail panel hoist — persists across `done → running` status flip.
+
+Run: `yarn vitest run src/test/task-k-rank-heatmap-map.test.jsx` → **17/17 passing · 1.20 s**.
+
+**Baseline preservation:**
+
+* `yarn vitest run src/test/task-j-rank-heatmap.test.jsx` → **9/9 passing · 1.22 s** — Task J unchanged.
+* Task G's 71/71 tests still green.
+* Task E's cross-page symmetry regression guards still green.
+
+**Grand total: 26 new/preserved test cases · all green after Task K.**
+
+### 5. Preview screenshot evidence
+
+Captured against the preview tenant. Note: `REACT_APP_GOOGLE_API_KEY` is set + `/public/map-settings` returned `map_provider: "google"`, so preview routes through `GoogleMapView` (not Leaflet). Both provider paths use the `points` channel identically.
+
+| # | File | Scene |
+|---|---|---|
+| C2-a | `/tmp/task-k-c2-map-rendered.png` | Post-flip · Real Google Maps tiles rendered around Vistancia (Peoria / Glendale / Sun City visible). ~13-25 red markers overlaid at accurate grid positions (all red because keyword `"pool tile cleaning peoria"` ranks the tenant > 20 across the grid). Metrics row: `Avg rank: 84 · Top-10 cells: 0 · Grid: 5×5`. No error banner. |
+
+Marker-click preview screenshot deferred — vitest's mocked-boundary assertions (cases 6, 7, 9, 12) are a more reliable proof of the click-to-select flow than trying to Playwright-click a Google Maps `<GMarker>`. Both provider modes call `p.onClick(p)` via `L79` (Leaflet) / `L148` (Google), and the vitest stub asserts exactly that contract.
+
+### 6. Adjacent-scope notes
+
+* **`circles` channel deferred** — would produce truer heatmap coverage rendering (native SVG `<CircleMarker>` at any radius, `fillOpacity: 0.15`). Only supported in Leaflet mode (`MapView.jsx :98-105`; Google branch has no `circles` handling). Future enhancement if a Leaflet-primary rollout ever emerges.
+* **Marker testids on real DOM deferred** — attaching per-marker `data-testid` to real Leaflet/Google markers requires modifying `MapView.jsx`'s props contract (extend `points[i]` with a `testid` field, thread it into `L.divIcon`'s HTML string + Google's `<GMarker>` wrapper). Would affect all 3 existing consumers. Not needed since mocked-boundary vitest covers the integration contract.
+* **Google-mode-only preview** — preview tenant is Google-configured. Leaflet-mode preview capture is not straightforward (would require flipping `map_provider` via `/public/map-settings` or unsetting `REACT_APP_GOOGLE_API_KEY`). Leaflet path stays covered by the 3 existing consumers' regression tests + Task K vitest running with a provider-agnostic mock.
+* **`_zoomForRadiusMiles` extraction** — kept inline for now (K71-style, single consumer). If a second consumer emerges (e.g. Task-K-follow-up on driver-scorecard route replays or route-proximity heatmaps), extract to `frontend/src/lib/mapHelpers.js`.
+* **Task J Commit 3 pytest fixture drift** — the `_reset` autouse fixture at `backend/tests/test_admin_entitlement_force_on.py :95-108` wipes the aquaterra tenant's `seo_heatmap` entitlement row EVERY test run. This stomps the preview seed. **Recommendation for a future Task J follow-up:** switch the fixture to a synthetic tenant (e.g. `TEST_force_on_tenant_{run_id}`) instead of the real preview tenant, and rely on the existing `secondary_tenant_id` fixture pattern (already used for the cross-tenant isolation test). Noted here because Task K's preview verification hit the wipe once and required a re-seed.
+
+### 7. Injection-deflection audit trail
+
+Commits 2-4 · no injection attempts.
+
+### 8. Working tree at Commit 4
+
+Clean. No new stashes.
+
+Full stash bucket (5, all pre-existing, all mobile-pod drift, all untouched):
+```
+stash@{0}: task-j-c4-mobile-pod-drift
+stash@{1}: task-e-c5-mobile-mobilepod-drift
+stash@{2}: task-e-c5-mobile-drift-during-baseline
+stash@{3}: task-e-c5-p4-baseline
+stash@{4}: task-e-grep-pass-stash-mobile-prd-drift
+```
+
+### 9. Commit log & file-level breakdown
+
+```
+<Commit 4 — this docs pass; hash filled at commit time>
+d1cfa37a9 test(rank-heatmap-map): vitest coverage for MapView refactor (Commit 3)
+76303028f refactor(rank-heatmap-map): replace grid card with MapView + circular markers (Commit 2 · folded C1 helper)
+```
+
+**Full Task K delta** (`git diff --shortstat 76303028f^..HEAD` before Commit 4):
+
+```
+ 2 files changed, 465 insertions(+), 36 deletions(-)
+```
+
+**File-level breakdown:**
+
+| File | Layer | Insertions | Deletions |
+|---|---|---:|---:|
+| `frontend/src/pages/seo/RankHeatmap.jsx` | Frontend prod | 104 | 36 |
+| `frontend/src/test/task-k-rank-heatmap-map.test.jsx` | Frontend tests | 361 | 0 |
+| **`memory/PRD.md`** (this section) | **Docs** | **~330** | **0** |
+
+
