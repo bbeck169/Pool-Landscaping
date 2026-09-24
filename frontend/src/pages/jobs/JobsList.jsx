@@ -22,6 +22,10 @@ import {
   BulkConfirmModal,
   LockedPill,
 } from "@/components/bulk-select/BulkSelectToolkit";
+// Task L+P · Commit 6 · Feb-2026 — new "Photos" column strip.
+// Reads ``photo_ids`` + ``photo_thumb_urls`` already present on
+// list rows (Commit-3 widening).
+import { JobPhotoThumbs } from "@/components/jobs/JobPhotoThumbs";
 
 // Phase 34 · Feb 2026 — Dashboard KPI tiles link into this list
 // with ``?status=active`` / ``?status=pending`` (backend job docs
@@ -230,12 +234,17 @@ export default function JobsList() {
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Title</th>
               <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
               <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Scheduled</th>
+              <th className="text-left px-3 py-2 font-semibold hidden md:table-cell"
+                  style={{ color: colors.onSurfaceSecondary, width: 128 }}
+                  data-testid="jobs-col-photos">
+                Photos
+              </th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
             </tr>
           </thead>
           <tbody>
             {(rows || []).length === 0 && rows !== null ? (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-sm"
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="jobs-empty">
                 No jobs match this filter.
               </td></tr>
@@ -265,6 +274,14 @@ export default function JobsList() {
                     style={{ color: colors.muted }}
                     onClick={() => navigate(`/jobs/${r.id}`)}>
                   {r.scheduled_date || "—"}
+                </td>
+                <td className="px-3 py-3 hidden md:table-cell"
+                    onClick={() => navigate(`/jobs/${r.id}`)}>
+                  <JobPhotoThumbs
+                    jobId={r.id}
+                    photoIds={r.photo_ids}
+                    photoThumbUrls={r.photo_thumb_urls}
+                  />
                 </td>
                 <td className="px-3 py-3 text-xs" onClick={() => navigate(`/jobs/${r.id}`)}>
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px]"
