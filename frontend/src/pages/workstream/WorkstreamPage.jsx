@@ -23,6 +23,8 @@ import { Forbidden } from "@/hooks/usePermissions";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import { colors } from "@/theme";
 import { StatusPill } from "@/components/ui-kit";
+// Task E · Feb-2026 — Shared navy filter/search strip primitive.
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 // Phase 19 · Feb-2026 · Sub-item A — job assignee avatar.
 import { UserAvatar } from "@/components/UserAvatar";
 // Feb-2026 · Services / Repairs countdown pills (shared classifier
@@ -609,114 +611,71 @@ export default function WorkstreamPage() {
         />
       </div>
 
-      {/* Filter bar */}
-      <div
-        className="rounded-lg p-3 mb-3 flex flex-wrap gap-2 items-end"
-        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+      {/* Filter bar — Task E · Feb-2026: NavyFilterBar migration.
+          Wraps the pre-migration bare flex row in the shared navy
+          chrome. Each control renders with a stacked
+          ``text-[10px] font-bold uppercase`` caption above via
+          NavyFilterBar sub-primitive ``label`` props (decision
+          #3).  No Status dropdown to restyle (Phase 5A.2 removed
+          the filter — WS lists only completed jobs, decision #2).
+          The Technician admin gate stays around the control
+          (isAdmin ternary) so the primitive isn't role-aware. */}
+      <NavyFilterBar
         data-testid="workstream-filter-bar"
+        data-k52-navy-strip="true"
       >
-        <div className="flex flex-col">
-          <label
-            className="text-[10px] font-bold uppercase mb-0.5"
-            style={{ color: colors.muted }}
-          >
-            Since
-          </label>
-          <input
-            type="date"
-            value={since}
-            onChange={(e) => setSince(e.target.value)}
-            className="px-2 py-1 rounded-md text-sm"
-            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-            data-testid="ws-filter-since"
-          />
-        </div>
-        <div className="flex flex-col">
-          <label
-            className="text-[10px] font-bold uppercase mb-0.5"
-            style={{ color: colors.muted }}
-          >
-            Until
-          </label>
-          <input
-            type="date"
-            value={until}
-            onChange={(e) => setUntil(e.target.value)}
-            className="px-2 py-1 rounded-md text-sm"
-            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-            data-testid="ws-filter-until"
-          />
-        </div>
+        <NavyFilterBar.DatePicker
+          label="Since"
+          value={since}
+          onChange={setSince}
+          data-testid="ws-filter-since"
+        />
+        <NavyFilterBar.DatePicker
+          label="Until"
+          value={until}
+          onChange={setUntil}
+          data-testid="ws-filter-until"
+        />
         {isAdmin ? (
-          <div className="flex flex-col">
-            <label
-              className="text-[10px] font-bold uppercase mb-0.5"
-              style={{ color: colors.muted }}
-            >
-              Technician
-            </label>
-            <select
-              value={techId}
-              onChange={(e) => setTechId(e.target.value)}
-              className="px-2 py-1 rounded-md text-sm"
-              style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface, minWidth: 160 }}
-              data-testid="ws-filter-tech"
-            >
-              <option value="">All technicians</option>
-              {techs.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
+          <NavyFilterBar.Select
+            label="Technician"
+            value={techId}
+            onChange={setTechId}
+            data-testid="ws-filter-tech"
+            minWidth={160}
+          >
+            <option value="">All technicians</option>
+            {techs.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </NavyFilterBar.Select>
         ) : null}
-        <div className="flex flex-col">
-          <label
-            className="text-[10px] font-bold uppercase mb-0.5"
-            style={{ color: colors.muted }}
-          >
-            Customer
-          </label>
-          <div style={{ minWidth: 180 }}>
-            <CustomerCombobox
-              value={customerId}
-              onChange={setCustomerId}
-              customers={customers}
-              testid="ws-filter-customer"
-              placeholder="All customers"
-            />
-          </div>
-        </div>
-        <div className="flex flex-col">
-          {/* Phase 5A.2 · Feb 2026 — status filter removed. Workstream
-              lists ONLY completed jobs (server rejects anything else). */}
-        </div>
-        <div className="flex flex-col ml-auto">
-          <label
-            className="text-[10px] font-bold uppercase mb-0.5"
-            style={{ color: colors.muted }}
-          >
-            Sort
-          </label>
-          <div className="relative">
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              className="px-2 py-1 pr-7 rounded-md text-sm appearance-none"
-              style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface, minWidth: 160 }}
-              data-testid="ws-sort"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <ChevronDown
-              size={13}
-              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
-              color={colors.muted}
-            />
-          </div>
-        </div>
-      </div>
+        <NavyFilterBar.Combobox label="Customer" minWidth={180}>
+          <CustomerCombobox
+            value={customerId}
+            onChange={setCustomerId}
+            customers={customers}
+            testid="ws-filter-customer"
+            placeholder="All customers"
+          />
+        </NavyFilterBar.Combobox>
+        {/* Phase 5A.2 · Feb 2026 — status filter removed.
+            Workstream lists ONLY completed jobs (server rejects
+            anything else).  Task E kept the removal — nothing to
+            restyle here. */}
+        <NavyFilterBar.Select
+          label="Sort"
+          value={sort}
+          onChange={setSort}
+          data-testid="ws-sort"
+          minWidth={160}
+          className="ml-auto"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </NavyFilterBar.Select>
+      </NavyFilterBar>
 
       <ActiveFilterChips
         filters={{
