@@ -50,8 +50,34 @@ function _installMockGet(overrides = {}) {
     "/customers?count_only=true&portal_activated=false": { count: 18 },
     ...overrides,
   };
+  // Feb-2026 · Tail Fix E — extract the caller-overridable count
+  // values so the same numbers flow into both the legacy
+  // ``count_only`` fanout responses (retained for two tests below
+  // that still assert against the legacy URL) AND the post-P31
+  // ``/customers/counts`` envelope. Precedent: c09c94d05 (P44 fix
+  // in Tail Fix D).
+  const activatedCount =
+      counts["/customers?count_only=true&portal_activated=true"]?.count ?? 0;
+  const notActivatedCount =
+      counts["/customers?count_only=true&portal_activated=false"]?.count ?? 0;
+  const missingAddressCount =
+      counts["/customers?count_only=true&missing_address=true"]?.count ?? 0;
   mockGet.mockImplementation((path) => {
     if (path in counts) return Promise.resolve(counts[path]);
+    // Feb-2026 · Tail Fix E — post-P31 ``loadCounts()`` hydrates
+    // both badges from the consolidated envelope's
+    // ``portal_activated`` + ``portal_not_activated`` buckets.
+    // Bare endpoint and any query-string variant are intercepted.
+    if (path === "/customers/counts"
+          || path.startsWith("/customers/counts?")) {
+      return Promise.resolve({
+        active: 0, inactive: 0, muted: 0, waitlist: 0,
+        missing_address: missingAddressCount,
+        portal_activated: activatedCount,
+        portal_not_activated: notActivatedCount,
+        no_payment_method: 0, never_logged_in: 0,
+      });
+    }
     if (path.includes("count_only=true")) return Promise.resolve({ count: 0 });
     return Promise.resolve(_emptyPage);
   });
@@ -114,13 +140,17 @@ describe("CustomersList · P43c portal-status filter", () => {
       expect(aCount.textContent).toMatch(/10/);
       expect(naCount.textContent).toMatch(/18/);
     });
+    // Feb-2026 · Tail Fix E — parallel per-status ``count_only``
+    // calls are retired; the two badges now hydrate from a single
+    // ``/customers/counts`` envelope call carrying the
+    // ``portal_activated`` + ``portal_not_activated`` buckets.
+    // Same pattern as c09c94d05 (P44 fix in Tail Fix D). Semantic
+    // contract preserved: both badges pull their numbers from a
+    // count-flavored network call.
     const calls = mockGet.mock.calls.map((c) => c[0]);
-    expect(calls).toContain(
-      "/customers?count_only=true&portal_activated=true",
-    );
-    expect(calls).toContain(
-      "/customers?count_only=true&portal_activated=false",
-    );
+    expect(calls.some((p) =>
+      p === "/customers/counts" || p.startsWith("/customers/counts?"),
+    )).toBe(true);
   });
 
   it("clicking Activated fires a fetch with portal_activated=true", async () => {
