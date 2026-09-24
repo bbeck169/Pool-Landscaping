@@ -48,6 +48,22 @@ export const colors = {
    */
   searchIcon: "#0284C7",
 
+  /*
+   * ─────────────────────────────────────────────────────────────
+   * Task E · Feb-2026 — NavyFilterBar permanent search border.
+   *
+   * Consumed by ``NavyFilterBar.Search`` as the *rest-state*
+   * border color (Tailwind blue-500 hex).  This is NOT a
+   * focus-border override for the sitewide shadcn ``<Input>``
+   * component (Phase N1) — it lives only inside the compound
+   * ``NavyFilterBar.Search`` sub-primitive so the six migrated
+   * filter-bar pages read as "white card w/ permanent blue
+   * outline" against the navy strip. Any app-wide input-border
+   * sweep is deferred to a future Task B revival.
+   * ─────────────────────────────────────────────────────────────
+   */
+  inputBorder: "#3B82F6",
+
   // ═══════════════════════════════════════════════════════════════
   // Feb 2026 · Service-line palettes (additive).
   //
