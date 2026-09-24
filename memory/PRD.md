@@ -22117,6 +22117,113 @@ Same P58 fix pattern applies to all three HIGH items: introduce `tenant_id = use
 
 ---
 
+## Task D — Employee Benefits tenant-managed CRUD catalog (Feb-2026)
+
+**Scope**: Ship a full-stack CRUD Employee Benefits feature — backend router at canonical `/api/benefits`, persistent `benefits` collection, admin-managed web UI at `/workforce/benefits`, and a seeded "Perks at Work" starter row per-tenant on first GET. Web-only in this task; mobile port dispatches separately after web verification via `e1_expo_frontend_dev`.
+
+### Grep 1 — Router registration & path collision
+
+| check | result |
+|---|---|
+| `grep "benefits" backend/routers/ backend/server.py` | Zero collisions. Path free. |
+| `grep "db.benefits"` | Zero hits. Collection unused. |
+| Router registration idiom | `from routers import (...)` block at `server.py` L25-142 + `for module in [...]` mount loop at L1177-1299 (calls `api_router.include_router(module.router)`). Individual router files declare `router = APIRouter()`. |
+
+### Grep 2 — Tenant-creation seed hooks
+
+Canonical pattern: `_ensure_default_pipeline(tenant_id)` in `routers/pipelines.py` L94-115. Helper called at top of GET before the read. `_ensure_default_pipeline` uses plain `insert_one` — no race guard. Task D twist for benefits: use race-safe `update_one(..., upsert=True)` on `{tenant_id, title="Perks at Work"}` (atomic on Mongo side) so two concurrent first-GETs on a fresh tenant never create duplicates. Idempotency gate uses `count_documents({tenant_id})` with **no** `deleted_at` filter so admins who delete the seed don't see it come back.
+
+### Grep 3 — Web reference component + nav registration
+
+**Halt-and-report — spec typo on reference component**: dispatch said `src/pages/admin/MasterServicesSettings.jsx`; actual location is `src/pages/settings/MasterServicesSettings.jsx` (562 lines). Same reference component the spec described. Not blocking.
+
+- **`src/App.js` route registration idiom**: `<Route path="admin/<slug>" element={<AdminOnly><PageComponent /></AdminOnly>} />`; also `<AdminOrManager>`, `<SuperAdminOnly>`. Task D uses `<Route path="workforce/benefits" element={<EmployeeBenefits />} />` — no route wrapper because technicians see the page.
+- **`src/nav/adminNav.js`**: no standalone Workforce section — Workforce is a subsection inside Operations (L188-203). Placement: Operations → Workforce subsection alongside Team / Time Off / Time Entries, at L200.
+
+### Grep 4 — Lucide icon availability
+
+- **`lucide-react`** in `package.json`: `^0.507.0`.
+- All 12 curated icons present in `node_modules/lucide-react/dist/esm/icons/` (`gift`, `heart`, `building`, `briefcase`, `coffee`, `graduation-cap`, `shield`, `smile`, `sparkles`, `book`, `dumbbell`, `piggy-bank`).
+
+### Design decisions locked in the halt-report
+
+1. **URL path**: canonical `/api/benefits` for GET/POST/PATCH/DELETE. No `/api/settings/benefits` alias.
+2. **Icon field**: kebab-case Lucide name string. 12-icon allowlist enforced at the pydantic layer (`BENEFIT_ICON_ALLOWLIST` frozenset, exported for tests). Frontend uses static imports + name→component `ICON_MAP` with defensive `Gift` fallback.
+3. **Delete**: soft, `deleted_at` timestamp. Matches app-wide pattern.
+4. **Seed**: race-safe `update_one({tenant_id, title}, {"$setOnInsert": doc}, upsert=True)` on `count_documents({tenant_id}) == 0`. Deleted rows still count toward the gate → admin can safely delete the seed.
+5. **Role gating**: `GET /api/benefits` = every authenticated user; mutations = admin/super_admin. Technicians see read-only tiles; CRUD controls self-gate via `usePermissions().effectiveRole in [admin, super_admin]`. Backend enforces via `Depends(require_admin)` on POST/PATCH/DELETE (backend hard 403 for technicians — verified live).
+6. **Seed row content**: `title="Perks at Work"`, `external_url="https://www.perksatwork.com/login"`, `icon="gift"`, description matches the marketing copy.
+
+### URL validation
+
+Strict `^https?://` regex at the pydantic layer rejects `javascript:`, `data:`, `file:`, `mailto:`, `ftp:`, protocol-relative, and no-scheme URLs. Enforced on both `POST` and `PATCH`. Test coverage: `test_external_url_scheme_rejection` parametrized over 6 attack surfaces.
+
+### Audit trail
+
+`POST/PATCH/DELETE` each write an `audit_log` row stamped with:
+```
+tenant_id, actor_user_id, actor_email,
+action ∈ {benefit.create, benefit.patch, benefit.delete},
+resource_type="benefit", resource_id=<benefit_id>,
+changed_fields, at
+```
+Failure to audit is logged, not raised (matches items.py::patch_item audit pattern).
+
+### Test coverage delivered
+
+- **Backend `backend/tests/test_benefits.py`** (Commit 3 · `e1f07d8b9`) — **20 tests** covering seed-on-first-GET + idempotency, tenant isolation on GET, POST admin+forbidden-technician, PATCH admin+cross-tenant+forbidden-technician, DELETE admin+cross-tenant+forbidden-technician, seed-idempotency-after-delete (primary contract), icon allowlist rejection on POST+PATCH, and parametrized URL scheme rejection over 6 attack surfaces.
+- **Frontend `frontend/src/test/task-d-benefits.test.jsx`** (Commit 4 · `9fe8cf552`) — **6 tests** covering admin view (all controls visible), technician view (read-only + tile link contract), New Benefit flow (POST + refresh), Edit flow (pre-fill + PATCH + refresh), Delete flow (confirm + DELETE + refresh), and icon preset picker (12 options + aria-pressed persistence).
+
+### Live curl sanity against preview
+
+- `GET /api/benefits` on a fresh aquaterra session → seeded `Perks at Work` row appears.
+- `POST /api/benefits` (admin) → 201 with `tenant_id` stamped.
+- `PATCH /api/benefits/{id}` (admin) → 200 with updated `description` + `updated_at`.
+- `DELETE /api/benefits/{id}` (admin) → `{ok: true, deleted: true, benefit_id}`; follow-up GET no longer includes the row.
+- **Cross-tenant PATCH** (aquaterra admin against foreign-tenant benefit id) → **404**; foreign row's `description` re-fetched and asserted unchanged.
+- **Cross-tenant DELETE** (aquaterra admin against foreign-tenant benefit id) → **404**; foreign row's `deleted_at` re-fetched and asserted still `null`.
+
+### Preview visual verification — both roles
+
+| role | preview URL | verified |
+|---|---|---|
+| `super@aquaterra.com` (super_admin) | `/workforce/benefits` | ✅ Perks at Work tile with `gift` Lucide icon; edit + delete icon buttons pinned top-right of tile; "New benefit" button top-right of page. Screenshot at `/tmp/task-d-admin-view.jpg`. |
+| `mike@aquaterra.com` (technician) | `/workforce/benefits` | ✅ Perks at Work tile visible + clickable; NO "New benefit" button, NO edit/delete icons; tile link carries `href=https://www.perksatwork.com/login` + `target=_blank` + `rel=noopener noreferrer`. Screenshot at `/tmp/task-d-tech-view.jpg`. |
+
+### Regression telemetry (baseline `b83b80507..HEAD`)
+
+- **New tests**: 20 (backend) + 6 (frontend) = 26.
+- **Regressions introduced**: **0**.
+- **Preview live curl**: 4 canonical endpoints + 2 cross-tenant smoke checks all pass.
+
+### P59 handoff (unchanged from P58 · pre-mapped)
+
+Task D introduces no new items to the P59 handoff table. P58's 6 items (3 HIGH read-side leaks + 3 LOW defense-in-depth) remain the P59 charter.
+
+### Mobile handoff — separate `e1_expo_frontend_dev` dispatch
+
+After web-green, the follow-up mobile dispatch scope is:
+- Mobile fetches `GET /api/benefits` and replaces any hardcoded tiles on the existing "Benefits" screen with the server response.
+- Admin CRUD **deferred on mobile** — mobile stays read-only. Admin edits happen from the web page.
+- Icon rendering uses the same `ICON_MAP` shape (map Lucide kebab-case → mobile-native icon component) with the same `Gift` fallback.
+- No backend changes required — the API contract is stable and tenant-isolated (P58 pattern).
+
+### Commit series (Task D · 5 commits inside main branch)
+
+1. `08597c779` · `feat(benefits): backend router + Pydantic models + seed-on-first-GET` — 312 additions across `backend/routers/benefits.py` (new file) + `backend/server.py`.
+2. `b78acd30e` · `feat(benefits): web page + admin dialog + tile grid + route + nav link` — 499 additions across `frontend/src/pages/workforce/EmployeeBenefits.jsx` (new file) + `App.js` route + `adminNav.js` entry.
+3. `e1f07d8b9` · `test(benefits): backend pytest coverage` — 423 additions, 20/20 green.
+4. `9fe8cf552` · `test(benefits): vitest coverage for web page` — 255 additions, 6/6 green.
+5. `docs(benefits): PRD section for Task D web + backend` (this section).
+
+### Non-goals
+
+- No mobile files (separate `e1_expo_frontend_dev` dispatch after web green).
+- No new theme tokens (Task E owns the NavyFilterBar + token drop).
+- No new dependencies (`lucide-react` was already in `package.json`).
+
+---
+
 
 
 
