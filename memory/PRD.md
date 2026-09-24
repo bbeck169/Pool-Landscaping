@@ -21710,7 +21710,7 @@ Rather than rip out Phase 10 (Option 2 — huge blast radius) or add a parallel 
   * Row `system=False` → SKIP always (tenant fully overrode).
   * `force_upgrade=True` escape hatch overrides the customization check for CLI operators.
   The Phase-10 canonical body is preserved verbatim as `_REFERRAL_EMAIL_BODY_LEGACY_P10` — the ONLY known prior body used by the customization detector.  Adding another prior body in a future phase is a two-line change: append to the constant list and bump `body_version`.
-- **Dev preview route** — `GET /api/dev/email-preview/referral-reward` in `backend/routers/dev_email_preview.py`.  Renders the BOOM email with the P53 spec's stub context: `Alex` / `Prasad Mikkilineni` / `$55.00` / `$110.00` / `Pool & Landscaping of Vistancia`.  Gated at BOTH registration time (in `server.py`, the router is not `include_router`'d when `APP_ENV == "production"`) and runtime (the handler itself returns 404 in prod as a belt-and-suspenders check).  No auth required in dev — the route is dev-only by construction.
+- **Dev preview route** — `GET /api/dev/email-preview/referral-reward` in `backend/routers/dev_email_preview.py`.  Renders the BOOM email with the P53 spec's stub context: `Alex` / `Prasad Mikkilineni` / `$55.00` / `$110.00` / `Pool & Landscaping of Vistancia`.  Gated at BOTH registration time (in `server.py`, the router is not `include_router`'d when `APP_ENV == "production"`) and runtime (the handler itself returns 404 in prod as a belt-and-suspenders check).  No auth required in dev — the route is dev-only by construction.  **Escape hatch** — `ENABLE_DEV_EMAIL_PREVIEW=true` overrides the APP_ENV gate.  Discovered during landing: the preview pod's `backend/.env` ships `APP_ENV=production` as a legacy config-drift artifact.  The override was added so the user can visual-smoke the BOOM template in a browser on the preview pod without flipping APP_ENV globally (which has knock-on effects on comms guardrails, mocking, etc.).  Values `1`, `true`, and `yes` (case-insensitive) all activate the override.
 - **Dev CLI** — `python -m scripts.send_referral_reward_preview <email>` in `backend/scripts/send_referral_reward_preview.py`.  Sends a real BOOM email using the production `services.email.resend_adapter.send` path (`category=transactional`, `audience=internal`, `allow_off_allowlist=True` so the K72 kill-switch + `COMMS_TEST_ALLOWLIST_EMAILS` guard don't intercept the dev preview).  Interactive `y` confirmation unless `--confirm` is passed (matches the safety pattern in `backend/scripts/purge_demo_data.py`).  Also supports `--dry-run` (prints the rendered HTML to stdout without sending) and `--tenant <tid>` (resolves that tenant's branding for the shell wrap).  Exit codes: 0=sent, 2=user aborted, 3=provider send failed.
 
 ### What we deliberately did NOT ship
@@ -21745,12 +21745,12 @@ New tests (five files, **45 tests total**, all green):
 - `backend/tests/test_p53_boom_email_render.py` (20 tests) — hero gradient stops, badge color, pill radius, headline text, CTA label, sign-off, badge font-size, drop shadow, merge var substitution + no leaks, amount not hardcoded ($25 + $55 both render), company name not hardcoded, zero external CSS, CTA href shape (path-only + absolute variants), version marker, subject line, legacy prior body preserved.
 - `backend/tests/test_p53_portal_my_referrals_count.py` (7 tests) — counter includes each of the four post-close-won states individually + excludes `voided` and pre-close-won states + mixed-bag tally + cross-tenant isolation.
 - `backend/tests/test_p53_marketing_templates_upsert.py` (8 tests) — fresh insert stamps `body_version`, idempotent second run, legacy Phase-10 body upgraded in place, tenant-customized row preserved under normal upsert, `force_upgrade=True` overwrites customized row, `system=False` row never touched even under force, SMS row insert-if-missing (P53 out of scope).
-- `backend/tests/test_p53_dev_preview_route.py` (5 tests) — dev env 200 with BOOM markers + no placeholder leaks + HTML content-type + APP_ENV missing defaults to preview + prod env 404 across PRODUCTION/Production/production case variants.
+- `backend/tests/test_p53_dev_preview_route.py` (8 tests) — dev env 200 with BOOM markers + no placeholder leaks + HTML content-type + APP_ENV missing defaults to preview + prod env 404 across PRODUCTION/Production/production case variants + `ENABLE_DEV_EMAIL_PREVIEW=true` unlocks prod-gated route + override accepts truthy variants (1/true/yes) + override does not leak when unset.
 - `backend/tests/test_p53_phase10_behavior_lock.py` (5 tests) — close-won hook default status is `pending_paid_window`, watcher CAS-guard is intact, refund/dispute guard intact, ledger primitive unchanged (`customer_credits` + `source="referral_credit"`), `PAID_WINDOW_DAYS == 30`.
 
 ### Test result summary
 
-- P53 tests: **45/45 green**
+- P53 tests: **48/48 green** (20 boom-render + 7 portal-count + 8 upsert + 8 dev-preview + 5 phase10-lock).
 - P47/P48/P50/P52 backend regression: **42/42 green** (unchanged from prior checkpoint).
 - P47/P48/P50/P52 frontend regression: **50/50 green** (vitest, unchanged).
 - Full-suite backend baseline flakes: `test_recurring_quarterly_semiannual_p47.py` (4 tests) + `test_phase10_referrals.py` (5 tests) — both pre-existing on the pre-P53 baseline (verified via `git stash`), unrelated to P53 changes.
@@ -21768,7 +21768,9 @@ Dry-run counts (fresh test tenant scenario from `test_p53_marketing_templates_up
 
 ### Preview URLs (dev-only)
 
-- Route (browser-openable in preview): `GET /api/dev/email-preview/referral-reward` — served via the FastAPI backend on the preview URL configured in `frontend/.env` (`REACT_APP_BACKEND_URL`).
+- **Live BOOM preview in browser** (verified 200 in the preview pod):
+  https://poolscape-audit.preview.emergentagent.com/api/dev/email-preview/referral-reward
+- Route (backend-side): `GET /api/dev/email-preview/referral-reward` — served on the preview pod after setting `ENABLE_DEV_EMAIL_PREVIEW=true` in `backend/.env` (already applied in this checkpoint).
 - CLI (dry-run to stdout): `cd /app/backend && python -m scripts.send_referral_reward_preview any@example.com --dry-run`
 - CLI (live send with confirmation): `cd /app/backend && python -m scripts.send_referral_reward_preview real@example.com` (interactive `y` prompt).
 - CLI (live send in automation): `cd /app/backend && python -m scripts.send_referral_reward_preview real@example.com --confirm`.
