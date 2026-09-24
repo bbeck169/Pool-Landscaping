@@ -15,13 +15,14 @@
  *
  * Feb-2026 · Onboarding-tile clickable + Chase-move ship
  *   * All 4 cards are now clickable (Enter/Space + click). Deep-
- *     link map:
+ *     link map (P53 tail · Feb-2026 — 4th card swap):
  *
  *       Card             → URL
  *       Invited          → /customers?portal_invited=any
  *       Activated        → /customers?portal_activated=1
  *       Signed in        → /customers?first_access=any
- *       Never logged in  → /customers?first_access=never   (preserved)
+ *       Cards on file    → /customers?has_payment_method=true
+ *                            &is_active=true                 (NEW)
  *
  *   * The "Chase" button lives under the INVITED card now
  *     (previously under Never). Semantically the chase audience
@@ -34,13 +35,37 @@
  *     The old test-id has been retired — see the migration memo
  *     ``FEATURE_ONBOARDING_TILE_CLICKABLE_AND_CHASE_MOVE.md``.
  *
+ * P53 tail · Feb-2026 — Customer stats tile swap
+ *   * The "Never logged in" card was swapped for a "Cards on
+ *     file" card. Rationale: the "Never" number was a lagging
+ *     onboarding negative that most admins glanced past; the
+ *     "Cards on file" number is a leading revenue-quality
+ *     positive that surfaces the % of the active book we can
+ *     bill instantly. Same shape, same 4-card layout.
+ *   * The backend ``never_logged_in`` count is DELIBERATELY
+ *     RETAINED in the ``/reports/portal-onboarding-health``
+ *     response (see the paired comment in
+ *     ``routers/profit_report.py``). The Chase button under
+ *     Invited reads ``data.cohorts.never_logged_in.count`` for
+ *     its ``chaseAudienceUpperBound = min(invited, never)``
+ *     disabled-state calculation. Removing the count would
+ *     silently break the Chase button's enabled state.
+ *   * New card testid: ``portal-onboarding-cards-on-file-tile``
+ *     (verbatim from the P53 tail brief — intentionally NOT
+ *     ``onboarding-cohort-cards-on-file`` because the tile is
+ *     surfaced in customer-stats coverage grids where the
+ *     ``portal-onboarding-`` prefix is the canonical anchor).
+ *
  * Test-ids:
  *   * ``onboarding-health-tile``
  *   * ``onboarding-cohort-invited`` / ``-activated`` /
- *     ``-signed-in`` / ``-never``  (per-card blocks)
+ *     ``-signed-in``  (per-card blocks for the first 3 cards)
+ *   * ``portal-onboarding-cards-on-file-tile`` (4th card block —
+ *     P53 tail swap)
  *   * ``onboarding-cohort-*-delta``  (per-card delta arrow)
  *   * ``onboarding-tile-invited-cta`` / ``-activated-cta`` /
- *     ``-signed-in-cta`` / ``-never-cta``  (per-card deep-link)
+ *     ``-signed-in-cta`` / ``-cards-on-file-cta``  (per-card
+ *     deep-link)
  *   * ``onboarding-tile-invited-chase-cta`` (Chase button)
  */
 import { useEffect, useState } from "react";
@@ -72,10 +97,32 @@ const COHORT_ORDER = [
     ctaTestid: "onboarding-tile-signed-in-cta",
   },
   {
-    key: "never_logged_in", label: "Never logged in",
-    testid: "onboarding-cohort-never",
-    ctaHref: "/customers?first_access=never",
-    ctaTestid: "onboarding-tile-never-cta",
+    key: "active_with_card_on_file",
+    label: "Cards on file",
+    // P53 tail (Feb-2026) — user-approved copy. Subtitle is
+    // rendered under the label; only this card carries one
+    // (rest of the cohort cards deliberately keep the pre-P53
+    // one-line-label rhythm).
+    subtitle: "Active customers with a saved payment method",
+    // Verbatim from the P53 tail brief. The tile testid pattern
+    // for cards 1-3 is ``onboarding-cohort-*``; the P53 tail
+    // approval used a different anchor (``portal-onboarding-*``)
+    // because this card is surfaced in customer-stats coverage
+    // grids where ``portal-onboarding-`` is the canonical
+    // prefix. Keep this testid EXACT — QA/product docs already
+    // reference it.
+    testid: "portal-onboarding-cards-on-file-tile",
+    // Tile ↔ list parity — the CTA has to land on the SAME
+    // subset the tile counted. Backend predicate:
+    //   (is_active OR absent) AND NOT is_muted AND
+    //   saved_payment_methods_count > 0
+    // ``?is_active=true`` on the customers list already
+    // implicitly enforces ``_NOT_MUTED`` (see customers.py L995),
+    // and ``?has_payment_method=true`` reads the same denorm
+    // (``saved_payment_methods_count > 0``). So this compound
+    // URL selects exactly the tile's counted rows.
+    ctaHref: "/customers?has_payment_method=true&is_active=true",
+    ctaTestid: "onboarding-tile-cards-on-file-cta",
   },
 ];
 
@@ -113,7 +160,7 @@ function DeltaArrow({ delta, testid }) {
 }
 
 
-function CohortCard({ label, testid, count, delta, ctaHref, ctaTestid }) {
+function CohortCard({ label, subtitle, testid, count, delta, ctaHref, ctaTestid }) {
   const navigate = useNavigate();
   const clickable = Boolean(ctaHref);
   const body = (
@@ -148,6 +195,18 @@ function CohortCard({ label, testid, count, delta, ctaHref, ctaTestid }) {
       >
         {label}
       </div>
+      {subtitle ? (
+        // P53 tail (Feb-2026) — subtitle line, only rendered when the
+        // cohort config sets one. Kept inline with the label rhythm
+        // (11px vs 3xl count) so the number stays the visual anchor.
+        <div
+          data-testid={`${testid}-subtitle`}
+          className="text-[11px] leading-tight mt-0.5"
+          style={{ color: colors.muted, fontWeight: 400 }}
+        >
+          {subtitle}
+        </div>
+      ) : null}
       <div
         className="text-3xl font-bold my-1 tabular-nums"
         style={{ color: colors.onSurface }}
@@ -257,6 +316,13 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
   // Audience = invited-and-never-signed-in ≈ min(invited, never)
   // as an upper-bound approximation; the modal fetches the real
   // list on open so the exact count settles there.
+  //
+  // P53 tail (Feb-2026) — the "Never logged in" TILE was swapped
+  // for "Cards on file", but the underlying ``never_logged_in``
+  // cohort count is still consumed here. Backend deliberately
+  // keeps returning ``cohorts.never_logged_in.count`` for exactly
+  // this Chase-button binding — removing this line would silently
+  // break the button's ``disabled`` state.
   const invitedCount = data.cohorts?.invited?.count ?? 0;
   const neverCount   = data.cohorts?.never_logged_in?.count ?? 0;
   const chaseAudienceUpperBound = Math.min(invitedCount, neverCount);
@@ -281,6 +347,7 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
             >
               <CohortCard
                 label={c.label}
+                subtitle={c.subtitle}
                 testid={c.testid}
                 count={block.count}
                 delta={block.delta_30d}

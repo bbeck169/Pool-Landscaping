@@ -7,10 +7,12 @@
  *   3. Feb-2026 · Onboarding-tile clickable ship — every one of
  *      the four cohort cards navigates to the correct filtered
  *      URL on both click AND Enter/Space keyboard activation:
- *        Invited   → /customers?portal_invited=any
- *        Activated → /customers?portal_activated=1
- *        Signed in → /customers?first_access=any
- *        Never     → /customers?first_access=never   (preserved)
+ *        Invited        → /customers?portal_invited=any
+ *        Activated      → /customers?portal_activated=1
+ *        Signed in      → /customers?first_access=any
+ *        Cards on file  → /customers?has_payment_method=true
+ *                           &is_active=true                  (P53
+ *                           tail — replaced Never logged in)
  *   4. Fetch failure surfaces toast.error and the tile does NOT
  *      render (skeleton removed, error state hidden — the tile is
  *      non-fatal).
@@ -44,10 +46,16 @@ function _payload(overrides = {}) {
     as_of: "2026-02-10T10:00:00+00:00",
     window_days: 30,
     cohorts: {
-      invited:         { count: 42, delta_30d: null },
-      activated:       { count: 30, delta_30d: 4 },
-      signed_in:       { count: 18, delta_30d: 3 },
-      never_logged_in: { count: 12, delta_30d: null },
+      invited:                  { count: 42, delta_30d: null },
+      activated:                { count: 30, delta_30d: 4 },
+      signed_in:                { count: 18, delta_30d: 3 },
+      // P53 tail (Feb-2026) — DELIBERATELY RETAINED in the response
+      // even though the tile UI no longer renders a card for it.
+      // The Chase button under Invited reads this count for its
+      // ``min(invited, never)`` disabled-state binding.
+      never_logged_in:          { count: 12, delta_30d: null },
+      // P53 tail (Feb-2026) — 4th tile is now Cards on file.
+      active_with_card_on_file: { count: 25, delta_30d: null },
       ...(overrides.cohorts || {}),
     },
     assumptions: {},
@@ -92,7 +100,12 @@ describe("PortalOnboardingHealthTile", () => {
     expect(screen.getByTestId("onboarding-cohort-invited")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-activated")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-signed-in")).toBeTruthy();
-    expect(screen.getByTestId("onboarding-cohort-never")).toBeTruthy();
+    // P53 tail (Feb-2026) — 4th card testid is now the P53-brief
+    // verbatim anchor (portal-onboarding-*) rather than the
+    // ``onboarding-cohort-*`` pattern of cards 1-3.
+    expect(
+      screen.getByTestId("portal-onboarding-cards-on-file-tile"),
+    ).toBeTruthy();
     expect(
       screen.getByTestId("onboarding-cohort-invited").textContent,
     ).toContain("42");
@@ -103,8 +116,9 @@ describe("PortalOnboardingHealthTile", () => {
       screen.getByTestId("onboarding-cohort-signed-in").textContent,
     ).toContain("18");
     expect(
-      screen.getByTestId("onboarding-cohort-never").textContent,
-    ).toContain("12");
+      screen.getByTestId("portal-onboarding-cards-on-file-tile")
+        .textContent,
+    ).toContain("25");
     expect(
       screen.getByTestId("onboarding-cohort-invited-delta"),
     ).toBeTruthy();
@@ -118,7 +132,8 @@ describe("PortalOnboardingHealthTile", () => {
       screen.getByTestId("onboarding-cohort-invited-delta").textContent,
     ).toContain("vs last 30d");
     expect(
-      screen.getByTestId("onboarding-cohort-never-delta").textContent,
+      screen.getByTestId("portal-onboarding-cards-on-file-tile-delta")
+        .textContent,
     ).toContain("vs last 30d");
     expect(apiGetImpl).toHaveBeenCalledWith(
       "/reports/portal-onboarding-health?window_days=30",
@@ -128,10 +143,13 @@ describe("PortalOnboardingHealthTile", () => {
   // Table-driven test — one assertion per cohort card, one for
   // click, one for Enter, one for Space. Matches the change-1 spec.
   const _COHORT_CASES = [
-    { testid: "onboarding-tile-invited-cta",   href: "/customers?portal_invited=any" },
-    { testid: "onboarding-tile-activated-cta", href: "/customers?portal_activated=1" },
-    { testid: "onboarding-tile-signed-in-cta", href: "/customers?first_access=any" },
-    { testid: "onboarding-tile-never-cta",     href: "/customers?first_access=never" },
+    { testid: "onboarding-tile-invited-cta",       href: "/customers?portal_invited=any" },
+    { testid: "onboarding-tile-activated-cta",     href: "/customers?portal_activated=1" },
+    { testid: "onboarding-tile-signed-in-cta",     href: "/customers?first_access=any" },
+    // P53 tail (Feb-2026) — 4th CTA points at the compound
+    // customers-list filter that matches the backend
+    // ``active_with_card_on_file`` predicate row-for-row.
+    { testid: "onboarding-tile-cards-on-file-cta", href: "/customers?has_payment_method=true&is_active=true" },
   ];
 
   for (const c of _COHORT_CASES) {

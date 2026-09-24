@@ -115,8 +115,16 @@ def test_envelope_shape_returns_four_cohorts(fake_db):
     assert set(out.keys()) >= {"as_of", "window_days", "cohorts",
                                     "assumptions"}
     assert out["window_days"] == 30
+    # P53 tail (Feb-2026) — envelope now returns FIVE cohorts. The
+    # 5th (``active_with_card_on_file``) was added when the customer-
+    # stats tile swapped the "Never logged in" card for "Cards on
+    # file"; ``never_logged_in`` is DELIBERATELY retained so the
+    # Chase button under Invited can still compute its
+    # ``min(invited, never)`` disabled-state binding.
     assert set(out["cohorts"].keys()) == {
-        "invited", "activated", "signed_in", "never_logged_in"}
+        "invited", "activated", "signed_in", "never_logged_in",
+        "active_with_card_on_file",
+    }
     for name, block in out["cohorts"].items():
         assert set(block.keys()) == {"count", "delta_30d"}, name
 

@@ -647,8 +647,18 @@ async def portal_onboarding_health(
         "has_login": 1,
         "portal_password_set_at": 1,
         "portal_first_login_at": 1,
+        # P53 tail (Feb-2026) — new "Active customers with cards on
+        # file" cohort. Reads the same denorm the
+        # ``?has_payment_method=true`` filter chip trusts
+        # (``saved_payment_methods_count``, source-of-truth per the
+        # P44 CardOnFileWarningBanner comment) so tile + chip
+        # never disagree.
+        "is_active": 1,
+        "is_muted": 1,
+        "saved_payment_methods_count": 1,
     }
     invited = activated = signed_in = never = 0
+    active_with_card = 0
     invited_delta = None            # noqa: F841 — kept null on purpose
     activated_delta = 0
     signed_in_delta = 0
@@ -679,6 +689,20 @@ async def portal_onboarding_health(
             # is intentional (they're part of the universe the
             # chip shows).
             never += 1
+        # P53 tail (Feb-2026) — "Active customers with cards on
+        # file" predicate:
+        #   1. is_active true OR absent (default active)
+        #   2. NOT is_muted (default false)
+        #   3. saved_payment_methods_count > 0
+        # The ``_valid_customer_id_predicate`` + soft-delete +
+        # merged-into guards in ``q`` already scope the walk to
+        # the same customer universe the list view shows.
+        raw_active = c.get("is_active")
+        active_ok = raw_active is None or bool(raw_active)
+        muted_ok = not bool(c.get("is_muted"))
+        pm_count = int(c.get("saved_payment_methods_count") or 0)
+        if active_ok and muted_ok and pm_count > 0:
+            active_with_card += 1
 
     value = {
         "as_of": now.isoformat(),
@@ -689,7 +713,21 @@ async def portal_onboarding_health(
                                   "delta_30d": activated_delta},
             "signed_in":       {"count": signed_in,
                                   "delta_30d": signed_in_delta},
+            # P53 tail — ``never_logged_in`` count is RETAINED in the
+            # response even though the tile UI no longer renders a
+            # card for it. Rationale: the frontend
+            # ``PortalOnboardingHealthTile.jsx`` reads
+            # ``data.cohorts.never_logged_in.count`` to compute the
+            # Chase-button ``chaseAudienceUpperBound = min(invited,
+            # never)``. Removing this key would silently break the
+            # Chase button's disabled/tooltip state. The
+            # ``?first_access=never`` filter chip in
+            # ``CustomersList.jsx`` also reads its count from the
+            # same universe.
             "never_logged_in": {"count": never, "delta_30d": None},
+            "active_with_card_on_file": {
+                "count": active_with_card, "delta_30d": None,
+            },
         },
         "assumptions": _ONBOARDING_ASSUMPTIONS,
     }
