@@ -14,7 +14,7 @@ import asyncio
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -120,15 +120,32 @@ def test_jj_ai_ops_list_is_tenant_scoped(super_headers, db, aq_tenant_id):
 # ═══════════════════════════════════════════════════════════════════════
 # Task KK — pricebook PATCH + bulk-delete
 # ═══════════════════════════════════════════════════════════════════════
-def _plant_item(db, name: str = "KK-item") -> str:
+def _plant_item(db, name: str = "KK-item", tenant_id: Optional[str] = None) -> str:
+    # P57 · Feb-2026 — fixture now defaults to seeding with the
+    # aquaterra tenant_id (looked up via aq_tenant_id from callers)
+    # instead of a null-tenant record. Pre-P57, _plant_item wrote
+    # items with NO tenant_id and the sibling _soft_delete_item's
+    # optional-tenant guard silently ran cross-tenant, so
+    # ``super@aquaterra.com`` (whose auth tenant IS aquaterra) could
+    # still soft-delete these null-tenant items. Post-P57 the guard
+    # is tightened (positional-required tenant_id + non-empty
+    # ValueError), so seed docs MUST carry the tenant_id or the
+    # bulk-delete route hits its ``not_found`` branch for every id.
+    # The `tenant_id` parameter is Optional here purely to keep the
+    # existing signature compatible with pre-P57 call sites in the
+    # same file — every caller in this test file that uses the seed
+    # via the bulk-delete route now passes aq_tenant_id explicitly.
     iid = uuid.uuid4().hex
     async def _go():
-        await db.items.insert_one({
+        doc = {
             "id": iid, "name": f"{name}-{iid[:6]}",
             "category": "Pool", "unit": "each",
             "unit_price": 10.0, "cost": 5.0, "tax_rate": 8.0,
             "active": True, "created_at": "2026-02-01T00:00:00Z",
-        })
+        }
+        if tenant_id:
+            doc["tenant_id"] = tenant_id
+        await db.items.insert_one(doc)
     _run(_go())
     return iid
 
@@ -165,8 +182,14 @@ def test_pricebook_patch_rejects_negative(db, super_headers):
     assert r.status_code == 422
 
 
-def test_pricebook_bulk_delete_happy(db, super_headers):
-    ids = [_plant_item(db, "KK-bulk") for _ in range(3)]
+def test_pricebook_bulk_delete_happy(db, super_headers, aq_tenant_id):
+    # P57 · Feb-2026 — pass aq_tenant_id explicitly so the seed
+    # items carry the caller's tenant scope. Pre-P57 this test
+    # passed only because both _plant_item AND _soft_delete_item
+    # silently ran cross-tenant. Post-P57 the fixture MUST plant
+    # tenant-scoped rows or the endpoint hits its not-found branch.
+    ids = [_plant_item(db, "KK-bulk", tenant_id=aq_tenant_id)
+              for _ in range(3)]
     r = http.post(
         f"{API}/pricebook/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
@@ -179,7 +202,9 @@ def test_pricebook_bulk_delete_happy(db, super_headers):
 
 def test_pricebook_bulk_delete_locked_by_active_invoice(db, super_headers, aq_tenant_id):
     """An item referenced by an active invoice line refuses hard-delete."""
-    iid = _plant_item(db, "KK-locked")
+    # P57 · Feb-2026 — plant with tenant_id so the item is
+    # visible to super@aquaterra.com's bulk-delete request.
+    iid = _plant_item(db, "KK-locked", tenant_id=aq_tenant_id)
     async def _plant_ref():
         await db.quotes.insert_one({
             "id": uuid.uuid4().hex, "tenant_id": aq_tenant_id,
