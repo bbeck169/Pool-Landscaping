@@ -21781,3 +21781,151 @@ Dry-run counts (fresh test tenant scenario from `test_p53_marketing_templates_up
 - **P51 portal shell gradient variants** — separate surface from email HTML.
 - **Optional post-P53** — add a second known canonical prior body to `_KNOWN_PRIORS` if a further BOOM iteration lands.  Currently there is only one prior (Phase 10).
 
+
+
+---
+
+## P53.1 · Hardening (Feb-2026 · immediate follow-on to P53 ship)
+
+Two hardening items that de-risk the P53 ship without changing behavior.  Both landed as independent commits so either could be reverted in isolation if a regression surfaces.
+
+### I.1 — Phase-10 behavior lock: grep guards → real state-transition tests
+
+**Commit**: `f1e990e16 test(p53): convert phase10 behavior lock to real state-transition assertions`
+
+The P53 checkpoint acknowledged that `test_p53_phase10_behavior_lock.py`'s five assertions were `inspect.getsource()` string-grep guards, not real behavior contracts (see "Disclosure" note in the P53 test summary above).  Grep guards catch "flow deleted / constant renamed" but do not catch "semantics changed while string kept".
+
+I.1 replaces the file with six real state-transition tests driven via `batch_safe_run` against seeded Mongo state (fake-DB fixture):
+
+- `test_close_won_hook_default_flips_referral_to_pending_paid_window` — close-won hook default branch flips a referral doc's `status` from `close_won` to `pending_paid_window` with the correct paid-window deadline computed from `PAID_WINDOW_DAYS`.
+- `test_close_won_hook_legacy_branch_flips_to_converted_and_mints_ledger` — legacy code-path flips to `converted` and mints one `customer_credits` row.
+- `test_watcher_cas_guard_blocks_concurrent_double_credit` — the compare-and-swap guard in `_try_credit_referral` prevents a concurrent second credit even under interleaved reads.
+- `test_refund_inside_window_voids_referral_and_blocks_credit` — a refund landing inside the paid window flips the referral to `voided` and inhibits the credit-mint path.
+- `test_happy_path_writes_ledger_balance_and_flips_referral_to_credited` — the successful-window-exit path writes the ledger row, updates the balance, and flips the referral to `credited`.
+- `test_paid_window_days_constant_is_30` — the constant guard is retained (business rule).
+
+**Test result**: `pytest tests/test_p53_phase10_behavior_lock.py -v` → **6 passed, 1 warning in 0.82s**.  Commit body carries the halt-and-report gate: *"None of the transitions revealed a real bug in the shipped Phase 10 flow."*
+
+### I.2 — Boot-time WARNING when `ENABLE_DEV_EMAIL_PREVIEW` is truthy in production
+
+**Commits**:
+- `455331b5d feat(p53): warn on ENABLE_DEV_EMAIL_PREVIEW+APP_ENV=production drift`
+- `e3052463a test(p53): boot-time warning coverage + prod env example checklist`
+
+The P53 ship added an env-gated `/api/dev/email-preview/referral-reward` route (dev-only unless `ENABLE_DEV_EMAIL_PREVIEW=true`).  P53's own test suite exhaustively covers the 200/404 contract, but does NOT emit any operational signal when a production deployment accidentally ships with the override truthy — a silent-security-drift class of bug.
+
+I.2 adds a boot-time WARNING log line:
+
+```
+WARNING backend.dev_email_preview  ENABLE_DEV_EMAIL_PREVIEW is truthy in
+  APP_ENV=production; a dev-only email preview route is now reachable.
+  If this is a production deployment, unset the override or contact ops.
+```
+
+Implementation:
+- Pure helper `check_dev_preview_env_drift()` + module-level constant `DEV_PREVIEW_DRIFT_WARNING` extracted into `backend/routers/dev_email_preview.py` so the detector is unit-testable without importing `backend/server.py`.
+- `server.py` boot section calls the helper once at startup after config load.
+- `backend/.env.production.example` documents the intent under a "P53 · dev preview override" comment block.
+
+**Test result**: `pytest tests/test_p53_boot_time_drift_warning.py -v` → **12 passed, 1 warning in 0.28s**.  Coverage matrix:
+- detector truth table (prod+truthy → warn; prod+falsy → no warn; preview+truthy → no warn; preview+falsy → no warn; APP_ENV absent → default preview + truthy → no warn),
+- exact message signature (regex-anchored on the "ENABLE_DEV_EMAIL_PREVIEW is truthy" phrase),
+- boot-gate emit count (one warn per boot, not one per request),
+- `.env.production.example` documentation snapshot.
+
+---
+
+## P53 Tail Bundle (Feb-2026 · same session as P53.1)
+
+Three orthogonal fixes that surfaced during P53 post-ship QA + smoke.  Each landed as its own commit for atomic revert.
+
+### Fix A — Income-by-Service reads line's `service_category_id` before pricebook
+
+**Commit**: `218a8a2b3 fix(p53): income-by-service reads line.service_category_id before pricebook`
+
+Pre-P53, both `dashboard_revenue.income_by_service_category` (the customer-stats tile) and `dashboard_drilldown.income_by_service_rows` (its drilldown modal) resolved a line item's service-category via pricebook `item_id` lookup only.  Lines that had been explicitly recategorized (`line.service_category_id` set to a value different from the pricebook default) still bucketed under the original pricebook item's category.  Because BOTH handlers had the same bug, the reports stayed self-consistent — tile + drilldown lied together, so QA never caught the mismatch against the underlying line data.
+
+Fix mirrored in both files with the same precedence:
+
+  1. `line.service_category_id` (user explicit override)
+  2. pricebook `item.service_category_id` (default from `item_id`)
+  3. `Uncategorized` fallback
+
+Drilldown `income_by_category_rows` also picks up the line-first display so the `svc_name` column in the Income-by-Category drilldown matches the Income-by-Service tile bucket for the same line.
+
+**Test coverage** — `backend/tests/test_p53_income_by_service_category_precedence.py` (7 tests): tile line-first override, tile pricebook fallback, tile Uncategorized fallback, mixed dataset totals, cross-tenant isolation, drilldown row shows recategorized line under new bucket, tile ↔ drilldown parity assertion.  All 7 green in 0.35s.
+
+### Fix B — Home breadcrumb points to `/` instead of nonexistent `/dashboard`
+
+**Commit**: `a3ee3c292 fix(p53): home breadcrumb points to root instead of nonexistent /dashboard`
+
+Pre-P53, `ROUTE_META` keyed the admin Home crumb by `"/dashboard"` and every admin surface (workstream, schedule, customers, jobs, leads, quotes, estimates, invoices, payments, analytics, reports, reviews, marketing, admin, settings) declared `parent: "/dashboard"`.  That path is NOT a mounted frontend route — the admin landing is served by `RoleAwareIndex` at `"/"`, and the string `"/dashboard"` that appears inside `Dashboard.jsx` is an API path, not a frontend route.  Every admin breadcrumb's Home link therefore led to a 404.
+
+Fix re-keys Home to `"/"` and re-parents every top-level admin route to `"/"`.  Nested routes (e.g. `"/marketing/sequences/:id" → "/marketing/sequences" → "/marketing" → "/"`) walk back to the real landing.  `"/dashboard"` stays in `CRUMB_SKIP` on purpose — a stale bookmark hitting the 404 shell should not render a misleading `"Dashboard > ..."` trail.
+
+**Test coverage** — `frontend/src/test/p53-home-breadcrumb-route.test.jsx` (11 tests): Home entry keyed by `"/"`, every admin route parent chain terminates at `"/"`, no top-level ROUTE_META entry declares parent `"/dashboard"`, legacy `/dashboard` stays in `CRUMB_SKIP`, `buildCrumbs()` from a deep page renders Home with `href="/"`, `matchRouteKey()` resolves `"/"` cleanly, plus 5 negative + edge cases.  All 11 green in 672ms.
+
+### Fix C — Customer stats tile swap · Never-Logged-In → Cards-on-File
+
+**Commit**: `5c94ad621 feat(p53): swap Never-Logged-In tile for Cards-on-File on customer stats`
+
+The Portal Onboarding Health tile on `/customers` renders a 4-card snapshot of the customer portal funnel.  Pre-P53 the 4th card was "Never logged in" — a lagging onboarding negative that most admins glanced past.  Replaced with "Cards on file": a leading revenue-quality positive that surfaces the count of active customers we can bill instantly.
+
+**Backend** — `routers/profit_report.py`:
+- Extend the read-once projection with `is_active`, `is_muted`, `saved_payment_methods_count`.
+- New cohort `active_with_card_on_file`. Predicate:
+  - `(is_active is True OR is_active is absent)` — legacy default-active per Phase 34f
+  - AND `is_muted is NOT True` — P32 muted-tab exclusivity
+  - AND `saved_payment_methods_count > 0` — the same denorm the `?has_payment_method=true` chip trusts (source-of-truth per the P44 CardOnFileWarningBanner comment)
+- `never_logged_in` is **deliberately retained** in the response even though the tile UI stopped rendering it.  The Chase button under the Invited card reads `data.cohorts.never_logged_in.count` to compute `chaseAudienceUpperBound = min(invited, never)`; dropping the key would silently break the button's disabled state.
+
+**Frontend** — `components/customers/PortalOnboardingHealthTile.jsx`:
+- 4th `COHORT_ORDER` entry replaced.  Config:
+  - `key: "active_with_card_on_file"`
+  - `label: "Cards on file"`
+  - `subtitle: "Active customers with a saved payment method"`
+  - `testid: "portal-onboarding-cards-on-file-tile"` (verbatim from the P53 tail brief — intentionally NOT following the `onboarding-cohort-*` pattern of the first 3 cards; QA/product docs already reference the `portal-onboarding-*` anchor for customer-stats coverage grids)
+  - `ctaHref: "/customers?has_payment_method=true&is_active=true"`
+  - `ctaTestid: "onboarding-tile-cards-on-file-cta"`
+- `CohortCard` extended with optional `subtitle` prop (rendered below the label at 11px/muted; only the Cards-on-file card carries one — the other 3 keep the pre-P53 one-line-label rhythm).
+- `neverCount` binding preserved — same const still feeds the Chase button.
+
+**Tile ↔ list parity**: the CTA `?has_payment_method=true&is_active=true` lands on **exactly** the rows the backend counted.  The customers-list `is_active=true` branch already enforces `_NOT_MUTED` (customers.py L995), and `has_payment_method=true` reads the same `saved_payment_methods_count>0` predicate.
+
+**Test coverage** —
+- `backend/tests/test_p53_portal_onboarding_health_cards_on_file.py` (14 new tests): envelope shape, Chase-binding retain, all 5 predicate branches (active+card, absent-is_active+card, is_active=False, is_muted=True, card<=0), universe scoping (soft-delete, merged-into, K49b orphan), cross-tenant isolation, mixed-seed sanity.
+- `backend/tests/test_portal_onboarding_health.py` (envelope-shape assertion updated for the 5th cohort key — same commit, contract change + coverage inseparable).
+- `frontend/src/test/p53-portal-onboarding-health-tile.test.jsx` (7 new tests): 4-card cardinality unchanged, 4th card user-approved copy + testid, count sources from the correct cohort, CTA parity, retired-testid absence, Chase button disabled/enabled binding.
+- `frontend/src/test/portal-onboarding-health-tile.test.jsx` (existing regression file updated — 4th card testid + mock payload; **8/8 green**).
+
+All Fix C tests green: 21 passed backend in 0.45s, 15 passed frontend (7 P53-specific + 8 existing regression) in ~250ms combined.
+
+---
+
+## Known gotchas (recorded here for future phases)
+
+### The platform auto-commit sweep hook
+
+During the P53.1 + Tail Bundle session (Feb-2026), the platform's auto-commit hook fired **between message send and next tool call** and swept every uncommitted change (Fix A + Fix B + Fix C partial + 89k lines of `.ruff_cache` / `backend/logs/integrity_dump_*.json`) into a single commit titled `**Halt-and-report: state pushback.**` with the Slack-style user-facing pushback message as the commit body.
+
+Recovery pattern (safe because the branch was local-only, no remote):
+1. `chore(gitignore): exclude ruff cache, integrity dumps, and vite/pycache noise` — commit adding `backend/logs/integrity_dump_*.json` + `frontend/node_modules/.vite/` rules + `git rm --cached` of 1300 already-tracked noise files.
+2. Preserve Fix A/B/C code to `/tmp/p53-tail-bundle-preserve/` with sha256 receipts.
+3. `git reset --hard e3052463a` (drops the sweep commit + the follow-up cleanup commit — both live in the working tree via `/tmp` preserve or file-checkout).
+4. `git cherry-pick 18f5e528e` (the cleanup commit re-applied cleanly onto the pre-sweep base; one modify/delete conflict on a background-modified `.ruff_cache` file resolved via `git rm -f`).
+5. Restore Fix A files → run Fix A test → commit as `fix(p53): income-by-service reads line.service_category_id before pricebook`.
+6. Restore Fix B files → run Fix B test → commit as `fix(p53): home breadcrumb points to root instead of nonexistent /dashboard`.
+7. Restore Fix C partial → grep-verify Chase-button linkage (**NOT ambiguous** — `neverCount = data.cohorts?.never_logged_in?.count ?? 0` at line 261 is the only site) → finish frontend tile → run both suites → commit as `feat(p53): swap Never-Logged-In tile for Cards-on-File on customer stats`.
+
+**Preventive hardening now in place**:
+- `.gitignore` rules block re-track of `backend/logs/integrity_dump_*.json`, `frontend/node_modules/.vite/`, `__pycache__/`, `.ruff_cache/`.
+- **Operational rule for future agents** (adopted this session): before any user-facing reply, either fully commit or `git stash push` any in-flight code change so partial state never sits unstaged when a reply goes out.  Prevents the sweep hook from picking up half-formed diffs.
+
+### P53-subset test collection pollution (open, non-blocking)
+
+Running the union `pytest tests/ -k "p53 or P53 or portal_onboarding_health"` triggers 3 failures in `test_p53_phase10_behavior_lock.py::test_watcher_cas_guard_blocks_concurrent_double_credit`, `test_refund_inside_window_voids_referral_and_blocks_credit`, `test_happy_path_writes_ledger_balance_and_flips_referral_to_credited`.  Running the same file in isolation passes 6/6 in 0.82s; running the file against any single other P53 test file passes 100% (pair matrix verified: `test_p53_income_by_service_category_precedence.py`, `test_p53_boot_time_drift_warning.py`, `test_p53_portal_onboarding_health_cards_on_file.py`, `test_portal_onboarding_health.py` all pair cleanly with `phase10_behavior_lock`).
+
+The pollution manifests only when the full 82-test P53 subset runs.  Root cause not yet located — some third fixture in the union pollutes the fake-DB monkeypatched state that `phase10_behavior_lock` reads.  **Neither the P53 ship nor the Tail Bundle changes are responsible** — verified by running the same subset against `78af23eb3` (pre-Fix-A baseline) and getting the same 3 failures.
+
+Do not add these three test names to the flake ignore list — the underlying test code is correct.  Future fix: locate the polluting fixture (probably a global monkeypatch on `routers.referral_watcher` that leaks between tests).
+
