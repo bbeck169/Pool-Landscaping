@@ -22166,3 +22166,292 @@ Followed the strict flake-ignore list (only `test_recurring_quarterly_semiannual
 * **Pricebook writeback augmentation** — `backend/services/pricebook/writeback.py` (`e6a658ae7`).
 * **Tests** — `backend/tests/test_p55_category_sync.py` (`b8f6c154a` original 15 · `3418eca48` sentinel-marker update · `a0507a6af` 2 regression guards).  Final tally: 17/17 green in 0.13s.
 
+
+---
+
+## P54 · Recurring Jobs Bulk Category Edit (Feb-2026)
+
+### Motivation & scope
+
+P54 is the first live consumer of the P55 category-sync
+orchestrator. Admins who need to re-taxonomize a batch of recurring
+templates (a common flow when introducing a new
+service-line or splitting an income bucket) previously had to open
+each template's Edit modal, flip the dropdown, save, and wait for
+the P55 fan-out per template. P54 wraps that per-row loop into a
+single `POST /api/recurring-jobs/bulk-update-categories` call and
+lets the frontend fan the request to the endpoint's own per-row
+handler with honest per-row telemetry.
+
+The endpoint mirrors the sibling `bulk_activate_recurring`
+handler's shape 1:1 so operators reading the response body see the
+same telemetry vocabulary (`updated` / `already_current` /
+`failed` / `results[]`) they already learned from the Bulk
+Activate flow.
+
+### Grep-pass findings (Section 5 · pre-commit paranoia mandate)
+
+Ran a grep-first pass over every dimension the spec touched
+BEFORE writing any code. Four material discrepancies surfaced;
+each halted for user decision (Q1–Q4). Findings tabulated for
+future phases so they don't have to redo the grep:
+
+| Discovery | What the spec assumed | What grep proved | Resolution |
+|-|-|-|-|
+| Batch-cap constant | 400 | No 400 constant in `recurring_jobs.py`. `_BULK_ACTIVATE_MAX = 100`, `_BulkDeleteIn.max_items = 200`. | Q1/A · new in-file constant `_BULK_UPDATE_CATEGORIES_MAX = 100`. |
+| Cross-tenant policy | Silent filter + `skipped_out_of_tenant_count` field | `bulk_activate_recurring` returns per-row `{status: "failed", error: "not_found"}`. NO silent filter. | Q2/A · mirror bulk-activate. Cross-tenant + typo + deleted all land in the same `not_found` bucket. `skipped_out_of_tenant_count` field DROPPED. |
+| Validation helper | Reuse `validate_service_category` | Helper exists (`service_categories.py :137`) but returns HTTP 400 with a DIFFERENT payload shape (`error/field/available_categories`). The single-item PATCH does NOT use it — it uses an inline pattern returning HTTP 422 with `code/field/attempted/collection`. `validate_income_category` does NOT exist anywhere. | Q3/A · mirror the PATCH inline pattern. Extraction to a shared helper deferred to P56 pre-feature refactor. |
+| Testid convention | `recurring-jobs-bulk-edit-*` prefix | File uses `recurring-bulk-*` for bulk-only elements and `recurring-jobs-*` for non-bulk elements (census: `recurring-bulk-activate`, `recurring-bulk-hard-delete`, `recurring-bulk-hard-delete-modal` vs `recurring-jobs-page`, `recurring-jobs-income-category`, etc.). | Q4/A · follow existing convention. Concrete testids listed under "Frontend surface" below. |
+
+Confirmed on the grep pass (no discrepancies):
+
+* Bulk-actions bar exists in `RecurringJobs.jsx :822-873`
+  (Bulk Activate + Delete Permanently). Insertion point for
+  P54's new Bulk Edit Categories button is between the two.
+* `GET /api/service-categories` list endpoint exists
+  (`service_categories.py :241`, returns `{items: [...], total: int}`,
+  admin-only).
+* `_write_recurring_category_audit` is reusable as-is
+  (`recurring_jobs.py :1179` — single-item PATCH shape:
+  event `recurring_job.recategorize`, `diff: {field: {before, after}}`).
+* `sync_recurring_template_to_children` signature unchanged since P55
+  landed (verified before Commit 1).
+* Origin marker `"bulk_recurring_edit"` is NOT in
+  `_SKIP_TABLE["sync_recurring_template_to_children"]` (which
+  contains only the P55 `_RESERVED_SELF_LOOP` sentinel).
+
+### Backend endpoint contract
+
+`POST /api/recurring-jobs/bulk-update-categories` — admin/manager,
+tenant-scoped. Payload:
+
+```python
+class _BulkUpdateCategoriesIn(BaseModel):
+    ids: List[str] = Field(..., min_length=1)
+    service_category_id: Optional[str] = None
+    income_category_id: Optional[str] = None
+```
+
+Uses Pydantic v2 `model_fields_set` to distinguish JSON-absent
+from JSON-null. Only fields present in the JSON body AND with a
+non-empty stripped-string value trigger the resolve + apply path.
+
+**Payload-level rejections (before the per-row loop starts):**
+
+| HTTP | Code / error | Trigger |
+|-|-|-|
+| 400 | `batch_too_large` | `len(ids) > 100` (post-dedupe) |
+| 400 | `no_category_fields_set` | neither field resolves to a non-empty value |
+| 422 | `<field>_too_long` | id string > 80 chars |
+| 422 | `<field>_no_html` | id contains `<` or `>` |
+| 422 | `service_category_invalid` / `income_category_invalid` | id doesn't resolve to an active row on the caller's tenant. Shape: `{code, field, attempted, collection}` — mirrors single-item PATCH at `recurring_jobs.py :828-849` |
+
+**Per-row outcomes** (HTTP 200; each id gets its own `results[]` entry):
+
+| status | Meaning |
+|-|-|
+| `updated` | Template found, at least one field differed, write landed, P55 sync fired successfully. |
+| `already_current` | Every incoming field's target value already matches the on-disk value. Idempotent no-op: no write, no sync, no audit row. |
+| `failed` | Template not found under the caller's tenant (out-of-tenant ids land here too — Q2/A) OR P55 sync raised `CategorySyncNameLookupError` (template write DID land — partial-apply state) OR generic sync exception. Row's `error` field carries the specific string. |
+
+**Response envelope:**
+
+```json
+{
+  "updated": 0, "already_current": 0, "failed": 0,
+  "sync_result_summary": {
+    "child_invoices_updated": 0,
+    "child_invoices_skipped_paid": 0,
+    "child_invoices_skipped_loop": 0,
+    "child_error_rows": 0
+  },
+  "results": [{"id": "...", "status": "...", "error": "..."}]
+}
+```
+
+### P55 sync integration
+
+Origin marker: **`"bulk_recurring_edit"`**. Grep-verified NOT in
+`_SKIP_TABLE["sync_recurring_template_to_children"]` (which holds
+only `_RESERVED_SELF_LOOP` post-P55 Commit 6). Test
+`test_bulk_edit_origin_not_in_skip_set` guards against a future
+edit to `_SKIP_TABLE` silently disabling the fan-out — mirrors
+`test_entry_point_origin_is_not_in_skip_set` from the P55
+Commit-7 test suite.
+
+Cross-file mapping of origin strings that MUST NOT collide with
+their own skip set (kept in the P55 PRD section too — replicated
+here so a phase reviewer sees the P54 marker without cross-doc
+hopping):
+
+| Callee | Real caller | Entry origin | Where guarded |
+|-|-|-|-|
+| `sync_recurring_template_to_children` | `PATCH /api/recurring-jobs/{tpl_id}` | `"recurring_template_edit"` | `test_entry_point_origin_is_not_in_skip_set` (P55 · Commit 7) |
+| `sync_recurring_template_to_children` | `POST /api/recurring-jobs/bulk-update-categories` (**this phase**) | `"bulk_recurring_edit"` | `test_bulk_edit_origin_not_in_skip_set` (P54 · Commit 4) |
+| `sync_invoice_line_to_pricebook` | uncategorized-items recategorize handler (`income_categories.py :1005`) | `"invoice_line_edit"` | `test_entry_point_origin_is_not_in_skip_set` (P55 · Commit 7) |
+
+Any future phase adding a caller MUST land its own regression guard
+in the same test file's static-contract test block.
+
+### Audit-per-item vs audit-per-batch decision
+
+**Chose audit-per-item** (one `recurring_job.recategorize` row per
+`updated` result). Rationale:
+
+* The single-item PATCH already writes one audit row per
+  category-change PATCH. Bulk = admin dispatching many equivalent
+  PATCHes; each conceptual PATCH deserves its own audit row so
+  the tenant's audit ledger reads uniformly whether the
+  taxonomy edit came through the row's Edit modal or the bulk
+  toolbar. Search queries like "who recategorized template X
+  between date Y and date Z" MUST return a row regardless of the
+  UI path.
+* The P55 orchestrator writes its OWN `category.sync_from_template`
+  audit row per orchestrator invocation (P55 · Commit 1). Bulk-
+  batching THAT event would defeat the "bounded row per fan-out"
+  design; keeping the two audit streams orthogonal means a bulk
+  edit of 20 templates produces 20 `recurring_job.recategorize`
+  rows + 20 `category.sync_from_template` rows — one per template,
+  one per fan-out, cleanly composable.
+* `already_current` rows write NO audit row (the writer's own
+  no-op guard drops empty-diff writes). Test
+  `test_bulk_update_already_current_writes_no_audit` locks this.
+
+### Partial-apply state
+
+The `_write_recurring_category_audit` + `db.recurring_job_templates.update_one`
++ P55 sync call sequence is NOT atomic — Mongo has no cross-collection
+transaction on this path. If the P55 sync raises
+`CategorySyncNameLookupError` after the template write already landed,
+that row classifies as `failed` in the response but the template's own
+category field IS updated on disk. Operators re-running a bulk
+backfill can safely retry — the second call will classify the row as
+`already_current` (idempotent) and the P55 fan-out will re-fire.
+
+Test `test_bulk_update_partial_apply_on_p55_sync_failure` locks
+this — asserts the template write persists AND the row's
+`results[]` entry carries the specific error string
+`category_deleted_after_source_write (<category_id>)`.
+
+### Frontend surface
+
+**`RecurringJobs.jsx` changes** (all under the existing
+`recurring-bulk-*` + `recurring-jobs-*` testid convention):
+
+* **Service-category filter dropdown** (top of page, alongside
+  the customer-search input):
+    * State: `serviceCategoryFilter` (default `""` = "All
+      categories" sentinel).
+    * `filteredItems` memo composes search filter AND category
+      filter via `AND`; exact-match on `service_category_id`
+      (rows without the P4 taxonomy denorm drop out under a
+      specific filter, reappear under "All categories").
+    * `serviceCats` state now loads on MOUNT via a separate
+      `useEffect` (previously only fired when the Edit modal
+      opened) so both the filter dropdown AND the bulk-edit modal
+      have options on first render.
+    * testid: `recurring-jobs-service-category-filter` (non-bulk
+      element → `recurring-jobs-*` prefix per Q4/A).
+
+* **Bulk Edit Categories toolbar button** (between Bulk Activate
+  + Delete Permanently):
+    * Neutral indigo affordance (`#4F46E5` background) so it
+      reads as *editing*, not activating or destroying.
+    * Disabled when `selectedIds.size === 0` or the request is
+      in-flight.
+    * testid: `recurring-bulk-edit-categories`.
+
+* **Bulk Edit Categories modal**:
+    * Two `<select>` dropdowns (Service, Income). First `<option>`
+      of each is the `"Unchanged"` sentinel (value `""`) which
+      the Apply handler OMITS from the POST body — the backend's
+      `model_fields_set` check keeps the field out of the write
+      set.
+    * Apply button disabled when both dropdowns are still
+      `"Unchanged"` (guards against the backend's
+      `no_category_fields_set` 400 without ever hitting the
+      network).
+    * Inline error slot renders backend 422 codes next to the
+      dropdowns instead of a raw toast — dropdown-adjacent
+      surface is more actionable.
+    * Batch cap: `BULK_UPDATE_CATEGORIES_BATCH = 100` matches the
+      backend `_BULK_UPDATE_CATEGORIES_MAX`. Payloads > 100 are
+      sliced in place — operator never sees a raw
+      `batch_too_large` 400.
+    * Aggregate toast: `"N updated, N already current, N failed
+      · N invoices synced"`. Warning-style on any `failed > 0`,
+      success otherwise.
+    * testids: `recurring-bulk-edit-categories-modal`,
+      `recurring-bulk-edit-service-cat-select`,
+      `recurring-bulk-edit-income-cat-select`,
+      `recurring-bulk-edit-apply`, `recurring-bulk-edit-cancel`,
+      `recurring-bulk-edit-error`.
+
+### Regression triage — targeted smoke test (Feb-2026)
+
+Ran the same 69-file P54-adjacent smoke set serially with
+`pytest -p no:xdist` (68 P55-adjacent files + `test_p54_recurring_jobs_bulk_update_categories.py`),
+comparing HEAD (P54 tip, `a69a04dac`) against baseline
+`c6fdb88c5` (immediately pre-P55, with the P54 + P55 test files
+excluded on the baseline side since neither existed yet):
+
+* HEAD (P54 tip): 67 failed, 4 errored, **432 passed**, 24 skipped in 90.19s.
+* Baseline (`c6fdb88c5`): 67 failed, 4 errored, 403 passed, 24 skipped in 90.19s.
+
+Set-diff of failing node ids: **∅ both ways.** No P54-caused
+regressions. Every failure in the HEAD set is the same
+pre-existing motor-loop / xdist / env-dependent flake list that
+P55's own triage already documented (see P55 PRD § "Regression
+triage" above).
+
+Flake-ignore list unchanged (`test_recurring_quarterly_semiannual_p47.py`
++ `test_phase10_referrals.py`) — the "halt-and-report on ANY new
+pre-existing flake" mandate was not triggered.
+
+### File / commit inventory
+
+| Commit | Sha | Purpose |
+|-|-|-|
+| 1 | `1d11e06fd` | `feat(p54): backend bulk-update-categories endpoint with p55 sync integration` |
+| 2 | `c547aa1c9` | `feat(p54): recurring jobs service-category filter dropdown` |
+| 3 | `f1fd837fb` | `feat(p54): recurring jobs bulk-edit categories modal` |
+| 4 | `ce9caee79` | `test(p54): backend bulk endpoint coverage + skip-set regression guard` (12 tests, 0.35s) |
+| 5 | `a69a04dac` | `test(p54): frontend filter + bulk-edit modal coverage` (24 source-scan tests, 9ms) |
+| 6 | (this doc)   | `docs(p54): PRD section for recurring jobs bulk category edit` |
+
+Files touched:
+* `backend/routers/recurring_jobs.py` — new endpoint (+310 lines).
+* `backend/tests/test_p54_recurring_jobs_bulk_update_categories.py` — new test file (+537 lines).
+* `frontend/src/pages/admin/RecurringJobs.jsx` — filter + modal (+374 lines net; 96 in filter Commit + 278 in modal Commit).
+* `frontend/src/test/p54-recurring-jobs-bulk-edit.test.jsx` — new test file (+273 lines).
+* `memory/PRD.md` — this section.
+
+### Explicit "not done" list — P54 scope boundary
+
+Documented so the next agent doesn't rediscover:
+
+* **Bulk clear NOT supported.** Passing `null` / omitting a field
+  on a specific dropdown means "unchanged", NOT "clear to null".
+  Bulk-clearing a category from N templates would need a distinct
+  UI affordance (a "Clear" toggle) + a distinct sentinel in the
+  payload — deferred.
+* **No async task offloading.** Every bulk-update-categories
+  request runs synchronously in the request handler. At the 100
+  cap this is bounded by the P55 fan-out cost per row — typical
+  latency ~1-3 s per 100-template call on a warm connection. If
+  a future tenant's fan-out density pushes this past 30 s, the
+  right move is to offload to a background worker (P56 or later)
+  rather than raise the cap.
+* **Loop invariant preserved via Q4 sentinel.** The P54 origin
+  `"bulk_recurring_edit"` is a REAL caller — putting it in
+  `_SKIP_TABLE` would recreate the P55 · Commit 6 shipping bug.
+  The `test_bulk_edit_origin_not_in_skip_set` static guard
+  enforces this permanently.
+* **PATCH single-item wire NOT touched.** Q3/A decision — the
+  bulk endpoint mirrors the PATCH inline pattern by duplication,
+  not extraction. If P56 grep confirms it needs the same
+  validation shape, extract THEN as a P56 pre-feature refactor.
+* **No mobile parity.** The recurring-jobs bulk toolbar lives
+  only in the admin web surface (`frontend/`) — no mobile UI
+  changes.
+
