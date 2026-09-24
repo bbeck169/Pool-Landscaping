@@ -533,8 +533,21 @@ api_router.include_router(_batch_b_email_preview.router)
 # stronger of the two guards; the handler itself also 404s on prod
 # as a belt-and-suspenders defense). Deliberately mounted next to
 # the existing Batch B preview endpoint so the two live together.
+#
+# Escape hatch: ``ENABLE_DEV_EMAIL_PREVIEW=true`` overrides the
+# APP_ENV gate. Set this env var on the preview pod when
+# ``APP_ENV=production`` is a legacy config-drift artifact (the
+# preview pod's ``backend/.env`` currently ships ``APP_ENV=production``
+# for historical reasons); the override lets the user visual-smoke
+# the BOOM template in a browser without flipping APP_ENV globally
+# (APP_ENV has broader implications on comms guardrails, mocking,
+# etc. that are out of P53 scope).
 _p53_app_env = (os.environ.get("APP_ENV") or "preview").strip().lower()
-if _p53_app_env != "production":
+_p53_force_preview = (
+    (os.environ.get("ENABLE_DEV_EMAIL_PREVIEW") or "").strip().lower()
+    in ("1", "true", "yes")
+)
+if _p53_app_env != "production" or _p53_force_preview:
     from routers import dev_email_preview as _p53_dev_email_preview  # noqa: E402
     api_router.include_router(_p53_dev_email_preview.router)
 

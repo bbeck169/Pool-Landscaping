@@ -109,3 +109,63 @@ def test_prod_env_case_insensitive(preview_client):
             f"variant {variant!r} did NOT lock the route "
             f"(status={r.status_code})"
         )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Section 3 — ENABLE_DEV_EMAIL_PREVIEW escape hatch
+# ═════════════════════════════════════════════════════════════════════
+def test_enable_dev_email_preview_override_unlocks_prod(monkeypatch):
+    """The preview pod's ``backend/.env`` ships
+    ``APP_ENV=production`` as a legacy config-drift artifact. Setting
+    ``ENABLE_DEV_EMAIL_PREVIEW=true`` on that pod unlocks the route
+    without flipping APP_ENV globally (which would have broader
+    knock-on effects on comms guardrails, mocking, etc.)."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ENABLE_DEV_EMAIL_PREVIEW", "true")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.dev_email_preview import router
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    client = TestClient(app)
+
+    r = client.get("/api/dev/email-preview/referral-reward")
+
+    assert r.status_code == 200
+    assert "BOOM!" in r.text
+
+
+def test_enable_dev_email_preview_accepts_truthy_variants(monkeypatch):
+    """Match the codebase's other flag-detection conventions: accept
+    ``1``, ``true``, and ``yes`` (case-insensitive)."""
+    for variant in ("1", "true", "TRUE", "yes", "YES"):
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("ENABLE_DEV_EMAIL_PREVIEW", variant)
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routers.dev_email_preview import router
+        app = FastAPI()
+        app.include_router(router, prefix="/api")
+        client = TestClient(app)
+        r = client.get("/api/dev/email-preview/referral-reward")
+        assert r.status_code == 200, (
+            f"variant {variant!r} did NOT unlock the route "
+            f"(status={r.status_code})"
+        )
+
+
+def test_enable_dev_email_preview_does_not_leak_when_unset(monkeypatch):
+    """Sanity check — when the override is unset (or falsy), prod
+    APP_ENV still locks the route."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("ENABLE_DEV_EMAIL_PREVIEW", raising=False)
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.dev_email_preview import router
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+    client = TestClient(app)
+
+    r = client.get("/api/dev/email-preview/referral-reward")
+
+    assert r.status_code == 404

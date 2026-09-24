@@ -61,7 +61,17 @@ def _is_prod() -> bool:
     """Runtime env detection — matches the codebase-wide
     ``APP_ENV == "production"`` convention (grep-verified against
     ~30 call-sites in ``backend/routers/`` and
-    ``backend/services/``)."""
+    ``backend/services/``).
+
+    Escape hatch: ``ENABLE_DEV_EMAIL_PREVIEW=true`` overrides the
+    APP_ENV gate so the preview pod (which currently ships
+    ``APP_ENV=production`` in its ``.env`` as a legacy config-drift
+    artifact) can still expose the route without flipping the
+    global APP_ENV. When the override is set, this function returns
+    ``False`` regardless of APP_ENV."""
+    if (os.environ.get("ENABLE_DEV_EMAIL_PREVIEW") or "").strip().lower() \
+            in ("1", "true", "yes"):
+        return False
     return (os.environ.get("APP_ENV") or "").strip().lower() == "production"
 
 
