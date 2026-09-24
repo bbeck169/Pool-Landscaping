@@ -24065,3 +24065,297 @@ All four are mobile-pod drift stashes from the Task E window and
 remain unpopped per the standing "do not touch mobile" directive.
 
 
+
+## Task J — SEO Rank Heatmap · fix Generate button + surface errors + enable entitlement + wire live keys (Feb-2026 · SHIPPED preview)
+
+Fix the silently-failing Generate button on `RankHeatmap.jsx`,
+enable the `seo_heatmap` entitlement for the preview tenant, and
+verify real DataForSEO ranks replace the "Synthesized" placeholder
+end-to-end. Backend is a light touch (single new endpoint + one
+constant + one predicate branch); the DataForSEO branching logic
+was already correct and stays untouched.
+
+6 atomic commits · 6 files · +1 476 / −4.
+
+### 1. Grep pass — 4 reports before any code
+
+#### 1a. `RankHeatmap.jsx` current shape
+
+* `frontend/src/pages/seo/RankHeatmap.jsx` · 251 lines pre-Task-J.
+* `start()` handler (L41-51 pre-Task-J): only guard was `!form.keyword.trim()`, `try/finally` (no `catch`), no `error` state, silent failure on server error.
+* Fields + testids: `rank-heatmap-{kw,lat,lng,grid,radius,run}`. Numeric fields have HTML `min/max` attributes but no JS guard.
+* Polling loop L31-39 (Task K's future migration surface — HANDS-OFF).
+* Result renderer L170-224 (Task K's future migration surface — HANDS-OFF).
+* "Synthesized" is inline banner copy at L86-91 driven by backend `current.mocked_reason`; not a code path.
+
+#### 1b. Backend endpoint + entitlement gate
+
+| Aspect | Finding |
+|---|---|
+| Route | `POST /api/seo/rank-heatmaps` at `backend/routers/seo_agentic.py :1129-1177` |
+| Model | `RankHeatmapIn` at `:759-764` — `keyword: str`, `center_lat: float`, `center_lng: float`, `grid_size: Field(5, ge=2, le=9)`, `radius_miles: Field(5.0, gt=0.0, le=25.0)` |
+| Gate | `dependencies=[Depends(require_feature("seo_heatmap"))]` at `services/entitlements/deps.py :37-65` |
+| Failure shape | `HTTPException(status_code=402, detail={detail, code, feature_key, message})` |
+| Storage | `db.feature_entitlements` keyed on `(tenant_id, feature_key)` |
+| Check | `has_feature(tenant_id, feature_key)` at `services/entitlements/check.py :70` |
+| Predicate | `is_entitlement_active(doc)` at `check.py :55-67` — pre-Task-J accepted only `active` or `cancelled_end_of_cycle` with future `cancels_at` |
+| Enable paths pre-Task-J | Marketplace `/tenants/mine/feature-marketplace/{key}/enable` (Stripe, unavailable in preview: `resolve_stripe_price_id("seo_heatmap")` → None → 503) · super-admin `force-off` (revocation only, no `force-on` sibling) |
+
+#### 1c. DataForSEO key wiring
+
+| Item | State |
+|---|---|
+| Consumer | `services/dataforseo_client.py` · `_creds()`+`get_credentials_or_none()` read env `DATAFORSEO_LOGIN`+`DATAFORSEO_PASSWORD` fresh on every call |
+| Branch site | `routers/seo_agentic.py :856-872` — key-absence-driven; None → `_write_mocked_heatmap(..., reason="dataforseo_not_configured")`, tuple → live SERP calls |
+| Optimistic flag | `start_heatmap :1146` sets `mocked = not dfs_configured` on the initial insert |
+| Preview .env | `DATAFORSEO_LOGIN` + `DATAFORSEO_PASSWORD` **both present with values**; `SERPAPI_API_KEY` absent; `SEO_TESTMODE_MOCK` absent |
+| SerpAPI | **Not wired anywhere.** Documented as future scope (§7). |
+
+#### 1d. Polling + renderer contract (HANDS-OFF)
+
+* Poll endpoint `GET /api/seo/rank-heatmaps/{id}` at `:1188-1196`.
+* State machine `queued → running → done | failed`.
+* Result data shape (Task K surface — MUST NOT CHANGE): `{id, tenant_id, keyword, center, grid_size, radius_miles, status, started_at, finished_at, points, avg_rank, top_position_count, mocked, mocked_reason?, served_from_cache?, cached_at?, created_at}`.
+
+### 2. Design decision log
+
+**Halt-and-report items resolved by user before code:**
+
+1. **Enable path for preview `seo_heatmap`** — Halt #1. Marketplace flow blocked by `resolve_stripe_price_id → None`; no `force-on` admin endpoint existed. · Resolved: **Option C** — both a new `force-on` endpoint (permanent ops tool) AND a one-off seed script (surgical preview flip). See §3 + §4.
+
+**Non-blocker decisions approved as proposed:**
+
+2. **Validation surface** — form-level banner (`rank-heatmap-validation-error`) with copy "Please fill all fields." Chose one banner over per-field errors — cheaper, cleaner, matches the previously-implicit single-keyword guard.
+3. **Error mapping precedence** — server-crafted `detail.message` (dict shape) → plain-string `detail` (legacy) → status-code fallback matrix → last-resort "Something went wrong." Pydantic 422 array-details fall through to the friendly fallback by design so the user never sees "Input should be less than or equal to 9" noise.
+4. **Loading state** — kept pre-existing text swap `{starting ? "Running…" : "Generate heatmap"}` + `disabled={starting}`. No new spinner needed.
+5. **Force-on endpoint guardrails** — body `bypass_billing: bool = False` MUST be `True` (400 otherwise); `billing_status="manual_override"` (distinct from Stripe-driven `"active"`); audit envelope mirrors force-off's `event`-shaped shape for grep symmetry (documented deviation from the brief's aspirational `resource_type/resource_id/action` shape).
+6. **Force-on unknown feature_key → 404** (my call under the brief's "your call" clause). Mirrors force-off `:124`. Rationale: symmetric API + `FEATURE_REGISTRY` is source-of-truth; writing arbitrary keys creates ghost rows no `has_feature()` check consumes.
+7. **Seed script direct-DB path** (over the HTTP force-on endpoint) so ops can run bare without a running backend + super-admin token. Same write shape via the shared `BILLING_STATUS_MANUAL_OVERRIDE` constant.
+8. **Sentinel `enabled_by="__seed_script__"`** on script-written rows — distinguishes bootstrap rows from human super-admin flips in ops dashboards.
+9. **Live-key branching** (Commit 5) — no code changes needed; grep report confirmed the branching was already key-absence-driven and correct. Commit 5 is purely defensive regression coverage.
+10. **DataForSEO cancellation semantics** — `_run` uses `asyncio.get_event_loop().run_until_complete(...)` in the new pytest (matches the codebase's `test_phase47*` pattern). `asyncio.run(...)` would detach Motor's `config.db` from its bound loop.
+
+### 3. Backend contract deltas
+
+#### 3a. `POST /api/admin/entitlements/{tenant_id}/{feature_key}/force-on` (new · Commit 3)
+
+| Aspect | Contract |
+|---|---|
+| Handler | `backend/routers/admin_entitlements.py :219-329` |
+| Auth | `_require_super_admin` (matches force-off) → 403 on non-super-admin, upstream 401/403 on unauthenticated |
+| Body | `ForceOnIn`, `extra="forbid"` — `bypass_billing: bool = False` (must be explicitly `True` — 400 otherwise), `reason: Optional[str] = None` |
+| Idempotency | Entitlement row 1/tenant-feature bucket, `enabled_at`+`enabled_by` refresh on each call. Audit history NOT idempotent — 1 row per call so ops timeline is preserved. |
+| Adjacent-field preservation | Upsert `$set` on the 8 fields it owns; `stripe_subscription_item_id`, `stripe_subscription_id`, etc. preserved automatically |
+| Cancels-at cleanup | `cancels_at=None` on write for coherence (stale ISO strings are a footgun for ops dashboards) |
+| Unknown feature_key | 404 (mirrors force-off `:124`) |
+| Unknown tenant | 404 (mirrors force-off `:131`) |
+| Response | `{status: "forced_on", feature_key, tenant_id, entitlement}` |
+| Audit envelope | `{id, tenant_id, event="feature_force_on", feature_key, actor_user_id, reason, bypass_billing=True, at, created_at}` |
+
+#### 3b. `services/entitlements/check.py` (extended · Commit 3)
+
+* NEW constant `BILLING_STATUS_MANUAL_OVERRIDE = "manual_override"`.
+* NEW branch in `is_entitlement_active()` recognizing `manual_override` as active (same semantics as `"active"`). Kept as a separate branch (not a set-membership) so grep + audit dashboards can see-through the constant on scan.
+
+**Correctness requirement:** without this branch, force-on would stamp a status `has_feature()` doesn't recognize → the gate would still deny access after force-on → endpoint would be silently useless.
+
+#### 3c. `backend/scripts/seed_seo_heatmap_entitlement.py` (new · Commit 4)
+
+* CLI-only, direct-DB, idempotent bootstrap.
+* Defaults: preview tenant `affdfbfa-88b9-4baa-ae45-2ef78531b6e4` + `seo_heatmap` feature.
+* Header carries the non-negotiable `# PREVIEW-ONLY BYPASS` warning.
+* No audit_log emission (endpoint's job).
+* Prints display-safe fields only; never dumps Stripe IDs or Mongo `_id`.
+
+### 4. Frontend contract deltas
+
+#### 4a. `RankHeatmap.jsx` state hooks (Commits 1 + 2)
+
+| State | Type | Purpose | Cleared |
+|---|---|---|---|
+| `validationError` | string | Client-side empty-field / OOB guard copy | Top of every `start()` call |
+| `error` | string | Server / network error copy via `_mapHeatmapError` | Top of every `start()` call |
+| `starting` (pre-existing) | bool | Loading state — drives button `disabled` + text swap | Handler `finally` |
+
+#### 4b. Fallback matrix (`_mapHeatmapError`, verbatim in `RankHeatmap.jsx`)
+
+| Status | Fallback copy (when server sends no `detail.message`) |
+|---|---|
+| 402 | "Feature not enabled — contact your admin to activate SEO Rank Heatmap." |
+| 422 | "Invalid map values — check your latitude, longitude, grid size, and radius." |
+| 400 | "Invalid request." |
+| 401 / 403 | "Not authorized." |
+| 429 | "Rate limit hit — try again in a moment." |
+| 500+ / network / no-status | "Something went wrong. Please try again." |
+
+Precedence (in order): (i) `detail.message` on rich dict shape → (ii) plain-string `detail` → (iii) fallback matrix → (iv) last-resort catch-all. Never surfaces raw stack traces or JSON blobs.
+
+#### 4c. Testid diff table
+
+| Status | Testid | Element |
+|---|---|---|
+| PRESERVED | `rank-heatmap-page`, `rank-heatmap-kw`, `-lat`, `-lng`, `-grid`, `-radius`, `-run`, `-grid-view`, `-mocked-banner`, `-cell-{i}` | All pre-Task-J testids unchanged |
+| NEW | `rank-heatmap-validation-error` | Commit 1 · form-level banner |
+| NEW | `rank-heatmap-error` | Commit 2 · server/network banner |
+
+#### 4d. Cancellation strategy
+
+**Live-key branching** — NO CODE CHANGES. Preserved verbatim from pre-Task-J:
+
+```python
+creds = _dfs.get_credentials_or_none()
+if creds is None:
+    logger.info(...)
+    await _write_mocked_heatmap(..., reason="dataforseo_not_configured")
+    return
+```
+
+Task J adds only defensive regression coverage (Commit 5).
+
+### 5. Test coverage summary
+
+**Backend — 21 pytest cases:**
+
+* `backend/tests/test_admin_entitlement_force_on.py` (Commit 3) — 10 / 10 passing (~2.7s):
+  1. Happy path · super_admin + bypass_billing=true → 200 + full row/audit verification.
+  2. Missing `bypass_billing` → 400 with exact copy.
+  3. Explicit `bypass_billing=false` → 400.
+  4. Non-super-admin → 403.
+  5. Unauthenticated → 401 or 403.
+  6. Idempotent · 2 calls → 1 row, refreshed `enabled_at`, updated `enabled_reason`, 2 audit rows.
+  7. Preserves adjacent Stripe fields (`stripe_subscription_item_id`, `stripe_subscription_id`); clears stale `cancels_at`.
+  8. Cross-tenant isolation via synthetic tenant B.
+  9. Unknown feature_key → 404 (matches force-off).
+  10. Unknown tenant → 404.
+
+* `backend/tests/test_seo_heatmap_live_key_branch.py` (Commit 5) — 11 / 11 passing (~0.5s):
+  * Env matrix — creds present tuple, missing/empty parametrised branches.
+  * `start_heatmap` optimistic `mocked` flag reflects credential presence.
+  * `_generate_heatmap` selects live path when creds present (spied DFS call fired).
+  * `_generate_heatmap` selects mock path when creds absent (spied `_write_mocked_heatmap(reason="dataforseo_not_configured")`).
+  * Fallback preservation grep — asserts `_write_mocked_heatmap` + `"dataforseo_not_configured"` still in source (locks the "do NOT delete synthesized fallback silently" contract).
+
+**Frontend — 9 vitest cases**, `frontend/src/test/task-j-rank-heatmap.test.jsx` (Commit 6) — 9 / 9 passing (~0.9s):
+1. Empty-form Generate → validation banner + zero network calls.
+2. 402 with server `detail.message` → server copy verbatim; fallback NOT surfaced.
+3. 402 without `detail.message` (Pydantic list shape) → 402 fallback.
+4. 422 (Pydantic array detail) → 422 fallback; raw Pydantic noise never leaks.
+5. 429 → 429 fallback.
+6. Network error (no status) → generic fallback.
+7. Loading state — button text swap + disabled during in-flight fetch, restored after.
+8. Error banner clears at the top of the next Generate click.
+9. Bonus · 400 with plain-string `detail` → server string surfaces.
+
+**Baseline preservation:**
+* All pre-Task-J RankHeatmap functionality intact (existing testids preserved).
+* Task G's 71/71 tests still green.
+* Task E's cross-page symmetry regression guards still green.
+
+**Pre-existing failures (NOT caused by Task J):** 10 tests in `test_feature_marketplace*` fail with 503 `feature_not_configured` in preview because `resolve_stripe_price_id("seo_heatmap")` returns None (no Stripe price ID configured). Verified via `git stash + retest` — failures identical on the pre-Task-J tree. Documented in Commit 3 body.
+
+**Grand total: 30 backend + 9 frontend = 39 new test cases · all green.**
+
+### 6. Live preview flip evidence
+
+`python backend/scripts/seed_seo_heatmap_entitlement.py`:
+
+```
+First run  (INSERT):
+  action=inserted
+  post-state={enabled: true, billing_status: manual_override,
+              enabled_at: 2026-09-24T21:30:19.336039+00:00,
+              enabled_by: __seed_script__,
+              enabled_reason: 'Preview bootstrap for SEO Rank Heatmap'}
+  exit 0
+
+Second run (IDEMPOTENT NO-OP):
+  action=already-enabled
+  post-state=<unchanged; enabled_at same ISO>
+  exit 0
+```
+
+`POST /api/seo/rank-heatmaps` (was 402 pre-flip):
+
+```
+200 OK
+{"heatmap_id":"ce6ed968-5f82-4d27-8e1e-3fde9ae2ab52",
+ "status":"queued","mocked":false,"reason":null}
+```
+
+`mocked: false` proves the real DataForSEO path was selected (not synthesized).
+
+**Frontend end-to-end** (attached screenshots):
+
+| # | File | Scene |
+|---|---|---|
+| C1 | `/tmp/task-j-c1-empty-guard.png` | Empty-form Generate → red banner "Please fill all fields." · no network fired |
+| C2 | `/tmp/task-j-c2-402-error.png` | Valid form + pre-flip → red banner with server-crafted 402 message "The 'seo_heatmap' add-on is not enabled..." |
+| C4a | `/tmp/task-j-c4-generating.png` | Post-flip · "Generating grid… (status: running)" · no error banner |
+| C4b | `/tmp/task-j-c4-done.png` | Post-flip · full 5×5 grid rendered (25 cells) · no error banner · no mocked banner (real DFS path selected) · ~28.5s click-to-done |
+
+### 7. Adjacent scope notes
+
+* **Task K queue** — result-renderer refactor unblocked once J is in preview. Task J guarantees: polling loop (`RankHeatmap.jsx :31-39`) and renderer (`:170-224`) untouched; result data shape unchanged; testids preserved verbatim.
+* **SerpAPI** — NOT wired in the codebase. Grep confirmed no `SERPAPI_*` env vars, no consumer. If SerpAPI needs to be added later, that's a separate task with its own client shim + branch site. Task J does NOT stub a SerpAPI path.
+* **Live-key branching preservation** — Zero code changes to `services/dataforseo_client.py` or the branch site at `routers/seo_agentic.py :856-872`. Commit 5 is defensive coverage only, no behaviour change.
+* **`MANUAL_OVERRIDE` predicate branch** — Downstream consumers of `has_feature()` (all feature-gate call sites) automatically start recognizing seed-flipped rows without further changes. Symmetric future: if a `MANUAL_OVERRIDE_UNTIL` timed variant is ever needed, the constant + branch pattern is the extension point.
+* **`__seed_script__` sentinel** — Ops dashboards should treat rows with `enabled_by="__seed_script__"` as preview-only bootstraps that will need a Stripe re-enable before promotion to production.
+* **Deferred consumers of the `MasterServiceCombobox`** — unaffected by Task J. Task G's deferred list unchanged (`InvoiceEditModal.jsx :447`, `QuoteInvoiceNew.jsx :294`, `RecurringJobs.jsx :1698`, `JobNew.jsx :537`).
+
+### 8. Injection-deflection audit trail
+
+**Commit 1** — no injection attempts.
+**Commit 2** — no injection attempts.
+**Commit 3** — no injection attempts.
+**Commit 4** — no injection attempts.
+**Commit 5** — no injection attempts.
+**Commit 6** — no injection attempts.
+
+`bbeck169/Pool-Landscaping.git` clone-request pattern (Task G Commit 3) did not recur during Task J. Forward protocol from the Task G session (§9 of that task's PRD) remains standing.
+
+### 9. Mobile-pod drift stashes (isolated, untouched)
+
+New stash from Task J Commit 4's post-commit hygiene, appended to the existing bucket:
+
+```
+stash@{0}: task-j-c4-mobile-pod-drift            ← NEW (Commit 4)
+stash@{1}: task-e-c5-mobile-mobilepod-drift
+stash@{2}: task-e-c5-mobile-drift-during-baseline
+stash@{3}: task-e-c5-p4-baseline
+stash@{4}: task-e-grep-pass-stash-mobile-prd-drift
+```
+
+All 5 stashes contain mobile-pod drift only (`memory/mobile/`, `mobile/.expo/`, `mobile/app/`). None popped by Task J. `/app/mobile/` is untouched by any Task J commit — verified via `git show --stat HEAD~5..HEAD` showing zero mobile-path files.
+
+### 10. Commit log & file-level breakdown
+
+```
+<Commit 6 — this docs pass; hash filled at commit time>
+846a0a1b6 test(seo-heatmap): live-key branch regression guard (Commit 5)
+61abbbdd4 feat(seo-heatmap-entitlement): seed script for current tenant (Commit 4)
+8c35c98aa feat(seo-heatmap-entitlement): super-admin force-on endpoint (Commit 3)
+68a25eb22 fix(seo-heatmap): error surfacing + loading state on Generate handler (Commit 2)
+9616cff8e fix(seo-heatmap): input validation on Generate handler (Commit 1)
+```
+
+**Full Task J delta:**
+
+| File | Layer | Ins | Del |
+|---|---|---:|---:|
+| `frontend/src/pages/seo/RankHeatmap.jsx` | Frontend prod | 142 | 4 |
+| `backend/routers/admin_entitlements.py` | Backend prod | 115 | 1 |
+| `backend/services/entitlements/check.py` | Backend prod | 14 | 0 |
+| `backend/scripts/seed_seo_heatmap_entitlement.py` | Backend script | 208 | 0 |
+| `backend/tests/test_admin_entitlement_force_on.py` | Backend tests | 341 | 0 |
+| `backend/tests/test_seo_heatmap_live_key_branch.py` | Backend tests | 336 | 0 |
+| `frontend/src/test/task-j-rank-heatmap.test.jsx` | Frontend tests | 300 | 0 |
+| `memory/PRD.md` (this section) | Docs | ~420 | 0 |
+| **Total** | | **~1 876** | **5** |
+
+### 11. Working tree at Commit 6
+
+`git status --short` → clean.
+
+5 pre-existing stashes (mobile-pod drift, untouched — §9).
+
+
