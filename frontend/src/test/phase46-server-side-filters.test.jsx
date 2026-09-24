@@ -51,6 +51,23 @@ function _installMockGet() {
         total: 2,
       });
     }
+    // Feb-2026 · Tail Fix E — Phase P31 replaced the per-tab
+    // ``count_only=true`` fanout with a consolidated
+    // ``/customers/counts`` envelope. ``loadCounts()`` in
+    // ``CustomersList.jsx`` now fires a single call that carries
+    // the same ``tags`` + ``city`` params. The ``_countCalls()``
+    // helper below has been retargeted to match this endpoint.
+    // Precedent: c09c94d05 (P44 fix in Tail Fix D).
+    if (typeof path === "string"
+          && (path === "/customers/counts"
+              || path.startsWith("/customers/counts?"))) {
+      return Promise.resolve({
+        active: 0, inactive: 0, muted: 0, waitlist: 0,
+        missing_address: 0,
+        portal_activated: 0, portal_not_activated: 0,
+        no_payment_method: 0, never_logged_in: 0,
+      });
+    }
     if (typeof path === "string" && path.startsWith("/customers")) {
       if (path.includes("count_only=true")) {
         return Promise.resolve({ count: 0 });
@@ -106,11 +123,18 @@ function _listCalls() {
 
 
 function _countCalls() {
+  // Feb-2026 · Tail Fix E — retargeted from the retired
+  // per-tab ``/customers?count_only=true`` fanout onto the
+  // consolidated ``/customers/counts`` endpoint that Phase P31
+  // migrated to. Semantic contract preserved: this helper
+  // captures every count-flavored network call so tests can
+  // assert filter params land on them. Precedent: c09c94d05
+  // (P44 fix in Tail Fix D).
   return mockGet.mock.calls
     .map((c) => c[0])
     .filter((p) => typeof p === "string"
-                       && p.startsWith("/customers?")
-                       && p.includes("count_only=true"));
+                       && (p === "/customers/counts"
+                           || p.startsWith("/customers/counts?")));
 }
 
 
@@ -171,9 +195,16 @@ describe("CustomersList · P46 server-side filters", () => {
     await waitFor(() => {
       const cnt = _countCalls().filter((p) =>
         p.includes("tags=Pool") && p.includes("city=Phoenix"));
-      // Active + Inactive + Muted (admin sees all three). All must
-      // carry both filter params.
-      expect(cnt.length).toBeGreaterThanOrEqual(2);
+      // Feb-2026 · Tail Fix E — Phase P31 collapsed the per-tab
+      // ``count_only=true`` fanout (previously Active + Inactive
+      // + Muted = 3 separate calls, hence the historical ``>= 2``
+      // gate) into a single ``/customers/counts`` envelope call.
+      // The semantic contract preserved: ``tags`` and ``city``
+      // must land on the counts request(s) alongside the list
+      // request — post-P31 there is one such call, so ``>= 1``
+      // is the honest gate. This is NOT a semantic weakening; it
+      // reflects a code-under-test fact. Precedent: c09c94d05.
+      expect(cnt.length).toBeGreaterThanOrEqual(1);
     });
   });
 
