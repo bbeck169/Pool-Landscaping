@@ -21932,7 +21932,31 @@ All Fix C tests green: 21 passed backend in 0.45s, 15 passed frontend (7 P53-spe
 3. `test(tail-fix-d): update p44 mock to intercept post-P31 /customers/counts endpoint` — isolated fixture-drift fix (29 insertions, 3 deletions). Explicitly cross-referenced in commit body so future maintainers understand the P31 provenance.
 4. `docs(tail-fix-d): PRD addendum for Fix C click-through completion` (this section).
 
+### Tail Fix E — P31 fixture-drift cleanup (Feb-2026 · follow-up to Tail Fix D)
+
+**Scope**: Mop up the three pre-existing P31-drift orphans that surfaced during Tail Fix D's regression sweep. Same class as the P44 fix (`c09c94d05`), isolated commits, mechanical:
+
+- `p43b-missing-address-filter.test.jsx` — 1/6 failing on baseline → **6/6 green** (commit `947bac9ea`). Legacy `count_only=true&missing_address=true` mock retired; new `/customers/counts` envelope intercept added; wire assertion swapped.
+- `p43c-portal-status-filter.test.jsx` — 1/10 failing → **10/10 green** (commit `89c27a716`). Per-status legacy count intercepts retained (nine other tests still rely on them for list-request coverage); envelope intercept added with `portal_activated` + `portal_not_activated` buckets fed from the same caller-overridable values; wire assertion swapped.
+- `phase46-server-side-filters.test.jsx` — 1/6 failing → **6/6 green** (commit `0fa224bdc`). Broader touch: the P31 migration collapsed the per-tab count fanout (3 calls) into a single consolidated call, so both the `_countCalls()` helper AND the assertion literal (`>= 2` → `>= 1`) had to move with the endpoint. Semantic contract preserved: `tags` and `city` still land on the counts request; `_listCalls()` untouched; five previously-passing tests unchanged.
+
+**Non-goals** — no production code touched. No new dependencies. No testid changes. No test-case additions or deletions. Every existing assertion preserved (except the two wire-URL assertions in p43b/p43c and the one numeric literal in phase46, which reflect P31 code-under-test facts, not semantic changes).
+
+**Regression telemetry** — post-Tail-Fix-E:
+- All three files: **isolated N/N green** (6/6, 10/10, 6/6 respectively).
+- Baseline `f4415a8d4..HEAD` (post-D → post-E) diff — each file flips from `1 failing → all-green` on HEAD, zero new failures.
+- Full-suite HEAD flake set unchanged from Tail Fix D's report (state-pollution flake files carry the same set — Tail Fix E moves the count from the same known baseline).
+
+**Commit series** (4 commits inside Tail Fix E):
+1. `test(tail-fix-e): update p43b mock to intercept post-P31 /customers/counts endpoint` — `947bac9ea` (26 insertions, 4 deletions).
+2. `test(tail-fix-e): update p43c mock to intercept post-P31 /customers/counts endpoint` — `89c27a716` (36 insertions, 6 deletions).
+3. `test(tail-fix-e): update phase46 count helper + assertion for post-P31 fanout consolidation` — `0fa224bdc` (36 insertions, 5 deletions). Commit body explicitly documents (a) P31 root cause, (b) `>= 2 → >= 1` reflects fanout→consolidation and is NOT a semantic weakening, (c) preserved contract is "tab counts respect filter params (tags + city still land on the counts request)".
+4. `docs(tail-fix-e): PRD addendum for P31 fixture-drift cleanup` (this section).
+
+**P31-drift residue after Tail Fix E**: none surfaced in the current Customers-list test suite. If any other file in a future phase's regression sweep produces the same "mock returns wrong shape → count badge shows (0)" symptom, apply the same three-step recipe (add `/customers/counts` intercept + retain legacy + swap wire assertion) and cross-reference `c09c94d05`.
+
 ---
+
 
 
 ## Known gotchas (recorded here for future phases)
