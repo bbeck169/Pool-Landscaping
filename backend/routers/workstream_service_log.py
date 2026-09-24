@@ -158,50 +158,105 @@ async def _media_items(job: dict, tenant_id: str) -> List[Dict[str, Any]]:
     """Return the renderable media list (photos + videos) for the
     Service Log detail view.
 
-    Phase P44 · Feb-2026 — read-path fix.  Prior to P44 this helper
-    only inspected ``job.get("photos")`` (the legacy embedded array
-    on the ``jobs`` collection).  Since Phase 27 (Feb 2026), techs
-    upload service-report media via ``POST /api/service-reports/
-    {report_id}/media`` which writes directly to
-    ``db.service_reports.photos`` / ``.videos`` via ``$push``,
-    bypassing the ``jobs.photos`` mirror.  That left the Service
-    Log view rendering "No service images uploaded" for every
-    Phase-27-era job.
+    Task L+P · Feb-2026 — MERGE behavior (previously CASCADE).
+    Both ``service_reports.photos`` / ``.videos`` AND
+    ``jobs.photos`` / ``.videos`` are read and combined into a
+    single list — a photo present in EITHER source appears in the
+    result.  Pre-Task-L+P (Phase P44) this helper preferred one
+    source over the other via a fallback ladder; that caused
+    legacy ``jobs.photos`` to be hidden the moment the tech
+    uploaded a single service-report photo, and Phase-27-era SR
+    photos to be hidden when the job also carried legacy embedded
+    photos.  The merge closes both gaps at once.
 
-    Read cascade (tenant-scoped at every rung):
-      1. **service_reports** — primary.  Match ``(tenant_id,
-         job_id)`` and use the report's ``photos`` + ``videos``
-         arrays as-is.  These carry a pre-computed ``url`` field
-         (streaming endpoint) so no S3 signing happens here.
-      2. **jobs.photos / jobs.videos** — legacy fallback.  Fires
-         when either (a) no service_reports doc exists for the
-         job, or (b) the service_report exists but its
-         ``photos`` array is empty (partial write, template
-         bootstrap, or the tenant hasn't migrated to the new
-         media route yet).  URLs go through the P35 renderer at
-         ``/api/public/job-photo/{jid}/{pid}`` which owns the
-         S3-signed-URL fallback ladder.
+    Sources (both tenant-scoped):
+      * **service_reports** — Phase 27 upload path (Feb-2026).
+        Match ``(tenant_id, job_id)``; photos + videos carry a
+        pre-computed ``url`` field (see
+        ``services/service_report_media.py``).  ``kind: image``.
+      * **jobs.photos / jobs.videos** — legacy embedded arrays.
+        URLs go through the P35 renderer at
+        ``/api/public/job-photo/{jid}/{pid}`` which owns the S3
+        signed-URL fallback ladder.
 
-    NOTE — multi-tech aggregation is deferred.  Multiple
-    ``service_reports`` docs can exist per job (one per tech, keyed
-    by ``(tenant_id, job_id, tech_id)``).  This helper picks the
-    first matching doc per the P44 spec; a follow-up will collect
-    across all techs when we lock the wire shape.
+    Merge rules:
+      * **Dedupe by ``id``.**  When the same photo id lives in
+        both sources, the SR entry wins (freshest metadata +
+        already-signed url).
+      * **Ordering.**  Items with a ``created_at`` timestamp are
+        sorted DESC (newest first, unified timeline across both
+        sources).  Items lacking a reliable timestamp fall back
+        to insertion order (SR first, then legacy) — matches the
+        pre-Task-L+P precedence and keeps legacy rows without
+        timestamps from silently reordering.
+      * Each returned item gains a ``source`` field
+        (``"service_report"`` | ``"job"``) so downstream consumers
+        can distinguish if needed.  The Service Log wire response
+        already accepts additive fields (see
+        ``test_p44_service_log_media_read_path.py`` — never asserts
+        exact-match on entry keys).
+
+    NOTE — multi-tech aggregation is still deferred (per P44 spec).
+    Multiple ``service_reports`` docs can exist per job (one per
+    tech, keyed by ``(tenant_id, job_id, tech_id)``); this helper
+    picks the first matching doc, same as pre-Task-L+P.  Cross-tech
+    aggregation is a follow-up.
     """
     jid = job.get("id") or ""
 
-    # Rung 1 — service_reports (P44 primary).
+    # ── Rung 1 — service_reports (tenant-scoped). ──
+    sr_items: List[Dict[str, Any]] = []
     report = await db.service_reports.find_one(
         {"tenant_id": tenant_id, "job_id": jid},
         {"_id": 0, "photos": 1, "videos": 1},
     )
-    if report and (report.get("photos") or report.get("videos")):
-        return _serialize_service_report_media(
+    if report:
+        sr_items = _serialize_service_report_media(
             report.get("photos") or [], report.get("videos") or [],
         )
 
-    # Rung 2 — legacy jobs.photos / jobs.videos fallback.
-    return _serialize_job_embedded_media(job)
+    # ── Rung 2 — legacy jobs.photos / jobs.videos (from the doc
+    #      already loaded + tenant-scoped by the calling endpoint). ──
+    job_items = _serialize_job_embedded_media(job)
+
+    # Tag source so downstream consumers can distinguish when needed.
+    for it in sr_items:
+        it["source"] = "service_report"
+    for it in job_items:
+        it["source"] = "job"
+
+    # Merge + dedupe by id (SR wins on collision — freshest metadata,
+    # pre-computed url).  Legacy items lacking an id are always kept
+    # (they represent independent embedded blobs).
+    seen_ids: set = {it["id"] for it in sr_items if it.get("id")}
+    merged: List[Dict[str, Any]] = list(sr_items)
+    for it in job_items:
+        if it.get("id") and it["id"] in seen_ids:
+            continue
+        merged.append(it)
+
+    # Sort by ``created_at`` DESC where available; entries without a
+    # timestamp fall back to their insertion order (SR first, then
+    # legacy).  Python ``sorted`` is stable, so equal keys preserve
+    # input order — SR photos with identical timestamps stay in
+    # their SR-doc order, and legacy photos without ``created_at``
+    # stay after all SR-with-timestamp photos.
+    def _sort_key(item: Dict[str, Any]) -> tuple:
+        ts = item.get("created_at") or ""
+        # Partition first by presence-of-ts, then desc by ts value.
+        # Descending is achieved with ``reverse=True`` below — so
+        # here we use a positive ts.  Empty ts sorts LAST because
+        # the partition key ``1`` > ``0``.
+        return (0 if ts else 1, ts)
+
+    # Split into two lists: timestamped (sorted desc) + untimestamped
+    # (insertion order preserved).  A direct sorted() with reverse=True
+    # would also reverse the untimestamped tail, which is not what we
+    # want — we want SR-first, legacy-second among the untimestamped.
+    ts_items = [it for it in merged if it.get("created_at")]
+    no_ts_items = [it for it in merged if not it.get("created_at")]
+    ts_items.sort(key=lambda it: it.get("created_at") or "", reverse=True)
+    return ts_items + no_ts_items
 
 
 def _serialize_service_report_media(photos: List[dict],
