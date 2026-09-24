@@ -21685,3 +21685,97 @@ Two small follow-ups landed after the main P52 report:
 1. **P50 TODO-anchor test inversion** (user Option i).  The pre-P52 assertion (`expect(src).toMatch(/TODO\(P52\)[\s\S]*tenant\.default_locale/)`) inverted to `expect(src).not.toMatch(/TODO\(P52\)/)`.  Renamed the test to "P52 tenant.default_locale anchor was consumed and detector is wired — post-P52 negative-space check".  Guards against two future regressions: (a) a re-added TODO anchor that never gets cleaned up, (b) somebody deleting the `lang-tenant-default` detector.  P50 suite back to **12/12 green**.
 2. **Customers cohort tabs restyle.**  `CustomersList.jsx` `customers-cohort-tabs`: active tab picks up the saturated brand-primary bg (`#0284C7`) + white fg + `rgba(2,132,199,0.4)` glow, matching the P52 chemistry-actions dropdown trigger on `CustomerDetail`.  Inactive tabs keep the pre-P52 transparent-on-muted recede.  Six-test suite (`p52-cohort-tabs-active-glow.test.jsx`) — baseline mount + one test per tab — all green.
 
+
+---
+
+## Phase P53 · Feb-2026 — Automated Referral Rewards Reconciliation (Option 1 — Minimal-touch · SHIPPED preview)
+
+### Why this exists
+
+The user's original P53 brief assumed a greenfield "reward on first-paid + $55 credit + BOOM email" build.  Ground-truth grep discovered a substantial Phase 10 (Feb 2026) referral-automation stack that already implements ~80% of the brief — under different names and with a different trigger (30-day paid-window instead of first-paid).  The Phase-10 test suite (`test_phase10_referrals.py`, `test_slice_r_o2_l_batch.py`, `test_slice_o_referrals.py`, `test_phase34_task_t_review_gating.py`) locks in the existing behavior across ~40 tests.
+
+Rather than rip out Phase 10 (Option 2 — huge blast radius) or add a parallel path (Option 3 — coordination bug surface), the user picked **Option 1: minimal-touch reconciliation**.  Phase 10 stays; P53 fixes only what's actually broken and ships the BOOM redesign + preview tools.
+
+### What we shipped in P53 (Option 1)
+
+- **Portal "My Referrals" tile counter fix** — `GET /api/customer-portal/referrals/my` in `backend/routers/referral_rewards.py`.  The `conversions` field previously filtered on `status == "converted"` alone, silently under-counting every Phase-10 tenant (whose modern flow jumps `pending_paid_window` → `crediting_in_progress` → `credited` without ever landing on `converted`).  Counter widened to include all four post-close-won states: `{"converted", "pending_paid_window", "crediting_in_progress", "credited"}`.  API field name unchanged; only the semantic widens.  Docstring updated to match.
+- **BOOM celebration email redesign** — `_REFERRAL_EMAIL_BODY` in `backend/services/referral_watcher.py`.  Table-based layout, inline styles only, no `<style>` blocks, no external CSS.  Design: 135deg `#1B1F5C → #16A34A` hero gradient · pill `#10B981` reward badge (48px bold amount, soft `box-shadow`) · `BOOM! 🚀 You just earned {{REFERRAL_CREDIT_AMOUNT}}!` headline · "Refer another friend" CTA linked to `/portal/referrals` (absolute when `PUBLIC_APP_URL` is set) · "Keep sharing the love! — {{COMPANY_NAME}} Team" sign-off.  Preserves all five Phase-10 merge variables — `$55` is NOT hardcoded, `{{REFERRAL_CREDIT_AMOUNT}}` renders cleanly for tenants at $25, $55, or any future amount, and `{{COMPANY_NAME}}` replaces every previous "Vistancia" hardcode assumption.  Subject line: `"BOOM! 🚀 You just earned {{REFERRAL_CREDIT_AMOUNT}}!"`.
+- **New merge tag `{{PORTAL_REFERRALS_URL}}`** populated by `_fire_credit_notifications` via a new local helper `_absolute_portal_referrals_url()` that mirrors the `_absolute_portal_url` pattern in `routers/marketing_review_requests.py` (reads `PUBLIC_APP_URL` at runtime, falls back to path-only).  Deep-links to the pre-existing frontend route `/portal/referrals` (verified: mounted in `frontend/src/App.js:1021`, page component at `frontend/src/pages/portal/PortalReferralsPage.jsx`).
+- **Shell wrap on the send path** — `_fire_credit_notifications` now calls `wrap_html_in_shell(body, branding)` before Resend send (fail-open on shell-resolve failure — never blocks credit issuance).  Matches the pattern used by every other transactional email path in the codebase (quotes, invoices, password reset, admin invites).  The pre-P53 send path skipped the shell wrap, so referral emails historically rendered without tenant branding.  Belt-and-suspenders fix.
+- **Idempotent `marketing_templates` upsert with version-tracked customization detection** — `seed_referral_credit_templates()` rewritten from insert-if-missing to a version-aware upsert.  Introduces a new `body_version` field on `marketing_templates` documents; current version is `p53_v1`.  Detection matrix:
+  * Row missing → INSERT with new body + `body_version = "p53_v1"`.
+  * Row `system=True`, `body_version == "p53_v1"` → SKIP (idempotent).
+  * Row `system=True`, `body_version != "p53_v1"`, `body ∈ {_REFERRAL_EMAIL_BODY_LEGACY_P10}` → UPGRADE in place (system row not tenant-customized).
+  * Row `system=True`, `body_version != "p53_v1"`, `body ∉ known priors` → SKIP (tenant customized the copy — do not overwrite).
+  * Row `system=False` → SKIP always (tenant fully overrode).
+  * `force_upgrade=True` escape hatch overrides the customization check for CLI operators.
+  The Phase-10 canonical body is preserved verbatim as `_REFERRAL_EMAIL_BODY_LEGACY_P10` — the ONLY known prior body used by the customization detector.  Adding another prior body in a future phase is a two-line change: append to the constant list and bump `body_version`.
+- **Dev preview route** — `GET /api/dev/email-preview/referral-reward` in `backend/routers/dev_email_preview.py`.  Renders the BOOM email with the P53 spec's stub context: `Alex` / `Prasad Mikkilineni` / `$55.00` / `$110.00` / `Pool & Landscaping of Vistancia`.  Gated at BOTH registration time (in `server.py`, the router is not `include_router`'d when `APP_ENV == "production"`) and runtime (the handler itself returns 404 in prod as a belt-and-suspenders check).  No auth required in dev — the route is dev-only by construction.
+- **Dev CLI** — `python -m scripts.send_referral_reward_preview <email>` in `backend/scripts/send_referral_reward_preview.py`.  Sends a real BOOM email using the production `services.email.resend_adapter.send` path (`category=transactional`, `audience=internal`, `allow_off_allowlist=True` so the K72 kill-switch + `COMMS_TEST_ALLOWLIST_EMAILS` guard don't intercept the dev preview).  Interactive `y` confirmation unless `--confirm` is passed (matches the safety pattern in `backend/scripts/purge_demo_data.py`).  Also supports `--dry-run` (prints the rendered HTML to stdout without sending) and `--tenant <tid>` (resolves that tenant's branding for the shell wrap).  Exit codes: 0=sent, 2=user aborted, 3=provider send failed.
+
+### What we deliberately did NOT ship
+
+- **NOT** modifying `_run_close_won_pipeline` or `fire_referral_conversion_hook`.  The existing close-won path already flips referrals to `pending_paid_window` (Phase-10 default) or `converted` (legacy immediate-credit branch, gated by `tenant.legacy_immediate_referral_credit`).  Both branches are locked in `test_p53_phase10_behavior_lock.py`.
+- **NOT** shortening the 30-day paid-window trigger to first-paid.  That would remove the Phase-10 F2 refund-protection window (`_check_refund_or_dispute_inside_window`).  P53 F2 says "no clawback" for post-issue refunds; keeping the pre-issue guard is strictly better.
+- **NOT** adding a competing `invoice.paid` referral-credit fast-path.  Would duplicate the watcher.
+- **NOT** creating a new `referral_credits` collection.  The existing primitive `db.customer_credits` (ledger) + `db.customer_credits_balance` (rolled balance) with `source="referral_credit"` continues to be the source of truth.  Halt-and-report + user Q1 refinement resolved this in favor of reusing the existing primitive.
+- **NOT** adding email/phone secondary matching on the close-won hook.  The existing `lead_id` link (referral row created upstream by `POST /api/customer-portal/referrals` in `routers/portal_referrals.py`) is the authoritative match key.  A secondary match path would be redundant.
+- **NOT** renaming any Phase-10 statuses (`pending_paid_window` etc. stay verbatim).  Breaking that vocabulary would break ~40 Phase-10 tests.
+- **NOT** touching timezone code — deferred to P52.1.
+- **NOT** preempting P51's portal shell gradient variants — P53's BOOM gradient lives inside the transactional email HTML, a separate surface from the portal shared-component gradients scheduled for P51.
+
+### Discovered conventions (recorded here for future phases)
+
+- **Environment detection**: `APP_ENV` env var, values `"production"` or `"preview"` (default `"preview"`).  Grep-verified against ~30 call-sites in `backend/routers/` and `backend/services/`.  Case-insensitive comparison — production tests validate PRODUCTION/Production/production all lock dev-only routes.
+- **Scripts convention**: `backend/scripts/<name>.py` invoked as `python -m scripts.<name>` (never `python backend/scripts/<name>.py`).  Argparse for CLI parsing; `if __name__ == "__main__": sys.exit(main())` idiom.  Interactive confirmation prompts on destructive commands (see `backend/scripts/purge_demo_data.py` for the reference pattern — no existing scripts use `--admin-token` guards, so interactive `y` prompt is the closest existing safety precedent).
+- **Customization marker on `marketing_templates`**: `system=True` (boolean) is the sole existing marker.  No `customized_at`, `customized_by`, or `version` field existed before P53.  P53 introduces `body_version` on the `referral_credit_earned_email` row only; other `marketing_templates` rows are unchanged.  Future template redesigns should follow the same pattern (bump `body_version`, append the previous canonical body to a `_KNOWN_PRIORS` list).
+
+### Files touched
+
+Modified (existing files):
+- `backend/services/referral_watcher.py` — BOOM body constants + `_absolute_portal_referrals_url()` helper + `PORTAL_REFERRALS_URL` merge var injection + shell-wrap on the send path + version-aware `seed_referral_credit_templates()`.
+- `backend/routers/referral_rewards.py` — `my_referrals` conversion counter widened to all four post-close-won statuses.
+- `backend/server.py` — env-gated `include_router` for the new dev preview module.
+
+New:
+- `backend/routers/dev_email_preview.py` — `GET /api/dev/email-preview/referral-reward` route + `render_boom_preview_html()` helper (reused by the CLI).
+- `backend/scripts/send_referral_reward_preview.py` — Argparse-driven CLI with `--dry-run`, `--confirm`, `--tenant <tid>`.
+
+New tests (five files, **45 tests total**, all green):
+- `backend/tests/test_p53_boom_email_render.py` (20 tests) — hero gradient stops, badge color, pill radius, headline text, CTA label, sign-off, badge font-size, drop shadow, merge var substitution + no leaks, amount not hardcoded ($25 + $55 both render), company name not hardcoded, zero external CSS, CTA href shape (path-only + absolute variants), version marker, subject line, legacy prior body preserved.
+- `backend/tests/test_p53_portal_my_referrals_count.py` (7 tests) — counter includes each of the four post-close-won states individually + excludes `voided` and pre-close-won states + mixed-bag tally + cross-tenant isolation.
+- `backend/tests/test_p53_marketing_templates_upsert.py` (8 tests) — fresh insert stamps `body_version`, idempotent second run, legacy Phase-10 body upgraded in place, tenant-customized row preserved under normal upsert, `force_upgrade=True` overwrites customized row, `system=False` row never touched even under force, SMS row insert-if-missing (P53 out of scope).
+- `backend/tests/test_p53_dev_preview_route.py` (5 tests) — dev env 200 with BOOM markers + no placeholder leaks + HTML content-type + APP_ENV missing defaults to preview + prod env 404 across PRODUCTION/Production/production case variants.
+- `backend/tests/test_p53_phase10_behavior_lock.py` (5 tests) — close-won hook default status is `pending_paid_window`, watcher CAS-guard is intact, refund/dispute guard intact, ledger primitive unchanged (`customer_credits` + `source="referral_credit"`), `PAID_WINDOW_DAYS == 30`.
+
+### Test result summary
+
+- P53 tests: **45/45 green**
+- P47/P48/P50/P52 backend regression: **42/42 green** (unchanged from prior checkpoint).
+- P47/P48/P50/P52 frontend regression: **50/50 green** (vitest, unchanged).
+- Full-suite backend baseline flakes: `test_recurring_quarterly_semiannual_p47.py` (4 tests) + `test_phase10_referrals.py` (5 tests) — both pre-existing on the pre-P53 baseline (verified via `git stash`), unrelated to P53 changes.
+
+### Migration / upsert output
+
+The `seed_referral_credit_templates()` upgrade runs automatically on next boot via the existing `_bg_m3_marketing_templates_seed()` boot hook + `backmigrate_legacy_referral_credits()` bootstrap — no manual migration step is required.  Existing preview and production tenants whose email row is `system=True` with the Phase-10 canonical body will land on `body_version=p53_v1` on the first post-P53 boot.  Tenants who customized the copy stay on their existing body indefinitely.
+
+Dry-run counts (fresh test tenant scenario from `test_p53_marketing_templates_upsert.py`):
+- Insert: `{inserted=1, sms_inserted=1}` — new tenant gets both rows fresh.
+- Second run: `{skipped_current=1, sms_skipped=1}` — idempotent.
+- Legacy Phase-10 upgrade: `{upgraded=1}` — legacy body detected, replaced.
+- Customized-copy skip: `{skipped_customized=1}` — tenant edit preserved.
+- Non-system skip: `{skipped_non_system=1}` — tenant-owned row untouched.
+
+### Preview URLs (dev-only)
+
+- Route (browser-openable in preview): `GET /api/dev/email-preview/referral-reward` — served via the FastAPI backend on the preview URL configured in `frontend/.env` (`REACT_APP_BACKEND_URL`).
+- CLI (dry-run to stdout): `cd /app/backend && python -m scripts.send_referral_reward_preview any@example.com --dry-run`
+- CLI (live send with confirmation): `cd /app/backend && python -m scripts.send_referral_reward_preview real@example.com` (interactive `y` prompt).
+- CLI (live send in automation): `cd /app/backend && python -m scripts.send_referral_reward_preview real@example.com --confirm`.
+
+### Follow-up items (out of P53 scope)
+
+- **P52.1 timezone slice** — pending user Option A vs B decision.  Untouched by P53.
+- **P51 portal shell gradient variants** — separate surface from email HTML.
+- **Optional post-P53** — add a second known canonical prior body to `_KNOWN_PRIORS` if a further BOOM iteration lands.  Currently there is only one prior (Phase 10).
+
