@@ -58,6 +58,26 @@ function _installMockGet({ items = [], noPaymentCount = 5 } = {}) {
     if (path === "/customers?count_only=true&has_payment_method=false") {
       return Promise.resolve({ count: noPaymentCount });
     }
+    // Feb-2026 · Tail Fix D fixture-drift fix — Phase P31 migrated
+    // the standalone-badge counts from a per-badge
+    // ``/customers?count_only=true&...`` fanout to the consolidated
+    // ``/customers/counts`` envelope (see routers/customers.py L521-
+    // L670). ``loadCounts()`` now hydrates ``noPaymentCount`` from
+    // the envelope's ``no_payment_method`` bucket. Intercept both
+    // the bare endpoint (no chips active — the default test state)
+    // and any query-string variant emitted when composed chips
+    // are on. Legacy ``count_only`` intercept above is retained so
+    // no other assertion accidentally regresses.
+    if (path === "/customers/counts"
+          || path.startsWith("/customers/counts?")) {
+      return Promise.resolve({
+        active: 0, inactive: 0, muted: 0, waitlist: 0,
+        missing_address: 0,
+        portal_activated: 0, portal_not_activated: 0,
+        no_payment_method: noPaymentCount,
+        never_logged_in: 0,
+      });
+    }
     if (path.includes("count_only=true")) return Promise.resolve({ count: 0 });
     return Promise.resolve({
       items, total: items.length, page: 1, page_size: 50,
@@ -96,10 +116,16 @@ describe("CustomersList · P44 no-payment filter + row action", () => {
       const cnt = screen.getByTestId("customers-no-payment-count");
       expect(cnt.textContent).toMatch(/12/);
     });
+    // Feb-2026 · Tail Fix D fixture-drift fix — the standalone-
+    // badge count now hydrates from the consolidated
+    // ``/customers/counts`` envelope (Phase P31 migration), NOT
+    // the legacy ``count_only=true`` fanout. Assert the new
+    // endpoint is called; the legacy assertion has been retired
+    // because the wire no longer emits it.
     const calls = mockGet.mock.calls.map((c) => c[0]);
-    expect(calls).toContain(
-      "/customers?count_only=true&has_payment_method=false",
-    );
+    expect(calls.some((p) =>
+      p === "/customers/counts" || p.startsWith("/customers/counts?"),
+    )).toBe(true);
   });
 
   it("clicking the chip fires a fetch with has_payment_method=false", async () => {
