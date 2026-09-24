@@ -159,6 +159,15 @@ export default function CustomersList() {
     if (cohortParam === "active") return "active";
     const urlTab = searchParams.get("tab") || searchParams.get("status");
     if (urlTab) return urlTab;
+    // Feb-2026 · Tail Fix D — ``?is_active=true|false`` accepted as
+    // a third alias (below ``?tab=`` and ``?status=``) so the
+    // Cards-on-file tile CTA lands on the correct cohort tab. The
+    // canonical shorthand set matches the existing ``portal_activated``
+    // hydrator: ``1|0|true|false``. Kept below the other aliases so
+    // pre-existing bookmarks / URLs keep their meaning.
+    const urlIsActive = searchParams.get("is_active");
+    if (urlIsActive === "1" || urlIsActive === "true") return "active";
+    if (urlIsActive === "0" || urlIsActive === "false") return "inactive";
     return "active";
   })();
   const [tab, setTab] = useState(initialTab);
@@ -382,6 +391,31 @@ export default function CustomersList() {
     return raw === "0" || raw === "false";
   });
   const [noPaymentCount, setNoPaymentCount] = useState(null);
+  // Feb-2026 · Tail Fix D — Customer stats tile ``Cards on file``
+  // quick-filter. Inbound link from the P53 Tail Bundle Fix C tile
+  // (``/customers?has_payment_method=true&is_active=true``). No UI
+  // toggle — the tile click IS the filter surface. Mutually
+  // exclusive with the P44 ``noPaymentFilter`` chip: they
+  // cooperatively own the shared ``?has_payment_method`` URL
+  // param.
+  //   * On mount — tile signal (``true``/``1``) always wins if
+  //     both variants are somehow present in the query-string
+  //     (URLSearchParams.get() returns the first occurrence, and
+  //     our initializers key off distinct values, so a
+  //     ``?has_payment_method=true&has_payment_method=0`` string
+  //     resolves via first-wins on the browser side ⇒ tile wins.
+  //     Documented as the tie-break invariant for manual URL
+  //     editors who might send ambiguous strings.
+  //   * After mount — flipping either state clears the other via
+  //     explicit setters in the toggle / hydration paths below.
+  //     The URL sync effect further down owns the param on writes:
+  //       noPaymentFilter=true  → ``has_payment_method=0``
+  //       hasCardFilter=true    → ``has_payment_method=1``
+  //       neither              → param deleted
+  const [hasCardFilter, setHasCardFilter] = useState(() => {
+    const raw = searchParams.get("has_payment_method");
+    return raw === "1" || raw === "true";
+  });
   // Feb-2026 · P44 — Per-row busy set for the "Send payment link"
   // row action. Storing customer ids keeps concurrent clicks on
   // different rows independent while preventing double-fire on the
@@ -546,6 +580,14 @@ export default function CustomersList() {
     else if (portalStatusFilter === "not_activated") params.set("portal_activated", "false");
     // Feb-2026 · P44 — "No payment on file" chip.
     if (noPaymentFilter) params.set("has_payment_method", "false");
+    // Feb-2026 · Tail Fix D — Cards-on-file tile inbound filter.
+    // Mutex-guarded: never fires simultaneously with ``noPaymentFilter``
+    // (state-level mutex enforced in the toggle/hydration paths + URL
+    // sync effect below). Emits the canonical ``true`` payload the
+    // backend already accepts (see ``routers/customers.py`` L816 /
+    // L1212–1224 — filter uses the ``saved_payment_methods_count``
+    // denorm, same join semantic the tile counts against).
+    else if (hasCardFilter) params.set("has_payment_method", "true");
     // Feb-2026 · Customer temp password + first-access — "Never
     // logged in" chip. Distinct filter from portal_activated.
     if (neverLoggedIn) params.set("first_access", "never");
@@ -642,6 +684,11 @@ export default function CustomersList() {
         params.set("portal_activated", "false");
       }
       if (noPaymentFilter) params.set("has_payment_method", "false");
+      // Feb-2026 · Tail Fix D — mirror ``load()`` so the tab-count
+      // envelope respects the tile-driven filter. Mutex-guarded
+      // against ``noPaymentFilter`` — the same either/or invariant
+      // that governs the wire request in ``load()`` above.
+      else if (hasCardFilter) params.set("has_payment_method", "true");
       if (city && city.trim()) params.set("city", city.trim());
       for (const t of selectedTags) params.append("tags", t);
       const qs = params.toString();
@@ -685,7 +732,7 @@ export default function CustomersList() {
     loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
-       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
+       missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
 
   // Feb-2026 · P43 — URL sync + page reset on chip toggle. Skip the
   // first invocation so hydrating chips from the URL on mount does
@@ -707,6 +754,7 @@ export default function CustomersList() {
     else if (portalStatusFilter === "not_activated") next.set("portal_activated", "0");
     else next.delete("portal_activated");
     if (noPaymentFilter) next.set("has_payment_method", "0");
+    else if (hasCardFilter) next.set("has_payment_method", "1");
     else next.delete("has_payment_method");
     // Feb-2026 · Customer temp password + first-access — URL sync.
     // ``first_access`` param is shared between "Never logged in"
@@ -721,7 +769,7 @@ export default function CustomersList() {
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, neverLoggedIn, portalInvitedFilter, signedInFilter]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter]);
 
   // Feb-2026 · P43b — Fetch the total "missing address" count once
   // on mount (and whenever the tenant scope changes) so the chip
@@ -1744,6 +1792,11 @@ export default function CustomersList() {
                   setMissingPhone(false);
                   setMissingAddress(false);
                   setNoPaymentFilter(false);
+                  // Feb-2026 · Tail Fix D — Clear the tile-driven
+                  // ``Cards on file`` filter alongside its P44
+                  // sibling so the "Clear" button truly resets
+                  // every payment-related predicate.
+                  setHasCardFilter(false);
                   setPortalStatusFilter("");
                   if (canManageDeleted) setIncludeDeleted(false);
                   setIncludeMerged(false);
@@ -1844,7 +1897,17 @@ export default function CustomersList() {
                 Payment
               </div>
               <button
-                onClick={() => setNoPaymentFilter((v) => !v)}
+                onClick={() => setNoPaymentFilter((v) => {
+                  const nextVal = !v;
+                  // Feb-2026 · Tail Fix D — cooperative param mutex.
+                  // Toggling the P44 chip ON must clear the
+                  // ``hasCardFilter`` state that a tile-driven
+                  // landing may have hydrated, so the shared
+                  // ``?has_payment_method`` URL param flips cleanly
+                  // from ``"1"`` (D) to ``"0"`` (P44) in one render.
+                  if (nextVal) setHasCardFilter(false);
+                  return nextVal;
+                })}
                 data-testid="customers-no-payment-filter"
                 aria-pressed={noPaymentFilter ? "true" : "false"}
                 title="Customers with no card AND no ACH bank account on file. Matches the same 'Card on file required — none saved' banner shown on customer detail."
