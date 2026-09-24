@@ -834,6 +834,97 @@ def test_invoice_line_clear_does_not_clear_pricebook(fake_db):
 
 
 # ══════════════════════════════════════════════════════════════════
+# 10. Regression guards — Feb-2026 shipping bug (Commit 7)
+# ══════════════════════════════════════════════════════════════════
+def test_entry_point_origin_is_not_in_skip_set():
+    """Regression guard for the P55 shipping bug where the
+    reserved self-loop skip slot for
+    ``sync_recurring_template_to_children`` collided with the
+    PATCH entry-point origin string, silently disabling the
+    template → invoice fan-out.
+
+    Contract: for every entry-point origin string passed by a
+    real caller, that origin MUST NOT appear in
+    ``_SKIP_TABLE[<its callee>]``. If it does, the entry-point
+    call gets short-circuited by its own loop guard and the
+    orchestrator never runs.
+
+    Real caller inventory (grep-verified · Feb-2026):
+      * ``backend/routers/recurring_jobs.py`` PATCH handler
+        passes ``origin=\"recurring_template_edit\"`` when firing
+        ``sync_recurring_template_to_children``.
+      * ``backend/routers/income_categories.py`` recategorize
+        handler passes ``origin=\"invoice_line_edit\"`` when
+        firing ``sync_invoice_line_to_pricebook``.
+    """
+    from services import category_sync as cs
+    real_entry_origins = {
+        "sync_recurring_template_to_children": "recurring_template_edit",
+        "sync_invoice_line_to_pricebook": "invoice_line_edit",
+    }
+    for callee, entry_origin in real_entry_origins.items():
+        skip_set = cs._SKIP_TABLE.get(callee, set())
+        assert entry_origin not in skip_set, (
+            f"Entry-point origin {entry_origin!r} appears in "
+            f"_SKIP_TABLE[{callee!r}]={skip_set!r} — this "
+            f"silently disables the entry-point call. Either "
+            f"rename the origin at the call site or replace the "
+            f"skip-set entry with the _RESERVED_SELF_LOOP "
+            f"sentinel."
+        )
+
+
+def test_recurring_template_patch_wire_actually_fires_sync(fake_db):
+    """End-to-end behavioral guard: firing the orchestrator with
+    the EXACT origin string the recurring-jobs PATCH handler
+    uses in production must propagate the category change to
+    linked unpaid invoices.
+
+    Before Commit 6 · Option C this test would have failed —
+    ``origin=\"recurring_template_edit\"`` was both the entry
+    origin AND the reserved short-circuit marker, so
+    ``updated_count`` would have been 0 (loop-prevention short
+    circuit) and the invoice line's ``service_category_id``
+    would have stayed at ``SVC_OLD``.
+    """
+    from services.category_sync import (
+        sync_recurring_template_to_children,
+    )
+    _seed_categories(fake_db)
+    job_ids = _seed_jobs(fake_db, 2)
+    _seed_invoices(fake_db, job_ids)  # 2 unpaid invoices
+
+    result = _run(sync_recurring_template_to_children(
+        tenant_id=TID_A, recurring_job_id=TPL_ID,
+        # The literal string the recurring-jobs PATCH handler
+        # passes at runtime. Keep this in lockstep with
+        # ``backend/routers/recurring_jobs.py`` — a rename there
+        # without a rename here is exactly the class of bug this
+        # test guards against.
+        origin="recurring_template_edit",
+        service_category_id=SVC_NEW,
+        income_category_id=INC_NEW,
+    ))
+    assert result.updated_count == 2, (
+        f"PATCH origin failed to propagate — "
+        f"result={result}. Was the origin re-added to the "
+        f"_SKIP_TABLE?"
+    )
+    assert result.skipped_loop_count == 0
+    # Every unpaid invoice's line item picked up the new pair
+    # (both modern + legacy income aliases and modern service).
+    for inv in fake_db.quotes.rows:
+        if inv["payment_status"] == "unpaid":
+            li = inv["line_items"][0]
+            assert li["income_category_id"] == INC_NEW
+            assert li["income_category_name"] == "New Income Cat"
+            assert li["category"] == INC_NEW
+            assert li["category_name"] == "New Income Cat"
+            assert li["service_category_id"] == SVC_NEW
+            assert li["service_category_name"] == "New Service Cat"
+
+
+# ══════════════════════════════════════════════════════════════════
 # Helpers
 # ══════════════════════════════════════════════════════════════════
 def _first(coll: _Coll, **kw) -> Optional[Dict[str, Any]]:
