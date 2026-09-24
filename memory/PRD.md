@@ -21957,6 +21957,93 @@ All Fix C tests green: 21 passed backend in 0.45s, 15 passed frontend (7 P53-spe
 
 ---
 
+## Phase P58 — Bulk endpoint + single-item tenant-isolation audit (Feb-2026)
+
+**Scope**: Comprehensive audit of every mutation endpoint across `bulk_crm.py`, `bulk_crm_p1.py`, `quotes.py`, `leads.py`, `citations.py`, and `items.py` (the P57 handoff charter) plus one discovery fold-in in `impexp.py`. Structural continuation of P57's `_soft_delete_item` hardening: every mutation must filter by `tenant_id` on every read AND write, no exceptions.
+
+### Grep 1 — endpoint verdict (40 endpoints across the charter + 1 discovery)
+
+| Router | Endpoints audited | Verdict |
+|---|---|---|
+| `bulk_crm.py` | 16 (customers/jobs/tasks/comms/email-templates/sms-templates bulk-delete + bulk-update) | **SAFE** — all delegate to `_generic_bulk_delete` / `_generic_bulk_update` / `_resolve_ids`, tenant-scoped by Task LL |
+| `bulk_crm_p1.py` | 10 (reviews/users/customer-tags/service-reports/time-entries bulk-delete + bulk-update) | **SAFE** — same shared helpers as above |
+| `quotes.py` | 6 (invoices/payments bulk-delete + soft-delete + delete singles + delete quote) | **SAFE** — all via `_resolve_invoice_ids` / `_perform_soft_delete_quote` / `_perform_delete_payment` (all tenant-scoped) |
+| `leads.py` | 4 (bulk-delete + bulk-hard-delete + bulk-update-status + soft-delete single) | **SAFE** — all via `_resolve_ids_from_selector` / `_perform_soft_delete_lead` / `_hard_delete_lead` (all tenant-scoped) |
+| `citations.py` | 2 (mark-verified single + bulk-mark-verified) | **SAFE** — `_upsert_row(tid, ...)` correctly scoped; global `citation_directories` collection intentionally cross-tenant by design |
+| `items.py` | 6 (create + patch + delete single/aliased + bulk-delete + bulk-update-categories) | **1 BUGGY**: `patch_item` (L344/L436/L449 unscoped find/update); rest SAFE (P56/P57 hardening held) |
+| `impexp.py` (discovery fold-in) | 1 mutation audited (`import_items`) | **BUGGY**: L382 unscoped find_one, L384 unscoped update_one, L388 insert with no `tenant_id` field |
+
+**Buggy count**: 2 endpoints. Well below the 8-endpoint split threshold — single P58 series.
+
+### Grep 2 — shared helper audit
+
+Every shared soft-delete / update helper touched by the audited endpoints is already tenant-tightened:
+
+| helper | file | hardened when |
+|---|---|---|
+| `_soft_delete_item` | items.py L165 | P57 (ValueError on None/empty/whitespace tenant_id) |
+| `_resolve_pricebook_ids` | items.py L492 | P57 (positional-required tenant_id + ValueError) |
+| `_generic_bulk_delete` / `_generic_bulk_update` / `_resolve_ids` | bulk_crm.py | Task LL (positional-required `tenant: dict`) |
+| `_perform_soft_delete_quote` / `_perform_delete_payment` / `_resolve_invoice_ids` | quotes.py | Task BB / EE |
+| `_resolve_ids_from_selector` / `_perform_soft_delete_lead` / `_hard_delete_lead` | leads.py | Task EE / Phase LD1 |
+| `_upsert_row` | citations.py | tenant-scoped find; update filters by row.id only (defense-in-depth-weak, flagged for P59) |
+
+**No new signature-tightening in P58** — every helper the buggy endpoints touch had already been tightened. The bugs were caller-side path errors.
+
+### Grep 3 — tests that PASSED on the buggy `patch_item` behavior
+
+Same-shape class as P57's `_plant_item` fixture bug:
+
+| test | file | why it passed | post-fix outcome |
+|---|---|---|---|
+| `test_pricebook_patch_happy` | test_phase34_task_jj_kk_ee_digest.py L153 | `_plant_item(db)` seeded item without tenant_id; buggy patch didn't check tenant | Fixed in Commit 3 — passes `tenant_id=aq_tenant_id` to `_plant_item`, mirrors P57 precedent |
+| `test_pricebook_patch_rejects_negative` | same file L175 | Same fixture pattern | Same fix, same commit |
+| `test_pricebook_patch_role_gate` | same file L165 | Same fixture pattern, but assertion is 403 from `require_admin` short-circuit | Unaffected by fix — sanity re-run confirms still 403 |
+
+### Fix delivered
+
+- **`patch_item`** (Commit 1 · `4632ac030`) — L344/L436/L449 all filter by `tenant_id = user.get("tenant_id")`; P57-style ValueError guard on empty/whitespace; **audit-trail integrity fix**: `audit_log` row now stamps `tenant_id` so tenant-scoped audit queries see `pricebook.patch` actions (previously missing).
+- **`import_items`** (Commit 2 · `49b857902`) — L382 find_one filter includes tenant_id; L384 update_one filter includes tenant_id AND stamps tenant_id on the `$set` for legacy-orphan backfill; L388 insert stamps tenant_id on the new doc; P57-style ValueError guard.
+
+### Test coverage delivered
+
+- **`test_p58_patch_item_tenant_isolation.py`** (Commit 3 · `2326b25d7`) — 3 tests: same-tenant regression (200), cross-tenant rejection (404 + foreign row's unit_price re-fetched and asserted unchanged), audit_log tenant_id stamp.
+- **`test_p58_import_items_tenant_isolation.py`** (Commit 4 · `bdfe9606f`) — 2 tests: name-collision does NOT overwrite foreign-tenant row (foreign price unchanged + new tenant-A row created with correct tenant_id), inserted rows always carry tenant_id (2-row batch, every row asserted).
+- **Fixture fix** — `_plant_item` in `test_phase34_task_jj_kk_ee_digest.py` now receives `tenant_id=aq_tenant_id` in the two impacted PATCH tests (Commit 3).
+
+### Regression telemetry (baseline `47e111e3c..HEAD`)
+
+- **New tests**: 5 (3 P58 patch_item + 2 P58 import_items).
+- **Restored tests**: 2 (phase34 patch happy + rejects-negative — via fixture fix).
+- **Full pricebook/patch/bulk regression sweep post-P58**: **105/105 green**.
+- **Regressions introduced**: **0** across the audited files.
+
+### P59 handoff paragraph — read-side + defense-in-depth followups
+
+P58's grep passes surfaced these adjacent gaps that fall outside its mutation-only charter. **Recommended next phase: P59 · Pricebook + Customer read-side tenant isolation.**
+
+| # | severity | location | issue | recommended action |
+|---|---|---|---|---|
+| 1 | **HIGH** | items.py L89 (`list_items`) | `GET /items` — `db.items.find({}, ...)` with NO tenant filter; any admin can read every tenant's pricebook (1000-row cap) | P59 · add `tenant_id: user.get("tenant_id")` filter + ValueError guard |
+| 2 | **HIGH** | impexp.py L59 (`export_customers`) | `GET /export/customers` — `db.customers.find({}, ...)` with NO tenant filter; any admin can CSV-export every tenant's customer list (5000-row cap) | P59 · add tenant filter + ValueError guard |
+| 3 | **HIGH** | impexp.py L65 (`export_items`) | `GET /export/items` — `db.items.find({}, ...)` with NO tenant filter; any admin can CSV-export every tenant's pricebook (5000-row cap) | P59 · same fix pattern |
+| 4 | LOW | bulk_crm.py L607 (`_email_tpl_locked`) + L653 (`_sms_tpl_locked`) | `db.sequences.count_documents(...)` omits tenant_id — cross-tenant lock-check leak (not exploitable due to UUID collision improbability, but defense-in-depth weakness) | P59 · defense-in-depth |
+| 5 | LOW | items.py L197-200 (`_soft_delete_item` lock-check) | `count_documents` on quotes/estimates/billing_plans lacks tenant_id — same UUID-collision-safe class as #4 | P59 · defense-in-depth |
+| 6 | LOW | citations.py L451 (`_upsert_row` update filter) | Update filter has only `{"id": row["id"]}` — no tenant_id defense-in-depth (row was fetched tenant-scoped so not exploitable given current callers, but a future caller that mutates `updates.tenant_id` would leak) | P59 · defense-in-depth |
+
+Same P58 fix pattern applies to all three HIGH items: introduce `tenant_id = user.get("tenant_id")` at handler top, add P57-style ValueError guard, wrap the `find(...)` filter with `tenant_id`. Estimated scope: ~3 file edits + 3 new test files + 1 PRD section. Recommended commit series shape: `fix(p59): tenant-scope list_items` + `fix(p59): tenant-scope export_customers` + `fix(p59): tenant-scope export_items` + 3 test files + docs.
+
+### Commit series (P58 · 5 commits inside main branch)
+
+1. `4632ac030` · `fix(p58): tenant-scope patch_item on items.py` — 34 lines changed (30 additions).
+2. `49b857902` · `fix(p58): tenant-scope import_items on impexp.py` — 51 lines changed (48 additions).
+3. `2326b25d7` · `test(p58): patch_item cross-tenant isolation coverage + phase34 fixture fix` — 226 lines added (204 new file + 22 fixture edits).
+4. `bdfe9606f` · `test(p58): import_items cross-tenant isolation coverage` — 223 lines added.
+5. `docs(p58): PRD section for bulk endpoint tenant-isolation audit` (this section).
+
+---
+
+
 
 
 ## Known gotchas (recorded here for future phases)
