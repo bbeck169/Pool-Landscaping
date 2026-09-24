@@ -6,6 +6,8 @@ import { ArrowLeft, Download, Search, Play, Plus, Trash2, Upload, FileDown, Exte
 import { api } from "@/api";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
+// Task E · Feb-2026 — Shared navy filter/search strip primitive.
+import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
@@ -185,7 +187,18 @@ export function PaymentsLedger() {
         />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      {/* Task E · Feb-2026 — Consolidated filter surface.
+          Stat-card filters (Method + Status) moved OUT of their
+          Card wrappers INTO this single navy strip (per Task E
+          decision #2 — stat cards for those two positions had no
+          summary display, so they're removed entirely).  Records
+          + Total collected cards below stay as pure display
+          tiles.  Search input picks up the sitewide Task E
+          contract (solid white + permanent \`#3B82F6\` border +
+          navy text, per decision #1).  Export-CSV button lifted
+          into the strip's right slot for one-row cohesion — the
+          table Card starts directly with the table body. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <Card testId="payments-total-count" className="p-4">
           <div className="text-xs" style={{ color: colors.muted }}>Records</div>
           <div className="text-2xl font-bold" style={{ color: colors.onSurface }}>{total}</div>
@@ -194,48 +207,53 @@ export function PaymentsLedger() {
           <div className="text-xs" style={{ color: colors.muted }}>Total collected</div>
           <div className="text-2xl font-bold" style={{ color: colors.brand }}>{money(totalAmount)}</div>
         </Card>
-        <Card testId="payments-filter-method" className="p-4">
-          <div className="text-xs mb-1" style={{ color: colors.muted }}>Method</div>
-          <select value={method} onChange={(e) => { setMethod(e.target.value); setPage(1); }}
-                  className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
-                  style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                  data-testid="method-select">
-            <option value="all">All methods</option>
-            <option>Card</option><option>Stripe</option><option>Venmo</option>
-            <option>Zelle</option><option>Cash</option><option>Check</option>
-          </select>
-        </Card>
-        <Card testId="payments-filter-status" className="p-4">
-          <div className="text-xs mb-1" style={{ color: colors.muted }}>Status</div>
-          <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-                  className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
-                  style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                  data-testid="status-select">
-            <option value="">All statuses</option>
-            <option value="paid">Paid</option>
-            <option value="processing">Processing</option>
-            <option value="partial">Partial</option>
-          </select>
-        </Card>
       </div>
 
+      <NavyFilterBar
+        data-testid="payments-filters"
+        data-k52-navy-strip="true"
+      >
+        <NavyFilterBar.Search
+          value={q}
+          onChange={setQ}
+          placeholder="Search customer or invoice…"
+          ariaLabel="Search payments"
+          data-testid="payments-search"
+        />
+        <NavyFilterBar.Select
+          value={method}
+          onChange={(v) => { setMethod(v); setPage(1); }}
+          data-testid="payments-filter-method"
+          ariaLabel="Filter payments by method"
+          minWidth={160}
+        >
+          <option value="all">All methods</option>
+          <option>Card</option><option>Stripe</option><option>Venmo</option>
+          <option>Zelle</option><option>Cash</option><option>Check</option>
+        </NavyFilterBar.Select>
+        <NavyFilterBar.Select
+          value={status}
+          onChange={(v) => { setStatus(v); setPage(1); }}
+          data-testid="payments-filter-status"
+          ariaLabel="Filter payments by status"
+          minWidth={160}
+        >
+          <option value="">All statuses</option>
+          <option value="paid">Paid</option>
+          <option value="processing">Processing</option>
+          <option value="partial">Partial</option>
+        </NavyFilterBar.Select>
+        <button
+          onClick={exportCsv}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg hover:brightness-95"
+          style={{ backgroundColor: colors.brand, color: "#fff" }}
+          data-testid="payments-export"
+        >
+          <Download size={12} /> Export CSV
+        </button>
+      </NavyFilterBar>
+
       <Card>
-        <div className="flex items-center justify-between p-4 gap-2 flex-wrap"
-             style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-            <Search size={14} style={{ color: colors.searchIcon }} />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customer or invoice…"
-                   className="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
-                   style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                   data-testid="payments-search" />
-          </div>
-          <button onClick={exportCsv}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg hover:brightness-95"
-                  style={{ backgroundColor: colors.brand, color: "#fff" }}
-                  data-testid="payments-export">
-            <Download size={12} /> Export CSV
-          </button>
-        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="payments-table">
             <thead>
