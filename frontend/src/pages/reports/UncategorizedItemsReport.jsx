@@ -37,6 +37,7 @@ import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Search, CheckCircle2, RefreshCw, AlertTriangle, X as XIcon,
+  Trash2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -44,6 +45,7 @@ import { PageHeader } from "@/components/ui-kit";
 import CategoryPicker, {
   invalidateCategoryCache,
 } from "@/components/income/CategoryPicker";
+import TypedConfirmModal from "@/components/ui/TypedConfirmModal";
 
 
 const RANGE_OPTIONS = [
@@ -108,6 +110,13 @@ export default function UncategorizedItemsReport() {
   // Client-side row dismissals (only affect the current session /
   // page view; refresh brings them back).
   const [dismissed, setDismissed] = useState(() => new Set());
+
+  // Feb-2026 · Bulk hard-delete — modal + acknowledge-paid flow.
+  // Two-step flow so the operator has to acknowledge the amber
+  // warning BEFORE the TypedConfirmModal opens. See §G.4c ruling.
+  const [hardDeleteBusy, setHardDeleteBusy] = useState(false);
+  const [hardDeleteStep, setHardDeleteStep] = useState("idle");
+  //          idle | paid-warning | confirm
 
   // Optimistic patch state — mirrors the resolved values on the row
   // WITHOUT waiting for a re-fetch. Keyed by row key.
@@ -364,6 +373,108 @@ export default function UncategorizedItemsReport() {
     });
   };
 
+  // ── Feb-2026 · Bulk hard-delete helpers ─────────────────
+  // How many of the SELECTED rows belong to a paid invoice?
+  // Drives the amber pre-warning gate on the confirm modal.
+  const selectedRows = useMemo(() => {
+    const out = [];
+    for (const raw of rows) {
+      const key = _rowKey(raw);
+      if (selected.has(key)) out.push(_effectiveRow(raw));
+    }
+    return out;
+  }, [rows, selected, _effectiveRow]);
+
+  const selectedPaidCount = useMemo(() => (
+    selectedRows.filter(
+      (r) => (r.invoice_payment_status || "").toLowerCase() === "paid",
+    ).length
+  ), [selectedRows]);
+
+  const _openHardDeleteFlow = () => {
+    if (selected.size === 0) return;
+    if (selectedPaidCount > 0) {
+      setHardDeleteStep("paid-warning");
+    } else {
+      setHardDeleteStep("confirm");
+    }
+  };
+
+  const _closeHardDeleteFlow = () => {
+    if (hardDeleteBusy) return;
+    setHardDeleteStep("idle");
+  };
+
+  const _acknowledgePaidWarning = () => {
+    setHardDeleteStep("confirm");
+  };
+
+  const _onHardDeleteConfirm = async () => {
+    if (hardDeleteBusy || selected.size === 0) return;
+    setHardDeleteBusy(true);
+    try {
+      const payloadRows = selectedRows.map((r) => ({
+        invoice_id: r.invoice_id,
+        line_item_index: r.line_item_index,
+        description: r.description || "",
+        unit_price: Number(r.unit_price) || 0,
+      }));
+      const res = await api.post(
+        "/reports/uncategorized-items/bulk-hard-delete",
+        {
+          rows: payloadRows,
+          acknowledged_lock_bypass: selectedPaidCount > 0,
+        },
+      );
+      const deleted = Number(res?.deleted || 0);
+      const skipped = Array.isArray(res?.skipped) ? res.skipped : [];
+      const bulkOp = res?.bulk_op_id;
+
+      // Skip-code breakdown for the toast.
+      const codeCounts = {};
+      for (const s of skipped) {
+        codeCounts[s.code] = (codeCounts[s.code] || 0) + 1;
+      }
+      const skipStr = Object.entries(codeCounts)
+        .map(([code, n]) => `${n} ${code}`).join(", ");
+
+      const msg = deleted > 0
+        ? `Deleted ${deleted} line item${deleted === 1 ? "" : "s"}`
+          + (skipped.length ? ` · ${skipped.length} skipped` : "")
+        : `Nothing deleted · ${skipped.length} skipped`;
+
+      toast.success(msg, {
+        duration: 10000,
+        description: skipStr ? `Breakdown: ${skipStr}` : undefined,
+        action: deleted > 0 && bulkOp ? {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              const u = await api.post(
+                `/reports/uncategorized-items/bulk-hard-delete/`
+                + `${encodeURIComponent(bulkOp)}/undo`,
+                {},
+              );
+              const restored = Number(u?.restored || 0);
+              toast.info(`Restored ${restored} line item${restored === 1 ? "" : "s"}`);
+              load();
+            } catch (err) {
+              toast.error(err?.message || "Undo failed");
+            }
+          },
+        } : undefined,
+      });
+
+      setSelected(new Set());
+      setHardDeleteStep("idle");
+      load();
+    } catch (e) {
+      toast.error(e?.message || "Hard delete failed");
+    } finally {
+      setHardDeleteBusy(false);
+    }
+  };
+
   const headerSubtitle =
     total === 0 ? "0 uncategorized line items"
     : `${visibleCount} of ${total} uncategorized line item${total === 1 ? "" : "s"}`;
@@ -567,6 +678,17 @@ export default function UncategorizedItemsReport() {
               Bulk assign to…
             </button>
           )}
+          <button
+            type="button"
+            onClick={_openHardDeleteFlow}
+            disabled={bulkBusy || hardDeleteBusy}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-60"
+            style={{ background: "#DC2626" }}
+            data-testid="uncat-hard-delete-btn"
+            title="Permanently remove selected rows from their invoices"
+          >
+            <Trash2 size={13} /> Hard Delete Selected ({selected.size})
+          </button>
           <button
             type="button"
             onClick={() => { setSelected(new Set()); setBulkPickerOpen(false); }}
@@ -786,6 +908,80 @@ export default function UncategorizedItemsReport() {
           </div>
         </div>
       )}
+
+      {/* ── Feb-2026 · Paid-invoice pre-warning gate ─────────── */}
+      {hardDeleteStep === "paid-warning" ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) _closeHardDeleteFlow();
+          }}
+          data-testid="uncat-hard-delete-paid-warning"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl bg-white"
+            style={{ border: "1px solid rgba(15,23,42,0.10)" }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={22} className="shrink-0 mt-0.5"
+                             style={{ color: "#B45309" }} />
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Paid invoices in your selection
+                </h2>
+                <p className="text-sm mt-1 text-slate-700">
+                  {selectedPaidCount} of your {selected.size} selected
+                  line item{selected.size === 1 ? "" : "s"} belong{selectedPaidCount === 1 ? "s" : ""} to
+                  paid invoices. Removing them will recompute the invoice
+                  total but leave <span className="font-semibold">amount_paid</span> untouched
+                  &mdash; the <span className="font-semibold">remaining balance</span> will clamp at 0.
+                </p>
+                <p className="text-xs mt-2 text-slate-500">
+                  Historical AR reporting for those invoices will reflect the
+                  new total. Proceed only if you are sure.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={_closeHardDeleteFlow}
+                className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 text-slate-800"
+                data-testid="uncat-hard-delete-paid-warning-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={_acknowledgePaidWarning}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-amber-600 hover:bg-amber-700"
+                data-testid="uncat-hard-delete-paid-warning-acknowledge"
+              >
+                I understand, continue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Feb-2026 · TypedConfirmModal — DELETE keyword gate ─ */}
+      <TypedConfirmModal
+        open={hardDeleteStep === "confirm"}
+        title={`Hard delete ${selected.size} line item${selected.size === 1 ? "" : "s"}?`}
+        description={
+          selectedPaidCount > 0
+            ? `${selected.size} total · ${selectedPaidCount} on paid invoice${selectedPaidCount === 1 ? "" : "s"}. This action cannot be undone from the UI after the 10-second toast window closes — an audit trail is preserved.`
+            : `This action cannot be undone from the UI after the 10-second toast window closes — an audit trail is preserved.`
+        }
+        keyword="DELETE"
+        confirmLabel="Hard delete"
+        onConfirm={_onHardDeleteConfirm}
+        onCancel={_closeHardDeleteFlow}
+        busy={hardDeleteBusy}
+        testIdPrefix="uncat-hard-delete-confirm"
+      />
     </div>
   );
 }
