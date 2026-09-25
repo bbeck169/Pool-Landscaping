@@ -1,12 +1,15 @@
 """Task H0 · Feb-2026 — Historical Invoice Date Backfill.
 
-Backend tests locking the ``created_at`` optional admin-only
-override contract on ``POST /quotes`` (``QuoteIn.created_at``),
-plus the PATCH-defense strip on ``PUT /quotes/{qid}`` guarding
+Backend tests locking the ``created_at`` / ``paid_at`` optional
+admin-only override contract on:
+
+  * ``POST /quotes``                    (``QuoteIn.created_at``)
+  * ``POST /quotes/{qid}/record-payment`` (``RecordPaymentIn.paid_at``)
+
+Plus the PATCH-defense strip on ``PUT /quotes/{qid}`` guarding
 the write-once historical-date contract.
 
-Coverage matrix (7 tests · Commit 1 scope · Commit 2 appends
-the record-payment ``paid_at`` cases 8-10 in the same file):
+Coverage matrix (10 tests · Commit 1 = 1-7 · Commit 2 = 8-10):
 
   Quote-create:
     1. Admin backfill → stored, override audit fields populated.
@@ -16,6 +19,11 @@ the record-payment ``paid_at`` cases 8-10 in the same file):
     5. Admin ancient date (> 10y) → 400 date_too_old.
     6. Admin naive datetime → coerced to UTC.
     7. PATCH-defense: PUT with ``created_at`` → unchanged.
+
+  Record-payment:
+    8. Admin fully-paid + paid_at → applied, override audit stamped.
+    9. Admin partial + paid_at → silently deferred (INFO trace).
+    10. Admin future paid_at → 400 future_date_not_allowed.
 
 Uses live Mongo + live HTTP against ``BASE`` — matches every
 other integration-style test in this suite. Tenant scope is
@@ -323,3 +331,99 @@ def test_patch_defense_created_at_stripped(
     # Title DID land — control assertion showing the PATCH itself
     # went through (only the H0 override keys were filtered).
     assert post["title"] == "PATCH defense test"
+
+
+# ── 8) Record-payment: admin fully-paid + paid_at applied ──────
+def test_admin_paid_at_backfill_full_payment_applied(
+    admin_h, h0_customer_id, dbc, aquaterra_id,
+):
+    # Create an invoice first.
+    r = requests.post(
+        f"{API}/quotes", headers=admin_h,
+        json={**_make_quote_payload(h0_customer_id), "doc_type": "invoice"},
+        timeout=20,
+    )
+    assert r.status_code == 200
+    qid = r.json()["id"]
+    total = float(r.json()["total"])
+
+    override = "2024-04-05T09:15:00+00:00"
+    r2 = requests.post(
+        f"{API}/quotes/{qid}/record-payment", headers=admin_h,
+        json={"amount": total, "paid_at": override},
+        timeout=20,
+    )
+    assert r2.status_code == 200, r2.text
+
+    stored = dbc.quotes.find_one(
+        {"id": qid, "tenant_id": aquaterra_id}, {"_id": 0},
+    )
+    assert stored["payment_status"] == "paid"
+    stored_dt = datetime.fromisoformat(stored["paid_at"])
+    override_dt = datetime.fromisoformat(override)
+    assert stored_dt == override_dt, (
+        f"paid_at drifted — expected {override_dt}, got {stored_dt}"
+    )
+    assert stored.get("paid_at_override_by"), stored
+    assert stored.get("paid_at_override_at"), stored
+
+
+# ── 9) Record-payment: partial payment silently defers override ─
+def test_admin_paid_at_backfill_partial_deferred(
+    admin_h, h0_customer_id, dbc, aquaterra_id,
+):
+    r = requests.post(
+        f"{API}/quotes", headers=admin_h,
+        json={**_make_quote_payload(h0_customer_id), "doc_type": "invoice"},
+        timeout=20,
+    )
+    assert r.status_code == 200
+    qid = r.json()["id"]
+    total = float(r.json()["total"])
+
+    override = "2024-04-05T09:15:00+00:00"
+    partial = round(total / 2, 2)
+    r2 = requests.post(
+        f"{API}/quotes/{qid}/record-payment", headers=admin_h,
+        json={"amount": partial, "paid_at": override},
+        timeout=20,
+    )
+    # 200 — silent deferral, NOT a 400.
+    assert r2.status_code == 200, r2.text
+
+    stored = dbc.quotes.find_one(
+        {"id": qid, "tenant_id": aquaterra_id}, {"_id": 0},
+    )
+    # partial-payment must NOT stamp paid_at at all (matches
+    # pre-Task-H0 behaviour). The override drops silently.
+    assert stored["payment_status"] == "partial"
+    assert stored.get("paid_at") in (None, ""), stored.get("paid_at")
+    assert "paid_at_override_by" not in stored
+    assert "paid_at_override_at" not in stored
+
+
+# ── 10) Record-payment: future paid_at rejected ────────────────
+def test_future_paid_at_rejected(admin_h, h0_customer_id):
+    r = requests.post(
+        f"{API}/quotes", headers=admin_h,
+        json={**_make_quote_payload(h0_customer_id), "doc_type": "invoice"},
+        timeout=20,
+    )
+    assert r.status_code == 200
+    qid = r.json()["id"]
+    total = float(r.json()["total"])
+
+    future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    r2 = requests.post(
+        f"{API}/quotes/{qid}/record-payment", headers=admin_h,
+        json={"amount": total, "paid_at": future},
+        timeout=20,
+    )
+    assert r2.status_code == 400, r2.text
+    detail = r2.json().get("detail") or {}
+    if isinstance(detail, dict):
+        assert detail.get("error") == "future_date_not_allowed", detail
+        assert detail.get("field") == "paid_at", detail
+    else:
+        assert "future" in str(detail).lower()
+

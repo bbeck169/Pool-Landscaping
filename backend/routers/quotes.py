@@ -1749,7 +1749,39 @@ async def record_payment(qid: str, body: RecordPaymentIn,
         "charge_failed": False, "charge_error": "",
     }
     if fully_paid:
-        update.update({"status": "accepted", "paid_at": now_iso(), "payment_method": "manual"})
+        # Task H0 · Feb-2026 — resolve the optional ``paid_at``
+        # override before the paid-branch $set builds. Only the
+        # fully-paid transition stamps ``paid_at`` today, so the
+        # override is authoritative on this branch (partial-pay
+        # override is silently deferred; see the ``elif`` below).
+        from services.quotes.date_override import resolve_date_override
+        effective_paid_at, pa_by, pa_at = resolve_date_override(
+            body.paid_at,
+            user=user,
+            tenant_id=tenant["id"],
+            field_name="paid_at",
+            entity_kind="payment",
+            entity_id=qid,
+            log_level="info",   # partial deferrals must not spam WARN
+        )
+        update.update({
+            "status": "accepted",
+            "paid_at": effective_paid_at,
+            "payment_method": "manual",
+        })
+        if pa_by is not None:
+            update["paid_at_override_by"] = pa_by
+            update["paid_at_override_at"] = pa_at
+    elif body.paid_at is not None:
+        # Task H0 · Feb-2026 — partial-payment silent deferral.
+        # Emit a grep-friendly INFO trace so ops can still debug
+        # a "why isn't my paid_at applied?" ticket, but never
+        # 400 a legit partial-then-close workflow.
+        from services.quotes.date_override import log_paid_at_deferred
+        log_paid_at_deferred(
+            user=user, tenant_id=tenant["id"], quote_id=qid,
+            reason="partial_payment",
+        )
     await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": update})
     if doc.get("customer_id"):
         msg = ("Your payment was received in full. Thank you!" if fully_paid

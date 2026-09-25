@@ -456,6 +456,17 @@ class TermsSettingsIn(BaseModel):
 
 class RecordPaymentIn(BaseModel):
     amount: float
+    # Task H0 · Feb-2026 — Historical Invoice Date Backfill.
+    # Optional admin-only override on the record-payment path.
+    # ``record_payment`` in ``routers/quotes.py`` only stamps
+    # ``paid_at`` when the payment transitions the invoice to
+    # ``fully_paid=True`` — sending ``paid_at`` on a partial
+    # payment silently defers the override (INFO log line with
+    # ``deferred_reason=partial_payment``) rather than 400ing,
+    # matching the least-surprise semantics locked in the halt
+    # report. Resolution + validation delegated to
+    # ``services.quotes.date_override.resolve_date_override``.
+    paid_at: Optional[datetime] = None
 
 
 class CategoryIn(BaseModel):
