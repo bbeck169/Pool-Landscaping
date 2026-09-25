@@ -334,6 +334,11 @@ async def main() -> int:
         # pending_import_customers + import_batches, H.2 quotes
         # import-provenance sparse partials + import_audit).
         ("pdf_import",             "routers.imports",                       "ensure_indexes"),
+        # Feb-2026 — Bulk hard-delete for uncategorized line items;
+        # (tenant_id, event, bulk_op_id) sparse partial on audit_logs
+        # so the undo lookup is O(log n) rather than a full tenant
+        # slice scan.
+        ("uncategorized_bulk_hd",  "routers.income_categories",             "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:

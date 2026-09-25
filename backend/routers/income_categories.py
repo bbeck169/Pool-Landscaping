@@ -666,7 +666,15 @@ async def uncategorized_items(
         query,
         {"_id": 0, "id": 1, "invoice_number": 1, "line_items": 1,
           "customer_name": 1, "customer_id": 1, "created_at": 1,
-          "service_category": 1},
+          "service_category": 1,
+          # Feb-2026 · Bulk hard-delete for uncategorized line items —
+          # the frontend needs ``payment_status`` per row so it can
+          # tally how many selected lines belong to paid invoices
+          # (G.4c amber-warning gate before the TypedConfirmModal).
+          # ``updated_at`` is projected too so a follow-up write can
+          # use it as the ``find_one_and_update`` concurrency guard.
+          "payment_status": 1, "amount_paid": 1, "total": 1,
+          "updated_at": 1},
     )
     async for inv in cur:
         for idx, li in enumerate(inv.get("line_items") or []):
@@ -785,6 +793,11 @@ async def uncategorized_items(
             # context; separate from the line-item service category
             # this page mutates).
             "invoice_service_category": inv.get("service_category"),
+            # Feb-2026 · Bulk hard-delete for uncategorized line items —
+            # exposed so the frontend can render an amber warning
+            # ("N of the selected lines belong to paid invoices")
+            # BEFORE opening the TypedConfirmModal.
+            "invoice_payment_status": inv.get("payment_status"),
         })
     return {"items": rows, "total": len(rows), "range": range,
             "range_bounds": range_bounds, "missing": key}
@@ -1428,4 +1441,510 @@ async def reorder_categories(
             {"id": cid, "tenant_id": tid},
             {"$set": {"sort_order": idx, "updated_at": now}})
     return {"ok": True, "updated": len(ids)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · Bulk hard-delete for uncategorized line items
+# ═══════════════════════════════════════════════════════════════════
+# Two endpoints:
+#   * POST /reports/uncategorized-items/bulk-hard-delete
+#   * POST /reports/uncategorized-items/bulk-hard-delete/{bulk_op_id}/undo
+#
+# Semantics locked in Phase 1 §G rulings — see the
+# ``services.reports.uncategorized_line_deletes`` module docstring
+# for the full rationale.  This block is the request/response +
+# orchestration layer only; pure planning + math + audit-row
+# construction live in the service module.
+# ═══════════════════════════════════════════════════════════════════
+from routers.tenants import get_current_tenant as _get_current_tenant   # noqa: E402
+from utils import require_admin as _require_admin_dep                    # noqa: E402
+from services.reports.uncategorized_line_deletes import (                # noqa: E402
+    DeleteRequest,
+    apply_deletions,
+    build_audit_row,
+    build_undo_audit_row,
+    plan_deletions,
+    recompute_totals,
+)
+
+
+_UNCAT_HARD_DELETE_CAP = 100
+
+
+class _HardDeleteRow(BaseModel):
+    invoice_id: str
+    line_item_index: int
+    description: str
+    unit_price: float
+
+
+class _HardDeleteBody(BaseModel):
+    rows: List[_HardDeleteRow]
+    acknowledged_lock_bypass: bool = False
+    deletion_reason: Optional[str] = None
+
+
+@router.post("/reports/uncategorized-items/bulk-hard-delete",
+              operation_id="reports.uncategorizedItems.bulkHardDelete")
+async def bulk_hard_delete_uncategorized_lines(
+    body: _HardDeleteBody,
+    user: dict = Depends(_require_admin_dep),
+    tenant: dict = Depends(_get_current_tenant),
+) -> Dict[str, Any]:
+    """Bulk hard-delete line items from invoices.
+
+    Response shape::
+
+        {
+            "bulk_op_id": <uuid4>,
+            "requested":  <int>,
+            "deleted":    <int>,
+            "skipped":    [{"invoice_id": str,
+                             "line_item_index": int,
+                             "code": str}, ...],
+        }
+
+    Skip codes (verbatim taxonomy from §G.7):
+      * ``not_found_or_cross_tenant``
+      * ``line_index_out_of_bounds``
+      * ``content_shifted``
+      * ``locked_paid``
+      * ``already_deleted``
+
+    Cap: 100 rows per call (``422 bulk_cap_exceeded``).  Empty rows
+    → ``422 empty_rows``.
+
+    Per-row semantics — see ``services.reports.uncategorized_line_deletes``.
+
+    Per-invoice writes use ``find_one_and_update`` with an
+    ``updated_at`` guard (G.3b): on mismatch we retry ONCE with a
+    fresh read; if still contested every row targeting that
+    invoice is added to ``skipped[]`` with code
+    ``content_shifted``.
+    """
+    tenant_id = tenant["id"]
+
+    # ── Cap + empty payload guards ─────────────────────────
+    rows = list(body.rows or [])
+    if not rows:
+        raise HTTPException(
+            422, {"code": "empty_rows",
+                    "detail": "rows is required"},
+        )
+    if len(rows) > _UNCAT_HARD_DELETE_CAP:
+        raise HTTPException(
+            422, {"code": "bulk_cap_exceeded",
+                    "cap": _UNCAT_HARD_DELETE_CAP,
+                    "attempted": len(rows)},
+        )
+
+    bulk_op_id = str(uuid.uuid4())
+    invoice_ids = list({r.invoice_id for r in rows})
+
+    # ── Load invoices (tenant-scoped) ──────────────────────
+    inv_docs: Dict[str, Dict[str, Any]] = {}
+    async for inv in db.quotes.find(
+        {"tenant_id": tenant_id, "id": {"$in": invoice_ids},
+          "doc_type": "invoice"},
+        {"_id": 0},
+    ):
+        inv_docs[inv["id"]] = inv
+
+    # ── Plan the deletions (pure) ──────────────────────────
+    payload_typed = [
+        DeleteRequest(
+            invoice_id=r.invoice_id,
+            line_item_index=r.line_item_index,
+            description=r.description,
+            unit_price=r.unit_price,
+        )
+        for r in rows
+    ]
+    plan = plan_deletions(
+        payload_typed,
+        invoices_by_id=inv_docs,
+        acknowledged_lock_bypass=body.acknowledged_lock_bypass,
+    )
+
+    deleted = 0
+    skipped_out: List[Dict[str, Any]] = [
+        {"invoice_id": s.invoice_id,
+          "line_item_index": s.line_item_index,
+          "code": s.code}
+        for s in plan.skipped
+    ]
+
+    # ── Apply per-invoice with updated_at guard (G.3b) ─────
+    for invoice_id, planned in plan.deletes_by_invoice.items():
+        inv = inv_docs.get(invoice_id)
+        if inv is None:                                            # defensive
+            continue
+        applied = False
+        for attempt in (1, 2):
+            # ── Signal any pre-mutation snapshotting hooks ──
+            # snapshot_before_mutation is our canonical audit
+            # for document_versions.  Best-effort; never raises.
+            try:
+                from services.documents.versions import (
+                    snapshot_before_mutation, has_signature,
+                    invalidate_signature_if_present,
+                )
+            except Exception:                                      # noqa: BLE001
+                snapshot_before_mutation = None                    # type: ignore
+                has_signature = None                                # type: ignore
+                invalidate_signature_if_present = None              # type: ignore
+
+            had_signature = False
+            if has_signature is not None:
+                try:
+                    had_signature = await has_signature(
+                        doc_id=invoice_id, tenant_id=tenant_id,
+                    )
+                except Exception:                                  # noqa: BLE001
+                    had_signature = False
+
+            apply_result = apply_deletions(inv, planned)
+            totals = recompute_totals(inv, apply_result.new_line_items)
+            new_updated_at = _now().isoformat()
+
+            update_doc = {
+                "line_items": apply_result.new_line_items,
+                "subtotal": totals["subtotal"],
+                "tax": totals["tax"],
+                "total": totals["total"],
+                "remaining_balance": totals["remaining_balance"],
+                "updated_at": new_updated_at,
+            }
+
+            if snapshot_before_mutation is not None:
+                try:
+                    await snapshot_before_mutation(
+                        doc_type="invoice",
+                        doc_id=invoice_id,
+                        tenant_id=tenant_id,
+                        current_doc=inv,
+                        new_doc={**inv, **update_doc},
+                        saved_by_user=user,
+                        status_at_edit=(inv.get("status") or "draft"),
+                        reason="line_item.hard_delete",
+                        signature_invalidated=had_signature,
+                    )
+                except Exception:                                  # noqa: BLE001
+                    logger.exception(
+                        "[uncategorized.hard_delete] snapshot_before_mutation "
+                        "failed for invoice=%s",
+                        invoice_id,
+                    )
+
+            # ── Optimistic-lock write ──────────────────────
+            guard = {"id": invoice_id, "tenant_id": tenant_id,
+                      "doc_type": "invoice"}
+            captured_updated_at = inv.get("updated_at")
+            if captured_updated_at is not None:
+                guard["updated_at"] = captured_updated_at
+            r = await db.quotes.find_one_and_update(
+                guard, {"$set": update_doc},
+                return_document=False,
+            )
+            if r is None and attempt == 1:
+                # Concurrent write — retry once with a fresh read.
+                fresh = await db.quotes.find_one(
+                    {"id": invoice_id, "tenant_id": tenant_id,
+                      "doc_type": "invoice"},
+                    {"_id": 0},
+                )
+                if fresh is None:
+                    for p in planned:
+                        skipped_out.append({
+                            "invoice_id": invoice_id,
+                            "line_item_index": p.line_item_index,
+                            "code": "not_found_or_cross_tenant",
+                        })
+                    break
+                # Re-run planner against the fresh doc for THIS
+                # invoice only (other invoices already succeeded /
+                # were skipped).
+                re_plan = plan_deletions(
+                    [
+                        DeleteRequest(
+                            invoice_id=invoice_id,
+                            line_item_index=p.line_item_index,
+                            description=p.description,
+                            unit_price=p.unit_price,
+                        )
+                        for p in planned
+                    ],
+                    invoices_by_id={invoice_id: fresh},
+                    acknowledged_lock_bypass=body.acknowledged_lock_bypass,
+                )
+                # Surface any newly-skipped rows from the retry planner.
+                for s in re_plan.skipped:
+                    skipped_out.append({
+                        "invoice_id": s.invoice_id,
+                        "line_item_index": s.line_item_index,
+                        "code": s.code,
+                    })
+                planned = re_plan.deletes_by_invoice.get(invoice_id, [])
+                if not planned:
+                    break
+                inv = fresh
+                continue
+            if r is None:
+                # Second attempt also lost the race — bail with
+                # content_shifted for the whole group.
+                for p in planned:
+                    skipped_out.append({
+                        "invoice_id": invoice_id,
+                        "line_item_index": p.line_item_index,
+                        "code": "content_shifted",
+                    })
+                break
+
+            # ── Success — write audit rows + invalidate sig ─
+            audit_at = datetime.now(timezone.utc)
+            audit_rows = []
+            for snap in apply_result.deleted_snapshots:
+                original_idx = snap.get("_pre_delete_index", -1)
+                audit_rows.append(build_audit_row(
+                    tenant_id=tenant_id,
+                    invoice_id=invoice_id,
+                    line_item_index=original_idx,
+                    line_snapshot=snap,
+                    actor=user,
+                    bulk_op_id=bulk_op_id,
+                    deletion_reason=body.deletion_reason,
+                    at=audit_at,
+                ))
+            if audit_rows:
+                try:
+                    await db.audit_logs.insert_many(
+                        audit_rows, ordered=False,
+                    )
+                except Exception:                                  # noqa: BLE001
+                    logger.exception(
+                        "[uncategorized.hard_delete] audit_logs "
+                        "insert_many failed for invoice=%s",
+                        invoice_id,
+                    )
+            if invalidate_signature_if_present is not None and had_signature:
+                try:
+                    await invalidate_signature_if_present(
+                        doc_type="invoice",
+                        doc_id=invoice_id,
+                        tenant_id=tenant_id,
+                        collection=db.quotes,
+                    )
+                except Exception:                                  # noqa: BLE001
+                    logger.exception(
+                        "[uncategorized.hard_delete] signature "
+                        "invalidation failed for invoice=%s",
+                        invoice_id,
+                    )
+            deleted += len(apply_result.deleted_snapshots)
+            applied = True
+            break
+
+        if not applied:
+            continue
+
+    logger.info(
+        "[uncategorized.hard_delete] actor=%s bulk_op=%s "
+        "requested=%d deleted=%d skipped=%d",
+        (user or {}).get("email"), bulk_op_id,
+        len(rows), deleted, len(skipped_out),
+    )
+    return {
+        "bulk_op_id": bulk_op_id,
+        "requested": len(rows),
+        "deleted": deleted,
+        "skipped": skipped_out,
+    }
+
+
+@router.post(
+    "/reports/uncategorized-items/bulk-hard-delete/{bulk_op_id}/undo",
+    operation_id="reports.uncategorizedItems.bulkHardDelete.undo",
+)
+async def undo_bulk_hard_delete_uncategorized_lines(
+    bulk_op_id: str,
+    user: dict = Depends(_require_admin_dep),
+    tenant: dict = Depends(_get_current_tenant),
+) -> Dict[str, Any]:
+    """Replay every ``line_item.hard_delete`` audit row for the
+    given ``bulk_op_id`` by re-inserting each snapshot at the END
+    of its target invoice's ``line_items`` array (G.6c ruling —
+    original indexes are unsafe under concurrent edits).
+
+    Idempotency: any audit row that already has a paired
+    ``line_item.hard_delete.undo`` row with ``undo_of=<bulk_op_id>``
+    is skipped so a second call is a no-op.
+
+    Cross-tenant guard: rows are filtered by
+    ``tenant_id == caller_tenant``, and any target invoice not
+    found for the tenant is skipped.
+
+    Response shape::
+
+        {
+            "bulk_op_id":     <str>,
+            "audit_rows":     <int>,   # total rows found
+            "restored":       <int>,   # newly re-inserted lines
+            "already_undone": <int>,   # rows that had a prior undo
+            "skipped":        [{"invoice_id": str,
+                                 "reason": "invoice_not_found"}, ...],
+        }
+    """
+    tenant_id = tenant["id"]
+
+    # Load all delete-audit rows for the group.
+    delete_rows: List[Dict[str, Any]] = []
+    async for r in db.audit_logs.find(
+        {"tenant_id": tenant_id,
+          "event": "line_item.hard_delete",
+          "bulk_op_id": bulk_op_id},
+        {"_id": 0},
+    ):
+        delete_rows.append(r)
+    if not delete_rows:
+        raise HTTPException(
+            404, {"code": "bulk_op_not_found",
+                    "bulk_op_id": bulk_op_id},
+        )
+
+    # Load all EXISTING undo rows so idempotent re-runs are a
+    # no-op per audit-row id.
+    already_undone_audit_ids: set = set()
+    async for r in db.audit_logs.find(
+        {"tenant_id": tenant_id,
+          "event": "line_item.hard_delete.undo",
+          "undo_of": bulk_op_id},
+        {"_id": 0, "undone_audit_id": 1},
+    ):
+        aid = r.get("undone_audit_id")
+        if aid:
+            already_undone_audit_ids.add(aid)
+
+    # Group audit rows by invoice_id.
+    by_invoice: Dict[str, List[Dict[str, Any]]] = {}
+    for row in delete_rows:
+        if row.get("id") in already_undone_audit_ids:
+            continue
+        by_invoice.setdefault(row["invoice_id"], []).append(row)
+
+    restored = 0
+    already_undone_count = len(delete_rows) - sum(len(v) for v in by_invoice.values())
+    skipped_out: List[Dict[str, Any]] = []
+
+    for invoice_id, audit_rows in by_invoice.items():
+        inv = await db.quotes.find_one(
+            {"id": invoice_id, "tenant_id": tenant_id,
+              "doc_type": "invoice"},
+            {"_id": 0},
+        )
+        if inv is None:
+            skipped_out.append({
+                "invoice_id": invoice_id,
+                "reason": "invoice_not_found",
+            })
+            continue
+
+        current_lines = list(inv.get("line_items") or [])
+        undo_audit_rows: List[Dict[str, Any]] = []
+        for ar in audit_rows:
+            snap = dict(ar.get("line_snapshot") or {})
+            if not snap:
+                continue
+            new_index = len(current_lines)
+            current_lines.append(snap)
+            undo_audit_rows.append(build_undo_audit_row(
+                tenant_id=tenant_id,
+                invoice_id=invoice_id,
+                line_snapshot=snap,
+                reinserted_at_index=new_index,
+                actor=user,
+                undo_of_bulk_op_id=bulk_op_id,
+            ))
+            # Stamp the ``undone_audit_id`` link so idempotency
+            # works on subsequent undo calls.
+            undo_audit_rows[-1]["undone_audit_id"] = ar.get("id")
+
+        # Recompute totals + persist.
+        totals = recompute_totals(inv, current_lines)
+        await db.quotes.update_one(
+            {"id": invoice_id, "tenant_id": tenant_id,
+              "doc_type": "invoice"},
+            {"$set": {
+                "line_items": current_lines,
+                "subtotal": totals["subtotal"],
+                "tax": totals["tax"],
+                "total": totals["total"],
+                "remaining_balance": totals["remaining_balance"],
+                "updated_at": _now().isoformat(),
+            }},
+        )
+        if undo_audit_rows:
+            try:
+                await db.audit_logs.insert_many(
+                    undo_audit_rows, ordered=False,
+                )
+            except Exception:                                  # noqa: BLE001
+                logger.exception(
+                    "[uncategorized.hard_delete.undo] audit insert "
+                    "failed for invoice=%s",
+                    invoice_id,
+                )
+        restored += len(undo_audit_rows)
+
+    logger.info(
+        "[uncategorized.hard_delete.undo] actor=%s bulk_op=%s "
+        "restored=%d already_undone=%d",
+        (user or {}).get("email"), bulk_op_id,
+        restored, already_undone_count,
+    )
+    return {
+        "bulk_op_id": bulk_op_id,
+        "audit_rows": len(delete_rows),
+        "restored": restored,
+        "already_undone": already_undone_count,
+        "skipped": skipped_out,
+    }
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Startup index ensure (called by scripts.ensure_indexes)
+# ═══════════════════════════════════════════════════════════════════
+async def ensure_indexes() -> None:
+    """Feb-2026 · Bulk hard-delete for uncategorized line items —
+    startup index installer.  Registered in
+    ``scripts.ensure_indexes`` ROUTER_ENSURE_INDEXES.
+
+    Adds ONE compound sparse partial index on ``audit_logs`` so the
+    undo lookup (``{tenant_id, event, bulk_op_id}``) resolves in
+    logarithmic time rather than scanning the entire tenant slice
+    of ``audit_logs`` (26k rows at write time; grows linearly).
+
+    Every index plan runs in its own ``try/except`` per the H.2
+    self-healing pattern — a single failure logs at WARN but never
+    blocks the rest.
+    """
+    async def _one(coll: str, keys, opts: dict) -> None:
+        try:
+            await db[coll].create_index(keys, **opts)
+        except Exception as exc:                                   # noqa: BLE001
+            logger.warning(
+                "[income_categories] index ensure failed on %s (%s): "
+                "%s: %s",
+                coll, opts.get("name"), type(exc).__name__, exc,
+            )
+
+    await _one(
+        "audit_logs",
+        [("tenant_id", 1), ("event", 1), ("bulk_op_id", 1)],
+        {
+            "name": "audit_logs_tenant_event_bulkop",
+            "background": True,
+            "partialFilterExpression": {"bulk_op_id": {"$exists": True}},
+        },
+    )
 
