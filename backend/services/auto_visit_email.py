@@ -544,6 +544,410 @@ def _photos_grid(
     return {"html": section, "text": text}
 
 
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · Portal-style branded template (pool template only).
+# ═════════════════════════════════════════════════════════════════════
+# In-place restructure of the ``render_email`` pool branch into small
+# pure card composers so the email matches the portal service-report
+# detail visual (header logo strip → job title card with pills →
+# POOL 2x2 metrics grid → service checklist → visit photos).
+#
+# The landscape branch keeps the pre-existing single-column render
+# path so no landscape smoke regressions can leak in.
+#
+# Email-safety rules honored:
+#   * Table-based layout; every card is an outer <table>.
+#   * All CSS inline; no <style> block; no external stylesheet.
+#   * Images: absolute URLs, ``alt`` set, explicit width/height where
+#     known, ``display:block`` on <img>.
+#   * Buttons: solid brand-blue backgrounds, no CSS gradients.
+#   * Preheader: hidden ``display:none`` pre-render string.
+#   * No ``@media`` queries — email clients strip them unpredictably.
+
+
+# Portal chip color mapping — mirrors ``CHEM_BAND_STYLES`` at
+# ``frontend/src/pages/portal/PortalServiceReports.jsx:1229``:
+#   below    -> bg-sky-500     -> #0EA5E9
+#   average  -> bg-emerald-500 -> #10B981
+#   above    -> bg-amber-500   -> #F59E0B
+#   elevated -> bg-red-500     -> #EF4444
+# Backend band strings come from ``services.chemistry_bands`` and
+# are Title Case with a space — mapping key preserves that shape.
+_BAND_HEX_MAP: Dict[str, Dict[str, str]] = {
+    "Below Average": {"bg": "#0EA5E9", "fg": "#FFFFFF", "label": "Below"},
+    "Average":       {"bg": "#10B981", "fg": "#FFFFFF", "label": "Average"},
+    "Above Average": {"bg": "#F59E0B", "fg": "#FFFFFF", "label": "Above Avg"},
+    "Elevated":      {"bg": "#EF4444", "fg": "#FFFFFF", "label": "Elevated"},
+}
+
+# Neutral card + text tokens (email-safe, dark-mode agnostic).
+_CARD_BG          = "#FFFFFF"
+_CARD_BORDER      = "#E5E7EB"
+_CARD_SHADOW      = "0 1px 3px rgba(0,0,0,0.08)"
+_TEXT_PRIMARY     = "#0F172A"
+_TEXT_SECONDARY   = "#475569"
+_TEXT_MUTED       = "#94A3B8"
+_SECTION_HEADER   = "#334155"
+_CHECKMARK_GREEN  = "#10B981"
+_PAGE_BG          = "#F5F7FA"
+
+
+def _band_style(band: Optional[str]) -> Dict[str, str]:
+    """Return the ``{bg, fg, label}`` chip style for a canonical
+    band string.  Falls through to the ``Average`` palette when the
+    band is missing/unknown — email always renders SOMETHING legible."""
+    if band and band in _BAND_HEX_MAP:
+        return _BAND_HEX_MAP[band]
+    return _BAND_HEX_MAP["Average"]
+
+
+def _render_preheader(company: str, customer_name: str,
+                       address: str) -> str:
+    """Hidden preheader (Gmail/Apple Mail inbox row snippet)."""
+    who = (customer_name or "").strip() or "your visit"
+    where = (address or "").strip()
+    tail = f" at {where}" if where else ""
+    text = f"Visit summary for {who}{tail}"
+    return (
+        f'<div style="display:none;max-height:0;overflow:hidden;'
+        f'mso-hide:all;visibility:hidden;opacity:0;color:transparent;'
+        f'height:0;width:0;font-size:1px;line-height:1px;">'
+        f'{text}'
+        f'</div>'
+    )
+
+
+def _render_pill(text: str, bg: str, fg: str = "#FFFFFF") -> str:
+    """Solid-color inline pill."""
+    return (
+        f'<span style="display:inline-block;background:{bg};color:{fg};'
+        f'font-size:12px;font-weight:600;letter-spacing:0.02em;'
+        f'padding:4px 10px;border-radius:999px;line-height:1;'
+        f'margin-right:6px;white-space:nowrap;">{text}</span>'
+    )
+
+
+def _render_header_bar(company: str, logo_url: Optional[str],
+                       palette: Dict[str, str]) -> str:
+    """Portal-style top bar: brand-navy strip with the tenant logo
+    (or the company name in white when no logo is set)."""
+    inner: str
+    if logo_url:
+        abs_logo = _absolute_url(logo_url)
+        inner = (
+            f'<img src="{abs_logo}" alt="{company}" '
+            f'height="40" '
+            f'style="display:block;max-height:40px;height:40px;'
+            f'width:auto;border:0;outline:none;text-decoration:none" />'
+        )
+    else:
+        inner = (
+            f'<span style="color:#FFFFFF;font-family:system-ui,-apple-'
+            f'system,BlinkMacSystemFont,sans-serif;font-size:18px;'
+            f'font-weight:700;letter-spacing:0.02em;">{company}</span>'
+        )
+    return (
+        f'<table role="presentation" width="100%" cellspacing="0" '
+        f'cellpadding="0" style="background:{palette["primary"]};'
+        f'border-collapse:collapse;" bgcolor="{palette["primary"]}">'
+        f'<tr><td align="left" '
+        f'style="padding:14px 24px;background:{palette["primary"]};" '
+        f'bgcolor="{palette["primary"]}">{inner}</td></tr></table>'
+    )
+
+
+def _card_open(padding: str = "20px") -> str:
+    return (
+        f'<table role="presentation" width="100%" cellspacing="0" '
+        f'cellpadding="0" style="background:{_CARD_BG};border:1px '
+        f'solid {_CARD_BORDER};border-radius:12px;box-shadow:'
+        f'{_CARD_SHADOW};border-collapse:separate;margin-bottom:16px;">'
+        f'<tr><td style="padding:{padding};">'
+    )
+
+
+def _card_close() -> str:
+    return "</td></tr></table>"
+
+
+def _render_job_title_card(
+    job: Dict[str, Any],
+    tech_name: str,
+    resolved_address: str,
+    visit_date: str,
+    service_type_label: str,
+    status_label: str,
+    palette: Dict[str, str],
+) -> str:
+    """Hero card: service-type + status pills, title, meta row."""
+    title = (job.get("title") or job.get("service_type")
+             or "Service visit").strip() or "Service visit"
+    pills: List[str] = []
+    if service_type_label:
+        pills.append(_render_pill(service_type_label, palette["primary"]))
+    if status_label:
+        pills.append(_render_pill(status_label, palette["primary"]))
+    pills_html = "".join(pills)
+
+    meta_bits: List[str] = []
+    if visit_date:
+        meta_bits.append(
+            f'<span style="white-space:nowrap;">📅 {visit_date}</span>')
+    if tech_name:
+        meta_bits.append(
+            f'<span style="white-space:nowrap;">👤 {tech_name}</span>')
+    if resolved_address:
+        meta_bits.append(
+            f'<span>📍 {resolved_address}</span>')
+    meta_html = (
+        f'<span style="color:{_TEXT_MUTED};">&nbsp;·&nbsp;</span>'
+    ).join(meta_bits)
+
+    return (
+        _card_open()
+        + (
+            f'<div style="margin-bottom:10px;">{pills_html}</div>'
+            f'<h1 style="margin:0 0 10px;padding:0;'
+            f'font-family:system-ui,-apple-system,BlinkMacSystemFont,'
+            f'sans-serif;font-size:22px;line-height:1.25;font-weight:700;'
+            f'color:{_TEXT_PRIMARY};">{title}</h1>'
+            f'<div style="font-family:system-ui,-apple-system,'
+            f'BlinkMacSystemFont,sans-serif;font-size:13px;color:'
+            f'{_TEXT_SECONDARY};">{meta_html}</div>'
+        )
+        + _card_close()
+    )
+
+
+def _iter_pool_metric_rows(sr: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Yield ``[{key, label, value, band}, ...]`` for the metrics
+    grid — only readings with either a numeric value or a
+    pre-computed band label."""
+    rows: List[Dict[str, Any]] = []
+    for ck, display, val, pre_label in _iter_readings(
+            sr.get("chemical_readings") or []):
+        has_value = val not in (None, "", 0)
+        if not has_value and not pre_label:
+            continue
+        band = pre_label or (band_for_reading(ck, val) if ck else None)
+        rows.append({
+            "key": ck or display, "label": display,
+            "value": val, "band": band,
+        })
+    return rows
+
+
+def _render_pool_metrics_card(sr: Dict[str, Any],
+                               palette: Dict[str, str]) -> str:
+    """2x2 grid of POOL metric cells."""
+    rows = _iter_pool_metric_rows(sr)
+    if not rows:
+        return ""
+
+    def _cell(row: Dict[str, Any]) -> str:
+        style = _band_style(row.get("band"))
+        chip = _render_pill(style["label"], style["bg"], style["fg"])
+        return (
+            f'<td valign="top" width="50%" '
+            f'style="padding:8px;width:50%;box-sizing:border-box;">'
+            f'<table role="presentation" width="100%" cellspacing="0" '
+            f'cellpadding="0" style="background:#F8FAFC;border:1px '
+            f'solid {_CARD_BORDER};border-radius:8px;border-collapse:'
+            f'separate;">'
+            f'<tr><td style="padding:10px 12px;">'
+            f'<div style="font-family:system-ui,-apple-system,'
+            f'BlinkMacSystemFont,sans-serif;font-size:12px;color:'
+            f'{_TEXT_SECONDARY};text-transform:uppercase;letter-spacing:'
+            f'0.04em;margin-bottom:4px;">{row["label"]}</div>'
+            f'<div>{chip}</div>'
+            f'</td></tr></table>'
+            f'</td>'
+        )
+
+    html_rows: List[str] = []
+    for i in range(0, len(rows), 2):
+        pair = rows[i:i + 2]
+        cells = [_cell(r) for r in pair]
+        if len(cells) < 2:
+            cells.append(
+                '<td valign="top" width="50%" '
+                'style="padding:8px;width:50%;">&nbsp;</td>'
+            )
+        html_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    grid = (
+        f'<table role="presentation" width="100%" cellspacing="0" '
+        f'cellpadding="0" style="border-collapse:collapse;margin:-8px;"'
+        f'>{"".join(html_rows)}</table>'
+    )
+    header = (
+        f'<div style="font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,sans-serif;font-size:13px;font-weight:700;'
+        f'letter-spacing:0.06em;color:{_SECTION_HEADER};'
+        f'text-transform:uppercase;margin:0 0 12px;">'
+        f'💧 POOL</div>'
+    )
+    return _card_open() + header + grid + _card_close()
+
+
+def _render_checklist_card(sr: Dict[str, Any]) -> str:
+    """Bulleted service checklist — green check per completed item."""
+    checklist = (sr.get("checklist_completed")
+                  or sr.get("checklist_items") or [])
+    done = [c for c in checklist
+            if isinstance(c, dict) and c.get("done")]
+    if not done:
+        return ""
+    rows = "".join(
+        f'<tr><td valign="top" '
+        f'style="padding:6px 0;font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,sans-serif;font-size:14px;color:'
+        f'{_TEXT_PRIMARY};">'
+        f'<span style="display:inline-block;width:18px;height:18px;'
+        f'background:{_CHECKMARK_GREEN};color:#FFFFFF;border-radius:'
+        f'4px;text-align:center;line-height:18px;font-weight:700;'
+        f'font-size:13px;margin-right:10px;vertical-align:middle;">✓'
+        f'</span>{c.get("label", "Item")}</td></tr>'
+        for c in done
+    )
+    header = (
+        f'<div style="font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,sans-serif;font-size:13px;font-weight:700;'
+        f'letter-spacing:0.06em;color:{_SECTION_HEADER};'
+        f'text-transform:uppercase;margin:0 0 8px;">'
+        f'📋 SERVICE CHECKLIST</div>'
+    )
+    return (
+        _card_open()
+        + header
+        + '<table role="presentation" width="100%" cellspacing="0" '
+        + 'cellpadding="0" style="border-collapse:collapse;">'
+        + rows
+        + '</table>'
+        + _card_close()
+    )
+
+
+def _render_photos_card(sr: Dict[str, Any], portal_link: str,
+                         safe_photos: List[Dict[str, Any]],
+                         palette: Dict[str, str]) -> str:
+    """Portal-style visit-photos card."""
+    if not safe_photos:
+        return ""
+    ordered = sorted(safe_photos, key=_photo_ts, reverse=True)
+    top6 = ordered[:6]
+    overflow = max(0, len(ordered) - 6)
+    cells: List[str] = []
+    for p in top6:
+        url = p.get("url") or p.get("uri") or ""
+        if not url:
+            continue
+        abs_url = _absolute_url(url)
+        cells.append(
+            f'<td valign="top" width="33.33%" '
+            f'style="padding:6px;width:33.33%;box-sizing:border-box;">'
+            f'<a href="{portal_link}" '
+            f'style="text-decoration:none;color:inherit;">'
+            f'<img src="{abs_url}" alt="Visit photo" '
+            f'width="180" '
+            f'style="display:block;width:100%;max-width:180px;'
+            f'height:auto;border-radius:8px;border:1px solid '
+            f'{_CARD_BORDER};" />'
+            f'</a></td>'
+        )
+    rows: List[str] = []
+    for i in range(0, len(cells), 3):
+        chunk = cells[i:i + 3]
+        while len(chunk) < 3:
+            chunk.append(
+                '<td valign="top" width="33.33%" '
+                'style="padding:6px;width:33.33%;">&nbsp;</td>'
+            )
+        rows.append("<tr>" + "".join(chunk) + "</tr>")
+    header = (
+        f'<div style="font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,sans-serif;font-size:13px;font-weight:700;'
+        f'letter-spacing:0.06em;color:{_SECTION_HEADER};'
+        f'text-transform:uppercase;margin:0 0 8px;">'
+        f'🖼️ VISIT PHOTOS</div>'
+    )
+    body = (
+        '<table role="presentation" width="100%" cellspacing="0" '
+        'cellpadding="0" style="border-collapse:collapse;margin:-6px;">'
+        + "".join(rows)
+        + '</table>'
+    )
+    overflow_html = ""
+    if overflow > 0:
+        overflow_html = (
+            f'<p style="margin:8px 0 0;font-family:system-ui,'
+            f'-apple-system,BlinkMacSystemFont,sans-serif;font-size:'
+            f'12px;color:{_TEXT_SECONDARY};">'
+            f'<a href="{portal_link}" style="color:{palette["accent"]};'
+            f'text-decoration:none;font-weight:600;">'
+            f'+{overflow} more in your report →</a></p>'
+        )
+    return _card_open() + header + body + overflow_html + _card_close()
+
+
+def _compose_visit_summary_text(
+    *,
+    company: str, customer_name: str,
+    service_type_label: str, status_label: str,
+    title: str, visit_date: str, tech_name: str,
+    resolved_address: str, metric_rows: List[Dict[str, Any]],
+    checklist_labels: List[str], photos_count: int,
+    photos_overflow: int, portal_link: str,
+    customer_notes: str, review_link: Optional[str],
+    custom_footer: str,
+) -> str:
+    """Plain-text sibling with the same info order as the HTML."""
+    lines: List[str] = [company, "Service visit summary", ""]
+    pills = " · ".join(p for p in (service_type_label, status_label) if p)
+    if pills:
+        lines.append(pills)
+    if title:
+        lines.append(title)
+    meta = " · ".join(
+        p for p in (visit_date, tech_name, resolved_address) if p)
+    if meta:
+        lines.append(meta)
+    lines.append("")
+    if metric_rows:
+        lines.append("POOL")
+        for r in metric_rows:
+            style = _band_style(r.get("band"))
+            val = r.get("value")
+            val_str = f" ({val})" if val not in (None, "", 0) else ""
+            lines.append(f"  - {r['label']}: {style['label']}{val_str}")
+        lines.append("")
+    if checklist_labels:
+        lines.append("SERVICE CHECKLIST")
+        for lbl in checklist_labels:
+            lines.append(f"  - {lbl}")
+        lines.append("")
+    if photos_count > 0:
+        suffix = (f" (+{photos_overflow} more in your portal)"
+                  if photos_overflow else "")
+        lines.append(
+            f"Visit photos: {photos_count} attached{suffix}")
+        lines.append(f"  View photos in portal: {portal_link}")
+        lines.append("")
+    if customer_notes:
+        lines += ["Notes from your tech:", customer_notes, ""]
+    if review_link:
+        lines.append(f"Leave a review: {review_link}")
+    lines.append(f"Portal: {portal_link}")
+    if custom_footer:
+        lines += ["", custom_footer]
+    lines += [
+        "",
+        "Internal service notes are not included in this summary.",
+    ]
+    return "\n".join(lines)
+
+
+
 def render_email(
     tenant: dict, job: dict, sr: dict, customer: dict,
     branding: Optional[Mapping[str, Any]] = None,
@@ -635,119 +1039,255 @@ def render_email(
     # neither is configured.
     portal_link = _absolute_url("/portal/service-reports")
 
-    # ─── HTML ───────────────────────────────────────────────────────
-    # Phase COMM1 · Feb-2026 — header uses the tenant primary color
-    # as the band background so the email surface matches the
-    # customer's brand at a glance.
-    header_html = (
-        f'<table cellspacing="0" cellpadding="0" style="width:100%;'
-        f'border-collapse:collapse;background:{palette["primary"]};'
-        f'padding:16px 20px" bgcolor="{palette["primary"]}">'
-        f'<tr><td>'
-    )
-    if logo:
-        # Phase P45 · Feb-2026 — absolute URL for email-client
-        # compatibility (Gmail/Outlook can't resolve relative
-        # paths); already-absolute URLs pass through unchanged.
-        abs_logo = _absolute_url(logo)
+    # ─── HTML + Text ─────────────────────────────────────────────────
+    # Feb-2026 · Pool branch → portal-style branded template using
+    # the card composers above. Landscape branch stays on the
+    # pre-existing single-column render path (no visual regression
+    # for landscape reports).
+    if is_landscape:
+        # Landscape branch — unchanged inline render.
+        header_html = (
+            f'<table cellspacing="0" cellpadding="0" style="width:100%;'
+            f'border-collapse:collapse;background:{palette["primary"]};'
+            f'padding:16px 20px" bgcolor="{palette["primary"]}">'
+            f'<tr><td>'
+        )
+        if logo:
+            abs_logo = _absolute_url(logo)
+            header_html += (
+                f'<img src="{abs_logo}" alt="{company}" '
+                f'style="max-height:48px;margin-bottom:8px;display:block" />'
+            )
         header_html += (
-            f'<img src="{abs_logo}" alt="{company}" '
-            f'style="max-height:48px;margin-bottom:8px;display:block" />'
+            f'<div style="color:#FFFFFF;font-family:system-ui;'
+            f'font-size:20px;font-weight:700">{company}</div>'
+            f'<div style="color:rgba(255,255,255,0.85);font-family:system-ui;'
+            f'font-size:14px;margin-top:2px">Service visit summary</div>'
+            f'</td></tr></table>'
         )
-    header_html += (
-        f'<div style="color:#FFFFFF;font-family:system-ui;'
-        f'font-size:20px;font-weight:700">{company}</div>'
-        f'<div style="color:rgba(255,255,255,0.85);font-family:system-ui;'
-        f'font-size:14px;margin-top:2px">Service visit summary</div>'
-        f'</td></tr></table>'
-    )
-
-    info_rows = [
-        ("Date", visit_date),
-        ("Technician", sr.get("tech_name") or ""),
-        ("Address", job.get("address") or ""),
-    ]
-    info_html = "".join(
-        f"<tr><td style='padding:2px 12px 2px 0;color:#555'>{k}</td>"
-        f"<td style='padding:2px 0;font-weight:600'>{v}</td></tr>"
-        for k, v in info_rows if v
-    )
-
-    sections_html = "".join(
-        f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px;'
-        f'color:{palette["secondary"]}">{s["title"]}</h3>{s["html"]}'
-        for s in sections
-    )
-    notes_html = ""
-    if customer_notes:
-        notes_html = (
+        info_rows = [
+            ("Date", visit_date),
+            ("Technician", sr.get("tech_name") or ""),
+            ("Address", job.get("address") or ""),
+        ]
+        info_html = "".join(
+            f"<tr><td style='padding:2px 12px 2px 0;color:#555'>{k}</td>"
+            f"<td style='padding:2px 0;font-weight:600'>{v}</td></tr>"
+            for k, v in info_rows if v
+        )
+        sections_html = "".join(
             f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px;'
-            f'color:{palette["secondary"]}">Notes from your tech</h3>'
-            f'<p style="white-space:pre-line;background:#f6f6f6;padding:12px;'
-            f'border-radius:6px">{customer_notes}</p>'
+            f'color:{palette["secondary"]}">{s["title"]}</h3>{s["html"]}'
+            for s in sections
         )
-    photos_block = _photos_grid(sr, portal_link, palette, safe_photos)
-    photos_html = photos_block["html"]
+        notes_html = ""
+        if customer_notes:
+            notes_html = (
+                f'<h3 style="margin:16px 0 4px;font-family:system-ui;font-size:15px;'
+                f'color:{palette["secondary"]}">Notes from your tech</h3>'
+                f'<p style="white-space:pre-line;background:#f6f6f6;padding:12px;'
+                f'border-radius:6px">{customer_notes}</p>'
+            )
+        photos_block = _photos_grid(sr, portal_link, palette, safe_photos)
+        photos_html = photos_block["html"]
+        cta_html = ""
+        if include_reviews:
+            cta_html += (
+                f'<p><a href="{review_link}" '
+                f'style="background:{palette["accent"]};color:#fff;'
+                f'text-decoration:none;padding:10px 16px;border-radius:6px;'
+                f'display:inline-block;font-weight:600">Leave us a review</a></p>'
+            )
+        cta_html += (
+            f'<p><a href="{portal_link}" '
+            f'style="background:{palette["accent"]};color:#fff;'
+            f'text-decoration:none;padding:10px 16px;border-radius:6px;'
+            f'display:inline-block;font-weight:600">View full report →</a></p>'
+        )
+        footer_html = ('<p style="color:#888;font-size:12px;margin-top:24px">'
+                       'This is an automatic recap of the customer-facing portion of your visit. '
+                       'Internal service notes are not included.')
+        if custom_footer:
+            footer_html += f' {custom_footer}'
+        footer_html += (f' <br/><a href="{app_url}/portal/unsubscribe" style="color:#888">Unsubscribe</a>'
+                        if app_url else '')
+        footer_html += '</p>'
+        html = (f'<div style="font-family:system-ui;max-width:600px;margin:0 auto;'
+                f'background:#FFFFFF">'
+                f'{header_html}'
+                f'<div style="padding:20px">'
+                f'<table style="margin-top:12px" cellspacing="0">{info_html}</table>'
+                f'{sections_html}{notes_html}{photos_html}{cta_html}{footer_html}'
+                f'</div>'
+                f'</div>')
+        text_lines = [
+            company, "Service visit summary", "",
+            f"Date: {visit_date}",
+            f"Tech: {sr.get('tech_name') or ''}",
+            f"Address: {job.get('address') or ''}",
+            "",
+        ]
+        for s in sections:
+            text_lines.append(s["title"] + ":")
+            text_lines.append(s["text"])
+            text_lines.append("")
+        if customer_notes:
+            text_lines += ["Notes from your tech:", customer_notes, ""]
+        if photos_block["text"]:
+            text_lines += [photos_block["text"], ""]
+        if include_reviews:
+            text_lines.append(f"Leave a review: {review_link}")
+        text_lines.append(f"Portal: {portal_link}")
+        if custom_footer:
+            text_lines += ["", custom_footer]
+        text_lines.append("")
+        text_lines.append("Internal service notes are not included in this summary.")
+        return {"subject": subject, "html": html,
+                "text": "\n".join(text_lines), "kind": "landscape"}
 
+    # ─── Portal-style pool branch (Feb-2026) ─────────────────────────
+    # Copy for pill / card composition — falls back to sane defaults
+    # so the template still renders on legacy payloads that don't
+    # carry ``service_type`` or ``status``.
+    service_type_label = (
+        (job.get("service_type") or "").strip()
+        or (sr.get("kind") or "").strip().title()
+        or "Pool service"
+    )
+    status_label = (
+        (job.get("status") or "").strip().title()
+        or "Completed"
+    )
+    tech_name = (sr.get("tech_name") or "").strip()
+    resolved_address = (job.get("address") or "").strip()
+    customer_name = (customer.get("name") or "").strip()
+    metric_rows = _iter_pool_metric_rows(sr)
+    checklist_labels = [
+        c.get("label", "Item")
+        for c in ((sr.get("checklist_completed")
+                    or sr.get("checklist_items") or []))
+        if isinstance(c, dict) and c.get("done")
+    ]
+    photos_count = len(safe_photos[:6])
+    photos_overflow = max(0, len(safe_photos) - 6)
+
+    # ── CTA row (review + portal) — sits BELOW the cards.
     cta_html = ""
     if include_reviews:
         cta_html += (
-            f'<p><a href="{review_link}" '
+            f'<p style="margin:8px 0;text-align:center;">'
+            f'<a href="{review_link}" '
             f'style="background:{palette["accent"]};color:#fff;'
-            f'text-decoration:none;padding:10px 16px;border-radius:6px;'
-            f'display:inline-block;font-weight:600">Leave us a review</a></p>'
+            f'text-decoration:none;padding:12px 20px;border-radius:8px;'
+            f'display:inline-block;font-weight:600;'
+            f'font-family:system-ui,-apple-system,BlinkMacSystemFont,'
+            f'sans-serif;">Leave us a review</a></p>'
         )
     cta_html += (
-        f'<p><a href="{portal_link}" '
+        f'<p style="margin:8px 0;text-align:center;">'
+        f'<a href="{portal_link}" '
         f'style="background:{palette["accent"]};color:#fff;'
-        f'text-decoration:none;padding:10px 16px;border-radius:6px;'
-        f'display:inline-block;font-weight:600">View full report →</a></p>'
+        f'text-decoration:none;padding:12px 20px;border-radius:8px;'
+        f'display:inline-block;font-weight:600;'
+        f'font-family:system-ui,-apple-system,BlinkMacSystemFont,'
+        f'sans-serif;">View full report →</a></p>'
     )
 
-    footer_html = ('<p style="color:#888;font-size:12px;margin-top:24px">'
-                   'This is an automatic recap of the customer-facing portion of your visit. '
-                   'Internal service notes are not included.')
+    # ── Notes card (only when the tech left customer-facing notes).
+    notes_html = ""
+    if customer_notes:
+        notes_html = (
+            _card_open()
+            + (
+                f'<div style="font-family:system-ui,-apple-system,'
+                f'BlinkMacSystemFont,sans-serif;font-size:13px;'
+                f'font-weight:700;letter-spacing:0.06em;color:'
+                f'{_SECTION_HEADER};text-transform:uppercase;'
+                f'margin:0 0 8px;">📝 NOTES FROM YOUR TECH</div>'
+                f'<p style="margin:0;white-space:pre-line;'
+                f'font-family:system-ui,-apple-system,BlinkMacSystemFont,'
+                f'sans-serif;font-size:14px;color:{_TEXT_PRIMARY};'
+                f'line-height:1.5;">{customer_notes}</p>'
+            )
+            + _card_close()
+        )
+
+    footer_html = (
+        f'<p style="color:{_TEXT_MUTED};font-size:12px;margin:24px 0 0;'
+        f'text-align:center;font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,sans-serif;">'
+        f'This is an automatic recap of the customer-facing portion '
+        f'of your visit. Internal service notes are not included.'
+    )
     if custom_footer:
         footer_html += f' {custom_footer}'
-    footer_html += (f' <br/><a href="{app_url}/portal/unsubscribe" style="color:#888">Unsubscribe</a>'
-                    if app_url else '')
-    footer_html += '</p>'
+    if app_url:
+        footer_html += (
+            f' <br/><a href="{app_url}/portal/unsubscribe" '
+            f'style="color:{_TEXT_MUTED};text-decoration:underline;">'
+            f'Unsubscribe</a>'
+        )
+    footer_html += "</p>"
 
-    html = (f'<div style="font-family:system-ui;max-width:600px;margin:0 auto;'
-            f'background:#FFFFFF">'
-            f'{header_html}'
-            f'<div style="padding:20px">'
-            f'<table style="margin-top:12px" cellspacing="0">{info_html}</table>'
-            f'{sections_html}{notes_html}{photos_html}{cta_html}{footer_html}'
-            f'</div>'
-            f'</div>')
+    # ── Compose the HTML shell.
+    preheader_html = _render_preheader(
+        company, customer_name, resolved_address)
+    header_bar_html = _render_header_bar(company, logo, palette)
+    title_card_html = _render_job_title_card(
+        job=job, tech_name=tech_name,
+        resolved_address=resolved_address,
+        visit_date=visit_date,
+        service_type_label=service_type_label,
+        status_label=status_label,
+        palette=palette,
+    )
+    metrics_card_html = _render_pool_metrics_card(sr, palette)
+    checklist_card_html = _render_checklist_card(sr)
+    photos_card_html = _render_photos_card(
+        sr, portal_link, safe_photos, palette)
 
-    # ─── Text ───────────────────────────────────────────────────────
-    text_lines = [
-        company, "Service visit summary", "",
-        f"Date: {visit_date}",
-        f"Tech: {sr.get('tech_name') or ''}",
-        f"Address: {job.get('address') or ''}",
-        "",
-    ]
-    for s in sections:
-        text_lines.append(s["title"] + ":")
-        text_lines.append(s["text"])
-        text_lines.append("")
-    if customer_notes:
-        text_lines += ["Notes from your tech:", customer_notes, ""]
-    if photos_block["text"]:
-        text_lines += [photos_block["text"], ""]
-    if include_reviews:
-        text_lines.append(f"Leave a review: {review_link}")
-    text_lines.append(f"Portal: {portal_link}")
-    if custom_footer:
-        text_lines += ["", custom_footer]
-    text_lines.append("")
-    text_lines.append("Internal service notes are not included in this summary.")
+    html = (
+        f'<!DOCTYPE html><html><body style="margin:0;padding:0;'
+        f'background:{_PAGE_BG};font-family:system-ui,-apple-system,'
+        f'BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;">'
+        f'{preheader_html}'
+        f'<table role="presentation" width="100%" cellspacing="0" '
+        f'cellpadding="0" style="background:{_PAGE_BG};'
+        f'border-collapse:collapse;">'
+        f'<tr><td align="center" style="padding:0;">'
+        f'{header_bar_html}'
+        f'</td></tr>'
+        f'<tr><td align="center" style="padding:24px 12px;">'
+        f'<table role="presentation" width="600" cellspacing="0" '
+        f'cellpadding="0" style="max-width:600px;width:100%;'
+        f'border-collapse:collapse;">'
+        f'<tr><td>{title_card_html}</td></tr>'
+        f'<tr><td>{metrics_card_html}</td></tr>'
+        f'<tr><td>{checklist_card_html}</td></tr>'
+        f'<tr><td>{photos_card_html}</td></tr>'
+        f'<tr><td>{notes_html}</td></tr>'
+        f'<tr><td>{cta_html}</td></tr>'
+        f'<tr><td>{footer_html}</td></tr>'
+        f'</table></td></tr></table></body></html>'
+    )
 
-    return {"subject": subject, "html": html, "text": "\n".join(text_lines),
-            "kind": ("landscape" if is_landscape else "pool")}
+    text = _compose_visit_summary_text(
+        company=company, customer_name=customer_name,
+        service_type_label=service_type_label,
+        status_label=status_label,
+        title=(job.get("title") or job.get("service_type")
+                or "Service visit"),
+        visit_date=visit_date, tech_name=tech_name,
+        resolved_address=resolved_address,
+        metric_rows=metric_rows, checklist_labels=checklist_labels,
+        photos_count=photos_count, photos_overflow=photos_overflow,
+        portal_link=portal_link, customer_notes=customer_notes,
+        review_link=(review_link if include_reviews else None),
+        custom_footer=custom_footer,
+    )
+
+    return {"subject": subject, "html": html, "text": text,
+            "kind": "pool"}
 
 
 async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optional[dict]:
