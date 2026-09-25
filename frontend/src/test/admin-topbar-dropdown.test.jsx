@@ -1,21 +1,24 @@
 /**
- * Feb-2026 · AdminTopBar dropdown styling lock.
+ * Feb-2026 · AdminTopBar dropdown styling lock (revised spec).
  *
  * Locks the three cosmetic bumps the design brief asked for:
  *
- *   1. Section-title (``DropdownMenuLabel``) — text is wrapped in a
- *      subtle brand-tinted chip: ``bg-white/5``,
- *      ``text-sm font-bold uppercase tracking-wider``, colored via
- *      ``colors.brandTertiary``.
- *   2. Entry links inside ``EntryItem`` — indented by ``pl-6``.
+ *   1. Section-title (``DropdownMenuLabel``) — renders as a
+ *      distinct header block: background ``colors.nav.bgActiveNavy``
+ *      (#303AA0), label indented ``pl-3`` (matching the sidebar's
+ *      subsection row-indent at ``AdminSidebar.jsx:377``), inner
+ *      text wrapped in a ``<span>`` with
+ *      ``px-3 py-1.5 text-base font-bold uppercase``.
+ *   2. Entry links inside ``EntryItem`` — indented by ``pl-6`` so
+ *      they sit further left-shifted than the ``pl-3`` title.
  *   3. ``DropdownMenuSeparator`` bumped to ``h-[2px] bg-white/25``.
  *
- * Mobile parity — the ``MobileMenu`` block mirrors the label chip
- * styling and the ``pl-6`` link indent.
+ * Mobile parity — ``MobileMenu`` mirrors the label header block
+ * treatment and the ``pl-6`` link indent.
  *
  * Rationale for a source-scan style test (mirrors K75 · line 109):
  * Radix DropdownMenu portals only open in jsdom with a pointer-
- * event polyfill.  The whole surface here is CSS-class polish
+ * event polyfill. The whole surface here is CSS-class polish
  * with no behavior change; a source-level regex on
  * ``AdminTopBar.jsx`` is the least-brittle way to lock the
  * classes without inventing a Radix jsdom shim.
@@ -49,34 +52,32 @@ const _MOBILE = _sliceBetween(
 );
 
 
-describe("AdminTopBar · dropdown section-title styling", () => {
-  it("desktop CategoryDropdown label chip carries uppercase + font-bold + brand-tinted background", () => {
-    // Every ``DropdownMenuLabel`` in the desktop block wraps its
-    // text in a span with the four canonical polish classes.
-    const chipClass =
-      /className="[^"]*\bbg-white\/5\b[^"]*\brounded\b[^"]*\btext-sm\b[^"]*\bfont-bold\b[^"]*\buppercase\b[^"]*\btracking-wider\b[^"]*"/;
-    expect(_DESKTOP).toMatch(chipClass);
-    // Color comes from the ``brandTertiary`` token, not an inline hex.
+describe("AdminTopBar · dropdown section-title header block", () => {
+  it("desktop CategoryDropdown label carries bgActiveNavy token + pl-3 (sidebar row-anchor)", () => {
+    // Label wrapper: pl-3 className + bgActiveNavy background via
+    // the imported token (NOT a hardcoded hex).
     expect(_DESKTOP).toMatch(
-      /<DropdownMenuLabel[\s\S]*?style=\{\{\s*color:\s*colors\.brandTertiary\s*\}\}/,
+      /<DropdownMenuLabel[\s\S]*?className="pl-3"[\s\S]*?style=\{\{[\s\S]*?backgroundColor:\s*colors\.nav\.bgActiveNavy[\s\S]*?\}\}/,
+    );
+    // Inner span carries the revised chip classes.
+    expect(_DESKTOP).toMatch(
+      /className="[^"]*\binline-block\b[^"]*\bpx-3\b[^"]*\bpy-1\.5\b[^"]*\btext-base\b[^"]*\bfont-bold\b[^"]*\buppercase\b[^"]*"/,
     );
   });
 
-  it("mobile MobileMenu mirrors the section-title chip class + brandTertiary color", () => {
-    const chipClass =
-      /className="[^"]*\bbg-white\/5\b[^"]*\brounded\b[^"]*\btext-sm\b[^"]*\bfont-bold\b[^"]*\buppercase\b[^"]*\btracking-wider\b[^"]*"/;
-    expect(_MOBILE).toMatch(chipClass);
+  it("mobile MobileMenu mirrors the header-block treatment", () => {
     expect(_MOBILE).toMatch(
-      /<DropdownMenuLabel[\s\S]*?style=\{\{\s*color:\s*colors\.brandTertiary\s*\}\}/,
+      /<DropdownMenuLabel[\s\S]*?className="pl-3"[\s\S]*?style=\{\{[\s\S]*?backgroundColor:\s*colors\.nav\.bgActiveNavy[\s\S]*?\}\}/,
+    );
+    expect(_MOBILE).toMatch(
+      /className="[^"]*\binline-block\b[^"]*\bpx-3\b[^"]*\bpy-1\.5\b[^"]*\btext-base\b[^"]*\bfont-bold\b[^"]*\buppercase\b[^"]*"/,
     );
   });
 });
 
 
 describe("AdminTopBar · entry link indent", () => {
-  it("EntryItem link element carries the pl-6 indent", () => {
-    // Only the link's className should carry ``pl-6``; the label
-    // header stays flush with the dropdown's own padding.
+  it("EntryItem link element carries the pl-6 indent (title pl-3 + additional pl-3 shift)", () => {
     expect(_ENTRY).toMatch(
       /<Link\s+to=\{e\.to\}\s+className="[^"]*\bpl-6\b[^"]*"/,
     );
@@ -92,15 +93,13 @@ describe("AdminTopBar · entry link indent", () => {
 
 describe("AdminTopBar · thicker dividers", () => {
   it("desktop DropdownMenuSeparator instances carry h-[2px] bg-white/25", () => {
-    // Match both usages inside the desktop block — the
-    // noSub↔bySub boundary and the between-bySub loop.
     const sepPattern =
       /<DropdownMenuSeparator\s+className="[^"]*\bh-\[2px\][^"]*\bbg-white\/25\b[^"]*"/g;
     const hits = _DESKTOP.match(sepPattern) || [];
     expect(hits.length).toBeGreaterThanOrEqual(2);
-    // And the DropdownMenuContent's ``[role=separator]`` override
-    // is bumped to bg-white/25 so the class on the child wins the
-    // attribute-selector fight.
+    // Parent's ``[role=separator]`` selector override is bumped to
+    // bg-white/25 so the child className wins the attribute-selector
+    // fight — otherwise the parent's higher specificity swallows it.
     expect(_DESKTOP).toMatch(/\[&_\[role=separator\]\]:bg-white\/25/);
   });
 });

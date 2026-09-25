@@ -234,10 +234,13 @@ function CategoryDropdown({ group }) {
         {Object.entries(group.bySub).map(([sub, entries], j, subArr) => (
           <React.Fragment key={sub}>
             <DropdownMenuLabel
-              className="pl-4"
-              style={{ color: colors.brandTertiary }}
+              className="pl-3"
+              style={{
+                color: colors.nav.fg,
+                backgroundColor: colors.nav.bgActiveNavy,
+              }}
             >
-              <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+              <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
                 {sub}
               </span>
             </DropdownMenuLabel>
@@ -309,8 +312,14 @@ function MobileMenu({ visible, fixedItems }) {
       >
         {fixedItems.length > 0 ? (
           <>
-            <DropdownMenuLabel style={{ color: colors.brandTertiary }}>
-              <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+            <DropdownMenuLabel
+              className="pl-3"
+              style={{
+                color: colors.nav.fg,
+                backgroundColor: colors.nav.bgActiveNavy,
+              }}
+            >
+              <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
                 Primary
               </span>
             </DropdownMenuLabel>
@@ -345,8 +354,14 @@ function MobileMenu({ visible, fixedItems }) {
                   {g.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
                   {Object.entries(g.bySub).map(([sub, entries]) => (
                     <React.Fragment key={sub}>
-                      <DropdownMenuLabel style={{ color: colors.brandTertiary }}>
-                        <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+                      <DropdownMenuLabel
+                        className="pl-3"
+                        style={{
+                          color: colors.nav.fg,
+                          backgroundColor: colors.nav.bgActiveNavy,
+                        }}
+                      >
+                        <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
                           {sub}
                         </span>
                       </DropdownMenuLabel>
