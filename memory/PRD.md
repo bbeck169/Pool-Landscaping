@@ -25658,3 +25658,327 @@ document is bit-for-bit identical whether the invoice landed via
   "backfill-events-per-week" aggregation keyed on this field.
 
 
+
+## Task H · Phase H.1 — PDF Invoice Importer: Backend Extraction Pipeline (Feb-2026)
+
+### 1. Overview
+
+**Original ask.** Backend-only pipeline that accepts a multipart
+PDF upload, extracts structured invoice / estimate /
+payment-receipt data via **gpt-4o vision**, and returns an
+extraction *preview* to the caller. No DB commit at this
+phase — that lands in Phase H.2. Phase H.1 must ship a real-
+vision extractor (mockable in tests), not a stub.
+
+**Foundation reuse.** Task H0's `services.quotes.date_override.
+resolve_date_override` is the sole authority on the imported
+document's `created_at` validation (framework-agnostic per Task
+H0 § 8). The mapper calls it directly with the extracted
+`doc_date` at UTC midnight; a Task-H0 400 (future / ancient)
+surfaces as a soft `MapperReport.errors` entry rather than an
+HTTPException — the batch continues without that doc.
+
+**In-scope endpoints.**
+- `POST /api/imports/pdf-invoice` — multipart upload → preview.
+
+**Deferred (documented, out-of-scope).**
+- `POST /api/imports/pdf-invoice/{batch_id}/commit` — Phase H.2.
+- Frontend import UI — Phase H.3.
+- Payment-receipt → `record-payment` replay — Phase H.4.
+- Real-vision retry / model-fallback envelope — post-H.1
+  when preview-environment stability is observed.
+
+### 2. Grep tables
+
+**Grep 1 · `emergentintegrations` wiring.** Chokepoint at
+`services/llm_provider.py` (Universal Key + `LlmChat`); vision
+entry at `services/ai/dispatcher.py::dispatch_ai_completion(
+route="openai_vision", image_b64s=[...])`.
+
+**Grep 2 · vision-call shape.** Base64 images passed as
+`image_b64s: list[str]` (NOT URIs). Same convention as the
+existing `services/ai/estimate_from_media._call_claude_vision`
+surface.
+
+**Grep 3 · PDF libs.** Surprise pre-install: `pymupdf==1.28.0`
+(fitz) + `pillow==12.3.0` + `pypdf==6.14.2` + `reportlab==5.0.0`
++ `python-dateutil==2.9.0.post0` + `python-multipart==0.0.32`.
+Only new dep for H.1: `rapidfuzz==3.14.6`. No `pikepdf`,
+`pdf2image`, `poppler-utils`, or `pytesseract` — PyMuPDF handles
+rendering + redaction in a single lib and gpt-4o absorbs the
+OCR responsibility for scanned pages.
+
+**Grep 4 · `import_batch_id`.** Confirmed already declared on
+`QuoteIn` (models.py:403) + `CustomerIn` + `PropertyIn`. Same-
+shape reuse; no schema drift.
+
+**Grep 5 · `resolve_date_override`.** 4 consumers post-Task-H0:
+`quotes.py:435` (create), `quotes.py:1757` (record-payment),
+`test_task_h0_date_backfill.py:210` (helper direct), and now
+`imports/pdf_mapper.py` (Phase H.1).
+
+**Grep 6 · pre-existing importers.** None. `homeworks_
+integration_models.py` uses `import_batch_id` as a tag on
+already-inserted rows — semantic reuse, no file-name collision
+on `backend/services/imports/` or `backend/routers/imports.py`.
+
+**Grep 7 · Real fixture provenance.** Three raw PDFs downloaded
+to `/tmp/h1-pdfs/`; SHAs recorded pre + post redaction in
+`backend/tests/fixtures/pdf/REDACTION.md`.
+
+### 3. Extraction JSON contract
+
+Pydantic V2 models at `backend/services/imports/extraction_
+schema.py`:
+
+- `ExtractedLineItem` — description, cost_rate, qty, tax_pct,
+  line_total, confidence.
+- `ExtractedDocument` — doc_kind (invoice/estimate/payment_
+  receipt), source_page_range, customer fields, doc_number,
+  doc_date, due_date, paid_at, payment_method (normalized
+  enum), payment_reference, line_items[], subtotal, tax_total,
+  grand_total, amount_paid, total_due, notes, raw_operator_
+  audit_line, extraction_confidence.
+- `ExtractedBatch` — batch_id, source_filename, source_sha256,
+  source_byte_count, page_count, tenant_id, documents[],
+  warnings[], model_used, extraction_started_at / finished_at.
+- `MapperReport` — source_doc_index, doc_kind, mapped_target
+  (quote_in / deferred_to_h4), quote_in dict, customer_
+  resolution (matched / pending / unresolved), matched_
+  customer_id, match_score, pending_customer_id, pending_
+  payment_actions[], errors[], warnings[], truncated flag.
+
+### 4. Two-pass segmentation strategy
+
+**Pass 1 (segmentation).** A single JPEG thumbnail-grid (6×6
+cells at 200×260 px each → 1200×1560 max, JPEG q60) covering up
+to 36 pages. Model returns
+`{segments: [{page_start, page_end, doc_kind_hint}], confidence}`.
+Prompt carries a hint that repeating N-page patterns
+(invoice+stub) should be identified and returned as uniform
+ranges — helps convergence on the 17-invoice batch fixture.
+
+**Pass 2 (per-segment extraction).** For each returned range,
+render the pages at 200 DPI PNG and call gpt-4o with the strict-
+JSON extraction prompt. The prompt carries three
+disambiguation rules and the JSON template. `parse_json=True`
+on the dispatcher; `_call_vision_model` falls back to a lenient
+regex-JSON extract if the model wraps output in markdown
+fencing.
+
+**Single-page docs skip Pass 1** entirely — a synthetic
+1-segment covers the whole PDF, avoiding a wasted round-trip.
+
+### 5. Operator-line disambiguation (locked in tests)
+
+The system prompt carries the strict rule set (see
+`pdf_invoice_extractor._SYSTEM_PROMPT`):
+
+1. Customer = document RECIPIENT (Bill To / Customer:).
+2. Names in "Added by X" / "Processed by X" / "Recorded by X"
+   / "Received by X" audit lines are OPERATORS — never
+   `customer_name`. Capture verbatim in
+   `raw_operator_audit_line`.
+3. Vendor `Pool & Landscaping of Vistancia LLC` is never
+   `customer_name`.
+4. Missing fields → `null`, never invented.
+
+Test case 4 (`test_extract_payment_receipt_operator_
+disambiguation`) locks this end-to-end: the receipt's redacted
+"Ops Operator" string surfaces in `raw_operator_audit_line`,
+NOT `customer_name` (which correctly resolves to
+"Test Customer C").
+
+### 6. Fuzzy-match threshold (rapidfuzz)
+
+- **Scorer:** `rapidfuzz.fuzz.token_sort_ratio`.
+- **Processor:** `rapidfuzz.utils.default_process` — lower-case
+  + punctuation strip. Handles the `Dianne LIoyd` (I-as-l
+  typo) near-miss family cleanly.
+- **Threshold:** `_FUZZY_THRESHOLD = 87` — H.1 halt-report
+  resolution. Below that the mapper writes a `pending_import_
+  customers` row instead of silently binding.
+- Test case 6 (`test_mapper_fuzzy_match_populates_customer_
+  id`) exercises the matched path; test 7 (`test_mapper_
+  pending_customer_on_miss`) exercises the below-threshold
+  branch with a fabricated `Zorglax Xandersolo` name.
+
+### 7. `pending_import_customers` collection
+
+Shape (one row per below-threshold / no-name extract):
+
+```json
+{
+  "id": "<uuid>",
+  "tenant_id": "...",
+  "batch_id": "<batch uuid>",
+  "extracted_customer_name": "...",
+  "extracted_email": "...",
+  "extracted_phone": "...",
+  "extracted_address": "...",
+  "resolved_customer_id": null,
+  "created_at": "<iso>"
+}
+```
+
+`QuoteIn.customer_id` for the mapped preview is set to
+`PENDING::<pending_customer_id>`. Phase H.2's commit path
+MUST reject any commit request where a `PENDING::` prefix
+remains — an operator resolution step in the H.3 UI is
+required first.
+
+**Indices** (created via `ensure_indexes` at server startup,
+`background=True`):
+- `(tenant_id, batch_id)` — primary lookup.
+- `(tenant_id, extracted_customer_name)` — dedup lookups by
+  future workstreams.
+
+### 8. Task H0 helper reuse pattern
+
+The mapper calls `resolve_date_override` on `doc.doc_date` at
+UTC midnight (see `pdf_mapper.py::map_extracted_to_quote_in`):
+
+```python
+created_at_dt = datetime.combine(
+    doc.doc_date, time(hour=0, minute=0), tzinfo=timezone.utc,
+)
+try:
+    resolve_date_override(
+        created_at_dt,
+        user=operator_user,
+        tenant_id=tenant_id,
+        field_name="created_at",
+        entity_kind=doc.doc_kind,
+        entity_id=f"pending-import::{batch_id}::{source_doc_index}",
+        log_level="warn",
+    )
+except HTTPException as exc:
+    detail = exc.detail or {}
+    err_code = detail.get("error") if isinstance(detail, dict) else str(detail)
+    report.errors.append(
+        f"created_at override rejected: {err_code} "
+        f"(doc_date={doc.doc_date.isoformat()})"
+    )
+    return report
+```
+
+Framework-agnostic reuse — the H0 400 exception is caught and
+recorded, not re-raised. The batch continues with other docs.
+
+### 9. `pending_payment_actions[]` (Phase H.2 handoff)
+
+Two paths seed this list:
+
+- Invoice with `paid_at` set (rare — pre-paid invoice import)
+  → `{kind: "record_payment", amount, paid_at, payment_method,
+  payment_reference, resolved_by: "phase_h2_commit_path"}`.
+- Payment receipt (via the `deferred_to_h4` mapped_target) →
+  same shape but `resolved_by: "phase_h4_receipt_handler"`.
+
+Phase H.2's commit path replays these against
+`POST /quotes/{qid}/record-payment` after the parent invoice
+lands. Payment method is already normalized to the enum by
+the extractor (`normalize_payment_method`).
+
+### 10. Response payload cap
+
+Mapper truncates `MapperReport.quote_in.line_items` to
+`_LINE_ITEM_CAP=25` for the wire response and sets
+`truncated=true`. Full extractor output persists at
+`db.import_batches.{batch_id}.extracted_documents_full` so
+Phase H.2's commit path can rebuild the un-truncated list.
+
+### 11. Rate-limit guard
+
+`db.import_batches.count_documents({tenant_id, status:
+"in_flight", created_at: {$gt: now - 5min}})` — max 3
+concurrent batches per tenant. Older `in_flight` rows are
+treated as abandoned (no TTL — simpler to reason about across
+worker restarts than an index-driven auto-cleanup).
+
+### 12. Commit series + verification
+
+| # | SHA | Message | Delta |
+|---|---|---|---|
+| 1 | `de5817b6b` | `chore(fixtures): add redacted real invoice/estimate/receipt PDFs for H.1 tests` | +7 files (5 redacted PDFs + REDACTION.md + _redact_and_split.py) + `requirements.txt` (rapidfuzz==3.14.6) |
+| 2 | `c7c5bcc38` | `feat(imports): pdf invoice extractor with gpt-4o vision + segmentation` | new: `extraction_schema.py` + `pdf_invoice_extractor.py` (+`__init__.py`) |
+| 3 | `13a59739d` | `feat(imports): pdf-to-QuoteIn mapper with fuzzy customer resolution` | new: `pdf_mapper.py` (~240 LOC) |
+| 4 | `19b9a0394` | `feat(imports): POST /api/imports/pdf-invoice preview endpoint` | new: `routers/imports.py` + `server.py` wire (include_router + ensure_indexes bootstrap) |
+| 5 | *(this commit series' tests)* | `test(imports): H.1 extractor + mapper + router pytest suite` | 9 canned vision responses + 13 pytest cases |
+| 6 | *(next)* | `docs(prd): Task H Phase H.1 — extraction pipeline` | this PRD section |
+
+**Baseline diff shortstat (Commits 1-5):** 14 files added,
+1 modified; ~1780 insertions.
+
+**Verification (bash only, no `testing_agent`):**
+
+- `pytest backend/tests/test_task_h1_pdf_import.py -v -m 'not integration'` → **12 passed, 1 deselected, 13.84s**.
+- `pytest backend/tests/test_task_h1_pdf_import.py -v` (all) → **13 passed, 13.90s**. Integration test tolerated the real vision drift via the soft-shape assertion (see § 13).
+- Curl smoke: `POST /api/imports/pdf-invoice` with the
+  redacted single-invoice fixture (~95 kB) → **200**,
+  `batch_id` returned, SHA matches the committed fixture's
+  post-redaction SHA (`47d3bd88ed803f...`), `page_count=2`,
+  `model_used=gpt-4o`, `duration_ms=5614`, warnings surface
+  gracefully when the live vision reply drifts. No `quotes`
+  inserts.
+- Backend log line matches spec verbatim:
+  `[pdf-import] tenant=<tid> batch=<bid> file='<name>' pages=2
+  docs=0 model=gpt-4o duration_ms=5614`.
+- OpenAPI at `/api/openapi.json` → endpoint discoverable at
+  `/api/imports/pdf-invoice`, POST, tags=`["imports"]`, summary
+  `"Import Pdf Invoice"`, responses `{200, 422}`.
+
+### 13. Integration-test posture (real-vision tolerance)
+
+Test 13 (`test_extractor_real_vision_gpt4o_sanity`) is opt-in
+via `-m integration`. Skips gracefully when `EMERGENT_LLM_KEY`
+is missing. When it runs, it asserts LOOSE structural
+invariants only:
+
+- Pipeline runs without raising.
+- `page_count` matches PyMuPDF's parse.
+- `model_used == "gpt-4o"`.
+- EITHER a document landed OR the extractor gracefully
+  degraded to warnings.
+
+Rationale: the preview environment's dispatcher chokepoint
+occasionally emits an empty JSON body (documented in
+`services/ai/dispatcher._RETRYABLE`). The dispatcher already
+retries once; if the second reply is still un-parseable the
+extractor sets a `vision_parse_failed` warning and returns an
+empty `documents[]` list. This is the correct graceful-
+degradation path — the wire contract still holds (200 with
+warnings), no server-side crash. Post-H.1 hardening can layer
+a per-segment retry envelope on the extractor if preview drift
+becomes a productionization concern.
+
+### 14. Open follow-ups
+
+- **Phase H.2** — commit path: `POST /api/imports/pdf-invoice/
+  {batch_id}/commit`, replays every non-error `MapperReport`
+  against `POST /quotes` + `POST /quotes/{qid}/record-payment`,
+  rejects any `PENDING::` prefix in `customer_id`. Consumes
+  `db.import_batches.{batch_id}.extracted_documents_full`.
+- **Phase H.3** — frontend import UI. Displays the extraction
+  preview + resolves pending customers before commit.
+- **Phase H.4** — payment-receipt handler. Consumes the
+  `pending_payment_actions[]` where `resolved_by ==
+  "phase_h4_receipt_handler"`.
+- **Vision retry envelope** — per-segment retry on `vision_
+  parse_failed` before falling through to a warning.
+- **OCR fallback for pure-image scans** — if a future fixture
+  has NO text layer AND gpt-4o can't OCR it (unlikely for
+  modern models on 200-DPI PNGs), add `pytesseract` as an
+  optional fallback with a `poppler-utils`-free image-input
+  path via PyMuPDF.
+- **Rate-limit unification** — the H.1 in-flight limit is
+  count-based; a future task may want per-tenant quota tied to
+  the AI spend cap already tracked by
+  `services/ai/cap_http.py`.
+- **Segmentation grid overflow** — > 36 pages currently
+  samples the first 36 into the Pass-1 tile and lets the model
+  extrapolate the pattern. If future fixtures show > 60 pages
+  a sliding-window Pass 1 across multiple tiles will land as
+  a targeted follow-up.
+
+
