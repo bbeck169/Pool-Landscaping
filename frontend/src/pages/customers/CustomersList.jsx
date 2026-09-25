@@ -1529,114 +1529,122 @@ export default function CustomersList() {
         data-testid="customers-filters"
         data-k52-navy-strip="true"
       >
-        <NavyFilterBar.Search
-          value={q}
-          onChange={setQ}
-          placeholder="Search name, email, phone, address…"
-          data-testid="customers-search"
-        />
-        <div className="flex items-center gap-1">
-          <Filter size={14} style={{ color: colors.nav.fgMuted }} />
-          {[
-            { k: "all", label: "All" },
-            { k: "unscheduled", label: "Unscheduled" },
-            { k: "waitlist", label: "Waitlist" },
-          ].map((s) => (
-            <NavyFilterBar.Chip
-              key={s.k}
-              active={scope === s.k}
-              onClick={() => setScope(s.k)}
-              data-testid={`customers-scope-${s.k}`}
-            >
-              {s.label}
-            </NavyFilterBar.Chip>
-          ))}
-        </div>
-        <NavyFilterBar.Select
-          value={tag}
-          onChange={setTag}
-          data-testid="customers-filter-tag"
+        {/* Feb-2026 · Customers List Navy Hero — two-row layout.
+            Search + scope chips + Sort ride the top row; Portal
+            / Missing Card / Tags / More Filters / City wrap on
+            the bottom row.  ``w-full`` on each row div forces
+            NavyFilterBar's outer flex-wrap parent to break
+            between them (row1's next sibling starts on a fresh
+            line). All handlers + testids preserved verbatim —
+            layout + styling only. */}
+        <div
+          className="w-full flex flex-row flex-wrap items-center gap-3"
+          data-testid="customers-filters-row-top"
         >
-          <option value="">All tags</option>
-          {TAG_PRESETS.map((t) => (
-            <option key={t}>{t}</option>
-          ))}
-        </NavyFilterBar.Select>
-        {/* Feb 2026 · Sort dropdown — Newest→Oldest default,
-            persisted to localStorage. Change triggers a re-fetch
-            via the load() effect (sortBy in dep-array) and resets
-            to page 1. */}
-        <NavyFilterBar.Select
-          value={sortBy}
-          onChange={setSortBy}
-          data-testid="customers-filter-sort"
-          ariaLabel="Sort customers by"
-        >
-          {_SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </NavyFilterBar.Select>
-        {/* Phase G4a · Feb-2026 — Portal-activation filter
-            dropdown. Stacks with the segmented cohort tabs
-            (Active | Inactive | Muted | All). Persists via
-            ``customerListFilter.portalStatus`` in localStorage.
-            Selecting a non-default value resets to page 1 via
-            the ``portalStatus`` effect above. */}
-        <NavyFilterBar.Select
-          value={portalStatus}
-          onChange={setPortalStatus}
-          data-testid="customers-filter-portal-status"
-          ariaLabel="Filter customers by portal activation status"
-        >
-          {_PORTAL_STATUS_OPTIONS.map((o) => (
-            <option
-              key={o.value}
-              value={o.value}
-              data-testid={`portal-status-option-${o.value}`}
-            >
-              {o.label}
-            </option>
-          ))}
-        </NavyFilterBar.Select>
-        {cities.length ? (
+          <NavyFilterBar.Search
+            value={q}
+            onChange={setQ}
+            placeholder="Search name, email, phone, address…"
+            data-testid="customers-search"
+          />
+          <div className="flex items-center gap-1">
+            <Filter size={14} style={{ color: colors.nav.fgMuted }} />
+            {[
+              { k: "all", label: "All" },
+              { k: "unscheduled", label: "Unscheduled" },
+              { k: "waitlist", label: "Waitlist" },
+            ].map((s) => (
+              <NavyFilterBar.Chip
+                key={s.k}
+                active={scope === s.k}
+                onClick={() => setScope(s.k)}
+                data-testid={`customers-scope-${s.k}`}
+              >
+                {s.label}
+              </NavyFilterBar.Chip>
+            ))}
+          </div>
+          {/* Feb 2026 · Sort dropdown — Newest→Oldest default,
+              persisted to localStorage. Change triggers a re-fetch
+              via the load() effect (sortBy in dep-array) and resets
+              to page 1. */}
           <NavyFilterBar.Select
-            value={city}
-            onChange={setCity}
-            data-testid="customers-filter-city"
+            value={sortBy}
+            onChange={setSortBy}
+            data-testid="customers-filter-sort"
+            ariaLabel="Sort customers by"
           >
-            <option value="">All cities</option>
-            {cities.map((c) => (
-              <option key={c}>{c}</option>
+            {_SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </NavyFilterBar.Select>
-        ) : null}
-        {/* Phase 12 · Feb 2026 — "Missing card" filter chip. Admin +
-            manager only. Server-side filter (requires the
-            missing_card=true query param). Kept as a raw
-            ``<button>`` (not a ``NavyFilterBar.Chip``) because its
-            active state uses a yellow warning tint, distinct from
-            the gradient active tone the shared Chip primitive
-            renders. */}
-        {isAdminOrManager && (
-          <button
-            onClick={() => setMissingCardOnly((v) => !v)}
-            data-testid="customers-filter-missing-card"
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-            style={{
-              backgroundColor: missingCardOnly ? "#FEF3C7" : colors.surfaceSecondary,
-              color: missingCardOnly ? "#92400E" : colors.onSurfaceSecondary,
-              border: `1px solid ${missingCardOnly ? "#FDE68A" : colors.border}`,
-            }}
+        </div>
+        <div
+          className="w-full flex flex-row flex-wrap items-center gap-3"
+          data-testid="customers-filters-row-bottom"
+        >
+          {/* Phase G4a · Feb-2026 — Portal-activation filter
+              dropdown. Stacks with the segmented cohort tabs
+              (Active | Inactive | Muted | All). Persists via
+              ``customerListFilter.portalStatus`` in localStorage.
+              Selecting a non-default value resets to page 1 via
+              the ``portalStatus`` effect above. */}
+          <NavyFilterBar.Select
+            value={portalStatus}
+            onChange={setPortalStatus}
+            data-testid="customers-filter-portal-status"
+            ariaLabel="Filter customers by portal activation status"
           >
-            <span
-              className="inline-block w-2 h-2 rounded-full"
-              style={{ backgroundColor: missingCardOnly ? "#B45309" : "#94A3B8" }}
-            />
-            Missing card
-          </button>
-        )}
+            {_PORTAL_STATUS_OPTIONS.map((o) => (
+              <option
+                key={o.value}
+                value={o.value}
+                data-testid={`portal-status-option-${o.value}`}
+              >
+                {o.label}
+              </option>
+            ))}
+          </NavyFilterBar.Select>
+          {/* Phase 12 · Feb 2026 — "Missing card" filter chip. Admin +
+              manager only. Server-side filter (requires the
+              missing_card=true query param). Kept as a raw
+              ``<button>`` (not a ``NavyFilterBar.Chip``) because its
+              active state uses a yellow warning tint, distinct from
+              the gradient active tone the shared Chip primitive
+              renders.
+              Feb-2026 · Customers List Navy Hero — inactive state
+              now blends into the strip: navy bg + white text +
+              subtle white/10 border. Active state stays amber. */}
+          {isAdminOrManager && (
+            <button
+              onClick={() => setMissingCardOnly((v) => !v)}
+              data-testid="customers-filter-missing-card"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+              style={{
+                backgroundColor: missingCardOnly ? "#FEF3C7" : colors.nav.bg,
+                color: missingCardOnly ? "#92400E" : colors.nav.fg,
+                border: `1px solid ${missingCardOnly ? "#FDE68A" : colors.nav.border}`,
+              }}
+            >
+              <span
+                className="inline-block w-2 h-2 rounded-full"
+                style={{ backgroundColor: missingCardOnly ? "#B45309" : "#94A3B8" }}
+              />
+              Missing card
+            </button>
+          )}
+          <NavyFilterBar.Select
+            value={tag}
+            onChange={setTag}
+            data-testid="customers-filter-tag"
+          >
+            <option value="">All tags</option>
+            {TAG_PRESETS.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </NavyFilterBar.Select>
         {/* Feb-2026 · P45 — "More filters" dropdown. Replaces the
              chip strip with a single trigger that opens a grouped,
              always-mounted panel. Every child control preserves its
@@ -1695,9 +1703,9 @@ export default function CustomersList() {
                 aria-controls="customers-more-filters-panel"
                 className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
                 style={{
-                  backgroundColor: active > 0 ? "#DBEAFE" : colors.surfaceSecondary,
-                  color: active > 0 ? "#1E3A8A" : colors.onSurfaceSecondary,
-                  border: `1px solid ${active > 0 ? "#93C5FD" : colors.border}`,
+                  backgroundColor: active > 0 ? "#DBEAFE" : colors.nav.bg,
+                  color: active > 0 ? "#1E3A8A" : colors.nav.fg,
+                  border: `1px solid ${active > 0 ? "#93C5FD" : colors.nav.border}`,
                 }}
                 title="More filters"
               >
@@ -2205,6 +2213,19 @@ export default function CustomersList() {
               </div>
             ) : null}
           </div>
+        </div>
+          {cities.length ? (
+            <NavyFilterBar.Select
+              value={city}
+              onChange={setCity}
+              data-testid="customers-filter-city"
+            >
+              <option value="">All cities</option>
+              {cities.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </NavyFilterBar.Select>
+          ) : null}
         </div>
       </NavyFilterBar>
 

@@ -12,6 +12,7 @@ import { StatusChip } from "@/src/components/ui";
 import Breadcrumbs from "@/src/components/nav/Breadcrumbs";
 import BrandLogo from "@/src/components/BrandLogo";
 import { useBreadcrumbs } from "@/src/hooks/useBreadcrumbs";
+import { openGlobalMenu } from "@/src/components/tools/GlobalMenu";
 
 export function OfflineBanner({ testID }: { testID?: string }) {
   return (
@@ -69,6 +70,25 @@ function SettingsSprocket() {
   );
 }
 
+function HamburgerButton() {
+  const { user } = useAuth();
+  const role = String((user as any)?.role || "");
+  const allowed = role === "admin" || role === "super_admin" || role === "technician";
+  if (!allowed) return null;
+  return (
+    <Pressable
+      onPress={openGlobalMenu}
+      style={styles.hamburgerBtn}
+      hitSlop={10}
+      testID="mobile-menu-trigger"
+      accessibilityLabel="Open menu"
+      accessibilityRole="button"
+    >
+      <Ionicons name="menu-outline" size={24} color={colors.onSurface} />
+    </Pressable>
+  );
+}
+
 export function Header({
   title,
   subtitle,
@@ -90,7 +110,7 @@ export function Header({
   return (
     <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.headerRow}>
-        <View style={{ flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0 }}>
+        <View style={styles.headerLeftCluster}>
           {back ? (
             <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} testID="header-back">
               <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
@@ -108,9 +128,10 @@ export function Header({
             ) : null}
           </View>
         </View>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+        <View style={styles.headerRightCluster}>
           <SettingsSprocket />
           {right}
+          <HamburgerButton />
         </View>
       </View>
       {crumbs.length > 0 && <Breadcrumbs items={crumbs} />}
@@ -422,6 +443,31 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
+  },
+  headerLeftCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    minWidth: 0,
+  },
+  headerRightCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+    flexWrap: "wrap",
+    maxWidth: "60%",
+    justifyContent: "flex-end",
+  },
+  hamburgerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
   },
   backBtn: { marginRight: spacing.xs, marginLeft: -6 },
   sprocketBtn: {

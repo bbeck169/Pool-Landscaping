@@ -22,7 +22,7 @@
  * layout needs to change — this ships without touching any of the
  * ~30 `(app)/*.tsx` files.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View, Modal, Pressable, StyleSheet, Text, Alert, Platform,
 } from "react-native";
@@ -34,10 +34,26 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { ToolsMenuBody } from "./ToolsMenuBody";
 import type { ToolCardTile } from "./ToolCard";
 
+/* ── Module-level open trigger ──────────────────────────────────────
+ * The hamburger button now lives inside the shared Header (widgets.tsx).
+ * It calls `openGlobalMenu()` which sets the open state via the
+ * setter registered by the mounted GlobalMenu component.
+ */
+let _openSetter: ((v: boolean) => void) | null = null;
+export function openGlobalMenu() {
+  _openSetter?.(true);
+}
+
 export const GlobalMenu: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
+
+  // Register the setter so the module-level `openGlobalMenu` can reach it.
+  useEffect(() => {
+    _openSetter = setOpen;
+    return () => { _openSetter = null; };
+  }, []);
   // Phase 44 · Fix 2 — cross-platform logout confirmation state. On
   // native we lean on `Alert.alert()`; on RN-Web `Alert.alert()` is a
   // no-op, so we surface an in-sheet inline confirm banner using the
@@ -87,24 +103,8 @@ export const GlobalMenu: React.FC = () => {
 
   return (
     <>
-      <Pressable
-        onPress={() => setOpen(true)}
-        style={[
-          styles.trigger,
-          // Phase 43 → 43.2 · trigger moved from top-LEFT to top-RIGHT
-          // per UX request. Sheet still slides from the top; only this
-          // affordance's position changed. All Phase 43/43.1 sheet
-          // behavior (search, pinned, recents, chips, pin toggle) is
-          // preserved untouched.
-          { top: insets.top + spacing.sm, right: spacing.md },
-        ]}
-        hitSlop={10}
-        testID="mobile-menu-trigger"
-        accessibilityLabel="Open menu"
-        accessibilityRole="button"
-      >
-        <Ionicons name="menu-outline" size={26} color={colors.onSurface} />
-      </Pressable>
+      {/* Trigger removed — now rendered inside Header (widgets.tsx).
+          The module-level openGlobalMenu() bridges the two. */}
 
       <Modal
         visible={open}
@@ -186,21 +186,6 @@ export const GlobalMenu: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  trigger: {
-    position: "absolute",
-    zIndex: 1000,
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    // Subtle background so the icon reads over any header color the
-    // screen underneath happens to use.
-    backgroundColor: "rgba(255,255,255,0.75)",
-    ...(Platform.OS === "web"
-      ? { boxShadow: "0 1px 2px rgba(0,0,0,0.08)" as any }
-      : { elevation: 2 }),
-  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.45)",
