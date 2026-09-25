@@ -1,0 +1,1 @@
+{"dependencies":[],"output":[{"data":{"code":"__d(function(g,r,i,a,m,e,d){m.exports=/[ \\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]/});","lineCount":1,"map":[[1,28,1,0,"module"],[1,30,1,7,"exports"],[1,38,1,15],[1,96,1,73],[1,99]],"functionMap":{"names":["<global>"],"mappings":"AAA"},"hasCjsExports":true},"type":"js/module"}]}
