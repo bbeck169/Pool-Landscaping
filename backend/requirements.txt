@@ -172,3 +172,4 @@ wrapt==2.4.1
 yarl==1.24.2
 zipp==4.1.0
 freezegun==1.5.5
+rapidfuzz==3.14.6
