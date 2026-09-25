@@ -621,6 +621,13 @@ api_router.include_router(_feb2026_public_places.router)
 # the label-aware resolver.  Router already prefixes ``/api``.
 from routers import admin_leads_backfill_label_resolution as _l2_backfill  # noqa: E402
 app.include_router(_l2_backfill.router)
+# Task H · Phase H.1 · Feb-2026 — PDF Invoice Importer preview.
+# ``POST /api/imports/pdf-invoice`` — multi-part upload → gpt-4o
+# vision extraction + fuzzy customer resolution → returns an
+# ``ExtractedBatch`` + per-doc ``MapperReport[]``. No DB writes
+# to ``quotes`` at this phase (H.2 owns the commit path).
+from routers import imports as _h1_imports  # noqa: E402
+app.include_router(_h1_imports.router)
 # Phase L3 · Feb-2026 — Text + Email from Leads.  Reuses the
 # customer-side SMS (RingCentral) + email (Resend) providers to
 # compose free-form messages rooted at a lead.  Endpoints:
@@ -2626,6 +2633,15 @@ async def _background_seed():
             )
             await _promo_indexes()
             await _ref_indexes()
+            # Task H · Phase H.1 · Feb-2026 — PDF Invoice Importer
+            # index creation.  background=True per H.1 spec so a
+            # large tenant does not block boot.
+            try:
+                from routers.imports import ensure_indexes as _h1_import_indexes
+                await _h1_import_indexes()
+                logger.info("[phase-h1] import_batches + pending_import_customers indexes ensured")
+            except Exception as _ex_h1_idx:                        # noqa: BLE001
+                logger.warning(f"[phase-h1] import indexes skipped: {_ex_h1_idx}")
             await _seed_tpls()
             bm_res = await _backmigrate()
             logger.info(f"[phase10] back-migration: {bm_res}")
