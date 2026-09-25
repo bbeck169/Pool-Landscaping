@@ -330,6 +330,10 @@ async def main() -> int:
         ("notifications_pipeline", "services.notifications_pipeline.service_notifications", "ensure_indexes"),
         # Phase A1 · Feb-2026 · Proactive Intelligence — alert store.
         ("intelligence_alerts", "services.intelligence.alerts", "ensure_indexes"),
+        # Task H · Feb-2026 — PDF Invoice Importer indexes (H.1
+        # pending_import_customers + import_batches, H.2 quotes
+        # import-provenance sparse partials + import_audit).
+        ("pdf_import",             "routers.imports",                       "ensure_indexes"),
     ]
     for label, module_path, attr_name in ROUTER_ENSURE_INDEXES:
         try:
