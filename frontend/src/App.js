@@ -153,6 +153,7 @@ const CommsEmailBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-
 const CommsSmsBuilder = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsSmsBuilder })));
 const CommsAutomationsPage = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsAutomationsPage })));
 const CommsSendsHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-comms-commspages" */ "@/pages/comms/CommsPages").then(m => ({ default: m.CommsSendsHistoryPage })));
+const NotesArchive = React.lazy(() => import(/* webpackChunkName: "p-notes-archive" */ "@/pages/comms/NotesArchive"));
 const ReviewsDashboard = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsDashboard })));
 const ReviewsRequestsPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsRequestsPage })));
 const ReviewsPlatformsPage = React.lazy(() => import(/* webpackChunkName: "p-reviews-reviewspages" */ "@/pages/reviews/ReviewsPages").then(m => ({ default: m.ReviewsPlatformsPage })));
@@ -1456,6 +1457,7 @@ export default function App() {
             <Route path="admin/comms/sms/:code"       element={<AdminOnly><CommsSmsBuilder /></AdminOnly>} />
             <Route path="admin/comms/automations"     element={<AdminOnly><CommsAutomationsPage /></AdminOnly>} />
             <Route path="admin/comms/sends"           element={<AdminOnly><CommsSendsHistoryPage /></AdminOnly>} />
+            <Route path="admin/comms/notes-archive"   element={<AdminOnly><NotesArchive /></AdminOnly>} />
             {/* Reviews Subsystem · Phase 2 — admin surface */}
             <Route path="admin/reviews"               element={<AdminOnly><ReviewsDashboard /></AdminOnly>} />
             <Route path="admin/reviews/requests"      element={<AdminOnly><ReviewsRequestsPage /></AdminOnly>} />

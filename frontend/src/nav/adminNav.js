@@ -379,6 +379,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/comms/templates",   label: "Templates",      icon: Layers,        feature: "settings", hard_rule: "admin_only" },
     { to: "/admin/comms/automations", label: "Automations",    icon: Zap,           feature: "settings", hard_rule: "admin_only" },
     { to: "/admin/comms/sends",       label: "Sends History",  icon: History,       feature: "settings", hard_rule: "admin_only" },
+    { to: "/admin/comms/notes-archive", label: "Notes Archive", icon: FileText,     feature: "settings", hard_rule: "admin_only" },
   ]},
 
   { key: "reviews", label: "Reviews", icon: StarIcon, entries: [
