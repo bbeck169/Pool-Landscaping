@@ -8,7 +8,7 @@
  * - ❌ Offline (red dot)
  */
 import React from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useSyncManager, SyncStatus } from "@/src/services/SyncManager";
@@ -23,6 +23,8 @@ const STATUS_CFG: Record<SyncStatus, { bg: string; fg: string; icon: string; lab
 
 export default function SyncStatusPill() {
   const { syncStatus, outboxCount, syncNow, isOnline } = useSyncManager();
+  const { width: screenW } = useWindowDimensions();
+  const compact = screenW < 400;
   const cfg = STATUS_CFG[syncStatus];
 
   const showPending = outboxCount > 0 && syncStatus !== "syncing";
@@ -42,9 +44,11 @@ export default function SyncStatusPill() {
       ) : (
         <Ionicons name={effectiveCfg.icon as any} size={12} color={effectiveCfg.fg} />
       )}
-      <Text style={[s.text, { color: effectiveCfg.fg }]} testID="sync-status-label">
-        {effectiveCfg.label}
-      </Text>
+      {!compact && (
+        <Text style={[s.text, { color: effectiveCfg.fg }]} testID="sync-status-label">
+          {effectiveCfg.label}
+        </Text>
+      )}
     </Pressable>
   );
 }

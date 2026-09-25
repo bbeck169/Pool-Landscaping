@@ -456,7 +456,7 @@ const styles = StyleSheet.create({
     gap: 8,
     flexShrink: 1,
     flexWrap: "wrap",
-    maxWidth: "60%",
+    maxWidth: "55%",
     justifyContent: "flex-end",
   },
   hamburgerBtn: {
