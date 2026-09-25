@@ -36,7 +36,7 @@
  *   * Commit 5  — commit + rollback actions.
  *   * Commit 6  — integration test + PRD update.
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   UploadCloud,
@@ -44,6 +44,7 @@ import {
   ShieldCheck,
   Loader2,
   AlertCircle,
+  CheckCircle2,
   Clock,
   X,
 } from "lucide-react";
@@ -63,8 +64,44 @@ export const FILE_STATUS = {
   QUEUED: "queued",
   UPLOADING: "uploading",
   PROCESSING: "processing",
+  PREVIEW_READY: "preview_ready",
   ERROR: "error",
 };
+
+
+// Backend status → terminal check.  Any of these values, once
+// observed on the batch, ends the poll loop for that file.
+// See recon report §A.2 for the full status enum.
+export const TERMINAL_BATCH_STATUSES = new Set([
+  "preview_complete",
+  "failed",
+  "cancelled",
+  "committing",         // once commit starts, the poller yields
+  "committed",
+  "commit_failed",
+  "rolling_back",
+  "rolled_back",
+  "rollback_failed",
+]);
+
+
+// Poll-hint clamp (Ruling E.5) — honour backend hint but never
+// slower than 15s (admin UI responsiveness) or faster than 3s
+// (avoid hammering the backend rate limiter).
+export const POLL_HINT_MIN_SECONDS = 3;
+export const POLL_HINT_MAX_SECONDS = 15;
+
+export function clampPollHint(hint) {
+  const n = Number(hint);
+  if (!isFinite(n) || n <= 0) return POLL_HINT_MIN_SECONDS;
+  return Math.max(POLL_HINT_MIN_SECONDS,
+                  Math.min(POLL_HINT_MAX_SECONDS, Math.floor(n)));
+}
+
+
+export function isTerminalStatus(status) {
+  return TERMINAL_BATCH_STATUSES.has(String(status || ""));
+}
 
 
 /**
@@ -197,6 +234,44 @@ export async function postPdfInvoice(file, { baseUrl, token } = {}) {
 }
 
 
+/**
+ * GET the current state of a batch.  Returns the sanitised row
+ * from the backend (see recon report §A.2): carries ``status``,
+ * ``stage``, and a computed ``progress_pct`` (0-100 int).
+ *
+ * Exported so the vitest can drive the poll loop without
+ * mounting the component.  Failures throw with a translated
+ * user message; the caller can retry on transient errors.
+ */
+export async function pollBatch(batchId, { baseUrl, token } = {}) {
+  const BASE = baseUrl || process.env.REACT_APP_BACKEND_URL || "";
+  const TOKEN = token || (
+    typeof localStorage !== "undefined"
+      ? (localStorage.getItem("token") || "")
+      : ""
+  );
+  const res = await fetch(
+    `${BASE}/api/imports/pdf-invoice/${encodeURIComponent(batchId)}`,
+    {
+      method: "GET",
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    },
+  );
+  if (!res.ok) {
+    let body = null;
+    try { body = await res.json(); } catch { /* body empty */ }
+    const inner = (body && typeof body === "object" && body.detail !== undefined)
+      ? body.detail
+      : body;
+    const err = new Error(messageForUploadError(res.status, inner));
+    err.status = res.status;
+    err.detail = inner;
+    throw err;
+  }
+  return await res.json();
+}
+
+
 // Local counter so React reconciliation doesn't confuse pending
 // rows when the operator quickly re-selects.  A monotonic counter
 // scoped to the module works because a single PdfInvoiceImportPage
@@ -216,6 +291,13 @@ export default function PdfInvoiceImportPage() {
   // Pool-slot counter kept in a ref so the pump can read/write it
   // synchronously without a re-render round-trip.
   const inFlightRef = useRef(0);
+  // Fresh ref to the latest files snapshot so the poll loop can
+  // read without stale-closure bugs.
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  // Poll-timer registry keyed by file id — used to cancel timers
+  // on unmount or when a row leaves PROCESSING.
+  const pollTimersRef = useRef(new Map());
 
 
   /**
@@ -353,6 +435,139 @@ export default function PdfInvoiceImportPage() {
     // orphan a real backend batch).  The dismiss surface hides
     // the button on those two states via ``canDismiss`` below.
     setFiles((prev) => prev.filter((f) => f.id !== id));
+    // Also cancel any pending poll timer for this row.
+    const t = pollTimersRef.current.get(id);
+    if (t) {
+      clearTimeout(t);
+      pollTimersRef.current.delete(id);
+    }
+  }, []);
+
+
+  /**
+   * Poll one file's batch until its backend status reaches a
+   * terminal value (preview_complete / failed / cancelled /
+   * commit_failed / rollback_failed / committed / rolled_back).
+   *
+   * Uses a self-scheduling setTimeout chain rather than a raw
+   * setInterval so the next tick honours the FRESH
+   * ``poll_hint_seconds`` value returned by the last response
+   * (clamped 3-15s per Ruling E.5).  Transient errors are
+   * absorbed with a scheduled retry — the loop only stops on
+   * a terminal backend status or an explicit unmount.
+   */
+  const pollOne = useCallback(async (fileId) => {
+    const current = filesRef.current.find((f) => f.id === fileId);
+    if (!current || current.status !== FILE_STATUS.PROCESSING) {
+      // Row was dismissed or already terminal — bail.
+      return;
+    }
+    let scheduleNext = true;
+    let hintSeconds = clampPollHint(current.poll_hint_seconds || 5);
+    try {
+      const batch = await pollBatch(current.batch_id);
+      const nextHint = clampPollHint(batch.poll_hint_seconds || hintSeconds);
+      hintSeconds = nextHint;
+      if (isTerminalStatus(batch.status)) {
+        scheduleNext = false;
+        setFiles((prev) => prev.map((f) => {
+          if (f.id !== fileId) return f;
+          if (batch.status === "preview_complete") {
+            return {
+              ...f,
+              status: FILE_STATUS.PREVIEW_READY,
+              progress_pct: 100,
+              stage: batch.stage || null,
+              batch,
+              poll_hint_seconds: nextHint,
+            };
+          }
+          // Any other terminal state → ERROR with a
+          // descriptive label so the operator can retry or
+          // roll back.
+          return {
+            ...f,
+            status: FILE_STATUS.ERROR,
+            progress_pct: batch.progress_pct ?? null,
+            stage: batch.stage || null,
+            error: batch.error
+              || batch.message
+              || `Batch ended in ${batch.status}.`,
+            batch,
+            poll_hint_seconds: nextHint,
+          };
+        }));
+      } else {
+        // Still processing — merge the live progress values so
+        // the row's progress bar + stage label move.
+        setFiles((prev) => prev.map((f) => (
+          f.id === fileId
+            ? {
+              ...f,
+              progress_pct: batch.progress_pct ?? f.progress_pct ?? 0,
+              stage: batch.stage || f.stage || null,
+              poll_hint_seconds: nextHint,
+            }
+            : f
+        )));
+      }
+    } catch {
+      // Transient failure — do NOT flip to ERROR (network
+      // hiccups happen).  Keep polling at the last known hint.
+    }
+    if (scheduleNext) {
+      const timerId = setTimeout(() => pollOne(fileId),
+                                  hintSeconds * 1000);
+      pollTimersRef.current.set(fileId, timerId);
+    } else {
+      pollTimersRef.current.delete(fileId);
+    }
+  }, []);
+
+
+  /**
+   * Kick a poll loop whenever a file enters PROCESSING, and
+   * cancel any orphaned timer when a file leaves PROCESSING
+   * (either dismissed or flipped to a terminal state by the
+   * loop itself).  Runs on every ``files`` change so the
+   * managed set of active timers reflects the latest state.
+   */
+  useEffect(() => {
+    const activeIds = new Set(
+      files
+        .filter((f) => f.status === FILE_STATUS.PROCESSING && f.batch_id)
+        .map((f) => f.id),
+    );
+    // Start pollers for rows that just entered PROCESSING.
+    for (const id of activeIds) {
+      if (!pollTimersRef.current.has(id)) {
+        // Sentinel value so a rapid re-render doesn't schedule
+        // twice — the sentinel is replaced by the real timer id
+        // when pollOne schedules the next tick.
+        pollTimersRef.current.set(id, "pending");
+        pollOne(id);
+      }
+    }
+    // Cancel pollers for rows that left PROCESSING.
+    for (const [id, timer] of pollTimersRef.current.entries()) {
+      if (!activeIds.has(id) && timer !== "pending") {
+        clearTimeout(timer);
+        pollTimersRef.current.delete(id);
+      }
+    }
+  }, [files, pollOne]);
+
+
+  // Cancel every poller on unmount so a route change doesn't
+  // leak timers.
+  useEffect(() => {
+    const timers = pollTimersRef.current;
+    return () => {
+      for (const t of timers.values()) {
+        if (t && t !== "pending") clearTimeout(t);
+      }
+      timers.clear();
+    };
   }, []);
 
 
@@ -460,20 +675,25 @@ export default function PdfInvoiceImportPage() {
 
 function FileRow({ f, onRemove }) {
   const canDismiss = f.status === FILE_STATUS.QUEUED
-    || f.status === FILE_STATUS.ERROR;
+    || f.status === FILE_STATUS.ERROR
+    || f.status === FILE_STATUS.PREVIEW_READY;
   const tone = STATUS_TONE[f.status] || STATUS_TONE.queued;
   const Icon = tone.Icon;
+  const showProgress = f.status === FILE_STATUS.PROCESSING
+    || f.status === FILE_STATUS.PREVIEW_READY;
+  const progress = Math.max(0, Math.min(100,
+    Number(f.progress_pct) || 0));
   return (
     <div
       data-testid={`pdf-import-file-row-${f.id}`}
       data-status={f.status}
-      className="flex items-center gap-3 rounded-md border px-3 py-2"
+      className="flex items-start gap-3 rounded-md border px-3 py-2"
       style={{
         borderColor: colors.border,
         backgroundColor: colors.surface,
       }}
     >
-      <FileText size={16} style={{ color: colors.muted }} />
+      <FileText size={16} style={{ color: colors.muted }} className="mt-1" />
       <div className="flex-1 min-w-0">
         <div
           className="text-sm truncate"
@@ -484,7 +704,28 @@ function FileRow({ f, onRemove }) {
         <div className="text-xs" style={{ color: colors.muted }}>
           {formatBytes(f.size)}
           {f.error ? ` · ${f.error}` : null}
+          {f.status === FILE_STATUS.PROCESSING && f.stage
+            ? ` · ${prettyStage(f.stage)}`
+            : null}
         </div>
+        {showProgress ? (
+          <div
+            className="mt-1.5 h-1.5 w-full rounded bg-slate-100 overflow-hidden"
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            data-testid={`pdf-import-file-progress-${f.id}`}
+          >
+            <div
+              className="h-full transition-[width] duration-300 ease-out"
+              style={{
+                width: `${progress}%`,
+                backgroundColor: colors.brand,
+              }}
+            />
+          </div>
+        ) : null}
       </div>
       <span
         className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${tone.className}`}
@@ -509,6 +750,23 @@ function FileRow({ f, onRemove }) {
 }
 
 
+/**
+ * Pretty-print the backend ``stage`` string.  Values arrive as
+ * ``segmentation`` / ``extraction N/M`` / ``mapping N/M`` /
+ * ``persisting`` (see recon report §A.2) — capitalise + retain
+ * the N/M suffix so operators see 'Extraction 3/7' etc.
+ */
+export function prettyStage(stage) {
+  if (typeof stage !== "string" || !stage) return "";
+  const m = stage.match(/^([a-z_]+)(?:\s+(\d+\/\d+))?$/i);
+  if (!m) return stage;
+  const [, verb, suffix] = m;
+  const label = verb.replace(/_/g, " ")
+                    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return suffix ? `${label} ${suffix}` : label;
+}
+
+
 const STATUS_TONE = {
   [FILE_STATUS.QUEUED]: {
     label: "Queued",
@@ -526,6 +784,11 @@ const STATUS_TONE = {
     Icon: Loader2,
     className: "bg-amber-100 text-amber-800",
     spin: true,
+  },
+  [FILE_STATUS.PREVIEW_READY]: {
+    label: "Preview ready",
+    Icon: CheckCircle2,
+    className: "bg-emerald-100 text-emerald-800",
   },
   [FILE_STATUS.ERROR]: {
     label: "Error",
