@@ -2583,3 +2583,21 @@
 - **Backend curl verification**: `GET /api/jobs/{id}/service-report` confirmed `internal_notes: 'job notes visible only internally'` and `customer_notes: 'customer-facing notes here'` persisted after Save.
 - **Visual parity**: Pool notes layout identical to landscaping (placeholder text, multiline, 3 lines, label with subtle annotation).
 
+
+## Iteration — Fix: Dashboard title fully visible at 390px
+- **Commit**: 672f45ce1a290189243f2b2c5d3766ef7e1b03f4
+- **Date**: 2026-09-25
+- **Path chosen**: A+B hybrid (tighten maxWidth + collapse SyncStatusPill label on narrow screens)
+- **Changes**:
+  - `widgets.tsx`: `headerRightCluster.maxWidth` changed from `'60%'` to `'55%'` — gives the title ~18px more horizontal budget
+  - `SyncStatusPill.tsx`: Added `useWindowDimensions()` check — when `width < 400px`, hides the text label ("Synced"/"Syncing"/etc), showing only the status icon. This saves ~37px of horizontal space, enough to prevent title truncation. Full labels still render at ≥ 400px (tablet).
+- **Files modified**: `mobile/src/components/widgets.tsx`, `mobile/src/components/SyncStatusPill.tsx`
+- **Verification screenshots** (saved to `/app/memory/artifacts/`):
+  - `mobile_dashboard_390_fix_2026-09-25.png` — "Dashboard" FULLY VISIBLE, no ellipsis ✓
+  - `mobile_dashboard_360_fix_2026-09-25.png` — "Dashbo..." (expected narrow truncation), cluster wraps hamburger to line 2 ✓
+  - `mobile_dashboard_768_fix_2026-09-25.png` — Full title, full pill labels, single row ✓
+  - `mobile_schedule_390_fix_2026-09-25.png` — "Schedule" fully visible, all icons inline ✓
+  - `mobile_customers_390_fix_2026-09-25.png` — "Customers" fully visible, no regression ✓
+  - `mobile_leads_390_fix_2026-09-25.png` — "Quotes & Invoi..." (long title, expected), no regression ✓
+- **No regressions**: All testIDs preserved. Metro + lint clean (only pre-existing unused-import warnings).
+

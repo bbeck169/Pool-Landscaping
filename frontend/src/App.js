@@ -520,6 +520,10 @@ const ChemicalCosts = React.lazy(() => import(/* webpackChunkName: "p-admin-chem
 const RecurringJobs = React.lazy(() => import(/* webpackChunkName: "p-admin-recurringjobs" */ "@/pages/admin/RecurringJobs"));
 const CFOReports = React.lazy(() => import(/* webpackChunkName: "p-admin-cforeports" */ "@/pages/admin/CFOReports"));
 const VendorBills = React.lazy(() => import(/* webpackChunkName: "p-admin-vendorbills" */ "@/pages/admin/VendorBills"));
+// Task B · Feb-2026 — PDF Invoice Importer admin page (scaffold
+// lands in Phase 2 Commit 1; upload / poll / preview / commit
+// flow wired in subsequent commits).
+const PdfInvoiceImportPage = React.lazy(() => import(/* webpackChunkName: "p-admin-imports-pdfinvoice" */ "@/pages/admin/imports/PdfInvoiceImportPage"));
 const PricingInsights = React.lazy(() => import(/* webpackChunkName: "p-admin-pricinginsights" */ "@/pages/admin/PricingInsights"));
 const RingCentralAdmin = React.lazy(() => import(/* webpackChunkName: "p-admin-ringcentraladmin" */ "@/pages/admin/RingCentralAdmin"));
 const TelephonyPage = React.lazy(() => import(/* webpackChunkName: "p-settings-telephonypage" */ "@/pages/settings/TelephonyPage"));
@@ -1162,6 +1166,10 @@ export default function App() {
             {/* Phase 51.K — CFO Reports (admin/super_admin) */}
             <Route path="admin/cfo/reports" element={<AdminOnly><CFOReports /></AdminOnly>} />
             <Route path="admin/finance/bills" element={<AdminOnly><VendorBills /></AdminOnly>} />
+            {/* Task B · Feb-2026 — PDF Invoice Importer.  Sits under
+                Finance in the sidebar (see adminNav.js, immediately
+                after Vendor Bills).  Admin-only per §E.4 ruling. */}
+            <Route path="admin/imports/pdf-invoice" element={<AdminOnly><PdfInvoiceImportPage /></AdminOnly>} />
             <Route path="admin/reports/pricing-insights" element={<AdminOnly><PricingInsights /></AdminOnly>} />
             {/* Phase 54 — RingCentral admin (settings + test + event log) */}
             <Route path="admin/settings/ringcentral" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
