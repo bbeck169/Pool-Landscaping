@@ -430,6 +430,8 @@ export default function JobChecklistScreen() {
       chemicals_added: current.chemicals_added,
       checklist_items: current.checklist_items,
       notes: current.notes,
+      internal_notes: current.internal_notes,
+      customer_notes: current.customer_notes,
     };
     // Phase v · Include water_bodies when multi-body data exists.
     const bodies = waterBodiesRef.current;
@@ -999,6 +1001,8 @@ export default function JobChecklistScreen() {
               chemicalUnits={report.chemical_units || ["gal", "lbs", "oz", "tabs"]}
               checklistItems={report.checklist_items || []}
               notes={report.notes || ""}
+              internalNotes={report.internal_notes || ""}
+              customerNotes={report.customer_notes || ""}
               observations={report.observations || {}}
               onChange={patchReport}
               template={backendKind}

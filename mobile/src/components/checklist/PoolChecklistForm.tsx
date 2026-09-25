@@ -112,6 +112,9 @@ export type PoolChecklistFormProps = {
   // + tech only) exposed on wizard step 6. Optional so legacy callers
   // that haven't been updated to the wizard shell keep working.
   internalNotes?: string;
+  // Customer-facing notes — visible on the customer portal service
+  // report view. Mirrors the landscaping form's `customerNotes` prop.
+  customerNotes?: string;
   // Phase 56.10 — visible-algae observation from the report doc.
   observations?: { visible_algae?: "none" | "light" | "heavy" };
   // Phase 56.7 — when set (1..6), only render the section matching
@@ -128,6 +131,7 @@ export type PoolChecklistFormProps = {
     checklist_items: ChecklistItem[];
     notes: string;
     internal_notes: string;
+    customer_notes: string;
     observations: any;
   }>) => void;
 };
@@ -138,6 +142,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     checklistItems, notes, onChange,
   } = props;
   const internalNotes = props.internalNotes || "";
+  const customerNotes = props.customerNotes || "";
   const wizardStep = props.wizardStep ?? null;
   // Feb-2026 · Checklist reclassifier — busy flag between picker tap
   // and parent PATCH+refetch (see props.onReclassify).
@@ -714,6 +719,36 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         onChangeText={(v) => onChange({ notes: v })}
         testID="pool-notes"
       />
+
+      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
+        Job Notes <Text style={styles.subtle}>(Internal — not visible to customer)</Text>
+      </Text>
+      <AppTextInput
+        multiline
+        numberOfLines={3}
+        editable={!locked}
+        style={styles.textarea}
+        value={internalNotes}
+        placeholder="Private notes for admins + dispatchers…"
+        placeholderTextColor={colors.muted}
+        onChangeText={(v) => onChange({ internal_notes: v })}
+        testID="pool-internal-notes"
+      />
+
+      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
+        Customer Notes <Text style={styles.subtle}>(visible to customer)</Text>
+      </Text>
+      <AppTextInput
+        multiline
+        numberOfLines={3}
+        editable={!locked}
+        style={styles.textarea}
+        value={customerNotes}
+        placeholder="Anything the customer should see on their service report…"
+        placeholderTextColor={colors.muted}
+        onChangeText={(v) => onChange({ customer_notes: v })}
+        testID="pool-customer-notes"
+      />
     </View>
   );
 }
@@ -941,6 +976,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface,
     marginBottom: spacing.sm,
+  },
+  subtle: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
   },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   readingCell: { width: "48%" },
