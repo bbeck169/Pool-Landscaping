@@ -47,6 +47,8 @@ import {
   CheckCircle2,
   Clock,
   X,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { PageHeader, Button } from "@/components/ui-kit";
 import { colors } from "@/theme";
@@ -272,6 +274,72 @@ export async function pollBatch(batchId, { baseUrl, token } = {}) {
 }
 
 
+/**
+ * GET the pre-flight duplicates snapshot for a batch.  Returns
+ * ``{ batch_id, duplicate_count, duplicates: [...] }`` per recon
+ * report §A.3.  Each duplicate entry carries ``source_doc_index``
+ * + ``existing_quote_id`` + ``doc_number`` + ``customer_id``.
+ *
+ * Exported so the vitest can drive the pre-flight surface
+ * without mounting the component.
+ */
+export async function fetchDuplicates(batchId, { baseUrl, token } = {}) {
+  const BASE = baseUrl || process.env.REACT_APP_BACKEND_URL || "";
+  const TOKEN = token || (
+    typeof localStorage !== "undefined"
+      ? (localStorage.getItem("token") || "")
+      : ""
+  );
+  const res = await fetch(
+    `${BASE}/api/imports/pdf-invoice/${encodeURIComponent(batchId)}/duplicates`,
+    {
+      method: "GET",
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    },
+  );
+  if (!res.ok) {
+    let body = null;
+    try { body = await res.json(); } catch { /* body empty */ }
+    const inner = (body && typeof body === "object" && body.detail !== undefined)
+      ? body.detail
+      : body;
+    const err = new Error(messageForUploadError(res.status, inner));
+    err.status = res.status;
+    err.detail = inner;
+    throw err;
+  }
+  return await res.json();
+}
+
+
+/**
+ * Format a decimal amount as US currency ``$1,234.56``.  Falls
+ * back to ``—`` for null / undefined / non-numeric.
+ */
+export function formatCurrency(amount) {
+  if (amount === null || amount === undefined) return "—";
+  const n = Number(amount);
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString("en-US", {
+    style: "currency", currency: "USD",
+  });
+}
+
+
+/**
+ * Format an ISO date-ish string as ``Mar 14, 2026``.  Falls
+ * back to ``—`` for null / undefined / invalid.
+ */
+export function formatIsoDate(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") return "—";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+  });
+}
+
+
 // Local counter so React reconciliation doesn't confuse pending
 // rows when the operator quickly re-selects.  A monotonic counter
 // scoped to the module works because a single PdfInvoiceImportPage
@@ -288,6 +356,9 @@ export default function PdfInvoiceImportPage() {
   // The files array is the whole state machine — each entry
   // carries a status + optional batch_id / error message.
   const [files, setFiles] = useState([]);
+  // Track which PREVIEW_READY rows have their preview surface
+  // expanded.  Set<fileId>.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
   // Pool-slot counter kept in a ref so the pump can read/write it
   // synchronously without a re-render round-trip.
   const inFlightRef = useRef(0);
@@ -298,6 +369,16 @@ export default function PdfInvoiceImportPage() {
   // Poll-timer registry keyed by file id — used to cancel timers
   // on unmount or when a row leaves PROCESSING.
   const pollTimersRef = useRef(new Map());
+
+
+  const toggleExpanded = useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
 
   /**
@@ -656,15 +737,31 @@ export default function PdfInvoiceImportPage() {
       </div>
 
       {/* Files list — hidden until an operator adds their first
-          file.  Rendered as a lean rows-only list; Commit 3 wires
-          the per-batch progress bar into each PROCESSING row. */}
+          file.  Rendered as a lean rows-only list; each
+          PREVIEW_READY row can expand a preview surface with a
+          duplicate-highlighted table + summary chip. */}
       {hasFiles ? (
         <div
           data-testid="pdf-import-files-list"
           className="mt-6 space-y-2"
         >
           {files.map((f) => (
-            <FileRow key={f.id} f={f} onRemove={removeFile} />
+            <React.Fragment key={f.id}>
+              <FileRow
+                f={f}
+                onRemove={removeFile}
+                onToggleExpand={toggleExpanded}
+                expanded={expandedIds.has(f.id)}
+              />
+              {f.status === FILE_STATUS.PREVIEW_READY
+                && expandedIds.has(f.id)
+                && f.batch ? (
+                <PreviewSurface
+                  fileId={f.id}
+                  batch={f.batch}
+                />
+              ) : null}
+            </React.Fragment>
           ))}
         </div>
       ) : null}
@@ -673,10 +770,12 @@ export default function PdfInvoiceImportPage() {
 }
 
 
-function FileRow({ f, onRemove }) {
+function FileRow({ f, onRemove, onToggleExpand, expanded }) {
   const canDismiss = f.status === FILE_STATUS.QUEUED
     || f.status === FILE_STATUS.ERROR
     || f.status === FILE_STATUS.PREVIEW_READY;
+  const canExpand = f.status === FILE_STATUS.PREVIEW_READY
+    && f.batch;
   const tone = STATUS_TONE[f.status] || STATUS_TONE.queued;
   const Icon = tone.Icon;
   const showProgress = f.status === FILE_STATUS.PROCESSING
@@ -734,6 +833,25 @@ function FileRow({ f, onRemove }) {
         <Icon size={12} className={tone.spin ? "animate-spin" : ""} />
         {tone.label}
       </span>
+      {canExpand ? (
+        <button
+          type="button"
+          onClick={() => onToggleExpand(f.id)}
+          className="ml-1 rounded p-1 hover:bg-black/5"
+          data-testid={`pdf-import-file-expand-${f.id}`}
+          aria-label={
+            expanded ? `Collapse ${f.name} preview`
+                     : `Expand ${f.name} preview`
+          }
+          aria-expanded={expanded ? "true" : "false"}
+        >
+          {expanded ? (
+            <ChevronUp size={16} style={{ color: colors.muted }} />
+          ) : (
+            <ChevronDown size={16} style={{ color: colors.muted }} />
+          )}
+        </button>
+      ) : null}
       {canDismiss ? (
         <button
           type="button"
@@ -746,6 +864,244 @@ function FileRow({ f, onRemove }) {
         </button>
       ) : null}
     </div>
+  );
+}
+
+
+/**
+ * Renders the dry-run preview table for one PREVIEW_READY batch.
+ * On mount runs the pre-flight ``GET /duplicates`` fetch and
+ * highlights matching rows in amber with a ``Duplicate`` pill
+ * linking to the existing invoice.
+ *
+ * MVP scope (Ruling E.6): single-scroll table, no pagination /
+ * virtualization.  ``max-h-[70vh] overflow-auto`` caps the
+ * table height so the future commit/rollback footer stays on-
+ * screen for large batches (typical is ~10 rows; scanned
+ * batches hit 50+).
+ */
+function PreviewSurface({ fileId, batch }) {
+  const [duplicates, setDuplicates] = useState(null); // null=loading, [] once resolved
+  const [dupError, setDupError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchDuplicates(batch.id || batch.batch_id)
+      .then((envelope) => {
+        if (cancelled) return;
+        setDuplicates(envelope?.duplicates || []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setDupError(err?.message
+          || "Could not check for duplicates.");
+        setDuplicates([]);
+      });
+    return () => { cancelled = true; };
+  }, [batch]);
+
+  const previews = Array.isArray(batch.mapper_previews)
+    ? batch.mapper_previews : [];
+  // Only ``quote_in``-mapped previews participate in dedup;
+  // payment receipts (mapped_target=deferred_to_h4) render as
+  // an info row.
+  const invoicePreviews = previews.filter(
+    (p) => p.mapped_target === "quote_in",
+  );
+
+  const dupIndex = useMemo(() => {
+    const m = new Map();
+    for (const d of (duplicates || [])) {
+      m.set(d.source_doc_index, d);
+    }
+    return m;
+  }, [duplicates]);
+
+  const totalCount = invoicePreviews.length;
+  const dupCount = dupIndex.size;
+
+  return (
+    <div
+      data-testid={`pdf-import-preview-${fileId}`}
+      className="rounded-md border px-4 py-3"
+      style={{
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceSecondary,
+      }}
+    >
+      {/* Summary chip strip — "N duplicates / M total". */}
+      <div
+        data-testid={`pdf-import-preview-summary-${fileId}`}
+        className="mb-3 flex flex-wrap items-center gap-3 text-xs"
+      >
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-slate-100 text-slate-700"
+        >
+          <FileText size={12} />
+          {totalCount} row{totalCount === 1 ? "" : "s"}
+        </span>
+        <span
+          className={
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium "
+            + (dupCount > 0
+              ? "bg-amber-100 text-amber-900"
+              : "bg-slate-100 text-slate-500")
+          }
+          data-testid={`pdf-import-preview-dupchip-${fileId}`}
+        >
+          <AlertCircle size={12} />
+          {dupCount} duplicate{dupCount === 1 ? "" : "s"}
+        </span>
+        {duplicates === null ? (
+          <span
+            className="inline-flex items-center gap-1.5 text-slate-500"
+            data-testid={`pdf-import-preview-dup-loading-${fileId}`}
+          >
+            <Loader2 size={12} className="animate-spin" />
+            Checking for duplicates…
+          </span>
+        ) : null}
+        {dupError ? (
+          <span
+            className="inline-flex items-center gap-1.5 text-red-600"
+            data-testid={`pdf-import-preview-dup-error-${fileId}`}
+          >
+            <AlertCircle size={12} />
+            {dupError}
+          </span>
+        ) : null}
+      </div>
+
+      {totalCount === 0 ? (
+        <div className="text-sm" style={{ color: colors.muted }}>
+          No invoice rows extracted from this PDF (may be a
+          payment receipt — Phase H.4 handles those separately).
+        </div>
+      ) : (
+        <div
+          className="max-h-[70vh] overflow-auto rounded"
+          style={{ backgroundColor: colors.surface }}
+        >
+          <table
+            data-testid={`pdf-import-preview-table-${fileId}`}
+            className="w-full text-sm"
+          >
+            <thead
+              style={{
+                backgroundColor: colors.surfaceSecondary,
+                color: colors.onSurfaceSecondary,
+              }}
+            >
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Invoice #</th>
+                <th className="px-3 py-2 text-left font-medium">Date</th>
+                <th className="px-3 py-2 text-right font-medium">Total</th>
+                <th className="px-3 py-2 text-left font-medium">Customer</th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoicePreviews.map((p) => (
+                <PreviewRow
+                  key={p.source_doc_index}
+                  preview={p}
+                  duplicate={dupIndex.get(p.source_doc_index)}
+                  fileId={fileId}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function PreviewRow({ preview, duplicate, fileId }) {
+  const isDup = Boolean(duplicate);
+  const q = preview.quote_in || {};
+  return (
+    <tr
+      data-testid={`pdf-import-preview-row-${fileId}-${preview.source_doc_index}`}
+      data-source-index={preview.source_doc_index}
+      data-duplicate={isDup ? "true" : "false"}
+      className={
+        isDup ? "bg-amber-50 text-amber-900"
+              : "hover:bg-black/2"
+      }
+      style={{ borderTop: `1px solid ${colors.border}` }}
+    >
+      <td className="px-3 py-2 font-mono">
+        {q.doc_number || "—"}
+      </td>
+      <td className="px-3 py-2">
+        {formatIsoDate(q.doc_date)}
+      </td>
+      <td className="px-3 py-2 text-right">
+        {formatCurrency(q.total_due ?? q.amount_paid)}
+      </td>
+      <td className="px-3 py-2">
+        <CustomerCell preview={preview} />
+      </td>
+      <td className="px-3 py-2">
+        {isDup ? (
+          <a
+            href={`/invoices/${duplicate.existing_quote_id}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-900 hover:bg-amber-200"
+            data-testid={`pdf-import-preview-dup-link-${fileId}-${preview.source_doc_index}`}
+          >
+            <AlertCircle size={12} />
+            Duplicate
+          </a>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-800"
+          >
+            <CheckCircle2 size={12} />
+            New
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+
+function CustomerCell({ preview }) {
+  const q = preview.quote_in || {};
+  const name = q.customer_name || "—";
+  const resolution = preview.customer_resolution;
+  if (resolution === "matched") {
+    return (
+      <span className="text-sm" style={{ color: colors.onSurface }}>
+        {name}
+      </span>
+    );
+  }
+  if (resolution === "pending") {
+    return (
+      <span className="text-sm text-slate-600">
+        {name}
+        <span
+          className="ml-1.5 inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-700"
+        >
+          Pending
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="text-sm text-red-700">
+      {name}
+      <span
+        className="ml-1.5 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0 text-[10px] font-medium text-red-800"
+      >
+        Unresolved
+      </span>
+    </span>
   );
 }
 
