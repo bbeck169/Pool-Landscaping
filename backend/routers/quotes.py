@@ -410,7 +410,14 @@ async def create_quote(body: QuoteIn,
         "payment_status": "unpaid",
         "notes": body.notes,
         "terms": terms,
-        "created_at": now_iso(),
+        # Task H0 · Feb-2026 — resolve the optional admin-only
+        # ``created_at`` override via the shared helper. When
+        # absent OR the caller isn't in the admin allowlist, the
+        # helper returns ``now_iso()`` and both audit slots stay
+        # ``None`` — the doc-level `if ... is not None` guard
+        # below prevents the ``_override_by`` / ``_override_at``
+        # sentinel from ever landing on the fallback path.
+        "created_at": None,  # placeholder — overwritten below
         # Phase K79 · Feb-2026 — NEW quotes default to grouped
         # customer-facing display ON. Existing quotes are backfilled
         # to false by scripts/k79_customer_group_display_migration.py
@@ -421,6 +428,24 @@ async def create_quote(body: QuoteIn,
         ),
         "customer_group_descriptions": body.customer_group_descriptions or {},
     }
+    # Task H0 · Feb-2026 — resolve the optional ``created_at``
+    # override.  Helper is a no-op / silent-drop for the non-
+    # admin caller path (returns ``now_iso()`` + ``None`` audit
+    # slots); admin overrides get validated + WARN-logged.
+    from services.quotes.date_override import resolve_date_override
+    effective_created_at, cr_by, cr_at = resolve_date_override(
+        body.created_at,
+        user=user,
+        tenant_id=tenant["id"],
+        field_name="created_at",
+        entity_kind=body.doc_type,
+        entity_id=doc["id"],
+        log_level="warn",
+    )
+    doc["created_at"] = effective_created_at
+    if cr_by is not None:
+        doc["created_at_override_by"] = cr_by
+        doc["created_at_override_at"] = cr_at
     # Phase 56.18 — assign human-readable invoice number on birth for
     # docs typed as invoice (quotes don't get one; see routers/
     # billing.py for master invoices).
@@ -657,6 +682,25 @@ async def update_quote(qid: str, body: QuoteUpdate,
     # flags — never persist them on the doc row.
     _edit_reason = upd.pop("edit_reason", None)
     upd.pop("acknowledged_lock_bypass", None)
+    # Task H0 · Feb-2026 — Historical Date Backfill defense.
+    # The PATCH schema (``QuoteUpdate``) does not declare
+    # ``created_at`` / ``paid_at`` / the override audit fields,
+    # so Pydantic already drops them silently. This belt-and-
+    # suspenders strip locks the contract against a future
+    # schema drift that adds one of these keys to ``QuoteUpdate``:
+    # the create-only override path is the sole authoritative
+    # writer of historical dates, and mutating either the value
+    # or the audit sentinel via PATCH would break the "imported
+    # vs real-time" distinction Task H (PDF importer) relies on.
+    for _h0_key in (
+        "created_at",
+        "paid_at",
+        "created_at_override_by",
+        "created_at_override_at",
+        "paid_at_override_by",
+        "paid_at_override_at",
+    ):
+        upd.pop(_h0_key, None)
     # Feb-2026 · Invoice God Mode — write the distinct audit line
     # AFTER ``upd`` has been sanitised (request-only flags stripped,
     # ``terms``/``terms_and_conditions`` coalesced) so the audit row

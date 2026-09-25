@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator, AliasChoices
 from typing import List, Optional, Any, Dict
+from datetime import datetime
 import re
 
 
@@ -380,6 +381,16 @@ class QuoteIn(BaseModel):
     due_date: Optional[str] = None  # YYYY-MM-DD (invoices)
     notes: Optional[str] = ""
     terms: Optional[str] = None  # None → auto-fill from /settings/terms defaults
+    # Task H0 · Feb-2026 — Historical Invoice Date Backfill.
+    # Optional admin-only override on the create path. When absent
+    # the router server-stamps ``now()`` (existing behaviour).
+    # When present + caller role ∈ {admin, super_admin, owner},
+    # ``services.quotes.date_override.resolve_date_override``
+    # coerces to UTC, validates future/ancient thresholds, and
+    # emits a WARN audit log. Non-admin senders → field silently
+    # dropped, no override audit fields written, no log. This is
+    # the foundation the Task H PDF Invoice Importer plugs into.
+    created_at: Optional[datetime] = None
     # Feb-2026 MP1.5 — Multi-property billing plumbing. Optional pointer
     # to the ``properties`` row this doc bills against. When the customer
     # owns exactly one active property the router auto-assigns it. When
