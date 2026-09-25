@@ -241,3 +241,37 @@ def test_empty_preview_job_id_falls_back_to_stub(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["template"] == "quote_sent"
+
+
+# ══════════════════════════════════════════════════════════════════
+# Batch follow-up C · ``template`` is optional when the caller
+# supplies ``preview_job_id`` — the branded visit-summary render
+# is what they want, no stub involved.
+# ══════════════════════════════════════════════════════════════════
+def test_preview_job_id_alone_returns_200_with_visit_summary(
+    admin_sess: requests.Session, owned_job_id: str,
+):
+    """``?preview_job_id=<seed_job>`` alone → 200, visit_summary."""
+    r = admin_sess.get(
+        f"{BASE_URL}{_URL}?preview_job_id={owned_job_id}",
+        timeout=REQ_TIMEOUT,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["template"] == "visit_summary"
+    assert body.get("preview_job_id") == owned_job_id
+    assert body.get("subject"), body
+    assert body.get("html"), body
+    assert body.get("text"), body
+
+
+def test_no_template_and_no_preview_job_id_returns_400(
+    admin_sess: requests.Session,
+):
+    """Neither param supplied → 400 with the actionable hint."""
+    r = admin_sess.get(f"{BASE_URL}{_URL}", timeout=REQ_TIMEOUT)
+    assert r.status_code == 400, r.text
+    body_text = r.text.lower()
+    assert "template" in body_text
+    assert "preview_job_id" in body_text
+

@@ -141,9 +141,14 @@ _STUBS = {
 
 @router.get("/tenants/me/email-preview")
 async def preview_email(
-    template: str = Query(...,
-                          description="One of: quote_sent, invoice_reminder, "
-                                      "password_reset, portal_invite"),
+    template: Optional[str] = Query(
+        None,
+        description="One of: quote_sent, invoice_reminder, "
+                    "password_reset, portal_invite. Optional "
+                    "when ``preview_job_id`` is supplied — the "
+                    "endpoint then renders the branded visit-"
+                    "summary email regardless of ``template``.",
+    ),
     locale: str = Query("en",
                         description="Preview locale: one of en/es/fr. "
                                     "Only affects invoice_reminder CTA "
@@ -241,6 +246,17 @@ async def preview_email(
         }
 
     # ─── Stub fallback path (unchanged behavior) ────────────────────
+    # Feb-2026 · Batch follow-up C — when ``preview_job_id`` is
+    # omitted we require ``template`` because the stubs are keyed
+    # by it. When BOTH are missing, surface a clear 400 (instead
+    # of the historical 422 from the required-query rejection) so
+    # the caller knows either param unblocks the request.
+    if not template:
+        raise HTTPException(
+            400,
+            "Either 'template' or 'preview_job_id' is required. "
+            f"Expected template ∈ {sorted(_STUBS.keys())}.",
+        )
     if template not in _STUBS:
         raise HTTPException(
             400,
