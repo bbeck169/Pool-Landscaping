@@ -26020,3 +26020,109 @@ will surface in pytest instead of in prod.
   handoff will land as a follow-up.
 
 
+
+
+## Task N · Phase N — Notes Archive (round 1, archive-only) (Feb-2026)
+
+Scoped down from the original wide Task N brief.  This round ships
+**archive only** — notifications, primary-contact plumbing, and
+CustomerDetail Notes History are DEFERRED to a follow-up.
+
+### 1. What shipped
+
+- **Backend endpoint** `GET /api/service-reports/archive` (admin-gated,
+  tenant-scoped).  Returns submitted SRs with any of `notes`,
+  `internal_notes`, `customer_notes` populated, joined with
+  jobs.customer + users.tech for display.
+- **Filters:** customer_search (case-insensitive, `re.escape`'d),
+  tech_id, date range (YYYY-MM-DD, UTC-day-inclusive), industry
+  (Pool / Landscaping / Service via template map).  Server-side
+  pagination, cap 100 (400 above).
+- **Partial index** `service_reports_archive_idx` on
+  `(tenant_id: 1, submitted_at: -1)` with a partial filter on
+  submitted rows + note-existence.  Startup hook gated behind
+  `_RUN_STARTUP_INDEXES` (ops-parity).
+- **Frontend page** `/admin/comms/notes-archive` reusing the Task E
+  `NavyFilterBar` compound API.  Columns: Date, Customer, Tech Name,
+  Industry, Note Content.  Note Content is 3 stacked labeled paragraphs
+  with per-field 140-char truncation + `See more` / `See less`
+  expander (Q1 option c).
+- **Nav** — "Notes Archive" appended to the Communications admin
+  group (position 6, after Sends History).  `<AdminOnly>` guard.
+
+### 2. Template → industry mapping (locked)
+
+Derived from Phase N.1 DB audit (73 SRs, 4 distinct template values):
+
+| DB `template` | Industry label |
+|---|---|
+| `"pool"` | Pool |
+| `"landscape"` | Landscaping |
+| `"generic"` | Service |
+| `null` / missing | Service (fallback — currently only test rows) |
+
+### 3. Add-A · Index-usage assertion
+
+`test_archive_uses_partial_index` explains the archive's initial
+`$match` + `$sort` pipeline stages via `db.command('explain',
+verbosity='executionStats')` and asserts the winning plan references
+`service_reports_archive_idx` OR emits an `IXSCAN` stage.  Guards
+against COLLSCAN regressions from future query-shape drift.  Marked
+`@pytest.mark.integration`; runs against real Mongo (mongomock-safe
+via `OperationFailure → pytest.skip`).
+
+### 4. Add-B · Expander testid contract
+
+Per-field data-testid convention for row `sr_id` and field
+`{notes|internal_notes|customer_notes}`:
+
+- `notes-archive-row-{sr_id}-{field}-preview` — truncated preview.
+- `notes-archive-row-{sr_id}-{field}-full` — full text (post-expand).
+- `notes-archive-row-{sr_id}-{field}-toggle` — See more / See less.
+
+Vitest `NotesArchive · Add-B expander contract` locks the
+preview→full toggle→collapse cycle.
+
+### 5. Test coverage
+
+- Backend (`test_task_n_notes_archive.py`): **11/11** green — happy
+  path, customer-search, tech-id filter, date-range, industry filter,
+  non-admin 403, cross-tenant leak-proof (decoy tenant SR MUST NOT
+  surface), pagination boundary, page_size_too_large 400,
+  invalid_date_format 400, index-usage assertion.
+- Frontend (`notes-archive-page.test.jsx`): **12/12** green — loading
+  state, filter testid wire, empty state, error banner, row
+  rendering, expander preview/full/collapse, short-note no-toggle,
+  empty-field omission, search propagation, industry propagation,
+  next-button propagation, page_size propagation.
+
+### 6. Commit ledger
+
+| # | SHA | Message |
+|---|---|---|
+| 1 | `dbfe723fa` | `feat(service-reports): GET /api/service-reports/archive admin endpoint` |
+| 2 | `1d8ea7ed2` | `feat(comms): NotesArchive page with NavyFilterBar + server-side pagination` |
+| 3 | `d8f943dcc` | `feat(nav): add Notes Archive under Communications` |
+| 4 | *(this commit)* | `docs(prd): Task N Phase N — Notes Archive (round 1)` |
+
+### 7. Deferred to follow-up rounds
+
+- **N-notifications** — email + SMS to tenant primary contact on
+  `internal_notes` / `customer_notes` empty→populated transition + on
+  SR submit.  Blocked on the primary-contact-field decision (Phase
+  N.1 halt B, options 1–4 unresolved).
+- **N-customer-history** — CustomerDetail Notes History list.
+  Requires the CustomerDetail static-notes-field decision (Phase N.1
+  halt E, options a/b unresolved).
+- **N-perf** — long-running batch archive export.  Not required at
+  current envelope (13 note-bearing SRs across all tenants).
+
+### 8. Follow-up hardening (nice-to-have)
+
+- Extend the archive filter surface with a "note kind" chip
+  (notes / internal / customer) so ops can slice by field.
+- Client-side highlight of `customer_search` matches in the customer
+  cell + note cell (React highlight-words style).
+- Export-to-CSV button once the row count exceeds ~500 for any
+  tenant.
+
