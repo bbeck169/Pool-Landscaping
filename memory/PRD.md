@@ -25355,3 +25355,306 @@ insertions(+), 96 deletions(-)`.
 Task M+P is closed.
 
 
+
+## Task H0 — Historical Invoice Date Backfill (Foundation for Task H PDF Importer) (Feb-2026)
+
+### 1. Overview
+
+**Original ask.** Let admins backfill historical quotes/invoices
+with a user-supplied `created_at`, and record historical payments
+with a user-supplied `paid_at`. Today these are always server-
+stamped `datetime.now(timezone.utc)`, which breaks the Task H
+(PDF Invoice Importer) ability to preserve original invoice dates
+during bulk ingestion.
+
+**Consolidated scope.** Backend contract (Commits 1+2) + admin-
+only frontend UX (Commit 3). Task H0 is the *foundation*; the PDF
+importer, AI vision extraction, and import UI are Task H (separate
+task, out of scope here).
+
+**In-scope endpoints.**
+- `POST /quotes` — `QuoteIn.created_at: Optional[datetime]`
+- `POST /quotes/{qid}/record-payment` — `RecordPaymentIn.paid_at: Optional[datetime]`
+
+**Explicitly out-of-scope (documented but NOT touched).**
+- `POST /quotes/{qid}/pay` (offline full-pay shortcut at
+  `quotes.py:1761`) — endpoint takes no body; spec targeted
+  `record-payment` only.
+- `_duplicate_quote_doc` at `quotes.py:1010` — convenience
+  template path, not an import path.
+- `convert-to-job` at `quotes.py:1417` — stamps `created_at` on
+  a JOB doc, unrelated.
+- Internal automation stampers (`credits_apply`, `auto_invoice`,
+  `lumino_reconciler`, `lumino_zapier_dispatcher`) — no user
+  input, no override surface.
+
+### 2. Grep tables
+
+**Grep 1 · `QuoteIn` model shape.** `backend/models.py:374` —
+Pydantic V2, 12 fields pre-Task-H0. No `created_at` field. Task
+H0 adds it as field 13.
+
+**Grep 2 · `RecordPaymentIn` route.** `POST /quotes/{qid}/record-
+payment` at `routers/quotes.py:1689`. Bare model (`amount: float`).
+Task H0 adds `paid_at`. Stamp site at line 1708 (fully-paid
+branch only — partial payments do NOT stamp `paid_at`, so an
+override on partial silently defers).
+
+**Grep 3 · `created_at` server-stamps.** Three sites in
+`quotes.py`; only line 413 (`POST /quotes`) is in-scope. Lines
+1010 (`_duplicate_quote_doc`) and 1417 (`convert-to-job` on a
+job doc) are out of scope.
+
+**Grep 4 · `paid_at` server-stamps.** Two admin-facing sites in
+`quotes.py`: line 1708 (`record_payment` fully-paid branch, in
+scope) and line 1761 (`/quotes/{qid}/pay`, out of scope per
+spec). Read paths in `referral_watcher`, `finance/ebit`, and
+`reporting/paid_date` consume the field back — untouched.
+
+**Grep 5 · Frontend submit sites.** Two:
+- `QuoteInvoiceNew.jsx:159` — `api.post("/quotes", payload)`.
+  Pre-Task-H0 did NOT import `useAuth`; Task H0 adds the import.
+- `QuoteInvoiceDetail.jsx:1698` — `RecordPaymentModal.submit`
+  calls `api.post('/quotes/{id}/record-payment', {amount})`.
+  Parent `QuoteInvoiceDetail` already imports `useAuth` and
+  reads `user` at line 146; Task H0 prop-drills that `user`
+  down into the modal.
+
+**Grep 6 · Role gating on target endpoints.** Both endpoints use
+`require_admin` at `utils.py:184`, which admits `{admin,
+super_admin, owner}`. Task H0 override allowlist adopts the same
+set verbatim (halt-report resolution 1).
+
+**Grep 7 · Mongo shape check.** Sampled 2 real docs. Field names
+are canonical snake_case ISO strings: `created_at` +
+`paid_at`. No camelCase or `date_created` variants.
+
+### 3. Contract
+
+**Pydantic V2 additions:**
+
+```python
+class QuoteIn(BaseModel):
+    # ... existing 12 fields ...
+    created_at: Optional[datetime] = None   # Task H0
+
+class RecordPaymentIn(BaseModel):
+    amount: float
+    paid_at: Optional[datetime] = None      # Task H0
+```
+
+**Shared helper** at `backend/services/quotes/date_override.py`:
+
+```python
+def resolve_date_override(
+    override: Optional[datetime], *,
+    user: dict, tenant_id: str,
+    field_name: str, entity_kind: str, entity_id: str,
+    log_level: str = "warn",
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Returns (effective_iso, override_by_user_id, override_at_iso)."""
+```
+
+Framework-agnostic — Task H (PDF importer) will call this
+directly from its ingest pipeline. The only FastAPI coupling is
+`HTTPException` for the 400 validation cases, which Task H can
+catch + rewrap.
+
+**Audit fields on the persisted doc** (only when the override
+was applied — never on the `now()` fallback path):
+
+- `created_at_override_by` — actor user id (string)
+- `created_at_override_at` — actor timestamp at resolution time
+  (`now_iso()`), NOT the override target value
+- `paid_at_override_by`  — same shape
+- `paid_at_override_at`  — same shape
+
+### 4. Role gate rationale
+
+The override allowlist is `{admin, super_admin, owner}` (halt-
+report resolution 1). Owner is included because:
+
+- `utils.require_admin` already admits owner past the endpoint
+  gate — a silent-drop for owners on the override would produce
+  a confusing UX where a tenant creator sees the form control
+  but their input is discarded without feedback.
+- Owner has admin-level trust everywhere else in the codebase
+  — narrowing the trust surface just for date backfill would be
+  an inconsistency.
+- The frontend and backend both use the literal 3-role list.
+  Vitest `task-h0-backfill-date-ui.test.jsx` locks the frontend
+  regex; pytest `test_task_h0_date_backfill.py` case 3 exercises
+  the helper's `is_admin_role` directly. Drift on either side
+  trips the corresponding suite.
+
+Non-admin senders (`technician`, `customer`) hit the endpoint's
+`require_admin` gate FIRST (403), so the silent-drop branch in
+`resolve_date_override` is exercised only via the direct helper
+call (pytest case 3) — it exists as a defense-in-depth guard for
+future role additions to `require_admin` that shouldn't inherit
+backfill trust.
+
+### 5. Validation rules
+
+**Future-date threshold** — `override > now + 60s` → 400
+`future_date_not_allowed`. The 60-second slack allows for clock
+skew between the caller and the server (matches the tolerance
+used by other timestamp-validating endpoints in the codebase).
+
+**Ancient-date threshold** — `override < now - 10y` → 400
+`date_too_old`. Uses `timedelta(days=365*10)` (halt-report
+resolution accepted the approximation over `dateutil.relative
+delta` — the leap-year slop is trivial next to the 10-year bar).
+
+**Naive-datetime coercion** — `dt.replace(tzinfo=timezone.utc)`
+on naive input. Deliberately does NOT infer tenant timezone
+here — that's Phase P52.1's remit. An INFO trace fires when
+the coerce path runs so a future audit can trace where naive
+datetimes leaked from.
+
+**400 error shape (structured):**
+
+```json
+{
+  "detail": {
+    "error": "future_date_not_allowed" | "date_too_old",
+    "message": "<human-readable>",
+    "field": "created_at" | "paid_at"
+  }
+}
+```
+
+### 6. Partial-payment deferral semantics
+
+`record_payment` in `routers/quotes.py:1689` only stamps
+`paid_at` when the payment closes the balance (`fully_paid=True`
+at line 1701). Sending `paid_at` on a partial payment:
+
+- Does NOT 400 (halt-report resolution 2, option (a)).
+- Does NOT emit a WARN log (would be noisy for legit partial-
+  then-close workflows).
+- DOES emit an INFO trace via
+  `services.quotes.date_override.log_paid_at_deferred`:
+  `[paid_at-override] tenant=<tid> user=<uid>
+  entity=payment:<qid> deferred_reason=partial_payment`.
+- Leaves `paid_at` entirely absent from the `$set` (matches
+  pre-Task-H0 behaviour verbatim).
+
+The applied-path INFO trace uses the same log-line prefix so a
+single `grep '\[paid_at-override\]'` surfaces both branches for
+ops debugging.
+
+### 7. PATCH-path defense
+
+`QuoteUpdate` at `models.py:401` **does not currently declare**
+`created_at` / `paid_at` / any of the four override audit
+sentinels — Pydantic V2 drops the keys silently on PUT. Belt-and-
+suspenders strip inserted at `routers/quotes.py:659` area (right
+after the existing `upd.pop("acknowledged_lock_bypass", None)`)
+pops six keys:
+
+```python
+for _h0_key in (
+    "created_at",
+    "paid_at",
+    "created_at_override_by",
+    "created_at_override_at",
+    "paid_at_override_by",
+    "paid_at_override_at",
+):
+    upd.pop(_h0_key, None)
+```
+
+The strip protects against a future `QuoteUpdate` schema drift
+that adds one of these keys — the create-only override path is
+the sole authoritative writer of historical dates, and mutating
+either the value or the audit sentinel via PATCH would break
+the "imported vs real-time" distinction Task H relies on.
+
+Pytest case 7 (`test_patch_defense_created_at_stripped`)
+regression-guards the strip by sending all six keys in the PUT
+body and asserting the stored doc is unchanged; the control
+assertion on `title` proves the PATCH itself went through and
+only the H0 keys were filtered.
+
+### 8. `services/quotes/date_override.py` reusability by Task H
+
+The helper is intentionally framework-agnostic so the Task H
+PDF importer can call it directly from its ingest pipeline (no
+HTTP round-trip). Consumer contract:
+
+```python
+from services.quotes.date_override import (
+    resolve_date_override,
+    is_admin_role,
+)
+
+# Inside the Task H importer:
+effective_iso, override_by, override_at = resolve_date_override(
+    pdf_extracted_created_at,      # datetime | None
+    user=importing_user,            # role must be in {admin, super_admin, owner}
+    tenant_id=tenant_id,
+    field_name="created_at",
+    entity_kind="invoice",
+    entity_id=synthetic_invoice_id,
+    log_level="warn",
+)
+doc["created_at"] = effective_iso
+if override_by is not None:
+    doc["created_at_override_by"] = override_by
+    doc["created_at_override_at"] = override_at
+```
+
+Same shape both routers use in Commits 1 + 2, so the on-disk
+document is bit-for-bit identical whether the invoice landed via
+`POST /quotes` or the future Task H ingest pipeline.
+
+### 9. Commit series + verification
+
+| # | SHA | Message | Delta |
+|---|---|---|---|
+| 1 | `544756c58` | `feat(quotes): optional admin-only created_at override on quote/invoice create` | `+602 −1` across `services/quotes/date_override.py` (new), `models.py`, `routers/quotes.py`, `tests/test_task_h0_date_backfill.py` (new · 7 tests) |
+| 2 | `8eebb2453` | `feat(payments): optional admin-only paid_at override on record-payment` | `+153 −6` across `models.py`, `routers/quotes.py`, `tests/test_task_h0_date_backfill.py` (+3 tests → 10 total) |
+| 3 | `4eac6d982` | `feat(ui): admin-only backfill-date input in QuoteInvoiceNew + RecordPaymentModal` | `+396 −3` across `pages/quotes/QuoteInvoiceNew.jsx`, `pages/quotes/QuoteInvoiceDetail.jsx`, `test/task-h0-backfill-date-ui.test.jsx` (new · 13 tests) |
+
+**Baseline diff shortstat (Commits 1-3):** `7 files changed,
+1151 insertions(+), 10 deletions(-)`. Tests: 10 backend pytest
++ 13 frontend vitest = 23 new, all passing.
+
+**Curl smoke verification (Step 5, preview environment):**
+
+1. **SMOKE 1 · admin backfill** — POST `/quotes` with
+   `created_at="2024-03-10T12:00:00+00:00"` → stored doc has
+   `created_at="2024-03-10T12:00:00+00:00"` verbatim +
+   `created_at_override_by=<admin-user-id>` +
+   `created_at_override_at=<now>`.
+2. **SMOKE 2 · tech override** — POST `/quotes` as
+   `mike@aquaterra.com` → 403 `Admin access required` at the
+   endpoint gate (silent-drop path is only reachable by owner
+   role in the current codebase, which is allowlisted; the drop
+   is a defense-in-depth guard against future role additions).
+3. **SMOKE 3 · PATCH-defense** — PUT `/quotes/{qid}` with
+   `created_at="1999-12-31..."` + `paid_at` + all four override
+   sentinels → 200 · title updated · every historical-date
+   field on the doc unchanged (`created_at` still
+   `2024-03-10T12:00:00+00:00`).
+
+### 10. Open follow-ups
+
+- **`POST /quotes/{qid}/pay`** — the offline full-pay shortcut
+  currently takes no body. If a future task wants a `paid_at`
+  override there too, extend that route with a body model +
+  reuse `resolve_date_override`. Out of scope for Task H0.
+- **`_duplicate_quote_doc`** — if a future workstream wants to
+  preserve the original `created_at` when duplicating an
+  imported invoice as a template, this is the site.
+- **Task H (PDF Invoice Importer)** — the next task in the
+  series. Ingests PDFs, extracts dates via AI vision, and calls
+  `resolve_date_override` directly on the extracted values. The
+  shared helper is the entire H0 → H foundation.
+- **`created_at_override_at` semantics** — the audit timestamp
+  is the actor's clock at override resolution time (`now_iso()`),
+  NOT the override target value. A future ops report may want a
+  "backfill-events-per-week" aggregation keyed on this field.
+
+
