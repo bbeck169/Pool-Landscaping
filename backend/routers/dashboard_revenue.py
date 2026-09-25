@@ -28,6 +28,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
 from routers.tenants import get_current_tenant
+from services.reports.service_category_bucketing import (
+    bucket_service_category,
+)
 from utils import get_current_user
 
 router = APIRouter()
@@ -398,24 +401,18 @@ async def income_by_service_category(
         # relative to the top-card lifetime number.
         recognised_amount = 0.0
         for li in (inv.get("line_items") or []):
-            # P53 tail (Feb-2026) — resolution PRECEDENCE:
-            # 1. line-item's own ``service_category_id`` (user
-            #    explicitly recategorized this line), overrides all
-            # 2. pricebook item's ``service_category_id`` (default
-            #    inherited from the item_id lookup)
-            # 3. ``"Uncategorized"`` fallback
-            # Pre-P53 the tile ONLY read the pricebook item, so a
-            # recategorized line still bucketed under the item's
-            # original category. Report showed "Uncategorized" for
-            # lines the user had explicitly moved elsewhere.
-            line_svc_id = li.get("service_category_id")
-            if line_svc_id:
-                svc_id = line_svc_id
-            else:
-                iid = li.get("item_id")
-                svc_id = item_to_svc.get(iid) if iid else None
-            svc_name = svc_id_to_name.get(svc_id) if svc_id else None
-            bucket_key = svc_name or "Uncategorized"
+            # Feb-2026 · Income-by-service drill-down parity —
+            # canonical bucketing lives in
+            # ``services.reports.service_category_bucketing``
+            # and is shared with the drill-down route.
+            # Resolution precedence (unchanged):
+            #   1. line.service_category_id
+            #   2. pricebook item.service_category_id
+            #   3. Uncategorized (empty / stale)
+            _bucket_id, svc_name = bucket_service_category(
+                li, item_to_svc, svc_id_to_name,
+            )
+            bucket_key = svc_name
             amt = (float(li.get("quantity") or 0)
                     * float(li.get("unit_price") or 0))
             recognised_amount += amt
