@@ -61,7 +61,11 @@ describe("AdminTopBar cleanup — cluster ordering across all 3 wrap branches", 
       expect(branchIdx).toBeGreaterThan(-1);
       const slice = TOPBAR.slice(branchIdx, branchIdx + 2500);
       const settingsIdx = slice.indexOf("<SettingsSprocket />");
-      const bellIdx     = slice.search(/<NotificationBell\s+variant="inline"\s*\/>/);
+      // Feb-2026 · AdminTopBar bell cleanup — NotificationBell now
+      // carries an optional ``tone="navy"`` prop (glyph flips to
+      // ``colors.nav.fg`` on the navy strip). Relax the regex to
+      // accept the prop while still locking ``variant="inline"``.
+      const bellIdx     = slice.search(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/);
       const signOutIdx  = slice.indexOf("<SignOutButton />");
       expect(settingsIdx).toBeGreaterThan(-1);
       expect(bellIdx).toBeGreaterThan(-1);

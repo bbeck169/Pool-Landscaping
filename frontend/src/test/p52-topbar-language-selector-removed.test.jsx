@@ -68,6 +68,8 @@ describe("P52 · AdminTopBar · LanguageSelector removed", () => {
     // this assertion tracks the new neighbour.
     expect(ATB_SRC).toMatch(/<SettingsSprocket\s*\/>/);
     expect(ATB_SRC).toMatch(/<SignOutButton\s*\/>/);
-    expect(ATB_SRC).toMatch(/<NotificationBell\s+variant="inline"\s*\/>/);
+    // Feb-2026 · AdminTopBar bell cleanup — regex accepts the
+    // optional ``tone="navy"`` prop.
+    expect(ATB_SRC).toMatch(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/);
   });
 });

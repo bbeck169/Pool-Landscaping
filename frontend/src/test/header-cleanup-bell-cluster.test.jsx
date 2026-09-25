@@ -39,7 +39,9 @@ describe("Header cleanup — AdminTopBar direct NotificationBell", () => {
     expect(TOPBAR).toMatch(/from "@\/components\/NotificationBell"/);
     // Three branches — tech, narrow, wide — each ends with the
     // inline NotificationBell as its bell surface.
-    const matches = TOPBAR.match(/<NotificationBell\s+variant="inline"\s*\/>/g) || [];
+    // Feb-2026 · AdminTopBar bell cleanup — regex relaxed to accept
+    // the optional ``tone="navy"`` prop; the count-lock at 3 stays.
+    const matches = TOPBAR.match(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/g) || [];
     expect(matches.length).toBe(3);
   });
 
@@ -63,7 +65,7 @@ describe("Header cleanup — AdminTopBar direct NotificationBell", () => {
       expect(branchIdx).toBeGreaterThan(-1);
       const slice = TOPBAR.slice(branchIdx, branchIdx + 2500);
       const settingsIdx = slice.indexOf("<SettingsSprocket />");
-      const bellIdx     = slice.search(/<NotificationBell\s+variant="inline"\s*\/>/);
+      const bellIdx     = slice.search(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/);
       const signOutIdx  = slice.indexOf("<SignOutButton />");
       expect(settingsIdx).toBeGreaterThan(-1);
       expect(bellIdx).toBeGreaterThan(-1);

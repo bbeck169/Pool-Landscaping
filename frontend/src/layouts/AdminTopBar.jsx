@@ -457,7 +457,10 @@ export default function AdminTopBar() {
           data-testid="admin-topbar-tech-wrap"
         >
           <SettingsSprocket />
-          <NotificationBell variant="inline" />
+          {/* Feb-2026 · AdminTopBar bell cleanup — NotificationBell
+              glyph flips to ``colors.nav.fg`` via ``tone="navy"`` so
+              it reads on the navy strip. Red unread badge unchanged. */}
+          <NotificationBell variant="inline" tone="navy" />
           <SignOutButton />
         </div>
       ) : (
@@ -500,14 +503,22 @@ export default function AdminTopBar() {
                   ``hooks/usePermissions.jsx``) so it's a no-op
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
-              {/* Feb-2026 · AdminTopBar cleanup — cluster ends with
-                  Settings → NotificationBell → SignOut. AdminBellSlot
-                  (Proactive Intelligence alert) stays where it was,
-                  before Settings, since it surfaces a distinct
-                  signal type from NotificationBell. */}
-              <AdminBellSlot />
+              {/* Feb-2026 · AdminTopBar bell cleanup — the parallel
+                  ``AdminBellSlot`` (Proactive Intelligence AlertBell)
+                  was pulled from the right cluster. The single
+                  remaining bell surface is ``NotificationBell``
+                  (below), which now flips its glyph to
+                  ``colors.nav.fg`` via ``tone="navy"`` so it reads
+                  on the navy strip. The red unread-count badge on
+                  ``NotificationBell`` is unchanged — it keeps its
+                  ``#DC2626`` / ``#FFFFFF`` styling regardless of
+                  tone.  AlertBell / AdminBellSlot definitions
+                  remain in this file (unused-but-preserved) so
+                  a follow-up commit can re-mount them cleanly if
+                  we ever bring back the Proactive Intelligence
+                  surface. */}
               <SettingsSprocket />
-              <NotificationBell variant="inline" />
+              <NotificationBell variant="inline" tone="navy" />
               <SignOutButton />
             </div>
           </div>
@@ -528,14 +539,14 @@ export default function AdminTopBar() {
                   Auto-hidden when the user has <2 memberships,
                   so single-tenant users never see this control. */}
               <TenantSwitcher />
-              {/* Feb-2026 · AdminTopBar cleanup — cluster ends with
-                  Settings → NotificationBell → SignOut. AdminBellSlot
-                  (Proactive Intelligence alert) stays where it was,
-                  before Settings, since it surfaces a distinct
-                  signal type from NotificationBell. */}
-              <AdminBellSlot />
+              {/* Feb-2026 · AdminTopBar bell cleanup — see narrow
+                  branch above for the full rationale. Mirror the
+                  same cleanup on the wide branch: ``AdminBellSlot``
+                  mount dropped, ``NotificationBell`` gains
+                  ``tone="navy"`` so its glyph reads white on the
+                  navy strip. Red unread badge unchanged. */}
               <SettingsSprocket />
-              <NotificationBell variant="inline" />
+              <NotificationBell variant="inline" tone="navy" />
               <SignOutButton />
             </div>
           </div>

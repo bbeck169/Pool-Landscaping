@@ -289,7 +289,9 @@ describe("K76 · AdminTopBar · DOM shell contract", () => {
       const idx = TOPBAR_SRC.indexOf(`data-testid="${testid}"`);
       expect(idx).toBeGreaterThan(-1);
       const slice = TOPBAR_SRC.slice(idx, idx + 3000);
-      const bellIdx = slice.search(/<NotificationBell\s+variant="inline"\s*\/>/);
+      // Feb-2026 · AdminTopBar bell cleanup — regex relaxed to accept
+      // the optional ``tone="navy"`` prop added in the cleanup.
+      const bellIdx = slice.search(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/);
       const signOutIdx = slice.indexOf("<SignOutButton />");
       expect(bellIdx).toBeGreaterThan(-1);
       expect(signOutIdx).toBeGreaterThan(-1);
@@ -301,7 +303,9 @@ describe("K76 · AdminTopBar · DOM shell contract", () => {
     // Feb-2026 · AdminTopBar cleanup — the inline UniversalMenu
     // that used to end every branch was replaced by a standalone
     // NotificationBell.  Count-lock stays at 3 (one per wrap).
-    const matches = TOPBAR_SRC.match(/<NotificationBell\s+variant="inline"\s*\/>/g) || [];
+    // Bell cleanup added an optional ``tone="navy"`` prop — regex
+    // relaxed to still count all three mounts.
+    const matches = TOPBAR_SRC.match(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/g) || [];
     expect(matches.length).toBe(3);
   });
 

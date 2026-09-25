@@ -47,8 +47,18 @@ function relTime(iso) {
  * variant: "inline"  → renders as an inline button (AdminTopBar).
  *          "floating" → fixed top-3 right-14 (sits to the LEFT of the
  *                       hamburger which is at right-3).
+ *
+ * tone:    "surface" (default) → Bell glyph uses ``colors.onSurface``.
+ *                                 Correct on white/surface backdrops
+ *                                 (customer portal header, floating
+ *                                 top-right pill on light surfaces).
+ *          "navy"    → Bell glyph flips to ``colors.nav.fg`` so it
+ *                       reads on the navy AdminTopBar right cluster.
+ *                       Red unread badge is unaffected — it keeps its
+ *                       ``#DC2626`` / ``#FFFFFF`` styling regardless
+ *                       of tone.
  */
-export default function NotificationBell({ variant = "inline" }) {
+export default function NotificationBell({ variant = "inline", tone = "surface" }) {
   const [count, setCount] = useState(0);
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
@@ -118,7 +128,10 @@ export default function NotificationBell({ variant = "inline" }) {
         aria-label="Notifications"
         title="Team & job notifications"
       >
-        <Bell size={variant === "floating" ? 18 : 16} style={{ color: colors.onSurface }} />
+        <Bell
+          size={variant === "floating" ? 18 : 16}
+          style={{ color: tone === "navy" ? colors.nav.fg : colors.onSurface }}
+        />
         {count > 0 ? (
           <span
             className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center"
