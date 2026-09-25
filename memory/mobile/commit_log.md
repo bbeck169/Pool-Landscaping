@@ -2559,3 +2559,15 @@
 - **Verified**: App compiles + renders job detail with photo section showing "PHOTOS 0/10" for jobs with no photos. Metro bundle clean. No console errors.
 - **Note**: `business.tsx` still has local `toAbsolute()` — dedup to shared helper is a low-priority follow-up (not breaking).
 
+
+## Iteration — Flexbox Header: Dock hamburger inline, remove absolute positioning
+- **Commit**: 9eaef39a48ef6edff2a619696b8f31812c8c509c
+- **Date**: 2026-09-25
+- **Changes**:
+  - `GlobalMenu.tsx`: Exported module-level `openGlobalMenu()` function via setter pattern; removed the `<Pressable>` trigger overlay (was `position: "absolute"` + `zIndex: 1000`); removed `styles.trigger` StyleSheet entry
+  - `widgets.tsx`: Added `HamburgerButton` component inline in the `Header` right cluster; imported `openGlobalMenu` from GlobalMenu; added `headerLeftCluster`, `headerRightCluster` (with `flexShrink: 1, flexWrap: 'wrap', maxWidth: '60%'`), and `hamburgerBtn` styles
+  - No `paddingRight: 52` hack existed in current codebase — confirmed via grep (may have been removed in a prior iteration or never committed)
+- **Files modified**: `src/components/tools/GlobalMenu.tsx`, `src/components/widgets.tsx`
+- **Verified at**: 390px (iPhone), 360px (narrow Android), 768px (tablet) — header renders cleanly at all widths. Hamburger opens GlobalMenu sheet correctly. Schedule screen also verified.
+- **No regressions**: All existing header behavior (back button, brand logo, settings sprocket, notification bell, breadcrumbs) preserved.
+
