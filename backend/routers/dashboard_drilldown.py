@@ -126,17 +126,29 @@ def _make_next_cursor(offset: int, limit: int, total: int) -> Optional[str]:
 # In-memory cache (mirrors data_repair._dry_run_cache TTL).
 # ═════════════════════════════════════════════════════════════════════
 _DANGLING_CACHE_TTL_S = 60.0
-_dangling_cache: Dict[str, Any] = {"expires_at": 0.0, "payload": None}
+# Feb-2026 · P0 fix — cache keyed by ``tenant_id`` so:
+#   1. ``_scan_dangling_refs`` (now tenant-scoped after Phase R1)
+#      never leaks tenant A's rows into tenant B's response, even
+#      when tenant B's warm-cache lookup fires within 60s of A's
+#      first miss.
+#   2. Existing 60s TTL semantics preserved per bucket.
+_dangling_cache: Dict[str, Dict[str, Any]] = {}
 
 
-async def _cached_scan_dangling() -> Dict[str, List[Dict[str, Any]]]:
+async def _cached_scan_dangling(
+    tenant_id: str,
+) -> Dict[str, List[Dict[str, Any]]]:
     now = time.monotonic()
-    payload = _dangling_cache.get("payload")
-    if payload is not None and now < _dangling_cache["expires_at"]:
-        return payload
-    fresh = await _scan_dangling_refs()
-    _dangling_cache["payload"] = fresh
-    _dangling_cache["expires_at"] = now + _DANGLING_CACHE_TTL_S
+    bucket = _dangling_cache.get(tenant_id)
+    if bucket is not None:
+        payload = bucket.get("payload")
+        if payload is not None and now < bucket.get("expires_at", 0.0):
+            return payload
+    fresh = await _scan_dangling_refs(tenant_id)
+    _dangling_cache[tenant_id] = {
+        "payload": fresh,
+        "expires_at": now + _DANGLING_CACHE_TTL_S,
+    }
     return fresh
 
 
@@ -157,12 +169,13 @@ async def data_integrity_rows(
     limit: int = Query(_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     cursor: Optional[str] = Query(None),
     user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
     _require_admin_or_super(user)
     if issue_class not in _VALID_INTEGRITY_CLASSES:
         raise HTTPException(400, "invalid_class")
 
-    scan = await _cached_scan_dangling()
+    scan = await _cached_scan_dangling(tenant["id"])
     rows_all = scan.get(issue_class) or []
     total = len(rows_all)
     offset = _parse_cursor(cursor)
