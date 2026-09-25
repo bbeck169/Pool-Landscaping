@@ -504,19 +504,58 @@ export default function AdminDashboard() {
         </p>
       </header>
 
+      {/* Feb-2026 · Dashboard reorg — Mass Messaging is the first
+          CTA on the Dashboard. Self-guards on role internally
+          (admin / super_admin only). */}
+      <MassMessagingCard />
+
       {/* Feb 2026 · Dashboard quick-find — grouped search across
           customers / jobs / invoices / leads. Reuses the shared
           /api/search endpoint (admin | super_admin | manager). */}
       <GlobalSearchBar />
 
-      {/* Phase L1.5 · Feb-2026 — action-cards row (batched
-          summary). Sits directly under the search bar so
-          operators see actionable counts before any tile
-          breakdown. Auto-collapses to nothing when the tenant
-          is empty; the Intelligence Alerts card is pinned so
-          the operator always has a deep-link into the alerts
-          surface. Manager+ only.
-          Phase P15 · Feb-2026 — remount via ``tenantSettingsVersion``
+      {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
+          date-range filter.  Both tiles refetch when the range changes.
+          Phase K5 · Feb-2026 — RevenueForecastTile was pulled OUT of
+          this section and promoted to the topline row below.  The
+          shared ``revenueRange`` state still drives the top tile so
+          the filter here controls both surfaces. */}
+      <div className="mb-6" data-testid="revenue-tiles-section">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold"
+              style={{ color: colors.onSurface }}>Revenue insights</h2>
+          <RevenueDateRangeFilter onChange={setRevenueRange} />
+        </div>
+        {uncategorized && uncategorized.count > 0 ? (
+          <button
+            onClick={() => navigate("/reports/uncategorized-items")}
+            className="w-full flex items-center gap-3 rounded-xl p-3 mb-3 transition hover:brightness-95 text-left"
+            style={{ background: "#FEF3C7", color: "#78350F",
+                      border: "1px solid #FCD34D" }}
+            data-testid="uncategorized-banner"
+          >
+            <span className="text-lg" aria-hidden="true">⚠️</span>
+            <span className="flex-1 text-sm font-semibold">
+              {/* Feb-2026 · Grammar hotfix — backlog (ii) fixed the
+                  noun pluralization but the verb ``are`` was left
+                  hardcoded; count=1 rendered "1 line item are
+                  uncategorized." Now: is/are pivots on the count
+                  too. */}
+              {uncategorized.count} line item{uncategorized.count === 1 ? "" : "s"}{" "}
+              {uncategorized.count === 1 ? "is" : "are"} uncategorized.
+            </span>
+            <span className="text-xs font-bold underline">Review →</span>
+          </button>
+        ) : null}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <RevenueByCategoryTile range={revenueRange} />
+          <IncomeByServiceCategoryTile range={revenueRange} />
+        </div>
+      </div>
+
+      {/* Feb-2026 · Dashboard reorg — action-cards row (Today's
+          Routes, AI Alerts, ...) now sits under the Revenue-insights
+          section. Manager+ only. Remounts via ``tenantSettingsVersion``
           so a tenant timezone change refetches the tz-anchored
           "today" counts immediately (no page reload). */}
       {(user?.role === "admin" || user?.role === "super_admin"
@@ -534,14 +573,11 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
-      {/* Phase K5 · Feb-2026 — Dashboard tile reorder.  Revenue
-          Forecast + EBIT are now the two topmost tiles, sitting
-          directly above the Mass Messaging card so an operator
-          landing on the dashboard sees the forward-looking money
-          numbers first.  RevenueForecast still binds to the shared
-          ``revenueRange`` state that the Revenue-insights filter
-          controls below — changing the filter still refetches the
-          top tile in place. */}
+      {/* Feb-2026 · Revenue Forecast + EBIT topline tiles. Sit below
+          the Mass Messaging card, Global Search Bar, Revenue-insights
+          section, and action-cards row per the Feb-2026 Dashboard
+          reorg. RevenueForecastTile shares ``revenueRange`` state
+          with the donut tiles above. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"
               data-testid="dashboard-topline-tiles">
         <RevenueForecastTile range={revenueRange} />
@@ -551,11 +587,6 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
-
-      {/* Phase 15 · Feb-2026 — Mass Messaging top card. Self-guards on
-          role (admin / super_admin only). Renders above the weather
-          widget so it's the first CTA an admin sees on the Dashboard. */}
-      <MassMessagingCard />
 
       {/* Phase F3 · Feb-2026 — Soshie Publishing tile. Admin+ (super_admin
           / admin / owner) since moderation queue is admin-gated. */}
@@ -612,45 +643,6 @@ export default function AdminDashboard() {
           <ChevronRight size={16} color="#C2410C" />
         </button>
       ) : null}
-
-      {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
-          date-range filter.  Both tiles refetch when the range changes.
-          Phase K5 · Feb-2026 — RevenueForecastTile was pulled OUT of
-          this section and promoted to the topline row above.  The
-          shared ``revenueRange`` state still drives the top tile so
-          the filter here controls both surfaces. */}
-      <div className="mb-6" data-testid="revenue-tiles-section">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold"
-              style={{ color: colors.onSurface }}>Revenue insights</h2>
-          <RevenueDateRangeFilter onChange={setRevenueRange} />
-        </div>
-        {uncategorized && uncategorized.count > 0 ? (
-          <button
-            onClick={() => navigate("/reports/uncategorized-items")}
-            className="w-full flex items-center gap-3 rounded-xl p-3 mb-3 transition hover:brightness-95 text-left"
-            style={{ background: "#FEF3C7", color: "#78350F",
-                      border: "1px solid #FCD34D" }}
-            data-testid="uncategorized-banner"
-          >
-            <span className="text-lg" aria-hidden="true">⚠️</span>
-            <span className="flex-1 text-sm font-semibold">
-              {/* Feb-2026 · Grammar hotfix — backlog (ii) fixed the
-                  noun pluralization but the verb ``are`` was left
-                  hardcoded; count=1 rendered "1 line item are
-                  uncategorized." Now: is/are pivots on the count
-                  too. */}
-              {uncategorized.count} line item{uncategorized.count === 1 ? "" : "s"}{" "}
-              {uncategorized.count === 1 ? "is" : "are"} uncategorized.
-            </span>
-            <span className="text-xs font-bold underline">Review →</span>
-          </button>
-        ) : null}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <RevenueByCategoryTile range={revenueRange} />
-          <IncomeByServiceCategoryTile range={revenueRange} />
-        </div>
-      </div>
 
       {/* Phase K5 · Feb-2026 — Data Integrity + Crew Productivity
           were previously stacked above the Mass Messaging card.

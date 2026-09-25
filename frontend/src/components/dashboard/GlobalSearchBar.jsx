@@ -164,7 +164,7 @@ export default function GlobalSearchBar() {
         className="flex items-center gap-2 rounded-xl px-3 py-2 transition-colors"
         style={{
           backgroundColor: colors.surface,
-          border: `1px solid ${colors.border}`,
+          border: `1px solid ${colors.inputBorder}`,
         }}
       >
         <Search size={16} color={colors.searchIcon} />
@@ -180,8 +180,8 @@ export default function GlobalSearchBar() {
           }}
           onFocus={() => { if (debounced) setOpen(true); }}
           onKeyDown={onKeyDown}
-          className="flex-1 bg-transparent outline-none text-sm"
-          style={{ color: colors.onSurface }}
+          className="flex-1 bg-transparent outline-none text-sm placeholder:text-[#1B1F5C]"
+          style={{ color: colors.nav.bg }}
           data-testid="dashboard-global-search"
           aria-label="Search customers, jobs, invoices, leads"
         />
