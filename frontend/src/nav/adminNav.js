@@ -36,14 +36,28 @@ export const ADMIN_NAV_V2 = [
     // per Phase 2 ruling E.4 (matches the ``require_admin`` gate
     // on the backend endpoints).
     //
-    // Original recon report §B mis-identified Vendor Bills as
-    // sitting in the Finance group — Vendor Bills has always
-    // lived in the Reports group.  The user ruled Option A on
+    // History note: Phase 1 recon report §B mis-identified Vendor
+    // Bills as sitting in the Finance group — Vendor Bills was
+    // historically mis-grouped inside the Reports group (opened
+    // at ``key: "reports"`` line ~294).  User ruled Option A on
     // the sidebar-placement halt: PDF Import lives here in
-    // Finance/Invoicing (the semantically correct home), and
-    // Vendor Bills gets relocated adjacent in a small follow-up
-    // commit (Commit 1.5) so the two settle side-by-side.
+    // Finance/Invoicing, and Vendor Bills was relocated to sit
+    // directly after PDF Import (see Commit 1.5 · Vendor Bills
+    // relocation, below).
     { to: "/admin/imports/pdf-invoice",  label: "PDF Import",         icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only" },
+    // Task B · Commit 1.5 · Feb-2026 — Vendor Bills relocation.
+    // Vendor Bills was historically mis-grouped inside the
+    // Reports group (opened line 294) despite being a Finance /
+    // Invoicing surface (payable-side invoices).  Relocated
+    // here so operators find the receivable side (Invoices /
+    // Master Invoices / Auto-billing) and the payable side
+    // (PDF Import → Vendor Bills) in one place.  Row properties
+    // (to / icon / label) preserved verbatim; ``feature`` flips
+    // from ``reports`` to ``invoices`` to match the subsection
+    // and match the surrounding invoicing rows.  Sits directly
+    // after PDF Import — the two are a matched pair (import
+    // action → resulting list).
+    { to: "/admin/finance/bills",        label: "Vendor Bills",       icon: Receipt,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/late-fees",        label: "Late Fees",          icon: DollarSign, feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/billing",          label: "Billing Rules",      icon: Cog,        feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/payment-handles",  label: "Payment Handles",    icon: CreditCard, feature: "settings",  subsection: "Invoicing" },
@@ -367,7 +381,10 @@ export const ADMIN_NAV_V2 = [
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
-    { to: "/admin/finance/bills",          label: "Vendor Bills", icon: Receipt, feature: "reports" },
+    // ``Vendor Bills`` (was here) relocated to Finance/Invoicing
+    // in Commit 1.5 · Feb-2026 — see adminNav.js top of file for
+    // rationale (payable-side invoice surface belongs in
+    // Finance, not Reports).
     // Phase LZ4 (Feb 2026) — "Stripe Payments" nav entry removed
     // now that Stripe SDK is retired. Payment link generation
     // happens transparently via Lumino/Zapier; there is no

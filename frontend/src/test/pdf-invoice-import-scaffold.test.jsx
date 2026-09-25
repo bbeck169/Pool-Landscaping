@@ -21,9 +21,13 @@
  *
  *   * ``App.js`` registers ``admin/imports/pdf-invoice`` under
  *     ``<AdminOnly>`` (matches the backend ``require_admin`` gate).
- *   * ``adminNav.js`` inserts the entry inside the Finance group
- *     immediately after ``/admin/finance/bills`` (Vendor Bills),
- *     with ``hard_rule: "admin_only"`` per Phase 2 ruling E.4.
+ *   * ``adminNav.js`` inserts the entry inside the Finance/
+ *     Invoicing subsection, between ``Autobilling runs`` and
+ *     ``Late Fees``, with ``hard_rule: "admin_only"`` per
+ *     Phase 2 ruling E.4.  Vendor Bills sits directly after
+ *     PDF Import in the same subsection (relocated from the
+ *     Reports group in Commit 1.5) so the invoice-import
+ *     action and the resulting bill list are adjacent.
  */
 import React from "react";
 import { readFileSync } from "node:fs";
@@ -128,8 +132,9 @@ describe("Task B · Commit 1 route + sidebar wiring (source-inspect)", () => {
     // Sidebar-placement halt ruling (Option A) — the entry lives
     // in Finance/Invoicing (semantically correct — invoice-
     // producing action).  The recon report §B misread Vendor
-    // Bills as Finance-grouped when it actually lived in Reports;
-    // Vendor Bills gets relocated adjacent in a follow-up commit.
+    // Bills as Finance-grouped when it actually lived in Reports.
+    // Commit 1.5 relocated Vendor Bills to Finance/Invoicing so
+    // it sits directly after PDF Import.
     //
     // Ordering lock — Autobilling runs sits before PDF Import,
     // and PDF Import sits before Late Fees (all three are in
