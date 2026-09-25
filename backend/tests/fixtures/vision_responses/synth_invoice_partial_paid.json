@@ -1,0 +1,20 @@
+{
+  "_note": "Synthetic — partial-paid invoice for H.2 pending_payment_actions coverage.",
+  "extract_1_1": {
+    "doc_kind": "invoice",
+    "source_page_range": [1, 1],
+    "customer_name": "Synthetic Customer Partial",
+    "customer_address": "2 Synth Way, Testville AZ 00099",
+    "doc_number": "S-PARTIAL-002",
+    "doc_date": "2025-06-02",
+    "paid_at": "2025-06-05",
+    "payment_method": "Check",
+    "payment_reference": "chk-9012",
+    "line_items": [
+      {"description": "Deluxe service", "cost_rate": 300.0, "qty": 1.0, "line_total": 300.0, "confidence": 0.99}
+    ],
+    "subtotal": 300.0, "tax_total": 0.0, "grand_total": 300.0,
+    "amount_paid": 100.0, "total_due": 200.0,
+    "extraction_confidence": 0.99
+  }
+}

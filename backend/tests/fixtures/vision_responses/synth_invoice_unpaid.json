@@ -1,0 +1,17 @@
+{
+  "_note": "Synthetic — untaxed unpaid invoice.",
+  "extract_1_1": {
+    "doc_kind": "invoice",
+    "source_page_range": [1, 1],
+    "customer_name": "Synthetic Customer Unpaid",
+    "customer_address": "1 Synth Way, Testville AZ 00099",
+    "doc_number": "S-UNPAID-001",
+    "doc_date": "2025-06-01",
+    "line_items": [
+      {"description": "Standard cleaning", "cost_rate": 155.0, "qty": 1.0, "line_total": 155.0, "confidence": 0.99}
+    ],
+    "subtotal": 155.0, "tax_total": 0.0, "grand_total": 155.0,
+    "amount_paid": null, "total_due": 155.0,
+    "extraction_confidence": 0.99
+  }
+}

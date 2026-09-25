@@ -1,0 +1,33 @@
+{
+  "segmentation": {
+    "segments": [
+      {"page_start": 1, "page_end": 2, "doc_kind_hint": "invoice"}
+    ],
+    "confidence": 0.95
+  },
+  "extract_1_2": {
+    "doc_kind": "invoice",
+    "source_page_range": [1, 2],
+    "customer_name": "Test Customer A",
+    "customer_address": "123 Test Ln A, Testville AZ 00001",
+    "doc_number": "10774",
+    "doc_date": "2026-08-28",
+    "due_date": null,
+    "paid_at": null,
+    "payment_method": null,
+    "payment_reference": null,
+    "line_items": [
+      {"description": "Full Weekly Pool Service", "cost_rate": 164.0, "qty": 1.0, "tax_pct": 0.0, "line_total": 164.0, "confidence": 0.96},
+      {"description": "Chlorine tablets bucket", "cost_rate": 45.0, "qty": 1.0, "tax_pct": 0.0, "line_total": 45.0, "confidence": 0.93},
+      {"description": "Filter cartridge replacement", "cost_rate": 89.0, "qty": 1.0, "tax_pct": 0.0, "line_total": 89.0, "confidence": 0.95}
+    ],
+    "subtotal": 298.0,
+    "tax_total": 0.0,
+    "grand_total": 298.0,
+    "amount_paid": null,
+    "total_due": 298.0,
+    "notes": null,
+    "raw_operator_audit_line": null,
+    "extraction_confidence": 0.94
+  }
+}

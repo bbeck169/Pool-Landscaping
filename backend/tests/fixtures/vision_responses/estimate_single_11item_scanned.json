@@ -1,0 +1,42 @@
+{
+  "segmentation": {
+    "segments": [
+      {"page_start": 1, "page_end": 2, "doc_kind_hint": "estimate"}
+    ],
+    "confidence": 0.95
+  },
+  "extract_1_2": {
+    "doc_kind": "estimate",
+    "source_page_range": [1, 2],
+    "customer_name": "Test Customer B",
+    "customer_address": "123 Test Ln B, Peoria AZ 85383",
+    "doc_number": "1741",
+    "doc_date": "2025-04-15",
+    "due_date": null,
+    "paid_at": null,
+    "payment_method": null,
+    "payment_reference": null,
+    "line_items": [
+      {"description": "Pool remodel — plaster refinish", "cost_rate": 7500.0, "qty": 1.0, "line_total": 7500.0, "confidence": 0.94},
+      {"description": "Tile replacement (waterline)", "cost_rate": 2200.0, "qty": 1.0, "line_total": 2200.0, "confidence": 0.94},
+      {"description": "Pool light LED conversion", "cost_rate": 480.0, "qty": 2.0, "line_total": 960.0, "confidence": 0.93},
+      {"description": "Variable-speed pump upgrade", "cost_rate": 1650.0, "qty": 1.0, "line_total": 1650.0, "confidence": 0.94},
+      {"description": "Salt cell replacement", "cost_rate": 895.0, "qty": 1.0, "line_total": 895.0, "confidence": 0.94},
+      {"description": "Coping stone repair", "cost_rate": 1800.0, "qty": 1.0, "line_total": 1800.0, "confidence": 0.92},
+      {"description": "Drain replacement & main plumbing", "cost_rate": 2400.0, "qty": 1.0, "line_total": 2400.0, "confidence": 0.93},
+      {"description": "Filter housing gasket set", "cost_rate": 240.0, "qty": 1.0, "line_total": 240.0, "confidence": 0.94},
+      {"description": "Landscape rework — plant refresh", "cost_rate": 1200.0, "qty": 1.0, "line_total": 1200.0, "confidence": 0.92},
+      {"description": "Pump prime + startup service", "cost_rate": 750.0, "qty": 1.0, "line_total": 750.0, "confidence": 0.95},
+      {"description": "Water chemistry balance package", "cost_rate": 320.0, "qty": 1.0, "line_total": 320.0, "confidence": 0.95},
+      {"description": "Deck sealer application", "cost_rate": 2900.0, "qty": 1.0, "line_total": 2900.0, "confidence": 0.94}
+    ],
+    "subtotal": 22815.0,
+    "tax_total": 0.0,
+    "grand_total": 22815.0,
+    "amount_paid": null,
+    "total_due": 22815.0,
+    "notes": "Estimate valid 30 days from issue.",
+    "raw_operator_audit_line": null,
+    "extraction_confidence": 0.94
+  }
+}

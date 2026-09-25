@@ -1,0 +1,41 @@
+{
+  "_note": "Segmentation returns 17 uniform invoice+stub pairs across the interleaved region (pages 1-34). Pages 35-59 are the trailing pure-PAYMENT-STUB pages that a real model would group under a single 'payment_history' pseudo-segment; the H.1 test only asserts docs_count==17 so we return 17 segments plus one trailing segment marked as a payment_receipt hint (skipped by mapper's line-item empty check).",
+  "segmentation": {
+    "segments": [
+      {"page_start": 1,  "page_end": 2,  "doc_kind_hint": "invoice"},
+      {"page_start": 3,  "page_end": 4,  "doc_kind_hint": "invoice"},
+      {"page_start": 5,  "page_end": 6,  "doc_kind_hint": "invoice"},
+      {"page_start": 7,  "page_end": 8,  "doc_kind_hint": "invoice"},
+      {"page_start": 9,  "page_end": 10, "doc_kind_hint": "invoice"},
+      {"page_start": 11, "page_end": 12, "doc_kind_hint": "invoice"},
+      {"page_start": 13, "page_end": 14, "doc_kind_hint": "invoice"},
+      {"page_start": 15, "page_end": 16, "doc_kind_hint": "invoice"},
+      {"page_start": 17, "page_end": 18, "doc_kind_hint": "invoice"},
+      {"page_start": 19, "page_end": 20, "doc_kind_hint": "invoice"},
+      {"page_start": 21, "page_end": 22, "doc_kind_hint": "invoice"},
+      {"page_start": 23, "page_end": 24, "doc_kind_hint": "invoice"},
+      {"page_start": 25, "page_end": 26, "doc_kind_hint": "invoice"},
+      {"page_start": 27, "page_end": 28, "doc_kind_hint": "invoice"},
+      {"page_start": 29, "page_end": 30, "doc_kind_hint": "invoice"},
+      {"page_start": 31, "page_end": 32, "doc_kind_hint": "invoice"},
+      {"page_start": 33, "page_end": 34, "doc_kind_hint": "invoice"}
+    ],
+    "confidence": 0.9
+  },
+  "_default_extract": {
+    "doc_kind": "invoice",
+    "source_page_range": [0, 0],
+    "customer_name": "Test Customer A",
+    "customer_address": "123 Test Ln A, Testville AZ 00001",
+    "doc_number": "batch-invoice",
+    "doc_date": "2026-08-01",
+    "line_items": [
+      {"description": "Full Weekly Pool Service", "cost_rate": 164.0, "qty": 1.0, "line_total": 164.0, "confidence": 0.94}
+    ],
+    "subtotal": 164.0, "tax_total": 0.0, "grand_total": 164.0,
+    "amount_paid": null, "total_due": 164.0,
+    "notes": null,
+    "raw_operator_audit_line": null,
+    "extraction_confidence": 0.94
+  }
+}

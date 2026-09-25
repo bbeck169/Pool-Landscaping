@@ -1,0 +1,31 @@
+{
+  "segmentation": {
+    "segments": [
+      {"page_start": 1, "page_end": 1, "doc_kind_hint": "payment_receipt"}
+    ],
+    "confidence": 0.99
+  },
+  "extract_1_1": {
+    "doc_kind": "payment_receipt",
+    "source_page_range": [1, 1],
+    "customer_name": "Test Customer C",
+    "customer_address": null,
+    "customer_email": null,
+    "customer_phone": null,
+    "doc_number": null,
+    "doc_date": "2025-11-14",
+    "due_date": null,
+    "paid_at": "2025-11-14",
+    "payment_method": "Debit Card",
+    "payment_reference": "Invoice #11051",
+    "line_items": [],
+    "subtotal": null,
+    "tax_total": null,
+    "grand_total": 190.0,
+    "amount_paid": 190.0,
+    "total_due": 0.0,
+    "notes": null,
+    "raw_operator_audit_line": "Payment Added on 11/14/2025 by Ops Operator",
+    "extraction_confidence": 0.98
+  }
+}
