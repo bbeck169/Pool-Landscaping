@@ -371,10 +371,10 @@ export default function AdminSidebar() {
                   {useSubgroups
                     ? subsections.map((sub) => (
                         <div key={sub.name} className="mt-1" data-testid={`nav-subsection-${g.key}-${sub.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
-                          <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold tracking-wide" style={{ color: colors.muted }}>
+                          <div className="px-3 pt-1 pb-0.5 text-sm font-bold tracking-wide" style={{ color: colors.onSurfaceSecondary }}>
                             {sub.name}
                           </div>
-                          <div className="space-y-0.5">
+                          <div className="space-y-0.5 pl-3">
                             {sub.entries.map((e) => <Entry key={e.to} e={e} />)}
                           </div>
                         </div>
