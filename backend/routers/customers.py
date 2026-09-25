@@ -5798,3 +5798,85 @@ async def import_customers_csv(
         "errored": _errored_count,
         "row_errors": row_errors,
     }
+
+
+# ─── Task N Round 2 · Phase N.6 · Feb-2026 — Customer Notes History ────
+# Per-customer read of submitted service-report notes.  Same
+# aggregation shape as ``GET /api/service-reports/archive``; the only
+# difference is a ``customer_id`` constraint on the joined
+# ``job_doc.customer_id``.  Shared builder lives at
+# ``services/notes/archive_query.build_archive_pipeline`` so shape
+# drift lands in one file.  Admin-gated + tenant-scoped.
+from services.notes.archive_query import (
+    NOTES_ARCHIVE_MAX_PAGE_SIZE as _NOTES_HIST_MAX_PAGE_SIZE,
+    build_archive_pipeline as _build_notes_history_pipeline,
+    normalise_row as _normalise_notes_history_row,
+)
+
+
+@router.get("/customers/{cid}/notes-history")
+async def customer_notes_history(
+    cid: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return submitted service reports with any note field populated
+    for a single customer, newest-first.
+
+    Response shape mirrors ``/service-reports/archive`` verbatim so
+    the shared ``<NotesHistoryList/>`` frontend component renders
+    either one identically.
+    """
+    if page_size > _NOTES_HIST_MAX_PAGE_SIZE:
+        raise HTTPException(
+            400,
+            {"error": "page_size_too_large",
+             "max": _NOTES_HIST_MAX_PAGE_SIZE},
+        )
+    # Verify customer exists in this tenant (404 vs quietly-empty
+    # rows — the frontend surfaces "customer not found" distinctly
+    # from "customer has no notes yet").
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1, "notes": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+
+    pipeline = _build_notes_history_pipeline(
+        tenant_id=tenant["id"], page=page, page_size=page_size,
+        customer_id=cid,
+    )
+    if pipeline is None:  # pragma: no cover — no industry filter here
+        return {"rows": [], "total_count": 0, "page": page,
+                 "page_size": page_size,
+                 "customer": {"id": cid,
+                               "name": cust.get("name") or "",
+                               "notes": cust.get("notes") or ""}}
+
+    cursor = db.service_reports.aggregate(pipeline)
+    facet_result = await cursor.to_list(1)
+    facet = facet_result[0] if facet_result else {"rows": [], "total_count": []}
+    rows_out = [_normalise_notes_history_row(r) for r in (facet.get("rows") or [])]
+    total_count = 0
+    _tc = facet.get("total_count") or []
+    if _tc:
+        total_count = int(_tc[0].get("n") or 0)
+    return {
+        "rows": rows_out,
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        # ``customer`` block carries the customer-level free-text
+        # ``notes`` string (the persisted, edited-via-CustomerForm
+        # field) so the frontend can render it above the SR list
+        # in the CustomerDetail "Notes" tab per Phase N.5 §E halt.
+        "customer": {
+            "id": cid,
+            "name": cust.get("name") or "",
+            "notes": cust.get("notes") or "",
+        },
+    }
+

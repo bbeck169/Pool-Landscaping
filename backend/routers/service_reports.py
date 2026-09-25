@@ -2090,54 +2090,15 @@ async def last_readings(
 
 
 # ─── Task N · Phase N.1 · Feb-2026 — Notes Archive (admin) ───────────────
-_TEMPLATE_INDUSTRY_MAP = {
-    "pool": "Pool",
-    "landscape": "Landscaping",
-    "generic": "Service",
-}
+# Task N Round 2 · Phase N.6 — pipeline builder extracted to
+# ``services/notes/archive_query.py`` so the per-customer
+# notes-history endpoint reuses the same aggregation shape verbatim.
+from services.notes.archive_query import (
+    NOTES_ARCHIVE_MAX_PAGE_SIZE as _NOTES_ARCHIVE_MAX_PAGE_SIZE,
+    build_archive_pipeline as _build_archive_pipeline,
+    normalise_row as _normalise_archive_row,
+)
 _NOTES_ARCHIVE_INDEX_NAME = "service_reports_archive_idx"
-_NOTES_ARCHIVE_MAX_PAGE_SIZE = 100
-
-
-def _map_industry(template: Optional[str]) -> str:
-    """Locked mapping per Phase N.1 audit — ``pool``/``landscape``/``generic``
-    plus a ``None`` fallback that only fires against test rows in current
-    production data (``TEST_p37_j_*`` job ids)."""
-    return _TEMPLATE_INDUSTRY_MAP.get((template or "").lower(), "Service")
-
-
-def _parse_date_range_iso(
-    date_from: Optional[str], date_to: Optional[str],
-) -> Dict[str, str]:
-    """Convert ``YYYY-MM-DD`` inputs to a ``$gte`` / ``$lte`` fragment
-    covering the full UTC day range (inclusive both ends).  Raises
-    HTTPException(400) with ``invalid_date_format`` on any drift so
-    the client can surface a clear validation error."""
-    from datetime import datetime as _dt
-    out: Dict[str, str] = {}
-    if date_from:
-        try:
-            _dt.strptime(date_from, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(
-                400,
-                {"error": "invalid_date_format",
-                 "field": "date_from",
-                 "expected": "YYYY-MM-DD"},
-            )
-        out["$gte"] = f"{date_from}T00:00:00Z"
-    if date_to:
-        try:
-            _dt.strptime(date_to, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(
-                400,
-                {"error": "invalid_date_format",
-                 "field": "date_to",
-                 "expected": "YYYY-MM-DD"},
-            )
-        out["$lte"] = f"{date_to}T23:59:59.999Z"
-    return out
 
 
 async def ensure_indexes() -> None:
@@ -2187,139 +2148,38 @@ async def notes_archive(
     """Admin-gated read of submitted service reports with any of
     ``notes`` / ``internal_notes`` / ``customer_notes`` populated.
 
-    All filters are optional and combine with AND semantics.
-    Returns 200 with an empty ``rows`` list when no matches — never
-    a 404.  ``page_size`` capped at 100 (413 otherwise per user
-    spec adjusted to 400 per platform convention for input caps).
-    Tenant-scoped as the FIRST pipeline stage so the partial index
-    is index-scan-eligible.
+    Delegates aggregation building to
+    ``services.notes.archive_query.build_archive_pipeline`` so the
+    per-customer notes-history endpoint stays in shape-parity.
     """
-    import re as _re
     if page_size > _NOTES_ARCHIVE_MAX_PAGE_SIZE:
         raise HTTPException(
             400,
             {"error": "page_size_too_large",
              "max": _NOTES_ARCHIVE_MAX_PAGE_SIZE},
         )
-
-    # ── Stage 1 · tenant-scoped $match on the partial-index set ──
-    match_stage: Dict[str, Any] = {
-        "tenant_id": tenant["id"],
-        "submitted_at": {"$type": "string"},
-        "$or": [
-            {"notes": {"$type": "string", "$ne": ""}},
-            {"internal_notes": {"$type": "string", "$ne": ""}},
-            {"customer_notes": {"$type": "string", "$ne": ""}},
-        ],
-    }
-    if tech_id:
-        match_stage["tech_id"] = tech_id
-    _date_frag = _parse_date_range_iso(date_from, date_to)
-    if _date_frag:
-        # Merge with the ``$type: string`` guard.
-        match_stage["submitted_at"] = {"$type": "string", **_date_frag}
-    if industry:
-        # Reverse the industry → template map.  Multi-valued (e.g.
-        # ``Service`` maps to both ``generic`` and null/missing).
-        _wanted = [k for k, v in _TEMPLATE_INDUSTRY_MAP.items()
-                    if v.lower() == industry.lower()]
-        if industry.lower() == "service":
-            # Service is generic + missing/null template rows.
-            match_stage["$and"] = [
-                {"$or": [
-                    {"template": "generic"},
-                    {"template": None},
-                    {"template": {"$exists": False}},
-                ]}
-            ]
-        elif _wanted:
-            match_stage["template"] = _wanted[0]
-        else:
-            # Unknown industry label — return empty rather than 400
-            # so a stale UI dropdown doesn't crash the page.
-            return {"rows": [], "total_count": 0,
-                    "page": page, "page_size": page_size}
-
-    # ── Stages 2-4 · joins ─────────────────────────────────────
-    pipeline: List[Dict[str, Any]] = [
-        {"$match": match_stage},
-        {"$sort": {"submitted_at": -1}},
-        {"$lookup": {
-            "from": "jobs", "localField": "job_id",
-            "foreignField": "id", "as": "job_doc",
-        }},
-        {"$unwind": {"path": "$job_doc", "preserveNullAndEmptyArrays": True}},
-        {"$lookup": {
-            "from": "customers", "localField": "job_doc.customer_id",
-            "foreignField": "id", "as": "cust_doc",
-        }},
-        {"$unwind": {"path": "$cust_doc", "preserveNullAndEmptyArrays": True}},
-        {"$lookup": {
-            "from": "users",
-            "let": {"tid": "$tech_id"},
-            "pipeline": [
-                {"$match": {"$expr": {"$or": [
-                    {"$eq": ["$id", "$$tid"]},
-                    {"$eq": ["$technician_id", "$$tid"]},
-                ]}}},
-                {"$limit": 1},
-                {"$project": {"_id": 0, "name": 1, "id": 1}},
-            ],
-            "as": "tech_doc",
-        }},
-        {"$unwind": {"path": "$tech_doc", "preserveNullAndEmptyArrays": True}},
-    ]
-
-    # ── Stage 5 · post-lookup customer regex ───────────────────
-    if customer_search:
-        _pattern = _re.escape(customer_search.strip())
-        if _pattern:
-            pipeline.append({"$match": {
-                "cust_doc.name": {"$regex": _pattern, "$options": "i"},
-            }})
-
-    # ── Stage 6 · $facet paginate + count ──────────────────────
-    skip = (page - 1) * page_size
-    pipeline.append({"$facet": {
-        "rows": [
-            {"$skip": skip},
-            {"$limit": page_size},
-            {"$project": {
-                "_id": 0,
-                "sr_id": "$id",
-                "job_id": 1,
-                "submitted_at": 1,
-                "customer_id": "$cust_doc.id",
-                "customer_name": "$cust_doc.name",
-                "tech_id": 1,
-                "tech_name": "$tech_doc.name",
-                "template": 1,
-                "notes": 1,
-                "internal_notes": 1,
-                "customer_notes": 1,
-            }},
-        ],
-        "total_count": [{"$count": "n"}],
-    }})
+    try:
+        pipeline = _build_archive_pipeline(
+            tenant_id=tenant["id"], page=page, page_size=page_size,
+            customer_search=customer_search, tech_id=tech_id,
+            date_from=date_from, date_to=date_to, industry=industry,
+        )
+    except ValueError as e:
+        field = str(e).split(":", 1)[0] or "date"
+        raise HTTPException(
+            400,
+            {"error": "invalid_date_format",
+             "field": field, "expected": "YYYY-MM-DD"},
+        )
+    if pipeline is None:
+        # Unknown industry label — empty response, don't crash.
+        return {"rows": [], "total_count": 0,
+                 "page": page, "page_size": page_size}
 
     cursor = db.service_reports.aggregate(pipeline)
     facet_result = await cursor.to_list(1)
     facet = facet_result[0] if facet_result else {"rows": [], "total_count": []}
-    rows_out: List[Dict[str, Any]] = []
-    for row in facet.get("rows") or []:
-        rows_out.append({
-            "sr_id": row.get("sr_id"),
-            "job_id": row.get("job_id"),
-            "submitted_at": row.get("submitted_at"),
-            "customer_id": row.get("customer_id"),
-            "customer_name": row.get("customer_name") or "",
-            "tech_id": row.get("tech_id"),
-            "tech_name": row.get("tech_name") or "",
-            "industry": _map_industry(row.get("template")),
-            "notes": row.get("notes") or "",
-            "internal_notes": row.get("internal_notes") or "",
-            "customer_notes": row.get("customer_notes") or "",
-        })
+    rows_out = [_normalise_archive_row(r) for r in (facet.get("rows") or [])]
     total_count = 0
     _tc = facet.get("total_count") or []
     if _tc:
