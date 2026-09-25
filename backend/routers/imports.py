@@ -102,12 +102,29 @@ _STATUS_PREVIEW_COMPLETE = "preview_complete"
 _STATUS_FAILED = "failed"
 # TODO Task H.4 · cancel endpoint emits this status.
 _STATUS_CANCELLED = "cancelled"
+# Task H.2 · Feb-2026 — commit + rollback status enum extension.
+# ``committing`` / ``rolling_back`` are transient guards used to
+# prevent double-commit / double-rollback races on the same batch.
+# Terminal states: ``committed`` / ``commit_failed`` /
+# ``rolled_back`` / ``rollback_failed``.
+_STATUS_COMMITTING = "committing"
+_STATUS_COMMITTED = "committed"
+_STATUS_COMMIT_FAILED = "commit_failed"
+_STATUS_ROLLING_BACK = "rolling_back"
+_STATUS_ROLLED_BACK = "rolled_back"
+_STATUS_ROLLBACK_FAILED = "rollback_failed"
 
 # Statuses that count toward the per-tenant rate limit.  Both
 # ``queued`` and ``processing`` are "in flight" for the purposes
 # of the guard; terminal states (``preview_complete`` /
-# ``failed`` / ``cancelled``) do not.
-_IN_FLIGHT_STATUSES = (_STATUS_QUEUED, _STATUS_PROCESSING)
+# ``failed`` / ``cancelled`` / ``committed`` / ``rolled_back``)
+# do not.  Task H.2 · commit/rollback transient states
+# (``committing`` / ``rolling_back``) count as in-flight too so
+# a client cannot double-drive the endpoint.
+_IN_FLIGHT_STATUSES = (
+    _STATUS_QUEUED, _STATUS_PROCESSING,
+    _STATUS_COMMITTING, _STATUS_ROLLING_BACK,
+)
 
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
@@ -118,30 +135,91 @@ router = APIRouter(prefix="/api/imports", tags=["imports"])
 # ─────────────────────────────────────────────────────────────
 async def ensure_indexes() -> None:
     """Called at server-startup. background=True so the create
-    call does not block boot on large tenants."""
-    try:
-        await db.pending_import_customers.create_index(
-            [("tenant_id", 1), ("batch_id", 1)],
-            name="pending_import_customers_tenant_batch",
-            background=True,
-        )
-        await db.pending_import_customers.create_index(
-            [("tenant_id", 1), ("extracted_customer_name", 1)],
-            name="pending_import_customers_tenant_name",
-            background=True,
-        )
-        await db.import_batches.create_index(
-            [("tenant_id", 1), ("status", 1), ("created_at", -1)],
-            name="import_batches_tenant_status_created",
-            background=True,
-        )
-        await db.import_batches.create_index(
-            [("id", 1)], unique=True,
-            name="import_batches_id_uniq",
-            background=True,
-        )
-    except Exception as exc:                                       # noqa: BLE001
-        logger.warning(f"[imports] index create skipped: {exc}")
+    call does not block boot on large tenants.
+
+    Task H.2 · Feb-2026 — self-healing posture. Every index
+    plan is applied via its own ``try/except`` so a single
+    failure logs at WARN + keeps the loop going. The outer
+    ``try`` from H.1 swallowed a single failure silently AND
+    aborted every subsequent index — that's the drift observed
+    during Phase H.2.A recon (live ``db.import_batches`` had
+    only ``_id_`` even though the code declared four indexes).
+    """
+
+    async def _one(coll: str, keys, opts: dict) -> None:
+        """Best-effort index creation with per-plan WARN
+        logging.  Does NOT swallow the exception silently — every
+        failure emits an observable log line per Phase H.2.B
+        ruling §C."""
+        try:
+            await db[coll].create_index(keys, **opts)
+        except Exception as exc:                                   # noqa: BLE001
+            logger.warning(
+                "[imports] index ensure failed on %s (%s): %s: %s",
+                coll, opts.get("name"), type(exc).__name__, exc,
+            )
+
+    # ── H.1 indexes (retained) ─────────────────────────────
+    await _one(
+        "pending_import_customers",
+        [("tenant_id", 1), ("batch_id", 1)],
+        {"name": "pending_import_customers_tenant_batch", "background": True},
+    )
+    await _one(
+        "pending_import_customers",
+        [("tenant_id", 1), ("extracted_customer_name", 1)],
+        {"name": "pending_import_customers_tenant_name", "background": True},
+    )
+    await _one(
+        "import_batches",
+        [("tenant_id", 1), ("status", 1), ("created_at", -1)],
+        {"name": "import_batches_tenant_status_created", "background": True},
+    )
+    await _one(
+        "import_batches",
+        [("id", 1)],
+        {"name": "import_batches_id_uniq", "unique": True, "background": True},
+    )
+
+    # ── H.2 new indexes ────────────────────────────────────
+    # (tenant_id, import_batch_id) sparse partial — rollback
+    # perf.
+    await _one(
+        "quotes",
+        [("tenant_id", 1), ("import_batch_id", 1)],
+        {
+            "name": "quotes_tenant_import_batch",
+            "background": True,
+            "partialFilterExpression": {
+                "import_batch_id": {"$exists": True},
+            },
+        },
+    )
+    # (tenant_id, customer_id, import_source_doc_number) sparse
+    # partial — duplicate detection perf.
+    await _one(
+        "quotes",
+        [("tenant_id", 1), ("customer_id", 1),
+          ("import_source_doc_number", 1)],
+        {
+            "name": "quotes_tenant_customer_import_docnum",
+            "background": True,
+            "partialFilterExpression": {
+                "import_source_doc_number": {"$exists": True},
+            },
+        },
+    )
+    # import_audit — per-batch lookup + reverse-chron dashboard.
+    await _one(
+        "import_audit",
+        [("tenant_id", 1), ("batch_id", 1)],
+        {"name": "import_audit_tenant_batch", "background": True},
+    )
+    await _one(
+        "import_audit",
+        [("tenant_id", 1), ("at", -1)],
+        {"name": "import_audit_tenant_at_desc", "background": True},
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -522,3 +600,405 @@ async def get_pdf_invoice_batch(
             },
         )
     return _sanitize_row(row)
+
+
+
+# ═════════════════════════════════════════════════════════════
+# Task H · Phase H.2 — Commit + rollback endpoints
+# ═════════════════════════════════════════════════════════════
+from pydantic import BaseModel  # noqa: E402
+
+from services.imports.pdf_commit import (                          # noqa: E402
+    DuplicateBatchError,
+    UnresolvedCustomersError,
+    check_duplicates,
+    commit_batch,
+    rollback_batch,
+    write_import_audit,
+    _DUP_SKIP,
+    _DUP_INSERT_ANYWAY,
+    _DUP_FAIL,
+    _DUP_VALID,
+)
+
+
+class _CommitOptions(BaseModel):
+    """Body for ``POST /api/imports/pdf-invoice/{batch_id}/commit``.
+
+    * ``on_duplicate`` — one of ``"skip"`` (default) |
+      ``"insert_anyway"`` | ``"fail"``.
+    * ``notes`` — optional operator note surfaced on the
+      ``import_audit`` row (max 500 chars).
+    """
+    on_duplicate: Optional[str] = _DUP_SKIP
+    notes: Optional[str] = None
+
+
+def _serialise_duplicates(dups) -> List[Dict[str, Any]]:
+    return [{
+        "source_doc_index": d.source_doc_index,
+        "existing_quote_id": d.existing_quote_id,
+        "doc_number": d.doc_number,
+        "customer_id": d.customer_id,
+    } for d in dups]
+
+
+def _serialise_unresolved(unresolved) -> List[Dict[str, Any]]:
+    return [{
+        "source_doc_index": u.source_doc_index,
+        "extracted_customer_name": u.extracted_customer_name,
+        "pending_customer_id": u.pending_customer_id,
+    } for u in unresolved]
+
+
+@router.get("/pdf-invoice/{batch_id}/duplicates")
+async def get_batch_duplicates(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Task H · Phase H.2 — pre-flight duplicate scan.
+
+    Returns the list of previews that would collide with
+    existing quotes on ``(tenant_id, customer_id, doc_type,
+    import_source_doc_number)`` if the batch were committed
+    right now. Read-only; no state change.
+
+    Multi-tenant guard: cross-tenant matches surface as 404
+    ``batch_not_found`` (same posture as the poll endpoint).
+    """
+    row = await db.import_batches.find_one(
+        {"id": batch_id, "tenant_id": tenant["id"]},
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "batch_not_found",
+                "message": (
+                    f"No import batch with id={batch_id!r} for this tenant."
+                ),
+            },
+        )
+    previews = row.get("mapper_previews") or []
+    duplicates = await check_duplicates(
+        previews=previews, tenant_id=tenant["id"], db=db,
+    )
+    return {
+        "batch_id": batch_id,
+        "duplicate_count": len(duplicates),
+        "duplicates": _serialise_duplicates(duplicates),
+    }
+
+
+@router.post("/pdf-invoice/{batch_id}/commit")
+async def commit_pdf_invoice_batch(
+    batch_id: str,
+    options: Optional[_CommitOptions] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Task H · Phase H.2 — materialise a preview_complete
+    import batch into ``db.quotes``.
+
+    Status machine::
+
+        preview_complete → committing → committed
+                                     ↘ commit_failed
+
+    Preconditions:
+      * Batch status MUST be ``preview_complete`` (400
+        ``batch_wrong_status`` otherwise).
+      * Zero ``PENDING::`` sentinels remain (400
+        ``unresolved_customers`` otherwise).
+      * Zero mapper ``errors`` entries — those previews are
+        silently skipped inside :func:`commit_batch`.
+
+    Optional body: ``{"on_duplicate": "skip"|"insert_anyway"|"fail",
+    "notes": "..."}``.  Default ``on_duplicate="skip"``.
+
+    Response shape::
+
+        {
+          "batch_id", "status": "committed",
+          "quotes_created", "quotes_skipped_duplicates",
+          "quotes_skipped_idempotent",
+          "quote_ids": [...],
+          "duplicates_detected": [...],
+          "insert_errors": [...],
+          "audit_id"
+        }
+    """
+    opts = options or _CommitOptions()
+    on_duplicate = opts.on_duplicate or _DUP_SKIP
+    if on_duplicate not in _DUP_VALID:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_on_duplicate",
+                "message": (
+                    f"on_duplicate must be one of {sorted(_DUP_VALID)!r}; "
+                    f"got {on_duplicate!r}."
+                ),
+            },
+        )
+    notes = (opts.notes or "")[:500] if opts.notes else None
+
+    tenant_id = tenant["id"]
+
+    # ── Status guard: flip preview_complete → committing atomically.
+    guarded = await db.import_batches.find_one_and_update(
+        {"id": batch_id, "tenant_id": tenant_id,
+          "status": _STATUS_PREVIEW_COMPLETE},
+        {"$set": {"status": _STATUS_COMMITTING,
+                    "commit_started_at": datetime.now(timezone.utc).isoformat()}},
+        return_document=True,
+    )
+    if guarded is None:
+        # Either not found for this tenant OR in the wrong status.
+        row = await db.import_batches.find_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"_id": 0, "status": 1},
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "batch_not_found",
+                    "message": (
+                        f"No import batch with id={batch_id!r} for this tenant."
+                    ),
+                },
+            )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "batch_wrong_status",
+                "message": (
+                    f"Batch {batch_id!r} is in status "
+                    f"{row.get('status')!r}, expected "
+                    f"{_STATUS_PREVIEW_COMPLETE!r}."
+                ),
+                "current_status": row.get("status"),
+            },
+        )
+
+    # From here on, we own the ``committing`` transient state
+    # and are responsible for flipping to ``committed`` or
+    # ``commit_failed`` before returning.
+    try:
+        commit_result = await commit_batch(
+            batch=guarded,
+            tenant_id=tenant_id,
+            operator=user,
+            on_duplicate=on_duplicate,
+            db=db,
+        )
+    except UnresolvedCustomersError as exc:
+        # Reset batch to preview_complete so the operator can
+        # resolve pendings via H.3 UI and retry.
+        await db.import_batches.update_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"$set": {"status": _STATUS_PREVIEW_COMPLETE},
+              "$unset": {"commit_started_at": ""}},
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unresolved_customers",
+                "message": (
+                    f"{len(exc.unresolved)} preview(s) still carry "
+                    f"PENDING:: customer sentinels; resolve via the "
+                    f"admin review UI before commit."
+                ),
+                "unresolved": _serialise_unresolved(exc.unresolved),
+            },
+        )
+    except DuplicateBatchError as exc:
+        # ``on_duplicate="fail"`` — no partial commit occurred.
+        # Flip back to preview_complete so the operator can rerun
+        # with ``skip`` or ``insert_anyway``.
+        await db.import_batches.update_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"$set": {"status": _STATUS_PREVIEW_COMPLETE},
+              "$unset": {"commit_started_at": ""}},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "duplicates_detected",
+                "message": (
+                    f"{len(exc.duplicates)} duplicate(s) detected; "
+                    f"rerun with on_duplicate=skip to skip or "
+                    f"insert_anyway to force."
+                ),
+                "duplicates": _serialise_duplicates(exc.duplicates),
+            },
+        )
+    except Exception as exc:                                       # noqa: BLE001
+        logger.exception(
+            "[pdf-commit] tenant=%s batch=%s commit failed: %s",
+            tenant_id, batch_id, exc,
+        )
+        await db.import_batches.update_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"$set": {"status": _STATUS_COMMIT_FAILED,
+                        "commit_error": str(exc)[:400]}},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "commit_failed",
+                "message": str(exc)[:400],
+            },
+        )
+
+    # ── Success — audit + flip to committed ────────────────
+    audit_id = await write_import_audit(
+        action="commit",
+        batch=guarded,
+        tenant_id=tenant_id,
+        operator=user,
+        commit_result=commit_result,
+        options={"on_duplicate": on_duplicate},
+        notes=notes,
+        db=db,
+    )
+
+    committed_at = datetime.now(timezone.utc).isoformat()
+    await db.import_batches.update_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+        {"$set": {
+            "status": _STATUS_COMMITTED,
+            "committed_at": committed_at,
+            "committed_by_user_id": user.get("id"),
+            "committed_quotes": commit_result.quote_ids,
+            "commit_audit_id": audit_id,
+        }, "$unset": {"commit_started_at": ""}},
+    )
+
+    return {
+        "batch_id": batch_id,
+        "status": _STATUS_COMMITTED,
+        "quotes_created": commit_result.quotes_created,
+        "quotes_skipped_duplicates": commit_result.quotes_skipped_duplicates,
+        "quotes_skipped_idempotent": commit_result.quotes_skipped_idempotent,
+        "quote_ids": commit_result.quote_ids,
+        "duplicates_detected": _serialise_duplicates(
+            commit_result.duplicates_detected,
+        ),
+        "insert_errors": commit_result.insert_errors,
+        "audit_id": audit_id,
+    }
+
+
+@router.post("/pdf-invoice/{batch_id}/rollback")
+async def rollback_pdf_invoice_batch(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Task H · Phase H.2 — hard-delete every quote/invoice a
+    prior commit inserted for this batch.
+
+    Status machine::
+
+        committed → rolling_back → rolled_back
+                                ↘ rollback_failed
+
+    Collision detection (Phase H.2.B ruling §G): if any quote's
+    ``updated_at`` is greater than the batch's ``committed_at``,
+    snapshot the full doc into the ``import_audit.collisions``
+    array before deleting so audit-replay recovery remains
+    possible.
+    """
+    tenant_id = tenant["id"]
+
+    # ── Status guard: flip committed → rolling_back atomically.
+    guarded = await db.import_batches.find_one_and_update(
+        {"id": batch_id, "tenant_id": tenant_id,
+          "status": _STATUS_COMMITTED},
+        {"$set": {"status": _STATUS_ROLLING_BACK,
+                    "rollback_started_at": datetime.now(timezone.utc).isoformat()}},
+        return_document=True,
+    )
+    if guarded is None:
+        row = await db.import_batches.find_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"_id": 0, "status": 1},
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "batch_not_found",
+                    "message": (
+                        f"No import batch with id={batch_id!r} for this tenant."
+                    ),
+                },
+            )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "batch_not_committed",
+                "message": (
+                    f"Batch {batch_id!r} is in status "
+                    f"{row.get('status')!r}, expected "
+                    f"{_STATUS_COMMITTED!r}."
+                ),
+                "current_status": row.get("status"),
+            },
+        )
+
+    try:
+        rollback_result = await rollback_batch(
+            batch=guarded,
+            tenant_id=tenant_id,
+            operator=user,
+            db=db,
+        )
+    except Exception as exc:                                       # noqa: BLE001
+        logger.exception(
+            "[pdf-commit] tenant=%s batch=%s rollback failed: %s",
+            tenant_id, batch_id, exc,
+        )
+        await db.import_batches.update_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"$set": {"status": _STATUS_ROLLBACK_FAILED,
+                        "rollback_error": str(exc)[:400]}},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "rollback_failed",
+                "message": str(exc)[:400],
+            },
+        )
+
+    audit_id = await write_import_audit(
+        action="rollback",
+        batch=guarded,
+        tenant_id=tenant_id,
+        operator=user,
+        rollback_result=rollback_result,
+        db=db,
+    )
+
+    rolled_back_at = datetime.now(timezone.utc).isoformat()
+    await db.import_batches.update_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+        {"$set": {
+            "status": _STATUS_ROLLED_BACK,
+            "rolled_back_at": rolled_back_at,
+            "rolled_back_by_user_id": user.get("id"),
+            "rollback_audit_id": audit_id,
+        }, "$unset": {"rollback_started_at": ""}},
+    )
+
+    return {
+        "batch_id": batch_id,
+        "status": _STATUS_ROLLED_BACK,
+        "quotes_deleted": rollback_result.quotes_deleted,
+        "collision_count": rollback_result.collision_count,
+        "audit_id": audit_id,
+    }
