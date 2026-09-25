@@ -33,6 +33,7 @@ import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
 import { logNav } from "@/src/utils/diagnostics";
 import { ScheduleErrorBoundary } from "@/src/components/ScheduleErrorBoundary";
+import { isStrictAdmin } from "@/src/components/RoleGate";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header, NotificationBell } from "@/src/components/widgets";
 // Feb-2026 · Phase 1 offline foundation — write-through cache on
@@ -881,8 +882,9 @@ function ScheduleCalendarInner() {
           onConfirmMove={bulkMove}
           busy={busy}
           onOpenJob={(id: string) => router.push(`/job/${id}/checklist` as any)}
-          onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
+          onNewJob={() => router.push(`/job/new?scheduled_date=${focusISO}` as any)}
           isAdmin={isAdmin}
+          isStrictlyAdmin={isStrictAdmin(user)}
           userId={user?.id || ""}
           hourlyData={hourlyData}
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
@@ -916,6 +918,7 @@ function ScheduleCalendarInner() {
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
           isAdmin={isAdmin}
           isTech={isTech}
+          onNewJob={isStrictAdmin(user) ? () => router.push(`/job/new?scheduled_date=${focusISO}` as any) : undefined}
         />
       )}
 
@@ -1063,7 +1066,7 @@ function GridView(props: any) {
     checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
-    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData, userId,
+    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, isStrictlyAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
     gridSubMode, setGridSubMode, dayJobs, setReorderList,
     crews, crewFilter, crewMembers, onCrewSelect, isTech,
@@ -1181,6 +1184,12 @@ function GridView(props: any) {
             >
               <Ionicons name="close-outline" size={13} color="#fff" />
               <Text style={gStyles.pillText}>Clear</Text>
+            </Pressable>
+          ) : null}
+          {isStrictlyAdmin ? (
+            <Pressable onPress={onNewJob} style={gStyles.newBtn} testID="mobile-schedule-add-job-btn-grid" accessibilityLabel="Add job">
+              <Ionicons name="add-circle" size={14} color="#fff" />
+              <Text style={gStyles.newBtnText}>Add job</Text>
             </Pressable>
           ) : null}
           <Modal
@@ -1666,7 +1675,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
 /* ═══ Calendar view ══════════════════════════════════════════════════ */
 function CalendarView({
   weekDays, weekTitle, jobsByDay, showBH, onToggleBH, onPrev, onNext, onOpenJob,
-  weatherWidget, isAdmin, isTech,
+  weatherWidget, isAdmin, isTech, onNewJob,
 }: any) {
   return (
     <View style={{ flexGrow: 1 }}>
@@ -1687,6 +1696,12 @@ function CalendarView({
                     size={12} color={showBH ? "#fff" : colors.onSurfaceSecondary} />
           <Text style={[cStyles.bhPillText, showBH && { color: "#fff" }]}>BH</Text>
         </Pressable>
+        {onNewJob ? (
+          <Pressable onPress={onNewJob} style={gStyles.newBtn} testID="mobile-schedule-add-job-btn-calendar" accessibilityLabel="Add job">
+            <Ionicons name="add-circle" size={14} color="#fff" />
+            <Text style={gStyles.newBtnText}>Add job</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled>
