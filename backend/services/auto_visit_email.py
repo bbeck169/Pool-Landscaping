@@ -37,6 +37,120 @@ from typing import Any, Dict, List, Mapping, Optional
 from config import db, logger
 from utils import new_id, now_iso
 
+
+# ─── Feb-2026 · Property address resolution ─────────────────────────
+# The visit-summary email used to read ``job.address`` (a text
+# string copied at job-generation time).  That string goes stale
+# when a customer moves or when the underlying property is edited
+# after the recurring template stamped the job.  We now resolve
+# the CURRENT address off ``db.properties`` and fall back to the
+# text field only when the property_id is missing or unresolvable.
+def _format_property_address(prop: Mapping[str, Any]) -> str:
+    """Compose ``"line1, city, STATE POSTAL"`` from a property doc.
+
+    Returns an empty string when the property has no usable address
+    fragments — the caller then falls back to ``job.address``.
+    """
+    addr = prop.get("address")
+    if not isinstance(addr, dict):
+        return ""
+    line1 = (addr.get("line1") or "").strip()
+    line2 = (addr.get("line2") or "").strip()
+    city = (addr.get("city") or "").strip()
+    state = (addr.get("state") or "").strip()
+    postal = (addr.get("postal_code") or "").strip()
+    street = ", ".join(p for p in (line1, line2) if p)
+    tail = " ".join(p for p in (state, postal) if p).strip()
+    # Mirror the customer-side composition (see
+    # ``routers.customers._mirror_address_to_primary_property``).
+    parts: List[str] = []
+    if street:
+        parts.append(street)
+    if city:
+        parts.append(city)
+    if tail:
+        parts.append(tail)
+    return ", ".join(parts)
+
+
+async def _resolve_visit_email_address(
+    tenant: Mapping[str, Any], job: Mapping[str, Any],
+) -> str:
+    """Resolve the address to show in the visit-summary email.
+
+    Ladder (mirrors the ``on_my_way`` FK resolution at
+    ``routers/on_my_way.py:93``):
+
+    1. ``job.property_id`` → look up in ``db.properties`` under the
+       requester's ``tenant_id`` and compose from the property's
+       current ``address`` sub-doc.
+    2. ``customer.primary_property_id`` → same lookup.
+    3. Fallback → ``job.address`` (previous behavior).
+
+    Emits ``logger.warning("auto_visit_email.property_unresolved",
+    ...)`` when the ladder falls through to the text fallback so
+    ops can trace stale-FK / cross-tenant / soft-deleted-property
+    cases.  Never raises — the caller is a non-blocking best-
+    effort path.
+    """
+    tenant_id = tenant.get("id")
+    job_pid = job.get("property_id")
+    cust_pid: Optional[str] = None
+    fallback = (job.get("address") or "").strip()
+
+    # Ladder rung 2 preflight — ``customer.primary_property_id``.
+    if not job_pid:
+        cid = job.get("customer_id")
+        if tenant_id and cid:
+            cust = await db.customers.find_one(
+                {"id": cid, "tenant_id": tenant_id},
+                {"_id": 0, "primary_property_id": 1},
+            )
+            if cust:
+                cust_pid = cust.get("primary_property_id")
+
+    pid = job_pid or cust_pid
+    if not pid or not tenant_id:
+        logger.warning(
+            "auto_visit_email.property_unresolved "
+            "reason=no_property_id tenant_id=%s job_id=%s "
+            "customer_id=%s property_id=%s",
+            tenant_id, job.get("id"), job.get("customer_id"), pid,
+        )
+        return fallback
+
+    prop = await db.properties.find_one(
+        {"id": pid, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "address": 1, "deleted_at": 1},
+    )
+    if not prop:
+        # Cross-tenant lookup OR deleted-and-hard-removed property.
+        logger.warning(
+            "auto_visit_email.property_unresolved "
+            "reason=property_not_found tenant_id=%s job_id=%s "
+            "customer_id=%s property_id=%s",
+            tenant_id, job.get("id"), job.get("customer_id"), pid,
+        )
+        return fallback
+    if prop.get("deleted_at"):
+        logger.warning(
+            "auto_visit_email.property_unresolved "
+            "reason=property_soft_deleted tenant_id=%s job_id=%s "
+            "customer_id=%s property_id=%s",
+            tenant_id, job.get("id"), job.get("customer_id"), pid,
+        )
+        return fallback
+    composed = _format_property_address(prop)
+    if not composed:
+        logger.warning(
+            "auto_visit_email.property_unresolved "
+            "reason=empty_address_fields tenant_id=%s job_id=%s "
+            "customer_id=%s property_id=%s",
+            tenant_id, job.get("id"), job.get("customer_id"), pid,
+        )
+        return fallback
+    return composed
+
 # Phase COMM1 · Feb-2026 — customer-facing band classifier used
 # for the Required Four rows. Lives in ``chemistry_bands`` so the
 # same thresholds render across door-hanger email, portal page,
@@ -683,6 +797,17 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
         from routers.service_reports import _redact_report_for_customer
         safe_sr = _redact_report_for_customer(dict(sr))
 
+        # Feb-2026 · Address resolution — read the CURRENT address
+        # off ``db.properties`` when the job carries a ``property_id``,
+        # falling back to ``job.address`` when the FK is missing /
+        # stale / cross-tenant / soft-deleted.  Overlay onto a copy
+        # of ``job`` so the pure ``render_email`` function stays
+        # DB-free.
+        resolved_address = await _resolve_visit_email_address(tenant, job)
+        job_for_render = dict(job)
+        if resolved_address:
+            job_for_render["address"] = resolved_address
+
         # Phase COMM1 · Feb-2026 — resolve effective branding once
         # per fan-out so every recipient shares the same palette.
         try:
@@ -695,7 +820,7 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
         except Exception:                                   # noqa: BLE001
             branding = None
 
-        rendered = render_email(tenant, job, safe_sr, customer,
+        rendered = render_email(tenant, job_for_render, safe_sr, customer,
                                  branding=branding)
         resend_key = os.environ.get("RESEND_API_KEY")
         last_row = None
