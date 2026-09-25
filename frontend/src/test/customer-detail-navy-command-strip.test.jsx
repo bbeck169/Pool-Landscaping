@@ -16,17 +16,24 @@
  *   • The standalone inline Chemistry brand dropdown (previously
  *     rendered right after the Edit button) is GONE from
  *     CustomerDetail.jsx; its two options now live inside the
- *     "+ Create" submenu on CustomerActionDropdowns.
+ *     ``+ Create`` menu on CustomerActionDropdowns.
  *
- * Chemistry submenu contract (CustomerActionDropdowns.jsx):
- *   • Uses shadcn ``DropdownMenuSub`` / ``DropdownMenuSubTrigger``
- *     / ``DropdownMenuSubContent`` primitives.
- *   • Submenu trigger carries ``data-testid=
- *     "customer-create-chemistry-submenu"``.
- *   • Both options preserved with their legacy testids:
- *     ``cd-action-chemistry`` (→ ``/customers/:id/chemistry``)
- *     and ``cd-action-chem-history`` (→
- *     ``/customers/:id/chemistry-history``).
+ * Chemistry flat-items contract (CustomerActionDropdowns.jsx):
+ *   Round 2 (2026-02) — the intermediate ``DropdownMenuSub``
+ *   labelled ``Chemistry…`` was FLATTENED per user ruling.  The
+ *   two items now render as top-level ``+ Create`` siblings,
+ *   sitting directly after ``Meeting`` in source order.  Both
+ *   items preserve their P52 testids AND their pre-P52 legacy
+ *   testids:
+ *
+ *     • ``cd-action-chemistry`` / ``cd-chemistry`` →
+ *       ``/customers/:id/chemistry``
+ *     • ``cd-action-chem-history`` / ``cd-chemistry-history`` →
+ *       ``/customers/:id/chemistry-history``
+ *
+ *   Neither ``DropdownMenuSub`` / ``DropdownMenuSubTrigger`` /
+ *   ``DropdownMenuSubContent`` / ``DropdownMenuPortal`` remains
+ *   imported or mounted in the file after the flatten.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -87,40 +94,71 @@ describe("CustomerDetail · unified navy command strip", () => {
       /import\s+\{[\s\S]*DropdownMenuTrigger[\s\S]*\}\s+from\s+"@\/components\/ui\/dropdown-menu"/);
   });
 
-  it("+ Create dropdown carries a Chemistry submenu using shadcn Sub primitives", () => {
-    // Import surface — the three sub-primitives must be present.
-    expect(actionsSrc).toMatch(
-      /import\s+\{[\s\S]*DropdownMenuSub\b[\s\S]*\}\s+from\s+"@\/components\/ui\/dropdown-menu"/);
-    expect(actionsSrc).toContain("DropdownMenuSubTrigger");
-    expect(actionsSrc).toContain("DropdownMenuSubContent");
-    // Submenu is mounted inside the + Create menu.
-    const createIdx = actionsSrc.indexOf(
-      'testid="customer-create-menu-trigger"');
-    expect(createIdx).toBeGreaterThan(-1);
-    const submenuIdx = actionsSrc.indexOf(
-      'data-testid="customer-create-chemistry-submenu"');
-    expect(submenuIdx).toBeGreaterThan(createIdx);
+  it("+ Create dropdown carries Chemistry items as FLAT siblings — no Sub primitives", () => {
+    // Round-2 flatten — the intermediate ``DropdownMenuSub`` /
+    // ``DropdownMenuSubTrigger`` / ``DropdownMenuSubContent`` /
+    // ``DropdownMenuPortal`` primitives are no longer imported or
+    // mounted anywhere in CustomerActionDropdowns.jsx.  Guarding
+    // against a regressed re-nest — check JSX open-tags AND the
+    // dropdown-menu import list, but tolerate identifiers that
+    // appear only inside inline comment prose.
+    const jsxOpens =
+      /<DropdownMenuSub(?:Trigger|Content|Portal)?\b/;
+    expect(actionsSrc).not.toMatch(jsxOpens);
+    // Import surface — the file must import ONLY the base four
+    // primitives (Menu, Trigger, Content, Item).  Any Sub / Portal
+    // import here would be dead code.
+    const dropdownImportBlock = actionsSrc.match(
+      /import\s+\{([\s\S]*?)\}\s+from\s+"@\/components\/ui\/dropdown-menu"/,
+    )?.[1] || "";
+    expect(dropdownImportBlock).not.toMatch(/\bDropdownMenuSub\b/);
+    expect(dropdownImportBlock).not.toMatch(/\bDropdownMenuPortal\b/);
+    // And the submenu-trigger testid is gone.
+    expect(actionsSrc).not.toContain("customer-create-chemistry-submenu");
   });
 
-  it("both Chemistry options preserved with legacy testids + handlers", () => {
-    // Chemistry
+  it("Chemistry + Chemistry History render as flat siblings AFTER Meeting", () => {
+    // Source-order lock — Meeting → Chemistry → Chemistry History,
+    // all three as top-level ``+ Create`` items.  A future refactor
+    // that reorders (or re-nests) any of them trips this.
+    const meetingIdx = actionsSrc.indexOf(
+      'data-testid="customer-create-meeting"');
+    const chemistryIdx = actionsSrc.indexOf(
+      'data-testid="cd-action-chemistry"');
+    const chemHistoryIdx = actionsSrc.indexOf(
+      'data-testid="cd-action-chem-history"');
+    expect(meetingIdx).toBeGreaterThan(-1);
+    expect(chemistryIdx).toBeGreaterThan(meetingIdx);
+    expect(chemHistoryIdx).toBeGreaterThan(chemistryIdx);
+  });
+
+  it("both Chemistry options preserved with legacy testids + handlers + labels", () => {
+    // Chemistry — nav destination, both testids, visible label.
     expect(actionsSrc).toMatch(
       /navigate\(`\/customers\/\$\{cid\}\/chemistry`\)/);
     expect(actionsSrc).toContain('data-testid="cd-action-chemistry"');
     expect(actionsSrc).toContain('data-legacy-testid="cd-chemistry"');
-    // Chemistry History
+    // Chemistry History — nav destination, both testids, visible label.
     expect(actionsSrc).toMatch(
       /navigate\(`\/customers\/\$\{cid\}\/chemistry-history`\)/);
     expect(actionsSrc).toContain(
       'data-testid="cd-action-chem-history"');
     expect(actionsSrc).toContain(
       'data-legacy-testid="cd-chemistry-history"');
-    // Both options carry the visible label copy.
-    const submenuIdx = actionsSrc.indexOf(
-      'data-testid="customer-create-chemistry-submenu"');
-    const contentBlock = actionsSrc.slice(submenuIdx,
-                                           submenuIdx + 1500);
-    expect(contentBlock).toMatch(/Chemistry\b/);
-    expect(contentBlock).toMatch(/Chemistry History/);
+    // Both options render inside the SAME + Create menu content
+    // as the Meeting item.  Slice from ``Meeting`` through to the
+    // closing DropdownMenuContent and confirm both label copies +
+    // both Beaker icons appear.
+    const meetingIdx = actionsSrc.indexOf(
+      'data-testid="customer-create-meeting"');
+    const contentEndIdx = actionsSrc.indexOf(
+      "</DropdownMenuContent>", meetingIdx);
+    const flatBlock = actionsSrc.slice(meetingIdx, contentEndIdx);
+    expect(flatBlock).toMatch(/Chemistry\b/);
+    expect(flatBlock).toMatch(/Chemistry History/);
+    // Beaker icons on both — 2 hits expected.
+    const beakerHits = flatBlock.match(
+      /<Beaker\s+size=\{14\}\s+className="mr-2"\s*\/>/g) || [];
+    expect(beakerHits.length).toBeGreaterThanOrEqual(2);
   });
 });

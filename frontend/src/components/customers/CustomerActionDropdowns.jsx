@@ -4,10 +4,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-  DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
 import {
   Mail, MessageSquare, ChevronDown, Plus, Calendar, DollarSign,
@@ -34,13 +30,22 @@ import { colors } from "@/theme";
  * (the popover) keeps its default (light) styling — spec calls for
  * only the trigger to live on navy.
  *
- * Feb-2026 · Chemistry submenu consolidation
+ * Feb-2026 · Chemistry flat items (round 2)
  * ─────────────────────────────────────────
- * The standalone "Chemistry" brand-colored dropdown that lived
- * inline on the customer header row is folded into ``+ Create``
- * as a nested submenu labelled "Chemistry…". Both original
- * options (Chemistry, Chemistry History) are preserved with their
- * legacy testids so every existing suite keeps resolving.
+ * The Chemistry surface has landed in two rounds:
+ *
+ *   Round 1 (cc5477dc4) — the standalone brand-colored Chemistry
+ *   dropdown that lived inline on the customer header row was folded
+ *   into ``+ Create`` as a NESTED submenu labelled ``Chemistry…``.
+ *
+ *   Round 2 (this commit) — the nested submenu is FLATTENED. Both
+ *   original options (Chemistry, Chemistry History) now render as
+ *   top-level ``+ Create`` items, sitting directly after ``Meeting``
+ *   with intact icons, navigation destinations, and both their new
+ *   P52 testids (``cd-action-chemistry`` / ``cd-action-chem-history``)
+ *   and their pre-P52 legacy testids (``cd-chemistry`` /
+ *   ``cd-chemistry-history``) so every existing suite that clicks
+ *   by testid keeps resolving.
  */
 export function CustomerActionDropdowns({
   customer, onSend, onQuickTask, onSendServiceRecordsLink,
@@ -165,40 +170,32 @@ export function CustomerActionDropdowns({
           >
             <Users size={14} className="mr-2" /> Meeting
           </DropdownMenuItem>
-          {/* Feb-2026 · Chemistry submenu — folds the previous
-              standalone "Chemistry" brand-colored dropdown on the
-              customer header row into ``+ Create``. Both original
-              options and their pre-P52 legacy testids are preserved
-              so every existing suite that clicks by testid keeps
-              resolving. */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger
-              data-testid="customer-create-chemistry-submenu"
-              className="flex items-center gap-2"
-            >
-              <Beaker size={14} className="mr-2" /> Chemistry…
-            </DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent>
-                <DropdownMenuItem
-                  onSelect={() => navigate(`/customers/${cid}/chemistry`)}
-                  data-testid="cd-action-chemistry"
-                  data-legacy-testid="cd-chemistry"
-                >
-                  <Beaker size={14} className="mr-2" /> Chemistry
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() =>
-                    navigate(`/customers/${cid}/chemistry-history`)
-                  }
-                  data-testid="cd-action-chem-history"
-                  data-legacy-testid="cd-chemistry-history"
-                >
-                  <Beaker size={14} className="mr-2" /> Chemistry History
-                </DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuPortal>
-          </DropdownMenuSub>
+          {/* Feb-2026 · Chemistry flat items (round 2) — the previous
+              ``DropdownMenuSub`` labelled ``Chemistry…`` was flattened
+              per user ruling. Both items now render as top-level
+              ``+ Create`` siblings, sitting directly after
+              ``Meeting``. All four testids
+              (``cd-action-chemistry``, ``cd-action-chem-history``,
+              ``cd-chemistry``, ``cd-chemistry-history``) plus icons
+              and navigate destinations are preserved verbatim from
+              the round-1 submenu items — no downstream test that
+              clicks by any of these testids should regress. */}
+          <DropdownMenuItem
+            onSelect={() => navigate(`/customers/${cid}/chemistry`)}
+            data-testid="cd-action-chemistry"
+            data-legacy-testid="cd-chemistry"
+          >
+            <Beaker size={14} className="mr-2" /> Chemistry
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() =>
+              navigate(`/customers/${cid}/chemistry-history`)
+            }
+            data-testid="cd-action-chem-history"
+            data-legacy-testid="cd-chemistry-history"
+          >
+            <Beaker size={14} className="mr-2" /> Chemistry History
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
