@@ -1433,7 +1433,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         </p>
       </Modal>
 
-      <RecordPaymentModal open={payOpen} onClose={() => setPayOpen(false)} invoice={doc}
+      <RecordPaymentModal open={payOpen} onClose={() => setPayOpen(false)} invoice={doc} user={user}
         onDone={async (m) => { setPayOpen(false); setToast({ tone: "success", message: m }); await load(); }}
         onError={(e) => setToast({ tone: "error", message: e })} />
 
@@ -1686,16 +1686,37 @@ function SmsModal({ open, onClose, invoice, customer, onDone }) {
   );
 }
 
-function RecordPaymentModal({ open, onClose, invoice, onDone, onError }) {
+function RecordPaymentModal({ open, onClose, invoice, user, onDone, onError }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  // Task H0 · Feb-2026 — Historical Invoice Date Backfill.
+  // Admin-only optional ``paid_at`` override on record-payment.
+  // Role predicate mirrors ``QuoteInvoiceNew.jsx`` verbatim +
+  // matches the backend ``_DEFAULT_ADMIN_ALLOWLIST``.  Blank input
+  // → payload omits ``paid_at`` → server stamps ``now()`` on the
+  // fully-paid transition.  On partial payments the backend
+  // silently defers the override — see ``routers/quotes.py``
+  // ``record_payment`` ``elif body.paid_at is not None`` branch.
+  const canBackfill = ["admin", "super_admin", "owner"].includes(
+    (user?.role || "").toLowerCase()
+  );
+  const [paidDate, setPaidDate] = useState("");
   useEffect(() => {
     if (open) setAmount(String(Math.max(0, Number(invoice.total || 0) - Number(invoice.amount_paid || 0)).toFixed(2)));
+    if (open) setPaidDate("");
   }, [open, invoice]);
   const submit = async () => {
     setBusy(true);
     try {
-      await api.post(`/quotes/${invoice.id}/record-payment`, { amount: Number(amount) });
+      const payload = { amount: Number(amount) };
+      // Task H0 · include paid_at ONLY for admin backfill runs.
+      // Empty string would trigger a Pydantic 422; the
+      // conditional-key pattern keeps the default path
+      // bit-for-bit identical to the pre-H0 shape.
+      if (canBackfill && paidDate) {
+        payload.paid_at = new Date(paidDate).toISOString();
+      }
+      await api.post(`/quotes/${invoice.id}/record-payment`, payload);
       onDone(`Recorded ${money(Number(amount))}`);
     } catch (e) {
       onError(e.message);
@@ -1708,6 +1729,42 @@ function RecordPaymentModal({ open, onClose, invoice, onDone, onError }) {
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={submit} disabled={busy}>{busy ? "Saving…" : "Record"}</Button></>}>
       <TextInput label="AMOUNT" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
       <p className="text-xs mt-2" style={{ color: colors.muted }}>Cash / check / other — recorded manually. Stripe checkout marks paid automatically.</p>
+      {canBackfill ? (
+        <div className="mt-3" data-testid="backfill-date-section">
+          <details>
+            <summary
+              className="text-xs font-semibold tracking-wide cursor-pointer select-none"
+              style={{ color: colors.onSurfaceSecondary || colors.muted }}
+              data-testid="backfill-date-summary"
+            >
+              BACKFILL PAID DATE (admin)
+            </summary>
+            <div className="mt-3">
+              <label
+                className="text-xs font-semibold tracking-wide mb-1 block"
+                style={{ color: colors.onSurfaceSecondary || colors.muted }}
+              >
+                PAID DATE
+              </label>
+              <input
+                type="date"
+                value={paidDate}
+                onChange={(e) => setPaidDate(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                style={{
+                  backgroundColor: colors.surface,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="backfill-date-input"
+              />
+              <p className="text-xs mt-2" style={{ color: colors.muted }}>
+                Leave blank to use today. Only used when importing historical payments. On partial payments the date is deferred until the balance is closed.
+              </p>
+            </div>
+          </details>
+        </div>
+      ) : null}
     </Modal>
   );
 }

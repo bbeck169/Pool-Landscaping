@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Plus, X } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors, money } from "@/theme";
 import { PageHeader, Button, TextInput, Toast } from "@/components/ui-kit";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
@@ -58,6 +59,20 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   // the save-blocking category errors from the backend can be
   // rendered inline on the offending row instead of a page-level toast.
   const [rowErrors, setRowErrors] = useState({});
+  // Task H0 · Feb-2026 — Historical Invoice Date Backfill.
+  // Admin-only optional ``created_at`` override on quote/invoice
+  // create. The section renders only when ``canBackfill`` is
+  // truthy; a blank input falls through to the server's default
+  // ``now()`` stamp so the non-admin / no-override path is
+  // completely unchanged.  The role predicate mirrors the backend
+  // allowlist verbatim (``services.quotes.date_override``
+  // ``_DEFAULT_ADMIN_ALLOWLIST``) — future drift on either side
+  // trips vitest at ``task-h0-backfill-date-ui.test.jsx``.
+  const { user } = useAuth();
+  const canBackfill = ["admin", "super_admin", "owner"].includes(
+    (user?.role || "").toLowerCase()
+  );
+  const [backfillDate, setBackfillDate] = useState("");
 
   const [form, setForm] = useState({
     customer_id: preselect,
@@ -156,6 +171,16 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             pricebook_writeback: !!li.pricebook_writeback,
           })),
       };
+      // Task H0 · Feb-2026 — admin-only historical-date backfill.
+      // Include ``created_at`` ONLY when the operator is an admin
+      // AND typed a date; otherwise omit the key entirely so the
+      // server-side ``resolve_date_override`` short-circuits on
+      // ``None`` and stamps ``now()``.  Sending an empty string
+      // would trigger a Pydantic 422 (invalid datetime) — hence
+      // the conditional-key pattern rather than `|| undefined`.
+      if (canBackfill && backfillDate) {
+        payload.created_at = new Date(backfillDate).toISOString();
+      }
       const saved = await api.post("/quotes", payload);
       setToast({ tone: "success", message: `${docType === "invoice" ? "Invoice" : "Quote"} created` });
       setTimeout(
@@ -542,6 +567,57 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             data-testid="qf-terms"
           />
         </div>
+
+        {/*
+          Task H0 · Feb-2026 — admin-only Backfill Date section.
+          Zero visual change for techs / customers / no-override
+          flows: the collapsible ``<details>`` is only mounted when
+          ``canBackfill`` is truthy AND stays collapsed by default
+          (``open`` is intentionally omitted).  Blank input →
+          payload omits ``created_at`` → server stamps ``now()``.
+          See ``services/quotes/date_override.py`` for the paired
+          backend contract + validation.
+        */}
+        {canBackfill ? (
+          <div
+            className="rounded-2xl p-5 mb-4"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+            data-testid="backfill-date-section"
+          >
+            <details>
+              <summary
+                className="text-xs font-semibold tracking-wide cursor-pointer select-none"
+                style={{ color: colors.onSurfaceSecondary }}
+                data-testid="backfill-date-summary"
+              >
+                BACKFILL DATE (admin)
+              </summary>
+              <div className="mt-3">
+                <label
+                  className="text-xs font-semibold tracking-wide mb-1 block"
+                  style={{ color: colors.onSurfaceSecondary }}
+                >
+                  {docType === "invoice" ? "INVOICE DATE" : "ESTIMATE DATE"}
+                </label>
+                <input
+                  type="date"
+                  value={backfillDate}
+                  onChange={(e) => setBackfillDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+                  style={{
+                    backgroundColor: colors.surface,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="backfill-date-input"
+                />
+                <p className="text-xs mt-2" style={{ color: colors.muted }}>
+                  Leave blank to use today. Only used when importing historical {docType === "invoice" ? "invoices" : "estimates"}.
+                </p>
+              </div>
+            </details>
+          </div>
+        ) : null}
 
         <div className="flex justify-end gap-2 pb-8">
           <Button variant="ghost" onClick={(e) => { e.preventDefault(); navigate(-1); }}>Cancel</Button>
