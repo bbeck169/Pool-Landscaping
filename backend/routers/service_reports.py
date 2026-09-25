@@ -535,6 +535,7 @@ class ServiceReportPatch(BaseModel):
 @router.patch("/jobs/{jid}/service-report")
 async def patch_service_report(jid: str, body: ServiceReportPatch,
                                request: Request,
+                               background_tasks: BackgroundTasks,
                                user: dict = Depends(get_current_user),
                                tenant: dict = Depends(get_current_tenant)):
     # Phase 40 · Idempotency — offline mobile queues retry on reconnect.
@@ -606,6 +607,46 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
     resp = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    # Task N Round 2 · Phase N.6 — note-transition notifier.  Compares
+    # ``rep`` (pre-write snapshot at line 551) against ``resp`` (post-
+    # write re-read) and fires email + SMS to the tenant's notification
+    # recipients on any empty→populated flip of ``notes`` /
+    # ``internal_notes`` / ``customer_notes``.  Debounce collection
+    # ``notification_debounce`` guarantees at-most-once delivery per
+    # (tenant, SR, field, transition_kind) within 24h.  Never fails the
+    # PATCH response — closure catches all exceptions locally.
+    try:
+        _cust_name = (job.get("customer_name")
+                      or (await db.customers.find_one(
+                          {"id": job.get("customer_id"),
+                            "tenant_id": tenant["id"]},
+                          {"_id": 0, "name": 1}) or {}).get("name")
+                      or "Customer")
+        async def _notify_note_tx(
+            _tid=tenant["id"], _tenant=tenant, _rep=rep, _resp=resp or {},
+            _sr_id=(resp or rep or {}).get("id") or "",
+            _job_id=jid, _cust_name=_cust_name,
+            _template=(resp or rep or {}).get("template"),
+        ):
+            try:
+                from services.notes_notifications.notes_change_notifier import (
+                    notify_note_transitions as _nn,
+                )
+                await _nn(
+                    db=db, tenant=_tenant,
+                    sr_id=_sr_id, job_id=_job_id,
+                    customer_name=_cust_name, template=_template,
+                    old_sr=_rep or {}, new_sr=_resp,
+                )
+            except Exception as _e:
+                logger.warning(
+                    f"[notes-notifier:patch] deferred send failed: {_e}"
+                )
+        background_tasks.add_task(_notify_note_tx)
+    except Exception as _e_outer:
+        logger.warning(
+            f"[notes-notifier:patch] scheduler crashed: {_e_outer}"
+        )
     if key:
         await store_response(key, "PATCH /jobs/{jid}/service-report",
                               tenant["id"], resp,
@@ -1166,6 +1207,44 @@ async def submit_service_report(
         background_tasks.add_task(_emit_finalized)
     except Exception:
         pass
+    # Task N Round 2 · Phase N.6 — submit-time note notifier.  Fires
+    # a distinct "[Industry] Service report submitted — notes attached
+    # — Customer" fanout if ANY of the 3 note fields is non-empty at
+    # submit.  Debounce composite key differs from the patch-time
+    # kind (``submit_finalize`` vs ``patch_transition``) so this
+    # belt-and-suspenders send always gets a chance to fire even if
+    # a per-field patch_transition already fired earlier.
+    try:
+        async def _notify_submit_finalize(
+            _tenant=tenant, _job=job, _out=out or rep,
+            _tid=tenant["id"],
+        ):
+            try:
+                from services.notes_notifications.notes_change_notifier import (
+                    notify_submit_finalize as _nsf,
+                )
+                _cust = (_job.get("customer_name")
+                          or (await db.customers.find_one(
+                              {"id": _job.get("customer_id"),
+                                "tenant_id": _tid},
+                              {"_id": 0, "name": 1}) or {}).get("name")
+                          or "Customer")
+                await _nsf(
+                    db=db, tenant=_tenant,
+                    sr_id=(_out or {}).get("id") or "",
+                    job_id=jid, customer_name=_cust,
+                    template=(_out or {}).get("template"),
+                    new_sr=_out or {},
+                )
+            except Exception as _e:
+                logger.warning(
+                    f"[notes-notifier:submit] deferred send failed: {_e}"
+                )
+        background_tasks.add_task(_notify_submit_finalize)
+    except Exception as _e_outer:
+        logger.warning(
+            f"[notes-notifier:submit] scheduler crashed: {_e_outer}"
+        )
     # Feb-2026 · Marketing Slice M5c — drip event bus (service_completed).
     # P0 Fix 2a — pass the service_report id so the event ledger's
     # unique index dedupes retries against the same submission.

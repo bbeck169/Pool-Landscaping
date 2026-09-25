@@ -1943,6 +1943,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"task_n_service_reports_archive ensure_indexes crashed: {e}")
 
+    # Task N Round 2 · Phase N.6 · Feb-2026 — notification_debounce
+    # composite-unique + TTL indexes for the note-change notifier.
+    # Idempotent; second boot is a no-op via the fixed index names.
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.notes_notifications.notes_change_notifier import (
+            ensure_debounce_indexes as _task_n_deb_idx,
+        )
+        await _task_n_deb_idx(db)
+    except Exception as e:
+        logger.warning(f"task_n_notification_debounce ensure_indexes crashed: {e}")
+
     # Phase F3.5 · Feb-2026 — customer-scoped compound indexes.
     # Phase P24 · Feb-2026 — MOVED to the STRUCTURAL pre-yield block
     # in ``_run_boot_sequence`` because ``/health/ready`` verifies the
