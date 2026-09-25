@@ -2571,3 +2571,15 @@
 - **Verified at**: 390px (iPhone), 360px (narrow Android), 768px (tablet) — header renders cleanly at all widths. Hamburger opens GlobalMenu sheet correctly. Schedule screen also verified.
 - **No regressions**: All existing header behavior (back button, brand logo, settings sprocket, notification bell, breadcrumbs) preserved.
 
+
+## Iteration — Pool Checklist: notes fields + flushSave wiring + decimal keyboard verification
+- **Commit**: fdeafcfc7b4d2d3d3b080ae7aa409c7d324dfe76
+- **Date**: 2026-09-25
+- **Changes**:
+  - `PoolChecklistForm.tsx`: Added `customerNotes` prop; added `customer_notes` to onChange type; added Job Notes (internal) + Customer Notes (customer-facing) textareas mirroring the landscaping form exactly; added `subtle` style for label annotations; testIDs: `pool-internal-notes`, `pool-customer-notes`
+  - `checklist.tsx`: Wired `internalNotes={report.internal_notes}` and `customerNotes={report.customer_notes}` to `<PoolChecklistForm>`; added `internal_notes` and `customer_notes` to the `flushSave` PATCH payload body
+  - Verified all chemistry inputs use `keyboardType="decimal-pad"` (ReadingChipRow.tsx:210, WaterBodyPanel.tsx:178); ChemicalDropdownStack.tsx:133 uses conditional `integer ? "number-pad" : "decimal-pad"` — correct. No `parseInt` coercion anywhere.
+- **Files modified**: `mobile/src/components/checklist/PoolChecklistForm.tsx`, `mobile/app/job/[id]/checklist.tsx`
+- **Backend curl verification**: `GET /api/jobs/{id}/service-report` confirmed `internal_notes: 'job notes visible only internally'` and `customer_notes: 'customer-facing notes here'` persisted after Save.
+- **Visual parity**: Pool notes layout identical to landscaping (placeholder text, multiline, 3 lines, label with subtle annotation).
+
