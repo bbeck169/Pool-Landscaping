@@ -2022,8 +2022,44 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
     # Look up customer + tech for the payload.
     cust = await db.customers.find_one(
         {"id": tpl.get("customer_id"), "tenant_id": tenant_id},
-        {"_id": 0, "name": 1, "address": 1},
+        {"_id": 0, "name": 1, "address": 1, "primary_property_id": 1},
     ) or {}
+    # Feb-2026 · Part 2 · property_id stamping — resolve the
+    # property once per template so every generated job carries
+    # the FK + a CURRENT composed address.  Falls back to the
+    # customer's ``primary_property_id`` when the template omits
+    # the FK (legacy templates pre-P33) and logs a warning when
+    # neither surface yields a property.
+    from services.auto_visit_email import _format_property_address
+    resolved_property_id: Optional[str] = None
+    resolved_property_address: Optional[str] = None
+    tpl_pid = tpl.get("property_id")
+    cust_pid = cust.get("primary_property_id") if cust else None
+    candidate_pid = tpl_pid or cust_pid
+    if candidate_pid:
+        prop = await db.properties.find_one(
+            {"id": candidate_pid, "tenant_id": tenant_id,
+             "deleted_at": {"$exists": False}},
+            {"_id": 0, "id": 1, "address": 1},
+        )
+        if prop:
+            resolved_property_id = prop["id"]
+            resolved_property_address = _format_property_address(prop) or None
+        else:
+            logger.warning(
+                "recurring_job.generator.property_unresolved "
+                "template=%s tenant=%s customer=%s property_id=%s "
+                "reason=not_found_or_deleted",
+                tpl["id"], tenant_id, tpl.get("customer_id"),
+                candidate_pid,
+            )
+    else:
+        logger.warning(
+            "recurring_job.generator.no_property "
+            "template=%s tenant=%s customer=%s "
+            "reason=neither_tpl_nor_customer_primary",
+            tpl["id"], tenant_id, tpl.get("customer_id"),
+        )
     tech = None
     if tpl.get("assigned_tech_id"):
         tech = await db.users.find_one({"id": tpl["assigned_tech_id"]},
@@ -2045,14 +2081,20 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
     for d in dates:
         iso = d.isoformat()
         try:
-            await db.jobs.insert_one({
+            job_doc = {
                 "id": new_id(),
                 "tenant_id": tenant_id,
                 "title": tpl.get("service_type") or "Recurring Service",
                 "service_type": tpl.get("service_type"),
                 "customer_id": tpl.get("customer_id"),
                 "customer_name": cust.get("name") or tpl.get("customer_name"),
-                "address": cust.get("address") or "",
+                # Feb-2026 · Part 2 · one source of truth at
+                # generation time.  Prefer the property's composed
+                # address (already tenant-scoped + resolves the
+                # LIVE property, not a stale denorm) so the
+                # visit-email + portal fallbacks stay usable.
+                "address": (resolved_property_address
+                            or cust.get("address") or ""),
                 "technician_id": tech_id,
                 "technician_name": tech_name,
                 "crew_id": crew_id,
@@ -2063,7 +2105,12 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
                 "notes": tpl.get("notes") or "",
                 "recurring_template_id": tpl["id"],
                 "created_at": now_iso(),
-            })
+            }
+            # Only stamp property_id when we actually resolved one —
+            # never fabricate an FK on a zero-property customer.
+            if resolved_property_id:
+                job_doc["property_id"] = resolved_property_id
+            await db.jobs.insert_one(job_doc)
             inserted += 1
             inserted_dates.append(iso)
         except Exception as e:
