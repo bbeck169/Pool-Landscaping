@@ -26126,3 +26126,139 @@ preview→full toggle→collapse cycle.
 - Export-to-CSV button once the row count exceeds ~500 for any
   tenant.
 
+
+## Task N Round 2 · Notifications + Notes History (Feb-2026)
+
+Completes the notes workstream originally scoped in Round 1 (which
+shipped archive-only).  This round adds:
+
+  A. Note-transition + submit-finalize email + SMS notifications.
+  B. Per-customer Notes History endpoint + `<NotesHistoryList/>`
+     replacing the two legacy `<Info label="Notes"/>` display
+     sites in `CustomerDetail.jsx`.
+
+### 1. Feature A · Notifications
+
+**Trigger points:**
+- `patch_service_report` — after `update_one`, compares pre-write
+  `rep` vs post-write `resp` for empty→populated transitions on
+  `notes`, `internal_notes`, `customer_notes`.  One event per
+  transitioning field.
+- `submit_service_report` — after the existing `_emit_finalized`
+  add_task, fires a distinct submit-finalize summary if ANY of the
+  3 note fields is non-empty at submit time.
+
+**Transition semantics (locked):**
+```python
+def is_empty_to_populated(old, new):
+    return bool(new and new.strip()) and not bool(old and old.strip())
+```
+Value edits (both non-empty) do NOT fire.  Empty→populated→empty
+→populated re-fires on the second populate (each transition is a
+distinct debounce-key event).
+
+**Subject-line split (per Round 2 §5):**
+- `patch_transition`: `[Pool|Landscaping|Service] New note added — <customer>`
+- `submit_finalize`:  `[Pool|Landscaping|Service] Service report submitted — notes attached — <customer>`
+
+Body copy also differs — patch shows a preview of the newly-added
+note; submit shows all 3 note fields, labeled.
+
+**Debounce (`notification_debounce` collection):**
+- Unique index on `(tenant_id, sr_id, note_field, transition_kind)`.
+- TTL 24h on `expires_at`.
+- Insert-on-fire; `DuplicateKeyError` → skip send.
+- Composite key includes `transition_kind` so patch and submit
+  events are independently debounced (Phase N.5 §C locked).
+
+**Recipient resolution (Phase N.5 §A R.1):**
+Reuse `Tenant.lead_notification_recipients` (structured, per-
+channel opt-in) with fallback to legacy `lead_alert_email_recipients`
+and `lead_alert_sms_recipients`.  De-duped by `(channel, address)`.
+Zero schema migration.  Code comment explains the reuse; a rename
+to `notification_recipients` (R.2) is deferred to a follow-up.
+
+**Sender helper reuse (Phase N.5 §D):**
+- Email: `services.comms_email_adapter.send_email` (Resend).
+- SMS:   `services.comms_sms_adapter.send_sms` (RingCentral).
+Both already gate through opt-out + quiet-hours + send-log.  No
+new mailer introduced.  Fan-out uses `asyncio.gather` with
+`return_exceptions=True` so one recipient's failure never blocks
+another.  All send crashes log-WARN + swallow — notifier failures
+NEVER fail the originating PATCH/submit request.
+
+### 2. Feature B · Customer Notes History
+
+**Endpoint:** `GET /api/customers/{cid}/notes-history` (admin,
+tenant-scoped).  Response shape mirrors `/service-reports/archive`
+verbatim so the shared `<NotesHistoryList/>` renders either
+consistently.  Extra top-level `customer` block carries the
+persisted `customer.notes` field so the frontend can render it
+above the SR history (Phase N.5 §E halt option).
+
+**Shared query builder:** extracted to `services/notes/archive_query.py`
+so shape drift lands in one file.  Both the tenant-wide archive
+and the per-customer history rely on it.
+
+**Frontend replacement (Phase N.5 §E):**
+- `CustomerDetail.jsx:1075` (About section) — legacy `<Info label=
+  "Notes"/>` replaced by compact `<NotesHistoryList compact
+  onSeeAll={()=>setTab('notes')}/>` with "Recent notes" header.
+- `CustomerDetail.jsx:1177` (Notes tab) — legacy static block
+  replaced by:
+    1. Optional "Customer profile note" read-only card (rendered
+       only when `customer.notes.trim()`).
+    2. Full paginated `<NotesHistoryList customerId={id}/>`.
+
+**Write path unchanged.** `customer.notes` is still edited via
+`CustomerForm.jsx:483` textarea → `PUT /customers/{cid}`.  Zero
+schema migration, zero data movement, zero relocation.
+
+### 3. Commit ledger
+
+| # | SHA | Message |
+|---|---|---|
+| 1 | `3d3a39801` | `feat(notifications): notes_change_notifier transition detection + debounce + recipient resolver` |
+| 2 | `91513b9a6` | `feat(service-reports): wire note-change notifier into patch + submit handlers` |
+| 3 | `6dba45cd7` | `feat(customers): GET /api/customers/{cid}/notes-history admin endpoint + shared archive query builder` |
+| 4 | `9483068be` | `feat(customers): CustomerDetail Notes History replaces static notes displays` |
+| 5 | *(this commit)* | `docs(prd): Task N Round 2 — notifications + notes history` |
+
+Naming note: my services subpackage is `services/notes_notifications/`
+(not `services/notifications/`) because a pre-existing
+`services/notifications.py` module already exports the emit /
+`KIND_LABELS` API consumed by `routers/{team,ringcentral,
+job_requests,notifications}.py`.  Colliding names would have
+shadowed the module and broken those imports.
+
+### 4. Test coverage
+
+Backend — **29/29 green**:
+- `test_task_n_notes_change_notifier.py` — 12/12 (recipient
+  resolver ×2, transition semantics ×2, debounce ×2, one-channel-
+  failure, cross-tenant isolation, subject-split ×4).
+- `test_task_n_notes_history_endpoint.py` — 6/6 (happy path,
+  pagination, cross-tenant isolation, non-admin 403, customer-
+  not-found 404, row-shape parity vs archive).
+- `test_task_n_notes_archive.py` — 11/11 (Round 1 regression pass
+  through the refactored shared builder).
+
+Frontend — **19/19 green**:
+- `notes-history-list.test.jsx` — 7/7 (empty state, row rendering,
+  expander, compact page_size=3 + no pagination, compact "See all"
+  link when total>3 + not when ≤3, Next button advances page).
+- `notes-archive-page.test.jsx` — 12/12 (Round 1 regression).
+
+### 5. Deferred to Round 3 (if needed)
+
+- **Patch/submit cooldown** — if a `submit_finalize` fires within
+  30s of a same-SR `patch_transition`, skip the submit send.
+- **Recipient rename R.2** — `lead_notification_recipients` →
+  `notification_recipients` (model + migration + Settings UI + all
+  callers).  Larger blast radius; only worth doing if the naming
+  ages badly.
+- **Notification retry** — best-effort in Round 2.  A durable
+  retry queue against provider outages is future work.
+- **Per-recipient in-app inbox** — currently email + SMS only.
+
+
