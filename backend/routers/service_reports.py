@@ -2010,6 +2010,249 @@ async def last_readings(
     return {"customer_id": customer_id, "readings": out, "recent_readings": recent}
 
 
+# ─── Task N · Phase N.1 · Feb-2026 — Notes Archive (admin) ───────────────
+_TEMPLATE_INDUSTRY_MAP = {
+    "pool": "Pool",
+    "landscape": "Landscaping",
+    "generic": "Service",
+}
+_NOTES_ARCHIVE_INDEX_NAME = "service_reports_archive_idx"
+_NOTES_ARCHIVE_MAX_PAGE_SIZE = 100
+
+
+def _map_industry(template: Optional[str]) -> str:
+    """Locked mapping per Phase N.1 audit — ``pool``/``landscape``/``generic``
+    plus a ``None`` fallback that only fires against test rows in current
+    production data (``TEST_p37_j_*`` job ids)."""
+    return _TEMPLATE_INDUSTRY_MAP.get((template or "").lower(), "Service")
+
+
+def _parse_date_range_iso(
+    date_from: Optional[str], date_to: Optional[str],
+) -> Dict[str, str]:
+    """Convert ``YYYY-MM-DD`` inputs to a ``$gte`` / ``$lte`` fragment
+    covering the full UTC day range (inclusive both ends).  Raises
+    HTTPException(400) with ``invalid_date_format`` on any drift so
+    the client can surface a clear validation error."""
+    from datetime import datetime as _dt
+    out: Dict[str, str] = {}
+    if date_from:
+        try:
+            _dt.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                400,
+                {"error": "invalid_date_format",
+                 "field": "date_from",
+                 "expected": "YYYY-MM-DD"},
+            )
+        out["$gte"] = f"{date_from}T00:00:00Z"
+    if date_to:
+        try:
+            _dt.strptime(date_to, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                400,
+                {"error": "invalid_date_format",
+                 "field": "date_to",
+                 "expected": "YYYY-MM-DD"},
+            )
+        out["$lte"] = f"{date_to}T23:59:59.999Z"
+    return out
+
+
+async def ensure_indexes() -> None:
+    """Create the Notes Archive partial index at server-startup.
+
+    Keys: ``(tenant_id: 1, submitted_at: -1)`` — supports the archive
+    query's tenant scope + newest-first sort in a single index scan.
+
+    Partial filter: submitted rows only that have at least one populated
+    note field.  Keeps the index tiny; grows only with note-bearing
+    filed SRs (13 rows across all tenants at ship-time; a rounding
+    error on the collection).
+
+    Idempotent: ``background=True`` + a stable index name so a second
+    boot after the ship is a no-op.
+    """
+    try:
+        await db.service_reports.create_index(
+            [("tenant_id", 1), ("submitted_at", -1)],
+            name=_NOTES_ARCHIVE_INDEX_NAME,
+            background=True,
+            partialFilterExpression={
+                "submitted_at": {"$type": "string"},
+                "$or": [
+                    {"notes": {"$type": "string"}},
+                    {"internal_notes": {"$type": "string"}},
+                    {"customer_notes": {"$type": "string"}},
+                ],
+            },
+        )
+    except Exception as _e:  # pragma: no cover — defensive
+        logger.warning(f"[notes-archive] ensure_indexes crashed: {_e}")
+
+
+@router.get("/service-reports/archive")
+async def notes_archive(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1),
+    customer_search: Optional[str] = None,
+    tech_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    industry: Optional[str] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-gated read of submitted service reports with any of
+    ``notes`` / ``internal_notes`` / ``customer_notes`` populated.
+
+    All filters are optional and combine with AND semantics.
+    Returns 200 with an empty ``rows`` list when no matches — never
+    a 404.  ``page_size`` capped at 100 (413 otherwise per user
+    spec adjusted to 400 per platform convention for input caps).
+    Tenant-scoped as the FIRST pipeline stage so the partial index
+    is index-scan-eligible.
+    """
+    import re as _re
+    if page_size > _NOTES_ARCHIVE_MAX_PAGE_SIZE:
+        raise HTTPException(
+            400,
+            {"error": "page_size_too_large",
+             "max": _NOTES_ARCHIVE_MAX_PAGE_SIZE},
+        )
+
+    # ── Stage 1 · tenant-scoped $match on the partial-index set ──
+    match_stage: Dict[str, Any] = {
+        "tenant_id": tenant["id"],
+        "submitted_at": {"$type": "string"},
+        "$or": [
+            {"notes": {"$type": "string", "$ne": ""}},
+            {"internal_notes": {"$type": "string", "$ne": ""}},
+            {"customer_notes": {"$type": "string", "$ne": ""}},
+        ],
+    }
+    if tech_id:
+        match_stage["tech_id"] = tech_id
+    _date_frag = _parse_date_range_iso(date_from, date_to)
+    if _date_frag:
+        # Merge with the ``$type: string`` guard.
+        match_stage["submitted_at"] = {"$type": "string", **_date_frag}
+    if industry:
+        # Reverse the industry → template map.  Multi-valued (e.g.
+        # ``Service`` maps to both ``generic`` and null/missing).
+        _wanted = [k for k, v in _TEMPLATE_INDUSTRY_MAP.items()
+                    if v.lower() == industry.lower()]
+        if industry.lower() == "service":
+            # Service is generic + missing/null template rows.
+            match_stage["$and"] = [
+                {"$or": [
+                    {"template": "generic"},
+                    {"template": None},
+                    {"template": {"$exists": False}},
+                ]}
+            ]
+        elif _wanted:
+            match_stage["template"] = _wanted[0]
+        else:
+            # Unknown industry label — return empty rather than 400
+            # so a stale UI dropdown doesn't crash the page.
+            return {"rows": [], "total_count": 0,
+                    "page": page, "page_size": page_size}
+
+    # ── Stages 2-4 · joins ─────────────────────────────────────
+    pipeline: List[Dict[str, Any]] = [
+        {"$match": match_stage},
+        {"$sort": {"submitted_at": -1}},
+        {"$lookup": {
+            "from": "jobs", "localField": "job_id",
+            "foreignField": "id", "as": "job_doc",
+        }},
+        {"$unwind": {"path": "$job_doc", "preserveNullAndEmptyArrays": True}},
+        {"$lookup": {
+            "from": "customers", "localField": "job_doc.customer_id",
+            "foreignField": "id", "as": "cust_doc",
+        }},
+        {"$unwind": {"path": "$cust_doc", "preserveNullAndEmptyArrays": True}},
+        {"$lookup": {
+            "from": "users",
+            "let": {"tid": "$tech_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$or": [
+                    {"$eq": ["$id", "$$tid"]},
+                    {"$eq": ["$technician_id", "$$tid"]},
+                ]}}},
+                {"$limit": 1},
+                {"$project": {"_id": 0, "name": 1, "id": 1}},
+            ],
+            "as": "tech_doc",
+        }},
+        {"$unwind": {"path": "$tech_doc", "preserveNullAndEmptyArrays": True}},
+    ]
+
+    # ── Stage 5 · post-lookup customer regex ───────────────────
+    if customer_search:
+        _pattern = _re.escape(customer_search.strip())
+        if _pattern:
+            pipeline.append({"$match": {
+                "cust_doc.name": {"$regex": _pattern, "$options": "i"},
+            }})
+
+    # ── Stage 6 · $facet paginate + count ──────────────────────
+    skip = (page - 1) * page_size
+    pipeline.append({"$facet": {
+        "rows": [
+            {"$skip": skip},
+            {"$limit": page_size},
+            {"$project": {
+                "_id": 0,
+                "sr_id": "$id",
+                "job_id": 1,
+                "submitted_at": 1,
+                "customer_id": "$cust_doc.id",
+                "customer_name": "$cust_doc.name",
+                "tech_id": 1,
+                "tech_name": "$tech_doc.name",
+                "template": 1,
+                "notes": 1,
+                "internal_notes": 1,
+                "customer_notes": 1,
+            }},
+        ],
+        "total_count": [{"$count": "n"}],
+    }})
+
+    cursor = db.service_reports.aggregate(pipeline)
+    facet_result = await cursor.to_list(1)
+    facet = facet_result[0] if facet_result else {"rows": [], "total_count": []}
+    rows_out: List[Dict[str, Any]] = []
+    for row in facet.get("rows") or []:
+        rows_out.append({
+            "sr_id": row.get("sr_id"),
+            "job_id": row.get("job_id"),
+            "submitted_at": row.get("submitted_at"),
+            "customer_id": row.get("customer_id"),
+            "customer_name": row.get("customer_name") or "",
+            "tech_id": row.get("tech_id"),
+            "tech_name": row.get("tech_name") or "",
+            "industry": _map_industry(row.get("template")),
+            "notes": row.get("notes") or "",
+            "internal_notes": row.get("internal_notes") or "",
+            "customer_notes": row.get("customer_notes") or "",
+        })
+    total_count = 0
+    _tc = facet.get("total_count") or []
+    if _tc:
+        total_count = int(_tc[0].get("n") or 0)
+    return {
+        "rows": rows_out,
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 # ─── Phase 39 · Send Visit Recap ────────────────────────────────────────
 # Fired after a tech closes a job. Composes a short summary of the visit
 # (chemicals added, water readings, up to 3 photos) and sends it to the

@@ -1930,6 +1930,19 @@ async def _background_seed():
     except Exception as e:
         logger.warning(f"perf_triad_indexes crashed: {e}")
 
+    # Task N · Phase N.1 · Feb-2026 — Notes Archive partial index on
+    # ``service_reports``.  Backs ``GET /api/service-reports/archive``
+    # (admin).  Partial filter keeps the index tiny (submitted rows
+    # with any of ``notes`` / ``internal_notes`` / ``customer_notes``
+    # populated — 13 rows across all tenants at ship-time).
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from routers.service_reports import ensure_indexes as _task_n_sr_idx
+        await _task_n_sr_idx()
+    except Exception as e:
+        logger.warning(f"task_n_service_reports_archive ensure_indexes crashed: {e}")
+
     # Phase F3.5 · Feb-2026 — customer-scoped compound indexes.
     # Phase P24 · Feb-2026 — MOVED to the STRUCTURAL pre-yield block
     # in ``_run_boot_sequence`` because ``/health/ready`` verifies the
