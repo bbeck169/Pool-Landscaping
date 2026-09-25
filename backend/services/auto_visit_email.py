@@ -593,12 +593,45 @@ _PAGE_BG          = "#F5F7FA"
 
 
 def _band_style(band: Optional[str]) -> Dict[str, str]:
-    """Return the ``{bg, fg, label}`` chip style for a canonical
-    band string.  Falls through to the ``Average`` palette when the
-    band is missing/unknown — email always renders SOMETHING legible."""
-    if band and band in _BAND_HEX_MAP:
-        return _BAND_HEX_MAP[band]
+    """Return the ``{bg, fg, label}`` chip style for a band string.
+
+    Accepts both vocabularies the app produces:
+
+    * ``chemistry_bands`` Title-Case (``"Below Average"``, ``"Above
+      Average"``, ``"Average"``, ``"Elevated"``) — the source used
+      by ``band_for_reading`` in the non-redacted render path.
+    * ``chemistry.classify_reading`` lowercase short tokens
+      (``"below"``, ``"above"``, ``"average"``, ``"elevated"``) —
+      what the customer-redact pipeline (``_redact_report_for_customer``)
+      stamps onto ``sr["chemical_readings"][i]["label"]``.  The
+      customer email is the primary consumer of that shape.
+
+    Lookup is case-insensitive; unknown tokens fall through to the
+    Average palette so the email always renders SOMETHING legible.
+    """
+    if band:
+        canonical = _BAND_ALIAS.get(str(band).strip().lower())
+        if canonical:
+            return _BAND_HEX_MAP[canonical]
     return _BAND_HEX_MAP["Average"]
+
+
+# Feb-2026 · Band-label casing fix (batch follow-up A) — alias every
+# lowercase token ``chemistry.classify_reading`` emits (see grep on
+# ``services/chemistry.py:125-133``) plus the ``high`` / ``low``
+# variants seen historically in older seed rows, mapped to the four
+# canonical ``_BAND_HEX_MAP`` buckets.  Keys are pre-lowered so the
+# lookup site only needs to lower once.
+_BAND_ALIAS: Dict[str, str] = {
+    "below":          "Below Average",
+    "below average":  "Below Average",
+    "low":            "Below Average",
+    "average":        "Average",
+    "above":          "Above Average",
+    "above average":  "Above Average",
+    "elevated":       "Elevated",
+    "high":           "Elevated",
+}
 
 
 def _render_preheader(company: str, customer_name: str,
