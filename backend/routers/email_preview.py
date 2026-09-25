@@ -22,6 +22,8 @@ See /app/memory/FEATURE_SEND_COPY_LINK_AND_EMAIL_PREVIEW.md § 2.
 """
 from __future__ import annotations
 
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db, logger
@@ -31,6 +33,7 @@ from services.email.theming import wrap_html_in_shell
 from services.tenants.business_settings import (
     get_effective_business_settings,
 )
+from services.auto_visit_email import render_email as _render_visit_email
 
 
 router = APIRouter()
@@ -146,6 +149,13 @@ async def preview_email(
                                     "Only affects invoice_reminder CTA "
                                     "label (Feb 2026 · Invoice Email "
                                     "CTA Label ticket)."),
+    preview_job_id: Optional[str] = Query(
+        None,
+        description="Optional job id — when set, renders the branded "
+                    "visit-summary email for that job (tenant-scoped). "
+                    "Cross-tenant / unknown ids → 404. When omitted, "
+                    "the ``template`` stub is rendered instead.",
+    ),
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -154,15 +164,19 @@ async def preview_email(
     Zero PII — placeholder names, invoice numbers, and passwords
     only. Truthful to production: uses the same
     ``wrap_html_in_shell`` helper the real send path calls.
+
+    Feb-2026 · Visit-Email Preview — when ``preview_job_id`` is
+    supplied, the endpoint bypasses the stub path and renders the
+    real branded visit-summary email (via
+    :func:`services.auto_visit_email.render_email`) against the
+    caller's tenant-owned job. Cross-tenant / unknown ids return
+    404. The response payload uses ``template="visit_summary"`` to
+    signal the override.
     """
-    if template not in _STUBS:
-        raise HTTPException(
-            400,
-            f"Unknown template: {template!r}. Expected one of "
-            f"{sorted(_STUBS.keys())}.",
-        )
     if not tenant.get("id"):
         raise HTTPException(400, "Tenant context is required.")
+
+    # Resolve branding once — both branches use it.
     try:
         branding = await get_effective_business_settings(
             db, tenant["id"], absolutize=True,
@@ -170,6 +184,69 @@ async def preview_email(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[email-preview] branding resolve failed: {e}")
         branding = {}
+
+    # ─── Branded visit-summary render path (preview_job_id) ─────────
+    if preview_job_id:
+        job = await db.jobs.find_one(
+            {"id": preview_job_id, "tenant_id": tenant["id"]},
+            {"_id": 0},
+        )
+        if not job:
+            # Covers both cross-tenant and genuinely-missing ids.
+            raise HTTPException(
+                404, f"Job not found: {preview_job_id!r}",
+            )
+        # Grab the most-recent submitted service report for this job
+        # (falls back to any SR, else an empty dict). Never fails
+        # the preview on SR absence — the header/pills/meta still
+        # render meaningfully.
+        sr = await db.service_reports.find_one(
+            {"job_id": preview_job_id, "tenant_id": tenant["id"]},
+            {"_id": 0},
+            sort=[("submitted_at", -1)],
+        ) or {}
+        # Redact via the same helper the send path uses so internal
+        # notes never leak into the preview.
+        from routers.service_reports import _redact_report_for_customer
+        safe_sr = _redact_report_for_customer(dict(sr)) if sr else {}
+
+        customer_id = job.get("customer_id")
+        customer: Dict[str, Any] = {}
+        if customer_id:
+            customer = await db.customers.find_one(
+                {"id": customer_id, "tenant_id": tenant["id"]},
+                {"_id": 0},
+            ) or {}
+
+        # Resolve the property-driven address just like the send
+        # path so preview stays truthful.
+        from services.auto_visit_email import (
+            _resolve_visit_email_address as _resolve_addr,
+        )
+        resolved_address = await _resolve_addr(tenant, job)
+        job_for_render = dict(job)
+        if resolved_address:
+            job_for_render["address"] = resolved_address
+
+        rendered = _render_visit_email(
+            tenant, job_for_render, safe_sr, customer,
+            branding=branding,
+        )
+        return {
+            "template":       "visit_summary",
+            "html":           rendered["html"],
+            "text":           rendered.get("text", ""),
+            "subject":        rendered.get("subject", ""),
+            "preview_job_id": preview_job_id,
+        }
+
+    # ─── Stub fallback path (unchanged behavior) ────────────────────
+    if template not in _STUBS:
+        raise HTTPException(
+            400,
+            f"Unknown template: {template!r}. Expected one of "
+            f"{sorted(_STUBS.keys())}.",
+        )
     # Feb 2026 · Invoice Email CTA Label — only the invoice_reminder
     # stub currently varies by locale; other stubs are locale-invariant
     # so we detect signature and pass only when accepted.
