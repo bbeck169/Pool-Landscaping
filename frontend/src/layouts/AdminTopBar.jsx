@@ -222,25 +222,29 @@ function CategoryDropdown({ group }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/10"
+        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/25"
         style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg }}
         data-testid={`admin-topbar-${group.key}-menu`}
         data-k52-navy-popover="true"
       >
         {group.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
         {group.noSub.length > 0 && Object.keys(group.bySub).length > 0 ? (
-          <DropdownMenuSeparator />
+          <DropdownMenuSeparator className="h-[2px] bg-white/25" />
         ) : null}
         {Object.entries(group.bySub).map(([sub, entries], j, subArr) => (
           <React.Fragment key={sub}>
             <DropdownMenuLabel
-              className="text-[10px] uppercase tracking-wider pl-4"
-              style={{ color: colors.nav.fgMuted }}
+              className="pl-4"
+              style={{ color: colors.brandTertiary }}
             >
-              {sub}
+              <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+                {sub}
+              </span>
             </DropdownMenuLabel>
             {entries.map((e) => <EntryItem key={e.to} e={e} />)}
-            {j < subArr.length - 1 ? <DropdownMenuSeparator /> : null}
+            {j < subArr.length - 1 ? (
+              <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+            ) : null}
           </React.Fragment>
         ))}
       </DropdownMenuContent>
@@ -263,7 +267,7 @@ function EntryItem({ e }) {
         color: colors.nav.fgActive,
       } : undefined}
     >
-      <Link to={e.to} className="flex items-center gap-2 cursor-pointer">
+      <Link to={e.to} className="flex items-center gap-2 cursor-pointer pl-6">
         {Icon ? <Icon size={14} className="opacity-80 shrink-0" /> : null}
         <span className="truncate">{e.label}</span>
       </Link>
@@ -305,8 +309,10 @@ function MobileMenu({ visible, fixedItems }) {
       >
         {fixedItems.length > 0 ? (
           <>
-            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider opacity-60">
-              Primary
+            <DropdownMenuLabel style={{ color: colors.brandTertiary }}>
+              <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+                Primary
+              </span>
             </DropdownMenuLabel>
             {fixedItems.map((it) => {
               const ItIcon = it.Icon;
@@ -314,7 +320,7 @@ function MobileMenu({ visible, fixedItems }) {
                 <DropdownMenuItem asChild key={it.to}
                   data-testid={`admin-topbar-mobile-primary-${it.key}`}
                 >
-                  <Link to={it.to} className="flex items-center gap-2 cursor-pointer">
+                  <Link to={it.to} className="flex items-center gap-2 cursor-pointer pl-6">
                     {ItIcon ? <ItIcon size={14} className="opacity-80 shrink-0" /> : null}
                     <span className="truncate">{it.label}</span>
                   </Link>
@@ -339,8 +345,10 @@ function MobileMenu({ visible, fixedItems }) {
                   {g.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
                   {Object.entries(g.bySub).map(([sub, entries]) => (
                     <React.Fragment key={sub}>
-                      <DropdownMenuLabel className="text-[10px] uppercase tracking-wider opacity-60">
-                        {sub}
+                      <DropdownMenuLabel style={{ color: colors.brandTertiary }}>
+                        <span className="inline-block bg-white/5 rounded px-2 py-0.5 text-sm font-bold uppercase tracking-wider">
+                          {sub}
+                        </span>
                       </DropdownMenuLabel>
                       {entries.map((e) => <EntryItem key={e.to} e={e} />)}
                     </React.Fragment>
