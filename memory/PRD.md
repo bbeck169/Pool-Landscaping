@@ -26363,3 +26363,270 @@ Frontend — **19/19 green**:
 - **Per-recipient in-app inbox** — currently email + SMS only.
 
 
+
+
+## Task H · Phase H.2 — PDF Importer Commit + Rollback DB Path (Feb-2026)
+
+Materialises `preview_complete` import batches (produced by
+Phase H.1 mapper + Phase B2.B async pipeline) into real
+`db.quotes` documents, and supports undoing a commit via a
+sibling rollback endpoint. Multi-tenant strict. Admin-gated
+(`require_admin`).
+
+### 1. Endpoints
+
+* `POST /api/imports/pdf-invoice/{batch_id}/commit`
+  Body (optional): `{"on_duplicate": "skip"|"insert_anyway"|"fail",
+  "notes": "..."}`. Default `on_duplicate="skip"`.
+  Preconditions: batch status = `preview_complete`; zero
+  `PENDING::` sentinels remain in `mapper_previews`. Response
+  carries `quotes_created`, `quotes_skipped_duplicates`,
+  `quotes_skipped_idempotent`, `quote_ids[]`,
+  `duplicates_detected[]`, `insert_errors[]`, `audit_id`.
+  Status machine: `preview_complete → committing → committed`
+  (or `commit_failed` on exception; the router flips back to
+  `preview_complete` on 400 `unresolved_customers` / 409
+  `duplicates_detected` so the operator can retry).
+
+* `POST /api/imports/pdf-invoice/{batch_id}/rollback`
+  No body. Preconditions: batch status = `committed`. Hard-
+  deletes every quote tagged with `import_batch_id`. Collision
+  detection (see §5) snapshots any post-commit-edited quote
+  into the audit row before delete. Status machine:
+  `committed → rolling_back → rolled_back` (or `rollback_failed`).
+
+* `GET /api/imports/pdf-invoice/{batch_id}/duplicates`
+  Read-only pre-flight scan. Returns the list of previews that
+  would collide with existing quotes if the batch committed now.
+  No state change.
+
+Cross-tenant guard: all 3 endpoints return `404 batch_not_found`
+(never 403) so the surface cannot be used as a tenant-membership
+probe. Matches the B2.B posture.
+
+### 2. Customer-facing hook suppression
+
+`routers.quotes.create_quote` fires FOUR customer-facing hooks
+after inserting an invoice: Lumino Zapier payment-link dispatch,
+`automation_engine.emit("invoice.created")`, marketing drip
+event `invoice_sent`, and schema-v2 event dispatcher
+`invoice_sent`. Imported historicals are NOT re-notification
+events — bulk-committing 40 invoices from 2023 would spam the
+customer with 40 SMS/email/Zapier calls.
+
+Decision: **bypass `create_quote` entirely**. The commit path
+lives in `backend/services/imports/pdf_commit.py::commit_batch`
+and builds the persisted doc directly. A pytest source-code
+guard (`test_commit_does_not_fire_customer_hooks`) AST-parses
+`pdf_commit.py` and asserts none of the four hook modules
+appear in any `import` statement. Docstrings may reference the
+suppressed hooks by name for documentation without tripping
+the guard.
+
+**Kept firing**: pricebook writeback fan-out (data-integrity,
+not customer-facing) — runs per-invoice AFTER a successful
+insert, best-effort per-doc.
+
+### 3. Field-preservation semantics
+
+* `doc_number` (extracted from the PDF) becomes the persisted
+  `invoice_number` — we do NOT auto-assign a new sequential
+  number via `services.invoice_numbering.assign_invoice_number_if_missing`.
+  Historical invoices carry historical numbers.
+* `status` defaults to `"sent"` (not `"draft"`) — historicals
+  were sent to customers by definition.
+* `payment_status` preserved from `quote_in` when present;
+  falls back to `"unpaid"`.
+* `paid_at` extracted from `mapper_report.pending_payment_actions`
+  when the mapper prepared a `record_payment` action.
+* `created_at` resolved by `pdf_mapper` via H0's
+  `resolve_date_override` at map-time; commit path trusts it
+  as-is.
+
+### 4. Provenance stamps (persisted on every imported quote)
+
+* `import_batch_id` — FK to `db.import_batches.id`.
+* `import_source_doc_index` — 0-based position within the batch.
+* `import_source_doc_number` — the extracted `doc_number`.
+* `imported_from_pdf: True` — sparse filter target.
+* `imported_at` — ISO timestamp.
+* `imported_by_user_id` — operator who ran the commit.
+
+### 5. Concurrency + idempotency
+
+Zero Mongo transactions (matches codebase convention — grep for
+`start_session|with_transaction` returns zero hits repo-wide).
+Idempotency guarantees:
+
+* **Commit** — dedupes previews against
+  `{tenant_id, import_batch_id, import_source_doc_index}`
+  BEFORE the `insert_many(ordered=False)`. A mid-flight crash
+  can be retried by resetting the batch to `preview_complete`
+  and re-POSTing; already-inserted `(batch_id, index)` pairs
+  are skipped (`quotes_skipped_idempotent`).
+* **Rollback** — `delete_many` is atomic-per-doc; inherently
+  idempotent.
+* **Status guard** — every commit / rollback uses
+  `find_one_and_update` with the source status as the gate
+  clause so a concurrent second call fails-fast rather than
+  double-driving.
+
+### 6. Collision snapshotting (§G ruling)
+
+If any imported quote's `updated_at` is strictly greater than
+the batch's `committed_at` at rollback time, snapshot the FULL
+doc into `import_audit.collisions[]` before deleting. Non-
+colliding rollbacks skip the snapshot to keep audit rows light.
+Recovery flow (deferred, not implemented yet): admin loads the
+`import_audit` row, reads `collisions[]`, restores each doc by
+re-inserting.
+
+### 7. Duplicate detection
+
+Check against `{tenant_id, customer_id, doc_type,
+import_source_doc_number}`. Only invoices with a `doc_number`
+participate — a preview without `doc_number` never collides.
+
+`on_duplicate` policy:
+
+* `skip` (default) — dropped from insert, recorded in
+  `duplicates_detected`.
+* `insert_anyway` — inserted regardless (admin override).
+  Duplicates still recorded on the audit row for observability.
+* `fail` — dry-run duplicate scan first; if any hit, 409
+  without inserting anything.
+
+### 8. Indexes (added to `routers.imports.ensure_indexes` + the
+`scripts.ensure_indexes` ops runbook)
+
+* `quotes.(tenant_id, import_batch_id)` sparse partial
+  `{import_batch_id: {$exists: true}}` — rollback perf.
+* `quotes.(tenant_id, customer_id, import_source_doc_number)`
+  sparse partial `{import_source_doc_number: {$exists: true}}`
+  — duplicate-detection perf.
+* `import_audit.(tenant_id, batch_id)` — per-batch audit
+  lookup.
+* `import_audit.(tenant_id, at DESC)` — reverse-chron audit
+  dashboard.
+
+H.2 also **self-heals the H.1 index drift** observed during
+Phase H.2.A recon: the router's `ensure_indexes()` was wired
+at boot (`server.py::2666`) but preview + prod both run with
+`RUN_STARTUP_INDEXES=false`, so no H.1 indexes had actually
+materialised. Added `routers.imports.ensure_indexes` to the
+`scripts.ensure_indexes` list so `python -m scripts.ensure_indexes`
+now provisions the full H.1 + H.2 index surface.
+
+Every plan is applied via its own `try/except` in
+`ensure_indexes()` with per-plan WARN logging; a single index
+failure logs but does not abort the rest.
+
+### 9. `import_audit` collection shape
+
+```python
+{
+  "id": <uuid>,
+  "tenant_id": <str>,
+  "batch_id": <str>,
+  "action": "commit" | "rollback",
+  "operator_user_id": <str>,
+  "operator_email": <str>,
+  "at": <iso-utc>,
+  "source_filename": <str>,
+  "options": {...},
+  "notes": <optional operator note>,
+  # commit-specific
+  "quotes_created": <int>,
+  "quotes_skipped_duplicates": <int>,
+  "quotes_skipped_idempotent": <int>,
+  "quote_ids": [<uuid>, ...],
+  "duplicates_detected": [
+    {source_doc_index, existing_quote_id, doc_number, customer_id}, ...
+  ],
+  "insert_errors": [{source_doc_index, error_code, message}, ...],
+  # rollback-specific
+  "quotes_deleted": <int>,
+  "collision_count": <int>,
+  "collisions": [<full-quote-json>, ...],
+}
+```
+
+Audit writes fail LOUDLY (raise) — unlike the legacy
+`quotes.py` best-effort try/except audit writes, an import
+audit row is non-optional per Phase H.2.B rulings.
+
+### 10. Test coverage
+
+`backend/tests/test_task_h2_pdf_commit.py` — 17 tests. All
+green. Covers: happy commit, PENDING sentinel gate, wrong-
+status guard, all 3 `on_duplicate` policies, duplicates
+pre-flight endpoint, rollback happy path, rollback collision
+snapshotting, cross-tenant 404 on all 3 endpoints, idempotency
+re-run, `paid_at` preservation, customer-hook suppression
+(AST source guard), non-admin RBAC rejection, wrong-status
+rollback rejection, invalid `on_duplicate` value → 400,
+persisted provenance-field stamps.
+
+Existing suites (`test_task_h0_date_backfill.py`,
+`test_task_h1_pdf_import.py`, `test_task_h_b2b_async_import.py`)
+remain green with H.2 changes (52/52 with `-m "not integration"`,
+matching pre-H.2 baseline). The 4 pre-existing
+`@pytest.mark.integration` tests that hit live gpt-4o vision
+remain flaky by design (LLM output drift, not H.2 regression).
+
+### 11. Live curl smokes (Phase H.2.D)
+
+Three end-to-end smokes executed against the preview
+environment:
+
+1. `GET /duplicates` — pre-flight scan, `duplicate_count=1`
+   for a seed batch with a colliding preview.
+2. `POST /commit` with `on_duplicate=skip` — 2 quotes
+   created, 1 skipped as duplicate, audit row written.
+3. `POST /rollback` after simulating a post-commit edit —
+   2 quotes deleted, 1 collision snapshot preserved with
+   the `manual_edit` field intact.
+
+All 3 returned 200; audit rows carry the expected payload
+shapes.
+
+### 12. Deferred to Phase H.3 (Admin Review UI)
+
+* Admin UI surface for reviewing/editing previews before
+  commit (currently curl-only).
+* PENDING sentinel resolution flow — currently blocks commit
+  with a 400 payload listing the pendings; H.3 will let the
+  operator either fuzzy-match to an existing customer or
+  auto-create a new one.
+* Recovery-via-replay flow for rollback collision snapshots
+  (currently just stored in the audit row for out-of-band
+  recovery).
+
+### 13. Deferred to Phase H.4 (Payment Receipt Handler)
+
+Payment-receipt previews (`mapped_target="deferred_to_h4"`)
+are silently skipped by `commit_batch` — they'll be handled
+by the H.4 handler which resolves them to
+`POST /quotes/{qid}/record-payment` calls via H0's `paid_at`
+override.
+
+### 14. Files touched
+
+* `backend/services/imports/pdf_commit.py` — NEW. Service
+  module with `check_duplicates`, `commit_batch`,
+  `rollback_batch`, `write_import_audit`, dataclasses,
+  exception types. ~475 lines.
+* `backend/routers/imports.py` — added 3 endpoints
+  (`/commit`, `/rollback`, `/duplicates`), expanded status
+  enum with 6 new values, split the monolithic
+  `ensure_indexes` into per-plan `_one()` helper calls with
+  observable WARN logging, added 4 new indexes.
+* `backend/scripts/ensure_indexes.py` — added
+  `routers.imports.ensure_indexes` to
+  `ROUTER_ENSURE_INDEXES`.
+* `backend/tests/test_task_h2_pdf_commit.py` — NEW. 17
+  tests.
+* `backend/tests/test_task_h_b2b_async_import.py` — widened
+  `test_status_enum_includes_all_five` to cover the 6 new
+  H.2 statuses + the expanded `_IN_FLIGHT_STATUSES` set.
+
