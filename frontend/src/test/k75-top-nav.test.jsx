@@ -57,8 +57,19 @@ vi.mock("@/hooks/usePermissions", () => ({
   Forbidden: () => <div />,
 }));
 // Neutralise peripherals so the top bar renders in isolation.
-vi.mock("@/components/NotificationBell", () => ({ default: () => null }));
+// Feb-2026 · AdminTopBar cleanup — NotificationBell is now mounted
+// directly by AdminTopBar (was previously routed through the inline
+// UniversalMenu).  Stub it out with a marked <span> so the DOM
+// ordering assertions in the ``right cluster preserves order`` +
+// technician-cluster tests can locate it.
+vi.mock("@/components/NotificationBell", () => ({
+  default: () => <span data-testid="notification-bell-inline" />,
+}));
 vi.mock("@/components/AIDock/CreditsBudgetChip", () => ({ default: () => null }));
+// UniversalMenu import was dropped from AdminTopBar by the Feb-2026
+// cleanup, but a vi.mock on a path that AdminTopBar never imports
+// is harmless — leaving it here so a hypothetical future re-import
+// during a refactor doesn't crash the test suite before we notice.
 vi.mock("@/layouts/UniversalMenu", () => ({ default: () => <span data-testid="umenu-stub" /> }));
 // Give the ADMIN_NAV_V2 mock three groups so category dropdowns
 // render for the admin surface. Every entry passes RBAC because
@@ -187,14 +198,17 @@ describe("K76 · AdminTopBar · admin surface (category dropdowns)", () => {
     expect(wrap.querySelector('[data-testid="admin-topbar-finance"]')).toBeTruthy();
   });
 
-  it("right cluster preserves order — SignOut LEFT of UniversalMenu (wide branch)", () => {
+  it("right cluster preserves order — Settings LEFT of NotificationBell LEFT of SignOut (wide branch)", () => {
     mount("admin");
     const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    const settings = wide.querySelector('[data-testid="header-settings-sprocket"]');
+    const bell = wide.querySelector('[data-testid="notification-bell-inline"]');
     const signOut = wide.querySelector('[data-testid="header-signout"]');
-    const umenu = wide.querySelector('[data-testid="umenu-stub"]');
+    expect(settings).toBeTruthy();
+    expect(bell).toBeTruthy();
     expect(signOut).toBeTruthy();
-    expect(umenu).toBeTruthy();
-    expect(signOut.compareDocumentPosition(umenu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(settings.compareDocumentPosition(bell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bell.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("Add Customer + Settings sprocket + Sign Out all render in admin wide-wrap", () => {
@@ -235,11 +249,16 @@ describe("K76 · AdminTopBar · technician surface (fixed strip)", () => {
     expect(screen.queryByTestId("topbar-add-customer-btn")).toBeNull();
   });
 
-  it("technicians STILL see Sign Out + inline UniversalMenu (right cluster in wide-wrap)", () => {
+  it("technicians STILL see Sign Out + standalone NotificationBell (right cluster in wide-wrap)", () => {
     mount("technician");
     const wide = screen.getByTestId("admin-topbar-wide-wrap");
+    // Feb-2026 · AdminTopBar cleanup — technicians hit the
+    // ``admin-topbar-tech-wrap`` fallback branch (no admin nav /
+    // no tech-fixed strip), so the wide-wrap they see for tech
+    // role in isNarrow=false jsdom still ends with the inline
+    // NotificationBell + Sign-out per the new cluster contract.
     expect(wide.querySelector('[data-testid="header-signout"]')).toBeTruthy();
-    expect(wide.querySelector('[data-testid="umenu-stub"]')).toBeTruthy();
+    expect(wide.querySelector('[data-testid="notification-bell-inline"]')).toBeTruthy();
   });
 });
 
@@ -261,7 +280,7 @@ describe("K76 · AdminTopBar · DOM shell contract", () => {
     }
   });
 
-  it("each branch ends with SignOutButton BEFORE <UniversalMenu variant='inline'/>", () => {
+  it("each branch ends with SignOutButton AFTER <NotificationBell variant='inline'/>", () => {
     for (const testid of [
       "admin-topbar-tech-wrap",
       "admin-topbar-narrow-wrap",
@@ -270,16 +289,19 @@ describe("K76 · AdminTopBar · DOM shell contract", () => {
       const idx = TOPBAR_SRC.indexOf(`data-testid="${testid}"`);
       expect(idx).toBeGreaterThan(-1);
       const slice = TOPBAR_SRC.slice(idx, idx + 3000);
+      const bellIdx = slice.search(/<NotificationBell\s+variant="inline"\s*\/>/);
       const signOutIdx = slice.indexOf("<SignOutButton />");
-      const umenuIdx = slice.search(/<UniversalMenu\s+variant="inline"\s*\/>/);
+      expect(bellIdx).toBeGreaterThan(-1);
       expect(signOutIdx).toBeGreaterThan(-1);
-      expect(umenuIdx).toBeGreaterThan(-1);
-      expect(signOutIdx).toBeLessThan(umenuIdx);
+      expect(bellIdx).toBeLessThan(signOutIdx);
     }
   });
 
-  it("<UniversalMenu variant='inline'/> is emitted exactly 3 times (one per branch)", () => {
-    const matches = TOPBAR_SRC.match(/<UniversalMenu\s+variant="inline"\s*\/>/g) || [];
+  it("<NotificationBell variant='inline'/> is emitted exactly 3 times (one per branch)", () => {
+    // Feb-2026 · AdminTopBar cleanup — the inline UniversalMenu
+    // that used to end every branch was replaced by a standalone
+    // NotificationBell.  Count-lock stays at 3 (one per wrap).
+    const matches = TOPBAR_SRC.match(/<NotificationBell\s+variant="inline"\s*\/>/g) || [];
     expect(matches.length).toBe(3);
   });
 

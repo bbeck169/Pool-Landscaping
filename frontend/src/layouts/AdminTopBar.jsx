@@ -23,9 +23,11 @@
  *     items → customer / no-role only), ``admin-topbar-narrow-wrap``
  *     (<768px viewport), ``admin-topbar-wide-wrap`` (default).
  *   • Each branch ends with the right cluster in this order:
- *     AddCustomerButton · CreditsBudgetChip · SettingsSprocket ·
- *     SignOutButton · UniversalMenu (variant='inline'). Sign-out
- *     sits to the LEFT of the bell + hamburger cluster.
+ *     AddCustomerButton · … · SettingsSprocket · NotificationBell ·
+ *     SignOutButton (Feb-2026 AdminTopBar cleanup — CreditsBudgetChip
+ *     and QuickAddButton dropped; the ``inline`` UniversalMenu was
+ *     replaced by a standalone ``NotificationBell``; Sign-out is
+ *     the far-right element).
  *   • Root bar carries ``colors.nav.bg`` (K50 navy chrome, K74
  *     solid ``#1B1F5C``).
  *   • Active + hover state on every top-nav chip / category
@@ -50,8 +52,12 @@ import { useIndustries } from "@/hooks/useIndustries";
 import { useAuth } from "@/auth";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
 import { colors, gradients } from "@/theme";
-import UniversalMenu from "@/layouts/UniversalMenu";
-import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
+// Feb-2026 · AdminTopBar cleanup — standalone NotificationBell now
+// mounted directly in the right-cluster (was previously routed
+// through ``UniversalMenu``, which also brought a hamburger trigger
+// AdminTopBar no longer needs).  UniversalMenu itself is unchanged
+// and remains in use by the customer-portal ``AppLayout`` header.
+import NotificationBell from "@/components/NotificationBell";
 // Feb-2026 · Mobile Nav Duplicate Fix — mount RolePreviewSwitcher in
 // the narrow-branch right-cluster so super_admin keep one-tap "Test
 // as" access on mobile after Row 1 (the legacy AppLayout mobile
@@ -59,13 +65,9 @@ import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 // self-gates via ``canPreview`` so it's a no-op for non-super_admin.
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { Settings as SettingsIcon } from "lucide-react";
-// Phase L1.4 · Feb-2026 — QuickAdd dropdown (unified "+" with 4
-// create entrypoints). Slots between AddCustomer/AddJob and the
-// CreditsBudgetChip so it doesn't disturb the K76 shell order.
-import QuickAddButton from "@/components/topbar/QuickAddButton";
 // Phase T1.5 · Feb-2026 — multi-tenant switcher (auto-hidden for
-// single-tenant users). Sits next to QuickAdd so the "your world"
-// controls cluster in one place.
+// single-tenant users). Sits next to the "your world" controls
+// on the wide-branch cluster.
 import TenantSwitcher from "@/components/topbar/TenantSwitcher";
 // Phase A1 · Feb-2026 — Proactive Intelligence alert bell. The
 // component itself is self-gated to admin/super_admin (fail-closed
@@ -422,13 +424,18 @@ export default function AdminTopBar() {
         // its own <UniversalMenu> via <AppLayout>, so this branch
         // rarely renders in production but is kept for defensive
         // parity with pre-K75 behaviour.
+        //
+        // Feb-2026 · AdminTopBar cleanup — cluster now ends with
+        // Settings → NotificationBell → SignOut; the UniversalMenu
+        // mount was dropped so this fallback matches the two
+        // primary branches exactly.
         <div
           className="px-4 h-11 flex items-center justify-end gap-2"
           data-testid="admin-topbar-tech-wrap"
         >
           <SettingsSprocket />
+          <NotificationBell variant="inline" />
           <SignOutButton />
-          <UniversalMenu variant="inline" />
         </div>
       ) : (
         <>
@@ -457,7 +464,6 @@ export default function AdminTopBar() {
                   role set as its neighbour. */}
               <AddJobButton />
               <AddCustomerButton />
-              <CreditsBudgetChip />
               {/* Feb-2026 · Mobile Nav Duplicate Fix — the legacy
                   Row 1 mobile <header> in AppLayout used to host the
                   ``<RolePreviewSwitcher>`` picker.  Row 1 no longer
@@ -471,10 +477,15 @@ export default function AdminTopBar() {
                   ``hooks/usePermissions.jsx``) so it's a no-op
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
-              <SettingsSprocket />
+              {/* Feb-2026 · AdminTopBar cleanup — cluster ends with
+                  Settings → NotificationBell → SignOut. AdminBellSlot
+                  (Proactive Intelligence alert) stays where it was,
+                  before Settings, since it surfaces a distinct
+                  signal type from NotificationBell. */}
               <AdminBellSlot />
+              <SettingsSprocket />
+              <NotificationBell variant="inline" />
               <SignOutButton />
-              <UniversalMenu variant="inline" />
             </div>
           </div>
           {/* Wide (>=768px) — inline categories or fixed strip. */}
@@ -490,21 +501,19 @@ export default function AdminTopBar() {
                   branch. Order + styling match the narrow branch. */}
               <AddJobButton />
               <AddCustomerButton />
-              {/* Phase L1.4 · Feb-2026 — unified QuickAdd
-                  dropdown (Lead · Job · Estimate · Customer).
-                  Self-gates to admin/super_admin/manager so
-                  managers finally have a one-click create
-                  affordance in the wide topbar. */}
-              <QuickAddButton />
               {/* Phase T1.5 · Feb-2026 — tenant switcher.
                   Auto-hidden when the user has <2 memberships,
                   so single-tenant users never see this control. */}
               <TenantSwitcher />
-              <CreditsBudgetChip />
-              <SettingsSprocket />
+              {/* Feb-2026 · AdminTopBar cleanup — cluster ends with
+                  Settings → NotificationBell → SignOut. AdminBellSlot
+                  (Proactive Intelligence alert) stays where it was,
+                  before Settings, since it surfaces a distinct
+                  signal type from NotificationBell. */}
               <AdminBellSlot />
+              <SettingsSprocket />
+              <NotificationBell variant="inline" />
               <SignOutButton />
-              <UniversalMenu variant="inline" />
             </div>
           </div>
         </>

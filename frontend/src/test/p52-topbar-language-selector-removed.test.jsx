@@ -58,14 +58,16 @@ describe("P52 · AdminTopBar · LanguageSelector removed", () => {
     ).toBe(1);
   });
 
-  it("keeps SignOutButton + UniversalMenu adjacent — the P52 " +
+  it("keeps SignOutButton + right-cluster neighbours — the P52 " +
      "removal did not accidentally drop the neighbour components " +
      "that used to render alongside the LanguageSelector", () => {
-    // All three ex-neighbours (SettingsSprocket, SignOutButton,
-    // UniversalMenu) still render.  Regression guard against a
-    // careless refactor that removed one of them by copy-paste.
+    // The three ex-neighbours (SettingsSprocket, SignOutButton,
+    // NotificationBell) still render.  Feb-2026 · AdminTopBar
+    // cleanup — the inline ``<UniversalMenu>`` was dropped from
+    // AdminTopBar in favour of a standalone ``<NotificationBell>``;
+    // this assertion tracks the new neighbour.
     expect(ATB_SRC).toMatch(/<SettingsSprocket\s*\/>/);
     expect(ATB_SRC).toMatch(/<SignOutButton\s*\/>/);
-    expect(ATB_SRC).toMatch(/<UniversalMenu\s+variant="inline"\s*\/>/);
+    expect(ATB_SRC).toMatch(/<NotificationBell\s+variant="inline"\s*\/>/);
   });
 });
