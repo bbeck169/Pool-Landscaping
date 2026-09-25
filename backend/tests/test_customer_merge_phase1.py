@@ -339,6 +339,11 @@ def test_10_related_records_rewired_all_six_buckets():
         assert counts == {
             "jobs": 3, "invoices": 2, "payments": 1,
             "service_reports": 4, "estimates": 3, "leads": 5,
+            # Feb-2026 · properties bucket added by
+            # customer_merge/executor._rewire_related fix. This test
+            # seeds no properties for the secondary so the count is
+            # 0, but the KEY must be present in the response shape.
+            "properties": 0,
         }, counts
         # Verify jobs actually rewired to primary.
         assert _sync.jobs.count_documents(

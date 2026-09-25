@@ -161,6 +161,13 @@ async def _rewire_related(
     counts = {
         "jobs": 0, "invoices": 0, "payments": 0,
         "service_reports": 0, "estimates": 0, "leads": 0,
+        # Feb-2026 · gap fix — ``customer_merge`` was previously
+        # silent on ``db.properties``, leaving them pointing at the
+        # merged (secondary) customer.  Downstream surfaces
+        # (portal, visit-email fallback, invoicing) then couldn't
+        # resolve the property from the primary customer.  Rewire
+        # here, same tenant-scoped update pattern.
+        "properties": 0,
     }
     if not secondary_ids:
         return counts
@@ -171,6 +178,9 @@ async def _rewire_related(
         ("payments", "payments"),
         ("service_reports", "service_reports"),
         ("leads", "leads"),
+        # Feb-2026 · properties rewire alongside the pre-existing
+        # buckets.  Same shape (``customer_id`` FK, single ``$set``).
+        ("properties", "properties"),
     ):
         n = await db[coll_name].count_documents(base)
         counts[bucket] = n
