@@ -26630,3 +26630,146 @@ override.
   `test_status_enum_includes_all_five` to cover the 6 new
   H.2 statuses + the expanded `_IN_FLIGHT_STATUSES` set.
 
+
+## Task · Bulk Hard-Delete for Uncategorized Line Items (Feb-2026)
+
+Companion to the existing single-row assign/undo flow on the
+`/reports/uncategorized-items` page. Lets admins bulk hard-delete
+noise rows from the report in one gesture, with:
+
+* Selection-driven bulk toolbar (existing) → new Hard Delete
+  button visible only once ≥ 1 row is checked.
+* Two-stage confirm: amber "paid invoices in your selection"
+  pre-warning gate (only when the selection contains ≥ 1 paid
+  invoice), THEN the `TypedConfirmModal` `DELETE` keyword gate.
+* 10-second success toast with Undo affordance that hits the
+  companion undo endpoint.
+
+### Endpoints
+
+`POST /api/reports/uncategorized-items/bulk-hard-delete`
+  * operation_id: `reports.uncategorizedItems.bulkHardDelete`
+  * body: `{rows: [{invoice_id, line_item_index, description,
+    unit_price}], acknowledged_lock_bypass: bool = false,
+    deletion_reason: str? }`
+  * cap: 100 rows / call → `422 bulk_cap_exceeded`.
+  * response: `{bulk_op_id, requested, deleted, skipped[]}`.
+  * skip codes (G.7 taxonomy): `not_found_or_cross_tenant`,
+    `line_index_out_of_bounds`, `content_shifted` (G.1a
+    concurrency guard on description + unit_price),
+    `locked_paid` (paid invoice + no acknowledged_lock_bypass),
+    `already_deleted` (duplicate `(invoice_id, line_index)`).
+
+`POST /api/reports/uncategorized-items/bulk-hard-delete/
+  {bulk_op_id}/undo`
+  * operation_id: `reports.uncategorizedItems.bulkHardDelete.undo`
+  * body: `{}`.
+  * response: `{bulk_op_id, audit_rows, restored,
+    already_undone, skipped[]}`.
+  * Idempotent — re-runs are a no-op via `undone_audit_id`
+    linkage.
+  * Restores line snapshots at the END of the current
+    `line_items` array (G.6c ruling — original indices unsafe
+    under concurrent edits).
+
+### Semantics (§G rulings, locked Phase 1)
+
+* **G.1a** — concurrency guard on `(description, unit_price)`
+  vs. the LIVE invoice line; mismatch → `content_shifted`
+  skip.
+* **G.2** — 100-row cap per call.
+* **G.3b** — per-invoice atomic write with `updated_at` guard
+  in `find_one_and_update`; single retry on mismatch;
+  still-contested rows → `content_shifted`.
+* **G.4c** — `locked_paid` skip unless the operator sets
+  `acknowledged_lock_bypass=true` at the batch level.
+* **G.5a** — one `audit_logs` row per deleted line
+  (event=`line_item.hard_delete`), all sharing the same
+  `bulk_op_id` UUID.
+* **G.6a + G.6c** — 10-second undo window in the UI + the
+  companion undo endpoint restores by re-inserting at
+  end-of-array with a paired
+  `line_item.hard_delete.undo` audit row.
+
+### Locked-paid remaining_balance semantics
+
+When the operator acknowledges the paid-invoice warning:
+`recompute_totals` clamps `remaining_balance = max(total -
+amount_paid, 0)` — a paid invoice whose line is removed does
+NOT go negative; `amount_paid` is left untouched (historical
+AR reporting reflects the new total).
+
+### Hooks
+
+Per-invoice write signals to:
+* `services.documents.versions.snapshot_before_mutation`
+  (reason=`line_item.hard_delete`) — canonical
+  `document_versions` audit; best-effort, never raises.
+* `services.documents.versions.invalidate_signature_if_present`
+  — invalidates a stored signature if the invoice had one
+  pre-delete.
+
+### Files touched
+
+* `backend/services/reports/uncategorized_line_deletes.py`
+  — NEW. Pure planning + math + audit-row builders
+  (`plan_deletions`, `apply_deletions`, `recompute_totals`,
+  `build_audit_row`, `build_undo_audit_row`). Mongo-free
+  so unit-testable without a live DB. ~415 lines.
+* `backend/routers/income_categories.py` — added
+  `_HardDeleteRow`, `_HardDeleteBody` models + two endpoint
+  handlers (`bulk_hard_delete_uncategorized_lines`,
+  `undo_bulk_hard_delete_uncategorized_lines`) + an
+  `ensure_indexes` registration for
+  `audit_logs(tenant_id, event, bulk_op_id)` and
+  `audit_logs(tenant_id, event, undo_of)`.
+* `frontend/src/pages/reports/UncategorizedItemsReport.jsx`
+  — added the Hard Delete button in the bulk toolbar +
+  two-stage modal flow (`hardDeleteStep`: `idle` →
+  `paid-warning` → `confirm`) + `_onHardDeleteConfirm`
+  handler + undo action wired into `toast.success.action`.
+
+### Test coverage
+
+* `backend/tests/test_bulk_hard_delete_uncategorized.py`
+  — 16 tests. All green. Covers: happy path,
+  `already_deleted` dedupe, `line_index_out_of_bounds`,
+  `content_shifted` on description + unit_price, `locked_paid`
+  gate + ack bypass, `not_found_or_cross_tenant`, descending
+  delete order (multi-index within one invoice),
+  `apply_deletions` snapshot ordering, `recompute_totals`
+  clamp, audit-row shape (delete + undo), pure-function
+  planning semantics.
+* `frontend/src/test/uncategorized-hard-delete.test.jsx`
+  — 10 tests. All green. Covers: button visibility gated
+  on selection count, `DELETE` case-sensitive keyword
+  gate, paid-invoice pre-warning routing + acknowledgement
+  → typed-confirm, `acknowledged_lock_bypass=true` payload
+  after acknowledge, toast title + skip-code breakdown
+  description, deleted=0 path (no Undo action attached),
+  undo click POSTs to the correct endpoint and
+  `toast.info`s the restored count.
+
+### Live curl smokes
+
+Three end-to-end smokes executed against preview
+`https://poolscape-audit.preview.emergentagent.com`:
+
+1. **Happy path (unpaid row)** — deleted 1 line item on
+   invoice `14b95d8e…` → `{bulk_op_id, requested: 1,
+   deleted: 1, skipped: []}`.
+2. **`locked_paid` without `acknowledged_lock_bypass`** —
+   attempted to delete a line on paid invoice
+   `6e64b146…` → `{deleted: 0, skipped:
+   [{code: "locked_paid"}]}`.
+3. **Undo of the successful bulk_op_id** — restored 1
+   line, generated the paired
+   `line_item.hard_delete.undo` audit row with
+   `undo_of=<bulk_op_id>` and
+   `undone_audit_id=<delete-row-id>`.
+
+Audit-log verification: 2 rows per bulk_op_id
+(1 hard_delete + 1 hard_delete.undo). Line snapshot
+restored at `line_items[0]` with correct
+`unit_price / description`; totals recomputed
+(`subtotal=total=100, remaining_balance=100`).
