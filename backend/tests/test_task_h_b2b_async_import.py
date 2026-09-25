@@ -214,7 +214,12 @@ def test_poll_404_on_cross_tenant_batch(admin_h, dbc):
 def test_status_enum_includes_all_five():
     """Regression guard: the router MUST define all five status
     values so future H.4 cancel work doesn't require re-shipping
-    the client-side status-badge switch statement."""
+    the client-side status-badge switch statement.
+
+    Task H · Phase H.2 widens the enum with commit + rollback
+    transient/terminal states.  Both are asserted here so a
+    future refactor cannot silently drop them.
+    """
     from routers import imports as _imp
 
     assert _imp._STATUS_QUEUED == "queued"
@@ -222,8 +227,19 @@ def test_status_enum_includes_all_five():
     assert _imp._STATUS_PREVIEW_COMPLETE == "preview_complete"
     assert _imp._STATUS_FAILED == "failed"
     assert _imp._STATUS_CANCELLED == "cancelled"
-    # Rate-limit set must cover BOTH queued and processing.
-    assert set(_imp._IN_FLIGHT_STATUSES) == {"queued", "processing"}
+    # H.2 additions.
+    assert _imp._STATUS_COMMITTING == "committing"
+    assert _imp._STATUS_COMMITTED == "committed"
+    assert _imp._STATUS_COMMIT_FAILED == "commit_failed"
+    assert _imp._STATUS_ROLLING_BACK == "rolling_back"
+    assert _imp._STATUS_ROLLED_BACK == "rolled_back"
+    assert _imp._STATUS_ROLLBACK_FAILED == "rollback_failed"
+    # Rate-limit set must cover BOTH the B2.B in-flight statuses
+    # AND the H.2 transient states so a client cannot double-drive
+    # commit/rollback via a burst.
+    assert set(_imp._IN_FLIGHT_STATUSES) == {
+        "queued", "processing", "committing", "rolling_back",
+    }
 
 
 # ─────────────────────────────────────────────────────────────
