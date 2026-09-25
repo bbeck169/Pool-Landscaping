@@ -112,8 +112,8 @@ def _load_vision_response(stem: str) -> Dict[str, Any]:
 @pytest.fixture()
 def mock_vision(monkeypatch):
     """Factory fixture — call ``mock_vision(stem, extract_key=...)``
-    inside a test to stub ``_call_vision_model`` with a canned
-    response for the segmentation + extraction passes.
+    inside a test to stub the underlying ``dispatch_ai_completion``
+    with a canned response for the segmentation + extraction passes.
 
     The stub inspects the caller's ``user_text`` to decide which
     canned block to return.  Segmentation prompts contain
@@ -121,7 +121,20 @@ def mock_vision(monkeypatch):
     ``Extract structured data``.
 
     Returns a call-count dict so tests can assert the number of
-    dispatcher round-trips."""
+    dispatcher round-trips.
+
+    Phase H.1.5 · Feb-2026 — retargeted from the ``_call_vision_model``
+    seam to the ``dispatch_ai_completion`` dispatcher itself.  Stubbing
+    at the seam short-circuited the extractor's real unwrap logic —
+    that's exactly how H.1 was 13/13 green in pytest while 0/3 in
+    prod.  By stubbing at the dispatcher and returning a real
+    ``AICompletionResult`` with the production ``raw={"raw": payload,
+    "provider": ...}`` envelope, tests now exercise the actual
+    unwrap.  A future dispatcher-envelope drift will surface here
+    before it hits prod again.
+    """
+    from services.ai.models import AICompletionResult
+
     call_count = {"total": 0, "segmentation": 0, "extraction": 0}
 
     def _factory(stem: str, *, extract_key: str = "extract_1_2"):
@@ -133,17 +146,35 @@ def mock_vision(monkeypatch):
         })
         ext_payload = canned.get(extract_key) or canned.get("_default_extract")
 
+        def _wrap(payload: Dict[str, Any]) -> AICompletionResult:
+            """Match the REAL dispatcher return shape:
+
+                AICompletionResult(
+                    content="",
+                    raw={"raw": <parsed_payload>, "provider": "emergent"},
+                    ...
+                )
+
+            Any drift in this envelope means the extractor's unwrap
+            path must be updated too — that's the whole point of
+            stubbing at this level."""
+            return AICompletionResult(
+                content="",
+                provider_key="emergent",
+                provider_used="platform:emergent",
+                model="gpt-4o",
+                tenant_id="mock-tenant",
+                raw={"raw": payload, "provider": "emergent"},
+            )
+
         async def _stub(**kwargs):
             call_count["total"] += 1
             user_text = kwargs.get("user_text", "")
             if "thumbnail-grid preview" in user_text:
                 call_count["segmentation"] += 1
-                return {"parsed": seg_payload, "raw": {}}
+                return _wrap(seg_payload)
             if "Extract structured data" in user_text:
                 call_count["extraction"] += 1
-                # For multi-segment batches, re-shape the canned
-                # default extract into the segment's page range
-                # (parsed from the prompt "pages X-Y").
                 import re as _re
                 m = _re.search(r"pages\s+(\d+)-(\d+)", user_text)
                 if m and ext_payload:
@@ -151,14 +182,24 @@ def mock_vision(monkeypatch):
                     payload["source_page_range"] = [
                         int(m.group(1)), int(m.group(2)),
                     ]
-                    return {"parsed": payload, "raw": {}}
-                return {"parsed": ext_payload, "raw": {}}
-            return {"error": "unknown_prompt",
-                    "message": f"mock_vision saw unknown user_text prefix"}
+                    return _wrap(payload)
+                return _wrap(ext_payload or {})
+            # Preserve the pre-H.1.5 error-branch behaviour by
+            # returning an ``AICompletionResult`` whose envelope
+            # is empty — the extractor's unwrap will fall through
+            # to string-parse-on-empty and emit ``vision_parse_failed``.
+            return AICompletionResult(
+                content="",
+                provider_key="emergent",
+                provider_used="platform:emergent",
+                model="gpt-4o",
+                tenant_id="mock-tenant",
+                raw={},
+            )
 
-        from services.imports import pdf_invoice_extractor
+        from services.ai import dispatcher as _ai_dispatcher
         monkeypatch.setattr(
-            pdf_invoice_extractor, "_call_vision_model", _stub,
+            _ai_dispatcher, "dispatch_ai_completion", _stub,
         )
         return call_count
 
@@ -490,7 +531,68 @@ def test_router_preview_persists_batch_but_not_quotes(
     dbc.pending_import_customers.delete_many({"batch_id": body["batch"]["batch_id"]})
 
 
-# ── Test 13 · INTEGRATION — real gpt-4o vision sanity ─────────
+# ── Test 13 · H.1.5 regression · dispatcher-envelope unwrap ───
+@pytest.mark.anyio
+async def test_call_vision_model_result_unwrapping(
+    aquaterra_id, adb, monkeypatch,
+):
+    """H.1.5 regression lock — the extractor's ``_call_vision_model``
+    seam MUST unwrap the dispatcher's ``AICompletionResult.raw`` when
+    ``parse_json=True``.  Prior to H.1.5 the seam read the empty
+    ``result.content`` string instead of the parsed payload, causing
+    every real invoice call to return ``vision_parse_failed``.
+
+    This test constructs a real ``AICompletionResult`` shaped exactly
+    like the production dispatcher return (``content=""``,
+    ``raw={"raw": {...}, "provider": "emergent"}``) and asserts the
+    seam surfaces the parsed dict — NOT the ``vision_parse_failed``
+    error branch.
+    """
+    from services.ai.models import AICompletionResult
+    from services.imports import pdf_invoice_extractor
+    from services.ai import dispatcher as _ai_dispatcher
+
+    fake_payload = {
+        "doc_kind": "invoice",
+        "source_page_range": [1, 1],
+        "customer_name": "Test Customer X",
+        "grand_total": 199.99,
+        "line_items": [{"description": "Weekly Service", "line_total": 199.99}],
+    }
+
+    async def _fake_dispatch(**kwargs):
+        return AICompletionResult(
+            content="",
+            provider_key="emergent",
+            provider_used="platform:emergent",
+            model="gpt-4o",
+            tenant_id=aquaterra_id,
+            raw={"raw": fake_payload, "provider": "emergent"},
+        )
+
+    monkeypatch.setattr(
+        _ai_dispatcher, "dispatch_ai_completion", _fake_dispatch,
+    )
+
+    out = await pdf_invoice_extractor._call_vision_model(
+        tenant_id=aquaterra_id,
+        system_prompt="sys",
+        user_text="Extract structured data pages 1-1",
+        image_b64s=["deadbeef"],
+        db=adb,
+    )
+
+    assert "error" not in out, (
+        f"seam should unwrap parsed payload, got error branch: {out}"
+    )
+    assert out.get("parsed") == fake_payload
+    # ``raw`` on the seam response carries the full dispatcher
+    # envelope for observability — assert the wrapper key survived.
+    assert isinstance(out.get("raw"), dict)
+    assert out["raw"].get("provider") == "emergent"
+
+
+# ── Test 14 · INTEGRATION — real gpt-4o vision sanity ─────────
 @pytest.mark.integration
 @pytest.mark.anyio
 async def test_extractor_real_vision_gpt4o_sanity(aquaterra_id, adb):

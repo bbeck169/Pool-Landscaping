@@ -25982,3 +25982,41 @@ becomes a productionization concern.
   a targeted follow-up.
 
 
+
+## Task H · Phase H.1.5 — Live gpt-4o parse regression fix (Feb-2026)
+
+**RCA:** `_call_vision_model` read `AICompletionResult.content`,
+but when `parse_json=True` the dispatcher stashes the parsed
+payload at `result.raw["raw"]` (mirroring the envelope contract
+in `routers/ai_measure._unwrap_dispatcher_envelope`) and leaves
+`.content` as an EMPTY STRING because the raw dict has no
+`text`/`content` sub-key. Every real invoice call therefore
+tripped `vision_parse_failed` even though gpt-4o was emitting
+perfect JSON. Probe evidence confirmed the diagnosis before
+any code change (probe reverted, not committed).
+
+**Fix (this commit):** unwrap `result.raw["raw"]` first, fall
+back to `.content` string-parse + regex only if the parsed
+envelope is absent (defensive belt-and-suspenders). Regression
+test `test_call_vision_model_result_unwrapping` locks the
+seam contract against a real `AICompletionResult` shaped like
+production. The `mock_vision` fixture also retargeted from the
+seam to `dispatch_ai_completion` so all 13 pre-existing tests
+now exercise the ACTUAL unwrap logic — the next envelope drift
+will surface in pytest instead of in prod.
+
+**Verification:**
+- Pytest: **14/14** green (13 pre-existing + 1 new regression).
+- Live curl before H.1.5: **0/3** — all 3 real fixtures returned
+  `documents=[]` with `vision_parse_failed`.
+- Live curl after H.1.5: **3/3** — every fixture now returns
+  populated `documents` with correct customer names, totals,
+  line items; zero `vision_parse_failed` warnings.
+- Batch stretch (`invoice_batch_17_digital.pdf`, 34 pages):
+  server-side extraction completes in ~110s with 30
+  mapper_previews (over-segmented vs the 15-17 target — an
+  accuracy-tuning follow-up, not a parse regression). Ingress
+  proxy times out client-side at ~60s; a long-running-job
+  handoff will land as a follow-up.
+
+

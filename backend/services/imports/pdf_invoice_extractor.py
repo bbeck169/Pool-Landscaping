@@ -253,6 +253,21 @@ async def _call_vision_model(
     upstream failure.  Callers rely on the ``parsed`` key so a
     hardened schema is enforced by the caller (not this seam) —
     keep the seam thin.
+
+    Phase H.1.5 · Feb-2026 — dispatcher-return unwrap fix.  When
+    ``parse_json=True`` the dispatcher stashes the parsed payload at
+    ``result.raw["raw"]`` (mirroring the envelope contract
+    documented in ``routers/ai_measure._unwrap_dispatcher_envelope``)
+    and leaves ``result.content`` as an EMPTY STRING because the
+    ``raw`` dict has no ``text`` / ``content`` sub-key.  The
+    original H.1 seam read ``result.content`` only — which returned
+    an empty string on every live call and tripped the
+    ``vision_parse_failed`` warning across 3/3 real fixtures even
+    though gpt-4o was emitting perfect JSON.  We now unwrap the
+    parsed envelope first and only fall back to string-parse +
+    regex on ``result.content`` if the envelope is absent
+    (defensive belt-and-suspenders for a future dispatcher change
+    that might route parsed content back through ``.content``).
     """
     # Late import so tests that never reach this seam can run
     # without the whole dispatcher module graph.
@@ -269,24 +284,47 @@ async def _call_vision_model(
         db=db,
     )
 
-    content = getattr(result, "content", "") or ""
+    # Primary path — parsed payload lives at ``result.raw["raw"]``
+    # when ``parse_json=True``.  Also tolerate the case where the
+    # parsed payload has been hoisted straight onto ``result.raw``
+    # (some adapter code paths skip the extra wrap).
     parsed: Optional[Dict[str, Any]] = None
-    try:
-        parsed = json.loads(content)
-    except (ValueError, TypeError):
-        # Fall back to a lenient extract — some model runs wrap
-        # the JSON in markdown fencing.
-        m = re.search(r"\{.*\}", content, re.DOTALL)
-        if m:
-            try:
-                parsed = json.loads(m.group(0))
-            except (ValueError, TypeError):
-                parsed = None
+    raw_env = getattr(result, "raw", None)
+    if isinstance(raw_env, dict):
+        inner = raw_env.get("raw")
+        if isinstance(inner, dict) and "provider" not in inner:
+            parsed = inner
+        elif isinstance(raw_env, dict) and (
+            "doc_kind" in raw_env or "segments" in raw_env
+        ):
+            # Adapter hoisted the parsed payload directly onto
+            # ``raw`` without the extra wrap — accept it.
+            parsed = raw_env
+
+    # Fallback path — string-parse ``result.content`` (or its
+    # markdown-fenced JSON block) if the parsed envelope is
+    # missing.  Kept intentionally after the primary path so a
+    # single dispatcher regression doesn't silently degrade the
+    # extractor into 0/N again.
     if parsed is None:
+        content = getattr(result, "content", "") or ""
+        if isinstance(content, str) and content:
+            try:
+                parsed = json.loads(content)
+            except (ValueError, TypeError):
+                m = re.search(r"\{.*\}", content, re.DOTALL)
+                if m:
+                    try:
+                        parsed = json.loads(m.group(0))
+                    except (ValueError, TypeError):
+                        parsed = None
+
+    if parsed is None:
+        preview_src = raw_env if raw_env else getattr(result, "content", "")
         return {"error": "vision_parse_failed",
                 "message": f"Could not parse JSON from model output: "
-                            f"{content[:200]!r}"}
-    return {"parsed": parsed, "raw": getattr(result, "raw", {}) or {}}
+                            f"{str(preview_src)[:200]!r}"}
+    return {"parsed": parsed, "raw": raw_env or {}}
 
 
 # ── Document normalization ─────────────────────────────────────
