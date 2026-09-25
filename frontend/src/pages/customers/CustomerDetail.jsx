@@ -18,6 +18,7 @@ import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+import NotesHistoryList from "@/components/customers/NotesHistoryList";
 // Phase P52 · Feb-2026 — Chemistry / Chem History consolidation.
 // Two standalone action-row buttons collapse into a single brand-
 // coloured dropdown that sits inline with Edit / Delete on
@@ -1072,7 +1073,31 @@ export default function CustomerDetail() {
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
-              <Info label="Notes" value={customer.notes} preserveNewlines />
+              {/* Task N Round 2 · Feb-2026 — Notes History replaces the
+                  legacy static ``<Info label="Notes" value={customer.notes}
+                  />`` display.  Compact 3-row preview here; full paginated
+                  list lives on the "Notes" tab.  ``customer.notes`` (the
+                  persisted, edited-via-CustomerForm free-text field) is
+                  intentionally NOT rendered in this About section — it
+                  shows above the SR history on the Notes tab so the two
+                  distinct "note" concepts (customer-level free-text vs
+                  per-visit SR notes) don't blur together. */}
+              <div
+                className="mt-2"
+                data-testid="cd-notes-history-preview-about"
+              >
+                <div
+                  className="text-xs font-semibold uppercase tracking-wide mb-1"
+                  style={{ color: colors.onSurfaceSecondary }}
+                >
+                  Recent notes
+                </div>
+                <NotesHistoryList
+                  customerId={id}
+                  compact
+                  onSeeAll={() => setTab("notes")}
+                />
+              </div>
             </div>
           ) : null}
 
@@ -1174,7 +1199,42 @@ export default function CustomerDetail() {
           ) : null}
 
           {tab === "notes" ? (
-            <Info label="Notes" value={customer.notes} preserveNewlines />
+            <div
+              className="space-y-3"
+              data-testid="cd-notes-history-tab"
+            >
+              {/* Task N Round 2 · Phase N.5 §E halt option — preserve
+                  at-a-glance visibility of the persisted customer-level
+                  free-text ``customer.notes`` field.  Render as a
+                  read-only block above the SR history list; hidden when
+                  empty so the tab stays focused on visit notes.  The
+                  write path remains ``CustomerForm.jsx`` (Edit Customer
+                  page) → ``PUT /customers/{cid}`` — unchanged. */}
+              {customer.notes && customer.notes.trim() ? (
+                <div
+                  className="p-3 rounded-lg"
+                  data-testid="cd-notes-tab-customer-profile-note"
+                  style={{
+                    backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                >
+                  <div
+                    className="text-xs font-semibold uppercase tracking-wide mb-1"
+                    style={{ color: colors.onSurfaceSecondary }}
+                  >
+                    Customer profile note
+                  </div>
+                  <div
+                    className="text-sm whitespace-pre-line"
+                    style={{ color: colors.onSurface }}
+                  >
+                    {customer.notes}
+                  </div>
+                </div>
+              ) : null}
+              <NotesHistoryList customerId={id} />
+            </div>
           ) : null}
 
           {/* Phase I7 · Wave A · Feb-2026 — Communication Timeline
