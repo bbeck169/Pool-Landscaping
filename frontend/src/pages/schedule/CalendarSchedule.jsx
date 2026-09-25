@@ -43,8 +43,11 @@ import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 // Feb-2026 · Phase 1 — Tech "On my way" SMS CTA.
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
-// Feb-2026 · Schedule polish — per-job "Navigate" deep-link button.
-import NavigateJobButton from "@/components/schedule/NavigateJobButton";
+// Feb-2026 · Schedule card redesign — customer name + address now
+// open Google Maps directions directly (no dedicated Navigate
+// button).  Shared helpers in ``@/utils/directions`` produce the
+// same URL shape as the pre-Feb-2026 ``<NavigateJobButton />`` did.
+import { buildDirectionsUrl, openDirections } from "@/utils/directions";
 // Feb-2026 · Schedule enhancement — pending-no-crew admin nudge.
 import PendingNoCrewNudge from "@/components/schedule/PendingNoCrewNudge";
 // Feb-2026 · Phase 1 — Could-Not-Service modal.
@@ -2784,27 +2787,48 @@ export function GridPanel({
                         was removed. The schedule day view is
                         already tech-scoped in the header, so the
                         per-card avatar was redundant clutter. */}
-                    <span
-                      className="flex-1 min-w-0"
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      data-testid={`grid-job-title-${j.id}`}
-                    >
-                      <CustomerLink customerId={j.customer_id} name={j.customer_name || "Unknown"} />
-                    </span>
-                    {/* Feb-2026 · Batched Wave #1 — per-job
-                        Navigate button lives INSIDE the title row
-                        (adjacent to the customer name) so it
-                        matches the mobile card layout. Prefers
-                        lat/lng, falls back to address, disabled
-                        (with tooltip) when neither is present.
-                        stopPropagation lives in NavigateJobButton
-                        so a tap doesn't accidentally open the
-                        parent job card. */}
-                    <NavigateJobButton job={j} />
+                    {/* Feb-2026 · Schedule card redesign —
+                        customer name is now the primary directions
+                        trigger.  The truncation styles
+                        (``flex-1 min-w-0 overflow-hidden text-
+                        ellipsis whitespace-nowrap``) are preserved
+                        on the button so long names still ellipsise
+                        inside the fixed card grid.  Falls back to
+                        a plain ``<span>`` when neither coords nor
+                        address are resolvable. */}
+                    {buildDirectionsUrl(j) ? (
+                      <button
+                        type="button"
+                        onClick={(e) => openDirections(j, e)}
+                        className="flex-1 min-w-0 text-left cursor-pointer hover:underline focus:outline-none focus-visible:underline"
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: colors.onSurface,
+                          background: "transparent",
+                          padding: 0,
+                          border: 0,
+                          font: "inherit",
+                        }}
+                        data-testid={`schedule-card-${j.id}-customer-name-directions`}
+                        aria-label={`Open directions to ${j.customer_name || "customer"}`}
+                      >
+                        {j.customer_name || "Unknown"}
+                      </button>
+                    ) : (
+                      <span
+                        className="flex-1 min-w-0"
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        data-testid={`grid-job-title-${j.id}`}
+                      >
+                        {j.customer_name || "Unknown"}
+                      </span>
+                    )}
                     {j.customer_is_vip ? (
                       <span
                         className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
@@ -2828,8 +2852,30 @@ export function GridPanel({
                       scheduledDate={j.scheduled_date}
                     />
                   </div>
+                  {/* Feb-2026 · Schedule card redesign — address sits
+                      directly under the customer-name row, bumped to
+                      ``text-lg`` and wired as a second directions
+                      trigger (mirror of the name button above). */}
                   {j.address ? (
-                    <div className="text-xs truncate" style={{ color: colors.muted }}><AddressLink address={j.address} /></div>
+                    <div className="text-lg" style={{ color: colors.muted }}>
+                      <button
+                        type="button"
+                        onClick={(e) => openDirections(j, e)}
+                        className="text-left cursor-pointer hover:underline focus:outline-none focus-visible:underline truncate"
+                        style={{
+                          color: colors.muted,
+                          background: "transparent",
+                          padding: 0,
+                          border: 0,
+                          font: "inherit",
+                          maxWidth: "100%",
+                        }}
+                        data-testid={`schedule-card-${j.id}-address-directions`}
+                        aria-label={`Open directions to ${j.customer_name || "customer"}`}
+                      >
+                        {j.address}
+                      </button>
+                    </div>
                   ) : null}
                   {/* Feb-2026 · schedule polish — gate-code amber
                       pill (with lucide Key icon).  Merges the

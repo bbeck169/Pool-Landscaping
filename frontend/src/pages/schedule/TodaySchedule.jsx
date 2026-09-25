@@ -33,8 +33,11 @@ import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
-// Feb-2026 · Batch #4 · Item 2 — inline nav-arrow next to customer name.
-import NavigateJobButton from "../../components/schedule/NavigateJobButton";
+// Feb-2026 · Schedule card redesign — customer name + address now
+// open Google Maps directions directly (no dedicated Navigate
+// button).  Shared helpers in ``@/utils/directions`` produce the
+// same URL shape as the pre-Feb-2026 ``<NavigateJobButton />`` did.
+import { buildDirectionsUrl, openDirections } from "@/utils/directions";
 // Feb-2026 · Batch #4 · Item 3 (continuation) — shared refresh button
 // used across all schedule surfaces (Today + Calendar + Grid).
 import ScheduleRefreshButton from "@/components/schedule/ScheduleRefreshButton";
@@ -1036,15 +1039,31 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 </div>
                 <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: colors.onSurface }}
                      data-testid={`schedule-card-customer-${j.id}`}>
-                  <span><CustomerLink customerId={j.customer_id} name={j.customer_name || "—"} /></span>
-                  {/* Feb-2026 · Batch #4 · Item 2 — Navigate arrow
-                      moved inline with the customer name (from far-
-                      right where it used to sit next to the OPEN
-                      status pill). Kept as a sibling of the name
-                      span so DOM lookups + snapshot tests can
-                      assert positional invariants. Order: name →
-                      nav-arrow → VIP pill. */}
-                  <NavigateJobButton job={j} size={14} />
+                  {/* Feb-2026 · Schedule card redesign — customer
+                      name is now the primary directions trigger.
+                      Click / tap opens Google Maps with the job's
+                      destination pre-filled (same URL shape the
+                      old ``<NavigateJobButton />`` produced).  We
+                      ``stopPropagation`` inside ``openDirections``
+                      so the outer card's "open job" handler does
+                      NOT fire on this click.  If the job has
+                      neither usable coords nor an address, the
+                      button falls back to a plain ``<span>`` so
+                      users don't tap a broken affordance. */}
+                  {buildDirectionsUrl(j) ? (
+                    <button
+                      type="button"
+                      onClick={(e) => openDirections(j, e)}
+                      className="text-left cursor-pointer hover:underline focus:outline-none focus-visible:underline"
+                      style={{ color: colors.onSurface, background: "transparent", padding: 0, border: 0, font: "inherit" }}
+                      data-testid={`schedule-card-${j.id}-customer-name-directions`}
+                      aria-label={`Open directions to ${j.customer_name || "customer"}`}
+                    >
+                      {j.customer_name || "—"}
+                    </button>
+                  ) : (
+                    <span>{j.customer_name || "—"}</span>
+                  )}
                   {j.customer_is_vip ? (
                     <span
                       className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
@@ -1061,9 +1080,27 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                     </span>
                   ) : null}
                 </div>
-                <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}
+                <div className="text-lg" style={{ color: colors.onSurfaceSecondary }}
                      data-testid={`schedule-card-address-${j.id}`}>
-                  {j.address ? <AddressLink address={j.address} /> : "—"}
+                  {/* Feb-2026 · Schedule card redesign — address
+                      moved to ``text-lg`` and made a directions
+                      trigger (mirror of the customer-name button
+                      above).  ``AddressLink``'s Google-Maps *search*
+                      URL was replaced with the same ``dir`` URL as
+                      the name button so both tap targets behave
+                      identically. */}
+                  {j.address ? (
+                    <button
+                      type="button"
+                      onClick={(e) => openDirections(j, e)}
+                      className="text-left cursor-pointer hover:underline focus:outline-none focus-visible:underline"
+                      style={{ color: colors.onSurfaceSecondary, background: "transparent", padding: 0, border: 0, font: "inherit" }}
+                      data-testid={`schedule-card-${j.id}-address-directions`}
+                      aria-label={`Open directions to ${j.customer_name || "customer"}`}
+                    >
+                      {j.address}
+                    </button>
+                  ) : "—"}
                 </div>
                 {cityLine && (
                   <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
