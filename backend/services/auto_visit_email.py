@@ -441,7 +441,7 @@ def _pool_body_sections(sr: dict, palette: Dict[str, str]) -> list[dict]:
         })
     checklist = sr.get("checklist_completed") or sr.get("checklist_items") or []
     done = [c for c in checklist
-            if isinstance(c, dict) and c.get("done")]
+            if _checklist_is_done(c)]
     if done:
         items = "".join(f"<li>✓ {c.get('label', 'Item')}</li>" for c in done)
         sections.append({
@@ -464,7 +464,7 @@ def _pool_body_sections(sr: dict, palette: Dict[str, str]) -> list[dict]:
 
 def _landscape_body_sections(sr: dict) -> list[dict]:
     checklist = sr.get("checklist_completed") or sr.get("checklist_items") or []
-    done = [c for c in checklist if isinstance(c, dict) and c.get("done")]
+    done = [c for c in checklist if _checklist_is_done(c)]
     if not done:
         return []
     items = "".join(f"<li>✓ {c.get('label', 'Item')}</li>" for c in done)
@@ -484,6 +484,34 @@ def _photo_ts(p: Dict[str, Any]) -> str:
         if v:
             return str(v)
     return ""
+
+
+# Feb-2026 · Batch follow-up B — checklist key normaliser.
+#
+# The customer-facing service report can arrive with two different
+# "this item was performed" flags in the wild:
+#
+# * ``"done"``  — used by older tech submission payloads and the
+#   admin-facing annotations in ``routers.service_reports``.
+# * ``"checked"`` — used by the current portal / mobile picker
+#   widgets and stamped through ``_redact_report_for_customer``
+#   (see ``routers/service_reports.py:2571``).
+#
+# The renderer had four ``c.get("done")`` filters; on the current
+# seed shape (all ``checked`` keys) that meant the SERVICE
+# CHECKLIST card never rendered in the customer email.  This
+# helper is a narrow seam — every renderer accepts BOTH keys and
+# the redact / write paths stay unchanged.
+def _checklist_is_done(item: Any) -> bool:
+    """Return True iff the checklist item was completed by the tech.
+
+    Accepts either shape: ``{"done": True}`` (legacy) OR
+    ``{"checked": True}`` (post-redact / current UI widgets).
+    Non-dicts and falsy values return False.
+    """
+    if not isinstance(item, dict):
+        return False
+    return bool(item.get("done") or item.get("checked"))
 
 
 def _photos_grid(
@@ -828,7 +856,7 @@ def _render_checklist_card(sr: Dict[str, Any]) -> str:
     checklist = (sr.get("checklist_completed")
                   or sr.get("checklist_items") or [])
     done = [c for c in checklist
-            if isinstance(c, dict) and c.get("done")]
+            if _checklist_is_done(c)]
     if not done:
         return ""
     rows = "".join(
@@ -1199,7 +1227,7 @@ def render_email(
         c.get("label", "Item")
         for c in ((sr.get("checklist_completed")
                     or sr.get("checklist_items") or []))
-        if isinstance(c, dict) and c.get("done")
+        if _checklist_is_done(c)
     ]
     photos_count = len(safe_photos[:6])
     photos_overflow = max(0, len(safe_photos) - 6)
