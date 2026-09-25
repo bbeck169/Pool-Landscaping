@@ -85,9 +85,27 @@ _SEGMENTATION_USER_TMPL = (
     "{page_count}-page PDF.  Identify the distinct logical "
     "documents (invoices, estimates, or payment receipts) "
     "present.\n\n"
-    "If documents follow a repeating N-page pattern (e.g. "
-    "invoice+payment-stub, invoice+payment-stub, ...), "
-    "identify N and return uniform ranges.\n\n"
+    "SEGMENTATION RULES (apply in this priority order):\n\n"
+    "1. STUB-CONTINUATION RULE (highest priority): A page "
+    "showing only a remittance stub, payment stub, detach "
+    "slip, tear-off coupon, or 'please return with your "
+    "payment' instructions -- with NO customer line items "
+    "and NO 'Bill To' header -- is a CONTINUATION of the "
+    "preceding invoice, NEVER a standalone document.  Fold "
+    "that stub page into the segment of the invoice it is "
+    "paired with.\n\n"
+    "2. INTERLEAVING QUALIFIER: Batches may mix one-page "
+    "invoices and two-page (invoice + stub) invoices in any "
+    "order.  Do NOT assume a fixed repeating N-page pattern "
+    "across the whole PDF; detect each invoice boundary "
+    "independently, even when the layout looks visually "
+    "uniform.\n\n"
+    "3. DISTINCT-NUMBER ANCHOR: A new segment starts only "
+    "when a NEW distinct invoice / receipt / estimate number "
+    "appears on a page (or, if no number is visible, when a "
+    "new invoice header + 'Bill To' block appears).  Page "
+    "breaks, template repetition, and visual similarity "
+    "across pages are NOT segment boundaries on their own.\n\n"
     "Return JSON of the shape:\n"
     "{{\n"
     '  "segments": [\n'
@@ -193,17 +211,31 @@ def _render_page_png_b64(page: fitz.Page, dpi: int = 200) -> str:
 
 def _render_segmentation_grid_jpg_b64(
     doc: fitz.Document, max_cols: int = 6, max_rows: int = 6,
-    cell_w: int = 200, cell_h: int = 260, jpg_quality: int = 60,
+    cell_w: int = 300, cell_h: int = 390, jpg_quality: int = 70,
 ) -> str:
     """Render up to ``max_cols * max_rows`` page thumbnails into a
-    single JPEG grid image (green-lit budget: 6x6 = 36 pages per
-    grid tile → 1200x1560 max).  Returns base64 JPEG.
+    single JPEG grid image.
+
+    Task H · Phase B2.A · Feb-2026 — geometry bumped from
+    (200x260, q=60) to (300x390, q=70).  Rationale: at H.1's
+    default geometry the invoice-number band on each page tile
+    rasterised too small for gpt-4o to read reliably, so the
+    segmentation model under-anchored on the DISTINCT-NUMBER
+    ANCHOR rule (see ``_SEGMENTATION_USER_TMPL``) and fell back
+    to extrapolating a uniform 2-page pattern from the first few
+    pairs.  At 300x390 each thumbnail is ~1.5x larger in both
+    dimensions (2.25x pixel count) and the invoice-number band
+    is legible; q=70 keeps JPEG artefacts from blurring the
+    number strokes.
+
+    Green-lit budget: 6x6 = 36 pages per grid tile → 1800x2340
+    max (H.1: 1200x1560).  Returns base64 JPEG.
 
     Larger PDFs (>36 pages) still get one grid tile that samples
     the first 36 pages — for the H.1 fixture set this is enough
-    to detect the repeating pattern; the segmentation model is
-    hinted to extend the detected pattern across the full page
-    count via the prompt's ``page_count`` template variable."""
+    to detect the pattern; the segmentation model is hinted to
+    extend detected patterns across the full page count via the
+    prompt's ``page_count`` template variable."""
     total = min(doc.page_count, max_cols * max_rows)
     rows = (total + max_cols - 1) // max_cols
     grid_w = max_cols * cell_w

@@ -265,6 +265,7 @@ async def test_extract_invoice_multiline(mock_vision, aquaterra_id, adb):
         source_filename="invoice_single_multiline_digital.pdf",
         db=adb,
     )
+    assert len(batch.documents) == 1
     d = batch.documents[0]
     assert d.doc_kind == "invoice"
     assert 2 <= len(d.line_items) <= 3
@@ -309,6 +310,7 @@ async def test_extract_payment_receipt_operator_disambiguation(
         source_filename="payment_receipt_single_digital.pdf",
         db=adb,
     )
+    assert len(batch.documents) == 1
     d = batch.documents[0]
     assert d.doc_kind == "payment_receipt"
     assert d.amount_paid == 190.0
@@ -319,9 +321,20 @@ async def test_extract_payment_receipt_operator_disambiguation(
     assert d.customer_name != "Ops Operator"
 
 
-# ── Test 5 · 17-invoice batch segmentation ────────────────────
+# ── Test 5 · 48-invoice batch segmentation (post-B2.A prompt fix) ─
 @pytest.mark.anyio
 async def test_extract_batch_segmentation(mock_vision, aquaterra_id, adb):
+    """Task H · Phase B2.A · Feb-2026 — segmentation-accuracy lock.
+
+    The fixture filename ('_17_') is aspirational drift; the raw
+    PDF holds 48 distinct invoices interleaved across 59 pages
+    (mixing 1-page invoices and 2-page invoice+stub pairs).  The
+    corrected canned segmentation response reflects that reality;
+    the post-fix prompt (see ``_SEGMENTATION_USER_TMPL``) instructs
+    gpt-4o to fold stub pages into their parent invoice and to
+    NOT assume a fixed repeating N-page pattern.  See
+    ``backend/tests/fixtures/pdf/REDACTION.md`` for provenance.
+    """
     mock_vision("invoice_batch_17_digital", extract_key="_default_extract")
     from services.imports.pdf_invoice_extractor import extract
 
@@ -332,13 +345,18 @@ async def test_extract_batch_segmentation(mock_vision, aquaterra_id, adb):
         source_filename="invoice_batch_17_digital.pdf",
         db=adb,
     )
-    assert len(batch.documents) == 17
-    # Every segment should have a distinct 2-page range in a
-    # strictly-ascending order (regression guard on the
-    # segmentation ordering contract).
+    # B2.A target — the corrected canned response returns 48
+    # segments; the assertion tolerates a small band (40-50) so
+    # future minor canned-response tweaks don't flake this test.
+    assert 40 <= len(batch.documents) <= 50, (
+        f"expected 40-50 documents, got {len(batch.documents)}"
+    )
     ranges = [d.source_page_range for d in batch.documents]
-    assert ranges[0] == [1, 2]
-    assert ranges[-1] == [33, 34]
+    # First segment starts at page 1, last segment ends at the
+    # final PDF page (59).
+    assert ranges[0][0] == 1
+    assert ranges[-1][1] == 59
+    # Non-overlapping, strictly-ascending ordering contract.
     for prev, curr in zip(ranges, ranges[1:]):
         assert curr[0] > prev[1], f"segments overlap: {prev} → {curr}"
 
@@ -629,3 +647,171 @@ async def test_extractor_real_vision_gpt4o_sanity(aquaterra_id, adb):
         d = batch.documents[0]
         assert isinstance(d.line_items, list)
         assert d.grand_total is not None or d.total_due is not None or d.subtotal is not None
+
+
+
+# ── Test 15 · B2.A source-inspection · prompt hint regression guard ─
+def test_segmentation_prompt_contains_b2a_hints():
+    """Task H · Phase B2.A · Feb-2026 — source-inspection regression
+    guard.  The segmentation prompt MUST retain all three hints
+    landed in B2.A commit 2, so that a future prompt-simplification
+    doesn't silently reintroduce the over-segmentation bug.
+
+    Hints (in priority order per the fix):
+      1. Stub-continuation rule (stub page is a CONTINUATION of the
+         preceding invoice, never a standalone document).
+      2. Interleaving qualifier (batches may mix one-page and
+         two-page invoices; do not assume a fixed repeating pattern).
+      3. Distinct-number anchor (new segment starts only on a new
+         distinct invoice/receipt/estimate number).
+    """
+    from services.imports.pdf_invoice_extractor import _SEGMENTATION_USER_TMPL
+
+    tmpl = _SEGMENTATION_USER_TMPL
+    lower = tmpl.lower()
+
+    # Hint 1 — stub-continuation.
+    assert "stub-continuation rule" in lower, (
+        "Segmentation prompt missing STUB-CONTINUATION RULE header"
+    )
+    assert "continuation" in lower
+    assert "never a standalone document" in lower
+
+    # Hint 2 — interleaving qualifier.
+    assert "interleaving qualifier" in lower, (
+        "Segmentation prompt missing INTERLEAVING QUALIFIER header"
+    )
+    assert "do not assume a fixed repeating" in lower
+
+    # Hint 3 — distinct-number anchor.
+    assert "distinct-number anchor" in lower, (
+        "Segmentation prompt missing DISTINCT-NUMBER ANCHOR header"
+    )
+    assert "new distinct invoice" in lower
+
+    # Contract preservation — the JSON envelope MUST keep the
+    # ``confidence`` field so downstream consumers don't need a
+    # migration when the prompt is refined.
+    assert '"confidence"' in tmpl
+
+    # Preserve the ``thumbnail-grid preview`` sentinel the
+    # ``mock_vision`` fixture uses to route stub responses.
+    assert "thumbnail-grid preview" in tmpl
+
+
+# ── Test 16 · B2.A integration · receipt stays a single document ─
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+@pytest.mark.anyio
+async def test_integration_receipt_single_document(aquaterra_id, adb):
+    """Task H · Phase B2.A · Feb-2026 — real gpt-4o guard.
+
+    The payment-receipt fixture is a 1-page single document; a
+    correct segmentation MUST return exactly one document.  Skips
+    gracefully when ``EMERGENT_LLM_KEY`` is not set (unit-only run).
+    """
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+
+    from services.imports.pdf_invoice_extractor import extract
+
+    pdf_bytes = (_PDF_DIR / "payment_receipt_single_digital.pdf").read_bytes()
+    batch = await extract(
+        pdf_bytes=pdf_bytes, tenant_id=aquaterra_id,
+        source_filename="payment_receipt_single_digital.pdf", db=adb,
+    )
+    assert batch.page_count == 1
+    assert len(batch.documents) == 1, (
+        f"receipt over-segmented into {len(batch.documents)} documents"
+    )
+
+
+# ── Test 17 · B2.A integration · 2-page single-invoice · 1 doc ─
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+@pytest.mark.anyio
+async def test_integration_2page_invoice_single_document_1item(
+    aquaterra_id, adb,
+):
+    """Task H · Phase B2.A · Feb-2026 — real gpt-4o guard.
+
+    A 2-page invoice (invoice page + payment stub) MUST be
+    returned as a single document.  Stub-continuation rule
+    regression guard.
+    """
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+
+    from services.imports.pdf_invoice_extractor import extract
+
+    pdf_bytes = (_PDF_DIR / "invoice_single_1item_digital.pdf").read_bytes()
+    batch = await extract(
+        pdf_bytes=pdf_bytes, tenant_id=aquaterra_id,
+        source_filename="invoice_single_1item_digital.pdf", db=adb,
+    )
+    assert batch.page_count == 2
+    assert len(batch.documents) == 1, (
+        f"2-page invoice over-segmented into {len(batch.documents)} "
+        f"documents — stub-continuation rule not being applied"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+@pytest.mark.anyio
+async def test_integration_2page_invoice_single_document_multiline(
+    aquaterra_id, adb,
+):
+    """Task H · Phase B2.A · Feb-2026 — real gpt-4o guard.
+
+    A 2-page invoice with multi-line body (invoice page + payment
+    stub) MUST be returned as a single document.  Regression
+    guard for the multiline variant of the stub-continuation bug.
+    """
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+
+    from services.imports.pdf_invoice_extractor import extract
+
+    pdf_bytes = (_PDF_DIR / "invoice_single_multiline_digital.pdf").read_bytes()
+    batch = await extract(
+        pdf_bytes=pdf_bytes, tenant_id=aquaterra_id,
+        source_filename="invoice_single_multiline_digital.pdf", db=adb,
+    )
+    assert batch.page_count == 2
+    assert len(batch.documents) == 1, (
+        f"2-page multiline invoice over-segmented into "
+        f"{len(batch.documents)} documents"
+    )
+
+
+# ── Test 18 · B2.A integration · 48-invoice batch band assertion ─
+@pytest.mark.integration
+@pytest.mark.timeout(600)
+@pytest.mark.anyio
+async def test_integration_batch_segmentation_band(aquaterra_id, adb):
+    """Task H · Phase B2.A · Feb-2026 — real gpt-4o guard.
+
+    The 59-page batch fixture holds 48 distinct invoices
+    interleaved (mixed 1-page and 2-page invoice+stub pairs).
+    A correctly-segmented run lands in the 40-50 band; a
+    misfiring one either over-segments (splits stubs into
+    standalone docs; count >> 50) or under-segments (merges
+    multiple invoices; count < 40).
+    """
+    if not os.environ.get("EMERGENT_LLM_KEY"):
+        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+
+    from services.imports.pdf_invoice_extractor import extract
+
+    pdf_bytes = (_PDF_DIR / "invoice_batch_17_digital.pdf").read_bytes()
+    batch = await extract(
+        pdf_bytes=pdf_bytes, tenant_id=aquaterra_id,
+        source_filename="invoice_batch_17_digital.pdf", db=adb,
+    )
+    assert batch.page_count == 59
+    assert 40 <= len(batch.documents) <= 50, (
+        f"batch segmentation out of B2.A band: got "
+        f"{len(batch.documents)} documents, expected 40-50 "
+        f"(warnings: {batch.warnings[:5]})"
+    )

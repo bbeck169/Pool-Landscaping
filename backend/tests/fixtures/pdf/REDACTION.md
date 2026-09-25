@@ -6,6 +6,47 @@ post-redaction SHAs below are the exact bytes committed to the
 repo.  Pre-redaction SHAs are recorded for provenance ONLY — the
 raw PDFs are NEVER committed.
 
+## Ground-truth fixture shape (updated Task H · Phase B2.A · Feb-2026)
+
+| Fixture | Pages | Distinct documents | Notes |
+|---|---|---|---|
+| `invoice_batch_17_digital.pdf` | **59** | **48** | Filename says "17" but that was aspirational drift from the H.1 preview scope — the raw source actually holds 48 distinct invoices interleaved across 59 pages.  See "Batch fixture — mixed 1p/2p interleaving" below. |
+| `invoice_single_1item_digital.pdf` | 2 | 1 | Invoice page + payment stub — the stub is a continuation of the parent invoice, not a standalone document. |
+| `invoice_single_multiline_digital.pdf` | 2 | 1 | Multi-line invoice page + payment stub. |
+| `estimate_single_11item_scanned.pdf` | 2 | 1 | Scanned estimate spanning two pages. |
+| `payment_receipt_single_digital.pdf` | 1 | 1 | Single-page payment receipt. |
+
+## Batch fixture — mixed 1p/2p interleaving
+
+The `invoice_batch_17_digital.pdf` fixture is the one the segmentation
+prompt must handle robustly:
+
+- 48 distinct invoices totalling 59 pages.
+- ~37 invoices are single-page (no payment stub attached).
+- ~11 invoices are two pages (invoice + trailing payment stub).
+- The 1-page and 2-page invoices are **interleaved** — the file
+  does NOT follow a fixed repeating N-page pattern, so segmentation
+  logic that hard-codes "every N pages = one invoice" over-segments
+  the 1-page invoices and/or under-segments the 2-page ones.
+- The "17" in the filename was aspirational from the H.1 preview
+  scope and NEVER matched the redacted output; renaming the file
+  would break every existing SHA anchor below, so the filename
+  survives while the ground-truth count is documented here.
+
+The B2.A segmentation-prompt refinement (see
+`backend/services/imports/pdf_invoice_extractor.py::_SEGMENTATION_USER_TMPL`)
+adds three hints in priority order to defend against this
+interleaving:
+
+1. **Stub-continuation rule** — a page with only a remittance stub
+   is a continuation of the preceding invoice, never a standalone
+   document.
+2. **Interleaving qualifier** — batches may mix 1-page and 2-page
+   invoices in any order; do not assume a fixed repeating N-page
+   pattern.
+3. **Distinct-number anchor** — a new segment starts only when a
+   new distinct invoice / receipt / estimate number appears.
+
 ## Raw-source pre-redaction SHA-256 (never committed)
 
 | SHA-256 | Bytes | File |
