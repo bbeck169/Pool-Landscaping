@@ -30,6 +30,20 @@ export const ADMIN_NAV_V2 = [
     { to: "/invoices/master",           label: "Master Invoices",    icon: Layers,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/auto-billing",              label: "Auto-billing",       icon: Repeat,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/admin/autobilling-runs",     label: "Autobilling runs",   icon: Repeat,     feature: "invoices",  subsection: "Invoicing" },
+    // Task B · Feb-2026 — PDF Invoice Importer. Sits inside the
+    // Invoicing subsection alongside the other invoice-producing
+    // action rows (Auto-billing, Autobilling runs). Admin-only
+    // per Phase 2 ruling E.4 (matches the ``require_admin`` gate
+    // on the backend endpoints).
+    //
+    // Original recon report §B mis-identified Vendor Bills as
+    // sitting in the Finance group — Vendor Bills has always
+    // lived in the Reports group.  The user ruled Option A on
+    // the sidebar-placement halt: PDF Import lives here in
+    // Finance/Invoicing (the semantically correct home), and
+    // Vendor Bills gets relocated adjacent in a small follow-up
+    // commit (Commit 1.5) so the two settle side-by-side.
+    { to: "/admin/imports/pdf-invoice",  label: "PDF Import",         icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only" },
     { to: "/settings/late-fees",        label: "Late Fees",          icon: DollarSign, feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/billing",          label: "Billing Rules",      icon: Cog,        feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/payment-handles",  label: "Payment Handles",    icon: CreditCard, feature: "settings",  subsection: "Invoicing" },
@@ -353,12 +367,7 @@ export const ADMIN_NAV_V2 = [
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
-    { to: "/admin/finance/bills",          label: "Vendor Bills",        icon: Receipt, feature: "reports" },
-    // Task B · Feb-2026 — PDF Invoice Importer.  Sits directly
-    // under Vendor Bills so operators find both flows in one
-    // place.  Admin-only per Phase 2 ruling E.4 (matches the
-    // ``require_admin`` gate on the backend endpoints).
-    { to: "/admin/imports/pdf-invoice",    label: "PDF Import",          icon: UploadCloud, feature: "reports", hard_rule: "admin_only" },
+    { to: "/admin/finance/bills",          label: "Vendor Bills", icon: Receipt, feature: "reports" },
     // Phase LZ4 (Feb 2026) — "Stripe Payments" nav entry removed
     // now that Stripe SDK is retired. Payment link generation
     // happens transparently via Lumino/Zapier; there is no

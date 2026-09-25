@@ -123,21 +123,35 @@ describe("Task B · Commit 1 route + sidebar wiring (source-inspect)", () => {
   });
 
   it("adminNav.js inserts the PDF Import entry inside the Finance " +
-     "group immediately after Vendor Bills, with admin_only rule", () => {
-    // Ordering lock — Vendor Bills sits before PDF Import.
-    const vendorIdx = NAV_SRC.indexOf('to: "/admin/finance/bills"');
-    const importIdx = NAV_SRC.indexOf('to: "/admin/imports/pdf-invoice"');
-    expect(vendorIdx).toBeGreaterThan(-1);
-    expect(importIdx).toBeGreaterThan(vendorIdx);
-    // The two entries must be within a small window — no other
-    // sidebar row was inserted between them.
-    expect(importIdx - vendorIdx).toBeLessThan(500);
-    // Admin-only gate on the sidebar entry.
+     "group / Invoicing subsection immediately after Autobilling " +
+     "runs, with admin_only rule", () => {
+    // Sidebar-placement halt ruling (Option A) — the entry lives
+    // in Finance/Invoicing (semantically correct — invoice-
+    // producing action).  The recon report §B misread Vendor
+    // Bills as Finance-grouped when it actually lived in Reports;
+    // Vendor Bills gets relocated adjacent in a follow-up commit.
+    //
+    // Ordering lock — Autobilling runs sits before PDF Import,
+    // and PDF Import sits before Late Fees (all three are in
+    // Finance/Invoicing).
+    const autobillingIdx = NAV_SRC.indexOf('to: "/admin/autobilling-runs"');
+    const importIdx      = NAV_SRC.indexOf('to: "/admin/imports/pdf-invoice"');
+    const lateFeesIdx    = NAV_SRC.indexOf('to: "/settings/late-fees"');
+    expect(autobillingIdx).toBeGreaterThan(-1);
+    expect(importIdx).toBeGreaterThan(autobillingIdx);
+    expect(lateFeesIdx).toBeGreaterThan(importIdx);
+    // The new entry must sit inside the Finance group — grep
+    // guard: PDF Import's line must appear BEFORE the ai_employees
+    // group opens.
+    const aiEmployeesOpenerIdx = NAV_SRC.indexOf(
+      '{ key: "ai_employees"');
+    expect(aiEmployeesOpenerIdx).toBeGreaterThan(-1);
+    expect(importIdx).toBeLessThan(aiEmployeesOpenerIdx);
+    // Row properties.
     const importSlice = NAV_SRC.slice(importIdx, importIdx + 300);
     expect(importSlice).toMatch(/hard_rule:\s*"admin_only"/);
-    // Feature bucket — matches Vendor Bills' "reports" per Ruling E.4.
-    expect(importSlice).toMatch(/feature:\s*"reports"/);
-    // Label + icon (UploadCloud imported in the lucide-react barrel).
+    expect(importSlice).toMatch(/feature:\s*"invoices"/);
+    expect(importSlice).toMatch(/subsection:\s*"Invoicing"/);
     expect(importSlice).toMatch(/label:\s*"PDF Import"/);
     expect(importSlice).toMatch(/icon:\s*UploadCloud/);
   });
