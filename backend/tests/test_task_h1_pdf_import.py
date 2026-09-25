@@ -509,35 +509,67 @@ def test_router_rejects_non_pdf(admin_h):
         assert detail.get("error") == "pdf_only"
 
 
-# ── Test 12 · router · 200 preview · zero quote inserts ───────
+# ── Test 12 · router · async kickoff + poll · zero quote inserts ─
 def test_router_preview_persists_batch_but_not_quotes(
-    admin_h, aquaterra_id, dbc, h1_customer, monkeypatch,
+    admin_h, aquaterra_id, dbc, h1_customer,
 ):
-    """Router integration test.  Patches the extractor's vision
-    seam at the *live server* level via a module attribute so
-    the running uvicorn process picks up the stub.  Because the
-    live server runs as a separate process, we can't monkeypatch
-    it from pytest — instead we count ``quotes`` collection
-    inserts before / after to prove no writes leak."""
+    """Router integration test — post-B2.B async cutover.
+
+    Kicks off an import via ``POST /api/imports/pdf-invoice``,
+    polls ``GET /api/imports/pdf-invoice/{batch_id}`` until the
+    batch reaches a terminal state, and asserts:
+
+    * The kickoff response is ``202 Accepted`` with the async
+      envelope shape (``batch_id``, ``status=queued``,
+      ``poll_hint_seconds``, ``poll_url``, ``async: true``).
+    * The batch row eventually reaches ``preview_complete`` or
+      ``failed`` (both are terminal from the router's POV).
+    * The ``quotes`` collection count is UNCHANGED — preview
+      never inserts quote rows; that ships in Task H.2.
+    * The ``import_batches`` row DID land.
+    """
+    import time as _t
+
     pre_quotes = dbc.quotes.count_documents({"tenant_id": aquaterra_id})
     pre_batches = dbc.import_batches.count_documents({"tenant_id": aquaterra_id})
 
-    # We can't monkeypatch the running server, so this test exercises
-    # the real endpoint path but expects the extractor to attempt a
-    # real vision call — which will fail with a graceful warning.
-    # The endpoint still returns 200 with a batch_id + empty
-    # documents list; a batch row lands, but NO quotes rows do.
     pdf_bytes = (_PDF_DIR / "invoice_single_1item_digital.pdf").read_bytes()
     files = {"file": ("invoice_single_1item_digital.pdf",
                        io.BytesIO(pdf_bytes), "application/pdf")}
     r = requests.post(f"{API}/imports/pdf-invoice",
-                      headers=admin_h, files=files, timeout=60)
-    assert r.status_code == 200, r.text
+                      headers=admin_h, files=files, timeout=30)
+    assert r.status_code == 202, r.text
     body = r.json()
-    assert "batch" in body
-    assert body["batch"]["tenant_id"] == aquaterra_id
-    assert body["batch"]["source_filename"] == "invoice_single_1item_digital.pdf"
-    assert "mapper_previews" in body
+    assert body["async"] is True
+    assert body["status"] == "queued"
+    assert "batch_id" in body
+    assert "poll_url" in body
+    assert body["poll_url"].endswith(body["batch_id"])
+    assert 3 <= body["poll_hint_seconds"] <= 30
+    batch_id = body["batch_id"]
+
+    # ── Poll until terminal state ─────────────────────────
+    terminal = ("preview_complete", "failed", "cancelled")
+    poll_url = f"{API}/imports/pdf-invoice/{batch_id}"
+    deadline = _t.time() + 120
+    row = None
+    while _t.time() < deadline:
+        pr = requests.get(poll_url, headers=admin_h, timeout=15)
+        assert pr.status_code == 200, pr.text
+        row = pr.json()
+        if row.get("status") in terminal:
+            break
+        _t.sleep(2)
+    assert row is not None and row["status"] in terminal, (
+        f"batch never reached terminal state: {row}"
+    )
+
+    # If we hit ``preview_complete``, the row must carry a
+    # ``mapper_previews`` list (may be empty if extractor
+    # gracefully degraded, but the key exists).
+    if row["status"] == "preview_complete":
+        assert "mapper_previews" in row
+        assert row.get("progress_pct") == 100
 
     post_quotes = dbc.quotes.count_documents({"tenant_id": aquaterra_id})
     post_batches = dbc.import_batches.count_documents({"tenant_id": aquaterra_id})
@@ -550,8 +582,8 @@ def test_router_preview_persists_batch_but_not_quotes(
     assert post_batches == pre_batches + 1
 
     # Cleanup
-    dbc.import_batches.delete_one({"id": body["batch"]["batch_id"]})
-    dbc.pending_import_customers.delete_many({"batch_id": body["batch"]["batch_id"]})
+    dbc.import_batches.delete_one({"id": batch_id})
+    dbc.pending_import_customers.delete_many({"batch_id": batch_id})
 
 
 # ── Test 13 · H.1.5 regression · dispatcher-envelope unwrap ───

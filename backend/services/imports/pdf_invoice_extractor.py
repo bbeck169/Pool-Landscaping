@@ -40,7 +40,7 @@ import logging
 import re
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
 from dateutil import parser as _du_parser
@@ -422,17 +422,61 @@ async def extract(
     source_filename: str,
     hint_doc_kind: Optional[str] = None,
     db: Any = None,
+    batch_id: Optional[str] = None,
+    progress_callback: Optional[
+        Callable[..., Awaitable[None]]
+    ] = None,
 ) -> ExtractedBatch:
-    """Task H · Phase H.1 extractor.  See module docstring."""
+    """Task H · Phase H.1 extractor.  See module docstring.
+
+    Task H · Phase B2.B · Feb-2026 additions:
+
+    - ``batch_id`` — optional caller-provided UUID.  When set (from
+      the async router), the extractor uses it verbatim so the row
+      persisted at kickoff time and the row returned at completion
+      share the same primary key.  Defaults to a fresh ``uuid4()``
+      for backward-compat (all H.1 unit tests still call without
+      this kwarg).
+    - ``progress_callback`` — optional ``async`` fn invoked at
+      three stages (best-effort — any callback exception is
+      swallowed so a monitoring hiccup never corrupts the batch):
+        * ``await cb(stage="segmentation", current=None, total=None)``
+          right before the segmentation vision call.
+        * ``await cb(stage="extraction", current=N, total=M,
+                     partial_documents=[...])`` after each per-
+          segment extraction succeeds (or graceful-warning fails).
+        * The router owns the ``"mapping"`` + ``"persisting"``
+          stage transitions and calls its own update path — no
+          callback needed for those.
+    """
     started = datetime.now(timezone.utc)
-    batch_id = str(uuid.uuid4())
+    batch_id = batch_id or str(uuid.uuid4())
     sha = hashlib.sha256(pdf_bytes).hexdigest()
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_count = doc.page_count
     warnings: List[str] = []
 
+    async def _emit(stage: str, current: Optional[int] = None,
+                     total: Optional[int] = None,
+                     partial_documents: Optional[List[ExtractedDocument]] = None,
+                     ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(
+                stage=stage,
+                current=current,
+                total=total,
+                partial_documents=partial_documents,
+            )
+        except Exception as _exc:                                  # noqa: BLE001
+            logger.warning(
+                f"[extract] progress_callback swallowed exception: {_exc}"
+            )
+
     # ── Pass 1 · segmentation ──────────────────────────────
+    await _emit("segmentation")
     if page_count == 1:
         # Skip Pass 1 for single-page docs — segmentation is
         # trivial and would waste tokens.
@@ -467,6 +511,7 @@ async def extract(
 
     # ── Pass 2 · per-segment extraction ────────────────────
     documents: List[ExtractedDocument] = []
+    total_segments = len(segments)
     for idx, seg in enumerate(segments):
         p_start = max(1, int(seg.get("page_start") or 1))
         p_end = min(page_count, int(seg.get("page_end") or p_start))
@@ -494,6 +539,11 @@ async def extract(
                 f"segment {idx + 1} (pages {p_start}-{p_end}) extraction "
                 f"failed: {ext_result.get('error')}"
             )
+            # Still emit progress on graceful-warning failures so
+            # the poll surface advances.
+            await _emit("extraction", current=idx + 1,
+                         total=total_segments,
+                         partial_documents=documents)
             continue
 
         # Ensure the segment's page range wins if the model
@@ -502,6 +552,13 @@ async def extract(
         raw = dict(ext_result["parsed"])
         raw["source_page_range"] = [p_start, p_end]
         documents.append(_ensure_document(raw, warnings, idx + 1))
+
+        # Per-segment progress hint — the router persists this to
+        # the batch row's ``stage`` field so admins see live
+        # advancement inside the extraction bulk.
+        await _emit("extraction", current=idx + 1,
+                     total=total_segments,
+                     partial_documents=documents)
 
     doc.close()
     finished = datetime.now(timezone.utc)
