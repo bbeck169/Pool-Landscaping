@@ -43,40 +43,48 @@ describe("Customer detail action bar — single-row layout", () => {
     expect(rowSlice).toMatch(/overflow-x-auto/);
   });
 
-  it("preserves every button testid inside the same row", () => {
-    // Locate the row block (opening data-testid → next `</div>`
-    // that closes it). We approximate by finding the row testid then
-    // taking a generous forward slice — any missing testid inside
-    // this slice indicates a regression.
+  it("preserves every button testid inside the row + adjacent submenu", () => {
+    // Feb-2026 · Customer Header Navy Strip — the two Chemistry
+    // affordances (cd-chemistry, cd-chemistry-history — preserved
+    // as ``data-legacy-testid`` on the DropdownMenuItems) moved
+    // OUT of the inline row and INTO the "+ Create" submenu now
+    // rendered by ``CustomerActionDropdowns``. Split the assertions
+    // across the row block + the ActionDropdowns component source
+    // so both surfaces are covered.
     const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
-    // The row is followed by ~80 lines of markup; slice generously.
     const rowBlock = pageSrc.slice(rowIdx, rowIdx + 4000);
 
-    // 8 required affordances in order.
-    const REQUIRED = [
-      "<CustomerActionDropdowns",        // Send + Create dropdowns
+    // 6 affordances still live inside the row itself.
+    const ROW_REQUIRED = [
+      "<CustomerActionDropdowns",
       'testid="cd-edit"',
-      'testid="cd-chemistry"',
-      'testid="cd-chemistry-history"',
       'testid="cd-delete"',
       'data-testid="cd-click-to-call-wrapper"',
-      "cd-click-to-call",                // Prefix used by ClickToCallButton for its Call button testid
-      "cd-click-to-call-tel-fallback",   // Compact "Dial from this device" icon
+      "cd-click-to-call",
+      "cd-click-to-call-tel-fallback",
     ];
-    for (const key of REQUIRED) {
+    for (const key of ROW_REQUIRED) {
       expect(rowBlock).toContain(key);
     }
+
+    // Chemistry moved to the Create ▼ submenu.
+    const actionsSrc = readFileSync(
+      resolve(__dirname,
+        "../components/customers/CustomerActionDropdowns.jsx"),
+      "utf8");
+    expect(actionsSrc).toContain('data-legacy-testid="cd-chemistry"');
+    expect(actionsSrc).toContain(
+      'data-legacy-testid="cd-chemistry-history"');
   });
 
-  it("compact button sizing applied to Edit/Chemistry/Chem History/Delete", () => {
-    // The consolidation shrinks padding from ``px-4 py-2`` (ui-kit
-    // default) to ``px-2.5 py-1 text-xs`` on the row buttons so all
-    // 8 fit at ≥1200px viewports.
+  it("compact button sizing applied to Edit + Delete + Merge", () => {
+    // Feb-2026 · Navy Strip — the row now holds Edit / Delete /
+    // Merge with ``px-2.5 py-1 text-xs``. Chemistry moved to the
+    // Create ▼ submenu so the historical minimum drops from 4 → 3.
     const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
     const rowBlock = pageSrc.slice(rowIdx, rowIdx + 4000);
-    // At least 4 occurrences (Edit, Chemistry, Chem History, Delete).
     const matches = rowBlock.match(/px-2\.5 py-1 text-xs/g) || [];
-    expect(matches.length).toBeGreaterThanOrEqual(4);
+    expect(matches.length).toBeGreaterThanOrEqual(3);
   });
 
   it("suppresses the ClickToCallButton's stacked fallback so it fits one row", () => {

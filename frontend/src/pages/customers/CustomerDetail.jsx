@@ -25,13 +25,11 @@ import NotesHistoryList from "@/components/customers/NotesHistoryList";
 // ``cd-action-row``.  Testids from the removed buttons move onto
 // the new items so the cd-chemistry / cd-chemistry-history
 // selectors used by existing suites keep resolving.
-import { ChevronDown } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
+// Feb-2026 · Customer Header Navy Strip — the standalone Chemistry
+// dropdown that lived inline on the customer header row has been
+// folded into the "+ Create" menu inside CustomerActionDropdowns
+// (as a nested "Chemistry…" submenu). The inline ChevronDown +
+// DropdownMenu* imports that powered the removed block are gone.
 import { PhoneLink, AddressLink } from "@/components/customer";
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
@@ -588,6 +586,133 @@ export default function CustomerDetail() {
         </div>
       )}
 
+      {/* Feb-2026 · Unified navy command strip. Consolidates the
+          Overview dropdown + every top-right action button
+          (Send / Create / Edit / Delete / Merge / Call) into a
+          single horizontal navy container sitting directly below
+          the Portal Access panel. All handlers, testids, and
+          disabled-state logic are preserved verbatim — this is a
+          layout + styling move only. */}
+      <div
+        className="rounded-2xl mb-4 px-3 py-3 flex flex-row items-center gap-4 overflow-x-auto"
+        style={{
+          backgroundColor: colors.nav.bg,
+          border: `1px solid ${colors.nav.border}`,
+        }}
+        data-testid="cd-command-strip"
+      >
+        <div style={{ minWidth: 220 }} data-testid="cd-tabs-dropdown-shell">
+          <ResponsiveTabs
+            tabs={TABS}
+            active={tab}
+            onChange={setTab}
+            testidPrefix="cd-tab"
+            ariaLabel="Customer sections"
+            forceDropdown
+            recentStorageKey={
+              customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
+            }
+          />
+        </div>
+        <div
+          className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+          data-testid="cd-action-row"
+        >
+          {/* Feb-2026 Customer Detail Additions — top-right Send + Create dropdowns */}
+          <CustomerActionDropdowns
+            customer={customer}
+            onSend={openSendModal}
+            onQuickTask={openQuickTaskFromDropdown}
+            onSendServiceRecordsLink={() => setSrLinkOpen(true)}
+            navy
+          />
+          <Button
+            variant="ghost"
+            className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
+            onClick={() => navigate(`/customers/${id}/edit`)}
+            testid="cd-edit"
+            style={{
+              background: "transparent",
+              color: colors.nav.fg,
+              border: `1px solid rgba(255,255,255,0.20)`,
+            }}
+          >
+            <Edit3 size={14} /> Edit
+          </Button>
+          <Button
+            variant="danger"
+            className="px-2.5 py-1 text-xs hover:!bg-red-400/25 focus:!ring-2 focus:!ring-red-300/60"
+            onClick={() => setConfirmDelete(true)}
+            testid="cd-delete"
+            style={{
+              background: "rgba(239,68,68,0.18)",
+              color: "#FCA5A5",
+              border: "1px solid rgba(252,165,165,0.40)",
+            }}
+          >
+            <Trash2 size={14} /> Delete
+          </Button>
+          {/* Phase M1 · Feb-2026 — Customer Merge Wizard trigger.
+               Admin + super_admin only; the wizard modal handles
+               role errors gracefully if the backend 403s. */}
+          {["admin", "super_admin", "owner"].includes(
+              (meRole || "").toLowerCase()) ? (
+            <Button
+              variant="ghost"
+              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
+              onClick={() => setMergeOpen(true)}
+              testid="cd-merge-btn"
+              style={{
+                background: "transparent",
+                color: colors.nav.fg,
+                border: `1px solid rgba(255,255,255,0.20)`,
+              }}
+            >
+              <GitMerge size={14} /> Merge
+            </Button>
+          ) : null}
+          {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
+              cleanup — action bar consolidated to a single row, so we
+              suppress the ClickToCallButton's stacked ``Dial from this
+              device`` fallback and render it here as a compact icon-
+              only sibling with a tooltip. All click handlers, phone
+              normalization, and RingCentral wiring stay identical. */}
+          {(() => {
+            const primary =
+              (customer.mobiles && customer.mobiles[0]?.number_e164) ||
+              customer.phone;
+            if (!primary) return null;
+            const telHref = `tel:${String(primary).replace(/[^0-9+]/g, "")}`;
+            return (
+              <div
+                className="inline-flex items-center gap-1"
+                data-testid="cd-click-to-call-wrapper"
+              >
+                <ClickToCallButton
+                  phoneNumber={primary}
+                  entityKind="customer"
+                  entityId={customer.id}
+                  label={`Call ${customer.name || "customer"}`}
+                  testIdPrefix="cd-click-to-call"
+                  size="sm"
+                  showFallback={false}
+                />
+                <a
+                  href={telHref}
+                  className="inline-flex items-center justify-center w-7 h-7 rounded-md hover:bg-white/10"
+                  style={{ color: colors.nav.fg }}
+                  title="Dial from this device"
+                  aria-label="Dial from this device"
+                  data-testid="cd-click-to-call-tel-fallback"
+                >
+                  <Phone size={12} />
+                </a>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* Header card */}
       <div
         className="rounded-2xl p-6 mb-4"
@@ -752,116 +877,6 @@ export default function CustomerDetail() {
               />
             </div>
           </div>
-          <div
-            className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
-            data-testid="cd-action-row"
-          >
-            {/* Feb-2026 Customer Detail Additions — top-right Send + Create dropdowns */}
-            <CustomerActionDropdowns
-              customer={customer}
-              onSend={openSendModal}
-              onQuickTask={openQuickTaskFromDropdown}
-              onSendServiceRecordsLink={() => setSrLinkOpen(true)}
-            />
-            <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
-              <Edit3 size={14} /> Edit
-            </Button>
-            {/* Phase P52 · Feb-2026 — Chemistry actions consolidated
-                into a brand-coloured dropdown to shorten the action
-                row.  Legacy testids (cd-chemistry, cd-chemistry-
-                history) are preserved on the DropdownMenuItems so
-                every existing suite that clicks by testid keeps
-                resolving; the P52 test suite reads the new
-                cd-action-chemistry / cd-action-chem-history testids. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="px-2.5 py-1 text-xs"
-                  style={{
-                    backgroundColor: colors.brandPrimary,
-                    color: colors.onBrandPrimary,
-                  }}
-                  testid="cd-chemistry-actions-trigger"
-                >
-                  <Beaker size={14} /> Chemistry <ChevronDown size={12} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => navigate(`/customers/${id}/chemistry`)}
-                  data-testid="cd-action-chemistry"
-                  // Preserve the pre-P52 testid so existing suites
-                  // that select by cd-chemistry keep resolving.
-                  data-legacy-testid="cd-chemistry"
-                >
-                  <Beaker size={14} /> Chemistry
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => navigate(`/customers/${id}/chemistry-history`)}
-                  data-testid="cd-action-chem-history"
-                  data-legacy-testid="cd-chemistry-history"
-                >
-                  <Beaker size={14} /> Chem History
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button variant="danger" className="px-2.5 py-1 text-xs" onClick={() => setConfirmDelete(true)} testid="cd-delete">
-              <Trash2 size={14} /> Delete
-            </Button>
-            {/* Phase M1 · Feb-2026 — Customer Merge Wizard trigger.
-                 Admin + super_admin only; the wizard modal handles
-                 role errors gracefully if the backend 403s. */}
-            {["admin", "super_admin", "owner"].includes(
-                (meRole || "").toLowerCase()) ? (
-              <Button
-                variant="ghost"
-                className="px-2.5 py-1 text-xs"
-                onClick={() => setMergeOpen(true)}
-                testid="cd-merge-btn"
-              >
-                <GitMerge size={14} /> Merge
-              </Button>
-            ) : null}
-            {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
-                cleanup — action bar consolidated to a single row, so we
-                suppress the ClickToCallButton's stacked ``Dial from this
-                device`` fallback and render it here as a compact icon-
-                only sibling with a tooltip. All click handlers, phone
-                normalization, and RingCentral wiring stay identical. */}
-            {(() => {
-              const primary =
-                (customer.mobiles && customer.mobiles[0]?.number_e164) ||
-                customer.phone;
-              if (!primary) return null;
-              const telHref = `tel:${String(primary).replace(/[^0-9+]/g, "")}`;
-              return (
-                <div
-                  className="inline-flex items-center gap-1"
-                  data-testid="cd-click-to-call-wrapper"
-                >
-                  <ClickToCallButton
-                    phoneNumber={primary}
-                    entityKind="customer"
-                    entityId={customer.id}
-                    label={`Call ${customer.name || "customer"}`}
-                    testIdPrefix="cd-click-to-call"
-                    size="sm"
-                    showFallback={false}
-                  />
-                  <a
-                    href={telHref}
-                    className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
-                    title="Dial from this device"
-                    aria-label="Dial from this device"
-                    data-testid="cd-click-to-call-tel-fallback"
-                  >
-                    <Phone size={12} />
-                  </a>
-                </div>
-              );
-            })()}
-          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
@@ -927,29 +942,12 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Tabs — Feb-2026 · migrated to <ResponsiveTabs>. Desktop
-          keeps the identical horizontal strip; <md renders a
-          full-width dropdown so the 12-tab list stops requiring a
-          horizontal scroll. Parent still owns ``tab`` state, so
-          deep-linking (see the initial ``tab`` from URL query in
-          the ``useCustomerTabParam`` block above) is preserved. */}
-      <div
-        className="mb-4"
-        style={{ maxWidth: 280 }}
-        data-testid="cd-tabs-dropdown-shell"
-      >
-        <ResponsiveTabs
-          tabs={TABS}
-          active={tab}
-          onChange={setTab}
-          testidPrefix="cd-tab"
-          ariaLabel="Customer sections"
-          forceDropdown
-          recentStorageKey={
-            customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
-          }
-        />
-      </div>
+      {/* Feb-2026 · Tabs — the standalone ``ResponsiveTabs`` block
+          that lived here has been relocated into the unified
+          navy command strip immediately below the Portal Access
+          panel (see ``cd-command-strip`` above). Kept a
+          placeholder comment so the diff for future readers
+          shows where the dropdown used to live. */}
       <div
         className="rounded-2xl overflow-hidden mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}

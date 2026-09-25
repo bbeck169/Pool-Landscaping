@@ -32,13 +32,16 @@ describe("CustomerDetail · I6 tabs-as-dropdown", () => {
     expect(slice).toMatch(/tabs=\{TABS\}/);
   });
 
-  it("dropdown lives in a compact ~280px width-bounded shell", () => {
-    // The wrapper carries a maxWidth style + its own testid so a
-    // future full-width regression is easy to catch.
+  it("dropdown lives in a compact width-bounded shell inside the navy strip", () => {
+    // Feb-2026 · Customer Header Navy Strip — the shell relocated
+    // from a standalone ``maxWidth: 280`` container into the
+    // unified ``cd-command-strip`` flex row. It now carries
+    // ``minWidth: 220`` so it holds its column when the strip
+    // scrolls horizontally.
     const idx = CD_SRC.indexOf('data-testid="cd-tabs-dropdown-shell"');
     expect(idx).toBeGreaterThan(-1);
     const slice = CD_SRC.slice(Math.max(0, idx - 200), idx + 300);
-    expect(slice).toMatch(/maxWidth:\s*280/);
+    expect(slice).toMatch(/minWidth:\s*220/);
   });
 
   it("the dropdown shell sits ABOVE the tab-panel container", () => {
@@ -113,13 +116,17 @@ describe("CustomerDetail · I6 tabs-as-dropdown", () => {
     );
   });
 
-  it("no legacy horizontal-scroll classes at the CustomerDetail mount", () => {
-    // Belt-and-suspenders: nothing in the ~600 char slice around
-    // the ResponsiveTabs mount should still name an overflow-x
-    // scroll strip.
+  it("no legacy horizontal-scroll classes on the ResponsiveTabs mount itself", () => {
+    // Belt-and-suspenders: the ResponsiveTabs component's own
+    // mount site must NOT carry an overflow-x scroll strip. The
+    // parent navy command strip DOES use ``overflow-x-auto``
+    // (needed for narrow desktops with many buttons) but the
+    // ResponsiveTabs itself renders as a compact
+    // ``forceDropdown`` shell — so we bound the slice from the
+    // ``<ResponsiveTabs`` open to the FIRST ``/>`` that closes it.
     const idx = CD_SRC.indexOf("<ResponsiveTabs");
-    const slice = CD_SRC.slice(Math.max(0, idx - 400),
-                                        idx + 500);
+    const closeIdx = CD_SRC.indexOf("/>", idx);
+    const slice = CD_SRC.slice(idx, closeIdx + 2);
     expect(slice).not.toMatch(/overflow-x-auto/);
     expect(slice).not.toMatch(/hidden md:flex/);
   });
