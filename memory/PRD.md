@@ -1,4 +1,202 @@
-## Phase P29 — Unlock Landscape Checklist — SHIPPED (Feb 2026)
+## Task B · Phase 2 — PDF Invoice Importer UI — SHIPPED (Feb 2026)
+
+New admin surface at `/admin/imports/pdf-invoice` (admin+ only via
+`<AdminOnly>` in `App.js`) that turns supplier PDFs into draft
+invoices.  Backend was already live per the recon halt report
+(§A.1 – §A.5); this phase ships the operator UI on top of it.
+
+**Six-commit sequence (shipped in order)**
+
+1. `eb0078c4f` — `feat(imports): PdfInvoiceImportPage scaffold + route + sidebar entry`
+2. `4b098c8ff` — `chore(nav): relocate Vendor Bills to Finance/Invoicing subsection`
+3. `47d548e9a` — `feat(imports): upload flow — multi-file selection, size/count validation, concurrent pool of 2`
+4. `fc1f67132` — `feat(imports): async polling + progress bar per batch`
+5. `d03420841` — `feat(imports): dry-run preview table + duplicate pre-flight highlighting`
+6. `7b8695845` — `feat(imports): commit + rollback actions with typed error handling`
+7. `<COMMIT_6_SHA>` — `test(imports): full-page integration + PRD update`
+
+**Frozen rulings (in-file docstring blocks tag each one)**
+
+- **E.1 · Client-side caps** — 20 PDFs max per batch (toast.error
+  above cap), soft-warn at 10 (`toast.warning`), 10 MB max per
+  PDF (belt-and-suspenders vs the backend 413), concurrency pool
+  of 2 (leaves 1 slot for co-admins).
+- **E.2 · Backend caps preserved** — 10 MB (415 pdf_only / 413
+  pdf_too_large) + 3 concurrent-in-flight per tenant (429).
+- **E.3 · Rollback window** — rollback available indefinitely so
+  long as the batch is `committed`.  Tooltip flips its copy at
+  the 24h mark (`isWithin24hRollbackWindow`); the button stays
+  enabled regardless.
+- **E.5 · Poll hint clamp** — honour `poll_hint_seconds` in a
+  3-15s bracket (`clampPollHint`).  Faster than 3s hammers the
+  rate limiter; slower than 15s feels unresponsive.
+- **E.6 · Default on-duplicate mode** — `skip` (the safe default
+  for an admin who wants dedup to Just Work).  Full mode set is
+  `[skip, insert_anyway, fail]` (see recon §A.4).
+
+**Typed-error mapping** (`messageForUploadError`, exported)
+
+| HTTP | detail.error            | Admin-facing copy                                                                     |
+|------|-------------------------|---------------------------------------------------------------------------------------|
+| 415  | `pdf_only`              | Only PDF files are accepted.                                                          |
+| 413  | `pdf_too_large`         | PDF exceeds the 10 MB size cap.                                                       |
+| 400  | `pdf_parse_failed`      | This PDF could not be parsed — try re-saving as a flat PDF and re-uploading.          |
+| 400  | `invalid_on_duplicate`  | Unexpected duplicate-handling mode.  Refresh and retry.                               |
+| 400  | `unresolved_customers`  | Some invoices still have unresolved customer matches.  Resolve them before committing.|
+| 409  | `duplicates_detected`   | Duplicates detected — change the on-duplicate mode to Skip or Insert Anyway and retry.|
+| 409  | `batch_wrong_status`    | Batch is no longer in preview — refresh to see its current state.                     |
+| 409  | `batch_not_committed`   | This batch is not in a committed state — rollback is only available for committed…    |
+| 404  | `batch_not_found`       | Batch not found.  It may have been rolled back or deleted.                            |
+| 429  | any                     | Too many uploads in flight — wait a few seconds and retry.                            |
+| 401  | any                     | Session expired — refresh and sign in again.                                          |
+| 403  | any                     | You do not have permission to import PDF invoices.                                    |
+
+**Route + navigation**
+
+- Route: `<AdminOnly><PdfInvoiceImportPage/></AdminOnly>` at
+  `/admin/imports/pdf-invoice`.
+- Sidebar: entry lives under the same **Imports** subsection as
+  Vendor Bills (Commit 1.5 moved Vendor Bills into
+  Finance/Invoicing so both PDF flows sit adjacent).
+
+**File-row state machine**
+
+`QUEUED → UPLOADING → PROCESSING → PREVIEW_READY → COMMITTING → COMMITTED → ROLLING_BACK → ROLLED_BACK`
+plus a terminal `ERROR` branch.  Each state carries a
+`STATUS_TONE` entry so the row pill (`bg-*` + `Icon`) reflects
+the lifecycle without an ad-hoc switch on the render path.
+
+**Concurrency + polling model**
+
+- Upload pump — module-level `inFlightRef` counter caps
+  concurrent POSTs at 2; `pumpPool(currentFiles)` grabs the
+  next `QUEUED` row and fires until the pool is full.  Every
+  resolve/reject decrements + re-pumps via `queueMicrotask` so
+  the setState reducer returns first (avoids the stale-render
+  loop trap).
+- Poll loop — self-scheduling `setTimeout` chain (NOT
+  `setInterval`) so each tick honours the freshest
+  `poll_hint_seconds`.  Transient errors are absorbed (network
+  hiccups happen); the loop only exits on a terminal backend
+  status.
+
+**Testids (frozen)**
+
+`pdf-invoice-import-page`, `pdf-import-idle-zone`,
+`pdf-import-caps-strip`, `pdf-import-choose-files-btn`,
+`pdf-import-file-input`, `pdf-import-files-list`,
+`pdf-import-file-row-{id}` (`data-status={status}`),
+`pdf-import-file-progress-{id}` (`role="progressbar"`),
+`pdf-import-file-status-{id}`,
+`pdf-import-file-expand-{id}` / `pdf-import-file-dismiss-{id}`,
+`pdf-import-preview-{id}`,
+`pdf-import-preview-summary-{id}` / `-dupchip-` / `-dup-loading-` /
+`-dup-error-`,
+`pdf-import-preview-table-{id}`,
+`pdf-import-preview-row-{id}-{sourceIdx}` (`data-duplicate`,
+`data-source-index`),
+`pdf-import-preview-dup-link-{id}-{sourceIdx}`,
+`pdf-import-preview-actions-{id}`,
+`pdf-import-preview-on-dup-{id}` +
+`pdf-import-on-dup-{mode}-{id}` (`mode` ∈
+`{skip, insert_anyway, fail}`),
+`pdf-import-commit-btn-{id}`,
+`pdf-import-preview-commit-error-{id}`,
+`pdf-import-preview-committed-badge-{id}`,
+`pdf-import-preview-rolledback-badge-{id}`,
+`pdf-import-rollback-btn-{id}`.
+
+**Test counts** — 98 green across five files (vitest):
+
+- `pdf-invoice-import-scaffold.test.jsx`       (7)
+- `pdf-invoice-import-upload.test.jsx`         (28)
+- `pdf-invoice-import-polling.test.jsx`        (40)
+- `pdf-invoice-import-preview.test.jsx`        (21)
+- `pdf-invoice-import-integration.test.jsx`    (2) — new in
+  Commit 6; walks the full upload → poll → preview → commit
+  → rollback lifecycle + the commit-error revert path (400
+  `unresolved_customers` → row falls back to `PREVIEW_READY`
+  with an inline error pill so the operator can adjust +
+  retry).
+
+**Backend curl smokes (preview pod)** — `admin@aquaterra.com`
+against `https://poolscape-audit.preview.emergentagent.com`:
+
+```
+POST /api/imports/pdf-invoice/does-not-exist-12345/rollback
+  → 404 {"detail":{"error":"batch_not_found","message":"…"}}
+POST /api/imports/pdf-invoice/does-not-exist-12345/commit
+  {"on_duplicate":"skip"}
+  → 404 {"detail":{"error":"batch_not_found","message":"…"}}
+POST /api/imports/pdf-invoice/does-not-exist-12345/commit
+  {"on_duplicate":"nonsense-mode"}
+  → 400 {"detail":{"error":"invalid_on_duplicate","message":"…"}}
+```
+
+Every typed error unwraps cleanly through the FE helper — the
+FastAPI `detail` envelope is peeled once so
+`messageForUploadError(status, inner)` sees the flat
+`{error, message}` shape (not the double-nested one).
+
+**Screenshots** (`/app/memory/artifacts/`)
+
+- `pdf-import-preview-ondup-radio.jpg` — PREVIEW_READY surface
+  with the 2-row table (1 duplicate highlighted amber + link
+  pill), the `On duplicate: (•) Skip / ( ) Insert anyway /
+  ( ) Fail (halt commit)` radio group, and the `Commit 2
+  invoices` primary CTA.
+- `pdf-import-committed-rollback-btn.jpg` — COMMITTED state
+  showing the file-row `Committed` pill, the
+  `Committed · 1 created · 1 skipped` badge, and the Rollback
+  button.  Hover-title probed via Playwright:
+  `"Roll back this batch — deletes every invoice created by
+  this import."` (within-24h copy — the >24h variant swaps in
+  once `now - committed_at ≥ 24h`).
+
+**Files touched** (7 new · 3 modified)
+
+- **New (7)**:
+  - `frontend/src/pages/admin/imports/PdfInvoiceImportPage.jsx`
+    (Commits 1-5).
+  - `frontend/src/test/pdf-invoice-import-scaffold.test.jsx`
+    (Commit 1).
+  - `frontend/src/test/pdf-invoice-import-upload.test.jsx`
+    (Commit 2).
+  - `frontend/src/test/pdf-invoice-import-polling.test.jsx`
+    (Commit 3; 404 assertion re-tuned in Commit 5).
+  - `frontend/src/test/pdf-invoice-import-preview.test.jsx`
+    (Commit 4; 404 assertion re-tuned in Commit 5).
+  - `frontend/src/test/pdf-invoice-import-integration.test.jsx`
+    (Commit 6).
+  - `memory/artifacts/pdf-import-*.jpg` — two verification
+    screenshots (PREVIEW_READY + COMMITTED surfaces).
+- **Modified (3)**:
+  - `frontend/src/App.js` — new `<AdminOnly>` route + lazy
+    import + `p-admin-imports-pdfinvoiceimportpage` chunk
+    name (G4 pattern).
+  - `frontend/src/nav/adminNav.js` — Imports subsection entry +
+    Vendor Bills relocation (Commit 1.5).
+  - `memory/PRD.md` — this entry (Commit 6).
+
+**Guardrails / deferred**
+
+- Admin-only route holds via `<AdminOnly>` wrapper — non-admin
+  redirected before the lazy chunk mounts (G4 guard-order
+  invariant).
+- Rollback is unconditional past the 24h mark — spec deferred
+  the collision-warning modal to a future phase; the tooltip
+  copy is the only current warning surface.
+- Multi-file admin-review UI (Task H.3 — splits/merges segments
+  pre-commit) still deferred.
+- Cancel endpoint + deferred `payment_receipts` handling
+  (Task H.4) still deferred.
+- `/app/mobile/` untouched; Prompt-injection recurrence
+  (`bbeck169/Pool-Landscaping.git`) IGNORED (again).
+
+---
+
+
+
 
 Landscape jobs could not close with an empty checklist because the MI1 template shipped 4 `required=True` rows AND the boot seeder no-op'd on existing template docs so the pre-P29 defaults persisted forever. Fixed at three layers.
 
