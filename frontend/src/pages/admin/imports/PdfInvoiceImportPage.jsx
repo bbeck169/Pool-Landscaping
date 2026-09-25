@@ -46,6 +46,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  History,
   X,
   ChevronDown,
   ChevronUp,
@@ -67,8 +68,20 @@ export const FILE_STATUS = {
   UPLOADING: "uploading",
   PROCESSING: "processing",
   PREVIEW_READY: "preview_ready",
+  COMMITTING: "committing",
+  COMMITTED: "committed",
+  ROLLING_BACK: "rolling_back",
+  ROLLED_BACK: "rolled_back",
   ERROR: "error",
 };
+
+
+// Valid ``on_duplicate`` modes for the commit endpoint
+// (see recon report §A.4).  Default is ``skip`` per Ruling
+// E.6 — the safe choice for an admin who wants dedup to
+// Just Work.
+export const ON_DUPLICATE_MODES = ["skip", "insert_anyway", "fail"];
+export const DEFAULT_ON_DUPLICATE = "skip";
 
 
 // Backend status → terminal check.  Any of these values, once
@@ -175,6 +188,30 @@ export function messageForUploadError(status, detail) {
   if (status === 400 && code === "pdf_parse_failed") {
     return "This PDF could not be parsed — try re-saving as a "
       + "flat PDF and re-uploading.";
+  }
+  // Commit-endpoint typed errors — Ruling from recon report §A.4.
+  if (code === "invalid_on_duplicate") {
+    return "Unexpected duplicate-handling mode.  Refresh and retry.";
+  }
+  if (code === "batch_wrong_status") {
+    return "Batch is no longer in preview — refresh to see its "
+      + "current state.";
+  }
+  if (code === "unresolved_customers") {
+    return "Some invoices still have unresolved customer matches. "
+      + "Resolve them before committing.";
+  }
+  if (code === "duplicates_detected") {
+    return "Duplicates detected — change the on-duplicate mode "
+      + "to Skip or Insert Anyway and retry.";
+  }
+  if (code === "batch_not_committed") {
+    return "This batch is not in a committed state — rollback "
+      + "is only available for committed batches.";
+  }
+  if (code === "batch_not_found") {
+    return "Batch not found.  It may have been rolled back or "
+      + "deleted.";
   }
   if (status === 429) {
     return "Too many uploads in flight — wait a few seconds and "
@@ -309,6 +346,114 @@ export async function fetchDuplicates(batchId, { baseUrl, token } = {}) {
     throw err;
   }
   return await res.json();
+}
+
+
+/**
+ * POST the commit endpoint for one batch.  Payload carries the
+ * ``on_duplicate`` mode (recon report §A.4).  Returns the
+ * success envelope (\`\`quotes_created\`\`, ``quotes_skipped_*``,
+ * ``quote_ids``, ``audit_id``) or throws with the translated
+ * typed-error message.
+ *
+ * A 409 ``duplicates_detected`` (only fires when
+ * ``on_duplicate === "fail"`` and duplicates exist) attaches the
+ * duplicates array to the thrown Error's ``.detail.duplicates``
+ * so the caller can render them inline.
+ */
+export async function commitBatch(batchId, {
+  onDuplicate = DEFAULT_ON_DUPLICATE,
+  notes = null,
+  baseUrl,
+  token,
+} = {}) {
+  const BASE = baseUrl || process.env.REACT_APP_BACKEND_URL || "";
+  const TOKEN = token || (
+    typeof localStorage !== "undefined"
+      ? (localStorage.getItem("token") || "")
+      : ""
+  );
+  const body = { on_duplicate: onDuplicate };
+  if (notes) body.notes = notes;
+  const res = await fetch(
+    `${BASE}/api/imports/pdf-invoice/${encodeURIComponent(batchId)}/commit`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    let respBody = null;
+    try { respBody = await res.json(); } catch { /* body empty */ }
+    const inner = (respBody && typeof respBody === "object"
+        && respBody.detail !== undefined)
+      ? respBody.detail
+      : respBody;
+    const err = new Error(messageForUploadError(res.status, inner));
+    err.status = res.status;
+    err.detail = inner;
+    throw err;
+  }
+  return await res.json();
+}
+
+
+/**
+ * POST the rollback endpoint for one committed batch.  Returns
+ * ``{ batch_id, status, quotes_deleted, collision_count,
+ * audit_id }`` on success (recon §A.5).  No time-window guard
+ * — rollback is available indefinitely so long as the batch is
+ * in ``committed`` (Ruling E.3).
+ */
+export async function rollbackBatch(batchId, { baseUrl, token } = {}) {
+  const BASE = baseUrl || process.env.REACT_APP_BACKEND_URL || "";
+  const TOKEN = token || (
+    typeof localStorage !== "undefined"
+      ? (localStorage.getItem("token") || "")
+      : ""
+  );
+  const res = await fetch(
+    `${BASE}/api/imports/pdf-invoice/${encodeURIComponent(batchId)}/rollback`,
+    {
+      method: "POST",
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    },
+  );
+  if (!res.ok) {
+    let body = null;
+    try { body = await res.json(); } catch { /* body empty */ }
+    const inner = (body && typeof body === "object" && body.detail !== undefined)
+      ? body.detail
+      : body;
+    const err = new Error(messageForUploadError(res.status, inner));
+    err.status = res.status;
+    err.detail = inner;
+    throw err;
+  }
+  return await res.json();
+}
+
+
+/**
+ * Compute whether a committed batch is inside the
+ * "safer to rollback" 24-hour window (Ruling E.3).  Returns:
+ *
+ *   * ``true`` — committed less than 24 h ago (safe zone)
+ *   * ``false`` — either not committed OR more than 24 h old
+ *
+ * The rollback button stays enabled regardless — this only
+ * gates the tooltip copy.
+ */
+export function isWithin24hRollbackWindow(committedAt, now = Date.now()) {
+  if (!committedAt || typeof committedAt !== "string") return false;
+  const t = new Date(committedAt).getTime();
+  if (!isFinite(t)) return false;
+  const nowT = now instanceof Date ? now.getTime() : now;
+  return (nowT - t) < (24 * 60 * 60 * 1000);
 }
 
 
@@ -652,6 +797,63 @@ export default function PdfInvoiceImportPage() {
   }, []);
 
 
+  const handleCommitStart = useCallback((id) => {
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id ? { ...f, status: FILE_STATUS.COMMITTING } : f),
+    ));
+  }, []);
+
+  const handleCommitSuccess = useCallback((id, envelope) => {
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id
+        ? {
+          ...f,
+          status: FILE_STATUS.COMMITTED,
+          commit_outcome: envelope,
+          committed_at: new Date().toISOString(),
+        }
+        : f),
+    ));
+  }, []);
+
+  const handleCommitFailure = useCallback((id) => {
+    // Revert row to PREVIEW_READY so the operator can adjust
+    // the on-duplicate mode and retry.  The PreviewSurface
+    // keeps the inline error copy.
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id ? { ...f, status: FILE_STATUS.PREVIEW_READY } : f),
+    ));
+  }, []);
+
+  const handleRollbackStart = useCallback((id) => {
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id ? { ...f, status: FILE_STATUS.ROLLING_BACK } : f),
+    ));
+  }, []);
+
+  const handleRollbackSuccess = useCallback((id, envelope) => {
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id
+        ? {
+          ...f,
+          status: FILE_STATUS.ROLLED_BACK,
+          rollback_outcome: envelope,
+        }
+        : f),
+    ));
+  }, []);
+
+  const handleRollbackFailure = useCallback((id) => {
+    // Revert to COMMITTED so the operator can retry.  The
+    // PreviewSurface itself doesn't render a rollback-error
+    // pill — the row-level ERROR trail would double it up.
+    // A future commit can surface the copy inline.
+    setFiles((prev) => prev.map(
+      (f) => (f.id === id ? { ...f, status: FILE_STATUS.COMMITTED } : f),
+    ));
+  }, []);
+
+
   const openFileDialog = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -745,24 +947,39 @@ export default function PdfInvoiceImportPage() {
           data-testid="pdf-import-files-list"
           className="mt-6 space-y-2"
         >
-          {files.map((f) => (
-            <React.Fragment key={f.id}>
-              <FileRow
-                f={f}
-                onRemove={removeFile}
-                onToggleExpand={toggleExpanded}
-                expanded={expandedIds.has(f.id)}
-              />
-              {f.status === FILE_STATUS.PREVIEW_READY
-                && expandedIds.has(f.id)
-                && f.batch ? (
-                <PreviewSurface
-                  fileId={f.id}
-                  batch={f.batch}
+          {files.map((f) => {
+            const surfaceVisible = [
+              FILE_STATUS.PREVIEW_READY,
+              FILE_STATUS.COMMITTING,
+              FILE_STATUS.COMMITTED,
+              FILE_STATUS.ROLLING_BACK,
+              FILE_STATUS.ROLLED_BACK,
+            ].includes(f.status);
+            return (
+              <React.Fragment key={f.id}>
+                <FileRow
+                  f={f}
+                  onRemove={removeFile}
+                  onToggleExpand={toggleExpanded}
+                  expanded={expandedIds.has(f.id)}
                 />
-              ) : null}
-            </React.Fragment>
-          ))}
+                {surfaceVisible && expandedIds.has(f.id) && f.batch ? (
+                  <PreviewSurface
+                    fileId={f.id}
+                    batch={f.batch}
+                    fileStatus={f.status}
+                    fileMeta={f}
+                    onCommitStart={handleCommitStart}
+                    onCommitSuccess={handleCommitSuccess}
+                    onCommitFailure={handleCommitFailure}
+                    onRollbackStart={handleRollbackStart}
+                    onRollbackSuccess={handleRollbackSuccess}
+                    onRollbackFailure={handleRollbackFailure}
+                  />
+                ) : null}
+              </React.Fragment>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -773,9 +990,15 @@ export default function PdfInvoiceImportPage() {
 function FileRow({ f, onRemove, onToggleExpand, expanded }) {
   const canDismiss = f.status === FILE_STATUS.QUEUED
     || f.status === FILE_STATUS.ERROR
-    || f.status === FILE_STATUS.PREVIEW_READY;
-  const canExpand = f.status === FILE_STATUS.PREVIEW_READY
-    && f.batch;
+    || f.status === FILE_STATUS.PREVIEW_READY
+    || f.status === FILE_STATUS.ROLLED_BACK;
+  const canExpand = [
+    FILE_STATUS.PREVIEW_READY,
+    FILE_STATUS.COMMITTING,
+    FILE_STATUS.COMMITTED,
+    FILE_STATUS.ROLLING_BACK,
+    FILE_STATUS.ROLLED_BACK,
+  ].includes(f.status) && f.batch;
   const tone = STATUS_TONE[f.status] || STATUS_TONE.queued;
   const Icon = tone.Icon;
   const showProgress = f.status === FILE_STATUS.PROCESSING
@@ -880,9 +1103,12 @@ function FileRow({ f, onRemove, onToggleExpand, expanded }) {
  * screen for large batches (typical is ~10 rows; scanned
  * batches hit 50+).
  */
-function PreviewSurface({ fileId, batch }) {
+function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommitFailure, onRollbackStart, onRollbackSuccess, onRollbackFailure, fileStatus, fileMeta }) {
   const [duplicates, setDuplicates] = useState(null); // null=loading, [] once resolved
   const [dupError, setDupError] = useState(null);
+  const [onDuplicate, setOnDuplicate] = useState(DEFAULT_ON_DUPLICATE);
+  const [commitError, setCommitError] = useState(null);
+  const [commitOutcome, setCommitOutcome] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -919,6 +1145,50 @@ function PreviewSurface({ fileId, batch }) {
 
   const totalCount = invoicePreviews.length;
   const dupCount = dupIndex.size;
+
+  const isCommitting = fileStatus === FILE_STATUS.COMMITTING;
+  const isCommitted  = fileStatus === FILE_STATUS.COMMITTED;
+  const isRollingBack = fileStatus === FILE_STATUS.ROLLING_BACK;
+  const isRolledBack  = fileStatus === FILE_STATUS.ROLLED_BACK;
+  const isTerminal    = isCommitted || isRolledBack;
+
+  const handleCommit = useCallback(async () => {
+    setCommitError(null);
+    onCommitStart?.(fileId);
+    try {
+      const envelope = await commitBatch(batch.id || batch.batch_id, {
+        onDuplicate,
+      });
+      setCommitOutcome(envelope);
+      onCommitSuccess?.(fileId, envelope);
+    } catch (err) {
+      setCommitError(err?.message || "Commit failed.");
+      onCommitFailure?.(fileId, err);
+    }
+  }, [batch, fileId, onDuplicate, onCommitStart,
+      onCommitSuccess, onCommitFailure]);
+
+  const handleRollback = useCallback(async () => {
+    onRollbackStart?.(fileId);
+    try {
+      const envelope = await rollbackBatch(batch.id || batch.batch_id);
+      onRollbackSuccess?.(fileId, envelope);
+    } catch (err) {
+      onRollbackFailure?.(fileId, err);
+    }
+  }, [batch, fileId, onRollbackStart,
+      onRollbackSuccess, onRollbackFailure]);
+
+  // Rollback safe-window tooltip copy (Ruling E.3).  The button
+  // stays enabled regardless; the tooltip flips its copy once
+  // more than 24 h has passed since ``committed_at``.
+  const committedAt = fileMeta?.committed_at || null;
+  const withinWindow = isWithin24hRollbackWindow(committedAt);
+  const rollbackTitle = committedAt && !withinWindow
+    ? ("Rollback is available indefinitely, but is safer within "
+      + "24h of commit — later rollbacks may collide with edits.")
+    : "Roll back this batch — deletes every invoice created "
+      + "by this import.";
 
   return (
     <div
@@ -978,44 +1248,170 @@ function PreviewSurface({ fileId, batch }) {
           payment receipt — Phase H.4 handles those separately).
         </div>
       ) : (
-        <div
-          className="max-h-[70vh] overflow-auto rounded"
-          style={{ backgroundColor: colors.surface }}
-        >
-          <table
-            data-testid={`pdf-import-preview-table-${fileId}`}
-            className="w-full text-sm"
+        <>
+          <div
+            className="max-h-[70vh] overflow-auto rounded"
+            style={{ backgroundColor: colors.surface }}
           >
-            <thead
-              style={{
-                backgroundColor: colors.surfaceSecondary,
-                color: colors.onSurfaceSecondary,
-              }}
+            <table
+              data-testid={`pdf-import-preview-table-${fileId}`}
+              className="w-full text-sm"
             >
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">Invoice #</th>
-                <th className="px-3 py-2 text-left font-medium">Date</th>
-                <th className="px-3 py-2 text-right font-medium">Total</th>
-                <th className="px-3 py-2 text-left font-medium">Customer</th>
-                <th className="px-3 py-2 text-left font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoicePreviews.map((p) => (
-                <PreviewRow
-                  key={p.source_doc_index}
-                  preview={p}
-                  duplicate={dupIndex.get(p.source_doc_index)}
-                  fileId={fileId}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+              <thead
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  color: colors.onSurfaceSecondary,
+                }}
+              >
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Invoice #</th>
+                  <th className="px-3 py-2 text-left font-medium">Date</th>
+                  <th className="px-3 py-2 text-right font-medium">Total</th>
+                  <th className="px-3 py-2 text-left font-medium">Customer</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoicePreviews.map((p) => (
+                  <PreviewRow
+                    key={p.source_doc_index}
+                    preview={p}
+                    duplicate={dupIndex.get(p.source_doc_index)}
+                    fileId={fileId}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Commit / Rollback footer. */}
+          <div
+            className="mt-3 flex flex-wrap items-center gap-3 text-sm"
+            data-testid={`pdf-import-preview-actions-${fileId}`}
+          >
+            {isTerminal ? (
+              <>
+                {isCommitted ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800"
+                    data-testid={`pdf-import-preview-committed-badge-${fileId}`}
+                  >
+                    <CheckCircle2 size={12} />
+                    Committed
+                    {commitOutcome?.quotes_created !== undefined
+                      ? ` · ${commitOutcome.quotes_created} created`
+                      : null}
+                    {commitOutcome?.quotes_skipped_duplicates
+                      ? ` · ${commitOutcome.quotes_skipped_duplicates} skipped`
+                      : null}
+                  </span>
+                ) : null}
+                {isRolledBack ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-200 text-slate-800"
+                    data-testid={`pdf-import-preview-rolledback-badge-${fileId}`}
+                  >
+                    <History size={12} />
+                    Rolled back
+                  </span>
+                ) : null}
+                {isCommitted ? (
+                  <Button
+                    variant="secondary"
+                    onClick={handleRollback}
+                    disabled={isRollingBack}
+                    testid={`pdf-import-rollback-btn-${fileId}`}
+                    title={rollbackTitle}
+                  >
+                    {isRollingBack ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Loader2 size={14} className="animate-spin" />
+                        Rolling back…
+                      </span>
+                    ) : "Rollback"}
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {/* On-duplicate radio group. */}
+                <div
+                  className="flex flex-wrap items-center gap-3 text-xs"
+                  data-testid={`pdf-import-preview-on-dup-${fileId}`}
+                >
+                  <span
+                    className="font-medium"
+                    style={{ color: colors.muted }}
+                  >
+                    On duplicate:
+                  </span>
+                  {ON_DUPLICATE_MODES.map((mode) => (
+                    <label
+                      key={mode}
+                      className="inline-flex items-center gap-1.5 cursor-pointer"
+                      data-testid={`pdf-import-on-dup-${mode}-${fileId}`}
+                    >
+                      <input
+                        type="radio"
+                        name={`on-dup-${fileId}`}
+                        value={mode}
+                        checked={onDuplicate === mode}
+                        onChange={() => setOnDuplicate(mode)}
+                        disabled={isCommitting}
+                        className="cursor-pointer"
+                      />
+                      <span
+                        className={onDuplicate === mode
+                          ? "font-semibold" : ""}
+                        style={{ color: colors.onSurface }}
+                      >
+                        {ON_DUPLICATE_LABELS[mode]}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {commitError ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-red-100 text-red-800"
+                    data-testid={`pdf-import-preview-commit-error-${fileId}`}
+                  >
+                    <AlertCircle size={12} />
+                    {commitError}
+                  </span>
+                ) : null}
+                <div className="ml-auto">
+                  <Button
+                    variant="primary"
+                    onClick={handleCommit}
+                    disabled={isCommitting}
+                    testid={`pdf-import-commit-btn-${fileId}`}
+                  >
+                    {isCommitting ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Loader2 size={14} className="animate-spin" />
+                        Committing…
+                      </span>
+                    ) : (
+                      `Commit ${totalCount} invoice${totalCount === 1 ? "" : "s"}`
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
 }
+
+
+// Human copy for the on-duplicate radio group.
+const ON_DUPLICATE_LABELS = {
+  skip: "Skip",
+  insert_anyway: "Insert anyway",
+  fail: "Fail (halt commit)",
+};
 
 
 function PreviewRow({ preview, duplicate, fileId }) {
@@ -1145,6 +1541,28 @@ const STATUS_TONE = {
     label: "Preview ready",
     Icon: CheckCircle2,
     className: "bg-emerald-100 text-emerald-800",
+  },
+  [FILE_STATUS.COMMITTING]: {
+    label: "Committing",
+    Icon: Loader2,
+    className: "bg-indigo-100 text-indigo-800",
+    spin: true,
+  },
+  [FILE_STATUS.COMMITTED]: {
+    label: "Committed",
+    Icon: CheckCircle2,
+    className: "bg-emerald-200 text-emerald-900",
+  },
+  [FILE_STATUS.ROLLING_BACK]: {
+    label: "Rolling back",
+    Icon: Loader2,
+    className: "bg-amber-100 text-amber-900",
+    spin: true,
+  },
+  [FILE_STATUS.ROLLED_BACK]: {
+    label: "Rolled back",
+    Icon: History,
+    className: "bg-slate-200 text-slate-800",
   },
   [FILE_STATUS.ERROR]: {
     label: "Error",

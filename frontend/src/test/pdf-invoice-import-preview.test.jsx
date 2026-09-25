@@ -187,14 +187,17 @@ describe("fetchDuplicates · GET wire format", () => {
     expect(opts.headers.Authorization).toBe("Bearer test-jwt");
   });
 
-  it("throws with a translated message on 404", async () => {
+  it("throws with a translated message on 404 batch_not_found", async () => {
     window.fetch.mockResolvedValueOnce(new Response(
       JSON.stringify({ detail: { error: "batch_not_found" } }),
       { status: 404 },
     ));
+    // Commit 5 wired a bespoke ``batch_not_found`` copy into
+    // ``messageForUploadError`` — 404s carrying that code exit
+    // the generic ``Upload failed (…)`` fallback.
     await expect(fetchDuplicates("missing", {
       baseUrl: "https://api.example.com", token: "test-jwt",
-    })).rejects.toThrow(/Upload failed \(404\)/);
+    })).rejects.toThrow(/Batch not found/);
   });
 });
 

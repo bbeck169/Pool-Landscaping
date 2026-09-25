@@ -183,13 +183,13 @@ describe("pollBatch · GET wire format", () => {
       JSON.stringify({ detail: { error: "batch_not_found" } }),
       { status: 404 },
     ));
+    // Commit 5 wired a bespoke ``batch_not_found`` copy into
+    // ``messageForUploadError``; 404s carrying that code now
+    // exit the generic ``Upload failed (…)`` fallback.  See
+    // PdfInvoiceImportPage.jsx `batch_not_found` branch.
     await expect(pollBatch("missing", {
       baseUrl: "https://api.example.com", token: "test-jwt",
-    })).rejects.toThrow(/Upload failed \(404\)/);
-    // (404 falls into the generic bucket — the detail carries
-    // ``batch_not_found`` but we don't have a bespoke copy for
-    // the poll surface yet.  Commit 4 will add one when the
-    // preview surface starts caring about missing batches.)
+    })).rejects.toThrow(/Batch not found/);
   });
 
   it("url-encodes the batch id (defence against injection)", async () => {
