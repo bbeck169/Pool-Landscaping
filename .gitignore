@@ -207,3 +207,4 @@ backend/logs/integrity_dump_*.json
 frontend/node_modules/.vite/
 
 frontend/node_modules/.cache/default-development/48.pack
+frontend/node_modules/.cache/default-development/64.pack

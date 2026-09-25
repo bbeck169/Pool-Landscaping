@@ -460,6 +460,21 @@ export function PortalServiceReportDetail() {
       );
   }, [id]);
 
+  // ── Phase P49 · Feb-2026 · brand logo for the header card ────
+  // Reads the tenant's uploaded logo (falls back to null when the
+  // tenant hasn't uploaded one — render branch below handles that
+  // by omitting the img element entirely and keeping the header
+  // text-only).  Uses ``useTenantBrand`` — the shared portal hook
+  // that pulls ``branding.logo_url`` off the tenant summary cache.
+  //
+  // Rules-of-Hooks fix (Feb-2026): must live ABOVE every early
+  // ``return`` so the hook order stays stable across the loading
+  // / error / loaded render paths.  Previously called after the
+  // ``if (err)`` and ``if (!sr)`` gates, which crashed the detail
+  // page with "Rendered fewer hooks than expected" on the first
+  // ``err`` or ``!sr`` render.
+  const { logo_url: brandLogoUrl, name: brandName } = useTenantBrand();
+
   if (err) {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -534,14 +549,6 @@ export function PortalServiceReportDetail() {
                          || BODY_TYPE_LABELS[bodies[0]?.type]
                          || BODY_TYPE_LABELS[bodies[0]?.body_type]
                          || "Pool");
-
-  // ── Phase P49 · Feb-2026 · brand logo for the header card ────
-  // Reads the tenant's uploaded logo (falls back to null when the
-  // tenant hasn't uploaded one — render branch below handles that
-  // by omitting the img element entirely and keeping the header
-  // text-only).  Uses ``useTenantBrand`` — the shared portal hook
-  // that pulls ``branding.logo_url`` off the tenant summary cache.
-  const { logo_url: brandLogoUrl, name: brandName } = useTenantBrand();
 
   return (
     <div
