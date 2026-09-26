@@ -95,10 +95,18 @@ async def _fetch_all_invoices(tenant_id: str, dfrom: Optional[str], dto: Optiona
 # ─── revenue slices ───────────────────────────────────────────────────────────
 @router.get("/reports/revenue-by-city")
 async def revenue_by_city(start: Optional[str] = None, end: Optional[str] = None,
-                          user: dict = Depends(require_admin)):
-    tenant_id = user.get("tenant_id") or ""
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this fix ``db.customers.find({}, ...)`` ran with an
+    # empty filter, letting any admin token enumerate cross-tenant
+    # customer rows (names + address strings) via the city bucket
+    # side-channel.
+    tenant_id = tenant["id"]
     paid = await _fetch_paid(tenant_id, start, end)
-    customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
+    customers = await db.customers.find(
+        {"tenant_id": tenant_id}, {"_id": 0},
+    ).to_list(5000)
     by_cid = {c["id"]: c for c in customers}
     buckets: dict = {}
     for q in paid:
@@ -118,12 +126,22 @@ async def revenue_by_city(start: Optional[str] = None, end: Optional[str] = None
 
 @router.get("/reports/revenue-by-crew")
 async def revenue_by_crew(start: Optional[str] = None, end: Optional[str] = None,
-                          user: dict = Depends(require_admin)):
-    tenant_id = user.get("tenant_id") or ""
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this fix ``db.jobs.find({}, ...)`` and
+    # ``db.crews.find({}, ...)`` both ran with empty filters, letting
+    # any admin token enumerate cross-tenant job + crew rows through
+    # the revenue-by-crew bucket side-channel.
+    tenant_id = tenant["id"]
     paid = await _fetch_paid(tenant_id, start, end)
-    jobs = await db.jobs.find({}, {"_id": 0, "photos.data": 0}).to_list(10000)
+    jobs = await db.jobs.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "photos.data": 0},
+    ).to_list(10000)
     job_crew = {j["id"]: j.get("crew_id") for j in jobs}
-    crews = await db.crews.find({}, {"_id": 0}).to_list(500)
+    crews = await db.crews.find(
+        {"tenant_id": tenant_id}, {"_id": 0},
+    ).to_list(500)
     crew_name = {c["id"]: c.get("name", "Crew") for c in crews}
 
     # Attribute invoice revenue to a crew via converted_job_id or matching customer's most recent job.
@@ -155,8 +173,12 @@ async def revenue_by_crew(start: Optional[str] = None, end: Optional[str] = None
 
 @router.get("/reports/revenue-by-customer")
 async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = None,
-                              user: dict = Depends(require_admin)):
-    tenant_id = user.get("tenant_id") or ""
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    # P59 · Feb-2026 — strict tenant scope via ``get_current_tenant``.
+    # ``_fetch_paid`` already refuses empty-string tenant_id, so the
+    # bucketing below can only see the caller's invoices.
+    tenant_id = tenant["id"]
     paid = await _fetch_paid(tenant_id, start, end)
     buckets: dict = {}
     counts: dict = {}
@@ -177,9 +199,13 @@ async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = 
 
 @router.get("/reports/gross-sales")
 async def gross_sales(start: Optional[str] = None, end: Optional[str] = None,
-                      user: dict = Depends(require_admin)):
+                      user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
     """Sum of ALL invoices created in the window — paid + unpaid."""
-    tenant_id = user.get("tenant_id") or ""
+    # P59 · Feb-2026 — strict tenant scope via ``get_current_tenant``.
+    # ``_fetch_all_invoices`` already refuses empty-string tenant_id,
+    # so the totals below reflect only the caller's tenant.
+    tenant_id = tenant["id"]
     invs = await _fetch_all_invoices(tenant_id, start, end)
     total = round(sum(float(i.get("total") or 0) for i in invs), 2)
     paid_total = round(sum(_paid_amt(i) for i in invs), 2)
@@ -217,9 +243,11 @@ async def gross_sales(start: Optional[str] = None, end: Optional[str] = None,
 
 @router.get("/reports/invoiced-items")
 async def invoiced_items(start: Optional[str] = None, end: Optional[str] = None,
-                         user: dict = Depends(require_admin)):
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
     """Per-line-item aggregation across invoices in window."""
-    tenant_id = user.get("tenant_id") or ""
+    # P59 · Feb-2026 — strict tenant scope via ``get_current_tenant``.
+    tenant_id = tenant["id"]
     invs = await _fetch_all_invoices(tenant_id, start, end)
     agg: dict = {}
     for inv in invs:
