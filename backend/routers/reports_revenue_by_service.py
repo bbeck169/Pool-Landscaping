@@ -2,8 +2,13 @@
 
 Windowed revenue aggregation pivoted by service (invoice title).
 Mirrors the ``routers.reports.revenue_by_customer`` join pattern
-verbatim — reuses ``_fetch_paid`` / ``_fetch_all_invoices`` / the
+verbatim — mirrors ``_fetch_paid`` / ``_fetch_all_invoices`` / the
 ``_paid_amt`` helper so cockpit parity is a compile-time guarantee.
+(P59 · Feb-2026: the two ``_fetch_*`` helpers in
+``routers/reports.py`` now require a ``tenant_id`` positional arg;
+this module already scopes its own query inline, so no code change
+here — noting for future editors so the docstring comparison
+doesn't rot.)
 
 Contract:
     GET /api/reports/revenue-by-service?start_date&end_date

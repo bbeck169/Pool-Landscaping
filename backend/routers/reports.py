@@ -53,12 +53,20 @@ def _extract_city(addr: str) -> str:
     return parts[0] if parts else "Unknown"
 
 
-async def _fetch_paid(dfrom: Optional[str], dto: Optional[str]) -> list:
+async def _fetch_paid(tenant_id: str, dfrom: Optional[str], dto: Optional[str]) -> list:
     # Feb-2026 · P2 Item 2 — revenue-slice fetch MUST exclude soft-
     # deleted invoices. Merge existing amount_paid/status $or with the
     # soft-delete guard via $and.
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this splice the helper ran with an unfiltered
+    # ``doc_type=invoice`` query, letting any caller reach cross-
+    # tenant invoice rows through the JSON /reports/* endpoints
+    # (and, transitively, /export/*).  Callers MUST now pass
+    # ``tenant_id``; empty-string tenant_id yields empty result.
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        return []
     docs = await db.quotes.find(
-        {"doc_type": "invoice",
+        {"tenant_id": tenant_id, "doc_type": "invoice",
           "$and": [
               {"$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]},
               {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
@@ -68,11 +76,16 @@ async def _fetch_paid(dfrom: Optional[str], dto: Optional[str]) -> list:
     return [q for q in docs if _in_range(q.get("paid_at") or q.get("created_at"), dfrom, dto)]
 
 
-async def _fetch_all_invoices(dfrom: Optional[str], dto: Optional[str]) -> list:
+async def _fetch_all_invoices(tenant_id: str, dfrom: Optional[str], dto: Optional[str]) -> list:
     # Feb-2026 · P2 Item 2 — gross-sales / invoiced-items MUST exclude
     # soft-deleted invoices from the totals.
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Same rationale as ``_fetch_paid``; callers MUST pass
+    # ``tenant_id``.
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        return []
     docs = await db.quotes.find(
-        {"doc_type": "invoice",
+        {"tenant_id": tenant_id, "doc_type": "invoice",
           "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
         {"_id": 0},
     ).to_list(10000)
@@ -83,7 +96,8 @@ async def _fetch_all_invoices(dfrom: Optional[str], dto: Optional[str]) -> list:
 @router.get("/reports/revenue-by-city")
 async def revenue_by_city(start: Optional[str] = None, end: Optional[str] = None,
                           user: dict = Depends(require_admin)):
-    paid = await _fetch_paid(start, end)
+    tenant_id = user.get("tenant_id") or ""
+    paid = await _fetch_paid(tenant_id, start, end)
     customers = await db.customers.find({}, {"_id": 0}).to_list(5000)
     by_cid = {c["id"]: c for c in customers}
     buckets: dict = {}
@@ -105,7 +119,8 @@ async def revenue_by_city(start: Optional[str] = None, end: Optional[str] = None
 @router.get("/reports/revenue-by-crew")
 async def revenue_by_crew(start: Optional[str] = None, end: Optional[str] = None,
                           user: dict = Depends(require_admin)):
-    paid = await _fetch_paid(start, end)
+    tenant_id = user.get("tenant_id") or ""
+    paid = await _fetch_paid(tenant_id, start, end)
     jobs = await db.jobs.find({}, {"_id": 0, "photos.data": 0}).to_list(10000)
     job_crew = {j["id"]: j.get("crew_id") for j in jobs}
     crews = await db.crews.find({}, {"_id": 0}).to_list(500)
@@ -141,7 +156,8 @@ async def revenue_by_crew(start: Optional[str] = None, end: Optional[str] = None
 @router.get("/reports/revenue-by-customer")
 async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = None,
                               user: dict = Depends(require_admin)):
-    paid = await _fetch_paid(start, end)
+    tenant_id = user.get("tenant_id") or ""
+    paid = await _fetch_paid(tenant_id, start, end)
     buckets: dict = {}
     counts: dict = {}
     for q in paid:
@@ -163,7 +179,8 @@ async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = 
 async def gross_sales(start: Optional[str] = None, end: Optional[str] = None,
                       user: dict = Depends(require_admin)):
     """Sum of ALL invoices created in the window — paid + unpaid."""
-    invs = await _fetch_all_invoices(start, end)
+    tenant_id = user.get("tenant_id") or ""
+    invs = await _fetch_all_invoices(tenant_id, start, end)
     total = round(sum(float(i.get("total") or 0) for i in invs), 2)
     paid_total = round(sum(_paid_amt(i) for i in invs), 2)
     outstanding = round(total - paid_total, 2)
@@ -202,7 +219,8 @@ async def gross_sales(start: Optional[str] = None, end: Optional[str] = None,
 async def invoiced_items(start: Optional[str] = None, end: Optional[str] = None,
                          user: dict = Depends(require_admin)):
     """Per-line-item aggregation across invoices in window."""
-    invs = await _fetch_all_invoices(start, end)
+    tenant_id = user.get("tenant_id") or ""
+    invs = await _fetch_all_invoices(tenant_id, start, end)
     agg: dict = {}
     for inv in invs:
         for li in (inv.get("line_items") or []):

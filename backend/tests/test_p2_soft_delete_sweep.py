@@ -340,14 +340,21 @@ class TestDashboardRevenueHidesDeleted:
 
     def test_reports_fetch_paid_helper_excludes_deleted(self, fake_db):
         fake_db["quotes"].docs = [
-            {"id": "a", "doc_type": "invoice", "amount_paid": 100.0,
+            {"id": "a", "tenant_id": "t-test-1", "doc_type": "invoice",
+             "amount_paid": 100.0,
              "payment_status": "paid", "paid_at": "2026-02-15T00:00:00Z"},
-            {"id": "b", "doc_type": "invoice", "amount_paid": 200.0,
+            {"id": "b", "tenant_id": "t-test-1", "doc_type": "invoice",
+             "amount_paid": 200.0,
              "payment_status": "paid", "paid_at": "2026-02-16T00:00:00Z",
              "deleted_at": "2026-02-17T00:00:00Z"},
         ]
+        # P59 · Feb-2026 — helper now requires ``tenant_id`` and
+        # filters by it.  Fixture docs are stamped with a shared
+        # tenant so this test continues to lock the soft-delete
+        # exclusion it was written for AND additionally locks the
+        # tenant scope filter.
         from routers.reports import _fetch_paid
-        docs = _run(_fetch_paid(None, None))
+        docs = _run(_fetch_paid("t-test-1", None, None))
         ids = [d["id"] for d in docs]
         assert "a" in ids
         assert "b" not in ids
@@ -356,14 +363,18 @@ class TestDashboardRevenueHidesDeleted:
         self, fake_db,
     ):
         fake_db["quotes"].docs = [
-            {"id": "a", "doc_type": "invoice", "total": 50.0,
+            {"id": "a", "tenant_id": "t-test-1", "doc_type": "invoice",
+             "total": 50.0,
              "created_at": "2026-02-15T00:00:00Z"},
-            {"id": "b", "doc_type": "invoice", "total": 200.0,
+            {"id": "b", "tenant_id": "t-test-1", "doc_type": "invoice",
+             "total": 200.0,
              "created_at": "2026-02-16T00:00:00Z",
              "deleted_at": "2026-02-17T00:00:00Z"},
         ]
+        # P59 · Feb-2026 — helper now requires ``tenant_id``; see
+        # sibling ``test_reports_fetch_paid_helper_excludes_deleted``.
         from routers.reports import _fetch_all_invoices
-        docs = _run(_fetch_all_invoices(None, None))
+        docs = _run(_fetch_all_invoices("t-test-1", None, None))
         ids = [d["id"] for d in docs]
         assert ids == ["a"]
 
