@@ -339,11 +339,20 @@ async def _call_claude_vision(*, user_text: str,
 # ─────────────────────────────────────────────────────────────────────
 async def _whisper_transcribe(audio_bytes: bytes,
                                  filename: str = "memo.webm",
-                                 content_type: str = "audio/webm"
+                                 content_type: str = "audio/webm",
+                                 language: Optional[str] = None,
                                  ) -> Dict[str, Any]:
     """Return ``{"text": "…"}`` or ``{"error": "voice_provider_disabled"}``
     when ``OPENAI_API_KEY`` is missing. Any other Whisper failure
     surfaces as ``{"error": "whisper_error", "reason": "..."}``.
+
+    MA2 · Feb-2026 — ``language`` kwarg added. When non-empty, an
+    ISO-639-1 hint (e.g. ``"en"``, ``"es"``) is threaded into
+    Whisper's form data as the ``language`` field so the tech's
+    non-English voice memo is transcribed in the right tongue.
+    ``None`` (the default) preserves Whisper auto-detect + the
+    pre-MA2 behaviour for existing internal callers
+    (``estimate_from_voice``).
     """
     if _mock_enabled():
         mock = _next_mock()
@@ -361,7 +370,9 @@ async def _whisper_transcribe(audio_bytes: bytes,
         async with httpx.AsyncClient(timeout=60) as c:
             files = {"file": (filename or "memo.webm", audio_bytes,
                               content_type or "audio/webm")}
-            data = {"model": WHISPER_MODEL, "response_format": "json"}
+            data: Dict[str, Any] = {"model": WHISPER_MODEL, "response_format": "json"}
+            if language:
+                data["language"] = language
             r = await c.post(
                 "https://api.openai.com/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {key}"},
