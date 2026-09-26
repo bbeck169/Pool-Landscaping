@@ -2616,3 +2616,21 @@
   - `mobile_leads_390_fix_2026-09-25.png` — "Quotes & Invoi..." (long title, expected), no regression ✓
 - **No regressions**: All testIDs preserved. Metro + lint clean (only pre-existing unused-import warnings).
 
+## Iteration — MA2+MA3: MARCO Voice Command FAB on Job Detail + Service Report
+- **Commit**: b1fb14f38cb8e9f887a2cb0a0970ee640c0a1fda
+- **Date**: 2026-09-26
+- **Files added**:
+  - `src/services/marco/executeMarco.ts` — transcribeAudio() + executeMarco() client wrappers with typed MarcoError, 30s/15s timeouts, FormData multipart via getToken()
+  - `src/components/marco/MarcoVoiceButton.tsx` — navy FAB (arNavy bg, arBlue glow), tap-to-toggle recording (expo-audio useAudioRecorder), red pulse during recording, auto-stop at 60s, countdown badge at 45s+, toast feedback (success/error/connection), mic permission gate with Open Settings fallback
+  - `__tests__/marco-voice-button.test.tsx` — 10 tests covering: idle render, disabled state, recording start, success flow, ok:false rejection, 413/502 transcribe errors, 502 execute error, empty recording, mic permission denial
+- **Files modified**:
+  - `app/job/[id].tsx` — mounted `<MarcoVoiceButton screen="job_detail" entityId={job?.id}>` gated behind `!isCustomer`
+  - `app/job/[id]/checklist.tsx` — mounted `<MarcoVoiceButton screen="service_report" entityId={report?.id}>`
+- **Key decisions**:
+  - Used `expo-image-picker` getCameraPermissionsAsync pattern (not expo-camera, which crashes on web)
+  - Used `expo-audio` useAudioRecorder (already in package.json, SDK 54 API)
+  - Multipart FormData upload bypasses api.post() (which JSON-stringifies); uses raw fetch + getToken()
+  - No new dependencies added
+- **Verification**: FAB visible on both Job Detail and Service Report screens at 390px. Web preview captures saved to `/app/memory/artifacts/`. Jest 10/10 pass. Lint clean. Metro bundles cleanly.
+
+
