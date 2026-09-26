@@ -57,8 +57,15 @@ def _read_rows(text):
 
 # ----------------------- Export -----------------------
 @router.get("/export/customers")
-async def export_customers(user: dict = Depends(require_admin)):
-    rows = await db.customers.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+async def export_customers(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this fix ``db.customers.find({}, ...)`` ran with an
+    # empty filter, letting any admin token on any tenant enumerate
+    # cross-tenant customer rows through a CSV download.
+    rows = await db.customers.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0},
+    ).sort("name", 1).to_list(5000)
     return {"filename": "customers.csv", "content": _to_csv(rows, CUSTOMER_COLS), "count": len(rows)}
 
 
