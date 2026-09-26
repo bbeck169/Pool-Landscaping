@@ -487,13 +487,27 @@ async def update_user(user_id: str, body: dict,
     if (target.get("role") or "").lower() == "super_admin":
         raise HTTPException(403, "super_admin accounts cannot be modified from the roster widget.")
 
-    allowed_fields = {"department", "role", "display_color_hex", "auto_clockin_enabled"}
+    allowed_fields = {"department", "role", "display_color_hex", "auto_clockin_enabled", "applicator_license_number"}
     unknown = set(body.keys()) - allowed_fields
     if unknown:
         raise HTTPException(400, f"unsupported fields: {sorted(unknown)}")
 
     updates: dict = {}
     audit_changes: dict = {}
+
+    # Feb-2026 · C1 · CA2 ruling — regulatory applicator license
+    # number.  Admin-only edit (via this endpoint) so a rogue
+    # tech cannot self-issue a fake license.  Stored as a nullable
+    # free-form string; the chemical-application router snapshots
+    # this value at write time so the regulatory record is frozen
+    # to the license in effect on the day of spray.
+    if "applicator_license_number" in body:
+        raw = body["applicator_license_number"]
+        new_lic = None if raw is None or (isinstance(raw, str) and not raw.strip()) else str(raw).strip()
+        old_lic = target.get("applicator_license_number")
+        if new_lic != old_lic:
+            updates["applicator_license_number"] = new_lic
+            audit_changes["applicator_license_number"] = {"old": old_lic, "new": new_lic}
 
     # Feb-2026 · mobile-flagged gap — per-user Auto Clock-In enable flag.
     # Admin (and super_admin) can toggle for any technician; a self-PATCH
