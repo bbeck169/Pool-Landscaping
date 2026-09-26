@@ -123,7 +123,7 @@ module.exports = {
       },
       infoPlist: {
         NSCameraUsageDescription:
-          "Take before and after photos of service jobs",
+          "Take before/after job photos and use the AR Ruler to measure distances on-site",
         NSPhotoLibraryUsageDescription:
           "Attach job photos from your library",
         NSMicrophoneUsageDescription:

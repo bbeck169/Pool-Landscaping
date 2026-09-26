@@ -22,10 +22,11 @@ import { Sheet, PrimaryButton } from "@/src/components/ui";
 // Resolved by Metro via .native.tsx / .web.tsx platform extensions.
 // eslint-disable-next-line import/no-unresolved
 import MeasureMap from "@/src/components/measure/MeasureMap";
+import ARPermissionGate from "@/src/components/measure/ARPermissionGate";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 type Coord = { latitude: number; longitude: number };
-type Mode = "distance" | "area";
+type Mode = "distance" | "area" | "ar";
 
 const DEFAULT_REGION = { latitude: 33.7405, longitude: -112.3373, latitudeDelta: 0.01, longitudeDelta: 0.01 };
 
@@ -96,6 +97,12 @@ function MeasureScreen() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
+
+  const MODE_META: { key: Mode; icon: string; label: string }[] = [
+    { key: "distance", icon: "resize-outline", label: "Distance" },
+    { key: "area", icon: "scan-outline", label: "Area" },
+    { key: "ar", icon: "cube-outline", label: "AR Ruler" },
+  ];
 
   const addPoint = useCallback((c: Coord) => setPoints((p) => [...p, c]), []);
   const undo = () => setPoints((p) => p.slice(0, -1));
@@ -227,7 +234,24 @@ function MeasureScreen() {
 
   return (
     <View style={styles.root}>
-      <MeasureMap mode={mode} points={points} region={region} onRegionChange={setRegion} onPress={addPoint} mapRef={mapRef} />
+      {mode !== "ar" ? (
+        <MeasureMap mode={mode} points={points} region={region} onRegionChange={setRegion} onPress={addPoint} mapRef={mapRef} />
+      ) : null}
+
+      {mode === "ar" && (
+        <ARPermissionGate
+          onGranted={() => {}}
+          placeholder={
+            <View style={styles.arPlaceholder}>
+              <Ionicons name="cube-outline" size={48} color={colors.arBlue} />
+              <Text style={styles.arPlaceholderTitle}>AR Ruler</Text>
+              <Text style={styles.arPlaceholderSub}>
+                Coming in the next update.{"\n"}Tap-to-place pins in real space.
+              </Text>
+            </View>
+          }
+        />
+      )}
 
       {/* Top controls */}
       <View style={[styles.top, { paddingTop: insets.top + spacing.sm }]}>
@@ -252,21 +276,24 @@ function MeasureScreen() {
         </View>
 
         <View style={styles.modeRow}>
-          {(["distance", "area"] as Mode[]).map((m) => (
-            <Pressable key={m} style={[styles.modeBtn, mode === m && styles.modeBtnOn]} onPress={() => setMode(m)} testID={`measure-mode-${m}`}>
-              <Ionicons name={m === "distance" ? "resize-outline" : "scan-outline"} size={16} color={mode === m ? "#fff" : colors.onSurface} />
-              <Text style={[styles.modeText, mode === m && { color: "#fff" }]}>{m === "distance" ? "Distance" : "Area"}</Text>
+          {MODE_META.map((m) => (
+            <Pressable key={m.key} style={[styles.modeBtn, mode === m.key && styles.modeBtnOn]} onPress={() => setMode(m.key)} testID={`measure-mode-${m.key}`}>
+              <Ionicons name={m.icon as any} size={16} color={mode === m.key ? "#fff" : colors.onSurface} />
+              <Text style={[styles.modeText, mode === m.key && { color: "#fff" }]}>{m.label}</Text>
             </Pressable>
           ))}
         </View>
       </View>
 
-      {/* My location */}
-      <Pressable style={[styles.locBtn, { bottom: 190 + insets.bottom }]} onPress={myLocation} testID="measure-locate">
-        {locating ? <ActivityIndicator size="small" color={colors.brand} /> : <Ionicons name="locate" size={22} color={colors.brand} />}
-      </Pressable>
+      {/* My location — satellite modes only */}
+      {mode !== "ar" && (
+        <Pressable style={[styles.locBtn, { bottom: 190 + insets.bottom }]} onPress={myLocation} testID="measure-locate">
+          {locating ? <ActivityIndicator size="small" color={colors.brand} /> : <Ionicons name="locate" size={22} color={colors.brand} />}
+        </Pressable>
+      )}
 
-      {/* Result panel */}
+      {/* Result panel — satellite modes only */}
+      {mode !== "ar" && (
       <View style={[styles.panel, { paddingBottom: insets.bottom + spacing.md }]}>
         <View style={styles.resultRow}>
           <View style={{ flex: 1 }}>
@@ -312,6 +339,7 @@ function MeasureScreen() {
           </Pressable>
         </View>
       </View>
+      )}
 
       {/* Save sheet */}
       <Sheet visible={saveOpen} onClose={() => setSaveOpen(false)} title="Save measurement" testID="measure-save-sheet">
@@ -392,4 +420,7 @@ const styles = StyleSheet.create({
   pickerRow: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   pickerName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   pickerSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+  arPlaceholder: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.arNavy, gap: spacing.md, paddingHorizontal: spacing.xl },
+  arPlaceholderTitle: { fontFamily: font.bold, fontSize: fontSize["2xl"], color: "#fff" },
+  arPlaceholderSub: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.7)", textAlign: "center", lineHeight: 22 },
 });

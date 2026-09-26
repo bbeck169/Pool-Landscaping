@@ -23,6 +23,9 @@ export const colors = {
   borderStrong: "#D4D4D8",
   divider: "#E4E4E7",
   muted: "#71717A",
+  /** AR Ruler onboarding / overlay palette (AR-1) */
+  arNavy: "#1B1F5C",
+  arBlue: "#3B82F6",
 };
 
 // Web app signature primary gradient: sky-600 -> green-600
