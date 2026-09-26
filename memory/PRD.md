@@ -22445,6 +22445,16 @@ Recovery pattern (safe because the branch was local-only, no remote):
 - `.gitignore` rules block re-track of `backend/logs/integrity_dump_*.json`, `frontend/node_modules/.vite/`, `__pycache__/`, `.ruff_cache/`.
 - **Operational rule for future agents** (adopted this session): before any user-facing reply, either fully commit or `git stash push` any in-flight code change so partial state never sits unstaged when a reply goes out.  Prevents the sweep hook from picking up half-formed diffs.
 
+**Status update — 2026-02-20 recurrence (reclassify RESOLVED → RECURRING)**:
+The hook fired **again** during the public-invoice flood-fill task, this time twice in the same message-thread — first sweeping the intended flood-fill files under commit subject `## Status: **1 · Shipped, forgot to mention it**` (retro-report markdown captured from a chat reply), then a second time after a `git reset --soft HEAD~1` remediation under subject `**HALT — pixel-count recon reveals a metric-definition surprise, not a rendering bug.**`.  Each sweep also included an unrelated `backend/.ruff_cache/0.16.2/*` file that pytest had freshly rewritten in the working tree.  Clean recovery required two soft-resets, explicit-path staging of exactly the intended 3 files (`git add <path>` per file, never `-A` or `.`), and a bundled atomic commit issued from a single bash call to shrink the between-tool-call window.  Final clean commit landed at `8f9374207 chore(public-invoice): reprocess card-logos with flood-fill transparency to preserve internal white`.
+
+**Additional reporting discipline (adopted this session)** on top of the earlier "stash or commit before reply" rule:
+- Before any prose reply that reports on commits or work state, run `git status --short` and paste the filtered output into the reply.  This forces the working-tree snapshot into the message record so a subsequent auto-sweep is traceable.
+- Prefer `git add <explicit path> <explicit path> …` over `git add -A` or `git add .`.  Files not explicitly staged cannot be swept in by the hook.
+- Bundle multi-step git remediations (`reset` + `restore --staged` + `add` + `commit` + `diff-tree`) into a single `execute_bash` call whenever possible, so the between-tool-call window that the hook exploits is closed.
+
+
+
 ### P53-subset test collection pollution (open, non-blocking)
 
 Running the union `pytest tests/ -k "p53 or P53 or portal_onboarding_health"` triggers 3 failures in `test_p53_phase10_behavior_lock.py::test_watcher_cas_guard_blocks_concurrent_double_credit`, `test_refund_inside_window_voids_referral_and_blocks_credit`, `test_happy_path_writes_ledger_balance_and_flips_referral_to_credited`.  Running the same file in isolation passes 6/6 in 0.82s; running the file against any single other P53 test file passes 100% (pair matrix verified: `test_p53_income_by_service_category_precedence.py`, `test_p53_boot_time_drift_warning.py`, `test_p53_portal_onboarding_health_cards_on_file.py`, `test_portal_onboarding_health.py` all pair cleanly with `phase10_behavior_lock`).
