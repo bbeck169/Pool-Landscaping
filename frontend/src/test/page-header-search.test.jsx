@@ -226,6 +226,20 @@ describe("PageHeader · search input rendering + design tokens", () => {
     ).toBeTruthy();
   });
 
+  it("filterBar slot is NOT rendered when the prop is omitted (backwards compat)", () => {
+    // N5.filterBar preflight — omitting the ``filterBar`` prop MUST
+    // keep DOM byte-identical to pre-B PageHeader consumers. Every
+    // existing page (250+) calls ``<PageHeader title="..." />``
+    // without this prop; if the slot leaks into their render tree,
+    // layouts drift silently.
+    const { container } = render(<PageHeader title="Invoices" />);
+    expect(
+      container.querySelector(
+        '[data-testid="page-header-filter-bar-slot"]',
+      ),
+    ).toBeNull();
+  });
+
   it("search icon paints colors.nav.bg (navy on the white input)", () => {
     render(<PageHeader title="Invoices" />);
     const icon = screen.getByTestId("page-header-search-icon");

@@ -73,7 +73,7 @@ function _customerAddressLine(c) {
 }
 
 
-export function PageHeader({ title, subtitle, actions }) {
+export function PageHeader({ title, subtitle, actions, filterBar = null }) {
   const navigate = useNavigate();
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
@@ -496,6 +496,26 @@ export function PageHeader({ title, subtitle, actions }) {
           </div>
         ) : null}
       </div>
+
+      {/* Row 3 · optional filter-bar slot. N5.filterBar consolidation
+          preflight — N5-T2 will migrate the 4 pages currently
+          rendering ``<NavyFilterBar>`` under an inline ``<h1>`` into
+          ``<PageHeader filterBar={<NavyFilterBar>...</NavyFilterBar>}>``.
+          Consumers pass the child element as-is; PageHeader owns
+          only the placement + horizontal alignment (24px to match
+          the search-band + title-row insets). NavyFilterBar's own
+          ``rounded-2xl p-4 mb-4`` primitive supplies the bg/border/
+          bottom-margin so this slot never fights the child for
+          layout. Omitting the prop = zero DOM change (backwards
+          compat for every page already consuming PageHeader). */}
+      {filterBar ? (
+        <div
+          style={{ padding: "0 24px" }}
+          data-testid="page-header-filter-bar-slot"
+        >
+          {filterBar}
+        </div>
+      ) : null}
     </header>
   );
 }
