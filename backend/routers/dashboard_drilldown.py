@@ -76,6 +76,11 @@ from services.edit_window import (
     K6_UNLOCK_ROLES,
     role_bypasses_edit_window,
 )
+from services.reports.service_category_bucketing import (
+    UNCATEGORIZED_KEY,
+    UNCATEGORIZED_NAME,
+    bucket_service_category,
+)
 from utils import get_current_user, new_id, now_iso
 
 logger = logging.getLogger("dashboard_drilldown")
@@ -471,28 +476,38 @@ async def income_by_service_rows(
     tenant_id = tenant["id"]
 
     maps = await _load_income_category_maps(tenant_id)
-    target_svc_id: Optional[str] = None
-    target_svc_name = "Uncategorized"
-    if service_category_id != "Uncategorized":
-        # Accept either the raw service_category_id OR its display
-        # name.  The RevenueByCategoryTile sibling only surfaces the
-        # display label in its legend, so K41 falls back to a
-        # name→id resolve when the incoming param isn't a known id.
-        if service_category_id in maps["svc_id_to_name"]:
-            target_svc_id = service_category_id
-            target_svc_name = maps["svc_id_to_name"][service_category_id]
+    # Feb-2026 · Drill-down parity fix — route the target-bucket
+    # resolution through the same ladder ``bucket_service_category``
+    # uses on the chart tile.  The incoming ``service_category_id``
+    # query param can be:
+    #   1. The literal ``"Uncategorized"``  → target bucket_id
+    #      collapses to ``UNCATEGORIZED_KEY``.
+    #   2. A real ``service_category_id`` (UUID) known to
+    #      ``svc_id_to_name``  → target bucket_id is that id.
+    #   3. A display *name* that resolves to a known id  → target
+    #      bucket_id is the resolved id (legacy caller contract).
+    #   4. Anything else  → target bucket_id stays the incoming
+    #      literal (returns 0 rows since ``bucket_service_category``
+    #      only ever emits real ids or ``UNCATEGORIZED_KEY``).
+    if service_category_id == "Uncategorized":
+        target_bucket_id: str = UNCATEGORIZED_KEY
+        target_svc_name = UNCATEGORIZED_NAME
+    elif service_category_id in maps["svc_id_to_name"]:
+        target_bucket_id = service_category_id
+        target_svc_name = maps["svc_id_to_name"][service_category_id]
+    else:
+        name_to_id = {v: k for k, v in maps["svc_id_to_name"].items()}
+        resolved_id = name_to_id.get(service_category_id)
+        if resolved_id:
+            target_bucket_id = resolved_id
+            target_svc_name = service_category_id
         else:
-            name_to_id = {v: k for k, v in maps["svc_id_to_name"].items()}
-            resolved_id = name_to_id.get(service_category_id)
-            if resolved_id:
-                target_svc_id = resolved_id
-                target_svc_name = service_category_id
-            else:
-                # Neither an id nor a known name — treat as an empty
-                # bucket instead of a 400 so the modal renders a
-                # graceful "no rows" state.
-                target_svc_id = service_category_id
-                target_svc_name = service_category_id
+            # Neither an id nor a known name — surface an empty
+            # bucket rather than a 400.  bucket_service_category
+            # will never return this string, so the loop matches
+            # zero lines.
+            target_bucket_id = service_category_id
+            target_svc_name = service_category_id
 
     matched: List[Dict[str, Any]] = []
     cur = await _paid_invoice_cursor(tenant_id, s_iso, e_iso)
@@ -500,33 +515,20 @@ async def income_by_service_rows(
         items = inv.get("line_items") or []
         recognised_any = False
         for idx, li in enumerate(items):
-            # P53 tail (Feb-2026) — resolution PRECEDENCE (mirrors
-            # dashboard_revenue.income_by_service_category):
-            # 1. line-item's own ``service_category_id`` (user
-            #    explicitly recategorized this line), overrides all
-            # 2. pricebook item's ``service_category_id`` (default
-            #    inherited from item_id lookup)
-            # 3. ``"Uncategorized"`` fallback
-            # Drilldown parity is REQUIRED — a line that buckets to
-            # "Pool Service" on the aggregate tile MUST appear in
-            # the drilldown modal for that bucket. Pre-P53 both
-            # handlers had the same bug (pricebook-first), so the
-            # bug hid via double-negation. Fixing both together.
-            line_svc_id = li.get("service_category_id")
-            if line_svc_id:
-                svc_id = line_svc_id
-            else:
-                iid = li.get("item_id")
-                svc_id = maps["item_id_to_service"].get(iid) if iid else None
-            svc_name = (maps["svc_id_to_name"].get(svc_id) if svc_id
-                        else "Uncategorized")
-            if target_svc_id is None:
-                # Uncategorized bucket
-                if svc_id is not None and svc_name != "Uncategorized":
-                    continue
-            else:
-                if svc_id != target_svc_id:
-                    continue
+            # Feb-2026 · Drill-down parity — canonical bucketing via
+            # ``services.reports.service_category_bucketing`` so
+            # lines whose ``service_category_id`` points at a
+            # hard-deleted / stale category (no name in
+            # ``svc_id_to_name``) roll up to ``UNCATEGORIZED_KEY``
+            # on both the chart AND the drill-down.  Pre-fix the
+            # drill-down explicitly skipped stale-ref lines while
+            # the chart bucketed them under Uncategorized — parity
+            # was broken.
+            bucket_id, svc_name = bucket_service_category(
+                li, maps["item_id_to_service"], maps["svc_id_to_name"],
+            )
+            if bucket_id != target_bucket_id:
+                continue
             recognised_any = True
             resolved_cat = _resolve_line_category(
                 li, maps["item_id_to_category"], maps["income_cat_by_id"],
@@ -537,7 +539,7 @@ async def income_by_service_rows(
             inv_total = float(inv.get("total") or 0)
         except (TypeError, ValueError):
             inv_total = 0.0
-        if (target_svc_id is None and inv_total > 0
+        if (target_bucket_id == UNCATEGORIZED_KEY and inv_total > 0
                 and not recognised_any and not items):
             matched.append({
                 "invoice_id": inv.get("id"),
