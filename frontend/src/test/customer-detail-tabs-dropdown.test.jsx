@@ -29,7 +29,13 @@ describe("CustomerDetail · I6 tabs-as-dropdown", () => {
     const slice = CD_SRC.slice(idx, idx + 800);
     expect(slice).toMatch(/forceDropdown/);
     expect(slice).toMatch(/testidPrefix="cd-tab"/);
-    expect(slice).toMatch(/tabs=\{TABS\}/);
+    // Feb-2026 · M2 · TABS is now filtered through
+    // ``filterCustomerTabs(TABS, authUser?.role)`` into a
+    // ``visibleTabs`` memo so the Measurements tab can be gated to
+    // admin / super_admin / manager only.  Either literal is
+    // acceptable here so a future re-inline of the filter does
+    // not silently break this guardrail.
+    expect(slice).toMatch(/tabs=\{(?:TABS|visibleTabs)\}/);
   });
 
   it("dropdown lives in a compact width-bounded shell inside the navy strip", () => {

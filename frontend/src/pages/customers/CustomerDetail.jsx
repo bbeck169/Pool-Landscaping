@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, X as XIcon } from "lucide-react";
 import { api } from "@/api";
+import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import { useAuth } from "@/auth";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
@@ -248,6 +249,7 @@ const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
   { k: "properties", label: "Properties", icon: Home },
   { k: "jobs", label: "Jobs", icon: Briefcase },
+  { k: "measurements", label: "Measurements", icon: Ruler, roles: ["admin", "super_admin", "manager"] },
   { k: "documents", label: "Documents", icon: FileText },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
@@ -335,6 +337,16 @@ export default function CustomerDetail() {
     else params.delete("tab");
     setSearchParams(params, { replace: true });
   };
+  // Feb-2026 · M2 · role-scoped tab visibility.  Every legacy tab
+  // stays visible to every role (server-side gate on the page
+  // owner does the real enforcement); tabs that declare a
+  // ``roles: [...]`` array are gated to those roles only.
+  // Currently that only affects the Measurements tab, which is
+  // hidden for technician + customer per the M2 ruling.
+  const visibleTabs = useMemo(
+    () => filterCustomerTabs(TABS, authUser?.role),
+    [authUser?.role],
+  );
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Phase M1 · Feb-2026 — Merge Wizard modal open/close.
@@ -603,7 +615,7 @@ export default function CustomerDetail() {
       >
         <div style={{ minWidth: 220 }} data-testid="cd-tabs-dropdown-shell">
           <ResponsiveTabs
-            tabs={TABS}
+            tabs={visibleTabs}
             active={tab}
             onChange={setTab}
             testidPrefix="cd-tab"
@@ -1158,6 +1170,17 @@ export default function CustomerDetail() {
                 ) : null}
               </div>
             )
+          ) : null}
+
+          {tab === "measurements" ? (
+            // Feb-2026 · M2 · role-gated at TABS filter (visibleTabs)
+            // + defensive guard here so a stale deep-link like
+            // ``?tab=measurements`` on a technician session never
+            // renders the tab body even if the URL param bypassed
+            // the sidebar dropdown.
+            (["admin", "super_admin", "manager"].includes(authUser?.role)) ? (
+              <CustomerMeasurementsTab customer={customer} />
+            ) : null
           ) : null}
 
           {tab === "documents" ? (
