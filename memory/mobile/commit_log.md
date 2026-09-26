@@ -2598,6 +2598,21 @@
   - `mobile_dashboard_768_fix_2026-09-25.png` — Full title, full pill labels, single row ✓
   - `mobile_schedule_390_fix_2026-09-25.png` — "Schedule" fully visible, all icons inline ✓
   - `mobile_customers_390_fix_2026-09-25.png` — "Customers" fully visible, no regression ✓
+
+## Iteration — AR-1: Mode scaffold + permission onboarding gate + setup
+- **Commits**: `4ad0267f9` (source changes swept by parallel agent) + `ca29c3c1d` (test + yarn.lock)
+- **Date**: 2026-09-26
+- **Changes**:
+  - `package.json`: Added `expo-dev-client`, `expo-sensors` (yarn add). Removed `expo-camera` (breaks web bundle; using `expo-image-picker` for camera permissions instead).
+  - `src/theme.ts`: Added `arNavy: "#1B1F5C"` and `arBlue: "#3B82F6"` color tokens.
+  - `app.config.js`: Updated `NSCameraUsageDescription` to mention AR measurement.
+  - `app/measure.tsx`: Extended `Mode` type to `"distance" | "area" | "ar"`. Added 3-tab mode switch (Distance, Area, AR Ruler). AR mode conditionally hides satellite map + bottom HUD, shows ARPermissionGate + placeholder.
+  - `src/components/measure/ARPermissionGate.native.tsx`: Full permission gate — checks camera (via expo-image-picker) + motion (via DeviceMotion from expo-sensors), shows navy onboarding card with 2 permission cards + CTA, handles canAskAgain=false → Open Settings alert, calls onGranted() when both granted.
+  - `src/components/measure/ARPermissionGate.web.tsx`: Web stub — shows "AR requires physical device" message on navy background.
+  - `__tests__/ar-permission-gate.test.tsx`: 4 Jest tests (granted→placeholder, denied→onboarding, CTA→grant flow, canAskAgain=false→Settings alert). All pass.
+- **Key decision**: Used `expo-image-picker` (already installed) for camera permission checks instead of `expo-camera` (which crashes on web due to `createPermissionHook` native registration). Platform-split files (`.native.tsx`/`.web.tsx`) follow the existing `MeasureMap` pattern.
+- **Blocked**: `@reactvision/react-viro` NOT installed (awaiting user API keys). `npx expo prebuild` NOT run (separate commit per spec).
+
   - `mobile_leads_390_fix_2026-09-25.png` — "Quotes & Invoi..." (long title, expected), no regression ✓
 - **No regressions**: All testIDs preserved. Metro + lint clean (only pre-existing unused-import warnings).
 
