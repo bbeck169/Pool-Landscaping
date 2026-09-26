@@ -14,7 +14,7 @@ import {
   CalendarDays, DoorOpen, Clock, MessageSquare,
   Calculator, FlaskConical, Home as HomeIcon, Boxes, Wrench, Magnet,
   ClipboardList, Trophy, IdCard, DollarSign, TrendingUp,
-  UserCircle, MapPin, Settings,
+  UserCircle, MapPin, Settings, Layers,
 } from "lucide-react";
 const TECH_SECTIONS = [
   {
@@ -35,6 +35,7 @@ const TECH_SECTIONS = [
       // from the tech surface (see roleNav.js + backend gates). Techs
       // get calculators, D2D map, and knock/lead tools only.
       { key: "pool-calculators", icon: FlaskConical, label: "Pool Calculators", desc: "LSI · Volume · Salt · Turnover · Heater size", to: "/tech/tools/calculators" },
+      { key: "material-calculator", icon: Layers, label: "Material Calculator", desc: "L × W × D → ft³ / yd³ / tons for gravel · sand · topsoil · mulch", to: "/tech/tools/calculators?tab=material" },
       { key: "d2d-map", icon: MapPin, label: "D2D Map", desc: "Canvassing map", to: "/d2d/map" },
       { key: "d2d-knocks", icon: DoorOpen, label: "Knocks", desc: "Recent door activity", to: "/d2d/knocks" },
       { key: "d2d-open-leads", icon: Magnet, label: "Open Leads", desc: "Follow-ups in your funnel", to: "/d2d/open-leads" },
@@ -66,6 +67,7 @@ const ADMIN_SECTIONS = [
       { key: "business-card", icon: IdCard, label: "Business Card", desc: "NFC-ready digital card & .vcf", to: "/tech/card" },
       { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Build a quote on-site", to: "/estimator" },
       { key: "pool-calculators", icon: FlaskConical, label: "Pool Calculators", desc: "LSI · Volume · Salt · Turnover · Heater size", to: "/tech/tools/calculators" },
+      { key: "material-calculator", icon: Layers, label: "Material Calculator", desc: "L × W × D → ft³ / yd³ / tons for gravel · sand · topsoil · mulch", to: "/tech/tools/calculators?tab=material" },
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner + lot size search", to: "/property-lookup" },
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },
       { key: "pricing-tools", icon: DollarSign, label: "Pricing Tools", desc: "In-cost · Portfolio margins · Price recommender", to: "/admin/tools/pricing" },

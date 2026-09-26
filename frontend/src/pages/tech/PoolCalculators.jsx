@@ -11,10 +11,10 @@
  * customers get 403 on direct hits regardless of the UI.
  */
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Calculator, FlaskConical, Ruler, Droplets,
-  Timer, Flame, Copy, CheckCircle2, AlertTriangle,
+  Timer, Flame, Copy, CheckCircle2, AlertTriangle, Layers,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -25,6 +25,7 @@ const TABS = [
   { key: "salt",      label: "Salt",             icon: Droplets },
   { key: "turnover",  label: "Turnover",         icon: Timer },
   { key: "heater",    label: "Heater Size",      icon: Flame },
+  { key: "material",  label: "Material",         icon: Layers },
 ];
 
 function copyResult(text) {
@@ -467,11 +468,162 @@ function HeaterPanel({ tab }) {
   );
 }
 
+
+// ─── Material · L·W·D → cubic ft/yd + tons (Feb-2026) ─────────────
+const MATERIAL_OPTIONS = [
+  { value: "gravel_dry",      label: 'Gravel (3/4" dry)', density: 1.4 },
+  { value: "gravel_wet_sand", label: "Gravel w/ Sand",    density: 1.68 },
+  { value: "sand_dry",        label: "Sand (dry)",        density: 1.35 },
+  { value: "topsoil",         label: "Topsoil",           density: 1.1 },
+  { value: "mulch",           label: "Mulch",             density: 0.5 },
+  { value: "limestone",       label: "Limestone",         density: 1.35 },
+  { value: "concrete",        label: "Concrete",          density: 2.0 },
+];
+const UNIT_OPTIONS = [
+  { value: "ft", label: "feet" },
+  { value: "in", label: "inches" },
+  { value: "yd", label: "yards" },
+];
+
+function AxisWithUnit({ label, testidBase, value, onChangeValue, unit, onChangeUnit }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-bold uppercase tracking-wider"
+            style={{ color: colors.muted }}>{label}</span>
+      <div className="flex items-stretch gap-2 mt-1">
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2 flex-1"
+             style={{ backgroundColor: colors.background,
+                       border: `1px solid ${colors.border}` }}>
+          <input value={value} onChange={(e) => onChangeValue(e.target.value)}
+                  type="number" step="any" placeholder="0"
+                  className="w-full bg-transparent focus:outline-none text-base"
+                  style={{ color: colors.onSurface }}
+                  data-testid={`${testidBase}-value`} />
+        </div>
+        <select value={unit} onChange={(e) => onChangeUnit(e.target.value)}
+                className="rounded-lg px-3 py-2 text-sm font-semibold"
+                style={{ backgroundColor: colors.background,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface }}
+                data-testid={`${testidBase}-unit`}>
+          {UNIT_OPTIONS.map((u) => (
+            <option key={u.value} value={u.value}>{u.label}</option>
+          ))}
+        </select>
+      </div>
+    </label>
+  );
+}
+
+function MaterialPanel({ tab }) {
+  const [length, setLength] = useState("12.5");
+  const [lengthUnit, setLengthUnit] = useState("ft");
+  const [width, setWidth] = useState("8");
+  const [widthUnit, setWidthUnit] = useState("ft");
+  const [depth, setDepth] = useState("6");
+  const [depthUnit, setDepthUnit] = useState("in");
+  const [material, setMaterial] = useState("gravel_dry");
+  const defaultDensity = React.useMemo(
+    () => MATERIAL_OPTIONS.find((m) => m.value === material)?.density ?? 1.0,
+    [material],
+  );
+  // Whether the user has manually edited the density since the
+  // last material change. If not, the material dropdown drives
+  // the density input on every change; if yes, the override is
+  // preserved.
+  const [density, setDensity] = useState(String(defaultDensity));
+  const [densityDirty, setDensityDirty] = useState(false);
+  React.useEffect(() => {
+    if (!densityDirty) {
+      setDensity(String(defaultDensity));
+    }
+  }, [defaultDensity, densityDirty]);
+  const handleMaterialChange = (v) => {
+    setMaterial(v);
+    setDensityDirty(false);
+  };
+  const handleDensityChange = (v) => {
+    setDensity(v);
+    setDensityDirty(true);
+  };
+
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const compute = async () => {
+    setErr(null);
+    try {
+      const parsedDensity = parseFloat(density);
+      const body = {
+        length: { value: parseFloat(length), unit: lengthUnit },
+        width: { value: parseFloat(width), unit: widthUnit },
+        depth: { value: parseFloat(depth), unit: depthUnit },
+        material,
+        density_override: densityDirty && !Number.isNaN(parsedDensity)
+          ? parsedDensity : null,
+      };
+      const r = await api.post("/calculators/material", body);
+      setResult(r);
+    } catch (e) { setErr(e.message); }
+  };
+
+  return (
+    <CalcCard tab={tab}>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <AxisWithUnit label="Length" testidBase="mat-length"
+                       value={length} onChangeValue={setLength}
+                       unit={lengthUnit} onChangeUnit={setLengthUnit} />
+        <AxisWithUnit label="Width" testidBase="mat-width"
+                       value={width} onChangeValue={setWidth}
+                       unit={widthUnit} onChangeUnit={setWidthUnit} />
+        <AxisWithUnit label="Depth" testidBase="mat-depth"
+                       value={depth} onChangeValue={setDepth}
+                       unit={depthUnit} onChangeUnit={setDepthUnit} />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <Select label="Material" value={material} onChange={handleMaterialChange}
+                options={MATERIAL_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
+                testid="mat-material" />
+        <Field label={`Density (t/yd³)${densityDirty ? " · override" : ""}`}
+                value={density} onChange={handleDensityChange}
+                testid="mat-density" />
+      </div>
+      <button onClick={compute}
+              className="mt-4 w-full py-2 rounded-xl font-bold"
+              style={{ backgroundColor: colors.brand, color: "#fff" }}
+              data-testid="mat-compute">Compute material</button>
+      {err ? <div className="mt-3 text-sm" style={{ color: "#991B1B" }}>{err}</div> : null}
+      {result ? (
+        <>
+          <ResultBox testid="mat-result-ft3"
+                      title="Cubic Feet"
+                      value={`${result.cubic_feet.toFixed(2)} ft³`}
+                      note={`Density used: ${result.density_used} t/yd³`} />
+          <ResultBox testid="mat-result-yd3"
+                      title="Cubic Yards"
+                      value={`${result.cubic_yards.toFixed(2)} yd³`}
+                      note={`= cubic_feet / 27`} />
+          <ResultBox testid="mat-result-tons"
+                      title="Total Tons"
+                      value={`${result.total_tons.toFixed(2)} t`}
+                      note={`= cubic_yards × ${result.density_used}`} />
+        </>
+      ) : null}
+    </CalcCard>
+  );
+}
+
+
 export default function PoolCalculators() {
   const nav = useNavigate();
-  const [tab, setTab] = useState("lsi");
+  const [searchParams] = useSearchParams();
+  const initialTab = TABS.some((t) => t.key === searchParams.get("tab"))
+    ? searchParams.get("tab")
+    : "lsi";
+  const [tab, setTab] = useState(initialTab);
   const Panel = { lsi: LsiPanel, volume: VolumePanel, salt: SaltPanel,
-                   turnover: TurnoverPanel, heater: HeaterPanel }[tab];
+                   turnover: TurnoverPanel, heater: HeaterPanel,
+                   material: MaterialPanel }[tab];
   const tabDef = TABS.find((t) => t.key === tab);
 
   return (
@@ -490,7 +642,7 @@ export default function PoolCalculators() {
             Pool Calculators
           </h1>
           <p className="text-xs" style={{ color: colors.muted }}>
-            Chemistry &amp; sizing math — LSI, volume, salt, turnover code compliance, heater sizing.
+            Chemistry, sizing &amp; material math — LSI, volume, salt, turnover code compliance, heater sizing, material tonnage.
           </p>
         </div>
       </div>

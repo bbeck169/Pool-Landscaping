@@ -9,6 +9,7 @@ Endpoints:
   * POST /api/calculators/salt         — Salt to add (lbs)
   * POST /api/calculators/turnover     — Turnover time + code compliance
   * POST /api/calculators/heater-size  — BTU + monthly cost estimate
+  * POST /api/calculators/material     — L·W·D → ft³ / yd³ / tons (Feb-2026)
 """
 from __future__ import annotations
 import math
@@ -257,6 +258,106 @@ async def heater_calc(body: HeaterIn, user: dict = Depends(require_tech_or_above
         "heater_type": htype,
         "delta_t": round(delta_t, 1),
         "notes": notes,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase T2.5 (Feb-2026) — Material Volume + Tonnage calculator
+# ══════════════════════════════════════════════════════════════════════
+# Stateless L × W × D → cubic feet / cubic yards / total tons for a
+# picked bulk material. Same RBAC + no-DB posture as the T1/T2
+# calculators. Density defaults land inline; the caller may override
+# by passing ``density_override`` (t/yd³) — useful for atypical
+# blends the operator has weighed themselves.
+MATERIAL_DENSITIES = {
+    "gravel_dry":       1.4,   # 3/4" dry gravel
+    "gravel_wet_sand":  1.68,  # gravel with sand mixed in
+    "sand_dry":         1.35,
+    "topsoil":          1.1,
+    "mulch":            0.5,
+    "limestone":        1.35,
+    "concrete":         2.0,
+}
+
+# Feet-per-unit conversion factors. Units are hard-locked to the
+# three the mobile + web calculators expose. Any other string on
+# a length input yields a 400.
+_LENGTH_UNITS_TO_FT = {
+    "ft": 1.0,
+    "in": 1.0 / 12.0,
+    "yd": 3.0,
+}
+
+
+class LengthValue(BaseModel):
+    value: float
+    unit: str  # ft | in | yd
+
+
+class MaterialIn(BaseModel):
+    length: LengthValue
+    width: LengthValue
+    depth: LengthValue
+    material: Optional[str] = None
+    density_override: Optional[float] = None
+
+
+def _to_feet(v: LengthValue, axis: str) -> float:
+    factor = _LENGTH_UNITS_TO_FT.get(v.unit)
+    if factor is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid unit '{v.unit}' on {axis}; "
+                f"expected one of ft | in | yd"
+            ),
+        )
+    return v.value * factor
+
+
+def _resolve_density(material: Optional[str],
+                        density_override: Optional[float]) -> tuple[float, Optional[str]]:
+    # Explicit numeric override takes precedence (operator-weighed
+    # blends), otherwise the picked material's default. If neither
+    # resolves, 400.
+    if density_override is not None:
+        if density_override <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="density_override must be positive",
+            )
+        # Preserve the picked material key if any so the response
+        # is round-trippable.
+        return float(density_override), material
+    if material and material in MATERIAL_DENSITIES:
+        return MATERIAL_DENSITIES[material], material
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"invalid material '{material}' and no density_override; "
+            f"expected one of {sorted(MATERIAL_DENSITIES.keys())}"
+        ),
+    )
+
+
+@router.post("/material")
+async def material_calc(body: MaterialIn,
+                          user: dict = Depends(require_tech_or_above)):
+    length_ft = _to_feet(body.length, "length")
+    width_ft = _to_feet(body.width, "width")
+    depth_ft = _to_feet(body.depth, "depth")
+    density, material_key = _resolve_density(
+        body.material, body.density_override,
+    )
+    cubic_feet = length_ft * width_ft * depth_ft
+    cubic_yards = cubic_feet / 27.0
+    total_tons = cubic_yards * density
+    return {
+        "cubic_feet": round(cubic_feet, 4),
+        "cubic_yards": round(cubic_yards, 4),
+        "total_tons": round(total_tons, 4),
+        "material": material_key,
+        "density_used": density,
     }
 
 
