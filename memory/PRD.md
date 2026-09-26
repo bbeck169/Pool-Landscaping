@@ -22460,6 +22460,7 @@ The hook can sweep between chat turns even when all git ops are properly batched
 1. `d97810f56` (2026-02-20) — subject `## Status: **1 · Shipped, forgot to mention it**` — swept during currency retro-report reply; sanitized via `git reset --soft HEAD~1` before it entered the durable history (superseded by `8f9374207`).
 2. `381a86c9d` (2026-02-20) — subject `**HALT — pixel-count recon reveals a metric-definition surprise, not a rendering bug.**` — swept during the flood-fill halt-and-report reply; sanitized via a second `git reset --soft HEAD~1` (also superseded by `8f9374207`).
 3. `e3b10f6c1` (2026-02-20) — subject `# Step 0 · Delivered` — swept between the Step 0 delivery reply and Task 1 execution; contained only the ruff-cache noise (`backend/.ruff_cache/0.16.2/15012461920548998617`) and my full delivery-report markdown.  Sanitized via `git rebase --onto 9c9946349 e3b10f6c1 HEAD`; Task 1 replayed from `fa0bf18fd` → `73953aeed` (identical content, new parent).
+4. `f71741c1d` (2026-02-20) — subject `# Queued A · Delivered` — swept between the Queued-A drill-down delivery reply and N1 execution; contained only the ruff-cache noise (`backend/.ruff_cache/0.16.2/15012461920548998617` + `.../4712126653172967957`) and my full delivery-report markdown.  Sanitized via `git rebase --onto c28bf40fa f71741c1d HEAD`; N1 replayed from `80458f6a0` → `5b45d2fc5` (identical content, new parent).
 
 
 
