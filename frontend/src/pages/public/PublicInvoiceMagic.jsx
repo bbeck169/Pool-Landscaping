@@ -81,7 +81,7 @@ export default function PublicInvoiceMagic() {
   if (!token || !invoiceId) {
     return (
       <div
-        style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
+        style={{ minHeight: "100vh", padding: 24, background: colors.nav.bgDeep }}
         data-testid="public-invoice-magic-invalid-token"
       >
         <div
@@ -107,7 +107,7 @@ export default function PublicInvoiceMagic() {
 
   return (
     <div
-      style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
+      style={{ minHeight: "100vh", padding: 24, background: colors.nav.bgDeep }}
       data-testid="public-invoice-magic-root"
     >
       <div style={{ maxWidth: 960, margin: "0 auto" }}>

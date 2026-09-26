@@ -128,66 +128,78 @@ describe("PublicInvoiceMagic · mirrors the composite card-logos banner", () => 
   });
 });
 
-describe("Public-invoice surfaces · Feb 2026 navy page background", () => {
+describe("Public-invoice surfaces · Feb 2026 deep-navy page background", () => {
   // Both /pay/invoice/:id?token=... and /i/:token now paint their
-  // root container with ``colors.nav.bg`` (== ``#1B1F5C`` — the
-  // menu-navy token defined at ``theme.js:141``). The invoice card
-  // itself keeps its white background (that's inside <InvoiceView>,
-  // which this commit is not allowed to touch).
+  // root container with ``colors.nav.bgDeep`` (== ``#03002e`` — a
+  // deeper navy defined at ``theme.js`` in the ``nav`` bucket,
+  // introduced specifically for these two public magic-link
+  // surfaces so the white invoice card floats over an intentional
+  // dark backdrop). ``colors.nav.bg`` (== ``#1B1F5C``) is the
+  // sitewide sidebar / menu navy and is intentionally NOT reused
+  // here — the two aesthetics must not conflate. The invoice
+  // card itself keeps its white background (that's inside
+  // <InvoiceView>, which this commit is not allowed to touch).
 
-  it("both public files import ``colors`` from ``@/theme`` and use ``colors.nav.bg``", () => {
+  it("both public files import ``colors`` from ``@/theme`` and use ``colors.nav.bgDeep``", () => {
     expect(PAY_SRC).toMatch(/import\s+\{\s*colors\s*\}\s+from\s+"@\/theme"/);
     expect(MAGIC_SRC).toMatch(/import\s+\{\s*colors\s*\}\s+from\s+"@\/theme"/);
     // No lingering literal `#F3F4F6` on either file.
     expect(PAY_SRC).not.toContain("#F3F4F6");
     expect(MAGIC_SRC).not.toContain("#F3F4F6");
+    // No lingering ``colors.nav.bg`` (the sidebar-navy token). Only
+    // ``colors.nav.bgDeep`` should be referenced on these pages.
+    expect(PAY_SRC).not.toMatch(/colors\.nav\.bg\b/);
+    expect(MAGIC_SRC).not.toMatch(/colors\.nav\.bg\b/);
   });
 
-  it("PublicInvoicePay root + both error-state containers all paint navy", () => {
+  it("PublicInvoicePay root + both error-state containers all paint deep-navy", () => {
     // Happy-path root (public-invoice-pay-root).
     expect(
       nearBoth(PAY_SRC, "public-invoice-pay-root",
-                "background:\\s*colors\\.nav\\.bg"),
+                "background:\\s*colors\\.nav\\.bgDeep"),
     ).toBe(true);
     // Link-expired outer container.
     expect(
       nearBoth(PAY_SRC, "public-invoice-pay-link-expired",
-                "background:\\s*colors\\.nav\\.bg"),
+                "background:\\s*colors\\.nav\\.bgDeep"),
     ).toBe(true);
     // Missing-token outer container.
     expect(
       nearBoth(PAY_SRC, "public-invoice-pay-missing-token",
-                "background:\\s*colors\\.nav\\.bg"),
+                "background:\\s*colors\\.nav\\.bgDeep"),
     ).toBe(true);
   });
 
-  it("PublicInvoiceMagic root + invalid-token container both paint navy", () => {
+  it("PublicInvoiceMagic root + invalid-token container both paint deep-navy", () => {
     // Happy-path root (public-invoice-magic-root).
     expect(
       nearBoth(MAGIC_SRC, "public-invoice-magic-root",
-                "background:\\s*colors\\.nav\\.bg"),
+                "background:\\s*colors\\.nav\\.bgDeep"),
     ).toBe(true);
     // Invalid-token outer container.
     expect(
       nearBoth(MAGIC_SRC, "public-invoice-magic-invalid-token",
-                "background:\\s*colors\\.nav\\.bg"),
+                "background:\\s*colors\\.nav\\.bgDeep"),
     ).toBe(true);
   });
 
-  it("the ``colors.nav.bg`` token resolves to menu-navy #1B1F5C in theme.js", () => {
-    // Guardrail — if someone later moves or renames the token, both
-    // public surfaces would silently break. Assert the resolved
-    // hex value directly against the theme source so a rename must
-    // land in the same PR as an update here.
+  it("both ``colors.nav.bgDeep`` and ``colors.nav.bg`` still resolve to their pinned hex values in theme.js", () => {
+    // Guardrail — if someone later moves or renames either token,
+    // both public surfaces (bgDeep) or the entire admin nav chrome
+    // (bg) would silently break. Assert both hex values directly
+    // against the theme source so any rename must land in the
+    // same PR as an update here.
     const THEME_SRC = fs.readFileSync(
       path.resolve(__dirname, "../theme.js"),
       "utf8",
     );
-    // Find the ``nav: { ... bg: "#XXXXXX" ... }`` block and check
-    // the hex matches the K74 menu-navy value.
-    const navBlock = THEME_SRC.match(/\bnav\s*:\s*\{[\s\S]*?\}/);
+    // Find the ``nav: { ... }`` bucket and check both hexes.
+    const navBlock = THEME_SRC.match(/\bnav\s*:\s*\{[\s\S]*?\n\s*\},/);
     expect(navBlock).not.toBeNull();
-    expect(navBlock[0]).toMatch(/bg\s*:\s*"#1B1F5C"/);
+    // ``bg`` — sitewide sidebar / menu navy — stays as-is.
+    expect(navBlock[0]).toMatch(/\bbg\s*:\s*"#1B1F5C"/);
+    // ``bgDeep`` — public-invoice deep navy — new in this commit.
+    expect(navBlock[0]).toMatch(/\bbgDeep\s*:\s*"#03002e"/);
   });
 });
 

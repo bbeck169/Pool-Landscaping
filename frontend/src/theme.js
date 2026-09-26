@@ -150,6 +150,16 @@ export const colors = {
     // ``colors.gradient.*``. Contrast: white on ``#303AA0`` →
     // ~7.4 : 1 (WCAG AAA).
     bgActiveNavy: "#303AA0",
+    // Feb-2026 · deeper navy used exclusively by the public-invoice
+    // magic-link surfaces (``PublicInvoicePay`` + ``PublicInvoiceMagic``)
+    // where the white invoice card floats over a full-viewport
+    // background. ``nav.bg`` (#1B1F5C) is the sitewide sidebar /
+    // menu navy — we deliberately keep that as-is and use this
+    // deeper variant ONLY on the two public pages so the two
+    // aesthetics never conflate. Contrast: white body copy on
+    // ``#03002e`` → ~19.4 : 1 (AAA at all sizes) and the K74 red
+    // Pay Now CTA + amber / red alert boxes remain WCAG-AAA.
+    bgDeep: "#03002e",
     fg: "#FFFFFF",
     fgActive: "#1B1F5C",     // legacy pill text — retained for portal preview
     fgMuted: "rgba(255, 255, 255, 0.72)",
