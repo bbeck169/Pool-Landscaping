@@ -140,6 +140,13 @@
     font-variant-numeric: tabular-nums !important;
     white-space: nowrap;
   }
+  /* Feb-2026 · right-align numeric column headers on mobile too.
+   * ``!important`` beats any competing mobile-scoped selector that
+   * might otherwise inherit a browser-default center align on
+   * ``<th>`` or bleed in from the desktop-shared header rule. */
+  .iv-lines thead th.iv-num {
+    text-align: right !important;
+  }
   .iv-lines tbody td:first-child {
     max-width: 42vw !important;
     overflow: hidden !important;

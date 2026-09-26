@@ -136,6 +136,13 @@
   vertical-align: top;
 }
 .iv-num { text-align: right; }
+/* Feb-2026 · right-align numeric column headers so ``COST/RATE``,
+ * ``QTY/HR``, ``TOTAL`` line up flush-right with the numbers below.
+ * Needed because the ``.iv-lines thead th`` rule above sets
+ * ``text-align: left`` at specificity (0,0,3), which the unscoped
+ * ``.iv-num`` rule at (0,0,1) can't override — so ``th.iv-num``
+ * needs its own matching-specificity rule declared after. */
+.iv-lines thead th.iv-num { text-align: right; }
 .iv-empty { text-align: center; color: #9CA3AF; padding: 24px !important; }
 
 .iv-totals-row {
