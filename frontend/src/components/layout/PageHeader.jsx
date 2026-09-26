@@ -12,17 +12,21 @@
  * Layout
  * ──────
  *   Row 1 · title left, actions right, inherits page background.
- *   Row 2 · slim navy hero band with search input.
+ *   Row 2 · slim blue command-bar band with a centered search
+ *           input (max-width 640, ``margin: 0 auto``).
  *   Row 3 · absolute-positioned dropdown pane (max 8 results,
  *           keyboard nav via ↑/↓, Enter navigates, Esc clears).
  *
- * Design tokens
- * ─────────────
- *   Search band background = ``colors.nav.bg`` (#1B1F5C · WEB
- *   nav chrome, defined in ``theme.js``).  Input border =
- *   ``colors.inputBorder`` (#3B82F6 · permanent search-border
- *   blue defined in ``theme.js``).  White input surface, dark
- *   text, muted keyboard hint on the right.
+ * Design tokens (Feb-2026 · Global Command Bar spec)
+ * ──────────────────────────────────────────────────
+ *   Search band background = ``colors.inputBorder`` (#3B82F6 ·
+ *   command-bar blue, defined in ``theme.js``).  Input is
+ *   borderless — flat white pill (``border: none``, rounded-full)
+ *   on the blue hero.  Search icon uses ``colors.nav.bg``
+ *   (#1B1F5C · navy) so it reads clearly on the white input over
+ *   the blue hero.  The kbd hint on the right is a slightly
+ *   darker-than-``colors.muted`` grey (``#3F3F46``) chosen for
+ *   AA contrast on the ``surfaceSecondary`` pill background.
  *
  * Cmd+K global shortcut (N3) is NOT wired here.  Only the local
  * search UX ships in N1.  N2 wires this component into every
@@ -158,26 +162,30 @@ export function PageHeader({ title, subtitle, actions }) {
         ) : null}
       </div>
 
-      {/* Row 2 · slim navy band with the search input */}
+      {/* Row 2 · slim blue command-bar band with the search input */}
       <div
         style={{
-          backgroundColor: colors.nav.bg,
+          backgroundColor: colors.inputBorder,
           padding: "8px 24px",
           position: "relative",
         }}
         data-testid="page-header-search-band"
       >
-        <div style={{ position: "relative", maxWidth: 640 }}>
+        <div
+          style={{
+            position: "relative",
+            maxWidth: 640,
+            margin: "0 auto",
+          }}
+        >
           <div
             style={{
               position: "relative",
               display: "flex",
               alignItems: "center",
               backgroundColor: colors.surface,
-              borderStyle: "solid",
-              borderWidth: 1,
-              borderColor: colors.inputBorder,
-              borderRadius: 8,
+              border: "none",
+              borderRadius: 999,
               paddingLeft: 34,
               paddingRight: 68,
               height: 34,
@@ -189,10 +197,11 @@ export function PageHeader({ title, subtitle, actions }) {
               style={{
                 position: "absolute",
                 left: 10,
-                color: colors.inputBorder,
+                color: colors.nav.bg,
                 pointerEvents: "none",
               }}
               aria-hidden="true"
+              data-testid="page-header-search-icon"
             />
             <input
               ref={inputRef}
@@ -218,7 +227,10 @@ export function PageHeader({ title, subtitle, actions }) {
                 right: 10,
                 fontSize: 11,
                 letterSpacing: 0.5,
-                color: colors.muted,
+                // Slightly darker than colors.muted (#71717A) for
+                // comfortable AA contrast on the kbd hint's
+                // ``surfaceSecondary`` pill.
+                color: "#3F3F46",
                 padding: "2px 6px",
                 borderRadius: 4,
                 backgroundColor: colors.surfaceSecondary,

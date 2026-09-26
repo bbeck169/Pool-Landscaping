@@ -120,25 +120,76 @@ describe("PageHeader · search input rendering + design tokens", () => {
     );
   });
 
-  it("search input wrapper carries colors.inputBorder as borderColor", () => {
+  it("search input wrapper is borderless (Global Command Bar spec)", () => {
+    // N2' flip · the input was ``1px solid colors.inputBorder``
+    // pre-flip; the Global Command Bar spec calls for a flat
+    // white pill on the blue hero, so the input must render with
+    // no border.  React strips ``border: "none"`` from the
+    // rendered ``style`` attribute (verified: no ``border`` prop
+    // survives the style-object serializer) and jsdom's
+    // ``getComputedStyle`` returns ``""`` for border-related
+    // props with no explicit value.  Both signals are equally
+    // authoritative "no painted border" states.
     render(<PageHeader title="Invoices" />);
     const wrap = screen.getByTestId("page-header-search-input-wrap");
-    const bc = window.getComputedStyle(wrap).borderColor;
-    // Accept both hex-parsed and rgb-normalized forms.
-    // #3B82F6 == rgb(59, 130, 246).
-    expect(
-      bc === "#3B82F6" || bc === "rgb(59, 130, 246)",
-    ).toBe(true);
+    const cs = window.getComputedStyle(wrap);
+    const inline = wrap.getAttribute("style") || "";
+    // Positive signal · nothing paints a visible border.
+    const noStyle = (
+      cs.borderStyle === "" || cs.borderStyle === "none"
+    );
+    const noWidth = (
+      cs.borderWidth === "" || cs.borderWidth === "0px"
+      || cs.borderWidth === "0"
+    );
+    expect(noStyle).toBe(true);
+    expect(noWidth).toBe(true);
+    // Negative signal · the pre-flip 1px blue border is gone.
+    expect(inline).not.toMatch(/border-width:\s*1/);
+    expect(inline).not.toMatch(/border-color:\s*(?:rgb\(59,\s*130,\s*246\)|#3B82F6)/i);
   });
 
-  it("search band paints colors.nav.bg as background", () => {
+  it("search band paints colors.inputBorder as background (blue hero)", () => {
     render(<PageHeader title="Invoices" />);
     const band = screen.getByTestId("page-header-search-band");
     const bg = window.getComputedStyle(band).backgroundColor;
-    // #1B1F5C == rgb(27, 31, 92).
+    // #3B82F6 == rgb(59, 130, 246) · Global Command Bar blue.
     expect(
-      bg === "#1B1F5C" || bg === "rgb(27, 31, 92)",
+      bg === "#3B82F6" || bg === "rgb(59, 130, 246)",
     ).toBe(true);
+  });
+
+  it("search icon paints colors.nav.bg (navy on the white input)", () => {
+    render(<PageHeader title="Invoices" />);
+    const icon = screen.getByTestId("page-header-search-icon");
+    const c = window.getComputedStyle(icon).color;
+    // #1B1F5C == rgb(27, 31, 92) · navy.
+    expect(
+      c === "#1B1F5C" || c === "rgb(27, 31, 92)",
+    ).toBe(true);
+  });
+
+  it("search input container is horizontally centered inside the hero", () => {
+    // The direct child of the ``page-header-search-band`` is the
+    // width-clamped container.  It must be centered — either
+    // ``margin: 0 auto`` (auto margins on left AND right) or the
+    // parent band uses flex ``justifyContent: center``.
+    render(<PageHeader title="Invoices" />);
+    const band = screen.getByTestId("page-header-search-band");
+    const container = band.querySelector('[data-testid="page-header-search-input-wrap"]')
+      .parentElement;
+    const cs = window.getComputedStyle(container);
+    const bandCs = window.getComputedStyle(band);
+    const centeredViaMargin = (
+      cs.marginLeft === "auto" && cs.marginRight === "auto"
+    );
+    const centeredViaFlex = (
+      bandCs.display === "flex" && bandCs.justifyContent === "center"
+    );
+    expect(centeredViaMargin || centeredViaFlex).toBe(true);
+    // Width is clamped so ``margin: 0 auto`` actually shifts the
+    // container off the edge.  640px matches the spec.
+    expect(cs.maxWidth).toBe("640px");
   });
 
   it("renders the ⌘K / Ctrl+K keyboard hint on the right", () => {
