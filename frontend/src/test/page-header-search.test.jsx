@@ -47,7 +47,7 @@ vi.mock("@/theme", () => ({
     muted: "#71717A",
     brandTertiary: "#E0F2FE",
     inputBorder: "#3B82F6",
-    nav: { bg: "#1B1F5C", bgDeep: "#03002e" },
+    nav: { bg: "#1B1F5C", bgDeep: "#03002e", border: "rgba(255, 255, 255, 0.10)" },
   },
 }));
 
@@ -163,14 +163,67 @@ describe("PageHeader · search input rendering + design tokens", () => {
     expect(inline).not.toMatch(/border-color:\s*(?:rgb\(59,\s*130,\s*246\)|#3B82F6)/i);
   });
 
-  it("search band paints colors.inputBorder as background (blue hero)", () => {
+  it("search band paints colors.nav.bg as background (navy contained card)", () => {
+    // Feb-2026 · N5.reorder — the search band swapped from the
+    // full-bleed blue hero (colors.inputBorder = #3B82F6) into a
+    // contained navy card (colors.nav.bg = #1B1F5C) mirroring the
+    // C3 NavyFilterBar treatment.
     render(<PageHeader title="Invoices" />);
     const band = screen.getByTestId("page-header-search-band");
     const bg = window.getComputedStyle(band).backgroundColor;
-    // #3B82F6 == rgb(59, 130, 246) · Global Command Bar blue.
+    // #1B1F5C == rgb(27, 31, 92) · nav.bg navy.
     expect(
-      bg === "#3B82F6" || bg === "rgb(59, 130, 246)",
+      bg === "#1B1F5C" || bg === "rgb(27, 31, 92)",
     ).toBe(true);
+  });
+
+  it("search band is a rounded (16px) card with a subtle nav.border stroke", () => {
+    // Feb-2026 · N5.reorder — the search band now renders as a
+    // contained navy card. borderRadius must be 16px (matches
+    // rounded-2xl on the sibling NavyFilterBar primitive) and the
+    // 1px stroke uses colors.nav.border ("rgba(255,255,255,0.10)")
+    // so the corners are visible against the page bg.
+    render(<PageHeader title="Invoices" />);
+    const band = screen.getByTestId("page-header-search-band");
+    const cs = window.getComputedStyle(band);
+    expect(cs.borderRadius).toBe("16px");
+    // Border width must be 1px on all four sides.
+    expect(cs.borderTopWidth).toBe("1px");
+    expect(cs.borderRightWidth).toBe("1px");
+    expect(cs.borderBottomWidth).toBe("1px");
+    expect(cs.borderLeftWidth).toBe("1px");
+    // Border color must be present + non-transparent. jsdom
+    // canonicalises rgba() → rgba(255, 255, 255, 0.1).
+    expect(cs.borderTopColor).toBe("rgba(255, 255, 255, 0.1)");
+  });
+
+  it("search band is horizontally margined (24px) so corners never bleed to edge", () => {
+    // Feb-2026 · N5.reorder — the contained navy card must sit
+    // inside 24px of horizontal margin so the rounded corners are
+    // visible on both left + right. Consumers wrap PageHeader in
+    // their own page container — the margin belongs on this band
+    // itself so every Tier 1 page inherits it automatically.
+    render(<PageHeader title="Invoices" />);
+    const band = screen.getByTestId("page-header-search-band");
+    const cs = window.getComputedStyle(band);
+    expect(cs.marginLeft).toBe("24px");
+    expect(cs.marginRight).toBe("24px");
+  });
+
+  it("renders search band BEFORE the title row (top-of-page position)", () => {
+    // Feb-2026 · N5.reorder — the search band swapped from row 2
+    // (below the H1) to row 1 (above the H1). Lock DOM order so a
+    // future refactor can't silently move it back.
+    const { container } = render(<PageHeader title="Invoices" />);
+    const band = container.querySelector(
+      '[data-testid="page-header-search-band"]',
+    );
+    const h1 = container.querySelector("h1");
+    // eslint-disable-next-line no-bitwise
+    expect(
+      band.compareDocumentPosition(h1)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("search icon paints colors.nav.bg (navy on the white input)", () => {

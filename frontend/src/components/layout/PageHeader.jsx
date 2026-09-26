@@ -298,64 +298,21 @@ export function PageHeader({ title, subtitle, actions }) {
       style={{ width: "100%", background: "transparent" }}
       data-testid="page-header"
     >
-      {/* Row 1 · title + actions */}
+      {/* Row 1 · slim navy command-bar band with the search input.
+          Feb-2026 · N5.reorder — moved above the title row and
+          restyled from a full-bleed blue hero (colors.inputBorder)
+          into a contained navy card mirroring the C3
+          NavyFilterBar treatment: navy bg + subtle nav.border
+          stroke + rounded-2xl (16px) corners + horizontal 24px
+          margin so the corners are visible and never bleed
+          edge-to-edge. */}
       <div
         style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 16,
-          padding: "20px 24px 8px",
-        }}
-        data-testid="page-header-title-row"
-      >
-        <div style={{ minWidth: 0, flex: "1 1 auto" }}>
-          <h1
-            style={{
-              fontSize: 28,
-              lineHeight: 1.2,
-              fontWeight: 700,
-              margin: 0,
-              color: colors.onSurface,
-            }}
-            data-testid="page-header-title"
-          >
-            {title}
-          </h1>
-          {subtitle ? (
-            <p
-              style={{
-                fontSize: 13,
-                lineHeight: 1.4,
-                margin: "4px 0 0",
-                color: colors.muted,
-              }}
-              data-testid="page-header-subtitle"
-            >
-              {subtitle}
-            </p>
-          ) : null}
-        </div>
-        {actions ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flex: "0 0 auto",
-            }}
-            data-testid="page-header-actions"
-          >
-            {actions}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Row 2 · slim blue command-bar band with the search input */}
-      <div
-        style={{
-          backgroundColor: colors.inputBorder,
-          padding: "8px 24px",
+          backgroundColor: colors.nav.bg,
+          border: `1px solid ${colors.nav.border}`,
+          borderRadius: 16,
+          margin: "20px 24px 8px",
+          padding: "10px 16px",
           position: "relative",
         }}
         data-testid="page-header-search-band"
@@ -481,6 +438,63 @@ export function PageHeader({ title, subtitle, actions }) {
             </ul>
           ) : null}
         </div>
+      </div>
+
+      {/* Row 2 · title + actions. Feb-2026 · N5.reorder — moved
+          below the search band. Top padding trimmed and bottom
+          padding grown so the vertical rhythm from the pre-reorder
+          layout is preserved (band's 20 top + 8 bottom margins
+          absorb the removed title-row top padding). */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          padding: "8px 24px 20px",
+        }}
+        data-testid="page-header-title-row"
+      >
+        <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+          <h1
+            style={{
+              fontSize: 28,
+              lineHeight: 1.2,
+              fontWeight: 700,
+              margin: 0,
+              color: colors.onSurface,
+            }}
+            data-testid="page-header-title"
+          >
+            {title}
+          </h1>
+          {subtitle ? (
+            <p
+              style={{
+                fontSize: 13,
+                lineHeight: 1.4,
+                margin: "4px 0 0",
+                color: colors.muted,
+              }}
+              data-testid="page-header-subtitle"
+            >
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
+        {actions ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flex: "0 0 auto",
+            }}
+            data-testid="page-header-actions"
+          >
+            {actions}
+          </div>
+        ) : null}
       </div>
     </header>
   );
