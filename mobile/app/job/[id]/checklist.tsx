@@ -68,6 +68,7 @@ import { capturePhoto, getPhotosForEntity, purgePhotosForEntity, type PendingPho
 import { useOnline } from "@/src/offline";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
+import MarcoVoiceButton from "@/src/components/marco/MarcoVoiceButton";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -1240,6 +1241,8 @@ export default function JobChecklistScreen() {
           </View>
         </View>
       </Modal>
+      {/* MARCO voice command FAB */}
+      <MarcoVoiceButton screen="service_report" entityId={report?.id || null} />
     </View>
   );
 }

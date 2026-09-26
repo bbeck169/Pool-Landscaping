@@ -17,6 +17,7 @@ import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import MarcoVoiceButton from "@/src/components/marco/MarcoVoiceButton";
 // Phase 1 Offline Read — route hydrator cache + write-through.
 import {
   getCachedJobDetail, CK,
@@ -932,6 +933,8 @@ export default function JobDetail() {
           testID="job-edit-save"
         />
       </Sheet>
+      {/* MARCO voice command FAB — tech or admin only */}
+      {!isCustomer && <MarcoVoiceButton screen="job_detail" entityId={job?.id || null} />}
     </View>
   );
 }
