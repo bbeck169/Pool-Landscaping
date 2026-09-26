@@ -19,10 +19,20 @@ import {
 } from "@testing-library/react";
 
 const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
+const { searchGlobalSpy } = vi.hoisted(() => ({ searchGlobalSpy: vi.fn() }));
 
 // Mock react-router-dom's ``useNavigate``.
 vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateSpy,
+}));
+
+// Mock the backend search client so no real fetch fires during
+// component tests. Every test resets the spy in ``beforeEach`` and
+// can install per-test behaviour (resolve, reject, hang). Default
+// resolves with empty groups so existing synchronous tests keep
+// working without touching timers.
+vi.mock("@/lib/globalSearchClient", () => ({
+  searchGlobal: (...args) => searchGlobalSpy(...args),
 }));
 
 // Mock the theme so tests are hermetic — the real theme.js file
@@ -49,7 +59,7 @@ vi.mock("@/nav/adminNav", () => ({
       { to: "/invoices", label: "Invoices",
         aliases: ["Bills", "Receivables"] },
       { to: "/admin/imports/pdf-invoice", label: "PDF Import",
-        aliases: ["PDF Upload", "Bulk Import", "Upload Invoices"] },
+        aliases: ["PDF Upload", "Bulk Import"] },
       { to: "/payments", label: "Payments" },
     ] },
     { key: "ops", label: "Operations", entries: [
@@ -67,6 +77,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 
 beforeEach(() => {
   navigateSpy.mockReset();
+  searchGlobalSpy.mockReset();
+  // Default: empty groups so existing synchronous tests don't
+  // accidentally observe backend-driven rows.
+  searchGlobalSpy.mockResolvedValue({ customers: [], documents: [] });
 });
 afterEach(() => {
   cleanup();
@@ -272,5 +286,206 @@ describe("PageHeader · inline dropdown behavior", () => {
     fireEvent.mouseDown(screen.getByTestId("page-header-search-result-0"));
     expect(navigateSpy).toHaveBeenCalledTimes(1);
     expect(navigateSpy).toHaveBeenCalledWith("/invoices");
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// N4' · Grouped dropdown + debounced backend search
+// ─────────────────────────────────────────────────────────────
+import { act, waitFor } from "@testing-library/react";
+
+
+describe("PageHeader · N4' grouped dropdown", () => {
+  it("renders the three-section grouped shell when all groups populate", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [
+        { id: "c-1", name: "Smith Residence",
+          address_line1: "123 Main St", city: "Austin",
+          postal_code: "78701", match_field: "name" },
+      ],
+      documents: [
+        { type: "invoice", id: "inv-1", display_id: "INV-2026-000048",
+          title: "Weekly service", match_field: "number" },
+        { type: "job", id: "job-1", display_id: "J-ab88fb26",
+          title: "Pool Installation", match_field: "title" },
+      ],
+    });
+    render(<PageHeader title="Invoices" />);
+    // ``customer`` hits the Customers nav row (title match) + the
+    // seeded backend customer/document rows all populate. All three
+    // group headers must render.
+    fireEvent.change(_input(), { target: { value: "customer" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-customer")).toBeTruthy();
+    });
+    expect(screen.getByTestId("page-header-section-page")).toBeTruthy();
+    expect(screen.getByTestId("page-header-section-customer")).toBeTruthy();
+    expect(screen.getByTestId("page-header-section-document")).toBeTruthy();
+    // Count badges reflect the group sizes.
+    expect(screen.getByTestId("page-header-section-count-customer").textContent).toBe("1");
+    expect(screen.getByTestId("page-header-section-count-document").textContent).toBe("2");
+  });
+
+  it("customer row shows name and address subline", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [
+        { id: "c-42", name: "Smith Residence",
+          address_line1: "123 Main St", city: "Austin",
+          postal_code: "78701", match_field: "name" },
+      ],
+      documents: [],
+    });
+    render(<PageHeader title="Customers" />);
+    fireEvent.change(_input(), { target: { value: "smith" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-customer")).toBeTruthy();
+    });
+    // The pages group is empty for "smith", so the customer row
+    // is flat-index 0.
+    const row = screen.getByTestId("customer-address-0");
+    expect(row.textContent).toContain("123 Main St");
+    expect(row.textContent).toContain("Austin");
+    expect(row.textContent).toContain("78701");
+  });
+
+  it("document row shows type badge, display_id, and title", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [],
+      documents: [
+        { type: "invoice", id: "inv-99", display_id: "INV-2026-000099",
+          title: "Backup pump repair", match_field: "number" },
+      ],
+    });
+    render(<PageHeader title="Docs" />);
+    fireEvent.change(_input(), { target: { value: "backup" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-document")).toBeTruthy();
+    });
+    const badge = screen.getByTestId("doc-badge-0");
+    expect(badge.textContent).toBe("Invoice");
+    const row = screen.getByTestId("page-header-search-result-0");
+    expect(row.textContent).toContain("INV-2026-000099");
+    expect(row.textContent).toContain("Backup pump repair");
+  });
+
+  it("empty state renders when q >= 2 and every group is empty", async () => {
+    searchGlobalSpy.mockResolvedValue({ customers: [], documents: [] });
+    render(<PageHeader title="Search" />);
+    // ``zzz`` has no nav matches AND no backend matches.
+    fireEvent.change(_input(), { target: { value: "zzz" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-empty-state")).toBeTruthy();
+    });
+    expect(screen.getByTestId("page-header-empty-state").textContent)
+      .toContain("zzz");
+  });
+
+  it("1-char query does not fire the backend", async () => {
+    render(<PageHeader title="Search" />);
+    fireEvent.change(_input(), { target: { value: "s" } });
+    // Give the debounce timer more than enough time to fire.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(searchGlobalSpy).not.toHaveBeenCalled();
+  });
+
+  it("keyboard ↓↓↓ traverses across groups (pages → customers → documents)", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [
+        { id: "c-1", name: "Smith Residence", match_field: "name" },
+      ],
+      documents: [
+        { type: "invoice", id: "inv-1", display_id: "INV-1", title: "t",
+          match_field: "number" },
+      ],
+    });
+    render(<PageHeader title="X" />);
+    fireEvent.change(_input(), { target: { value: "invoi" } });
+    // Wait for the backend to populate customers + documents.
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-document")).toBeTruthy();
+    });
+    // navIndex mock returns Invoices for "invoi" → 1 page row.
+    // + 1 customer + 1 document = 3 flat rows.
+    // ↓ moves to index 1 (customer), ↓ moves to index 2 (document).
+    fireEvent.keyDown(_input(), { key: "ArrowDown" });
+    fireEvent.keyDown(_input(), { key: "ArrowDown" });
+    fireEvent.keyDown(_input(), { key: "Enter" });
+    expect(navigateSpy).toHaveBeenCalledTimes(1);
+    expect(navigateSpy).toHaveBeenCalledWith("/invoices/inv-1");
+  });
+
+  it("Enter on customer row navigates to /customers/:id", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [
+        { id: "cust-777", name: "Test Customer", match_field: "name" },
+      ],
+      documents: [],
+    });
+    render(<PageHeader title="X" />);
+    // Use a query with no page matches so the customer is at flat idx 0.
+    fireEvent.change(_input(), { target: { value: "test-customer" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-customer")).toBeTruthy();
+    });
+    fireEvent.keyDown(_input(), { key: "Enter" });
+    expect(navigateSpy).toHaveBeenCalledWith("/customers/cust-777");
+  });
+
+  it("Enter on job row navigates to /jobs/:id", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [],
+      documents: [
+        { type: "job", id: "job-321", display_id: "J-abcd1234",
+          title: "Deep clean", match_field: "id" },
+      ],
+    });
+    render(<PageHeader title="X" />);
+    fireEvent.change(_input(), { target: { value: "deep-clean-query" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-document")).toBeTruthy();
+    });
+    fireEvent.keyDown(_input(), { key: "Enter" });
+    expect(navigateSpy).toHaveBeenCalledWith("/jobs/job-321");
+  });
+
+  it("Enter on invoice row navigates to /invoices/:id", async () => {
+    searchGlobalSpy.mockResolvedValue({
+      customers: [],
+      documents: [
+        { type: "invoice", id: "inv-555", display_id: "INV-2026-000555",
+          title: "Feb", match_field: "number" },
+      ],
+    });
+    render(<PageHeader title="X" />);
+    fireEvent.change(_input(), { target: { value: "feb-invoice-q" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-document")).toBeTruthy();
+    });
+    fireEvent.keyDown(_input(), { key: "Enter" });
+    expect(navigateSpy).toHaveBeenCalledWith("/invoices/inv-555");
+  });
+
+  it("preserves prior results when the backend errors", async () => {
+    // First keystroke → success, rows land.
+    searchGlobalSpy.mockResolvedValueOnce({
+      customers: [
+        { id: "c-preserve", name: "Alpha", match_field: "name" },
+      ],
+      documents: [],
+    });
+    render(<PageHeader title="X" />);
+    fireEvent.change(_input(), { target: { value: "alpha" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("page-header-section-customer")).toBeTruthy();
+    });
+    // Second keystroke → backend fails; the customer row must
+    // NOT disappear from the dropdown.
+    searchGlobalSpy.mockRejectedValueOnce(new Error("500 backend"));
+    fireEvent.change(_input(), { target: { value: "alphaa" } });
+    // Wait long enough for the debounced fetch to settle.
+    await new Promise((r) => setTimeout(r, 450));
+    // Customer row is still present.
+    expect(screen.queryByTestId("page-header-section-customer")).toBeTruthy();
   });
 });

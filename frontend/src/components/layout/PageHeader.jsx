@@ -1,5 +1,6 @@
 /**
- * Feb-2026 · N1 · Shared page-header component.
+ * Feb-2026 · N1 / N4' · Shared page-header component with grouped
+ * global search.
  *
  * Contract
  * ────────
@@ -14,23 +15,27 @@
  *   Row 1 · title left, actions right, inherits page background.
  *   Row 2 · slim blue command-bar band with a centered search
  *           input (max-width 640, ``margin: 0 auto``).
- *   Row 3 · absolute-positioned dropdown pane (max 8 results,
- *           keyboard nav via ↑/↓, Enter navigates, Esc clears).
+ *   Row 3 · absolute-positioned dropdown pane with THREE grouped
+ *           sections (Pages · Customers · Documents), keyboard nav
+ *           traverses ALL rows flat regardless of section.
  *
- * Design tokens (Feb-2026 · Global Command Bar spec)
- * ──────────────────────────────────────────────────
- *   Search band background = ``colors.inputBorder`` (#3B82F6 ·
- *   command-bar blue, defined in ``theme.js``).  Input is
- *   borderless — flat white pill (``border: none``, rounded-full)
- *   on the blue hero.  Search icon uses ``colors.nav.bg``
- *   (#1B1F5C · navy) so it reads clearly on the white input over
- *   the blue hero.  The kbd hint on the right is a slightly
- *   darker-than-``colors.muted`` grey (``#3F3F46``) chosen for
- *   AA contrast on the ``surfaceSecondary`` pill background.
- *
- * Cmd+K global shortcut (N3) is NOT wired here.  Only the local
- * search UX ships in N1.  N2 wires this component into every
- * page's H1 slot in one sweep.
+ * N4' additions (Feb-2026)
+ * ────────────────────────
+ * * Dropdown is grouped via ``useGlobalSearch(query)``:
+ *     - Pages (local, sync, from ``@/lib/navIndex``)
+ *     - Customers (from ``/api/search/global``)
+ *     - Documents (Jobs + Invoices, merged, from same endpoint)
+ * * Backend fetch is debounced 300 ms + cancellable via
+ *   AbortController — stale keystrokes truly abort mid-flight.
+ * * On transient backend error, prior results are preserved so
+ *   the panel doesn't flash empty.
+ * * Enter navigates to the appropriate route based on row kind:
+ *     Page      → ``rec.path`` (navIndex-provided)
+ *     Customer  → ``/customers/${id}``
+ *     Document/job     → ``/jobs/${id}``  (App.js:938)
+ *     Document/invoice → ``/invoices/${id}``  (App.js:950)
+ * * Empty state ("No results for `<q>`") only when q has ≥ 2
+ *   chars AND all three groups are empty AND no error.
  */
 import React, {
   useCallback,
@@ -42,15 +47,29 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { colors } from "@/theme";
-import { searchNavIndex } from "@/lib/navIndex";
+import { useGlobalSearch } from "@/hooks/useGlobalSearch";
 
 
-/** Detect Mac for the ``⌘K`` vs ``Ctrl+K`` hint.  SSR-safe fallback
- *  is Ctrl since the visible chrome is a rendering hint only. */
+/** Detect Mac for the ``⌘K`` vs ``Ctrl+K`` hint. */
 function _detectMac() {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || navigator.platform || "";
   return /Mac|iPhone|iPad|iPod/i.test(ua);
+}
+
+
+/** Compute the customer address subline. Uses structured fields
+ *  when available, falls back to the legacy concatenated
+ *  ``address`` field if the structured fields are absent. */
+function _customerAddressLine(c) {
+  const line1 = (c.address_line1 || "").trim();
+  const city = (c.city || "").trim();
+  const postal = (c.postal_code || "").trim();
+  if (line1 || city || postal) {
+    const parts = [line1, [city, postal].filter(Boolean).join(" ")];
+    return parts.filter(Boolean).join(", ");
+  }
+  return (c.address || "").trim();
 }
 
 
@@ -59,14 +78,29 @@ export function PageHeader({ title, subtitle, actions }) {
   const inputRef = useRef(null);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
-  const results = useMemo(
-    () => (query.trim() ? searchNavIndex(query) : []),
-    [query],
-  );
+  const { pages, customers, documents, loading, error }
+    = useGlobalSearch(query);
   const isMac = useMemo(() => _detectMac(), []);
   const kbdHint = isMac ? "\u2318K" : "Ctrl+K";  // ⌘K
 
-  // Keep highlight in bounds whenever the result set changes.
+  // ── Flat row list for keyboard nav — sections are visual only.
+  //    Each row carries { kind, rec, sectionIndex } so ``commit``
+  //    can dispatch on kind without another lookup.
+  const flatRows = useMemo(() => {
+    const rows = [];
+    pages.forEach((rec) =>
+      rows.push({ kind: "page", rec }));
+    customers.forEach((rec) =>
+      rows.push({ kind: "customer", rec }));
+    documents.forEach((rec) =>
+      rows.push({ kind: "document", rec }));
+    return rows;
+  }, [pages, customers, documents]);
+
+  // Keep highlight in bounds whenever the QUERY changes. NOT on
+  // ``flatRows.length`` — a length change triggered by an async
+  // backend arrival would fire mid-way through a keystroke burst
+  // and reset the user's cursor unexpectedly.
   useEffect(() => {
     setHighlight(0);
   }, [query]);
@@ -77,32 +111,187 @@ export function PageHeader({ title, subtitle, actions }) {
     if (inputRef.current) inputRef.current.blur();
   }, []);
 
-  const commit = useCallback((rec) => {
-    if (!rec || !rec.path) return;
+  const commit = useCallback((row) => {
+    if (!row || !row.rec) return;
+    let target = null;
+    if (row.kind === "page") {
+      target = row.rec.path;
+    } else if (row.kind === "customer") {
+      if (row.rec.id) target = `/customers/${row.rec.id}`;
+    } else if (row.kind === "document") {
+      if (row.rec.type === "invoice" && row.rec.id) {
+        target = `/invoices/${row.rec.id}`;
+      } else if (row.rec.type === "job" && row.rec.id) {
+        target = `/jobs/${row.rec.id}`;
+      }
+    }
+    if (!target) return;
     clearAndClose();
-    navigate(rec.path);
+    navigate(target);
   }, [clearAndClose, navigate]);
 
-  const onKeyDown = useCallback((e) => {
+  // Event handler — deliberately NOT memoized. React re-creates
+  // on every render (cheap) so ``flatRows`` + ``highlight`` are
+  // always fresh from render scope. useCallback memoisation risks
+  // capturing stale ``flatRows`` between synchronous fireEvents
+  // when a backend arrival changes the row count mid-burst.
+  const onKeyDown = (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
       clearAndClose();
       return;
     }
-    if (!results.length) return;
+    if (!flatRows.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, results.length - 1));
+      setHighlight((h) => Math.min(h + 1, flatRows.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlight((h) => Math.max(h - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      commit(results[highlight]);
+      // Bounds guard — if backend results shrunk mid-nav, clamp
+      // to the last valid row.
+      const idx = Math.min(highlight, flatRows.length - 1);
+      if (idx >= 0) commit(flatRows[idx]);
     }
-  }, [results, highlight, commit, clearAndClose]);
+  };
 
-  const dropdownOpen = query.trim().length > 0 && results.length > 0;
+  const q = query.trim();
+  const hasAnyResults = flatRows.length > 0;
+  const showEmptyState = q.length >= 2 && !hasAnyResults && !loading && !error;
+  const dropdownOpen = q.length > 0 && (hasAnyResults || showEmptyState || loading);
+
+  // ── section renderer ──
+  const renderSection = (label, kind, rows, startFlatIdx) => {
+    if (!rows.length) return null;
+    return (
+      <li
+        role="presentation"
+        style={{ padding: 0 }}
+        data-testid={`page-header-section-${kind}`}
+      >
+        <div
+          style={{
+            padding: "8px 10px 4px",
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: 0.4,
+            textTransform: "uppercase",
+            color: colors.muted,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+          data-testid={`page-header-section-header-${kind}`}
+        >
+          <span>{label}</span>
+          <span data-testid={`page-header-section-count-${kind}`}>
+            {rows.length}
+          </span>
+        </div>
+        <ul role="group" style={{
+          margin: 0, padding: 0, listStyle: "none",
+        }}>
+          {rows.map((rec, idx) => {
+            const flatIdx = startFlatIdx + idx;
+            const active = flatIdx === highlight;
+            return (
+              <li
+                key={`${kind}-${rec.id || rec.path}-${idx}`}
+                role="option"
+                aria-selected={active}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commit({ kind, rec });
+                }}
+                onMouseEnter={() => setHighlight(flatIdx)}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  backgroundColor: active
+                    ? colors.brandTertiary
+                    : "transparent",
+                  borderLeft: active
+                    ? `3px solid ${colors.nav.bg}`
+                    : "3px solid transparent",
+                  color: colors.onSurface,
+                  fontSize: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                }}
+                data-testid={`page-header-search-result-${flatIdx}`}
+              >
+                {kind === "page" ? (
+                  <>
+                    <span>{rec.title}</span>
+                    <span style={{
+                      fontSize: 12, color: colors.muted,
+                    }}>
+                      {rec.path}
+                    </span>
+                  </>
+                ) : null}
+                {kind === "customer" ? (
+                  <>
+                    <span style={{ fontWeight: 600 }}>{rec.name}</span>
+                    <span style={{
+                      fontSize: 12, color: colors.muted,
+                    }} data-testid={`customer-address-${flatIdx}`}>
+                      {_customerAddressLine(rec) || "\u2014"}
+                    </span>
+                  </>
+                ) : null}
+                {kind === "document" ? (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: 0.5,
+                        textTransform: "uppercase",
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        color: colors.surface,
+                        backgroundColor: rec.type === "invoice"
+                          ? colors.inputBorder  // blue for invoice
+                          : colors.nav.bg,      // navy for job
+                      }}
+                      data-testid={`doc-badge-${flatIdx}`}
+                    >
+                      {rec.type === "invoice" ? "Invoice" : "Job"}
+                    </span>
+                    <span style={{
+                      fontFamily: "SFMono-Regular, Menlo, monospace",
+                      fontSize: 13,
+                    }}>
+                      {rec.display_id}
+                    </span>
+                    <span style={{
+                      color: colors.muted, fontSize: 13,
+                      overflow: "hidden", textOverflow: "ellipsis",
+                      whiteSpace: "nowrap", flex: "1 1 auto", minWidth: 0,
+                    }}>
+                      {rec.title}
+                    </span>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </li>
+    );
+  };
+
+  // Compute the starting flat index for each section.
+  const pagesStart = 0;
+  const customersStart = pages.length;
+  const documentsStart = pages.length + customers.length;
 
   return (
     <header
@@ -227,9 +416,6 @@ export function PageHeader({ title, subtitle, actions }) {
                 right: 10,
                 fontSize: 11,
                 letterSpacing: 0.5,
-                // Slightly darker than colors.muted (#71717A) for
-                // comfortable AA contrast on the kbd hint's
-                // ``surfaceSecondary`` pill.
                 color: "#3F3F46",
                 padding: "2px 6px",
                 borderRadius: 4,
@@ -262,45 +448,36 @@ export function PageHeader({ title, subtitle, actions }) {
               }}
               data-testid="page-header-search-dropdown"
             >
-              {results.map((rec, idx) => {
-                const active = idx === highlight;
-                return (
-                  <li
-                    key={rec.path}
-                    role="option"
-                    aria-selected={active}
-                    onMouseDown={(e) => {
-                      // ``mousedown`` so the click fires before the
-                      // input's ``blur`` collapses the dropdown.
-                      e.preventDefault();
-                      commit(rec);
-                    }}
-                    onMouseEnter={() => setHighlight(idx)}
-                    style={{
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      backgroundColor: active
-                        ? colors.brandTertiary
-                        : "transparent",
-                      color: colors.onSurface,
-                      fontSize: 14,
-                    }}
-                    data-testid={`page-header-search-result-${idx}`}
-                  >
-                    {rec.title}
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        fontSize: 12,
-                        color: colors.muted,
-                      }}
-                    >
-                      {rec.path}
-                    </span>
-                  </li>
-                );
-              })}
+              {renderSection("Pages", "page", pages, pagesStart)}
+              {loading && q.length >= 2 ? (
+                <li
+                  role="presentation"
+                  data-testid="page-header-loading-shimmer"
+                  style={{
+                    padding: "8px 10px",
+                    fontSize: 12,
+                    color: colors.muted,
+                    fontStyle: "italic",
+                  }}
+                >
+                  Loading customers &amp; documents\u2026
+                </li>
+              ) : null}
+              {renderSection("Customers", "customer", customers, customersStart)}
+              {renderSection("Documents", "document", documents, documentsStart)}
+              {showEmptyState ? (
+                <li
+                  role="presentation"
+                  data-testid="page-header-empty-state"
+                  style={{
+                    padding: "8px 10px",
+                    fontSize: 13,
+                    color: colors.muted,
+                  }}
+                >
+                  No results for &ldquo;{q}&rdquo;
+                </li>
+              ) : null}
             </ul>
           ) : null}
         </div>
