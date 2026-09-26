@@ -240,6 +240,14 @@ export const ADMIN_NAV_V2 = [
     { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", industry: "pools", subsection: "Field Service" },
     { to: "/equipment",    label: "Equipment",    icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     { to: "/admin/assets", label: "Assets",       icon: Wrench,   feature: "jobs", subsection: "Field Service" },
+    // Feb-2026 · C3 — Chemical Applications regulatory spray log.
+    // Route gated by ``AdminOrManager`` in App.js (admin +
+    // super_admin + manager). ``hard_rule: "manager_only"`` mirrors
+    // Recurring Jobs / Pricebook so managers see it in the sidebar.
+    // Technicians create sprays from mobile / field-log surfaces
+    // and do not need the admin list view — the ``manager_only``
+    // filter hides it from tech nav.
+    { to: "/admin/chemical-applications", label: "Chemical Applications", icon: FlaskConical, feature: "jobs", hard_rule: "manager_only", subsection: "Field Service", aliases: ["Spray Log", "Pesticide Log", "Chemical Log", "REI Tracking"] },
     // Inventory
     { to: "/admin/inventory",                 label: "Inventory",            icon: Boxes,             feature: "jobs",    subsection: "Inventory" },
     { to: "/admin/inventory/alerts",          label: "Stock Alerts",         icon: AlertTriangleIcon, feature: "jobs",    subsection: "Inventory" },

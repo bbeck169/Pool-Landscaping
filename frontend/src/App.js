@@ -55,6 +55,8 @@ const AdminTagsList = React.lazy(() => import(/* webpackChunkName: "p-admin-admi
 const AdminCommsSuppressionLog = React.lazy(() => import(/* webpackChunkName: "p-admin-admincommssuppressionlog" */ "@/pages/admin/AdminCommsSuppressionLog"));
 const AdminServiceReportsList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminservicereportslist" */ "@/pages/admin/AdminServiceReportsList"));
 const AdminTimeEntriesList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintimeentrieslist" */ "@/pages/admin/AdminTimeEntriesList"));
+// Feb-2026 · C3 — Chemical Applications regulatory spray log (admin+manager).
+const ChemicalApplicationsList = React.lazy(() => import(/* webpackChunkName: "p-chemical-chemicalapplicationslist" */ "@/pages/chemical/ChemicalApplicationsList"));
 const ReflowHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-admin-reflowhistorypage" */ "@/pages/admin/ReflowHistoryPage"));
 // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
 const AdminChargeTemplatesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminchargetemplatespage" */ "@/pages/admin/AdminChargeTemplatesPage"));
@@ -889,6 +891,11 @@ export default function App() {
             <Route path="admin/comms/suppression-log" element={<SuperAdminOnly><AdminCommsSuppressionLog /></SuperAdminOnly>} />
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
             <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
+            {/* Feb-2026 · C3 — Chemical Applications regulatory spray log.
+                Admin + super_admin + manager per C-series compliance role
+                brief; techs create sprays from mobile / field-log surfaces
+                (backend enforced) and do not need the admin list view. */}
+            <Route path="admin/chemical-applications" element={<AdminOrManager><ChemicalApplicationsList /></AdminOrManager>} />
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
             {/* Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD. */}
             <Route path="admin/charge-templates" element={<AdminOnly><AdminChargeTemplatesPage /></AdminOnly>} />
