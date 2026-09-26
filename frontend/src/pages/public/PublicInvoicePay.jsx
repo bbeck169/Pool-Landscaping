@@ -158,7 +158,7 @@ export default function PublicInvoicePay() {
                 src="/logos/credit-card-logos.png"
                 alt="Cards accepted"
                 data-testid="public-invoice-pay-card-logos"
-                className="h-12 w-auto mx-auto block"
+                className="h-24 w-auto max-w-[400px] mx-auto block"
               />
             </div>
           </div>
