@@ -22453,6 +22453,16 @@ The hook fired **again** during the public-invoice flood-fill task, this time tw
 - Prefer `git add <explicit path> <explicit path> …` over `git add -A` or `git add .`.  Files not explicitly staged cannot be swept in by the hook.
 - Bundle multi-step git remediations (`reset` + `restore --staged` + `add` + `commit` + `diff-tree`) into a single `execute_bash` call whenever possible, so the between-tool-call window that the hook exploits is closed.
 
+**Auto-hook fires during delivery reports — cannot be prevented from the agent side**:
+The hook can sweep between chat turns even when all git ops are properly batched inside `execute_bash`.  The between-turn window during a prose *delivery report* (where the agent describes what just landed) is still exposed to the hook, and no amount of staging/stashing discipline inside the agent's tool calls closes that window.  This class of fire cannot be prevented from the agent side without a platform hook config change.  Standing remediation: **Option-A rebase per incident** (`git rebase --onto <parent> <bad-sha> HEAD`), log the SHA in this file, move on.
+
+**Running counter of auto-hook fires (this Feb-2026 session)**:
+1. `d97810f56` (2026-02-20) — subject `## Status: **1 · Shipped, forgot to mention it**` — swept during currency retro-report reply; sanitized via `git reset --soft HEAD~1` before it entered the durable history (superseded by `8f9374207`).
+2. `381a86c9d` (2026-02-20) — subject `**HALT — pixel-count recon reveals a metric-definition surprise, not a rendering bug.**` — swept during the flood-fill halt-and-report reply; sanitized via a second `git reset --soft HEAD~1` (also superseded by `8f9374207`).
+3. `e3b10f6c1` (2026-02-20) — subject `# Step 0 · Delivered` — swept between the Step 0 delivery reply and Task 1 execution; contained only the ruff-cache noise (`backend/.ruff_cache/0.16.2/15012461920548998617`) and my full delivery-report markdown.  Sanitized via `git rebase --onto 9c9946349 e3b10f6c1 HEAD`; Task 1 replayed from `fa0bf18fd` → `73953aeed` (identical content, new parent).
+
+
+
 
 
 ### P53-subset test collection pollution (open, non-blocking)
