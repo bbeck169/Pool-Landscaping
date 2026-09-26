@@ -1,8 +1,0 @@
-{
-  "tests/test_auto_visit_email_address.py::test_branded_template_no_logo_falls_back_to_text_header": true,
-  "tests/test_customer_merge_m1.py::test_m11_stripe_warning_when_duplicate_had_stripe_customer": true,
-  "tests/test_auto_visit_email_band_labels_and_photos.py::test_required_four_render_as_bands_with_numeric_subtitle": true,
-  "tests/test_auto_visit_email_band_labels_and_photos.py::test_below_average_and_elevated_bands_render_correctly": true,
-  "tests/test_auto_visit_email_band_labels_and_photos.py::test_optional_readings_render_plain_no_band_label": true,
-  "tests/test_auto_visit_email_band_labels_and_photos.py::test_three_photos_render_all_three_in_grid": true
-}
