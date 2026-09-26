@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
+import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
 import { useAuth } from "@/auth";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
@@ -250,6 +251,11 @@ const TABS = [
   { k: "properties", label: "Properties", icon: Home },
   { k: "jobs", label: "Jobs", icon: Briefcase },
   { k: "measurements", label: "Measurements", icon: Ruler, roles: ["admin", "super_admin", "manager"] },
+  // Feb-2026 · C5 · Chemical History tab lives adjacent to Measurements
+  // since both are field-service record surfaces gated to admin +
+  // super_admin + manager. Techs record sprays from the mobile app;
+  // customers never see the tab.
+  { k: "chemical_history", label: "Chemical History", icon: FlaskConical, roles: CHEMICAL_HISTORY_TAB_ROLES },
   { k: "documents", label: "Documents", icon: FileText },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
@@ -1180,6 +1186,15 @@ export default function CustomerDetail() {
             // the sidebar dropdown.
             (["admin", "super_admin", "manager"].includes(authUser?.role)) ? (
               <CustomerMeasurementsTab customer={customer} />
+            ) : null
+          ) : null}
+
+          {tab === "chemical_history" ? (
+            // Feb-2026 · C5 · same defensive shape as measurements —
+            // filter gate + hard role check so a stale deep-link on a
+            // technician / customer session can't render the tab body.
+            (CHEMICAL_HISTORY_TAB_ROLES.includes(authUser?.role)) ? (
+              <CustomerChemicalHistoryTab customer={customer} />
             ) : null
           ) : null}
 

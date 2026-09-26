@@ -47,14 +47,15 @@ const {
 
 
 // Configurable per-test ``useParams`` return + ``useAuth`` return.
-// Both live on module-scoped mutable dicts so mocks reference them
-// lazily and each test can rewrite before render.
-const { authState, paramsState } = vi.hoisted(() => ({
+// ``searchState`` mirrors ``useSearchParams()`` for the C5 hydration
+// branch — each test can set specific query params before render.
+const { authState, paramsState, searchState } = vi.hoisted(() => ({
   authState: { user: { id: "u1", name: "Alex Admin",
                         applicator_license_number: "TX-12345",
                         role: "admin" },
                 role: "admin" },
   paramsState: {},
+  searchState: new URLSearchParams(),
 }));
 
 
@@ -97,6 +98,7 @@ vi.mock("@/auth", () => ({
 vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateSpy,
   useParams: () => paramsState,
+  useSearchParams: () => [searchState, () => {}],
   Link: ({ children, to, ...rest }) => <a href={to} {...rest}>{children}</a>,
 }));
 
@@ -202,8 +204,11 @@ function _installApiMocks({
 
 
 beforeEach(() => {
-  // Reset ambient mocks + auth + params.
+  // Reset ambient mocks + auth + params + search.
   paramsState.id = undefined;
+  // Recreate the URLSearchParams instance so leftover keys from the
+  // previous test don't leak into the next.
+  searchState.forEach((_, k) => searchState.delete(k));
   authState.user = { id: "u1", name: "Alex Admin",
                        applicator_license_number: "TX-12345",
                        role: "admin" };
@@ -629,5 +634,49 @@ describe("ChemicalApplicationForm — edit mode", () => {
       expect(screen.getByTestId("chem-app-form-role-lock")).toBeTruthy();
     });
     expect(screen.getByTestId("chem-app-form-submit").disabled).toBe(true);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 19. C5 · ?customer_id=<id> deep-link hydration (create mode)
+// ═══════════════════════════════════════════════════════════════════
+describe("ChemicalApplicationForm — C5 deep-link hydration", () => {
+  it("in create mode with ?customer_id=<id>, pre-selects the customer + auto-fills property_address", async () => {
+    // Land on /admin/chemical-applications/new?customer_id=cust-1.
+    searchState.set("customer_id", "cust-1");
+    render(<ChemicalApplicationForm />);
+    // Wait for the customer list to load and the hydration effect
+    // to fire (2nd render pass after customers arrive).
+    await waitFor(() => {
+      expect(screen.getByTestId("chem-app-form-customer").value).toBe("cust-1");
+    });
+    // Property address hydrated from cust-1's structured address fields.
+    await waitFor(() => {
+      const el = screen.getByTestId("chem-app-form-property-address");
+      expect(el.value).toContain("123 Main St");
+      expect(el.value).toContain("Austin");
+    });
+    // The Get Live Weather button is unlocked (customer is selected).
+    expect(screen.getByTestId("chem-app-form-fetch-weather").disabled).toBe(false);
+  });
+
+  it("in edit mode, ?customer_id query param is IGNORED (edit record wins)", async () => {
+    paramsState.id = "app-77";
+    searchState.set("customer_id", "cust-1");
+    _installApiMocks({ existingRecord: {
+      id: "app-77", application_date: "2026-02-15",
+      start_time: "10:00:00", stop_time: "10:30:00",
+      customer_id: "cust-2", property_address: "5 Beta Lane",
+      chemical_name: "Turflon", area_treated_sqft: 3200,
+      amount_sprayed_gal: 1.8, concentrate_oz: 6,
+      target_pest: "Bermuda", rei_hours: 24,
+      attachments: [], notes: "",
+    }});
+    render(<ChemicalApplicationForm />);
+    await waitFor(() => {
+      // Customer stays as the edit record's cust-2, NOT the query's cust-1.
+      expect(screen.getByTestId("chem-app-form-customer").value).toBe("cust-2");
+    });
   });
 });

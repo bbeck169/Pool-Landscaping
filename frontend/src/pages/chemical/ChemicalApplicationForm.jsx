@@ -35,7 +35,7 @@
 import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
-import { useNavigate, useParams, Link } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import {
   FlaskConical, Save, X as XIcon, Cloud, Loader2, AlertTriangle,
   Camera, Trash2, Shield, ArrowLeft,
@@ -146,6 +146,7 @@ function ErrorText({ children }) {
 export default function ChemicalApplicationForm() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const isEdit = !!id;
   const { user, role } = useAuth();
 
@@ -194,6 +195,34 @@ export default function ChemicalApplicationForm() {
       .then((r) => setCustomers(Array.isArray(r) ? r : (r?.items || [])))
       .catch(() => setCustomers([]));
   }, []);
+
+  // ── Create-mode deep-link hydration: ``?customer_id=<id>`` ──
+  // Feb-2026 · C5 · CustomerChemicalHistoryTab's "New Application"
+  // button carries ``?customer_id=<cid>`` so we can pre-select the
+  // customer picker and auto-fill ``property_address`` from the
+  // structured customer address, matching what a manual pick does.
+  // Only runs in create mode + after ``customers`` finishes loading
+  // so the composed address is available.
+  useEffect(() => {
+    if (isEdit) return;
+    const qCustomerId = searchParams.get("customer_id");
+    if (!qCustomerId) return;
+    if (!Array.isArray(customers) || customers.length === 0) return;
+    const c = customers.find((x) => x && x.id === qCustomerId);
+    if (!c) return;
+    // Only hydrate once: skip if the user already touched the customer
+    // field (either directly or via a previous pass of this effect).
+    setForm((prev) => {
+      if (prev.customer_id) return prev;
+      const addr = _composeCustomerAddress(c);
+      return {
+        ...prev,
+        customer_id: qCustomerId,
+        property_address: addr || prev.property_address,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, customers, searchParams]);
 
   useEffect(() => {
     if (!isEdit) return;
