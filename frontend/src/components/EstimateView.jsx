@@ -49,6 +49,13 @@ import DocDesktopShell from "@/components/documents/DocDesktopShell";
 // preview mode consumes the admin surface hook instead.
 import { useTenantBranding, useBusinessSettings } from "@/hooks/useTenantBranding";
 import EstimateFlipbook from "@/components/estimates/EstimateFlipbook";
+// Feb-2026 · Currency-format standardization — every money field on
+// EstimateView + InvoiceView now routes through the canonical
+// ``formatCurrency`` helper so both surfaces render "$333,333.33"
+// (US locale, comma-grouped, 2-decimal, ``$`` prefix). The local
+// ``fmt(n)`` helper below is preserved only for the surviving
+// non-money call sites (billable hours + margin percent).
+import { formatCurrency } from "@/components/reports/formatters";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -766,7 +773,7 @@ export default function EstimateView({
                         ) : null}
                       </td>
                       <td className="iv-num" style={rowStyle}>
-                        {fmt(g.subtotal)}
+                        {formatCurrency(g.subtotal)}
                       </td>
                       {showActionCol ? (
                         <td className="iv-num">
@@ -866,7 +873,7 @@ export default function EstimateView({
                       <div className="ev-line-card-row" style={cardStyle}>
                         <span className="ev-line-card-label">Subtotal</span>
                         <span className="ev-line-card-value">
-                          {fmt(g.subtotal)}
+                          {formatCurrency(g.subtotal)}
                         </span>
                       </div>
                       {showActionCol ? (
@@ -973,15 +980,15 @@ export default function EstimateView({
                       ) : null}
                     </td>
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
-                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.cost_rate)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.cost_rate)}</td> : null}
                     <td className="iv-num" style={rowStyle} data-mlabel="Qty/Hr">{li.qty_hr || li.quantity || 0}</td>
                     <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
-                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.m_rate)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.m_rate)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
-                    {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_b_cost)}</td> : null}
+                    {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.t_b_cost)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
-                    <td className="iv-num" style={rowStyle} data-mlabel="Total">{fmt(li.total)}</td>
+                    <td className="iv-num" style={rowStyle} data-mlabel="Total">{formatCurrency(li.total)}</td>
                     {as_customer && actionable && !locked ? (
                       <td className="iv-num">
                         {isDeclined ? (
@@ -1045,7 +1052,7 @@ export default function EstimateView({
                     </div>
                     <div className="ev-line-card-row" style={cardStyle}>
                       <span className="ev-line-card-label">Subtotal</span>
-                      <span className="ev-line-card-value">{fmt(li.total)}</span>
+                      <span className="ev-line-card-value">{formatCurrency(li.total)}</span>
                     </div>
                     {as_customer && actionable && !locked ? (
                       <div className="ev-line-card-action">
@@ -1088,12 +1095,12 @@ export default function EstimateView({
         totals={(
           <table className="ev-totals" data-testid="estimate-totals-table">
             <tbody>
-              <tr><td>Subtotal</td><td data-testid="estimate-totals-subtotal">{fmt(totals.subtotal)}</td></tr>
-              <tr><td>Taxes</td><td data-testid="estimate-totals-taxes">{fmt(totals.taxes)}</td></tr>
-              <tr><td>Amount Paid</td><td data-testid="estimate-totals-amount-paid">{fmt(totals.amount_paid)}</td></tr>
+              <tr><td>Subtotal</td><td data-testid="estimate-totals-subtotal">{formatCurrency(totals.subtotal)}</td></tr>
+              <tr><td>Taxes</td><td data-testid="estimate-totals-taxes">{formatCurrency(totals.taxes)}</td></tr>
+              <tr><td>Amount Paid</td><td data-testid="estimate-totals-amount-paid">{formatCurrency(totals.amount_paid)}</td></tr>
               <tr className="ev-total-highlight">
                 <td>Total Estimated Cost</td>
-                <td data-testid="estimate-totals-cost">{fmt(totals.total_estimated_cost)}</td>
+                <td data-testid="estimate-totals-cost">{formatCurrency(totals.total_estimated_cost)}</td>
               </tr>
               {/* Feb-2026 · Phase A — Original / Adjusted summary.
                   Only shown when the customer has flagged at least
@@ -1109,20 +1116,20 @@ export default function EstimateView({
                             marginRight: 8,
                           }}
                           data-testid="estimate-totals-original">
-                      ${fmt(totals.original_total)}
+                      {formatCurrency(totals.original_total)}
                     </span>
                     <span style={{ fontWeight: 700 }}
                           data-testid="estimate-totals-adjusted">
-                      ${fmt(totals.adjusted_total)}
+                      {formatCurrency(totals.adjusted_total)}
                     </span>
                   </td>
                 </tr>
               ) : null}
               {!as_customer ? (
                 <>
-                  <tr><td>Estimated Profit</td><td data-testid="estimate-totals-profit">{fmt(totals.estimated_profit)}</td></tr>
+                  <tr><td>Estimated Profit</td><td data-testid="estimate-totals-profit">{formatCurrency(totals.estimated_profit)}</td></tr>
                   <tr><td>Total B.Hrs</td><td data-testid="estimate-totals-b-hrs">{fmt(totals.total_b_hrs)}</td></tr>
-                  <tr><td>Total B.Hrs Revenue</td><td>{fmt(totals.total_b_hrs_revenue)}</td></tr>
+                  <tr><td>Total B.Hrs Revenue</td><td>{formatCurrency(totals.total_b_hrs_revenue)}</td></tr>
                 </>
               ) : null}
             </tbody>
@@ -1267,7 +1274,7 @@ export default function EstimateView({
           <p className="ev-modal-help">
             You're telling us you don't want{" "}
             <b>{line_items[lineDeclineOpen]?.description || "this item"}</b>{" "}
-            (${fmt(line_items[lineDeclineOpen]?.total)}). Your total will
+            ({formatCurrency(line_items[lineDeclineOpen]?.total)}). Your total will
             adjust automatically. You can undo this until you approve or
             decline the whole estimate.
           </p>

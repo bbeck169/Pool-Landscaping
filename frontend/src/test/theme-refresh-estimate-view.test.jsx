@@ -324,7 +324,10 @@ describe("EstimateView · theme refresh", () => {
     );
     expect(
       screen.getByTestId("estimate-totals-adjusted").textContent,
-    ).toContain("3000");
+    ).toContain("3,000");   /* Feb-2026 · currency standardization — the
+      canonical formatCurrency helper emits comma-grouped 2-decimal
+      currency, so ``3000`` renders as ``$3,000.00``. Match on the
+      comma-grouped fragment. */
   });
 });
 

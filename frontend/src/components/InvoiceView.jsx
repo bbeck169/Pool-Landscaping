@@ -33,6 +33,15 @@ import DocMobileHeader from "@/components/documents/DocMobileHeader";
 // Feb-2026 · Desktop-unification — shared shell so invoice /
 // estimate / quote all render the same skeleton at ≥ 768 px.
 import DocDesktopShell from "@/components/documents/DocDesktopShell";
+// Feb-2026 · Currency-format standardization — every money field on
+// InvoiceView (and its sibling EstimateView) now routes through the
+// canonical ``formatCurrency`` helper so both surfaces render
+// "$333,333.33" (US locale, comma-grouped, 2-decimal, ``$`` prefix).
+// The local ``fmtMoney(n)`` helper below is preserved for the single
+// remaining non-money site (line 316, ``li.percent``, a discount
+// percentage that historically flowed through the money helper —
+// keeping it here avoids emitting ``$`` on a percent cell).
+import { formatCurrency } from "@/components/reports/formatters";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -183,7 +192,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
                   }}
                 >
                   <CreditCard size={16} />
-                  &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+                  &nbsp;Pay {formatCurrency(totals?.total_due || 0)}
                 </button>
               </div>
             ) : null}
@@ -267,13 +276,13 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               <tr>
                 <td className="iv-kv-label">Credit Available</td>
                 <td className="iv-kv-value" data-testid="invoice-credit-available">
-                  {fmtMoney(header.credit_available)}
+                  {formatCurrency(header.credit_available)}
                 </td>
               </tr>
               <tr>
                 <td className="iv-kv-label">Outstanding Balance</td>
                 <td className="iv-kv-value" data-testid="invoice-outstanding-balance">
-                  {fmtMoney(header.outstanding_balance)}
+                  {formatCurrency(header.outstanding_balance)}
                 </td>
               </tr>
             </tbody>
@@ -311,10 +320,10 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               ) : line_items.map((li, i) => (
                 <tr key={i} data-testid={`invoice-line-item-row-${i}`}>
                   <td>{li.description}</td>
-                  <td className="iv-num">{fmtMoney(li.cost_rate)}</td>
+                  <td className="iv-num">{formatCurrency(li.cost_rate)}</td>
                   <td className="iv-num">{li.qty_hr}</td>
                   <td className="iv-num">{fmtMoney(li.percent)}</td>
-                  <td className="iv-num">{fmtMoney(li.total)}</td>
+                  <td className="iv-num">{formatCurrency(li.total)}</td>
                 </tr>
               ))}
             </tbody>
@@ -343,19 +352,19 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               <tbody>
                 <tr>
                   <td>Subtotal</td>
-                  <td data-testid="invoice-total-subtotal">{fmtMoney(totals.subtotal)}</td>
+                  <td data-testid="invoice-total-subtotal">{formatCurrency(totals.subtotal)}</td>
                 </tr>
                 <tr>
                   <td>This Invoice</td>
-                  <td data-testid="invoice-total-this-invoice">{fmtMoney(totals.this_invoice)}</td>
+                  <td data-testid="invoice-total-this-invoice">{formatCurrency(totals.this_invoice)}</td>
                 </tr>
                 <tr>
                   <td>Amount Paid</td>
-                  <td data-testid="invoice-total-amount-paid">{fmtMoney(totals.amount_paid)}</td>
+                  <td data-testid="invoice-total-amount-paid">{formatCurrency(totals.amount_paid)}</td>
                 </tr>
                 <tr className="iv-total-due">
                   <td>Total Due</td>
-                  <td data-testid="invoice-total-due">{fmtMoney(totals.total_due)}</td>
+                  <td data-testid="invoice-total-due">{formatCurrency(totals.total_due)}</td>
                 </tr>
               </tbody>
             </table>
@@ -387,10 +396,10 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
                 <tr><td>Customer</td><td>{bill_to.name}</td></tr>
                 <tr><td>Invoice #</td><td>{header.invoice_number}</td></tr>
                 <tr><td>Invoice Date</td><td>{header.invoice_date}</td></tr>
-                <tr><td>Outstanding Balance</td><td>{fmtMoney(header.outstanding_balance)}</td></tr>
-                <tr><td>This Invoice</td><td>{fmtMoney(totals.this_invoice)}</td></tr>
-                <tr><td>Total Due on Account</td><td>{fmtMoney(totals.total_due)}</td></tr>
-                <tr><td>Amount Paid</td><td>{fmtMoney(totals.amount_paid)}</td></tr>
+                <tr><td>Outstanding Balance</td><td>{formatCurrency(header.outstanding_balance)}</td></tr>
+                <tr><td>This Invoice</td><td>{formatCurrency(totals.this_invoice)}</td></tr>
+                <tr><td>Total Due on Account</td><td>{formatCurrency(totals.total_due)}</td></tr>
+                <tr><td>Amount Paid</td><td>{formatCurrency(totals.amount_paid)}</td></tr>
               </tbody>
             </table>
           </div>
@@ -434,7 +443,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
             data-testid="invoice-mobile-pay-btn"
           >
             <CreditCard size={18} />
-            &nbsp;Pay ${fmtMoney(totals?.total_due || 0)}
+            &nbsp;Pay {formatCurrency(totals?.total_due || 0)}
           </button>
         </div>
       ) : null}

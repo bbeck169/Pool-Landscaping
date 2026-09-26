@@ -86,8 +86,12 @@ describe("Invoice Pay Now restyle · InvoiceView (top-of-page CTA)", () => {
 
   it("keeps the CreditCard icon + balance-aware label", () => {
     // Both should be within a ~800-char window around the testid.
+    // Feb-2026 · Currency-format standardization — the label now
+    // uses ``Pay {formatCurrency(totals?.total_due || 0)}`` (no
+    // literal ``$`` prefix) so both public magic-link + admin
+    // + portal viewers render the same "$333,333.33" shape.
     expect(IV_SRC).toMatch(
-      /invoice-pay-now-btn[\s\S]{0,800}<CreditCard[\s\S]{0,400}Pay \$\{fmtMoney/,
+      /invoice-pay-now-btn[\s\S]{0,800}<CreditCard[\s\S]{0,400}Pay \{formatCurrency\(totals\?\.total_due/,
     );
   });
 });

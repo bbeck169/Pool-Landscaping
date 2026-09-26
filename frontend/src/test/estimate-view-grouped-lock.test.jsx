@@ -128,18 +128,23 @@ describe("EstimateView · grouped-layout LOCK-ON", () => {
     const hardscape = screen.getByTestId("estimate-grouped-row-cat-hardscape");
     const plants = screen.getByTestId("estimate-grouped-row-cat-plants");
     // Subtotals: 4200 and 750 — must appear formatted, must NOT be 0.00.
-    expect(hardscape.textContent).toContain("4200.00");
+    // Feb-2026 · currency standardization — the canonical
+    // formatCurrency helper emits ``$4,200.00`` / ``$750.00`` (comma-
+    // grouped 2-decimal). Match on the comma-grouped fragment so
+    // this passes without over-fitting to the exact $ prefix.
+    expect(hardscape.textContent).toContain("4,200.00");
     expect(plants.textContent).toContain("750.00");
     // No standalone "$0.00" subtotal cell (the reported bug's symptom).
-    // ``4200.00`` legitimately contains "0.00" as a substring so we
-    // scope the negative assertion to the row's numeric cell.
+    // ``$4,200.00`` legitimately contains ``0.00`` as a substring so
+    // we scope the negative assertion to the row's numeric cell,
+    // and match on the new comma-grouped shape.
     const hardscapeNumCell = hardscape.querySelector("td.iv-num");
-    expect(hardscapeNumCell.textContent.trim()).not.toBe("0.00");
+    expect(hardscapeNumCell.textContent.trim()).not.toBe("$0.00");
     const plantsNumCell = plants.querySelector("td.iv-num");
-    expect(plantsNumCell.textContent.trim()).not.toBe("0.00");
-    // Doc-level total.
+    expect(plantsNumCell.textContent.trim()).not.toBe("$0.00");
+    // Doc-level total — 5445 renders as ``$5,445.00``.
     expect(screen.getByTestId("estimate-totals-cost").textContent)
-      .toContain("5445");
+      .toContain("5,445");
   });
 
   it("does NOT render per-line Decline buttons on the customer view",

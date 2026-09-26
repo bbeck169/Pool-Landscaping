@@ -37,8 +37,12 @@ describe("P0 Bug B · Pay Now CTA on the customer-facing invoice", () => {
   });
 
   it("Toolbar Pay Now label shows the outstanding amount, not generic 'Pay Now'", () => {
-    // Feb-2026 P0 spec — button copy is ``Pay $XXX.XX``.
-    expect(IV_SRC).toMatch(/Pay \$\{fmtMoney\(totals\?\.total_due/);
+    // Feb-2026 P0 spec — button copy is ``Pay $XXX.XX``. As of the
+    // Feb-2026 currency-format standardization, the label routes
+    // through the canonical ``formatCurrency`` helper (which
+    // emits the ``$`` prefix itself) so the source shape is now
+    // ``Pay {formatCurrency(totals?.total_due || 0)}``.
+    expect(IV_SRC).toMatch(/Pay \{formatCurrency\(totals\?\.total_due/);
   });
 
   it("Toolbar Pay Now uses the design-system red danger tone (Feb 2026 restyle)", () => {
@@ -98,7 +102,9 @@ describe("P0 Bug B · Pay Now CTA on the customer-facing invoice", () => {
   });
 
   it("Mobile pay bar shows the outstanding balance in the CTA copy", () => {
-    expect(IV_SRC).toMatch(/iv-mobile-pay-btn[\s\S]{0,400}Pay \$\{fmtMoney/);
+    // Feb-2026 currency-format standardization — same shape as
+    // the toolbar CTA.
+    expect(IV_SRC).toMatch(/iv-mobile-pay-btn[\s\S]{0,400}Pay \{formatCurrency/);
   });
 
   it("Both CTAs open the same PaymentForm modal (single flow)", () => {
