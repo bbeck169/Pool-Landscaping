@@ -32,53 +32,13 @@ function fmtMoney(n) {
   return v.toFixed(2);
 }
 
-/** Inline monochrome text-mark for a card network. Uses ``currentColor``
- * so parent styling drives fill. NOT a trademarked brand logo — this is
- * a bordered wordmark chip in the "cards accepted" affordance style. */
-function CardNetworkMark({ label, letters, testId, width = 40 }) {
-  return (
-    <span
-      role="img"
-      aria-label={label}
-      data-testid={testId}
-      className="inline-flex items-center justify-center h-8 text-slate-600"
-      style={{ minWidth: width }}
-    >
-      <svg
-        width={width}
-        height="24"
-        viewBox={`0 0 ${width} 24`}
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <rect
-          x="0.75"
-          y="0.75"
-          width={width - 1.5}
-          height="22.5"
-          rx="4"
-          ry="4"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1"
-        />
-        <text
-          x={width / 2}
-          y="16"
-          textAnchor="middle"
-          fontFamily="ui-sans-serif, system-ui, sans-serif"
-          fontSize="10"
-          fontWeight="700"
-          letterSpacing="0.5"
-          fill="currentColor"
-        >
-          {letters}
-        </text>
-      </svg>
-    </span>
-  );
-}
+/** Feb 2026 · Public-invoice CTA — the four inline SVG
+ * ``CardNetworkMark`` badges that used to render below the Pay Now
+ * button were replaced with a single composite ``credit-card-logos.png``
+ * banner (``/logos/credit-card-logos.png`` in ``frontend/public/``).
+ * ``PublicInvoiceMagic`` renders the same banner in the same spot so
+ * both magic-link surfaces surface the same "cards accepted"
+ * affordance. */
 
 export default function PublicInvoicePay() {
   const { id } = useParams();
@@ -190,14 +150,15 @@ export default function PublicInvoicePay() {
               </span>
             </button>
             <div
-              className="mt-3 flex flex-row items-center justify-center gap-4"
-              data-testid="public-invoice-pay-card-icons"
-              aria-label="Cards accepted"
+              className="mt-3 flex justify-center"
+              data-testid="public-invoice-pay-card-logos-wrap"
             >
-              <CardNetworkMark label="Visa"             letters="VISA"  testId="pay-icon-visa" />
-              <CardNetworkMark label="Mastercard"       letters="MC"    testId="pay-icon-mastercard" />
-              <CardNetworkMark label="American Express" letters="AMEX"  testId="pay-icon-amex" />
-              <CardNetworkMark label="Discover"         letters="DISC"  testId="pay-icon-discover" />
+              <img
+                src="/logos/credit-card-logos.png"
+                alt="Cards accepted"
+                data-testid="public-invoice-pay-card-logos"
+                className="h-8 w-auto mx-auto block"
+              />
             </div>
           </div>
         ) : null}

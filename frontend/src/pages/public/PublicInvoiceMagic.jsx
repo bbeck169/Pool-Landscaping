@@ -126,6 +126,23 @@ export default function PublicInvoiceMagic() {
             <CreditCard size={16} /> {`Pay $${fmtMoney(totalDue)}`}
           </button>
         ) : null}
+        {/* Feb 2026 · Cards-accepted composite banner — same asset
+            + same styling as PublicInvoicePay so both magic-link
+            surfaces surface an identical "cards accepted"
+            affordance directly below the red primary action. */}
+        {canPay ? (
+          <div
+            className="mt-3 mb-3 flex justify-center"
+            data-testid="public-invoice-magic-card-logos-wrap"
+          >
+            <img
+              src="/logos/credit-card-logos.png"
+              alt="Cards accepted"
+              data-testid="public-invoice-magic-card-logos"
+              className="h-8 w-auto mx-auto block"
+            />
+          </div>
+        ) : null}
         <InvoiceView
           invoiceId={invoiceId}
           magicToken={token}
