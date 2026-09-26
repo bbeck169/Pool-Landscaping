@@ -31,6 +31,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { CreditCard } from "lucide-react";
 import { api } from "@/api";
+import { colors } from "@/theme";
 import InvoiceView from "@/components/InvoiceView";
 import PaymentForm from "@/components/PaymentForm";
 
@@ -80,7 +81,7 @@ export default function PublicInvoiceMagic() {
   if (!token || !invoiceId) {
     return (
       <div
-        style={{ minHeight: "100vh", padding: 24 }}
+        style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
         data-testid="public-invoice-magic-invalid-token"
       >
         <div
@@ -106,7 +107,7 @@ export default function PublicInvoiceMagic() {
 
   return (
     <div
-      style={{ minHeight: "100vh", padding: 24, background: "#F3F4F6" }}
+      style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
       data-testid="public-invoice-magic-root"
     >
       <div style={{ maxWidth: 960, margin: "0 auto" }}>

@@ -22,6 +22,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CreditCard } from "lucide-react";
 import { api } from "@/api";
+import { colors } from "@/theme";
 import InvoiceView from "@/components/InvoiceView";
 import PaymentForm from "@/components/PaymentForm";
 
@@ -78,7 +79,7 @@ export default function PublicInvoicePay() {
   if (linkExpiredMsg && !token) {
     return (
       <div
-        style={{ minHeight: "100vh", padding: 24 }}
+        style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
         data-testid="public-invoice-pay-link-expired"
       >
         <div
@@ -101,7 +102,7 @@ export default function PublicInvoicePay() {
   if (!token) {
     return (
       <div
-        style={{ minHeight: "100vh", padding: 24 }}
+        style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }}
         data-testid="public-invoice-pay-missing-token"
       >
         <div
@@ -124,7 +125,7 @@ export default function PublicInvoicePay() {
   const amountStr = fmtMoney(totalDue);
 
   return (
-    <div style={{ minHeight: "100vh", padding: 24, background: "#F3F4F6" }} data-testid="public-invoice-pay-root">
+    <div style={{ minHeight: "100vh", padding: 24, background: colors.nav.bg }} data-testid="public-invoice-pay-root">
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
         {/* Feb 2026 · Pay Now CTA restyle — top-of-page red
             full-width CTA + card-network icon row. Class list is

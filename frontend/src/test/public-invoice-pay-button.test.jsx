@@ -127,3 +127,67 @@ describe("PublicInvoiceMagic · mirrors the composite card-logos banner", () => 
     expect(imgIdx).toBeGreaterThan(btnIdx);
   });
 });
+
+describe("Public-invoice surfaces · Feb 2026 navy page background", () => {
+  // Both /pay/invoice/:id?token=... and /i/:token now paint their
+  // root container with ``colors.nav.bg`` (== ``#1B1F5C`` — the
+  // menu-navy token defined at ``theme.js:141``). The invoice card
+  // itself keeps its white background (that's inside <InvoiceView>,
+  // which this commit is not allowed to touch).
+
+  it("both public files import ``colors`` from ``@/theme`` and use ``colors.nav.bg``", () => {
+    expect(PAY_SRC).toMatch(/import\s+\{\s*colors\s*\}\s+from\s+"@\/theme"/);
+    expect(MAGIC_SRC).toMatch(/import\s+\{\s*colors\s*\}\s+from\s+"@\/theme"/);
+    // No lingering literal `#F3F4F6` on either file.
+    expect(PAY_SRC).not.toContain("#F3F4F6");
+    expect(MAGIC_SRC).not.toContain("#F3F4F6");
+  });
+
+  it("PublicInvoicePay root + both error-state containers all paint navy", () => {
+    // Happy-path root (public-invoice-pay-root).
+    expect(
+      nearBoth(PAY_SRC, "public-invoice-pay-root",
+                "background:\\s*colors\\.nav\\.bg"),
+    ).toBe(true);
+    // Link-expired outer container.
+    expect(
+      nearBoth(PAY_SRC, "public-invoice-pay-link-expired",
+                "background:\\s*colors\\.nav\\.bg"),
+    ).toBe(true);
+    // Missing-token outer container.
+    expect(
+      nearBoth(PAY_SRC, "public-invoice-pay-missing-token",
+                "background:\\s*colors\\.nav\\.bg"),
+    ).toBe(true);
+  });
+
+  it("PublicInvoiceMagic root + invalid-token container both paint navy", () => {
+    // Happy-path root (public-invoice-magic-root).
+    expect(
+      nearBoth(MAGIC_SRC, "public-invoice-magic-root",
+                "background:\\s*colors\\.nav\\.bg"),
+    ).toBe(true);
+    // Invalid-token outer container.
+    expect(
+      nearBoth(MAGIC_SRC, "public-invoice-magic-invalid-token",
+                "background:\\s*colors\\.nav\\.bg"),
+    ).toBe(true);
+  });
+
+  it("the ``colors.nav.bg`` token resolves to menu-navy #1B1F5C in theme.js", () => {
+    // Guardrail — if someone later moves or renames the token, both
+    // public surfaces would silently break. Assert the resolved
+    // hex value directly against the theme source so a rename must
+    // land in the same PR as an update here.
+    const THEME_SRC = fs.readFileSync(
+      path.resolve(__dirname, "../theme.js"),
+      "utf8",
+    );
+    // Find the ``nav: { ... bg: "#XXXXXX" ... }`` block and check
+    // the hex matches the K74 menu-navy value.
+    const navBlock = THEME_SRC.match(/\bnav\s*:\s*\{[\s\S]*?\}/);
+    expect(navBlock).not.toBeNull();
+    expect(navBlock[0]).toMatch(/bg\s*:\s*"#1B1F5C"/);
+  });
+});
+
