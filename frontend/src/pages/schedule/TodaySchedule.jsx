@@ -49,6 +49,8 @@ import {
   shiftTenantISODate,
   TENANT_TZ_FALLBACK,
 } from "@/lib/tenantTz";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -487,76 +489,78 @@ export default function TodaySchedule() {
         </div>
       )}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div>
-          <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>Today's Schedule</h1>
-          <p className="text-sm mt-1" style={{ color: colors.muted }}>
-            {data?.date ? new Date(data.date + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "…"} · {data?.tz}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <div className="rounded-xl flex items-center overflow-hidden"
-               style={{ border: `1px solid ${colors.border}` }}
-               data-testid="schedule-view-toggle">
-            {["list", "timeline"].map((m) => (
-              <button key={m} onClick={() => setMode(m)}
-                      className="px-3 py-2 text-xs font-bold uppercase tracking-wide"
-                      style={{
-                        backgroundColor: viewMode === m ? colors.brand : "transparent",
-                        color: viewMode === m ? "#fff" : colors.onSurfaceSecondary,
-                      }}
-                      data-testid={`schedule-view-${m}`}>
-                {m}
-              </button>
-            ))}
-          </div>
-          {/* Feb-2026 · List | Map sub-mode toggle. Only meaningful
-              in the "list" viewMode; timeline mode keeps its own
-              rendering. Hidden when the day has no jobs at all. */}
-          {viewMode === "list" && jobItems.length > 0 ? (
-            <div className="rounded-xl flex items-center overflow-hidden"
-                 style={{ border: `1px solid ${colors.border}` }}
-                 data-testid="schedule-sub-mode-toggle">
-              {[
-                { key: "list", label: "List", Icon: ListIcon },
-                { key: "map", label: "Map", Icon: MapIconLucide },
-              ].map(({ key, label, Icon }) => (
-                <button key={key} onClick={() => setSubMode(key)}
-                        className="px-3 py-2 text-xs font-bold uppercase tracking-wide flex items-center gap-1"
-                        style={{
-                          backgroundColor: gridSubMode === key ? colors.brand : "transparent",
-                          color: gridSubMode === key ? "#fff" : colors.onSurfaceSecondary,
-                        }}
-                        data-testid={`schedule-sub-mode-${key}`}>
-                  <Icon size={12} />
-                  {label}
+        {/* Feb-2026 · N5-T1 · PageHeader adoption. Replaces the
+            inline title + subtitle + toolbar row with the shared
+            <PageHeader/>. The full toolbar (view toggle, sub-mode
+            toggle, refresh, optimize, reset) moves into the
+            ``actions`` slot unchanged. */}
+        <PageHeader
+          title="Today's Schedule"
+          subtitle={
+            data?.date
+              ? `${new Date(data.date + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} · ${data?.tz || ""}`
+              : "…"
+          }
+          actions={
+            <>
+              <div className="rounded-xl flex items-center overflow-hidden"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid="schedule-view-toggle">
+                {["list", "timeline"].map((m) => (
+                  <button key={m} onClick={() => setMode(m)}
+                          className="px-3 py-2 text-xs font-bold uppercase tracking-wide"
+                          style={{
+                            backgroundColor: viewMode === m ? colors.brand : "transparent",
+                            color: viewMode === m ? "#fff" : colors.onSurfaceSecondary,
+                          }}
+                          data-testid={`schedule-view-${m}`}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+              {viewMode === "list" && jobItems.length > 0 ? (
+                <div className="rounded-xl flex items-center overflow-hidden"
+                     style={{ border: `1px solid ${colors.border}` }}
+                     data-testid="schedule-sub-mode-toggle">
+                  {[
+                    { key: "list", label: "List", Icon: ListIcon },
+                    { key: "map", label: "Map", Icon: MapIconLucide },
+                  ].map(({ key, label, Icon }) => (
+                    <button key={key} onClick={() => setSubMode(key)}
+                            className="px-3 py-2 text-xs font-bold uppercase tracking-wide flex items-center gap-1"
+                            style={{
+                              backgroundColor: gridSubMode === key ? colors.brand : "transparent",
+                              color: gridSubMode === key ? "#fff" : colors.onSurfaceSecondary,
+                            }}
+                            data-testid={`schedule-sub-mode-${key}`}>
+                      <Icon size={12} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <ScheduleRefreshButton busy={busy} onRefresh={load} />
+              {isAdminForReorder && jobItems.length >= 2 && (
+                <button onClick={handleOptimize} disabled={optimizing}
+                        className="px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 disabled:opacity-60 transition-all"
+                        style={{ background: gradients.navyToGreen.css, color: "#fff",
+                                 transform: optimizing ? "scale(0.98)" : "scale(1)" }}
+                        data-testid="schedule-optimize-route">
+                  <RouteIcon size={14}/> {optimizing ? "Optimizing…" : "Optimize Route"}
                 </button>
-              ))}
-            </div>
-          ) : null}
-          <ScheduleRefreshButton busy={busy} onRefresh={load} />
-          {/* Feb-2026 HOTFIX (live user report): Optimize Route is a
-              dispatcher/planner action. Techs must not see it — they
-              only see the reordered route via ``orderedJobItems``.
-              Same gate as the Reorder pill above (``isAdminForReorder``). */}
-          {isAdminForReorder && jobItems.length >= 2 && (
-            <button onClick={handleOptimize} disabled={optimizing}
-                    className="px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 disabled:opacity-60 transition-all"
-                    style={{ background: gradients.navyToGreen.css, color: "#fff",
-                             transform: optimizing ? "scale(0.98)" : "scale(1)" }}
-                    data-testid="schedule-optimize-route">
-              <RouteIcon size={14}/> {optimizing ? "Optimizing…" : "Optimize Route"}
-            </button>
-          )}
-          {isAdminForReorder && optimizedIds && (
-            <button onClick={resetOrder}
-                    className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
-                    style={{ backgroundColor: colors.surface, color: colors.onSurface,
-                             border: `1px solid ${colors.border}` }}
-                    data-testid="schedule-reset-order">
-              <RotateCcw size={14}/> Reset order
-            </button>
-          )}
-        </div>
+              )}
+              {isAdminForReorder && optimizedIds && (
+                <button onClick={resetOrder}
+                        className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
+                        style={{ backgroundColor: colors.surface, color: colors.onSurface,
+                                 border: `1px solid ${colors.border}` }}
+                        data-testid="schedule-reset-order">
+                  <RotateCcw size={14}/> Reset order
+                </button>
+              )}
+            </>
+          }
+        />
       </div>
 
       {/* Date picker — prev / date / next / Today */}

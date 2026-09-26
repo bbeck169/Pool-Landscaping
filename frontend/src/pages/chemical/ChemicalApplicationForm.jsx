@@ -46,6 +46,8 @@ import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import FileUpload from "@/components/files/FileUpload";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -451,15 +453,24 @@ export default function ChemicalApplicationForm() {
           <ArrowLeft size={12} /> Back to list
         </Link>
       </div>
-      <h1 className="text-2xl md:text-3xl font-bold"
-          style={{ color: colors.onSurface }}
+      <h1 className="text-2xl md:text-3xl font-bold sr-only"
           data-testid="chem-app-form-title">
-        <FlaskConical size={22} className="inline mr-2" />
         {isEdit ? "Edit Application" : "New Application"}
       </h1>
-      <p className="text-xs mt-1" style={{ color: colors.muted }}>
-        Regulatory spray log · WPS-compliant fields required.
-      </p>
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. The visible H1
+          + subtitle move into the shared <PageHeader/>; the
+          screen-reader-only H1 above preserves the
+          ``chem-app-form-title`` testid contract for existing
+          tests. */}
+      <PageHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <FlaskConical size={22} />
+            <span>{isEdit ? "Edit Application" : "New Application"}</span>
+          </span>
+        }
+        subtitle="Regulatory spray log · WPS-compliant fields required."
+      />
 
       {/* Edit-mode role lock */}
       {isEdit && !canEdit && (

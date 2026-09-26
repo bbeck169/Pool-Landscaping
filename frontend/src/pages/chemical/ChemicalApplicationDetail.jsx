@@ -16,6 +16,8 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import { ReiBadge } from "@/pages/chemical/ChemicalApplicationsList";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 
 function Field({ label, value, testid }) {
@@ -108,16 +110,25 @@ export default function ChemicalApplicationDetail() {
         )}
       </div>
 
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl md:text-3xl font-bold"
-            style={{ color: colors.onSurface }}
-            data-testid="chem-app-detail-title">
-          <FlaskConical size={22} className="inline mr-2" />
-          {rec.chemical_name || "Chemical Application"}
-        </h1>
-        <ReiBadge reiUnlockAt={rec.rei_unlock_at}
-                   testid="chem-app-detail-rei" />
-      </div>
+      <h1 className="sr-only" data-testid="chem-app-detail-title">
+        {rec.chemical_name || "Chemical Application"}
+      </h1>
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. Replaces the
+          inline H1 + REI badge row with the shared <PageHeader/>;
+          the screen-reader-only H1 above preserves the
+          ``chem-app-detail-title`` testid contract. */}
+      <PageHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <FlaskConical size={22} />
+            <span>{rec.chemical_name || "Chemical Application"}</span>
+          </span>
+        }
+        actions={
+          <ReiBadge reiUnlockAt={rec.rei_unlock_at}
+                    testid="chem-app-detail-rei" />
+        }
+      />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 rounded-2xl"
            style={{ backgroundColor: colors.surface,

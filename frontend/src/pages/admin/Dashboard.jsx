@@ -54,6 +54,8 @@ import RoutingCostTile from "@/components/admin/RoutingCostTile";
 // Feb-2026 · Polish bundle Item 3 — Warranties nearing expiration tile.
 import WarrantiesExpiringTile from "@/components/admin/WarrantiesExpiringTile";
 import { useAuth } from "@/auth";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 function Skeleton({ className = "", style = {} }) {
   return (
@@ -495,14 +497,14 @@ export default function AdminDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="admin-dashboard">
-      <header className="mb-6">
-        <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
-          Dashboard
-        </h1>
-        <p className="text-sm mt-1" style={{ color: colors.muted }}>
-          Hi{firstName ? `, ${firstName}` : ""} — here&apos;s your business at a glance.
-        </p>
-      </header>
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. Replaces the
+          inline <h1>Dashboard</h1> block with the shared
+          <PageHeader/>. Subtitle keeps the greeting copy verbatim
+          so no visible behavior changes for the operator. */}
+      <PageHeader
+        title="Dashboard"
+        subtitle={`Hi${firstName ? `, ${firstName}` : ""} — here's your business at a glance.`}
+      />
 
       {/* Feb-2026 · Dashboard reorg — Mass Messaging is the first
           CTA on the Dashboard. Self-guards on role internally

@@ -60,6 +60,8 @@ import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/c
 // EstimateView / magic-link surfaces. The ``doc-header-logo``
 // testid is asserted by ``src/test/doc-header-logo.test.jsx``.
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 // ─── Pure helpers · exported for Vitest ────────────────────────────────
 // Feb 2026 · P0/P0.5a/P1 — draft-transition fix. These are pulled out
@@ -504,6 +506,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         <ArrowLeft size={14} /> All {isInvoice ? "invoices" : "quotes"}
       </button>
 
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. The doc title
+          moves into the shared <PageHeader/>; the identity chrome
+          in the header card below (logo, StatusPill, payment /
+          signed chips, customer link, due date, total, History
+          button) stays put as data-rich in-body chrome. The inline
+          H1 further down was removed to prevent duplication. */}
+      <PageHeader title={doc?.title || (isInvoice ? "Invoice" : "Quote")} />
+
       {/* Phase LZ4 (Feb 2026) — StripeCheckoutReturn removed with
           the Stripe SDK retirement. Payment success is now surfaced
           via the Lumino return URL + webhook callback, so nothing
@@ -630,7 +640,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                 />
               ) : null}
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>
+            <h1 className="sr-only" data-testid="quote-invoice-detail-inline-h1">
               {doc.title}
             </h1>
             <p className="text-sm mt-1" style={{ color: colors.onSurfaceSecondary }}>

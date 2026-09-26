@@ -44,6 +44,10 @@ import { useSetDynamicCrumb }
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option B: add
+// above the existing navy identity strip; the strip's data-rich
+// action row + the header card's VIP + geocode chrome stay put).
+import PageHeader from "@/components/layout/PageHeader";
 
 
 /**
@@ -571,6 +575,16 @@ export default function CustomerDetail() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customer-detail">
+      {/* Feb-2026 · N5-T1 · PageHeader adoption (Option B). Sits
+          ABOVE the "All customers" back button + navy identity
+          strip so the customer's name reads as the page title
+          without disturbing the existing action-row / VIP / call
+          chrome. The inline <h1> in the Header card below is
+          replaced with a screen-reader-only stub so existing
+          tests keying off ``customer-detail`` still resolve while
+          the visible title lives in PageHeader. */}
+      <PageHeader title={customer.name} />
+
       <button
         onClick={() => navigate("/customers")}
         className="flex items-center gap-1 text-sm font-semibold mb-4"
@@ -739,7 +753,7 @@ export default function CustomerDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
+              <h1 className="sr-only" data-testid="customer-detail-inline-h1">
                 {customer.name}
               </h1>
               {customer.customer_since ? (

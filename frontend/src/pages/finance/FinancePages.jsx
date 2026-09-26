@@ -10,6 +10,14 @@ import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep. This module hosts
+// PaymentsLedger + AutoBilling + ImpExp + IncomeCategoriesCrud
+// (four page exports), all of which route through the shared
+// ``Header`` helper below. Refactoring the helper to render
+// <PageHeader/> wires PageHeader into all four surfaces in one
+// edit. See N5-audit §7 for the "shared-Header refactor" leverage
+// rationale.
+import PageHeader from "@/components/layout/PageHeader";
 
 function Card({ children, className = "", testId }) {
   return (
@@ -25,22 +33,24 @@ function Card({ children, className = "", testId }) {
 
 function Header({ title, subtitle, right }) {
   const nav = useNavigate();
+  // Feb-2026 · N5-T1 — shared Header helper refactored to render
+  // <PageHeader/>. The Back button sits ABOVE the header so its
+  // ``back-btn`` testid + navigation semantics are preserved
+  // (PageHeader has no first-class back slot; we keep the back
+  // affordance separate rather than nesting an interactive button
+  // inside PageHeader's <h1>).
   return (
-    <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-      <div className="flex items-center gap-3">
+    <>
+      <div className="flex items-center gap-3 mb-2">
         <button onClick={() => nav(-1)}
                 className="p-2 rounded-lg hover:brightness-95"
                 style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
                 data-testid="back-btn">
           <ArrowLeft size={16} />
         </button>
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>{title}</h1>
-          {subtitle ? <p className="text-xs mt-0.5" style={{ color: colors.muted }}>{subtitle}</p> : null}
-        </div>
       </div>
-      {right}
-    </div>
+      <PageHeader title={title} subtitle={subtitle} actions={right} />
+    </>
   );
 }
 

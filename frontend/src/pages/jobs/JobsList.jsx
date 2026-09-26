@@ -26,6 +26,8 @@ import {
 // Reads ``photo_ids`` + ``photo_thumb_urls`` already present on
 // list rows (Commit-3 widening).
 import { JobPhotoThumbs } from "@/components/jobs/JobPhotoThumbs";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 // Phase 34 · Feb 2026 — Dashboard KPI tiles link into this list
 // with ``?status=active`` / ``?status=pending`` (backend job docs
@@ -174,25 +176,29 @@ export default function JobsList() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="jobs-page">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>
-            <Briefcase size={20} className="inline mr-2" />
-            Jobs (admin)
-          </h1>
-          <p className="text-xs mt-0.5" style={{ color: colors.muted }}>
-            Bulk-manage work orders. Individual editing lives on the job detail page.
-          </p>
-        </div>
-        <button onClick={load}
-                className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
-                style={{ backgroundColor: colors.surfaceSecondary,
-                          color: colors.onSurfaceSecondary,
-                          border: `1px solid ${colors.border}` }}
-                data-testid="jobs-refresh-btn">
-          <RefreshCw size={12} /> Refresh
-        </button>
-      </div>
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. Replaces the
+          inline title + subtitle + refresh-button row with the
+          shared <PageHeader/>. Existing ``jobs-refresh-btn``
+          testid is preserved via the actions slot. */}
+      <PageHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Briefcase size={20} />
+            <span>Jobs (admin)</span>
+          </span>
+        }
+        subtitle="Bulk-manage work orders. Individual editing lives on the job detail page."
+        actions={
+          <button onClick={load}
+                  className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                            color: colors.onSurfaceSecondary,
+                            border: `1px solid ${colors.border}` }}
+                  data-testid="jobs-refresh-btn">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        }
+      />
 
       <div className="rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>

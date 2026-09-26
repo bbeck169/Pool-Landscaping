@@ -21,6 +21,8 @@ import JobEditPanel from "@/pages/jobs/JobEditPanel";
 // Follow-up column feeder). Rendered only for admin / super_admin /
 // manager; techs never see it. Backend PATCH gate enforces the same.
 import FollowUpEditor from "@/pages/jobs/FollowUpEditor";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -280,6 +282,39 @@ export default function JobDetail() {
         <ArrowLeft size={14} /> All jobs
       </button>
 
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. The job title
+          + admin action row (New Scheduled Job / Work Order /
+          Email / Delete) hoist into the shared <PageHeader/>.
+          The identity chrome BELOW (StatusPill, service_type,
+          customer link, address, click-to-call, meta strip, and
+          the primary action bar) stays put — those are data-rich
+          in-body chrome, not header chrome. */}
+      <PageHeader
+        title={job.title}
+        actions={
+          isAdmin ? (
+            <div className="flex gap-2 flex-wrap" data-testid="jd-admin-action-row">
+              <Button
+                variant="ghost"
+                onClick={() => setCreateOpen(true)}
+                testid="jd-new-scheduled-job"
+              >
+                <Plus size={14} /> New Scheduled Job
+              </Button>
+              <Button variant="ghost" onClick={downloadWorkOrder} testid="jd-workorder">
+                <FileDown size={14} /> Work Order
+              </Button>
+              <Button variant="ghost" onClick={() => setEmailModal(true)} testid="jd-email">
+                <Mail size={14} /> Email
+              </Button>
+              <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="jd-delete">
+                <Trash2 size={14} /> Delete
+              </Button>
+            </div>
+          ) : null
+        }
+      />
+
       {/* Header */}
       <div
         className="rounded-2xl p-6 mb-4"
@@ -293,9 +328,6 @@ export default function JobDetail() {
                 {job.service_type}
               </span>
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold" style={{ color: colors.onSurface }}>
-              {job.title}
-            </h1>
             <p className="text-sm mt-1" style={{ color: colors.onSurfaceSecondary }}>
               <CustomerLink
                 customerId={customer?.id || job?.customer_id}
@@ -327,26 +359,6 @@ export default function JobDetail() {
               );
             })()}
           </div>
-          {isAdmin ? (
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                variant="ghost"
-                onClick={() => setCreateOpen(true)}
-                testid="jd-new-scheduled-job"
-              >
-                <Plus size={14} /> New Scheduled Job
-              </Button>
-              <Button variant="ghost" onClick={downloadWorkOrder} testid="jd-workorder">
-                <FileDown size={14} /> Work Order
-              </Button>
-              <Button variant="ghost" onClick={() => setEmailModal(true)} testid="jd-email">
-                <Mail size={14} /> Email
-              </Button>
-              <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="jd-delete">
-                <Trash2 size={14} /> Delete
-              </Button>
-            </div>
-          ) : null}
         </div>
 
         {/* Action bar */}

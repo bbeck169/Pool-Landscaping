@@ -24,6 +24,8 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 import { formatValue, formatNumber } from "@/components/reports/formatters";
+// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
+import PageHeader from "@/components/layout/PageHeader";
 
 /**
  * Phase K66 · Feb-2026 — ReportsHub quick-access tile grid.
@@ -326,25 +328,20 @@ export default function ReportsHub() {
       style={{ fontFamily: "inherit" }}
       data-testid="reports-hub"
     >
-      <div className="flex items-start md:items-center flex-col md:flex-row md:justify-between gap-3 mb-6">
-        <div>
-          <h1
-            className="text-3xl md:text-4xl font-bold"
-            style={{ color: colors.onSurface }}
-            data-testid="reports-hub-title"
-          >
-            Reports
-          </h1>
-          <p
-            className="text-sm mt-1"
-            style={{ color: colors.muted }}
-            data-testid="reports-hub-subtitle"
-          >
+      {/* Feb-2026 · N5-T1 · PageHeader adoption. Replaces the
+          inline flex row (title + subtitle + DateRangePicker) with
+          the shared <PageHeader/>. Existing testids on the H1 +
+          subtitle are preserved via wrapping spans below so vitest
+          assertions keep working. */}
+      <PageHeader
+        title={<span data-testid="reports-hub-title">Reports</span>}
+        subtitle={
+          <span data-testid="reports-hub-subtitle">
             Quick-access tiles for every available report. Coming-soon tiles surface future phases.
-          </p>
-        </div>
-        <DateRangePicker />
-      </div>
+          </span>
+        }
+        actions={<DateRangePicker />}
+      />
 
       <div
         className="grid grid-cols-1 md:grid-cols-3 gap-4"
