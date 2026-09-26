@@ -178,8 +178,13 @@ def test_export_jobs_hydration_is_single_shot(monkeypatch, admin_h, aquaterra_ti
         # meaningful — call the handler function with a fake ``user``.
         import asyncio
         async def _call():
+            # P59 · Feb-2026 — /export/jobs now requires an explicit
+            # ``tenant`` dependency for strict tenant-scoped reads.
+            # Direct-handler invocation bypasses FastAPI DI, so the
+            # test must splice the resolved tenant in by hand.
             return await _reports.export_jobs(
                 user={"tenant_id": tid, "role": "admin"},
+                tenant={"id": tid},
                 start="2026-04-03", end="2026-04-30",
             )
         payload = asyncio.get_event_loop().run_until_complete(_call())

@@ -624,15 +624,24 @@ def _to_csv(rows, cols):
 
 @router.get("/export/jobs")
 async def export_jobs(user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant),
                       start: Optional[str] = None, end: Optional[str] = None):
-    rows = await db.jobs.find({}, {"_id": 0, "photos.data": 0}).sort("scheduled_date", -1).to_list(10000)
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this fix ``db.jobs.find({}, ...)`` ran with an empty
+    # filter, letting any admin token on any tenant enumerate
+    # cross-tenant job rows (customer names, addresses, prices,
+    # technician IDs) through a CSV download.
+    tenant_id = tenant["id"]
+    rows = await db.jobs.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "photos.data": 0},
+    ).sort("scheduled_date", -1).to_list(10000)
     if start or end:
         rows = [r for r in rows if _in_range(r.get("scheduled_date") or r.get("created_at"), start, end)]
     # Feb-2026 · P3 — hydrate ``technician_name`` from the current
     # users / technicians display name, overwriting any stale snapshot
     # baked in at job-write time. Single ``$in`` query per request via
     # ``resolve_technician_names`` — no N+1.
-    tenant_id = user.get("tenant_id") or ""
     tech_ids = {r.get("technician_id") for r in rows if r.get("technician_id")}
     names_map = await resolve_technician_names(db, tenant_id, list(tech_ids)) if tech_ids else {}
     for r in rows:
@@ -644,11 +653,13 @@ async def export_jobs(user: dict = Depends(require_admin),
 
 @router.get("/export/invoices")
 async def export_invoices(user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant),
                           start: Optional[str] = None, end: Optional[str] = None):
     # Feb-2026 · P2 Item 2 — invoice CSV export MUST exclude
     # soft-deleted rows (a common revenue-reconciliation surface).
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
     rows = await db.quotes.find(
-        {"doc_type": "invoice",
+        {"tenant_id": tenant["id"], "doc_type": "invoice",
           "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
         {"_id": 0},
     ).sort("created_at", -1).to_list(10000)
