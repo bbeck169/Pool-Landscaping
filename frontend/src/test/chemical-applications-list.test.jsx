@@ -29,9 +29,12 @@ import {
 } from "@testing-library/react";
 
 
-const { apiGetSpy, toastErrorSpy } = vi.hoisted(() => ({
+const {
+  apiGetSpy, toastErrorSpy, navigateSpy,
+} = vi.hoisted(() => ({
   apiGetSpy: vi.fn(),
   toastErrorSpy: vi.fn(),
+  navigateSpy: vi.fn(),
 }));
 
 
@@ -47,6 +50,10 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
     error: (...args) => toastErrorSpy(...args),
   },
+}));
+
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => navigateSpy,
 }));
 
 vi.mock("@/theme", () => ({
@@ -154,6 +161,7 @@ function _installApiMocks({
 
 beforeEach(() => {
   _installApiMocks();
+  navigateSpy.mockReset();
 });
 
 afterEach(() => {
@@ -458,5 +466,29 @@ describe("ChemicalApplicationsList — nav entry shape lock", () => {
     for (const alias of ["Spray Log", "Pesticide Log", "Chemical Log", "REI Tracking"]) {
       expect(row.aliases).toContain(alias);
     }
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 12. + New Application button — C4 wiring
+// ═══════════════════════════════════════════════════════════════════
+describe("ChemicalApplicationsList — C4 wiring", () => {
+  it("'+ New Application' button navigates to /admin/chemical-applications/new", async () => {
+    render(<ChemicalApplicationsList />);
+    await waitFor(() => {
+      expect(screen.getByTestId("chemical-applications-new-btn")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("chemical-applications-new-btn"));
+    expect(navigateSpy).toHaveBeenCalledWith("/admin/chemical-applications/new");
+  });
+
+  it("clicking a row navigates to /admin/chemical-applications/:id", async () => {
+    render(<ChemicalApplicationsList />);
+    await waitFor(() => {
+      expect(screen.getByTestId("chem-app-row-app-1")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByTestId("chem-app-row-app-1"));
+    expect(navigateSpy).toHaveBeenCalledWith("/admin/chemical-applications/app-1");
   });
 });

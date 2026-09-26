@@ -57,6 +57,10 @@ const AdminServiceReportsList = React.lazy(() => import(/* webpackChunkName: "p-
 const AdminTimeEntriesList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintimeentrieslist" */ "@/pages/admin/AdminTimeEntriesList"));
 // Feb-2026 · C3 — Chemical Applications regulatory spray log (admin+manager).
 const ChemicalApplicationsList = React.lazy(() => import(/* webpackChunkName: "p-chemical-chemicalapplicationslist" */ "@/pages/chemical/ChemicalApplicationsList"));
+// Feb-2026 · C4 — Chemical Application create + edit form.
+const ChemicalApplicationForm = React.lazy(() => import(/* webpackChunkName: "p-chemical-chemicalapplicationform" */ "@/pages/chemical/ChemicalApplicationForm"));
+// Feb-2026 · C4 — Chemical Application read-only detail view.
+const ChemicalApplicationDetail = React.lazy(() => import(/* webpackChunkName: "p-chemical-chemicalapplicationdetail" */ "@/pages/chemical/ChemicalApplicationDetail"));
 const ReflowHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-admin-reflowhistorypage" */ "@/pages/admin/ReflowHistoryPage"));
 // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
 const AdminChargeTemplatesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminchargetemplatespage" */ "@/pages/admin/AdminChargeTemplatesPage"));
@@ -896,6 +900,19 @@ export default function App() {
                 brief; techs create sprays from mobile / field-log surfaces
                 (backend enforced) and do not need the admin list view. */}
             <Route path="admin/chemical-applications" element={<AdminOrManager><ChemicalApplicationsList /></AdminOrManager>} />
+            {/* Feb-2026 · C4 — Create form + detail view + edit form.
+                Order matters: /new must precede /:id so the static
+                segment wins over the dynamic. Detail view is
+                admin+manager+super_admin (read-only for manager);
+                the edit route falls back on the form's in-page
+                ``require_admin``-parity lock banner for non-admin
+                viewers (backend PATCH is admin-only per C1). */}
+            <Route path="admin/chemical-applications/new"
+                    element={<AdminOrManager><ChemicalApplicationForm /></AdminOrManager>} />
+            <Route path="admin/chemical-applications/:id"
+                    element={<AdminOrManager><ChemicalApplicationDetail /></AdminOrManager>} />
+            <Route path="admin/chemical-applications/:id/edit"
+                    element={<AdminOrManager><ChemicalApplicationForm /></AdminOrManager>} />
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
             {/* Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD. */}
             <Route path="admin/charge-templates" element={<AdminOnly><AdminChargeTemplatesPage /></AdminOnly>} />

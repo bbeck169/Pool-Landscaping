@@ -22,7 +22,8 @@
  * surface is wired and easy to swap in C5).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, RefreshCw, ShieldCheck, Lock, Filter } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FlaskConical, RefreshCw, ShieldCheck, Lock, Filter, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -183,6 +184,8 @@ function ChemAppRow({ row, customersById, onClick }) {
 // Page
 // ═══════════════════════════════════════════════════════════════════
 export default function ChemicalApplicationsList() {
+  const navigate = useNavigate();
+
   // Filter state
   const [customerId, setCustomerId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -276,11 +279,9 @@ export default function ChemicalApplicationsList() {
   useEffect(() => { load(); }, [load]);
 
   const openRow = useCallback((row) => {
-    // C5 will hook this to the detail page; log the click surface
-    // for now so integration is obvious in dev tools.
-    // eslint-disable-next-line no-console
-    console.log("[C3] chem-app row clicked — detail page lands in C5", row.id);
-  }, []);
+    // C4 wires the detail page. Route pattern: /admin/chemical-applications/:id.
+    navigate(`/admin/chemical-applications/${row.id}`);
+  }, [navigate]);
 
   // ── Render ───────────────────────────────────────────────────
   const isInitialLoading = rows === null && !error;
@@ -302,14 +303,24 @@ export default function ChemicalApplicationsList() {
             Regulatory spray log — REI unlock badges tick live every minute.
           </p>
         </div>
-        <button onClick={load}
-                className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
-                style={{ backgroundColor: colors.surfaceSecondary,
-                          color: colors.onSurfaceSecondary,
-                          border: `1px solid ${colors.border}` }}
-                data-testid="chemical-applications-refresh-btn">
-          <RefreshCw size={12} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => navigate("/admin/chemical-applications/new")}
+                  className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: colors.nav.bg,
+                            color: colors.nav.fg,
+                            border: `1px solid ${colors.nav.border}` }}
+                  data-testid="chemical-applications-new-btn">
+            <Plus size={12} /> New Application
+          </button>
+          <button onClick={load}
+                  className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                            color: colors.onSurfaceSecondary,
+                            border: `1px solid ${colors.border}` }}
+                  data-testid="chemical-applications-refresh-btn">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* ── Filter bar (navy) ─────────────────────────────────── */}
