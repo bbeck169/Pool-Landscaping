@@ -22,11 +22,11 @@ export const ADMIN_NAV_V2 = [
 
   { key: "finance", label: "Finance", icon: DollarSign, entries: [
     // CFO
-    { to: "/cfo",                       label: "AI CFO",             icon: TrendingUp, feature: "reports", hard_rule: "admin_only", subsection: "CFO" },
+    { to: "/cfo",                       label: "AI CFO",             icon: TrendingUp, feature: "reports", hard_rule: "admin_only", subsection: "CFO", aliases: ["Financial", "CFO Dashboard", "Chief Financial Officer"] },
     { to: "/income-by-category",        label: "Income by Category", icon: DollarSign, feature: "reports", subsection: "CFO" },
     // Invoicing
-    { to: "/invoices",                  label: "Invoices",           icon: Receipt,    feature: "invoices",  subsection: "Invoicing" },
-    { to: "/payments",                  label: "Payments",           icon: CreditCard, feature: "payments",  subsection: "Invoicing" },
+    { to: "/invoices",                  label: "Invoices",           icon: Receipt,    feature: "invoices",  subsection: "Invoicing", aliases: ["Bills", "Receivables", "Sales", "AR", "Customer Invoices"] },
+    { to: "/payments",                  label: "Payments",           icon: CreditCard, feature: "payments",  subsection: "Invoicing", aliases: ["Received Payments", "Payment Log", "Deposits"] },
     { to: "/invoices/master",           label: "Master Invoices",    icon: Layers,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/auto-billing",              label: "Auto-billing",       icon: Repeat,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/admin/autobilling-runs",     label: "Autobilling runs",   icon: Repeat,     feature: "invoices",  subsection: "Invoicing" },
@@ -44,7 +44,7 @@ export const ADMIN_NAV_V2 = [
     // Finance/Invoicing, and Vendor Bills was relocated to sit
     // directly after PDF Import (see Commit 1.5 · Vendor Bills
     // relocation, below).
-    { to: "/admin/imports/pdf-invoice",  label: "PDF Import",         icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only" },
+    { to: "/admin/imports/pdf-invoice",  label: "PDF Import",         icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only", aliases: ["PDF Upload", "Bulk Import", "Import PDFs", "Upload Invoices", "PDF Invoice Importer"] },
     // Task B · Commit 1.5 · Feb-2026 — Vendor Bills relocation.
     // Vendor Bills was historically mis-grouped inside the
     // Reports group (opened line 294) despite being a Finance /
@@ -57,7 +57,7 @@ export const ADMIN_NAV_V2 = [
     // and match the surrounding invoicing rows.  Sits directly
     // after PDF Import — the two are a matched pair (import
     // action → resulting list).
-    { to: "/admin/finance/bills",        label: "Vendor Bills",       icon: Receipt,     feature: "invoices",  subsection: "Invoicing" },
+    { to: "/admin/finance/bills",        label: "Vendor Bills",       icon: Receipt,     feature: "invoices",  subsection: "Invoicing", aliases: ["Payables", "AP", "Supplier Bills", "Vendor Invoices"] },
     { to: "/settings/late-fees",        label: "Late Fees",          icon: DollarSign, feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/billing",          label: "Billing Rules",      icon: Cog,        feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/payment-handles",  label: "Payment Handles",    icon: CreditCard, feature: "settings",  subsection: "Invoicing" },
@@ -70,14 +70,14 @@ export const ADMIN_NAV_V2 = [
     // the recommended admin entry point.
     { to: "/pricebook/categories",       label: "Categories Management", icon: Layers,  feature: "settings",  subsection: "Invoicing" },
     // Checks & payroll
-    { to: "/admin/checks",              label: "Check Writer",       icon: FileEdit,   feature: "invoices",  subsection: "Checks & Payroll" },
+    { to: "/admin/checks",              label: "Check Writer",       icon: FileEdit,   feature: "invoices",  subsection: "Checks & Payroll", aliases: ["Checks", "Write Checks", "Print Checks"] },
     { to: "/admin/checks/bank-accounts",label: "Bank Accounts",      icon: Building2,  feature: "invoices",  subsection: "Checks & Payroll" },
     { to: "/admin/checks/payees",       label: "Payees",             icon: UsersRound, feature: "invoices",  subsection: "Checks & Payroll" },
     { to: "/admin/checks/analytics",    label: "Check Analytics",    icon: BarChart3,  feature: "reports",   subsection: "Checks & Payroll" },
     { to: "/admin/checks/batch/new",    label: "Batch Print",        icon: Layers,     feature: "invoices",  subsection: "Checks & Payroll" },
     { to: "/admin/checks/payroll",      label: "Payroll Import",     icon: UsersRound, feature: "invoices",  subsection: "Checks & Payroll" },
     // Dunning / AR
-    { to: "/admin/dunning/queue",       label: "Dunning Queue",      icon: Repeat,     feature: "invoicing", subsection: "AR & Dunning" },
+    { to: "/admin/dunning/queue",       label: "Dunning Queue",      icon: Repeat,     feature: "invoicing", subsection: "AR & Dunning", aliases: ["Late Invoices", "Overdue", "Collections", "Past Due"] },
     { to: "/admin/dunning/analytics",   label: "AR Aging",           icon: DollarSign, feature: "invoicing", subsection: "AR & Dunning" },
     { to: "/admin/dunning/settings",    label: "Dunning Setup",      icon: Zap,        feature: "invoicing", subsection: "AR & Dunning" },
     // Warranties
@@ -164,7 +164,7 @@ export const ADMIN_NAV_V2 = [
 
   { key: "operations", label: "Operations", icon: Wrench, entries: [
     // Schedule & dispatch
-    { to: "/schedule",               label: "Schedule",           icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch" },
+    { to: "/schedule",               label: "Schedule",           icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch", aliases: ["Calendar", "Bookings", "Jobs Calendar", "Appointments"] },
     { to: "/admin/jobs",             label: "Jobs (admin)",       icon: ListChecks,   feature: "jobs", subsection: "Schedule & Dispatch" },
     // Feb 2026 · Task A — top-level Recurring Jobs shortcut. Placed
     // adjacent to Schedule + Jobs so users don't have to hunt for
@@ -296,7 +296,7 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [
-    { to: "/customers",             label: "Customers",        icon: Users,      feature: "customers", subsection: "Directory" },
+    { to: "/customers",             label: "Customers",        icon: Users,      feature: "customers", subsection: "Directory", aliases: ["Clients", "Contacts", "Customer List", "Accounts"] },
     { to: "/admin/tags",            label: "Customer Tags",    icon: BadgeCheck, feature: "customers", subsection: "Directory" },
     { to: "/admin/service-reports", label: "Service Reports",  icon: ClipboardListIcon2, feature: "jobs",  subsection: "Directory" },
     { to: "/leads",                 label: "Leads",            icon: UserPlus,   feature: "customers", subsection: "Directory" },
@@ -321,7 +321,7 @@ export const ADMIN_NAV_V2 = [
 
   { key: "reports", label: "Reports", icon: BarChart3, entries: [
     { to: "/",                            label: "Dashboard",         icon: LayoutDashboard, feature: "dashboard" },
-    { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports" },
+    { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports", aliases: ["Analytics", "Reporting", "Business Reports"] },
     { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
     { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports" },
     { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports" },
