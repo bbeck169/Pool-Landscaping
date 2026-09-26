@@ -722,15 +722,23 @@ export default function CustomersList() {
 
   useEffect(() => {
     load();
-    // Phase K68 · Feb-2026 — ``load()`` now populates the tab
+    // Phase K68 · Feb-2026 — ``load()`` populates the four tab
     // counts via the paginated envelope's ``counts_by_status``
-    // block. Phase P31 · Feb-2026 — ``loadCounts()`` fires ONE
-    // ``/customers/counts`` fetch that also hydrates the five
-    // standalone-badge setters (missing_address, portal_activated
-    // x2, no_payment_method, never_logged_in) that used to live
-    // in their own per-badge effects. Kept alongside ``load()``
-    // so the badges refresh on every scope / chip change.
-    loadCounts();
+    // block, so no separate ``loadCounts()`` fetch is required on
+    // filter / tab / page / sort changes.
+    //
+    // CUS-perf · Feb-2026 — the redundant ``loadCounts()`` call
+    // that used to live here was removed as part of the Customers-
+    // list load-time fix. The five stable badge counts
+    // (missing_address, portal_activated x2, no_payment_method,
+    // never_logged_in) are by-design filter-invariant — they
+    // represent the STABLE population of the tenant and never
+    // move as the admin narrows other criteria — so they do not
+    // need a re-fetch on filter/tab/page/sort changes. The mount-
+    // only ``loadCounts()`` (see effect below) primes them once,
+    // and every post-mutation callsite (bulk-status, restore,
+    // import, etc.) explicitly re-invokes ``loadCounts()`` so
+    // the badges refresh when the underlying population changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
        missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);

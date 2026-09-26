@@ -3123,6 +3123,51 @@ async def _p24_run_perf_customers_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# ── CUS-perf · Feb-2026 — Customers-list sort-path compound indexes.
+#
+# Sibling to ``_p24_run_perf_customers_boot`` above. Ships three
+# compound indexes on the ``customers`` collection so the primary
+# list endpoint's sort surface (``created_desc`` default,
+# ``created_asc``, ``name_asc`` / ``name_desc``, ``last_name_asc``)
+# uses IXSCAN instead of an in-memory ``$sort`` stage. See
+# ``services.migrations.perf_customers_indexes_v2`` for the
+# catalogue + rollback runbook.
+#
+# Wired as ``must_succeed=False`` per CUS-perf ruling R1 — perf
+# polish, not correctness. Deliberately NOT added to
+# ``_REQUIRED_MIGRATIONS`` (ruling R2) so a rolling deploy against a
+# 10K-50K-doc ``customers`` collection doesn't 503 ``/health/ready``
+# during the background index build.
+async def _run_perf_customers_v2_boot(db_handle) -> dict:
+    """Run the ``perf_customers_v2`` structural migration.
+
+    Sentinel-gated internally so a second boot is a no-op. Routed
+    through ``_run_structural_migration`` so any Mongo hiccup
+    surfaces on
+    ``/api/health.init.structural_migrations.perf_customers_v2``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from services.migrations.perf_customers_indexes_v2 import (
+            run as _perf_customers_v2_run,
+        )
+        res = await _perf_customers_v2_run(db_handle)
+        logger.info(
+            "[perf-customers-v2] structural pass — skipped=%s created=%s "
+            "already=%s collections=%s",
+            res.get("skipped"),
+            res.get("created"),
+            res.get("already"),
+            res.get("collections"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "perf_customers_v2", _factory, must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3449,6 +3494,13 @@ async def _run_boot_sequence():
     _p24_warn_active_testmode_mocks()
     _p30_warn_stripe_live_env_gaps()
     await _p24_run_perf_customers_boot(db)
+    # CUS-perf · Feb-2026 — Customers-list sort-path compound indexes.
+    # Line-adjacent to v1's call so a boot-order regression that
+    # moves either helper out of the STRUCTURAL bucket is caught by
+    # the P24 pre-yield lint (test_p24_perf_customers_call_is_before
+    # _lifespan_yield) + the CUS-perf sibling lint. Best-effort per
+    # ruling R1 (must_succeed=False inside the wrapper).
+    await _run_perf_customers_v2_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
