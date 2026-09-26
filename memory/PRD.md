@@ -26971,3 +26971,139 @@ Audit-log verification: 2 rows per bulk_op_id
 restored at `line_items[0]` with correct
 `unit_price / description`; totals recomputed
 (`subtotal=total=100, remaining_balance=100`).
+
+
+## Phase P59 · Read-side tenant isolation — CSV exports + JSON reports (Feb-2026 · SHIPPED preview)
+
+**Status: SHIPPED — 5 discrete commits merged to preview.**
+
+Follow-up to Phase P57 (write-side isolation of `_soft_delete_item`)
+and Phase P58 (portal-token surface). P59 audits and closes the
+matching **read-side** leaks: 4 CSV exports and 5 JSON reports that
+had been running `db.<coll>.find({}, ...)` with empty filters,
+letting any admin token on any tenant enumerate cross-tenant rows.
+
+### Scope — 9 endpoints fixed
+
+| Route | Method | Router · file:line pre-fix | Leak surface |
+|---|---|---|---|
+| `/export/customers` | GET | `impexp.py` | Every customer row across all tenants (names, emails, phones, addresses, service plan, notes). |
+| `/export/items` | GET | `impexp.py` | Every pricebook / item row across all tenants (SKU, description, cost, price, category). |
+| `/export/jobs` | GET | `reports.py :625` | Every job row across all tenants (customer name, address, price, technician_id). |
+| `/export/invoices` | GET | `reports.py :654` | Every invoice row across all tenants (customer name, total, amount_paid, due_date, paid_at). |
+| `/reports/revenue-by-city` | GET | `reports.py :96` | `db.customers.find({}, ...)` unfiltered — cross-tenant customer names + address strings via city bucket rollup. |
+| `/reports/revenue-by-crew` | GET | `reports.py :119` | `db.jobs.find({}, ...)` + `db.crews.find({}, ...)` unfiltered — cross-tenant jobs + crew names driving revenue attribution. |
+| `/reports/revenue-by-customer` | GET | `reports.py :156` | Bucketing off `_fetch_paid`; caller tenant sourced from loose JWT claim, not strict `get_current_tenant`. |
+| `/reports/gross-sales` | GET | `reports.py :178` | Totals off `_fetch_all_invoices`; caller tenant sourced from loose JWT claim. |
+| `/reports/invoiced-items` | GET | `reports.py :218` | Line-item rollup off `_fetch_all_invoices`; caller tenant sourced from loose JWT claim. |
+
+### Commit trail (chronological, 5 SHAs)
+
+| # | SHA | Concern |
+|---|---|---|
+| 1 | `29b41dba8` | `fix(impexp): scope /export/customers to caller tenant` |
+| 2 | `4f2ab0541` | `fix(impexp): scope /export/items to caller tenant` |
+| 3 | `cc4be5904` | `fix(reports): scope _fetch_paid and _fetch_all_invoices helpers to caller tenant` |
+| 4 | `63f6e19c5` | `fix(reports): scope /export/jobs and /export/invoices to caller tenant` |
+| 5 | `bd9f72d8b` | `fix(reports): scope /reports/revenue-by-* + gross-sales + invoiced-items to caller tenant` |
+
+### Fix pattern
+
+Every route now:
+
+1. Depends on `get_current_tenant` (strict tenant dependency —
+   returns 404 `tenant_not_found` if the JWT claim doesn't resolve).
+2. Splices `"tenant_id": tenant["id"]` into every direct
+   `db.<coll>.find(...)` filter inside the handler body.
+3. Where the route already delegates to a helper (`_fetch_paid`,
+   `_fetch_all_invoices`), the helper's signature was tightened
+   in Commit 3 to **require** a non-empty string `tenant_id` and
+   return `[]` otherwise — so any future caller that forgets to
+   thread the tenant fails closed rather than leaking silently.
+
+Helper signature contract (Commit 3):
+
+```python
+async def _fetch_paid(tenant_id: str, dfrom, dto) -> list:
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        return []
+    docs = await db.quotes.find(
+        {"tenant_id": tenant_id, "doc_type": "invoice", ...},
+        {"_id": 0},
+    ).to_list(10000)
+    ...
+
+async def _fetch_all_invoices(tenant_id: str, dfrom, dto) -> list:
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        return []
+    docs = await db.quotes.find(
+        {"tenant_id": tenant_id, "doc_type": "invoice", ...},
+        {"_id": 0},
+    ).to_list(10000)
+    ...
+```
+
+### Test coverage — 4 dedicated isolation suites
+
+* `backend/tests/test_p59_export_customers_tenant_isolation.py`
+  — plants 3 aquaterra + 2 foreign-tenant customer rows, hits
+  `/export/customers`, asserts CSV includes every aquaterra row
+  and no foreign-tenant row.
+* `backend/tests/test_p59_export_items_tenant_isolation.py`
+  — same pattern for `/export/items`.
+* `backend/tests/test_p59_export_jobs_invoices_tenant_isolation.py`
+  — `/export/jobs` and `/export/invoices`; plants markered
+  cross-tenant jobs + invoice rows, asserts CSV inclusion +
+  foreign-tenant exclusion.
+* `backend/tests/test_p59_reports_json_tenant_isolation.py`
+  — one test per JSON route (`revenue-by-city`, `revenue-by-crew`,
+  `revenue-by-customer`, `gross-sales`, `invoiced-items`). Uses
+  markered city / crew names, customer names, invoice ids, and
+  line-item descriptions so foreign-tenant leakage is uniquely
+  attributable in the response payload.
+
+All 4 suites skip cleanly if only one tenant exists in preview
+(via `foreign_tenant_id` fixture returning `None`).
+
+### Ancillary test-fixture repair (bundled in Commit 4)
+
+`backend/tests/test_reports_tech_hydration.py::
+test_export_jobs_hydration_is_single_shot` invokes
+`_reports.export_jobs()` **directly** (bypassing FastAPI DI) to
+spy on `resolve_technician_names` for the no-N+1 assertion. After
+Commit 4 added `Depends(get_current_tenant)`, that direct call
+needed the resolved tenant spliced in by hand. The fixture now
+passes `tenant={"id": tid}` explicitly — the exact pattern the
+adjacent `test_analytics_utilization_matrix_hydrates_and_stops_
+dropping_users_id_rows` test already uses for the analytics
+handler's identical direct-invocation call. No behavior changes
+to the route itself; every existing hydration assertion is
+preserved (`test_export_jobs_hydrates_current_tech_name`,
+`test_export_jobs_missing_user_degrades_gracefully`, and the
+spy count assertion all still pass).
+
+### What P59 does NOT touch
+
+* No write-side changes. Writes were closed under P57.
+* No new endpoints or route re-shaping. Behavior for legitimate
+  single-tenant callers is unchanged. Response payload shapes,
+  filenames, and field names are identical.
+* No indexes added. Existing `tenant_id`-prefixed indexes on
+  `customers`, `items`, `jobs`, `quotes`, `crews` cover the new
+  filters.
+* No mobile client changes.
+
+### Regression sweep
+
+* `test_phase6_reports_finance.py` — 25/25 pass unchanged
+  (5 revenue slices + gross-sales + invoiced-items + jobs + invoices
+  CSV + non-admin forbid checks + OpenAPI shape).
+* `test_reports_tech_hydration.py` — 4/4 pass (hydration + no-N+1).
+* `test_p2_soft_delete_sweep.py` — the two pre-existing failures
+  in `TestDashboardRevenueHidesDeleted` (`_FakeCollection` object
+  has no attribute `distinct` on `routers/dashboard.py:250`) are
+  **UNRELATED** to P59; verified by stashing P59 diffs and
+  re-running — the same 2 tests still fail. These trace to the
+  Phase K41d "Bulk Operations audit summary" dashboard tile using
+  `db.audit_events.distinct(...)` which the test suite's fake
+  collection stub doesn't implement. Parked as pre-existing.
