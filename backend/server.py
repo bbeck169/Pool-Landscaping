@@ -826,6 +826,11 @@ api_router.include_router(_document_versions.router)
 # and portal read paths.
 from routers import invoice_views as _k47_invoice_views  # noqa: E402
 api_router.include_router(_k47_invoice_views.router)
+# QV-service · Feb-2026 — quote view-tracking admin history endpoint
+# (``GET /api/quotes/{qid}/views``). Registered next to its invoice
+# sibling so the two surfaces evolve in lockstep.
+from routers import quote_views as _qv_quote_views  # noqa: E402
+api_router.include_router(_qv_quote_views.router)
 # Phase H5 · Feb-2026 — Crew Productivity tile endpoint. Admin-only
 # weekly / monthly revenue-per-crew rollup for the admin dashboard.
 # Job attribution follows the F6a semantic (crew_id OR
@@ -1992,6 +1997,18 @@ async def _background_seed():
         logger.info("[k47-invoice-views] indexes ensured")
     except Exception as e:
         logger.warning(f"k47_invoice_views ensure_indexes crashed: {e}")
+
+    # QV-service · Feb-2026 — ``quote_views`` collection indexes for
+    # the quote view-tracking feature. Sibling of the K47 invoice
+    # bootstrap; same idempotent + best-effort semantics.
+    try:
+        if not _RUN_STARTUP_INDEXES:
+            raise RuntimeError("startup indexes disabled — run scripts.ensure_indexes")
+        from services.quote_view_tracker import ensure_quote_view_indexes
+        await ensure_quote_view_indexes()
+        logger.info("[qv-service] quote_views indexes ensured")
+    except Exception as e:
+        logger.warning(f"qv_service ensure_quote_view_indexes crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

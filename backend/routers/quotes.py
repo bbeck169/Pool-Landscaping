@@ -1325,6 +1325,7 @@ async def send_quote_to_customer(
 
 @router.get("/quotes/{qid}")
 async def get_quote(qid: str,
+                    request: Request,
                     user: dict = Depends(get_current_user),
                     tenant: dict = Depends(get_current_tenant),
                     # Feb-2026 · P2 Item 1 — super_admin escape hatch so
@@ -1363,6 +1364,28 @@ async def get_quote(qid: str,
         _email = (_cust.get("email") or "").strip()
         if _email:
             doc["customer_email"] = _email
+    # QV-service · Feb-2026 — record portal-authenticated customer
+    # views. Admin/office/dispatcher views are NOT tracked here
+    # (this is a customer-engagement signal, not an internal audit
+    # log). Mirrors ``invoice_viewer.py::get_invoice_full`` gate
+    # verbatim so the admin preview never inflates view stats. The
+    # doc_type guard inside the tracker's denorm update filters
+    # out invoices — this route is quote+invoice shared but the
+    # tracker only touches quote rows.
+    if role == "customer" and doc.get("doc_type") != "invoice":
+        try:
+            from services.quote_view_tracker import record_quote_view
+            ua = request.headers.get("user-agent")
+            ip = (request.client.host
+                    if request.client is not None else None)
+            await record_quote_view(
+                quote_id=qid,
+                tenant_id=tenant["id"],
+                source="portal",
+                user_agent=ua, ip=ip,
+            )
+        except Exception:  # pragma: no cover — defensive
+            pass
     return doc
 
 

@@ -649,12 +649,47 @@ async def _load_est_from_token(tok: str) -> Dict[str, Any]:
 
 @router.get("/portal/quotes/via-token")
 @router.get("/portal/estimates/via-token", deprecated=True)
-async def view_estimate_via_token(request: Request, token: str = Query(...)):
+async def view_estimate_via_token(
+    request: Request,
+    token: str = Query(...),
+    src: Optional[str] = Query(
+        None,
+        description=(
+            "QV-service · Feb-2026 — Optional send-channel "
+            "attribution: 'email' | 'sms' | 'portal' | 'link'. "
+            "Anything unknown normalises to 'link'. Backwards-"
+            "compatible: omitted callers still see the payload; "
+            "they just attribute as 'link'."
+        ),
+    ),
+):
     ctx = await _load_est_from_token(token)
-    return await _build_payload(
+    payload = await _build_payload(
         ctx["est"], ctx["tenant"], as_customer=True,
         magic_token=token, url_base=_resolve_url_base(request),
     )
+    # QV-service · Feb-2026 — fire-and-forget view stamp.
+    # ``record_quote_view`` swallows Mongo failures internally so
+    # the customer's page render is never blocked on it. The
+    # ``doc_type`` filter inside the tracker guarantees this
+    # tokenized route can never accidentally stamp an invoice
+    # (tokens issued for invoices never resolve here anyway — the
+    # collection is shared but ``doc_type`` on the doc gates the
+    # denorm update).
+    try:
+        from services.quote_view_tracker import record_quote_view
+        ua = request.headers.get("user-agent")
+        ip = (request.client.host
+                if request.client is not None else None)
+        await record_quote_view(
+            quote_id=ctx["est"]["id"],
+            tenant_id=ctx["tenant"]["id"],
+            source=src,
+            user_agent=ua, ip=ip,
+        )
+    except Exception:  # pragma: no cover — defensive
+        pass
+    return payload
 
 
 def _resolve_url_base(request: Request) -> str:
