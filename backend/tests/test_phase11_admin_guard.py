@@ -74,9 +74,25 @@ class TestPrimaryFourTechForbidden:
         r = requests.post(f"{API}/designs", json={"name": "tech-test"}, headers=tech_h, timeout=15)
         _expect_403(r)
 
-    def test_measurements_create_tech_403(self, tech_h):
-        r = requests.post(f"{API}/measurements", json={"name": "tech-m", "area_sqft": 100}, headers=tech_h, timeout=15)
-        _expect_403(r)
+    def test_measurements_create_tech_now_ok_feb_2026(self, tech_h):
+        # M1 · Feb-2026 · measurements POST was opened to
+        # ``require_tech_or_above`` (see backend/routers/measurements.py
+        # + backend/tests/test_measurements_schema_extension.py). Techs
+        # can now record manual measurements against a tenant customer
+        # from the Customer Detail → Measurements tab. This test was
+        # previously ``test_measurements_create_tech_403``; it is
+        # retained (flipped) as a regression guard so any future
+        # re-tightening back to admin-only lands with the same
+        # locked-in intent.
+        r = requests.post(f"{API}/measurements", json={"name": "TEST_tech_m", "area_sqft": 100}, headers=tech_h, timeout=15)
+        assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text[:200]}"
+        mid = r.json().get("id")
+        if mid:
+            # Cleanup — admin_h is not in scope here; this row's
+            # ``tenant_id`` is scoped to the tech's tenant so the
+            # global TEST_ regex conftest sweep drops it at
+            # session teardown.
+            pass
 
 
 class TestPrimaryFourAdminAllowed:
