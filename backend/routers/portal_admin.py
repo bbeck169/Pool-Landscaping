@@ -192,7 +192,44 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
     )
 
 
-async def _try_send_reset_email(to: str, name: str, temp_password: str, login_url: str) -> Optional[str]:
+# ══════════════════════════════════════════════════════════════════
+# TE-portal-job · Feb-2026 — module-level hardcoded fallback
+# constants for the portal-invite email. Byte-identical to the
+# pre-TE inline f-string composition. Used when the tenant has no
+# row in ``marketing_templates`` for ``code=portal_invite_email`` OR
+# when the DB read fails / the caller omits ``tenant_id``.
+#
+# ANY EDIT HERE MUST BE MIRRORED in
+# ``migrations/te_portal_job_templates_seed.py`` so the DB seed and
+# the fallback never drift.
+# ══════════════════════════════════════════════════════════════════
+_HARDCODED_INVITE_SUBJECT = "Your customer portal login"
+_HARDCODED_INVITE_HTML_TPL = (
+    "<p>Hi {name},</p>"
+    "<p>Your portal login is ready.</p>"
+    "<p><strong>Email:</strong> {to}<br>"
+    "<strong>Temporary password:</strong> "
+    "<code>{temp_password}</code></p>"
+    "<p><a href='{login_url}'>Sign in here</a> and change "
+    "your password from Profile.</p>"
+)
+_HARDCODED_INVITE_TEXT_TPL = (
+    "Hi {name},\n\n"
+    "Your portal login is ready.\n\n"
+    "Email: {to}\n"
+    "Temporary password: {temp_password}\n\n"
+    "Sign in here: {login_url}\n"
+    "and change your password from Profile."
+)
+
+
+async def _try_send_reset_email(
+    to: str,
+    name: str,
+    temp_password: str,
+    login_url: str,
+    tenant_id: Optional[str] = None,
+) -> Optional[str]:
     """Send the reset email. Returns the Resend ``email_id`` on success
     (a non-empty string), or ``None`` when the send failed or the API
     key isn't configured. Callers historically treated the return as
@@ -200,10 +237,47 @@ async def _try_send_reset_email(to: str, name: str, temp_password: str, login_ur
     non-empty string is truthy and ``None`` is falsy.
 
     Phase P34 · Feb-2026 — surfaced the Resend response id so the
-    outbox row + webhook events can be correlated per-send."""
+    outbox row + webhook events can be correlated per-send.
+
+    TE-portal-job · Feb-2026 — 3-tier body fallback:
+        1. Tenant's ``marketing_templates`` row (``code=
+           portal_invite_email``) — either the ``is_system=True``
+           seed default OR a user-edited override — resolved via
+           ``services.marketing_template_lookup.get_template_by_code``.
+        2. Module-level hardcoded constants
+           (``_HARDCODED_INVITE_SUBJECT`` / ``_HARDCODED_INVITE_HTML_TPL``
+           / ``_HARDCODED_INVITE_TEXT_TPL``) — reached when
+           ``tenant_id`` is None, the row is missing/inactive, or
+           the DB lookup raises.
+
+    The plain-text alternative body always uses the hardcoded text
+    template — the DB row only carries the HTML variant, and the
+    text-only fallback path is a rare secondary render used by
+    HTML-averse clients.
+    """
     from config import RESEND_API_KEY, EMAIL_FROM
     if not RESEND_API_KEY:
         return None
+    # TE-portal-job · Feb-2026 — Tier 1 · try the tenant's DB row.
+    subject = _HARDCODED_INVITE_SUBJECT
+    body_tpl = _HARDCODED_INVITE_HTML_TPL
+    if tenant_id:
+        try:
+            from services.marketing_template_lookup import (
+                get_template_by_code,
+            )
+            tpl = await get_template_by_code(
+                "portal_invite_email", tenant_id,
+            )
+            if tpl and tpl.get("body"):
+                body_tpl = tpl["body"]
+                if tpl.get("subject"):
+                    subject = tpl["subject"]
+        except Exception as _exc:
+            logger.warning(
+                "[te-portal-job] portal_invite_email DB lookup "
+                "failed for tenant=%s: %s", tenant_id, _exc,
+            )
     try:
         import resend
         resend.api_key = RESEND_API_KEY
@@ -214,28 +288,19 @@ async def _try_send_reset_email(to: str, name: str, temp_password: str, login_ur
         # only (NOT a full document) and returns a full
         # ``<!doctype html>...`` shell around it.
         from services.email.theming import wrap_html_in_shell
-        inner_html = (
-            f"<p>Hi {name or ''},</p>"
-            f"<p>Your portal login is ready.</p>"
-            f"<p><strong>Email:</strong> {to}<br>"
-            f"<strong>Temporary password:</strong> "
-            f"<code>{temp_password}</code></p>"
-            f"<p><a href='{login_url}'>Sign in here</a> and change "
-            f"your password from Profile.</p>"
+        inner_html = body_tpl.format(
+            name=name or "", to=to,
+            temp_password=temp_password, login_url=login_url,
         )
         wrapped_html = wrap_html_in_shell(inner_html, branding=None)
-        text_fallback = (
-            f"Hi {name or ''},\n\n"
-            f"Your portal login is ready.\n\n"
-            f"Email: {to}\n"
-            f"Temporary password: {temp_password}\n\n"
-            f"Sign in here: {login_url}\n"
-            f"and change your password from Profile."
+        text_fallback = _HARDCODED_INVITE_TEXT_TPL.format(
+            name=name or "", to=to,
+            temp_password=temp_password, login_url=login_url,
         )
         resp = resend.Emails.send({
             "from": EMAIL_FROM or "onboarding@resend.dev",
             "to": [to],
-            "subject": "Your customer portal login",
+            "subject": subject,
             "html": wrapped_html,
             "text": text_fallback,
         })
@@ -358,7 +423,10 @@ async def _do_portal_provision(cid: str, tenant_id: str, actor: dict,
     emailed = False
     email_id: Optional[str] = None
     if not explicit_password:
-        email_id = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
+        email_id = await _try_send_reset_email(
+            email, cust.get("name", ""), password, login_url,
+            tenant_id=tenant_id,
+        )
         emailed = bool(email_id)
         # Phase P34 · Feb-2026 — persist an outbox correlation row so
         # the admin delivery-status polling endpoint + Resend webhook

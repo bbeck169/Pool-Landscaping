@@ -88,6 +88,7 @@ def build_completion_sms_body(
     job: Optional[Mapping[str, Any]],
     customer: Optional[Mapping[str, Any]],
     portal_link: str,
+    body_template: Optional[str] = None,
 ) -> str:
     """Return the exact SMS body — a single line, no numeric values,
     no chemistry mentions.
@@ -99,6 +100,17 @@ def build_completion_sms_body(
     loader with locale priority: ``customer.locale`` → ``tenant.default_locale``
     → ``en``. English wording is byte-identical to the pre-D5 output.
 
+    TE-portal-job · Feb-2026 — ``body_template`` (opt-in) short-
+    circuits both the i18n loader AND the inline hardcoded fallback:
+    when supplied, the string is rendered via ``str.format(...)``
+    with the four canonical variable names (``first_name``,
+    ``job_title``, ``business_name``, ``portal_link``) and returned.
+    Callers use this to inject the tenant's ``marketing_templates``
+    row (``code=job_completion_sms``) resolved by
+    ``services.marketing_template_lookup.get_template_by_code`` — the
+    DB read stays at the caller so this function remains synchronous
+    (no breaking change to the 8+ direct-import test sites).
+
     Non-fatal fallback: if the loader raises (missing files, missing
     merge var, etc.) we log a WARN and fall back to the pre-D5 inline
     English composition so a template-tree bug can never blank an
@@ -107,6 +119,27 @@ def build_completion_sms_body(
     first = _pick_first_name(customer)
     title = _pick_job_title(job)
     business = _pick_business_name(tenant)
+
+    # TE-portal-job · Feb-2026 — DB-first short-circuit. If the
+    # caller resolved a DB template body, render it and return.
+    # Any exception here (bad format spec, missing key) falls
+    # through to the i18n loader path below so a broken DB row
+    # can never blank the SMS.
+    if body_template:
+        try:
+            return body_template.format(
+                first_name=first,
+                job_title=title,
+                business_name=business,
+                portal_link=portal_link,
+            )
+        except Exception as _te_exc:  # noqa: BLE001
+            import logging as _logging
+            _logging.getLogger("i18n_notifications").warning(
+                "[te-portal-job] job_completion_sms body_template "
+                "render failed — falling through to i18n loader: "
+                "%s: %s", type(_te_exc).__name__, str(_te_exc)[:200],
+            )
 
     try:
         # Local import so hot-reload picks up template file edits

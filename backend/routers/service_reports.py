@@ -1468,12 +1468,35 @@ async def submit_service_report(
             # See ``services.completion_sms_template.build_completion_sms_body``
             # for the rules (first-name derivation, title trim,
             # per-tenant business name).
+            #
+            # TE-portal-job · Feb-2026 — DB-first path. Resolve the
+            # tenant's ``marketing_templates`` row (``code=
+            # job_completion_sms``) BEFORE the sync build; passing
+            # ``body_template=`` short-circuits the loader with the
+            # DB body. Missing/inactive row → the sync function
+            # falls back to its i18n loader → inline hardcoded chain.
             from services.completion_sms_template import (
                 build_completion_sms_body,
             )
+            _db_tpl_body = None
+            try:
+                from services.marketing_template_lookup import (
+                    get_template_by_code,
+                )
+                _tpl = await get_template_by_code(
+                    "job_completion_sms", _tid,
+                )
+                if _tpl and _tpl.get("body"):
+                    _db_tpl_body = _tpl["body"]
+            except Exception as _te_exc:  # noqa: BLE001
+                logger.warning(
+                    "[te-portal-job] job_completion_sms DB lookup "
+                    "failed for tenant=%s: %s", _tid, _te_exc,
+                )
             sms_body = build_completion_sms_body(
                 tenant=_tenant, job=_job, customer=customer,
                 portal_link=portal_link,
+                body_template=_db_tpl_body,
             )
             from services.sms.rc_adapter import send as _send_sms
             sms_res = await _send_sms(

@@ -3398,6 +3398,31 @@ async def _run_boot_sequence():
         _p46_factory,
         must_succeed=False,
     )
+    # TE-portal-job · Feb-2026 — Seed transactional template
+    # defaults for ``portal_invite_email`` + ``job_completion_sms``
+    # across every tenant. Idempotent — reruns are no-ops for
+    # already-seeded tenants. ``must_succeed=False`` — a Mongo hiccup
+    # logs a WARN and boot continues; the call sites still fall
+    # through to their hardcoded module-level constants.
+    async def _te_portal_job_factory():
+        from migrations.te_portal_job_templates_seed import (
+            run as _te_run,
+        )
+        _res = await _te_run()
+        logger.info(
+            "[te-portal-job] boot pass — tenants_scanned=%s "
+            "portal_invite_seeded=%s job_completion_seeded=%s",
+            _res.get("tenants_scanned"),
+            _res.get("portal_invite_seeded"),
+            _res.get("job_completion_seeded"),
+        )
+        return _res
+
+    await _run_structural_migration(
+        "te_portal_job_templates_seed",
+        _te_portal_job_factory,
+        must_succeed=False,
+    )
     # Phase P24 · Feb-2026 — Go-live testmode WARN + perf_customers_v1
     # migration. Extracted into module-level helpers so pytest can
     # invoke them directly (see tests/test_p24_env_flip_defaults.py

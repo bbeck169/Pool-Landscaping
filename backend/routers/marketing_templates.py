@@ -48,6 +48,11 @@ ALLOWED_CHANNELS = {"email", "sms"}
 ALLOWED_CATEGORIES = {
     "service_completed", "invoice_sent", "past_due",
     "welcome", "review_request", "general",
+    # TE-portal-job · Feb-2026 — transactional trigger categories
+    # backed by ``marketing_templates`` rows with ``code=
+    # portal_invite_email`` and ``code=job_completion_sms``. Seeded
+    # by ``migrations/te_portal_job_templates_seed.py``.
+    "portal_invite", "job_completion",
 }
 
 

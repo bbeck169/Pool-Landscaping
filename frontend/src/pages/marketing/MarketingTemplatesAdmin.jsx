@@ -31,6 +31,9 @@ const CATEGORY_OPTIONS = [
   { v: "welcome", l: "Welcome" },
   { v: "review_request", l: "Review Request" },
   { v: "general", l: "General" },
+  // TE-portal-job · Feb-2026 — transactional trigger categories.
+  { v: "portal_invite", l: "Portal Invite" },
+  { v: "job_completion", l: "Job Completion" },
 ];
 
 
