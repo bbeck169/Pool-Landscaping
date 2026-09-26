@@ -50,6 +50,7 @@ vi.mock("@/theme", () => ({
   colors: {
     brand: "#0B4A6F", muted: "#6B7280", onSurface: "#111827",
     border: "#E5E7EB", surface: "#FFFFFF",
+    nav: { bg: "#1B1F5C", bgDeep: "#03002e" },
   },
   money: (n) => `$${Number(n || 0).toFixed(2)}`,
 }));

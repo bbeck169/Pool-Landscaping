@@ -21,6 +21,7 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 import EstimateView from "@/components/EstimateView";
+import { colors } from "@/theme";
 
 
 export default function PublicEstimateLanding() {
@@ -60,25 +61,33 @@ export default function PublicEstimateLanding() {
   if (!token) {
     return (
       <div
-        style={{ padding: 40, textAlign: "center", color: "#7F1D1D" }}
+        style={{
+          minHeight: "100vh",
+          padding: 40,
+          background: colors.nav.bgDeep,
+        }}
         data-testid="public-estimate-landing-missing-token"
       >
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-          Missing link token
-        </h1>
-        <p>
-          This estimate link is incomplete. Please open the link
-          exactly as it was sent to you.
-        </p>
+        <div style={{ textAlign: "center", color: "#7F1D1D" }}>
+          <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+            Missing link token
+          </h1>
+          <p>
+            This estimate link is incomplete. Please open the link
+            exactly as it was sent to you.
+          </p>
+        </div>
       </div>
     );
   }
   return (
     <div
-      className="max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"
+      style={{ minHeight: "100vh", background: colors.nav.bgDeep }}
       data-testid="public-estimate-landing"
     >
-      <EstimateView token={token} isAdmin={false} />
+      <div className="max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4">
+        <EstimateView token={token} isAdmin={false} />
+      </div>
     </div>
   );
 }
