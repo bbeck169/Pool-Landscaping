@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -9,6 +9,7 @@ import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
+import { formatRelativeFromIso } from "@/lib/relativeTime";
 import {
   PageHeader,
   Button,
@@ -622,7 +623,12 @@ export default function InvoicesList() {
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
-                  {/* Phase K47 · Feb-2026 — Viewed indicator */}
+                  {/* Phase K47 · Feb-2026 — Viewed indicator.
+                      QV-ui · Feb-2026 — Refactored to consume the
+                      shared ``formatRelativeFromIso`` helper +
+                      Lucide ``<Eye>`` icon (emoji swap parity with
+                      the QuotesList sibling). Wording is byte-
+                      identical to the pre-extraction inline copy. */}
                   <td
                     className="px-3 py-3 hidden lg:table-cell"
                     style={{ color: colors.onSurfaceSecondary }}
@@ -631,21 +637,8 @@ export default function InvoicesList() {
                   >
                     {r.first_viewed_at ? (
                       <span title={r.last_viewed_at || r.first_viewed_at} className="inline-flex items-center gap-1 text-xs">
-                        <span aria-hidden>👁</span>
-                        {(() => {
-                          const iso = r.last_viewed_at || r.first_viewed_at;
-                          const ts = Date.parse(iso);
-                          if (Number.isNaN(ts)) return "seen";
-                          const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-                          if (diffSec < 60) return `${diffSec}s ago`;
-                          const m = Math.floor(diffSec / 60);
-                          if (m < 60) return `${m}m ago`;
-                          const h = Math.floor(m / 60);
-                          if (h < 24) return `${h}h ago`;
-                          const d = Math.floor(h / 24);
-                          if (d < 30) return `${d}d ago`;
-                          return `${Math.floor(d / 30)}mo ago`;
-                        })()}
+                        <Eye size={12} aria-hidden />
+                        {formatRelativeFromIso(r.last_viewed_at || r.first_viewed_at) || "seen"}
                         {r.view_count > 1 ? (
                           <span className="ml-1 text-[10px]" style={{ color: colors.muted }} data-testid={`invoice-view-count-${r.id}`}>
                             ({r.view_count}×)

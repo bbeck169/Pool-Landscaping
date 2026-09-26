@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText } from "lucide-react";
+import { Plus, Search, FileText, Eye } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
 import { CustomerLink } from "@/components/customer";
 import { PageHeader, Button, Skeleton, StatusPill, EmptyState } from "@/components/ui-kit";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
+import { formatRelativeFromIso } from "@/lib/relativeTime";
 
 const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 
@@ -149,6 +150,12 @@ export default function QuotesList() {
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Quote</th>
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Amount</th>
+                {/* QV-ui · Feb-2026 — customer-engagement signal.
+                    Populated by the QV-service view tracker
+                    (portal-authenticated customer views + public
+                    tokenized magic-link opens). Hidden on <lg
+                    screens to match the InvoicesList sibling. */}
+                <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Viewed</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
               </tr>
             </thead>
@@ -164,6 +171,30 @@ export default function QuotesList() {
                   <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }}>{r.title}</td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} data-testid={`quote-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</td>
+                  {/* QV-ui · Feb-2026 — Viewed indicator cell. Wire
+                      target for the ``quote-viewed-${id}`` testid.
+                      Uses the shared ``formatRelativeFromIso`` so
+                      the wording matches the InvoicesList sibling
+                      byte-for-byte. */}
+                  <td
+                    className="px-3 py-3 hidden lg:table-cell"
+                    style={{ color: colors.onSurfaceSecondary }}
+                    data-testid={`quote-viewed-${r.id}`}
+                  >
+                    {r.first_viewed_at ? (
+                      <span title={r.last_viewed_at || r.first_viewed_at} className="inline-flex items-center gap-1 text-xs">
+                        <Eye size={12} aria-hidden />
+                        {formatRelativeFromIso(r.last_viewed_at || r.first_viewed_at) || "seen"}
+                        {r.view_count > 1 ? (
+                          <span className="ml-1 text-[10px]" style={{ color: colors.muted }} data-testid={`quote-view-count-${r.id}`}>
+                            ({r.view_count}×)
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-xs" style={{ color: colors.muted }}>—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-right"><StatusPill status={r.decision || r.status} /></td>
                 </tr>
               ))}

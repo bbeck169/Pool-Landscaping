@@ -18,6 +18,10 @@
 import React, { useEffect, useState } from "react";
 import { Eye, ChevronDown, ChevronUp } from "lucide-react";
 import { api } from "@/api";
+import {
+  formatRelativeFromIso as _relativeFromIso,
+  formatLocalFromIso as _fmtLocal,
+} from "@/lib/relativeTime";
 
 // Mirrors backend/services/invoice_view_tracker.py::_VALID_SOURCES.
 const SOURCE_LABELS = {
@@ -27,27 +31,11 @@ const SOURCE_LABELS = {
   link:  { label: "Link",   bg: "#F3F4F6", fg: "#374151" },
 };
 
-function _relativeFromIso(iso) {
-  if (!iso) return "";
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return "";
-  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (diffSec < 60)   return `${diffSec}s ago`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60)   return `${diffMin}m ago`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24)     return `${diffH}h ago`;
-  const diffD = Math.floor(diffH / 24);
-  if (diffD < 30)     return `${diffD}d ago`;
-  const diffMo = Math.floor(diffD / 30);
-  return `${diffMo}mo ago`;
-}
-
-function _fmtLocal(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+// QV-ui · Feb-2026 — the two inline formatters previously lived
+// here (``_relativeFromIso`` + ``_fmtLocal``) were promoted to
+// ``frontend/src/lib/relativeTime.js`` so InvoicesList,
+// QuotesList and QuoteViewHistory can share the same wording.
+// Local aliases above keep the JSX read-sites unchanged.
 
 export default function InvoiceViewHistory({ invoiceId }) {
   const [data, setData] = useState(null);

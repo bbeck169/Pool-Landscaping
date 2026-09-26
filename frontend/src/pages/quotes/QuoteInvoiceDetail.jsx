@@ -50,6 +50,7 @@ import FlipbookComposeSection from "@/components/quotes/FlipbookComposeSection";
 // Phase K47 · Feb-2026 — View-history card (admin/office/dispatcher
 // only; the component hides itself when the endpoint 403s).
 import InvoiceViewHistory from "@/components/invoices/InvoiceViewHistory";
+import QuoteViewHistory from "@/components/quotes/QuoteViewHistory";
 // Feb-2026 · Editable Sent Docs Phase 2 — slide-in version-history
 // drawer + trigger button. Component is a pure display over
 // ``GET /api/invoices|quotes/{id}/versions``.
@@ -1128,6 +1129,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           rendered on invoices (quotes have their own separate
           audit tab) and only for staff-authenticated views. */}
       {isInvoice && isStaff && <InvoiceViewHistory invoiceId={doc.id} />}
+
+      {/* QV-ui · Feb-2026 — Quote view-history card. Sibling of
+          the K47 invoice card above — same RBAC gate (staff only)
+          + inverse ``isInvoice`` guard so a quote route never
+          mounts both cards. Customer portal views are gated out
+          by ``!isStaff`` (the endpoint returns 403 for customers
+          anyway; this is defense-in-depth against a rogue role
+          leak). */}
+      {!isInvoice && isStaff && <QuoteViewHistory quoteId={doc.id} />}
 
       {/* Feb-2026 · Task 6 — Collapsible inline Terms & Conditions
           editor. Replaces the prior modal-based editor. All old
