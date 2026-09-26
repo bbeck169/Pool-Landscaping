@@ -140,7 +140,7 @@ export default function PublicInvoiceMagic() {
               src="/logos/credit-card-logos.png"
               alt="Cards accepted"
               data-testid="public-invoice-magic-card-logos"
-              className="h-8 w-auto mx-auto block"
+              className="h-12 w-auto mx-auto block"
             />
           </div>
         ) : null}
