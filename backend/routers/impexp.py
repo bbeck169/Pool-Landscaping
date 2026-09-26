@@ -70,8 +70,16 @@ async def export_customers(user: dict = Depends(require_admin),
 
 
 @router.get("/export/items")
-async def export_items(user: dict = Depends(require_admin)):
-    rows = await db.items.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+async def export_items(user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    # P59 · Feb-2026 — every read scoped to the caller's tenant.
+    # Prior to this fix ``db.items.find({}, ...)`` ran with an
+    # empty filter, letting any admin token on any tenant enumerate
+    # cross-tenant pricebook rows (including wholesale costs) via
+    # a CSV download.
+    rows = await db.items.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0},
+    ).sort("name", 1).to_list(5000)
     return {"filename": "pricebook.csv", "content": _to_csv(rows, ITEM_COLS), "count": len(rows)}
 
 
