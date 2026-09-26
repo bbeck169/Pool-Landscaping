@@ -122,6 +122,33 @@ async def ensure_defaults_for_tenant(tenant_id: str) -> None:
 # ═══════════════════════════════════════════════════════════════════
 # Category enforcement helper — called by quotes.py + invoice_edit.py
 # ═══════════════════════════════════════════════════════════════════
+def _line_item_row_ref(idx: int, li: Dict[str, Any]) -> str:
+    """Feb-2026 · Build a user-facing row reference for validation
+    errors.
+
+    Returns ``"Line Item {N} ({description})"`` where ``N`` is
+    ``idx + 1`` (1-based, matches what the operator sees in the
+    inline editor) and ``description`` is the line item's own
+    description text — or ``"Untitled"`` when missing/blank
+    (matches the codebase-wide fallback used by
+    ``document_generators``, ``templates_library``,
+    ``ai_employees``, etc.).
+
+    Callers concatenate this against the specific validation
+    complaint so a user with 20 line items can pinpoint the
+    offending row without counting from zero. The machine-parseable
+    ``field`` / ``line_index`` payload keys stay 0-based so
+    Pydantic-style ``loc`` consumers on the frontend keep working
+    unchanged — only the human ``message`` string is affected.
+    """
+    desc_raw = li.get("description") if li else None
+    if isinstance(desc_raw, str):
+        desc = desc_raw.strip()
+    else:
+        desc = ""
+    return f"Line Item {idx + 1} ({desc or 'Untitled'})"
+
+
 async def validate_line_item_categories(
     tenant_id: str, line_items: List[Dict[str, Any]],
 ) -> None:
@@ -151,9 +178,11 @@ async def validate_line_item_categories(
                     "error_code": "category_required",
                     "field": f"line_items[{idx}].category",
                     "line_index": idx,
-                    "message": ("Each income line item must have a "
-                                 "category. Available categories: "
-                                 f"{available}"),
+                    "message": (
+                        f"{_line_item_row_ref(idx, li)} — Each income "
+                        "line item must have a category. Available "
+                        f"categories: {available}"
+                    ),
                     "available_categories": available,
                 },
             )
@@ -168,8 +197,11 @@ async def validate_line_item_categories(
                 "field": f"line_items[{idx}].category",
                 "line_index": idx,
                 "attempted_category": cat_str,
-                "message": (f"Unknown or archived category: {cat_str!r}. "
-                             f"Available categories: {available}"),
+                "message": (
+                    f"{_line_item_row_ref(idx, li)} — Unknown or "
+                    f"archived category: {cat_str!r}. Available "
+                    f"categories: {available}"
+                ),
                 "available_categories": available,
             },
         )
@@ -255,8 +287,11 @@ async def validate_line_item_k71_categories(
                     "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].service_category_id",
                     "line_index": idx,
-                    "message": ("Service category is required for this "
-                                 "line item. Set it in the inline editor."),
+                    "message": (
+                        f"{_line_item_row_ref(idx, li)} — Service "
+                        "category is required for this line item. "
+                        "Set it in the inline editor."
+                    ),
                     "invalid_value": "",
                     "available_categories": svc_available,
                 },
@@ -273,8 +308,9 @@ async def validate_line_item_k71_categories(
                     "attempted": svc_val,
                     "invalid_value": svc_val,
                     "message": (
-                        f"Line item {idx} references an inactive or "
-                        f"unknown service category: {svc_val!r}."
+                        f"{_line_item_row_ref(idx, li)} — references "
+                        f"an inactive or unknown service category: "
+                        f"{svc_val!r}."
                     ),
                     "available_categories": svc_available,
                 },
@@ -289,8 +325,11 @@ async def validate_line_item_k71_categories(
                     "code": "invalid_line_item_category",
                     "field": f"line_items[{idx}].income_category_id",
                     "line_index": idx,
-                    "message": ("Income category is required for this "
-                                 "line item. Set it in the inline editor."),
+                    "message": (
+                        f"{_line_item_row_ref(idx, li)} — Income "
+                        "category is required for this line item. "
+                        "Set it in the inline editor."
+                    ),
                     "invalid_value": "",
                     "available_categories": inc_available,
                 },
@@ -307,8 +346,9 @@ async def validate_line_item_k71_categories(
                     "attempted": inc_val,
                     "invalid_value": inc_val,
                     "message": (
-                        f"Line item {idx} references an inactive or "
-                        f"unknown income category: {inc_val!r}."
+                        f"{_line_item_row_ref(idx, li)} — references "
+                        f"an inactive or unknown income category: "
+                        f"{inc_val!r}."
                     ),
                     "available_categories": inc_available,
                 },
