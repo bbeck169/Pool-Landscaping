@@ -40,7 +40,16 @@ def _now_iso() -> str:
 
 def _redact(v: Optional[str]) -> Optional[str]:
     """Redact a recipient for log storage. Keeps enough shape for
-    debugging without leaking the full PII."""
+    debugging without leaking the full PII.
+
+    SAFE-SEND-A.1 · Feb-2026 — added phone-aware branch.
+    E.164 numbers (leading ``+``, all digits, length 8..16) are
+    redacted as ``+1555***4567`` — first 5 chars (country + area)
+    plus last 4 (subscriber tail) with the middle digits starred.
+    Non-E.164 phones fall to the generic tail-preserving branch
+    below.  Emails go through the existing local-part redaction.
+    Behaviour for emails is BYTE-IDENTICAL to pre-A.1.
+    """
     if not v:
         return v
     s = str(v)
@@ -49,6 +58,13 @@ def _redact(v: Optional[str]) -> Optional[str]:
         keep = 2
         redacted_local = local[:keep] + ("*" * max(0, len(local) - keep))
         return f"{redacted_local}@{dom}"
+    # E.164 phone detection: leading '+', digits only after, len 8..16.
+    # Preserves country + area code (first 5 chars, e.g. ``+1555``)
+    # and the last 4 (subscriber tail) — middle digits starred.
+    if (s.startswith("+") and s[1:].isdigit()
+            and 8 <= len(s) <= 16):
+        star_count = max(0, len(s) - 9)  # 5 leading + 4 trailing kept.
+        return s[:5] + ("*" * star_count) + s[-4:]
     if len(s) <= 4:
         return "*" * len(s)
     return s[:2] + ("*" * (len(s) - 6)) + s[-4:]

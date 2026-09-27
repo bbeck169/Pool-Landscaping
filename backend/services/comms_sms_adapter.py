@@ -27,6 +27,7 @@ from services.comms_env_guard import (
     CommsContext, RedirectTargetMissing,
     get_redirect_targets, should_redirect_to_admin,
 )
+from services.comms_send_log import format_exc, record_attempt
 
 # GSM-7 basic + extension table — anything not in this set forces UCS-2.
 _GSM7_BASIC = set(
@@ -126,6 +127,23 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
                 "original_to=%s err=%s — SKIPPING send",
                 context.value, tenant_id, to_phone, exc,
             )
+            # SAFE-SEND-A.1 · audit-parity — write the skip row so
+            # ``comms_send_log`` reflects that a send was ATTEMPTED
+            # and suppressed by the redirect gate.  Match the email
+            # side's provider_status contract when it eventually
+            # gets this branch — the string doubles as the response
+            # envelope's ``status`` field (parity by construction).
+            record_attempt(
+                "sms", ok=False, tenant_id=tenant_id,
+                recipient=None,                       # never sent
+                provider="ringcentral",
+                provider_status="skipped_no_redirect_target",
+                was_mock=False, routed_via="safe_send_gate",
+                error=str(exc),
+                context=context.value,
+                intended_recipient=_original_to,
+                redirected=True,
+            )
             return {
                 "status": "skipped_no_redirect_target",
                 "safe_send_context": context.value,
@@ -149,8 +167,29 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
 
     stats = sms_length_stats(body)
     if not to_phone:
+        record_attempt(
+            "sms", ok=False, tenant_id=tenant_id,
+            recipient=to_phone,
+            provider="ringcentral",
+            provider_status="failed_empty_recipient",
+            was_mock=False, routed_via="pre_gate",
+            error="empty recipient phone",
+            context=context.value,
+            intended_recipient=_original_to,
+            redirected=_redirected,
+        )
         return {"status": "failed", "error": "empty recipient phone", **stats}
     if await _is_opted_out(tenant_id, to_phone):
+        record_attempt(
+            "sms", ok=False, tenant_id=tenant_id,
+            recipient=to_phone,
+            provider="ringcentral",
+            provider_status="skipped_opted_out",
+            was_mock=False, routed_via="opt_out_gate",
+            context=context.value,
+            intended_recipient=_original_to,
+            redirected=_redirected,
+        )
         return {"status": "skipped_opted_out", **stats}
 
     # Feb-2026 · P34 — Automation quiet-hours gate. See the mirror
@@ -214,12 +253,33 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
             f"comms_sms_adapter: MOCKED sms tenant={tenant_id} to={to_phone} "
             f"chars={stats['character_count']} segs={stats['segment_count']} "
             f"mms={'yes' if mms_url else 'no'} body={body!r}")
+        record_attempt(
+            "sms", ok=True, tenant_id=tenant_id,
+            recipient=to_phone,
+            provider="ringcentral",
+            provider_status="mocked",
+            was_mock=True, routed_via="sms_mock_mode",
+            context=context.value,
+            intended_recipient=_original_to,
+            redirected=_redirected,
+        )
         return {"status": "mocked", "provider_id": None, **stats}
 
     # Real path — kept minimal because OAU-153 is not resolved for this pod.
     try:
         from services.ringcentral_client import get_rc_platform, is_outbound_enabled
         if not await is_outbound_enabled():
+            record_attempt(
+                "sms", ok=False, tenant_id=tenant_id,
+                recipient=to_phone,
+                provider="ringcentral",
+                provider_status="outbound_disabled",
+                was_mock=False, routed_via="platform_ringcentral",
+                error="outbound disabled",
+                context=context.value,
+                intended_recipient=_original_to,
+                redirected=_redirected,
+            )
             return {"status": "failed", "error": "outbound disabled", **stats}
         platform = get_rc_platform()
         req = {
@@ -240,7 +300,29 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
                 provider_id = j.get("id")
         except Exception:
             pass
+        record_attempt(
+            "sms", ok=True, tenant_id=tenant_id,
+            recipient=to_phone,
+            provider="ringcentral",
+            provider_status="sent",
+            provider_response_id=provider_id,
+            was_mock=False, routed_via="platform_ringcentral",
+            context=context.value,
+            intended_recipient=_original_to,
+            redirected=_redirected,
+        )
         return {"status": "sent", "provider_id": provider_id, **stats}
     except Exception as e:
         logger.warning(f"comms_sms_adapter: rc send failed: {type(e).__name__}: {e}")
+        record_attempt(
+            "sms", ok=False, tenant_id=tenant_id,
+            recipient=to_phone,
+            provider="ringcentral",
+            provider_status="failed",
+            was_mock=False, routed_via="platform_ringcentral",
+            context=context.value,
+            intended_recipient=_original_to,
+            redirected=_redirected,
+            **format_exc(e),
+        )
         return {"status": "failed", "error": f"{type(e).__name__}: {e}", **stats}
