@@ -8,8 +8,9 @@ import React from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell,
           Image as ImageIcon, MessageSquare, Gauge, Star, RefreshCw,
-          UploadCloud, ExternalLink } from "lucide-react";
+          UploadCloud, ExternalLink, Search, FileText, Loader2 } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 // Feb-2026 · Polish bundle Item 2 — Top KB docs cited tile.
@@ -24,6 +25,209 @@ const KIND_OPTIONS = [
   { key: "custom",          label: "Custom" },
 ];
 
+// ═════════════════════════════════════════════════════════════
+// IH-A · Feb-2026 — Deep PDF indexing status + reindex + query
+// ═════════════════════════════════════════════════════════════
+/** Per-row pill rendering the deep-index status.
+ *  ``null`` / undefined → nothing rendered (legacy docs). */
+export function IndexStatusPill({ item }) {
+  const status = item?.index_status;
+  if (!status) return null;
+  const base = "px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase inline-flex items-center gap-1";
+  if (status === "pending") {
+    return (
+      <span
+        className={base}
+        style={{ backgroundColor: "#e5e7eb", color: "#374151" }}
+        data-testid={`ai-brain-index-pill-${item.id}`}
+        data-status="pending"
+      >Queued</span>
+    );
+  }
+  if (status === "indexing") {
+    return (
+      <span
+        className={base}
+        style={{ backgroundColor: "#dbeafe", color: "#1e40af" }}
+        data-testid={`ai-brain-index-pill-${item.id}`}
+        data-status="indexing"
+      >
+        <Loader2 size={9} className="animate-spin" />
+        Indexing…
+      </span>
+    );
+  }
+  if (status === "ready") {
+    const pages = Number(item.pages_count || 0);
+    const chunks = Number(item.chunks_count || 0);
+    return (
+      <span
+        className={base}
+        style={{ backgroundColor: "#dcfce7", color: "#166534" }}
+        data-testid={`ai-brain-index-pill-${item.id}`}
+        data-status="ready"
+        title={`Deep-indexed ${chunks} chunks across ${pages} pages`}
+      >Indexed: {pages}p / {chunks}c</span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span
+        className={base}
+        style={{ backgroundColor: "#fee2e2", color: "#991b1b" }}
+        data-testid={`ai-brain-index-pill-${item.id}`}
+        data-status="error"
+        title={item.index_error || "Index failed"}
+      >Index failed</span>
+    );
+  }
+  return null;
+}
+
+/** Reindex icon-button. Route enforces admin gate but we ALSO
+ *  gate here to match the brief's "reindex button (admin only)". */
+export function ReindexButton({ item, isAdmin, onReindex }) {
+  if (!isAdmin) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onReindex(item); }}
+      className="p-1 rounded hover:bg-black/5"
+      title="Re-run deep index for this document"
+      aria-label="Reindex document"
+      data-testid={`ai-brain-reindex-btn-${item.id}`}
+    >
+      <RefreshCw size={12} style={{ color: colors.muted }} />
+    </button>
+  );
+}
+
+/** "Ask this doc" panel — top of the page.  Debounce-free
+ *  (submit-on-enter) to keep the OpenAI-quota footprint low.
+ *  Renders top-3 hit cards on success.  Each card shows
+ *  ``doc_title`` + ``page N`` badge + first 240 chars of
+ *  ``chunk_text`` + ``figure_refs`` chips. */
+export function AskThisDocPanel({ onCitationSelect }) {
+  const [query, setQuery] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [hits, setHits] = React.useState([]);
+  const [err, setErr] = React.useState(null);
+
+  const submit = async (evt) => {
+    if (evt) evt.preventDefault();
+    if (!query.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api.post("/kb/query", {
+        query: query.trim(),
+        top_k: 3,
+        min_score: 0.25,
+      });
+      setHits(res?.hits || []);
+      if (res?.error) setErr(String(res.error));
+    } catch (e) {
+      setErr(`Query failed: ${e.message || e}`);
+      setHits([]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-xl p-3"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid="ai-brain-ask-panel"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Search size={14} style={{ color: colors.brand }} />
+        <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+          Ask this doc
+        </div>
+        <div className="text-[11px]" style={{ color: colors.muted }}>
+          Cite by page + figure across every indexed manual.
+        </div>
+      </div>
+      <form onSubmit={submit} className="flex items-stretch gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="e.g. What is the recommended chlorine dose?"
+          className="flex-1 rounded px-2 py-1.5 text-sm focus:outline-none"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="ai-brain-ask-input"
+        />
+        <button
+          type="submit"
+          disabled={busy || !query.trim()}
+          className="px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1 disabled:opacity-50"
+          style={{ backgroundColor: colors.brand, color: "#fff" }}
+          data-testid="ai-brain-ask-submit"
+        >
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+          Ask
+        </button>
+      </form>
+      {err ? (
+        <div className="mt-2 text-xs" style={{ color: "#991b1b" }}
+              data-testid="ai-brain-ask-error">{err}</div>
+      ) : null}
+      {hits.length > 0 ? (
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2"
+              data-testid="ai-brain-ask-hits">
+          {hits.map((hit, idx) => (
+            <button
+              key={`${hit.doc_id}-${idx}`}
+              type="button"
+              onClick={() => onCitationSelect && onCitationSelect(hit)}
+              className="text-left rounded-lg p-2 hover:brightness-95"
+              style={{
+                backgroundColor: colors.surfaceSecondary,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid={`ai-brain-ask-hit-${idx}`}
+            >
+              <div className="flex items-center gap-1.5 mb-1">
+                <FileText size={11} style={{ color: colors.brand }} />
+                <div className="text-[11px] font-semibold truncate"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`ai-brain-ask-hit-${idx}-title`}>
+                  {hit.doc_title || hit.doc_id}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 mb-1">
+                <span
+                  className="px-1 py-0.5 rounded text-[9px] font-semibold"
+                  style={{ backgroundColor: "#dbeafe", color: "#1e40af" }}
+                  data-testid={`ai-brain-ask-hit-${idx}-page`}
+                >Page {hit.page_num}</span>
+                {(hit.figure_refs || []).map((ref, ridx) => (
+                  <span
+                    key={ridx}
+                    className="px-1 py-0.5 rounded text-[9px] font-semibold"
+                    style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+                    data-testid={`ai-brain-ask-hit-${idx}-figure-${ridx}`}
+                  >{ref.figure_label}</span>
+                ))}
+              </div>
+              <div className="text-[11px] line-clamp-3"
+                    style={{ color: colors.muted }}>
+                {(hit.chunk_text || "").slice(0, 240)}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function AIBrainPage() {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -33,6 +237,36 @@ export default function AIBrainPage() {
   const [deleteId, setDeleteId] = React.useState(null);
   // Phase KB3 · Feb-2026 — file-ingestion modal.
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  // IH-A · Feb-2026 — user context for admin-gated reindex.
+  const auth = useAuth();
+  const isAdmin = ["admin", "super_admin"].includes(auth?.user?.role || "");
+
+  const reindexOne = React.useCallback(async (row) => {
+    try {
+      // Optimistic UI — flip pill to "indexing…" before the
+      // network round-trip so admins get instant feedback.
+      setItems((prev) => prev.map((it) =>
+        it.id === row.id
+          ? { ...it, index_status: "indexing", index_error: null }
+          : it,
+      ));
+      await api.post(`/kb/documents/${row.id}/reindex`, {});
+      toast.success(`Reindex started for "${row.title}"`);
+    } catch (e) {
+      const msg = e?.response?.data?.detail?.message
+                  || e?.response?.data?.message
+                  || e?.message
+                  || String(e);
+      toast.error(`Reindex failed: ${msg}`);
+      // Roll back optimistic pill on failure — reload will pick
+      // up the true status.
+      setItems((prev) => prev.map((it) =>
+        it.id === row.id
+          ? { ...it, index_status: row.index_status, index_error: row.index_error }
+          : it,
+      ));
+    }
+  }, []);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -158,6 +392,30 @@ export default function AIBrainPage() {
            preview.  Non-empty ``q`` → RAG top-5. */}
       <KBRetrievalPreviewPanel />
 
+      {/* IH-A · Feb-2026 — Deep PDF indexing "Ask this doc"
+           panel.  Uses ``POST /api/kb/query`` — cosine similarity
+           over the page-fidelity chunks.  Distinct surface from
+           the KBRetrievalPreviewPanel (which drives the copilot's
+           full-concat markdown context). */}
+      <AskThisDocPanel
+        onCitationSelect={(hit) => {
+          // Scroll the target doc into view + toast the citation.
+          const el = document.querySelector(
+            `[data-testid="ai-brain-item-${hit.doc_id}"]`,
+          );
+          if (el && el.scrollIntoView) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+          const figs = (hit.figure_refs || [])
+            .map((r) => r.figure_label).join(", ");
+          toast.info(
+            figs
+              ? `MARCO can cite: page ${hit.page_num}, ${figs}`
+              : `MARCO can cite: page ${hit.page_num}`,
+          );
+        }}
+      />
+
       {/* Phase P3 · Feb-2026 · Deliverable 2 — Knowledge Library
            grid.  Renders only KB rows with ``source_file_id`` set
            (uploaded manuals) with View / Supersede / Delete
@@ -200,7 +458,7 @@ export default function AIBrainPage() {
             >
               <div className="text-xs font-semibold truncate"
                    style={{ color: colors.onSurface }}>{it.title}</div>
-              <div className="text-[11px] flex items-center gap-1.5" style={{ color: colors.muted }}>
+              <div className="text-[11px] flex items-center gap-1.5 flex-wrap" style={{ color: colors.muted }}>
                 <span>{it.kind} · {it.is_active ? "active" : "inactive"}</span>
                 {it.source_type ? (
                   <span
@@ -209,6 +467,11 @@ export default function AIBrainPage() {
                     data-testid={`ai-brain-source-badge-${it.id}`}
                   >{it.source_type}</span>
                 ) : null}
+                {/* IH-A · Feb-2026 — deep-index status pill + reindex button. */}
+                <IndexStatusPill item={it} />
+                <ReindexButton
+                  item={it} isAdmin={isAdmin} onReindex={reindexOne}
+                />
               </div>
             </button>
           ))}

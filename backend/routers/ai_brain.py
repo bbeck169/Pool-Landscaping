@@ -52,7 +52,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from config import db, logger
@@ -387,6 +387,7 @@ def _extract_kb_text(source_type: str, data: bytes) -> str:
 @router.post("/ai/knowledge/file",
               tags=["ai"], operation_id="ai.knowledge.fileIngest")
 async def ingest_knowledge_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     kind: Optional[str] = Form(None),
@@ -538,6 +539,14 @@ async def ingest_knowledge_file(
         "created_by": user.get("id"),
         "created_at": now_iso(),
         "updated_at": now_iso(),
+        # IH-A · Feb-2026 — deep-index status fields.  Old rows
+        # (pre-IH-A) read as ``None`` and render on the FE as
+        # "not indexed" — reindex button surfaces the endpoint.
+        "index_status": "pending",
+        "chunks_count": 0,
+        "pages_count": 0,
+        "last_indexed_at": None,
+        "index_error": None,
     }
     await db.ai_knowledge_base.insert_one(kb_doc)
 
@@ -552,6 +561,31 @@ async def ingest_knowledge_file(
         "[kb-ingest] tenant=%s kb_id=%s file_id=%s source=%s size=%d chars=%d",
         tenant["id"], kb_id, file_id, source_type, len(data), len(content_md),
     )
+
+    # IH-A · Feb-2026 — kick off the deep index via
+    # ``BackgroundTasks``.  Sync-inline would keep the upload
+    # request open on top of a slow embed call (~1-2s per
+    # batch); background dispatch lets the API return
+    # immediately and the FE polls ``index_status``.
+    #
+    # PDFs go through page-fidelity chunking with raw
+    # ``data`` bytes; DOCX/TXT/MD fall back to a single "page
+    # 1" chunk stream via the already-extracted ``content_md``.
+    #
+    # Any indexer failure lands ``index_status='error'`` +
+    # ``index_error`` on the KB doc, never crashes the
+    # upload response.
+    if background_tasks is not None:
+        if source_type == "pdf":
+            background_tasks.add_task(
+                _index_kb_document_bg,
+                kb_id, tenant["id"], data, None,
+            )
+        else:
+            background_tasks.add_task(
+                _index_kb_document_bg,
+                kb_id, tenant["id"], None, content_md,
+            )
 
     kb_doc.pop("_id", None)
     return {
@@ -998,3 +1032,147 @@ async def weekly_ai_employees_summary(
     }
     _WEEKLY_CACHE[ck] = {"_at": _time.time(), "payload": payload}
     return payload
+
+
+# ══════════════════════════════════════════════════════════════
+# IH-A · Feb-2026 — Deep PDF Indexing for the Knowledge Base
+# ══════════════════════════════════════════════════════════════
+async def _index_kb_document_bg(
+    kb_id: str, tenant_id: str,
+    file_bytes: Optional[bytes], fallback_text: Optional[str],
+) -> None:
+    """FastAPI ``BackgroundTasks`` entry — never raises so the
+    HTTP layer isn't affected by indexer failures.  Errors land
+    on the KB doc as ``index_status='error'`` + ``index_error``.
+    """
+    try:
+        from services.kb.kb_indexer import index_document  # noqa: WPS433
+        await index_document(
+            kb_id, tenant_id=tenant_id, db=db,
+            file_bytes=file_bytes, fallback_text=fallback_text,
+        )
+    except Exception as exc:  # noqa: BLE001 — background swallow
+        logger.warning(
+            "[kb-ingest] background index failed kb=%s err=%s",
+            kb_id, exc,
+        )
+        try:
+            await db.ai_knowledge_base.update_one(
+                {"id": kb_id, "tenant_id": tenant_id},
+                {"$set": {
+                    "index_status": "error",
+                    "index_error": f"background_task_failed: {exc}",
+                }},
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+
+
+class KbQueryIn(BaseModel):
+    query: str
+    top_k: int = 6
+    doc_ids: Optional[List[str]] = None
+    min_score: float = 0.25
+
+
+@router.post("/kb/query", tags=["ai"], operation_id="kb.query")
+async def kb_query(
+    body: KbQueryIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Cosine-similarity retrieval over ``kb_document_chunks``.
+
+    Tenant-scoped hard — the underlying ``search_chunks`` uses
+    ``{"tenant_id": tenant["id"]}`` on the Mongo prefetch so
+    cross-tenant bleed is impossible.  Optional ``doc_ids``
+    filter narrows to specific KB documents (e.g. "Ask this
+    doc" panel in the FE).
+    """
+    from services.kb.kb_query import search_chunks  # noqa: WPS433
+    result = await search_chunks(
+        query=body.query,
+        tenant_id=tenant["id"],
+        db=db,
+        top_k=int(body.top_k or 6),
+        doc_ids=body.doc_ids,
+        min_score=float(body.min_score),
+    )
+    return result
+
+
+@router.post(
+    "/kb/documents/{doc_id}/reindex",
+    tags=["ai"], operation_id="kb.reindex",
+)
+async def kb_reindex(
+    doc_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only re-index for one KB document.  Reads the raw
+    source bytes back from S3 via the ``files`` linkage
+    established at upload time (``files.linked_entity_id ==
+    doc_id``).  Non-PDF sources reuse the doc's ``content_md``
+    as the fallback text stream (single "page 1").
+    """
+    _require_admin(user)
+    kb_doc = await db.ai_knowledge_base.find_one(
+        {"id": doc_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not kb_doc:
+        raise HTTPException(404, "not_found")
+
+    source_type = kb_doc.get("source_type")
+    if source_type == "pdf":
+        # PDF path — need bytes back from S3.
+        files_row = await db.files.find_one(
+            {"linked_entity_id": doc_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "storage_path": 1},
+        )
+        if not files_row or not files_row.get("storage_path"):
+            raise HTTPException(409, {
+                "code": "source_bytes_missing",
+                "message": (
+                    "No stored source file for this KB doc — "
+                    "please re-upload the source PDF."
+                ),
+            })
+        try:
+            from services.file_storage import get_object  # noqa: WPS433
+            data = get_object(files_row["storage_path"])
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, {
+                "code": "storage_read_failed",
+                "message": str(exc),
+            })
+        background_tasks.add_task(
+            _index_kb_document_bg,
+            doc_id, tenant["id"], data, None,
+        )
+    else:
+        # Non-PDF path — fall back to persisted content_md.
+        content_md = kb_doc.get("content_md") or ""
+        if not content_md.strip():
+            raise HTTPException(409, {
+                "code": "content_empty",
+                "message": "Nothing to reindex — content_md is empty.",
+            })
+        background_tasks.add_task(
+            _index_kb_document_bg,
+            doc_id, tenant["id"], None, content_md,
+        )
+
+    # Optimistic response — FE flips to "indexing…" pill; the
+    # background task will mutate ``index_status`` to
+    # ``ready`` / ``error`` shortly.
+    await db.ai_knowledge_base.update_one(
+        {"id": doc_id, "tenant_id": tenant["id"]},
+        {"$set": {
+            "index_status": "pending",
+            "index_error": None,
+        }},
+    )
+    return {"ok": True, "doc_id": doc_id, "status": "pending"}
+
