@@ -233,3 +233,216 @@ _LAST_STARTUP_BANNER_ISO: "str | None" = None
 
 def last_startup_banner_iso() -> "str | None":
     return _LAST_STARTUP_BANNER_ISO
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SAFE-SEND-A · Feb-2026 — Context-based Comms Safety Gate
+# ═══════════════════════════════════════════════════════════════════
+# Layered ON TOP of the Phase 34 / K72 primitives above — different
+# purpose, different primitives.  Phase 34 is an ``APP_ENV`` allowlist
+# guard; SAFE-SEND-A is a ``context`` gate that redirects AI-generated
+# and admin-test-mode comms to the tenant admin regardless of
+# environment.  Both gates fire in every adapter (K72 first, then
+# SAFE-SEND) — additive, not exclusive.
+import enum as _sf_enum
+
+
+class CommsContext(str, _sf_enum.Enum):
+    """Explicit send-time provenance stamped by every
+    ``send_email`` / ``send_sms`` call.
+
+    Values are strings so admin surfaces render / log them
+    directly (``str`` inheritance) and Pydantic can validate
+    request bodies against the enum.
+    """
+    SYSTEM = "system"
+    AGENT = "agent"
+    TEST = "test"
+
+
+class RedirectTargetMissing(RuntimeError):
+    """Neither ``business_card.email/phone`` nor an admin-user
+    contact is available on the tenant.  The adapter logs +
+    skips the send rather than defaulting to customer's
+    recipient — safer than accidental customer sends.
+    """
+
+
+@dataclass(frozen=True)
+class RedirectTargets:
+    """Resolved (email, phone) admin fallback destinations."""
+    email: "str | None" = None
+    phone: "str | None" = None
+
+
+# One function, three inputs, no side effects.
+def should_redirect_to_admin(context: CommsContext) -> bool:
+    """``AGENT`` + ``TEST`` redirect. ``SYSTEM`` passes through.
+    No other conditions."""
+    return context in (CommsContext.AGENT, CommsContext.TEST)
+
+
+async def get_redirect_targets(
+    *,
+    tenant_settings: "dict | None" = None,
+    tenant_id: "str | None" = None,
+    channel: str = "email",   # "email" | "sms"
+    db=None,
+) -> RedirectTargets:
+    """Resolve the admin redirect target for a given channel.
+
+    Priority chain:
+      1. ``tenant_settings["business_card"][channel]`` verbatim.
+      2. First ``users`` row with matching ``tenant_id`` and
+         ``role in {admin, super_admin, super}`` — reads
+         ``email`` or ``phone`` per channel.
+      3. Otherwise: raise ``RedirectTargetMissing`` — the
+         adapter treats this as "log + skip", never falls
+         through to customer.
+
+    ``channel`` gates WHICH field we read.  ``email`` mode
+    only errors when no email is resolvable; ``sms`` mode
+    only errors when no phone is resolvable.  Keeps unit tests
+    from paying for a lookup they'll never use.
+    """
+    if channel not in ("email", "sms"):
+        raise ValueError(f"unsupported channel: {channel}")
+
+    card = ((tenant_settings or {}).get("business_card") or {})
+    target_email = (card.get("email") or "").strip() or None
+    target_phone = (card.get("phone") or "").strip() or None
+
+    primary = target_email if channel == "email" else target_phone
+    if primary:
+        return RedirectTargets(email=target_email, phone=target_phone)
+
+    # Fallback — admin user contact via ``users`` collection.
+    if tenant_id and db is not None:
+        try:
+            admin_user = await db.users.find_one(
+                {
+                    "tenant_id": tenant_id,
+                    "role": {"$in": ["admin", "super_admin", "super"]},
+                },
+                {"_id": 0, "email": 1, "phone": 1},
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            admin_user = None
+        if admin_user:
+            fb = (admin_user.get(
+                "email" if channel == "email" else "phone",
+            ) or "").strip()
+            if fb:
+                if channel == "email":
+                    return RedirectTargets(email=fb, phone=target_phone)
+                return RedirectTargets(email=target_email, phone=fb)
+
+    raise RedirectTargetMissing(
+        f"no_redirect_target: tenant={tenant_id!r} "
+        f"channel={channel!r} (business_card.{channel} empty "
+        f"and no admin user contact)"
+    )
+
+
+# Client-side enforcement — request bodies may ONLY carry
+# ``TEST``. ``SYSTEM`` and ``AGENT`` are set server-side by
+# the codepath itself.  Prevents an authenticated user from
+# spoofing a customer send via a hand-crafted request body.
+_CLIENT_ALLOWED_CONTEXTS = frozenset({CommsContext.TEST})
+
+
+class ClientContextNotAllowedError(ValueError):
+    """Raised when a client request body attempts to supply
+    ``context=SYSTEM`` or ``context=AGENT`` — only server-side
+    codepaths may stamp those values.
+
+    Carries ``error_code = "invalid_comms_context"`` for the
+    ``server.py`` ``RequestValidationError`` handler to
+    fingerprint + return HTTP 400 with the SAFE-SEND-A error
+    envelope instead of Pydantic's default 422.  Subclasses
+    ``ValueError`` so Pydantic's ``field_validator`` machinery
+    accepts it cleanly.
+    """
+
+    error_code: str = "invalid_comms_context"
+
+    def __init__(
+        self,
+        supplied: "CommsContext | str | None" = None,
+        detail: "str | None" = None,
+    ):
+        # Normalize the offending value for the audit message.
+        if isinstance(supplied, CommsContext):
+            supplied_str = supplied.value
+        else:
+            supplied_str = str(supplied) if supplied is not None else "<missing>"
+        self.supplied = supplied_str
+        self.detail = detail or (
+            "context=SYSTEM|AGENT is server-controlled and cannot "
+            "be supplied by client requests"
+        )
+        super().__init__(
+            f"client_context_not_allowed: {supplied_str!r} — {self.detail}"
+        )
+
+
+def assert_client_supplied_context_allowed(
+    context: CommsContext,
+) -> None:
+    """Raise ``ClientContextNotAllowedError`` if a client tried
+    to spoof ``SYSTEM`` or ``AGENT`` from a request body.  Wire
+    into FastAPI request-model Pydantic validators.  The
+    server-side handler maps this to HTTP 400 with the
+    SAFE-SEND-A error envelope."""
+    if context not in _CLIENT_ALLOWED_CONTEXTS:
+        raise ClientContextNotAllowedError(supplied=context)
+
+
+# ─── SAFE-SEND-A · Pydantic request-body mixin ──────────────────────
+# Single source of truth for client-facing "context" enforcement.
+# Any FastAPI request body that exposes a ``context`` field to
+# clients MUST inherit from ``CommsSendRequestBase`` (or copy the
+# validator verbatim) — never sprinkle ``if context == ...`` checks
+# across individual routes.  The validator raises
+# ``ClientContextNotAllowedError``; ``server.py`` maps that to a
+# HTTP 400 with ``{"error_code": "invalid_comms_context", ...}``.
+try:
+    from pydantic import BaseModel as _SafeSendBaseModel, field_validator
+except Exception:  # pragma: no cover — pydantic is a hard dep
+    _SafeSendBaseModel = None  # type: ignore[assignment]
+    field_validator = None  # type: ignore[assignment]
+
+
+if _SafeSendBaseModel is not None and field_validator is not None:
+
+    class CommsSendRequestBase(_SafeSendBaseModel):
+        """Base model for any client-facing comms-send request body.
+
+        Exposes an optional ``context`` field validated against the
+        client-allow-list.  ``None`` is permitted — routes default
+        server-side to whatever context is appropriate for the
+        codepath.  ``TEST`` is the only client-supplied value that
+        passes.  ``SYSTEM`` / ``AGENT`` from a client body raise
+        ``ClientContextNotAllowedError`` at parse time.
+        """
+
+        context: "CommsContext | None" = None
+
+        @field_validator("context", mode="after")
+        @classmethod
+        def _reject_privileged_client_contexts(
+            cls, v: "CommsContext | None",
+        ) -> "CommsContext | None":
+            if v is None:
+                return v
+            assert_client_supplied_context_allowed(v)
+            return v
+
+
+def stamp_agent_context() -> CommsContext:
+    """Return ``CommsContext.AGENT``.  Trivial by design — its
+    real purpose is to give AI codepaths one grep-anchor so a
+    future safety audit can confirm every AI-driven send
+    flows through it."""
+    return CommsContext.AGENT

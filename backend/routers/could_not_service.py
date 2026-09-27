@@ -289,7 +289,9 @@ async def could_not_service(
                     reason_label=reason_label,
                 )
                 from services.comms_sms_adapter import send_sms
-                result = await send_sms(tid, phone, sms_body)
+                from services.comms_env_guard import CommsContext
+                result = await send_sms(tid, phone, sms_body,
+                                        context=CommsContext.SYSTEM)
                 status = result.get("status")
                 if status == "failed":
                     sms_result["reason"] = "send_failed"

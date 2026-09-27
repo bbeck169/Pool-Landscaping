@@ -411,8 +411,10 @@ async def _evaluate_tech(
             delay_mins=delay_mins,
         )
         try:
+            from services.comms_env_guard import CommsContext
             result = await send_sms(
                 tenant_id=tid, to_phone=phone, body=body,
+                context=CommsContext.SYSTEM,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(

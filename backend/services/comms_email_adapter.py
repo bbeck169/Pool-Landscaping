@@ -9,6 +9,10 @@ Thin wrapper over the same Resend client used by ``services/weekly_digest``,
 - Uniform status enum used by the ``communication_sends`` log:
   ``sent``, ``failed``, ``not_sent_missing_key``, ``skipped_opted_out``.
 - Never raises. Delivery failures return ``{"status":"failed", ...}``.
+
+SAFE-SEND-A · Feb-2026 — mandatory ``context`` kwarg-only param
+on ``send_email``.  Redirects AGENT + TEST to the tenant admin
+BEFORE any other gate fires.  See ``services.comms_env_guard``.
 """
 from __future__ import annotations
 
@@ -16,6 +20,10 @@ import os
 from typing import Any, Dict, Optional
 
 from config import db, logger
+from services.comms_env_guard import (
+    CommsContext, RedirectTargetMissing,
+    get_redirect_targets, should_redirect_to_admin,
+)
 from services.comms_send_log import record_attempt, format_exc
 
 
@@ -34,7 +42,10 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
                      from_name: Optional[str] = None,
                      from_email: Optional[str] = None,
                      headers: Optional[Dict[str, str]] = None,
-                     attachments: Optional[list] = None) -> Dict[str, Any]:
+                     attachments: Optional[list] = None,
+                     *,
+                     context: "CommsContext",
+                     ) -> Dict[str, Any]:
     """Send an email via Resend. Never raises.
 
     Feb-2026 · Customer-Attachments (Option D) — optional
@@ -43,7 +54,68 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
     SDK expects the base64 payload under ``content`` (not
     ``content_base64``); we remap right before the SDK call so
     the internal API stays semantic.
+
+    SAFE-SEND-A · Feb-2026 — the ``context`` kwarg is
+    MANDATORY (no default).  Callers stamp one of
+    ``CommsContext.{SYSTEM, AGENT, TEST}``.  AGENT / TEST get
+    redirected to the tenant admin via
+    ``get_redirect_targets`` BEFORE any opt-out, quiet-hours,
+    BYO, or Resend gate fires.  SYSTEM passes through
+    untouched.  Missing context → ``TypeError`` at call time.
     """
+    # SAFE-SEND-A · redirect FIRST — runs before opt-out check so
+    # a customer's opt-out never suppresses an admin-directed
+    # test / agent sample.
+    _redirect_headers = dict(headers or {})
+    _original_to = to_email
+    _redirected = False
+    if should_redirect_to_admin(context):
+        try:
+            tenant_doc = await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0, "settings": 1},
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            tenant_doc = None
+            logger.warning(
+                "safe_send.tenant_lookup_failed tenant=%s err=%s",
+                tenant_id, exc,
+            )
+        try:
+            targets = await get_redirect_targets(
+                tenant_settings=(tenant_doc or {}).get("settings") or {},
+                tenant_id=tenant_id,
+                channel="email",
+                db=db,
+            )
+        except RedirectTargetMissing as exc:
+            logger.warning(
+                "safe_send.redirect_target_missing context=%s tenant=%s "
+                "original_to=%s err=%s — SKIPPING send",
+                context.value, tenant_id, to_email, exc,
+            )
+            return {
+                "status": "skipped_no_redirect_target",
+                "safe_send_context": context.value,
+                "original_to": to_email,
+                "error": str(exc),
+            }
+        to_email = targets.email or to_email
+        subject = f"[MARCO TEST] {subject or ''}".strip()
+        _redirect_headers["X-MARCO-Original-To"] = _original_to or ""
+        _redirect_headers["X-MARCO-Safe-Send-Context"] = context.value
+        _redirected = True
+        logger.info(
+            "safe_send.redirected channel=email context=%s tenant=%s "
+            "original_to=%s redirected_to=%s",
+            context.value, tenant_id, _original_to, to_email,
+        )
+        headers = _redirect_headers
+    else:
+        logger.debug(
+            "safe_send.passthrough channel=email context=%s tenant=%s to=%s",
+            context.value, tenant_id, to_email,
+        )
+
     if not to_email:
         return {"status": "failed", "error": "empty recipient email"}
     if await _is_opted_out(tenant_id, to_email):
@@ -120,6 +192,8 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
             provider="resend", provider_status="not_sent_missing_key",
             was_mock=False, routed_via="platform_resend",
             error="RESEND_API_KEY missing on this pod",
+            context=context.value, intended_recipient=_original_to,
+            redirected=_redirected,
         )
         return {"status": "not_sent_missing_key"}
 
@@ -169,6 +243,8 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
             provider="resend", provider_status="suppressed_not_demo",
             was_mock=False, routed_via="platform_resend_gate",
             error="Blocked by services.comms.gate.is_comm_allowed",
+            context=context.value, intended_recipient=_original_to,
+            redirected=_redirected,
         )
         return {"status": "suppressed_not_demo", "provider_id": None}
 
@@ -185,6 +261,8 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
             provider="resend", provider_status="sent",
             provider_response_id=provider_id, was_mock=False,
             routed_via="platform_resend",
+            context=context.value, intended_recipient=_original_to,
+            redirected=_redirected,
         )
         return {"status": "sent", "provider_id": provider_id}
     except Exception as e:
@@ -194,6 +272,8 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
             template=(headers or {}).get("X-Template") if headers else None,
             provider="resend", provider_status="failed",
             was_mock=False, routed_via="platform_resend",
+            context=context.value, intended_recipient=_original_to,
+            redirected=_redirected,
             **format_exc(e),
         )
         return {"status": "failed", "error": f"{type(e).__name__}: {e}"}

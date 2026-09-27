@@ -299,10 +299,12 @@ async def _fire(
     else:
         try:
             from services.comms_email_adapter import send_email
+            from services.comms_env_guard import CommsContext
             result = await send_email(
                 tenant_id=tenant_id, to_email=email,
                 subject=subject, html=html,
                 from_name=tenant.get("name") or "Service Team",
+                context=CommsContext.SYSTEM,
             )
             status = result.get("status")
             if status in ("sent", "mocked"):
@@ -332,8 +334,10 @@ async def _fire(
     else:
         try:
             from services.comms_sms_adapter import send_sms
+            from services.comms_env_guard import CommsContext
             result = await send_sms(
                 tenant_id=tenant_id, to_phone=phone, body=sms_body,
+                context=CommsContext.SYSTEM,
             )
             status = result.get("status")
             if status in ("sent", "mocked"):

@@ -102,11 +102,13 @@ async def comms_diagnostics_test(payload: _TestSendIn,
     if channel == "email":
         try:
             from services.comms_email_adapter import send_email
+            from services.comms_env_guard import CommsContext
             res = await send_email(
                 to_email=payload.to,
                 subject=subject,
                 html=f"<p>{body}</p>",
                 tenant_id=tenant_id,
+                context=CommsContext.TEST,
             )
             status = (res or {}).get("status")
             ok = status == "sent"
@@ -390,11 +392,13 @@ async def comms_diagnostics_send_to_customer(
         )
         try:
             from services.comms_email_adapter import send_email
+            from services.comms_env_guard import CommsContext
             res = await send_email(
                 tenant_id=tenant_id or cust.get("tenant_id"),
                 to_email=to_email, subject=subject, html=html,
                 headers={"X-Template": f"_diagnostic_{template}",
                           "X-Tenant-Id": tenant_id or cust.get("tenant_id") or ""},
+                context=CommsContext.TEST,
             )
             status = (res or {}).get("status")
             ok = status == "sent"

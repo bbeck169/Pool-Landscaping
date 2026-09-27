@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from config import db, logger
 from services.comms_email_adapter import send_email
+from services.comms_env_guard import CommsContext
 
 
 async def _due_prospects_for_tenant(tenant_id: str,
@@ -106,7 +107,8 @@ async def run_outreach_followup_digest(
             to_email=recipient,
             subject=f"{len(due)} outreach follow-ups due today",
             html=html,
-            from_name="Outreach")
+            from_name="Outreach",
+            context=CommsContext.SYSTEM)
         if result.get("status") == "sent":
             digests_sent += 1
         # Bump each row so the digest is idempotent per day (marking

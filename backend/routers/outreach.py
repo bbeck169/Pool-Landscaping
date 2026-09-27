@@ -25,6 +25,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from config import db, logger
 from services.comms_email_adapter import send_email
+from services.comms_env_guard import CommsContext
 from utils import get_current_user, new_id, now_iso
 
 router = APIRouter()
@@ -488,7 +489,8 @@ async def send_to_prospect(
         to_email=prospect["contact_email"],
         subject=subject,
         html=html,
-        from_name="Outreach")
+        from_name="Outreach",
+        context=CommsContext.SYSTEM)
 
     status = "sent" if result.get("status") == "sent" else "failed"
     msg_doc = {

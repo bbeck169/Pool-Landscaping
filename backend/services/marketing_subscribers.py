@@ -215,9 +215,11 @@ async def send_confirmation_email(*, tenant: Dict[str, Any],
         confirm_url=confirm_url,
         first_name=(subscriber.get("first_name") or "").strip(),
     )
+    from services.comms_env_guard import CommsContext
     return await send_email(
         tenant_id, email,
         subject=f"Confirm your subscription to {tenant.get('name') or ''}".strip(),
         html=html,
         from_name=tenant.get("name") or None,
+        context=CommsContext.SYSTEM,
     )

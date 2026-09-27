@@ -335,7 +335,9 @@ async def on_my_way(
 
     # Real / mocked send.
     from services.comms_sms_adapter import send_sms
-    result = await send_sms(tid, phone, sms_body)
+    from services.comms_env_guard import CommsContext
+    result = await send_sms(tid, phone, sms_body,
+                            context=CommsContext.SYSTEM)
     status = result.get("status")
     provider_id = result.get("provider_id")
     if status in ("failed",):

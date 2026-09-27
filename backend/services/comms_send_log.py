@@ -74,6 +74,19 @@ def record_attempt(
     exc_trace: Optional[str] = None,
     routed_via: Optional[str] = None,
     diagnostic: bool = False,
+    # SAFE-SEND-A · Feb-2026 — send-time provenance + redirect audit.
+    # ``context`` is the ``CommsContext`` enum ``.value`` (str) that
+    # the adapter stamped on the call.  ``intended_recipient`` is the
+    # address the CALLER handed to ``send_email`` / ``send_sms`` —
+    # verbatim, no redaction yet (we redact before store).  ``redirected``
+    # is ``True`` when ``intended_recipient != recipient`` (i.e. the
+    # SAFE-SEND-A redirect fired).  Preserved on EVERY audit row —
+    # regardless of channel, success, mock, or gate outcome — so ops
+    # can always answer "where did this send actually go, and where
+    # did the caller try to send it?".
+    context: Optional[str] = None,
+    intended_recipient: Optional[str] = None,
+    redirected: bool = False,
 ) -> None:
     """Fire-and-forget best-effort audit. Never raises."""
     now = _now_iso()
@@ -87,19 +100,16 @@ def record_attempt(
         _STATE[channel]["last_error_at"] = now
         _STATE[channel]["last_error"] = (error or "")[:500]
 
-    row = {
-        "at": now, "channel": channel, "ok": bool(ok),
-        "tenant_id": tenant_id,
-        "recipient_redacted": _redact(recipient),
-        "template": template, "provider": provider,
-        "provider_status": provider_status,
-        "provider_response_id": provider_response_id,
-        "was_mock": bool(was_mock),
-        "routed_via": routed_via,
-        "diagnostic": bool(diagnostic),
-        "error": (error or None) if not ok else None,
-        "exc_type": exc_type, "exc_trace": (exc_trace or "")[:2000] or None,
-    }
+    row = _build_audit_row(
+        channel=channel, ok=ok, now=now,
+        tenant_id=tenant_id, recipient=recipient, template=template,
+        provider=provider, provider_status=provider_status,
+        provider_response_id=provider_response_id, was_mock=was_mock,
+        error=error, exc_type=exc_type, exc_trace=exc_trace,
+        routed_via=routed_via, diagnostic=diagnostic,
+        context=context, intended_recipient=intended_recipient,
+        redirected=redirected,
+    )
 
     async def _write():
         try:
@@ -119,6 +129,53 @@ def record_attempt(
             asyncio.run(_write())
         except Exception as e:  # pragma: no cover
             logger.warning(f"[comms_send_log] sync-fallback failed: {e}")
+
+
+def _build_audit_row(
+    *,
+    channel: str,
+    ok: bool,
+    now: str,
+    tenant_id: Optional[str],
+    recipient: Optional[str],
+    template: Optional[str],
+    provider: Optional[str],
+    provider_status: Optional[str],
+    provider_response_id: Optional[str],
+    was_mock: bool,
+    error: Optional[str],
+    exc_type: Optional[str],
+    exc_trace: Optional[str],
+    routed_via: Optional[str],
+    diagnostic: bool,
+    context: Optional[str],
+    intended_recipient: Optional[str],
+    redirected: bool,
+) -> Dict[str, Any]:
+    """SAFE-SEND-A · pure builder for the audit row shape.
+
+    Extracted so unit tests can assert on the exact fields written
+    to ``comms_send_log`` without needing to fake Motor / server
+    lazy imports.  The runtime path in ``record_attempt`` calls
+    this then hands the dict to Motor; the shape is contractual.
+    """
+    return {
+        "at": now, "channel": channel, "ok": bool(ok),
+        "tenant_id": tenant_id,
+        "recipient_redacted": _redact(recipient),
+        "template": template, "provider": provider,
+        "provider_status": provider_status,
+        "provider_response_id": provider_response_id,
+        "was_mock": bool(was_mock),
+        "routed_via": routed_via,
+        "diagnostic": bool(diagnostic),
+        "error": (error or None) if not ok else None,
+        "exc_type": exc_type, "exc_trace": (exc_trace or "")[:2000] or None,
+        # SAFE-SEND-A audit fields — always present on every row.
+        "context": context,
+        "intended_recipient_redacted": _redact(intended_recipient),
+        "redirected": bool(redirected),
+    }
 
 
 def format_exc(exc: BaseException) -> Dict[str, str]:

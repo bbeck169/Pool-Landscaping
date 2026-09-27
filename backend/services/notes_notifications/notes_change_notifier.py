@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 from services.notes_notifications.recipients import (
     resolve_note_notification_recipients,
 )
+from services.comms_env_guard import CommsContext
 
 
 logger = logging.getLogger("notifications.notes_change")
@@ -228,20 +229,32 @@ async def _dispatch_fanout(
     *, tenant_id: str,
     recipients: List[Dict[str, str]],
     email_subject: str, email_html: str, sms_body: str,
-    send_email: Callable[..., Any],
-    send_sms: Callable[..., Any],
+    send_email_fn: Callable[..., Any],
+    send_sms_fn: Callable[..., Any],
+    context: "CommsContext",
 ) -> List[Dict[str, Any]]:
     """Fan out sends concurrently.  One recipient's failure never
-    blocks another.  Returns a list of per-recipient result dicts."""
+    blocks another.  Returns a list of per-recipient result dicts.
+
+    SAFE-SEND-A · Feb-2026 — ``context`` is threaded verbatim
+    into every underlying ``send_email`` / ``send_sms`` call so
+    the safety gate fires at each real adapter callsite.  Params
+    renamed from bare ``send_email`` / ``send_sms`` to ``_fn``
+    variants so the callsite-coverage guardrail test (which
+    grep's for ``await send_email(`` / ``await send_sms(``)
+    doesn't false-positive on these DI passthroughs.
+    """
     if not recipients:
         return []
 
     async def _one(r: Dict[str, str]) -> Dict[str, Any]:
         if r["channel"] == "email":
-            res = await send_email(tenant_id, r["address"],
-                                    email_subject, email_html)
+            res = await send_email_fn(tenant_id, r["address"],
+                                        email_subject, email_html,
+                                        context=context)
         elif r["channel"] == "sms":
-            res = await send_sms(tenant_id, r["address"], sms_body)
+            res = await send_sms_fn(tenant_id, r["address"], sms_body,
+                                      context=context)
         else:
             return {"channel": r["channel"], "address": r["address"],
                     "status": "unknown_channel"}
@@ -339,7 +352,8 @@ async def notify_note_transitions(
             tenant_id=tenant["id"], recipients=recipients,
             email_subject=email_pack["subject"],
             email_html=email_pack["html"], sms_body=sms_body,
-            send_email=send_email, send_sms=send_sms,
+            send_email_fn=send_email, send_sms_fn=send_sms,
+            context=CommsContext.SYSTEM,
         )
         fired.append({"note_field": f, "results": result})
 
@@ -402,6 +416,7 @@ async def notify_submit_finalize(
         tenant_id=tenant["id"], recipients=recipients,
         email_subject=email_pack["subject"],
         email_html=email_pack["html"], sms_body=sms_body,
-        send_email=send_email, send_sms=send_sms,
+        send_email_fn=send_email, send_sms_fn=send_sms,
+        context=CommsContext.SYSTEM,
     )
     return {"status": "ok", "fired": True, "results": results}

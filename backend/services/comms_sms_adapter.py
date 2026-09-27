@@ -12,6 +12,10 @@ Character/segment counts are computed against the GSM-7 vs. UCS-2 split:
 plain ASCII / GSM-7 body → 160 chars/segment; anything above that (unicode
 emoji, non-ASCII glyphs) → 70 chars/segment. Multipart concatenated SMS
 loses ~7 chars/segment for header overhead — we account for that too.
+
+SAFE-SEND-A · Feb-2026 — mandatory ``context`` kwarg-only param
+on ``send_sms``.  Redirects AGENT + TEST to the tenant admin
+BEFORE any other gate fires.  See ``services.comms_env_guard``.
 """
 from __future__ import annotations
 
@@ -19,6 +23,10 @@ import os
 from typing import Any, Dict, Optional
 
 from config import db, logger
+from services.comms_env_guard import (
+    CommsContext, RedirectTargetMissing,
+    get_redirect_targets, should_redirect_to_admin,
+)
 
 # GSM-7 basic + extension table — anything not in this set forces UCS-2.
 _GSM7_BASIC = set(
@@ -69,7 +77,10 @@ async def _is_opted_out(tenant_id: str, phone: str) -> bool:
 
 
 async def send_sms(tenant_id: str, to_phone: str, body: str,
-                    mms_url: Optional[str] = None) -> Dict[str, Any]:
+                    mms_url: Optional[str] = None,
+                    *,
+                    context: "CommsContext",
+                    ) -> Dict[str, Any]:
     """Send an SMS (or log a mock). Never raises.
 
     Returns a dict with:
@@ -77,7 +88,65 @@ async def send_sms(tenant_id: str, to_phone: str, body: str,
         - ``provider_id``: RingCentral message id when real send succeeds; ``None`` otherwise
         - ``error``: exception summary on failed sends
         - ``character_count`` / ``segment_count``: metrics on the rendered body
+
+    SAFE-SEND-A · Feb-2026 — the ``context`` kwarg is
+    MANDATORY (no default).  Callers stamp one of
+    ``CommsContext.{SYSTEM, AGENT, TEST}``.  AGENT / TEST get
+    redirected to the tenant admin via
+    ``get_redirect_targets`` BEFORE any opt-out, quiet-hours,
+    BYO, or RingCentral gate fires.  SYSTEM passes through
+    untouched.  Missing context → ``TypeError`` at call time.
     """
+    # SAFE-SEND-A · redirect FIRST — runs before opt-out check so
+    # a customer's opt-out never suppresses an admin-directed
+    # test / agent sample.
+    _original_to = to_phone
+    _redirected = False
+    if should_redirect_to_admin(context):
+        try:
+            tenant_doc = await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0, "settings": 1},
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            tenant_doc = None
+            logger.warning(
+                "safe_send.tenant_lookup_failed tenant=%s err=%s",
+                tenant_id, exc,
+            )
+        try:
+            targets = await get_redirect_targets(
+                tenant_settings=(tenant_doc or {}).get("settings") or {},
+                tenant_id=tenant_id,
+                channel="sms",
+                db=db,
+            )
+        except RedirectTargetMissing as exc:
+            logger.warning(
+                "safe_send.redirect_target_missing context=%s tenant=%s "
+                "original_to=%s err=%s — SKIPPING send",
+                context.value, tenant_id, to_phone, exc,
+            )
+            return {
+                "status": "skipped_no_redirect_target",
+                "safe_send_context": context.value,
+                "original_to": to_phone,
+                "error": str(exc),
+                **sms_length_stats(body),
+            }
+        to_phone = targets.phone or to_phone
+        body = f"[MARCO TEST] {body or ''}".strip()
+        _redirected = True
+        logger.info(
+            "safe_send.redirected channel=sms context=%s tenant=%s "
+            "original_to=%s redirected_to=%s",
+            context.value, tenant_id, _original_to, to_phone,
+        )
+    else:
+        logger.debug(
+            "safe_send.passthrough channel=sms context=%s tenant=%s to=%s",
+            context.value, tenant_id, to_phone,
+        )
+
     stats = sms_length_stats(body)
     if not to_phone:
         return {"status": "failed", "error": "empty recipient phone", **stats}

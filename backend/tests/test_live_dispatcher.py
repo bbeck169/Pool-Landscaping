@@ -198,10 +198,16 @@ class _SMSStub:
 
     async def __call__(self, *, tenant_id: str, to_phone: str,
                         body: str, mms_url: Optional[str] = None,
+                        context: Any = None,
                         ) -> Dict[str, Any]:
+        # SAFE-SEND-A · Feb-2026 — real ``comms_sms_adapter.send_sms``
+        # now requires ``context`` as a kwarg-only param.  The stub
+        # captures it so tests can assert on the stamped context
+        # (defaults to ``None`` when a legacy test doesn't care).
         self.calls.append({
             "tenant_id": tenant_id, "to_phone": to_phone,
             "body": body, "mms_url": mms_url,
+            "context": context,
         })
         return {
             "status": self.status,

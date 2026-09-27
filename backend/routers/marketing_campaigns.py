@@ -324,14 +324,17 @@ async def send_test(cid: str, body: TestSendBody,
         (camp.get("content") or {}).get("sms_body") or "", ctx)
     email_results = []
     from services.comms_email_adapter import send_email
+    from services.comms_env_guard import CommsContext
     for addr in (body.recipient_emails or []):
         r = await send_email(tenant["id"], addr, f"[TEST] {subject_r}",
-                                html_r, from_name=camp.get("from_name"))
+                              html_r, from_name=camp.get("from_name"),
+                              context=CommsContext.TEST)
         email_results.append({"to": addr, "result": r})
     sms_results = []
     from services.comms_sms_adapter import send_sms
     for phone in (body.recipient_phones or []):
-        r = await send_sms(tenant["id"], phone, f"[TEST] {sms_r}")
+        r = await send_sms(tenant["id"], phone, f"[TEST] {sms_r}",
+                            context=CommsContext.TEST)
         sms_results.append({"to": phone, "result": r})
     return {"ok": True, "email": email_results, "sms": sms_results}
 

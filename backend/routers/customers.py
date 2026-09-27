@@ -3657,11 +3657,13 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
             )
 
     from services.comms_email_adapter import send_email
+    from services.comms_env_guard import CommsContext
     res = await send_email(
         tenant["id"], to,
         subject=body.subject.strip() or "Message",
         html=f"<pre style=\"font-family:inherit;white-space:pre-wrap\">{body.body}</pre>",
         attachments=email_attachments or None,
+        context=CommsContext.SYSTEM,
     )
 
     # BUG F — persist the send so it shows on the customer activity
@@ -4191,9 +4193,11 @@ async def send_service_records_link(cid: str,
             f"</div>"
         )
         from services.comms_email_adapter import send_email
+        from services.comms_env_guard import CommsContext
         res = await send_email(
             tenant["id"], recipient,
             subject=subject, html=html,
+            context=CommsContext.SYSTEM,
         )
         provider = "resend"
         provider_status = res.get("status") or "unknown"

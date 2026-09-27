@@ -401,6 +401,74 @@ except Exception as _p12_exc:  # pragma: no cover — defensive
     )
 
 
+# ═══════════════════════════════════════════════════════════════════
+# SAFE-SEND-A · Feb-2026 — Client-context 400 exception handler.
+# ═══════════════════════════════════════════════════════════════════
+# ``CommsSendRequestBase`` (services.comms_env_guard) raises
+# ``ClientContextNotAllowedError`` (a ``ValueError`` subclass with
+# ``error_code="invalid_comms_context"``) when a client request body
+# supplies ``context=SYSTEM|AGENT``.  Pydantic wraps ValueErrors from
+# field validators into ``RequestValidationError`` → default HTTP 422.
+# Spec requires HTTP 400 with a specific ``{error_code, detail}``
+# envelope for auditability; this handler fingerprints the wrapped
+# error and returns the correct shape.  Falls through to FastAPI's
+# default handler for every other validation error so 422 behavior
+# is unchanged for the rest of the API.
+try:
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+    from fastapi.exception_handlers import (
+        request_validation_exception_handler as _default_422_handler,
+    )
+
+    _SAFE_SEND_ERROR_SIGIL = "client_context_not_allowed"
+
+    @app.exception_handler(RequestValidationError)
+    async def _safe_send_client_context_handler(request, exc):
+        # Pydantic v2 wraps validator errors under ``errors[i]["ctx"]["error"]``
+        # (or as a stringified message in ``msg``).  Scan for the SAFE-SEND
+        # sigil across both shapes.
+        for err in exc.errors():
+            ctx = err.get("ctx") or {}
+            wrapped = ctx.get("error")
+            msg = str(err.get("msg") or "")
+            if isinstance(wrapped, Exception):
+                # ``ClientContextNotAllowedError`` carries ``error_code``.
+                if getattr(wrapped, "error_code", None) == "invalid_comms_context":
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error_code": "invalid_comms_context",
+                            "detail": getattr(
+                                wrapped, "detail",
+                                "context=SYSTEM|AGENT is server-controlled "
+                                "and cannot be supplied by client requests",
+                            ),
+                            "supplied": getattr(wrapped, "supplied", None),
+                        },
+                    )
+            if _SAFE_SEND_ERROR_SIGIL in msg:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error_code": "invalid_comms_context",
+                        "detail": (
+                            "context=SYSTEM|AGENT is server-controlled "
+                            "and cannot be supplied by client requests"
+                        ),
+                    },
+                )
+        # Not a SAFE-SEND-A violation — fall through to the default
+        # 422 handler so nothing else on the API changes shape.
+        return await _default_422_handler(request, exc)
+except Exception as _safesend_exc:  # pragma: no cover — defensive
+    import logging as _safesend_log
+    _safesend_log.getLogger("pool_crm").warning(
+        "[SAFE-SEND-A] client_context handler wire-up skipped: %s",
+        _safesend_exc,
+    )
+
+
 @api_router.get("/health", include_in_schema=False)
 async def _api_health_probe():
     # ``/api/health`` mirror — some Emergent ingress rules and the

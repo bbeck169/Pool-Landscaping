@@ -27,6 +27,7 @@ from services.comm_tokens import (
 )
 from services.comms_email_adapter import send_email
 from services.comms_sms_adapter import send_sms, sms_length_stats
+from services.comms_env_guard import CommsContext
 
 
 router = APIRouter(prefix="/comms", tags=["Communications"])
@@ -1112,7 +1113,8 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
             html = render_email_html(tpl.get("blocks_json") or [], ctx)
             try:
                 deliver = await send_email(tenant_id, contact, subject, html,
-                                             from_name=company.get("name") or None)
+                                             from_name=company.get("name") or None,
+                                             context=CommsContext.SYSTEM)
             except Exception as e:
                 deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
             doc = {
@@ -1164,7 +1166,8 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
             rendered = render_sms_text(tpl.get("body") or "", ctx)
             try:
                 deliver = await send_sms(tenant_id, contact, rendered,
-                                           mms_url=tpl.get("mms_image_url"))
+                                           mms_url=tpl.get("mms_image_url"),
+                                           context=CommsContext.SYSTEM)
             except Exception as e:
                 deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
             doc = {
@@ -1224,7 +1227,8 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
             subject = resolve_email_subject(tpl.get("subject") or "", ctx)
             html = render_email_html(tpl.get("blocks_json") or [], ctx)
             deliver = await send_email(tenant_id, contact, subject, html,
-                                         from_name=company.get("name") or None)
+                                         from_name=company.get("name") or None,
+                                         context=CommsContext.SYSTEM)
             # Phase I1.7.e · chunk 1 · Feb-2026 — transactional cap-exceeded
             # semantic: persist the audit row THEN 429 the caller. This
             # endpoint is a synchronous admin-triggered send, so surfacing
@@ -1268,7 +1272,8 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
             ctx.update(build_context_for_customer(customer, {}, {}, company, ""))
             rendered = render_sms_text(tpl.get("body") or "", ctx)
             deliver = await send_sms(tenant_id, contact, rendered,
-                                       mms_url=tpl.get("mms_image_url"))
+                                       mms_url=tpl.get("mms_image_url"),
+                                       context=CommsContext.SYSTEM)
             doc = {
                 "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
                 "template_code": template_code, "automation_code": automation_code,

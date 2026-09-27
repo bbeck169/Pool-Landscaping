@@ -748,13 +748,15 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
             subject_r, _ = render_body(camp_view.get("subject") or "", ctx)
             try:
                 from services.comms_email_adapter import send_email
+                from services.comms_env_guard import CommsContext
                 r = await send_email(
                     tenant_id, sub["email"], subject_r, tracked_html,
                     from_name=camp_view.get("from_name"),
                     from_email=camp_view.get("from_email"),
                     headers={"List-Unsubscribe":
                                  f"<{_base_backend_url()}/api/public/mkt/unsub/"
-                                 f"{mint_token(campaign_id, sub['id'], send_id)}>"})
+                                 f"{mint_token(campaign_id, sub['id'], send_id)}>"},
+                    context=CommsContext.SYSTEM)
                 provider_id = (r or {}).get("id") or (r or {}).get("message_id")
             except Exception as e:
                 ok_email = False
