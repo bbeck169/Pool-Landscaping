@@ -52,12 +52,16 @@
   gap: 32px;
   align-items: start;
 }
-.iv-header-left { font-size: 13px; line-height: 1.5; }
-/* Phase 34 · Feb 2026 — brand logo header on invoice/estimate previews. */
+.iv-header-left { font-size: 15px; line-height: 1.5; }
+/* Phase 34 · Feb 2026 — brand logo header on invoice/estimate previews.
+   Task B1 · Feb-2026 — 3x sizing bump (max-height 72→216, max-width 220
+   →min(660px, 100%)). The min() guard keeps the logo from overflowing
+   inside the ``.iv-doc`` container on narrow viewports without needing
+   a media query. Universal browser support (mid-2019+). */
 .iv-brand-logo {
   display: block;
-  max-height: 72px;
-  max-width: 220px;
+  max-height: 216px;
+  max-width: min(660px, 100%);
   width: auto;
   height: auto;
   margin-bottom: 10px;
@@ -82,7 +86,7 @@
 .iv-kv {
   border-collapse: collapse;
   margin-left: auto;
-  font-size: 12px;
+  font-size: 14px;
 }
 .iv-kv td { padding: 2px 0; }
 .iv-kv-label {
@@ -101,12 +105,12 @@
   margin: 16px 0 20px;
 }
 
-.iv-bill-to { font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+.iv-bill-to { font-size: 15px; line-height: 1.5; margin-bottom: 16px; }
 .iv-bill-name { font-weight: 800; font-size: 15px; }
 .iv-bill-addr { white-space: pre-wrap; }
 
 .iv-prop-addr {
-  font-size: 13px;
+  font-size: 15px;
   margin: 8px 0 16px;
 }
 
@@ -117,7 +121,7 @@
 .iv-lines {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 14.5px;
 }
 .iv-lines thead th {
   background: #F3F4F6;
@@ -157,7 +161,7 @@
   border: 1px solid #E5E7EB;
   border-radius: 6px;
   padding: 12px 16px;
-  font-size: 12.5px;
+  font-size: 14.5px;
   line-height: 1.6;
 }
 .iv-notes-title { font-weight: 800; margin-bottom: 4px; }
@@ -165,7 +169,7 @@
 .iv-totals {
   border-collapse: collapse;
   min-width: 240px;
-  font-size: 12.5px;
+  font-size: 14.5px;
 }
 .iv-totals td {
   padding: 4px 12px;
@@ -180,7 +184,7 @@
   border-top: 1.5px solid #111827;
   padding-top: 8px !important;
   font-weight: 800;
-  font-size: 14px;
+  font-size: 16px;
   color: #0F172A;
 }
 .iv-total-due td:first-child { color: #0F172A; }
@@ -206,7 +210,7 @@
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 24px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .iv-stub-right { border-collapse: collapse; min-width: 260px; }

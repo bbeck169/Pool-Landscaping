@@ -91,7 +91,7 @@
 .ev-totals {
   border-collapse: collapse;
   min-width: 280px;
-  font-size: 12.5px;
+  font-size: 14.5px;
 }
 .ev-totals td {
   padding: 6px 12px;
@@ -103,7 +103,7 @@
   background: #F3F4F6;
   font-weight: 800;
   color: #0F172A;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .ev-disclaimer {
@@ -155,7 +155,7 @@
 
 /* Phase K79 · Feb-2026 — Grouped customer-facing rows. */
 .ev-group-desc {
-  font-size: 12px;
+  font-size: 14px;
   color: #6B7280;
   margin-top: 2px;
   white-space: pre-wrap;
@@ -211,7 +211,7 @@
   padding: 20px 14px;
 }
 .ev-line-card-desc {
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.4;
   color: #0F172A;
   word-break: break-word;
