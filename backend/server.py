@@ -1197,6 +1197,16 @@ api_router.include_router(_fb_admin_entitlements.router)
 from routers import user_recent_colors as _fb_recent_colors  # noqa: E402
 api_router.include_router(_fb_recent_colors.router)
 
+# Feb-2026 · Pool Service PS-D — Smart Portal Tiles endpoint.
+# Returns the soonest future scheduled job per service-type
+# category (pool / landscape / filter_cleaning), gated by the
+# customer having an ACTIVE recurring subscription for that
+# category.  Registered inline (not in the shared loop below) so
+# the ``/api`` prefix is applied consistently with its sibling
+# Feb-2026 endpoints.
+from routers import portal_next_visits as _fb_portal_next_visits  # noqa: E402
+api_router.include_router(_fb_portal_next_visits.router)
+
 
 for module in [notifications_router,
                # Feb 2026 · Customer Merge Phase 1 — MUST be registered

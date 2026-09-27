@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Waves, Wrench, Receipt, FileText, MessageSquare, ChevronRight, AlertCircle, Plus, ClipboardCheck, DollarSign, CalendarClock, Wallet, X as XIcon, Send, Sparkles, UserRound, Star, Image as ImageIcon, Video as VideoIcon } from "lucide-react";
+import { Waves, Wrench, Receipt, FileText, MessageSquare, ChevronRight, AlertCircle, Plus, ClipboardCheck, DollarSign, CalendarClock, Wallet, X as XIcon, Send, Sparkles, UserRound, Star, Image as ImageIcon, Video as VideoIcon, Trees, Filter as FilterFunnelIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients } from '@/theme';
 import { useAuth } from "@/auth";
@@ -59,6 +59,19 @@ export default function PortalHome() {
   // Feb-2026 — Portal Quick Action tiles: Photos/Videos/Messages.
   // ``unreadMessages`` powers the Messages tile badge.
   const [unreadMessages, setUnreadMessages] = useState(0);
+  // Feb-2026 · Pool Service PS-D — Smart Portal Tiles state.
+  //   ``next_visits`` schema (from GET /api/portal/dashboard/next-visits):
+  //     { next_visits: [
+  //         { service_type: "pool"|"landscape"|"filter_cleaning",
+  //           next_visit_at: "2026-03-12T09:00:00-05:00" | "2026-03-12",
+  //           tech_name: "Mike Rodriguez" | null,
+  //           visit_id: "..." },
+  //       ...
+  //     ] }
+  //   ``null`` = still loading (renders skeleton).
+  //   ``{next_visits: []}`` = eligible → no tiles rendered.
+  //   ``"error"`` = endpoint 500'd → row hidden, no crash.
+  const [nextVisits, setNextVisits] = useState(null);
 
   const loadSummary = () => {
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
@@ -79,6 +92,22 @@ export default function PortalHome() {
     api.get("/portal/messages/unread-count")
       .then((r) => setUnreadMessages(Number(r?.unread || 0)))
       .catch(() => setUnreadMessages(0));
+    // Feb-2026 · Pool Service PS-D — Next Visit tiles.  Endpoint
+    // returns [] when nothing qualifies; hitting a 500 flips
+    // state to the ``"error"`` sentinel so the row hides fully
+    // (fail-quietly per portal UX ruling #8).
+    api.get("/portal/dashboard/next-visits")
+      .then((r) => {
+        const rows = Array.isArray(r?.next_visits)
+          ? r.next_visits
+          : [];
+        setNextVisits(rows);
+      })
+      .catch((exc) => {
+        // eslint-disable-next-line no-console
+        console.warn("[ps-d] next-visits fetch failed", exc);
+        setNextVisits("error");
+      });
     // Feb-2026 · Slice 5 — pull the two customer-audience AI
     // employees so the "Ask AI" section can render their cards.
     api
@@ -207,6 +236,44 @@ export default function PortalHome() {
           )}
         </div>
       </div>
+
+      {/* Feb-2026 · Pool Service PS-D — Smart Portal Tiles.
+          Renders a horizontal row (mobile: stacked) of "Next
+          Visit" tiles for Pool, Landscape, and Filter Cleaning.
+          Eligibility (BOTH must hold per service type):
+            1. Active recurring subscription for that service.
+            2. At least one future scheduled job for that service.
+          Backend filters to eligible entries only — see
+          routers/portal_next_visits.py.  Loading state renders
+          a skeleton row.  API error ("error" sentinel) or empty
+          array → row not rendered (fail-quietly per ruling #8).
+          Order: Pool → Landscape → Filter Cleaning (backend
+          guarantees the sort). */}
+      {nextVisits === null ? (
+        <div
+          className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3"
+          data-testid="next-visits-skeleton"
+        >
+          <Skeleton style={{ height: 88, borderRadius: 12 }} />
+          <Skeleton style={{ height: 88, borderRadius: 12 }} />
+          <Skeleton style={{ height: 88, borderRadius: 12 }} />
+        </div>
+      ) : (Array.isArray(nextVisits) && nextVisits.length > 0) ? (
+        <div
+          className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3"
+          data-testid="next-visits-tile-row"
+        >
+          {nextVisits.map((nv) => (
+            <NextVisitTile
+              key={nv.service_type}
+              nv={nv}
+              onOpen={() => navigate(
+                `/portal/schedule?service_type=${encodeURIComponent(nv.service_type)}`,
+              )}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {/* Feb-2026 · Item 12 — status "circles" hoisted directly under
           the greeting tile. Two rows: primary account tiles
@@ -541,6 +608,103 @@ export default function PortalHome() {
     </div>
   );
 }
+
+
+// Feb-2026 · Pool Service PS-D — Smart Portal Tile renderer.
+//
+//   Renders ONE "Next Visit" tile.  Service-type icon + label,
+//   human-readable datetime, tech name (fallback "Tech to be
+//   assigned"), and a chevron cue.  Whole tile is clickable and
+//   deep-links to /portal/schedule?service_type=<key>.  Palette
+//   matches the sibling account tiles (Navy #1B1F5C surface,
+//   Blue #3B82F6 accent on the icon puck).
+const _NEXT_VISIT_META = {
+  pool: {
+    label: "Pool",
+    icon: Waves,
+  },
+  landscape: {
+    label: "Landscape",
+    icon: Trees,
+  },
+  filter_cleaning: {
+    label: "Filter Cleaning",
+    icon: FilterFunnelIcon,
+  },
+};
+
+function _formatNextVisitDatetime(iso) {
+  if (!iso) return "TBD";
+  try {
+    // Support both date-only ("2026-03-12") and full ISO with tz.
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(iso).trim());
+    const d = new Date(isDateOnly ? `${iso}T09:00:00` : iso);
+    if (Number.isNaN(d.getTime())) return "TBD";
+    const dayLabel = d.toLocaleDateString(undefined, {
+      weekday: "long", month: "short", day: "numeric",
+    });
+    if (isDateOnly) return dayLabel;
+    const timeLabel = d.toLocaleTimeString(undefined, {
+      hour: "numeric", minute: "2-digit",
+    });
+    return `${dayLabel} at ${timeLabel}`;
+  } catch {
+    return String(iso);
+  }
+}
+
+function NextVisitTile({ nv, onOpen }) {
+  const meta = _NEXT_VISIT_META[nv?.service_type];
+  if (!meta) return null;
+  const Icon = meta.icon;
+  const dtLabel = _formatNextVisitDatetime(nv.next_visit_at);
+  const techLabel = nv.tech_name || "Tech to be assigned";
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex items-start gap-3 text-left rounded-xl p-3 bg-white border border-zinc-200 hover:border-blue-300 hover:shadow-sm transition"
+      data-testid={`next-visit-tile-${nv.service_type}`}
+      data-visit-id={nv.visit_id || ""}
+    >
+      <div
+        className="shrink-0 flex items-center justify-center w-10 h-10 rounded-lg text-white"
+        style={{ background: "#1B1F5C" }}
+        aria-hidden="true"
+      >
+        <Icon className="w-5 h-5" style={{ color: "#3B82F6" }} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div
+          className="text-[11px] uppercase tracking-wider font-bold"
+          style={{ color: "#1B1F5C" }}
+        >
+          {meta.label}
+        </div>
+        <div
+          className="text-sm font-semibold truncate mt-0.5"
+          style={{ color: "#111827" }}
+          data-testid={`next-visit-tile-datetime-${nv.service_type}`}
+        >
+          {dtLabel}
+        </div>
+        <div
+          className="text-xs text-zinc-600 truncate mt-0.5"
+          data-testid={`next-visit-tile-tech-${nv.service_type}`}
+        >
+          {techLabel}
+        </div>
+      </div>
+      <ChevronRight
+        className="w-4 h-4 shrink-0 mt-1"
+        style={{ color: "#3B82F6" }}
+        aria-hidden="true"
+        data-testid={`next-visit-tile-link-${nv.service_type}`}
+      />
+    </button>
+  );
+}
+
 
 function AlertTile({ label, value, tone, onClick, testid }) {
   return (
