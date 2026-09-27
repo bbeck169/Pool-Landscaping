@@ -3207,6 +3207,48 @@ async def _run_pdf_doc_date_backfill_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# Feb-2026 · Profitability backfill — historical chemistry ledger repair.
+# Companion to the P0 chemical-save-before-status-flip fix (commit
+# ``b77684f23``).  The P0 fix prevents FUTURE ledger loss; this
+# one-shot migration repairs HISTORICAL loss caused by the same
+# underlying bug (silent-swallowed ``snapshot_chemical_usage`` failures
+# at the pre-P0 L1006-1007 try/except) so profitability reporting is
+# accurate across the full report history.  See
+# ``services/migrations/chemical_usage_backfill_v1.py`` for the
+# detection query + rollback recipe.  Ruled ``must_succeed=False`` —
+# a partial backfill never crashes boot; the next boot retries via
+# the sentinel-gate short-circuit for successful reports + re-
+# attempts the failures.
+async def _run_chemical_usage_backfill_v1_boot(db_handle) -> dict:
+    """Run the ``chemical_usage_backfill_v1`` structural migration.
+
+    Sentinel-gated internally so a second boot is a no-op. Routed
+    through ``_run_structural_migration`` so any Mongo hiccup
+    surfaces on
+    ``/api/health.init.structural_migrations.chemical_usage_backfill_v1``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from services.migrations.chemical_usage_backfill_v1 import (
+            run as _chem_backfill_run,
+        )
+        res = await _chem_backfill_run(db_handle)
+        logger.info(
+            "[chemical-usage-backfill-v1] structural pass — skipped=%s "
+            "backfilled=%s failed=%s skipped_empty=%s",
+            res.get("skipped"),
+            res.get("rows_backfilled"),
+            res.get("rows_failed"),
+            res.get("rows_skipped_empty_chemistry"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "chemical_usage_backfill_v1", _factory, must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3551,6 +3593,21 @@ async def _run_boot_sequence():
     # ``/api/health.init.structural_migrations.pdf_doc_date_backfill_v1``
     # and the next boot retries.
     await _run_pdf_doc_date_backfill_v1_boot(db)
+    # Feb-2026 · Profitability backfill — historical chemistry ledger
+    # repair.  Companion to the P0 fix at commit ``b77684f23``.
+    # Detects submitted service_reports with non-empty chemistry
+    # but no matching ``chemical_usage_events`` rows and calls
+    # ``snapshot_chemical_usage`` per report to sync.  Line-adjacent
+    # to ``pdf_doc_date_backfill_v1``'s call so both post-P0
+    # structural passes live in the same STRUCTURAL bucket and a
+    # boot-order regression is caught by the pre-yield lint.
+    # Sentinel-gated internally — a second boot short-circuits
+    # without a DB touch.  Best-effort per the task brief
+    # (``must_succeed=False`` inside the wrapper); a Mongo hiccup
+    # logs to
+    # ``/api/health.init.structural_migrations.chemical_usage_backfill_v1``
+    # and the next boot retries.
+    await _run_chemical_usage_backfill_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
