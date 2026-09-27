@@ -2770,6 +2770,26 @@ async def _background_seed():
                 register_marco_reminders_cron(scheduler)
             except Exception as _marco_exc:  # pragma: no cover
                 logger.warning("[marco.reminders.cron] register failed: %s", _marco_exc)
+            # LDM-B · Feb-2026 — 5-min-cadence AI Live Dispatcher
+            # tick. Sibling of the MARCO reminder cron; scans every
+            # tenant for technicians projected to arrive late at
+            # their next scheduled visit and, when the projected
+            # delay exceeds the tenant-configured threshold
+            # (settings.automation_rules.dispatch_delay_threshold_mins),
+            # fans out MARCO-branded delay SMS to the next N
+            # customers on the route. Quiet-hours enforcement lives
+            # in services.comms_sms_adapter (single source of truth
+            # — see LDM-B commit narrative for the omitted
+            # quiet_hours_start/end rule fields).
+            try:
+                from services.live_dispatcher import (
+                    register_live_dispatcher_cron,
+                )
+                register_live_dispatcher_cron(scheduler)
+            except Exception as _ld_exc:  # pragma: no cover
+                logger.warning(
+                    "[live_dispatcher.cron] register failed: %s", _ld_exc,
+                )
             # Phase 51d · Feb-2026 — minute-cadence walkie cleanup tick.
             try:
                 from services.walkie.cleanup_cron import register_walkie_cleanup_cron
