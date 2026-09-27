@@ -699,14 +699,17 @@ export default function CustomersList() {
         inactive: r?.inactive ?? 0,
         muted: isAdmin ? (r?.muted ?? 0) : null,
         waitlist: isAdmin ? (r?.waitlist ?? 0) : null,
-        // Phase K68 · Feb-2026 — legacy fallback doesn't compute the
-        // "All" bucket; retain the same derivation the pre-P31
-        // fallback used so the primary envelope path stays
-        // authoritative when it populates ``counts_by_status``.
+        // Feb-2026 · CUS-perf v3 — the ``all`` bucket is now
+        // returned by ``/customers/counts`` (admin-only) so
+        // ``CustomersList.jsx`` no longer needs to derive it from
+        // the vestigial ``data.counts_by_status.all`` on the
+        // paginated list envelope.  Client-side fallback below
+        // survives the deploy-order gap where BE hasn't yet
+        // shipped the new field.
         all: isAdmin
-          ? ((r?.active ?? 0)
-              + (r?.inactive ?? 0)
-              + (r?.muted ?? 0))
+          ? (Number.isFinite(r?.all)
+              ? r.all
+              : ((r?.active ?? 0) + (r?.inactive ?? 0) + (r?.muted ?? 0)))
           : null,
       });
       // Phase P31 · Feb-2026 — hydrate the 5 stable-badge setters
@@ -721,24 +724,31 @@ export default function CustomersList() {
   };
 
   useEffect(() => {
-    load();
+    // Feb-2026 · CUS-perf v3 (R3=B ruling) — ``load()`` and
+    // ``loadCounts()`` fire IN PARALLEL on every filter / search /
+    // tab / page / sort / city / tag change.  ``Promise.all``
+    // dispatches both HTTP requests concurrently (HTTP2 mux keeps
+    // wall-clock cost close to a single round trip).  ``load()``
+    // still populates the tab-count state from the paginated
+    // envelope's ``data.counts_by_status`` (vestigial, kept for
+    // the deploy-order gap per R5); once the FE-side vestigial
+    // read is dropped in the follow-up commit
+    // (memory/FOLLOWUP_CUS_PERF_V3_ENVELOPE_DEPRECATION.md),
+    // ``loadCounts()`` will be the single source of truth for the
+    // 4 tab counts + the ``all`` bucket.
+    //
+    // Error isolation: each ``.catch()`` inside the two functions
+    // already swallows its own errors + surfaces via the toast /
+    // silent-log paths.  ``Promise.all`` never rejects here because
+    // the wrapped promises never reject (both catch their own
+    // errors), so no ``.allSettled`` wrapper is needed.
+    Promise.all([load(), loadCounts()]);
     // Phase K68 · Feb-2026 — ``load()`` populates the four tab
     // counts via the paginated envelope's ``counts_by_status``
-    // block, so no separate ``loadCounts()`` fetch is required on
-    // filter / tab / page / sort changes.
-    //
-    // CUS-perf · Feb-2026 — the redundant ``loadCounts()`` call
-    // that used to live here was removed as part of the Customers-
-    // list load-time fix. The five stable badge counts
-    // (missing_address, portal_activated x2, no_payment_method,
-    // never_logged_in) are by-design filter-invariant — they
-    // represent the STABLE population of the tenant and never
-    // move as the admin narrows other criteria — so they do not
-    // need a re-fetch on filter/tab/page/sort changes. The mount-
-    // only ``loadCounts()`` (see effect below) primes them once,
-    // and every post-mutation callsite (bulk-status, restore,
-    // import, etc.) explicitly re-invokes ``loadCounts()`` so
-    // the badges refresh when the underlying population changes.
+    // block (vestigial alias per R5); ``loadCounts()`` now runs in
+    // parallel and populates the SAME state from
+    // ``/customers/counts``.  Post-FE-vestigial-removal follow-up,
+    // ``loadCounts()`` becomes the sole authority.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchDeb, tag, scope, tab, missingCardOnly, missingEmail,
        missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, includeDeleted, includeMerged, page, pageSize, city, selectedTags, sortBy, portalStatus]);
@@ -876,14 +886,17 @@ export default function CustomersList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize]);
 
-  useEffect(() => {
-    // Feb-2026 · P40 — one-shot on mount is fine; the effect above
-    // that runs on filter/tab/page changes also fires ``loadCounts``,
-    // so this initial-mount call primes the badges before the first
-    // filter change.
-    loadCounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Feb-2026 · CUS-perf v3 (R3=B) — mount-only ``loadCounts()``
+  // was folded into the primary Promise.all above.  On mount the
+  // primary useEffect already fires ``load() + loadCounts()`` in
+  // parallel (React runs all useEffects on initial mount, so
+  // there's no window where the badges are un-primed).  Removed
+  // the redundant mount-only fetch to eliminate the duplicate
+  // ``/customers/counts`` request that landed on every page load.
+  //   Prior shape (removed):
+  //     useEffect(() => { loadCounts(); }, []);
+  // See ``memory/FOLLOWUP_CUS_PERF_V3_ENVELOPE_DEPRECATION.md``
+  // for the vestigial-envelope drop that follows this commit.
 
   // Feb-2026 · Load tag registry for the chip filter bar. One-shot
   // on mount — recomputed usage counts land via GET /customer-tags.

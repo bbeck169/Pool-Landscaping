@@ -523,6 +523,17 @@ class CustomerCountsResponse(BaseModel):
     inactive: int
     muted: Optional[int] = None
     waitlist: Optional[int] = None
+    # Feb-2026 · CUS-perf v3 — admin-only ``All`` tab total, added so
+    # ``CustomersList.jsx`` can consume ``/customers/counts`` as the
+    # SINGLE source of truth for every tab badge (see R2 ruling in
+    # the CUS-perf v3 recon).  Defined as ``active + inactive + muted``
+    # to mirror the legacy ``counts_by_status.all`` semantics
+    # (waitlist rows are a labelling overlay on top of active/inactive
+    # rather than an exclusive bucket; the ``all`` total intentionally
+    # does NOT include waitlist as a separate summand).  ``None`` for
+    # non-admin callers (matches the admin-gate the ``All`` tab
+    # already enforces in the FE).
+    all: Optional[int] = None
     missing_address: int
     portal_activated: int
     portal_not_activated: int
@@ -657,11 +668,27 @@ async def customer_counts(
     values = await _asyncio.gather(*tasks.values())
     payload = dict(zip(keys, values))
 
+    # Feb-2026 · CUS-perf v3 (R2 ruling) — the ``All`` tab total.
+    # Admin-only.  Backend is single source of truth so the FE
+    # doesn't need to derive this from the individual buckets.
+    # Formula mirrors the pre-refactor ``counts_by_status.all``
+    # semantics: waitlist rows overlap active/inactive (a waitlist
+    # customer is still active-or-inactive) so we do NOT add
+    # waitlist as a separate summand.  The paginated list envelope's
+    # ``counts_by_status.all`` (kept as a vestigial alias per R5)
+    # uses the same predicate.
+    all_total: Optional[int] = None
+    if is_admin:
+        all_total = (int(payload.get("active", 0))
+                       + int(payload.get("inactive", 0))
+                       + int(payload.get("muted", 0)))
+
     return CustomerCountsResponse(
         active=payload["active"],
         inactive=payload["inactive"],
         muted=payload.get("muted"),
         waitlist=payload.get("waitlist"),
+        all=all_total,
         missing_address=payload["missing_address"],
         portal_activated=payload["portal_activated"],
         portal_not_activated=payload["portal_not_activated"],
@@ -1534,79 +1561,94 @@ async def list_customers(
         _total_pages = 0 if total == 0 else (
             (total + page_size - 1) // page_size)
         # ═══════════════════════════════════════════════════════════
-        # Phase K68 · Feb-2026 — counts_by_status. Runs one $facet
-        # over the base query (search + city + tag + data-quality +
-        # portal-status), producing 5 overlapping counts. Wire the
-        # frontend at the same time so the K62 tab bar can drop
-        # its 3-4 legacy ``?count_only=true`` fanout.
+        # Phase K68 · Feb-2026 — counts_by_status (CUS-perf v3 refactor).
         #
-        # Bucket definitions (matches the tab-to-filter mapping the
-        # frontend already uses):
+        # Prior implementation ran a single ``$facet`` aggregation
+        # over the base query, producing 5 overlapping tab counts in
+        # one Mongo round trip.  While cheaper than the pre-K68
+        # 5-round-trip fanout, ``$facet`` still routed every bucket
+        # through a Python-side response validation stage and could
+        # not use the ``customers_dashboard_active_inactive_idx``
+        # compound cleanly — the aggregation planner tends to prefer
+        # a partition-only scan when a non-tenant-leading facet is
+        # present.
+        #
+        # Feb-2026 CUS-perf v3 replaces the ``$facet`` with 5
+        # concurrent ``count_documents`` calls via ``asyncio.gather``.
+        # Wall-clock cost is now ``max(bucket)`` — every bucket runs
+        # in parallel against Mongo's connection pool.  The
+        # per-bucket predicates preserve the exact same semantics
+        # (search + city + tags + data-quality + portal filters on
+        # the base + per-tab predicate on top) so byte-for-byte
+        # numerical parity with ``$facet`` is guaranteed.
+        #
+        # Bucket definitions (unchanged from K68):
         #   * active   — is_active∈{true, missing} AND is_muted!=true
         #   * inactive — is_active=false AND is_muted!=true
         #   * muted    — is_muted=true
         #   * waitlist — waitlisted=true
         #   * all      — the base query verbatim
         #
-        # ``unscheduled`` and ``missing_card`` run in Python
-        # post-filter so their exclusion isn't reflected in the
-        # facet counts — those tabs are advisory (their totals may
-        # over-count vs the visible page). Documented in the K68
-        # memory doc.
+        # ``unscheduled`` and ``missing_card`` still run in Python
+        # post-filter so their exclusion isn't reflected in the tab
+        # counts — those tabs are advisory (their totals may
+        # over-count vs the visible page).
+        #
+        # ─── VESTIGIAL ALIAS ──────────────────────────────────────
+        # ``counts_by_status`` is kept in the response envelope for
+        # 1 release cycle to survive the deploy-order gap where BE
+        # ships before FE.  Frontend as of the CUS-perf v3 commit
+        # reads ``/customers/counts`` (extended with the ``all``
+        # bucket) as single source of truth.  Drop this alias in
+        # the follow-up per
+        # ``memory/FOLLOWUP_CUS_PERF_V3_ENVELOPE_DEPRECATION.md``.
+        # No extra query cost — the alias is populated from the
+        # same 5 parallel counts already fetched below.
         # ═══════════════════════════════════════════════════════════
-        _k68_not_muted = {"$or": [{"is_muted": {"$ne": True}},
-                                        {"is_muted": {"$exists": False}}]}
-        _k68_facet = {
-            "active": [
-                {"$match": {"$and": [
-                    _k68_base_q,
-                    {"$or": [{"is_active": True},
-                                {"is_active": {"$exists": False}}]},
-                    _k68_not_muted,
-                ]}},
-                {"$count": "n"},
-            ],
-            "inactive": [
-                {"$match": {"$and": [
-                    _k68_base_q,
-                    {"is_active": False},
-                    _k68_not_muted,
-                ]}},
-                {"$count": "n"},
-            ],
-            "muted": [
-                {"$match": {"$and": [
-                    _k68_base_q, {"is_muted": True},
-                ]}},
-                {"$count": "n"},
-            ],
-            "waitlist": [
-                {"$match": {"$and": [
-                    _k68_base_q, {"waitlisted": True},
-                ]}},
-                {"$count": "n"},
-            ],
-            "all": [
-                {"$match": _k68_base_q},
-                {"$count": "n"},
-            ],
-        }
+        import asyncio as _cus_perf_v3_asyncio
+        _cbs_not_muted = {"$or": [{"is_muted": {"$ne": True}},
+                                     {"is_muted": {"$exists": False}}]}
+        # Per-bucket filter shape: ``$and`` of base + per-tab
+        # predicate(s).  Nested ``$and`` inside an outer ``$and``
+        # is optimized flat by the Mongo planner.
+        _cbs_active_q = {"$and": [
+            _k68_base_q,
+            {"$or": [{"is_active": True},
+                       {"is_active": {"$exists": False}}]},
+            _cbs_not_muted,
+        ]}
+        _cbs_inactive_q = {"$and": [
+            _k68_base_q, {"is_active": False}, _cbs_not_muted,
+        ]}
+        _cbs_muted_q = {"$and": [_k68_base_q, {"is_muted": True}]}
+        _cbs_waitlist_q = {"$and": [_k68_base_q, {"waitlisted": True}]}
+        _cbs_all_q = _k68_base_q
         try:
-            _k68_facet_res = await db.customers.aggregate(
-                [{"$facet": _k68_facet}]
-            ).to_list(1)
-            _k68_row = _k68_facet_res[0] if _k68_facet_res else {}
-        except Exception as _k68_exc:  # noqa: BLE001
-            logger.warning("[k68] counts_by_status facet failed: %s",
-                              _k68_exc)
-            _k68_row = {}
-        counts_by_status = {
-            "active": (_k68_row.get("active") or [{}])[0].get("n", 0),
-            "inactive": (_k68_row.get("inactive") or [{}])[0].get("n", 0),
-            "muted": (_k68_row.get("muted") or [{}])[0].get("n", 0),
-            "waitlist": (_k68_row.get("waitlist") or [{}])[0].get("n", 0),
-            "all": (_k68_row.get("all") or [{}])[0].get("n", 0),
-        }
+            _cbs_active, _cbs_inactive, _cbs_muted, _cbs_waitlist, _cbs_all = (
+                await _cus_perf_v3_asyncio.gather(
+                    db.customers.count_documents(_cbs_active_q),
+                    db.customers.count_documents(_cbs_inactive_q),
+                    db.customers.count_documents(_cbs_muted_q),
+                    db.customers.count_documents(_cbs_waitlist_q),
+                    db.customers.count_documents(_cbs_all_q),
+                )
+            )
+            counts_by_status = {
+                "active": int(_cbs_active or 0),
+                "inactive": int(_cbs_inactive or 0),
+                "muted": int(_cbs_muted or 0),
+                "waitlist": int(_cbs_waitlist or 0),
+                "all": int(_cbs_all or 0),
+            }
+        except Exception as _cbs_exc:  # noqa: BLE001
+            logger.warning(
+                "[cus-perf-v3] counts_by_status gather failed: %s",
+                _cbs_exc,
+            )
+            counts_by_status = {
+                "active": 0, "inactive": 0, "muted": 0,
+                "waitlist": 0, "all": 0,
+            }
         return {
             "items": docs,
             "total": total,
