@@ -224,7 +224,13 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
 
   const flushSave = useCallback(async () => {
     const cur = reportRef.current;
-    if (!cur || cur.submitted_at) return;
+    if (!cur) return;
+    // Feb-2026 · PS-A — post-submit autosave is allowed for the
+    // report's OWN technician (backend writes an audit row on
+    // every field diff).  Other roles still short-circuit on
+    // submitted rows — admins remain locked out of the PATCH per
+    // "retain existing edit path" ruling.
+    if (cur.submitted_at && role !== "technician") return;
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
     // If patchReport already flipped us to "saving", keep the timestamp;
@@ -652,7 +658,13 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     if (!report || !job) return null;
 
     const clientType = getChecklistType(job);
-    const locked = !!report.submitted_at;
+    // Feb-2026 · PS-A — technicians may edit their own submitted
+    // report (with audit trail).  ``locked`` stays true for every
+    // other role so admins keep the pre-PS-A read-only view.  The
+    // banner rendered below tells the tech what's happening.
+    const techPostSubmitEdit = role === "technician"
+      && !!report.submitted_at;
+    const locked = !!report.submitted_at && !techPostSubmitEdit;
 
     // Feb-2026 · Checklist reclassifier — admins/managers can always
     // retag; technicians only when the job is assigned to them (matches
@@ -675,6 +687,20 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
 
     return (
       <div style={{ overflow: "auto", padding: useWizard ? 0 : 20 }}>
+        {techPostSubmitEdit ? (
+          // Feb-2026 · PS-A — non-blocking banner for post-submit
+          // tech edits.  Blue on Deep Navy per the standard palette.
+          <div className="text-xs px-3 py-2 rounded mb-3 font-semibold"
+                data-testid="checklist-post-submit-edit-banner"
+                style={{
+                  color: "#3B82F6",
+                  background: "#03002e",
+                  border: "1px solid #3B82F6",
+                  margin: useWizard ? 12 : 0,
+                }}>
+            Editing submitted report — changes are audited
+          </div>
+        ) : null}
         {wsWarning ? (
           <div className="text-xs px-3 py-2 rounded mb-3"
                style={{ color: c.warnFg, background: c.warnBg, margin: useWizard ? 12 : 0 }}
@@ -822,6 +848,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   function renderFooter() {
     if (!report || !canWrite || loadErr) return null;
     if (report.submitted_at) {
+      // Feb-2026 · PS-A — technicians on a submitted report keep
+      // the editable body (autosave carries the persistence) but
+      // the "Close Job" button no longer applies (already
+      // closed) — suppress the footer entirely for that path.
+      // Other roles retain the read-only caption.
+      if (role === "technician") return null;
       return (
         <div className="px-5 py-3 text-xs" style={{ borderTop: `1px solid ${c.border}`, color: c.muted, background: c.surfaceAlt }}>
           Report submitted {new Date(report.submitted_at).toLocaleString()} — read-only.

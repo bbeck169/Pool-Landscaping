@@ -554,8 +554,20 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
     )
     if not rep:
         raise HTTPException(404, "Service report not started — GET first to bootstrap")
+    # Feb-2026 · PS-A — technicians on the assigned crew (already
+    # vetted upstream by ``_authorize_report`` via
+    # ``is_tech_authorized_on_job``) may edit their OWN report even
+    # after submit; every post-submit write lands an audit row.
+    # Admins / super_admins retain their pre-PS-A behaviour (locked
+    # by the 409) — no regression to their existing edit path.
+    _post_submit_edit = False
     if rep.get("submitted_at"):
-        raise HTTPException(409, "Report has already been submitted and is locked")
+        if (user.get("role") or "") == "technician":
+            _post_submit_edit = True
+        else:
+            raise HTTPException(
+                409, "Report has already been submitted and is locked",
+            )
     upd = {k: v for k, v in body.dict(exclude_unset=True).items()}
     # Mobile Phase 2 · Feb-2026 — tech-wins conflict audit. Strip
     # ``client_updated_at`` from the persisted payload; use it only
@@ -607,6 +619,46 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
     resp = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    # Feb-2026 · PS-A — audit trail for post-submit tech edits.
+    # Shallow field-diff (per ruling #2 — no deep-diff library) over
+    # only the fields the tech actually wrote.  Metadata columns
+    # (``updated_at``) are excluded from the visible diff since
+    # they're bookkeeping.  Each save writes a new audit row (per
+    # ruling #3 — simpler to query than versioned arrays).
+    if _post_submit_edit:
+        try:
+            _diffs: dict = {}
+            for _k in upd.keys():
+                if _k in ("updated_at",):
+                    continue
+                _old = (rep or {}).get(_k)
+                _new = (resp or {}).get(_k, upd.get(_k))
+                if _old != _new:
+                    _diffs[_k] = {"old": _old, "new": _new}
+            import uuid as _uuid_pkg
+            await db.audit_logs.insert_one({
+                "id": _uuid_pkg.uuid4().hex,
+                "tenant_id": tenant["id"],
+                "actor_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "actor_role": user.get("role"),
+                "event": "service_report_post_submit_edit",
+                "at": now_iso(),
+                "payload": {
+                    "report_id": (resp or rep or {}).get("id"),
+                    "job_id": jid,
+                    "tech_id": tech_id,
+                    "field_diffs": _diffs,
+                },
+            })
+        except Exception as _audit_exc:                          # noqa: BLE001
+            # Never fail the tech's PATCH on an audit-write hiccup;
+            # the write already landed.  Surfaces in logs so ops
+            # can investigate.
+            logger.warning(
+                f"[ps-a] audit write failed for report {rep.get('id')}"
+                f": {_audit_exc}"
+            )
     # Task N Round 2 · Phase N.6 — note-transition notifier.  Compares
     # ``rep`` (pre-write snapshot at line 551) against ``resp`` (post-
     # write re-read) and fires email + SMS to the tenant's notification
@@ -652,6 +704,45 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
                               tenant["id"], resp,
                               body.dict(exclude_unset=True))
     return resp
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · PS-A — audit history for post-submit tech edits.
+# GET /api/service-reports/{report_id}/audit — admin-only (super_admin
+# + manager included).  Lists every ``service_report_post_submit_edit``
+# row for a given report in reverse-chronological order so an admin
+# can trace exactly who changed what, when, and to what value.
+# ═══════════════════════════════════════════════════════════════════
+_PS_A_AUDIT_ADMIN_ROLES = {"admin", "super_admin", "manager"}
+
+
+@router.get("/service-reports/{report_id}/audit")
+async def list_service_report_audit(
+    report_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if (user.get("role") or "") not in _PS_A_AUDIT_ADMIN_ROLES:
+        raise HTTPException(403, "admin_only")
+    # Tenant-scoped lookup — confirm the report exists here before
+    # exposing audit rows (defence-in-depth against cross-tenant id
+    # guessing).
+    exists = await db.service_reports.find_one(
+        {"id": report_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    )
+    if not exists:
+        raise HTTPException(404, "service_report_not_found")
+    cursor = db.audit_logs.find(
+        {
+            "tenant_id": tenant["id"],
+            "event": "service_report_post_submit_edit",
+            "payload.report_id": report_id,
+        },
+        {"_id": 0},
+    ).sort("at", -1).limit(500)
+    items = await cursor.to_list(500)
+    return {"items": items, "total": len(items)}
 
 
 # ─── POST submit (lock + mark job status) ──────────────────────────────────
