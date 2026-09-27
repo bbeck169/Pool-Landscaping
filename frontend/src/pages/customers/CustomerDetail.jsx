@@ -746,8 +746,17 @@ export default function CustomerDetail() {
       </div>
 
       {/* Header card */}
+      {/* Feb-2026 · Customer profile typography bump — identity +
+          contact block reads at 14px (text-sm) across ALL nested
+          text.  Wrapper carries a Tailwind arbitrary variant
+          ([&_.text-xs]:!text-sm) so descendants that render their
+          own text-xs class inside shared components
+          (CustomerGeocodeInfo, ActivationControl, Chip, etc.)
+          scale up here without leaking the bump to those
+          components' other consumers.  ``!important`` guarantees
+          override regardless of utility source order. */}
       <div
-        className="rounded-2xl p-6 mb-4"
+        className="rounded-2xl p-6 mb-4 [&_.text-xs]:!text-sm"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
