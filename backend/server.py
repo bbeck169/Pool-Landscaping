@@ -2751,6 +2751,15 @@ async def _background_seed():
                 register_lana_reminders_cron(scheduler)
             except Exception as _lana_exc:  # pragma: no cover
                 logger.warning("[lana.reminders.cron] register failed: %s", _lana_exc)
+            # Feb-2026 · MARCO Sub-phase E — 5-min-cadence MARCO
+            # admin_todo proactive-ping tick.  Sibling of Lana's
+            # reminder cron; scans marco_admin_todos for open rows
+            # due within 15 min and fires an in-app bell + SSE ping.
+            try:
+                from services.marco_reminder_cron import register_marco_reminders_cron
+                register_marco_reminders_cron(scheduler)
+            except Exception as _marco_exc:  # pragma: no cover
+                logger.warning("[marco.reminders.cron] register failed: %s", _marco_exc)
             # Phase 51d · Feb-2026 — minute-cadence walkie cleanup tick.
             try:
                 from services.walkie.cleanup_cron import register_walkie_cleanup_cron

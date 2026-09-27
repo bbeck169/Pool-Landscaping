@@ -107,6 +107,8 @@ KIND_LABELS: dict[str, str] = {
     "inventory_low_stock":        "Inventory · Low Stock",
     # Feb-2026 · Optimize Route (tech→admin approval flow).
     "route_optimization_request": "Route Optimization · Request",
+    # Feb-2026 · MARCO · Sub-phase E — proactive todo reminder.
+    "marco_todo_due":             "MARCO · Todo Due Soon",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias
