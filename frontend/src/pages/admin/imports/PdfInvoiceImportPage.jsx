@@ -1115,6 +1115,21 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
   const [commitError, setCommitError] = useState(null);
   const [commitErrorStatus, setCommitErrorStatus] = useState(null);
   const [commitOutcome, setCommitOutcome] = useState(null);
+  // PDF-FIX-B · Feb-2026 — per-source-doc-index expansion state
+  // for the line-items detail row. Matches the top-level file-
+  // row pattern (``expandedIds``, line ~511) so the two toggles
+  // read consistently.
+  const [expandedPreviewIds, setExpandedPreviewIds] = useState(
+    () => new Set(),
+  );
+  const togglePreviewExpanded = useCallback((sourceIdx) => {
+    setExpandedPreviewIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceIdx)) next.delete(sourceIdx);
+      else next.add(sourceIdx);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1286,6 +1301,8 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
                     preview={p}
                     duplicate={dupIndex.get(p.source_doc_index)}
                     fileId={fileId}
+                    expanded={expandedPreviewIds.has(p.source_doc_index)}
+                    onToggle={togglePreviewExpanded}
                   />
                 ))}
               </tbody>
@@ -1459,13 +1476,28 @@ const ON_DUPLICATE_LABELS = {
 };
 
 
-export function PreviewRow({ preview, duplicate, fileId }) {
+export function PreviewRow({
+  preview, duplicate, fileId,
+  expanded = false, onToggle = () => {},
+}) {
   const isDup = Boolean(duplicate);
   const q = preview.quote_in || {};
+  const sourceIdx = preview.source_doc_index;
+  const lineItems = Array.isArray(q.line_items) ? q.line_items : [];
+  // PDF-FIX-B · Feb-2026 — drop line items that carry neither
+  // ``item_name`` NOR a non-empty ``description``.  Per rulings
+  // §2 (Neither → line item drops from view — silently, no
+  // banner). Prevents "empty rows" from cluttering the preview.
+  const renderableItems = lineItems.filter((li) => {
+    const hasName = Boolean(li && li.item_name);
+    const hasDesc = Boolean(li && (li.description || "").trim());
+    return hasName || hasDesc;
+  });
   return (
+    <React.Fragment>
     <tr
-      data-testid={`pdf-import-preview-row-${fileId}-${preview.source_doc_index}`}
-      data-source-index={preview.source_doc_index}
+      data-testid={`pdf-import-preview-row-${fileId}-${sourceIdx}`}
+      data-source-index={sourceIdx}
       data-duplicate={isDup ? "true" : "false"}
       className={
         isDup ? "bg-amber-50 text-amber-900"
@@ -1474,6 +1506,24 @@ export function PreviewRow({ preview, duplicate, fileId }) {
       style={{ borderTop: `1px solid ${colors.border}` }}
     >
       <td className="px-3 py-2 font-mono">
+        {/* PDF-FIX-B · Feb-2026 — chevron toggle for the line-items
+            detail row.  Icon SWAP (not CSS rotate) to match the
+            ``FileRow`` precedent at ~L995. ``aria-expanded`` keeps
+            the button screenreader-labelled per the same pattern. */}
+        <button
+          type="button"
+          onClick={() => onToggle(sourceIdx)}
+          className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded hover:bg-black/5"
+          aria-label={expanded ? "Collapse line items" : "Expand line items"}
+          aria-expanded={expanded ? "true" : "false"}
+          data-testid={`pdf-import-line-items-toggle-${fileId}-${sourceIdx}`}
+        >
+          {expanded ? (
+            <ChevronUp size={14} style={{ color: colors.muted }} />
+          ) : (
+            <ChevronDown size={14} style={{ color: colors.muted }} />
+          )}
+        </button>
         {q.doc_number || "—"}
       </td>
       <td className="px-3 py-2">
@@ -1515,6 +1565,85 @@ export function PreviewRow({ preview, duplicate, fileId }) {
         )}
       </td>
     </tr>
+    {expanded ? (
+      <tr
+        data-testid={`pdf-import-line-items-expanded-${fileId}-${sourceIdx}`}
+        style={{ borderTop: `1px solid ${colors.border}` }}
+      >
+        <td colSpan={5} className="px-3 py-3" style={{ backgroundColor: colors.surfaceSecondary }}>
+          {renderableItems.length === 0 ? (
+            <div
+              className="text-sm italic"
+              style={{ color: colors.muted }}
+              data-testid={`pdf-import-line-items-empty-${fileId}-${sourceIdx}`}
+            >
+              No line items extracted
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ color: colors.muted }}>
+                  <th className="px-2 py-1 text-left font-medium">Item Name</th>
+                  <th className="px-2 py-1 text-left font-medium">Description</th>
+                  <th className="px-2 py-1 text-right font-medium">Qty</th>
+                  <th className="px-2 py-1 text-right font-medium">Unit</th>
+                  <th className="px-2 py-1 text-right font-medium">Line $</th>
+                </tr>
+              </thead>
+              <tbody>
+                {renderableItems.map((li, idx) => {
+                  // Rulings §2: both name+desc → both render.
+                  //             name-only → "—" in desc col.
+                  //             desc-only → desc renders in name col
+                  //               (fallback), "—" in desc col.
+                  const hasName = Boolean(li.item_name);
+                  const nameCell = hasName ? li.item_name : li.description;
+                  const descCell = hasName ? (li.description || "—") : "—";
+                  const qty = Number(li.quantity ?? 0);
+                  const unit = Number(li.unit_price ?? 0);
+                  const lineTotal = qty * unit;
+                  return (
+                    <tr key={idx}>
+                      <td
+                        className="px-2 py-1"
+                        data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-name`}
+                      >
+                        {nameCell}
+                      </td>
+                      <td
+                        className="px-2 py-1"
+                        data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-description`}
+                      >
+                        {descCell}
+                      </td>
+                      <td
+                        className="px-2 py-1 text-right font-mono"
+                        data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-qty`}
+                      >
+                        {qty}
+                      </td>
+                      <td
+                        className="px-2 py-1 text-right font-mono"
+                        data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-price`}
+                      >
+                        {formatCurrency(unit)}
+                      </td>
+                      <td
+                        className="px-2 py-1 text-right font-mono"
+                        data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-line-total`}
+                      >
+                        {formatCurrency(lineTotal)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </td>
+      </tr>
+    ) : null}
+    </React.Fragment>
   );
 }
 
