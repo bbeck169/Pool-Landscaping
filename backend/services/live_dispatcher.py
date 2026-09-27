@@ -386,6 +386,19 @@ async def _evaluate_tech(
             {"_id": 0, "id": 1, "name": 1, "phone": 1, "phones": 1},
         )
         if not cust:
+            # LDM-E · Cross-tenant safety warning. A scheduled visit
+            # references a customer_id that does NOT resolve within
+            # this tenant's customers collection. That's either a
+            # soft-deleted customer or (rarely) cross-tenant data
+            # corruption — either way, refuse to send SMS and log
+            # the incident. Skipping avoids any chance of leaking
+            # SMS to another tenant's customer if the customer_id
+            # happens to collide across tenants.
+            logger.warning(
+                "[live_dispatcher.security] cross_tenant_customer_id "
+                "visit=%s tenant=%s customer_id=%s — skipping SMS",
+                visit.get("id"), tid, cid,
+            )
             continue
         phone = _resolve_phone(cust)
         if not phone:

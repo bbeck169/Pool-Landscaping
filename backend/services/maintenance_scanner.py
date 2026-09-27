@@ -269,7 +269,18 @@ async def _evaluate_customer(
         {"_id": 0, "id": 1, "name": 1},
     )
     if not cust:
-        # Orphan billing plan (customer soft-deleted) — skip.
+        # LDM-E · Cross-tenant safety warning. A billing_plan
+        # references a customer_id that does NOT resolve within
+        # this tenant's customers collection. That's either a
+        # soft-deleted customer or (rarely) cross-tenant data
+        # corruption where the plan carries a customer_id owned by
+        # another tenant. Refuse to draft an action and log the
+        # incident for security review.
+        logger.warning(
+            "[maintenance_scanner.security] cross_tenant_customer_id"
+            " tenant=%s customer_id=%s — skipping action draft",
+            tid, cid,
+        )
         return
     customer_name = cust.get("name") or ""
 
