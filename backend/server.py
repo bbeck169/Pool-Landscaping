@@ -652,6 +652,18 @@ api_router.include_router(_l3_lead_comms.router)
 from routers import admin_perf_explain_schedule as _k65_perf_router  # noqa: E402
 api_router.include_router(_k65_perf_router.router)
 
+# LS-B · Feb-2026 — MARCO Lead-Sense intake beacon.
+# ``POST /api/lead-sense/track`` — public beacon called by the
+# self-hosted tracker widget (frontend/public/widget/lead-sense.js).
+# Resolves the caller tenant via ``marco_lead_sense_id`` (LS-A),
+# enforces the tenant's ``lead_sense_allowed_origins``, and persists
+# a row into ``db.visitor_intent``. Registered on the bare app
+# (NOT api_router) because the router already declares its own
+# ``prefix="/api/lead-sense"`` — the api_router prefix would double
+# it to ``/api/api/lead-sense``.
+from routers import lead_sense as _lsb_lead_sense_router  # noqa: E402
+app.include_router(_lsb_lead_sense_router.router)
+
 # Feb-2026 · Live-Tech-Map Phase 1 — palette read endpoint. Backs the
 # Phase 2 Settings UI color picker (and any other surface that
 # needs to render the approved 12-color palette without hard-coding
@@ -3481,6 +3493,38 @@ async def _run_marco_lead_sense_id_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# LS-B · Feb-2026 — Structural: visitor_intent collection indexes.
+# Idempotent create-index sweep for the three indexes required by
+# LS-B's intake endpoint + future LS-D surfaces (see
+# ``memory/SPEC_MARCO_LEAD_SENSE.md`` §LS-B and the migration
+# module docstring for the specs). Sentinel-gated internally via
+# ``migration_status[key="visitor_intent_v1"]`` so a second boot
+# is a no-op. Best-effort (``must_succeed=False``); Mongo's
+# ``create_index`` is already idempotent for identical specs so a
+# hiccup during the sentinel-write phase is recoverable on the
+# next boot without duplicate index churn.
+async def _run_visitor_intent_v1_boot(db_handle) -> dict:
+    """Run the ``visitor_intent_v1`` structural migration."""
+    async def _factory():
+        from migrations.visitor_intent_v1 import (
+            run as _vi_run,
+        )
+        res = await _vi_run(dry_run=False, force=False, db_client=db_handle)
+        logger.info(
+            "[visitor-intent-v1] structural pass — "
+            "skipped_by_marker=%s indexes_ensured=%s",
+            res.get("skipped_by_marker"),
+            res.get("indexes_ensured"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "visitor_intent_v1", _factory,
+        must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3894,6 +3938,17 @@ async def _run_boot_sequence():
     # logs and the next boot retries — API layer falls back to
     # auto-generate on first GET when the persisted field is missing.
     await _run_marco_lead_sense_id_v1_boot(db)
+    # LS-B · Feb-2026 — Structural: visitor_intent collection index
+    # bootstrap. Wrapped through ``_run_structural_migration`` so a
+    # Mongo hiccup surfaces on
+    # ``/api/health.init.structural_migrations.visitor_intent_v1``
+    # and a boot-order regression is caught by the pre-yield lint.
+    # Sentinel-gated internally via
+    # ``migration_status[key="visitor_intent_v1"]``. Best-effort
+    # (``must_succeed=False`` inside the wrapper). Mongo's
+    # ``create_index`` is idempotent when the same spec exists so a
+    # partial-run recovery on the next boot is safe.
+    await _run_visitor_intent_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
