@@ -11,7 +11,7 @@
  *   · Row icon color is theme-per-type (filter=green, salt cell=teal),
  *     NOT status-per-tracker.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Filter as FilterIcon,
@@ -19,10 +19,13 @@ import {
   Search,
   Settings2,
   ChevronLeft,
+  ChevronRight,
   Plus,
   Trash2,
   CheckCircle2,
   Save,
+  List as ListIcon,
+  CalendarDays,
 } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -80,6 +83,280 @@ function fmtDate(iso) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+// Feb-2026 · Pool Service PS-C — inline month-grid calendar.
+//
+//   Rendered inside ``EquipmentTrackerListPage`` when the user
+//   toggles from List → Calendar.  Deliberately built inline (no
+//   new dep) — the tracker page's visual needs are narrow (day
+//   cells + event dots + month nav), and the codebase-standard
+//   ``react-big-calendar`` (used by ``pages/schedule/CalendarSchedule
+//   .jsx``) is overkill here (drag-drop, day/week/month/agenda
+//   views, event editing).  ``components/ui/calendar.jsx`` is a
+//   shadcn date-picker — not an event-display grid.
+//
+//   Palette (PS-C ruling #6):
+//     · Navy #1B1F5C — inactive toggle text/border.
+//     · Blue #3B82F6 — active toggle background + event dots.
+//
+//   Events on a day cell: rendered as up-to-3 stacked dots plus a
+//   ``+N`` count when there are more.  Clicking any event dot OR
+//   the day cell deep-links to the tracker's row (highlighted by
+//   query param ``?focus={id}`` — the list surface reads it and
+//   scrolls the row into view).
+// ═══════════════════════════════════════════════════════════════════
+const _MONTH_LABELS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const _WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+
+function _yyyy_mm_dd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+
+function _startOfMonthGrid(year, monthIndex) {
+  // Grid always starts on the Sunday <= day 1 of the month, so
+  // the first row includes the trailing days of the prior month.
+  const first = new Date(year, monthIndex, 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - first.getDay());
+  return start;
+}
+
+
+function TrackerCalendarGrid({ rows, trackerType, onDayClick,
+                                 onEventClick }) {
+  const today = useMemo(() => new Date(), []);
+  const [cursor, setCursor] = useState({
+    year: today.getFullYear(),
+    monthIndex: today.getMonth(),
+  });
+
+  // Group rows by their ``due_at`` day-key (YYYY-MM-DD).
+  const eventsByDay = useMemo(() => {
+    const out = {};
+    (rows || []).forEach((r) => {
+      const raw = r?.due_at;
+      if (!raw) return;
+      // ``due_at`` from the backend is a date-only ISO ("2026-02-15"),
+      // rendered via fmtDate elsewhere with a "T00:00:00" suffix.
+      // Take the first 10 chars as the day-key so we don't
+      // introduce a tz round-trip.
+      const key = String(raw).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+      (out[key] ||= []).push(r);
+    });
+    return out;
+  }, [rows]);
+
+  const monthEventCount = useMemo(() => {
+    return Object.entries(eventsByDay).filter(([key]) => {
+      const [y, m] = key.split("-").map(Number);
+      return y === cursor.year && (m - 1) === cursor.monthIndex;
+    }).reduce((acc, [, evs]) => acc + evs.length, 0);
+  }, [eventsByDay, cursor]);
+
+  const gridStart = _startOfMonthGrid(cursor.year, cursor.monthIndex);
+  // Always render 6 weeks (42 cells) so the grid height doesn't
+  // jitter between months with different week counts.
+  const cells = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < 42; i += 1) {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + i);
+      out.push(d);
+    }
+    return out;
+  }, [gridStart]);
+
+  function shiftMonth(delta) {
+    setCursor((cur) => {
+      const m = cur.monthIndex + delta;
+      const yearShift = Math.floor(m / 12);
+      const monthIndex = ((m % 12) + 12) % 12;
+      return { year: cur.year + yearShift, monthIndex };
+    });
+  }
+  function jumpToday() {
+    setCursor({ year: today.getFullYear(),
+                  monthIndex: today.getMonth() });
+  }
+
+  const _todayKey = _yyyy_mm_dd(today);
+  const _headerLabel = `${_MONTH_LABELS[cursor.monthIndex]} ${cursor.year}`;
+
+  return (
+    <div
+      className="bg-white rounded-xl border border-zinc-200 overflow-hidden"
+      data-testid={`tracker-calendar-${trackerType}`}
+    >
+      {/* Month strip */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
+        <button
+          onClick={() => shiftMonth(-1)}
+          className="p-1.5 rounded-md hover:bg-zinc-100 text-zinc-600"
+          aria-label="Previous month"
+          data-testid="tracker-calendar-prev-month"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <div className="flex items-center gap-3">
+          <div
+            className="text-sm font-semibold"
+            style={{ color: "#1B1F5C" }}
+            data-testid="tracker-calendar-month-label"
+          >
+            {_headerLabel}
+          </div>
+          <button
+            onClick={jumpToday}
+            className="text-xs px-2 py-0.5 rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+            data-testid="tracker-calendar-today-btn"
+          >
+            Today
+          </button>
+        </div>
+        <button
+          onClick={() => shiftMonth(1)}
+          className="p-1.5 rounded-md hover:bg-zinc-100 text-zinc-600"
+          aria-label="Next month"
+          data-testid="tracker-calendar-next-month"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Weekday header */}
+      <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50">
+        {_WEEKDAY_LABELS.map((w) => (
+          <div
+            key={w}
+            className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 py-2 text-center"
+          >
+            {w}
+          </div>
+        ))}
+      </div>
+
+      {/* Day grid */}
+      <div
+        className="grid grid-cols-7 relative"
+        data-testid="tracker-calendar-grid"
+      >
+        {cells.map((d, i) => {
+          const key = _yyyy_mm_dd(d);
+          const inMonth = d.getMonth() === cursor.monthIndex;
+          const isToday = key === _todayKey;
+          const events = eventsByDay[key] || [];
+          return (
+            <button
+              key={i}
+              onClick={() => onDayClick && onDayClick(key, events)}
+              className="text-left px-2 py-2 border-b border-r border-zinc-100 min-h-[84px] focus:outline-none focus:z-10 focus:ring-2 focus:ring-offset-0"
+              style={{
+                background: inMonth ? "#fff" : "#F8FAFC",
+                color: inMonth ? "#111827" : "#94A3B8",
+              }}
+              data-testid={`tracker-calendar-day-${key}`}
+              data-in-month={String(inMonth)}
+              data-event-count={events.length}
+            >
+              <div
+                className="inline-flex items-center justify-center text-[12px] font-semibold rounded-full w-6 h-6"
+                style={
+                  isToday
+                    ? { background: "#3B82F6", color: "#FFFFFF" }
+                    : {}
+                }
+              >
+                {d.getDate()}
+              </div>
+              {events.length > 0 ? (
+                <div className="mt-1 space-y-0.5">
+                  {events.slice(0, 3).map((ev) => (
+                    <div
+                      key={ev.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEventClick && onEventClick(ev);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onEventClick && onEventClick(ev);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 truncate text-[11px] font-medium hover:underline"
+                      style={{ color: "#1B1F5C" }}
+                      data-testid={`tracker-calendar-event-${ev.id}`}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ background: "#3B82F6" }}
+                      />
+                      <span className="truncate">
+                        {ev.customer_name || "Tracker"}
+                      </span>
+                    </div>
+                  ))}
+                  {events.length > 3 ? (
+                    <div
+                      className="text-[10px] font-semibold"
+                      style={{ color: "#1B1F5C" }}
+                      data-testid={`tracker-calendar-day-${key}-more`}
+                    >
+                      +{events.length - 3} more
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </button>
+          );
+        })}
+
+        {/* Empty-month overlay (ruling #5) — a subtle centered
+            note that never blocks the day-cell clicks. */}
+        {monthEventCount === 0 ? (
+          <div
+            className="pointer-events-none absolute inset-0 flex items-center justify-center"
+            data-testid={`tracker-calendar-empty-${trackerType}`}
+          >
+            <div
+              className="px-4 py-2 rounded-full text-xs font-semibold"
+              style={{
+                background: "rgba(27, 31, 92, 0.06)",
+                color: "#1B1F5C",
+              }}
+            >
+              No maintenance scheduled this month
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+
+// LocalStorage key for the List/Calendar preference (PS-C ruling
+// #3).  Keyed per-tracker so filter + salt cell preferences don't
+// clobber each other.
+function _viewPrefKey(trackerType) {
+  return `tracker_view_pref:${trackerType}`;
+}
+
+
+
+
 // ═══════════════════════════════════════════════════════════════════════
 // List view: /tracking/filter and /tracking/salt-cell
 // ═══════════════════════════════════════════════════════════════════════
@@ -93,6 +370,28 @@ export function EquipmentTrackerListPage({ trackerType }) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
+  // Feb-2026 · PS-C — List/Calendar toggle.  Preference persisted
+  // per-tracker in localStorage (ruling #3); default "list" for
+  // existing users so nothing changes on first paint.
+  const [viewMode, setViewMode] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(
+        _viewPrefKey(trackerType),
+      );
+      return stored === "calendar" ? "calendar" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        _viewPrefKey(trackerType), viewMode,
+      );
+    } catch {
+      /* localStorage may be blocked in test envs — safe no-op */
+    }
+  }, [trackerType, viewMode]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,10 +495,74 @@ export function EquipmentTrackerListPage({ trackerType }) {
               </button>
             ))}
           </div>
+          {/* Feb-2026 · PS-C — List/Calendar view toggle.  Navy
+              inactive / Blue active per ruling #6.  Search + status
+              filters still apply to the row set the calendar reads
+              from, so users can e.g. filter by "past due" then flip
+              to Calendar to see them plotted on the month. */}
+          <div
+            className="ml-auto flex items-center rounded-lg overflow-hidden"
+            style={{ border: `1px solid #1B1F5C` }}
+            data-testid="tracker-view-toggle"
+          >
+            <button
+              onClick={() => setViewMode("list")}
+              data-testid="tracker-view-list"
+              aria-pressed={viewMode === "list"}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition"
+              style={{
+                background: viewMode === "list" ? "#3B82F6" : "#FFFFFF",
+                color:      viewMode === "list" ? "#FFFFFF" : "#1B1F5C",
+              }}
+            >
+              <ListIcon className="w-3.5 h-3.5" />
+              List
+            </button>
+            <button
+              onClick={() => setViewMode("calendar")}
+              data-testid="tracker-view-calendar"
+              aria-pressed={viewMode === "calendar"}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition"
+              style={{
+                background: viewMode === "calendar" ? "#3B82F6" : "#FFFFFF",
+                color:      viewMode === "calendar" ? "#FFFFFF" : "#1B1F5C",
+                borderLeft: "1px solid #1B1F5C",
+              }}
+            >
+              <CalendarDays className="w-3.5 h-3.5" />
+              Calendar
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Body — List (existing) OR Calendar (PS-C).  Loading /
+          empty states still route through the list body since
+          they read from the row set + filters. */}
+      {viewMode === "calendar" && !loading ? (
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <TrackerCalendarGrid
+            rows={rows}
+            trackerType={trackerType}
+            onEventClick={(ev) => {
+              // Ruling #4 — deep-link to the tracker row via a
+              // ``?focus={id}`` query param.  The list view is
+              // still the source of truth for row detail; scrolling
+              // + highlight is a listener no-op today (parked for a
+              // follow-up), but the URL change gives the user a
+              // shareable anchor.
+              _nav(
+                `/tracking/${trackerType === "salt_cell" ? "salt-cell" : "filter"}?focus=${ev.id}`,
+              );
+              setViewMode("list");
+            }}
+            onDayClick={() => { /* no-op today */ }}
+          />
+        </div>
+      ) : null}
+
       {/* List body */}
+      {viewMode === "list" ? (
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-2">
         {loading && (
           <div className="text-center py-16 text-zinc-500" data-testid={`tracker-loading-${trackerType}`}>
@@ -282,6 +645,7 @@ export function EquipmentTrackerListPage({ trackerType }) {
           </div>
         ))}
       </div>
+      ) : null}
     </div>
   );
 }

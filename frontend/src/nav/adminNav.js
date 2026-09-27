@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store, Scale, KanbanSquare, Gift, UploadCloud } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store, Scale, KanbanSquare, Gift, UploadCloud, Filter as FilterFunnelIcon, Droplets } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -301,6 +301,20 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/website-seo",   label: "Website SEO", icon: SearchIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     // Feb-2026 · Phase 20 P4 — Local SEO checklist.
     { to: "/settings/local-seo",     label: "Local SEO",   icon: SearchIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
+  ]},
+
+  // Feb-2026 · Pool Service PS-C — dedicated "Specialty Services"
+  // group housing the recurring equipment-cleaning trackers.
+  // Placed immediately after Operations (which owns "Field
+  // Service" + "Inventory") so field-ops admins can pivot between
+  // day-to-day dispatch and long-horizon maintenance cadence
+  // without hopping across the Reports/Customers sections.  A
+  // top-level group (not a subsection under Operations) per the
+  // brief so the trackers show up as first-class nav destinations
+  // when they become tenant-primary revenue drivers.
+  { key: "specialty_services", label: "Specialty Services", icon: Waves, entries: [
+    { to: "/tracking/filter",    label: "Filter Tracker",    icon: FilterFunnelIcon, feature: "jobs", industry: "pools", aliases: ["Filter Cleaning", "Filter Cleanings", "Cartridge Cleanings"] },
+    { to: "/tracking/salt-cell", label: "Salt Cell Tracker", icon: Droplets,         feature: "jobs", industry: "pools", aliases: ["Salt Cell Replacements", "Salt Cell Cleanings", "Cell Replacements"] },
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [
