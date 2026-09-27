@@ -420,3 +420,183 @@ def test_k41_line_item_audit_fires_k6_on_completed_job():
         _db.audit_events.delete_many(
             {"$or": [{"invoice_id": inv_id}, {"job_id": job_id}]},
         )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# 7) Feb-2026 · Data-Integrity hard-delete upgrade
+# ═════════════════════════════════════════════════════════════════════
+def test_hard_delete_single_row_removes_job_from_db():
+    """POST /dashboard/data-integrity/resolve with
+    action='hard_delete' must permanently remove the job row from
+    db.jobs (verified via follow-up find_one → None) and emit an
+    audit event with after='hard_deleted'."""
+    ctx = _admin_ctx()
+    tenant_id = ctx["tenant_id"]
+    job_id = f"TEST-HD-SINGLE-{uuid.uuid4().hex[:8]}"
+    _db.jobs.insert_one({
+        "id": job_id, "tenant_id": tenant_id,
+        "status": "scheduled",
+        "customer_id": "orphan-cust-does-not-exist",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        r = requests.post(
+            f"{API}/dashboard/data-integrity/resolve",
+            headers=_headers(ctx["token"]),
+            json={"ref_class": "orphaned_customer_refs",
+                  "job_id": job_id,
+                  "action": "hard_delete"},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["action"] == "hard_delete"
+        assert body["deleted_count"] == 1
+        # Row is GONE from db.jobs.
+        assert _db.jobs.find_one({"id": job_id}) is None
+        # Audit event landed with after='hard_deleted' + action='hard_delete'.
+        audit = _db.audit_events.find_one({
+            "event_type": "dashboard_drilldown_edit",
+            "job_id": job_id,
+            "field": "status",
+            "after": "hard_deleted",
+        })
+        assert audit is not None
+        assert audit.get("action") == "hard_delete"
+        assert audit.get("tenant_id") == tenant_id
+    finally:
+        _db.jobs.delete_one({"id": job_id})
+        _db.audit_events.delete_many({"job_id": job_id})
+
+
+def test_hard_delete_bulk_uses_delete_many_fast_path():
+    """POST /dashboard/data-integrity/resolve-bulk with N items all
+    action='hard_delete' + ref_class='orphaned_customer_refs' must
+    remove ALL rows via the single-op fast-path, return
+    ``fast_path='hard_delete_many'`` in the response, and emit N
+    audit events."""
+    ctx = _admin_ctx()
+    tenant_id = ctx["tenant_id"]
+    N = 4
+    job_ids = [f"TEST-HD-BULK-{uuid.uuid4().hex[:8]}" for _ in range(N)]
+    _db.jobs.insert_many([
+        {"id": jid, "tenant_id": tenant_id, "status": "scheduled",
+         "customer_id": "orphan-cust", "created_at": datetime.now(timezone.utc).isoformat()}
+        for jid in job_ids
+    ])
+    try:
+        r = requests.post(
+            f"{API}/dashboard/data-integrity/resolve-bulk",
+            headers=_headers(ctx["token"]),
+            json={"items": [
+                {"ref_class": "orphaned_customer_refs",
+                 "job_id": jid,
+                 "action": "hard_delete",
+                 "target_id": None}
+                for jid in job_ids
+            ]},
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["succeeded"] == N
+        assert body["failed"] == 0
+        assert body["deleted_count"] == N
+        assert body.get("fast_path") == "hard_delete_many"
+        # All N rows GONE.
+        assert _db.jobs.count_documents({"id": {"$in": job_ids}}) == 0
+        # N audit events landed sharing the bulk_batch_id.
+        batch_id = body["bulk_batch_id"]
+        aud_count = _db.audit_events.count_documents({
+            "event_type": "dashboard_drilldown_edit",
+            "bulk_batch_id": batch_id,
+            "after": "hard_deleted",
+        })
+        assert aud_count == N
+    finally:
+        _db.jobs.delete_many({"id": {"$in": job_ids}})
+        _db.audit_events.delete_many({"job_id": {"$in": job_ids}})
+
+
+def test_hard_delete_bulk_rejects_over_cap():
+    """The existing 100-item cap must be preserved for the bulk
+    endpoint — an oversized batch returns 400 without deleting."""
+    ctx = _admin_ctx()
+    over_cap = [{"ref_class": "orphaned_customer_refs",
+                 "job_id": f"TEST-HD-CAP-{i}",
+                 "action": "hard_delete",
+                 "target_id": None} for i in range(101)]
+    r = requests.post(
+        f"{API}/dashboard/data-integrity/resolve-bulk",
+        headers=_headers(ctx["token"]),
+        json={"items": over_cap},
+        timeout=15,
+    )
+    assert r.status_code == 400
+    assert "batch_cap_exceeded" in r.text
+
+
+def test_hard_delete_cross_tenant_returns_404_and_does_not_delete():
+    """A job whose tenant_id differs from the caller's tenant must
+    NOT be deletable through the hard-delete path.  The tenant-
+    scoped find_one returns None → 404, and the row remains in
+    db.jobs."""
+    ctx = _admin_ctx()
+    # Use a synthetic foreign tenant id — no shared secret leakage.
+    foreign_tenant_id = f"foreign-tenant-{uuid.uuid4().hex[:12]}"
+    assert foreign_tenant_id != ctx["tenant_id"]
+    job_id = f"TEST-HD-XT-{uuid.uuid4().hex[:8]}"
+    _db.jobs.insert_one({
+        "id": job_id, "tenant_id": foreign_tenant_id,
+        "status": "scheduled",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        r = requests.post(
+            f"{API}/dashboard/data-integrity/resolve",
+            headers=_headers(ctx["token"]),
+            json={"ref_class": "orphaned_customer_refs",
+                  "job_id": job_id,
+                  "action": "hard_delete"},
+            timeout=15,
+        )
+        assert r.status_code == 404, r.text
+        # Row survives — cross-tenant is invisible AND non-mutating.
+        assert _db.jobs.find_one({"id": job_id}) is not None
+    finally:
+        _db.jobs.delete_one({"id": job_id})
+
+
+def test_hard_delete_rejected_for_non_customer_ref_classes():
+    """Per S2, hard_delete is only meaningful for
+    orphaned_customer_refs — the technician + unassigned variants
+    return 400."""
+    ctx = _admin_ctx()
+    tenant_id = ctx["tenant_id"]
+    # Seed a real job so the 400 comes from the class check, not from
+    # a spurious job-not-found.
+    job_id = f"TEST-HD-CLASS-{uuid.uuid4().hex[:8]}"
+    _db.jobs.insert_one({
+        "id": job_id, "tenant_id": tenant_id,
+        "status": "scheduled",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        for wrong_class in ("orphaned_technician_refs",
+                            "unassigned_pending_jobs"):
+            r = requests.post(
+                f"{API}/dashboard/data-integrity/resolve",
+                headers=_headers(ctx["token"]),
+                json={"ref_class": wrong_class,
+                      "job_id": job_id,
+                      "action": "hard_delete"},
+                timeout=15,
+            )
+            assert r.status_code == 400, r.text
+            assert "hard_delete_only_supports_orphaned_customer_refs" in r.text
+        # Row survives all four rejected attempts.
+        assert _db.jobs.find_one({"id": job_id}) is not None
+    finally:
+        _db.jobs.delete_one({"id": job_id})

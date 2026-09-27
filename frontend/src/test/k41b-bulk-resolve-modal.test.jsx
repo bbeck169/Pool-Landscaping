@@ -88,7 +88,12 @@ describe("K41b · Confirm strip — per-action summary", () => {
     // Summary refers to the target picker selection.
     expect(MODAL).toMatch(/Reassign \$\{n\} orphan job\$\{n === 1 \? "" : "s"\} to Customer "\$\{[^"]+/);
     // Destructive summary is specific and calls out irreversibility.
-    expect(MODAL).toMatch(/Soft-delete \$\{n\} orphan job\$\{n === 1 \? "" : "s"\} — cannot be undone by user\./);
+    // Feb-2026 · Data-Integrity hard-delete upgrade — buildSummary
+    // text updated from "Soft-delete ... cannot be undone by user"
+    // to "Hard-delete ... cannot be undone".  Dead code from the UI
+    // path (top-level Hard-delete button bypasses this strip per
+    // R4=B) but retained defensively; test tracks the current copy.
+    expect(MODAL).toMatch(/Hard-delete \$\{n\} orphan job\$\{n === 1 \? "" : "s"\} — cannot be undone\./);
   });
 
   it("destructive soft-delete requires a second click (two-step confirm)", () => {

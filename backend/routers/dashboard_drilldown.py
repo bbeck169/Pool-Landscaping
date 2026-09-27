@@ -593,11 +593,18 @@ async def income_by_service_rows(
 class DataIntegrityResolveBody(BaseModel):
     ref_class: str = Field(...)
     job_id: str = Field(...)
-    action: str = Field(...)  # "assign" | "delete"
+    action: str = Field(...)  # "assign" | "delete" (soft) | "hard_delete"
     target_id: Optional[str] = None  # required for action="assign"
 
 
-_INTEGRITY_ACTIONS = frozenset({"assign", "delete"})
+# Feb-2026 · Data-Integrity hard-delete upgrade.  ``hard_delete``
+# joins the soft ``delete`` (which sets status='deleted' + retains the
+# row) with a NEW irreversible ``db.jobs.delete_one`` /
+# ``db.jobs.delete_many`` path.  Only supported for
+# ``orphaned_customer_refs`` per the phase scope; other ref_classes
+# receive a 400 (see recon surprise S2).
+_INTEGRITY_ACTIONS = frozenset({"assign", "delete", "hard_delete"})
+_HARD_DELETE_SUPPORTED_CLASSES = frozenset({"orphaned_customer_refs"})
 
 
 async def _emit_drilldown_audit(
@@ -669,6 +676,7 @@ async def _apply_resolve_item(
     action: str,
     target_id: Optional[str],
     user: Dict[str, Any],
+    tenant_id: Optional[str] = None,
     bulk_batch_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Core resolve logic — shared by single-row + bulk endpoints.
@@ -677,12 +685,78 @@ async def _apply_resolve_item(
     the identical error contract as the single-row endpoint.  When
     ``bulk_batch_id`` is provided it is stamped onto every emitted
     ``dashboard_drilldown_edit`` audit event (K41b contract).
+
+    ``tenant_id`` is used ONLY by the ``hard_delete`` branch to filter
+    the ``db.jobs.find_one`` + ``db.jobs.delete_one`` queries per the
+    Feb-2026 hard-delete phase (recon surprise S1, ruling R1=C).  The
+    existing soft-delete + assign branches keep their pre-change
+    behavior (tenant filter NOT enforced on find/update) so this
+    commit stays scoped to hard-delete.  See
+    ``memory/FOLLOWUP_DASHBOARD_DRILLDOWN_TENANT_ISOLATION.md`` for
+    the backfill P2 followup.
     """
     if ref_class not in _VALID_INTEGRITY_CLASSES:
         raise HTTPException(400, "invalid_ref_class")
     if action not in _INTEGRITY_ACTIONS:
         raise HTTPException(400, "invalid_action")
 
+    # Hard-delete gate — restricted to orphaned_customer_refs per S2.
+    if action == "hard_delete" and ref_class not in _HARD_DELETE_SUPPORTED_CLASSES:
+        raise HTTPException(
+            400, "hard_delete_only_supports_orphaned_customer_refs",
+        )
+
+    # ── HARD-DELETE branch (irreversible) ────────────────────────
+    # Tenant-scoped find + delete so cross-tenant job_ids submitted
+    # directly to the endpoint cannot leak past the caller's tenant.
+    if action == "hard_delete":
+        find_filter: Dict[str, Any] = {"id": job_id}
+        if tenant_id:
+            find_filter["tenant_id"] = tenant_id
+        job = await db.jobs.find_one(
+            find_filter, {"_id": 0, "photos.data": 0},
+        )
+        if not job:
+            raise HTTPException(404, "job_not_found")
+        actor_id = user.get("id") or user.get("_id") or ""
+        # Capture pre-mutation state BEFORE delete so audit `before`
+        # preserves the row shape even after the row is gone.
+        before_status = job.get("status")
+        row_tenant_id = job.get("tenant_id")
+        del_filter: Dict[str, Any] = {"id": job_id}
+        if tenant_id:
+            del_filter["tenant_id"] = tenant_id
+        del_result = await db.jobs.delete_one(del_filter)
+        deleted_count = int(getattr(del_result, "deleted_count", 0) or 0)
+
+        def _extra_hd(**kw: Any) -> Dict[str, Any]:
+            base: Dict[str, Any] = {"job_id": job_id, **kw}
+            if bulk_batch_id:
+                base["bulk_batch_id"] = bulk_batch_id
+            return base
+
+        # Emit audit with field="status", after="hard_deleted" so:
+        #   * the row is discoverable via the existing K41 audit
+        #     index (same event_type + tile + field key),
+        #   * the K41c undo path's soft-delete matcher
+        #     (``field == "status" and after == "deleted"``) does
+        #     NOT match — undo cannot restore a hard-deleted row and
+        #     already returns "job_not_found" per row (see line 1019
+        #     comment).  Distinguishing after="hard_deleted" is a
+        #     defence-in-depth signal for future audit consumers.
+        await _emit_drilldown_audit(
+            tile="data-integrity", field="status",
+            before=before_status, after="hard_deleted",
+            actor_id=actor_id, tenant_id=row_tenant_id,
+            extra=_extra_hd(action="hard_delete"),
+        )
+        return {
+            "ok": True, "resolved": True,
+            "action": "hard_delete", "job_id": job_id,
+            "deleted_count": deleted_count,
+        }
+
+    # ── SOFT-DELETE + ASSIGN branches (unchanged) ────────────────
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "photos.data": 0})
     if not job:
         raise HTTPException(404, "job_not_found")
@@ -829,6 +903,7 @@ async def _apply_resolve_item(
 async def data_integrity_resolve(
     body: DataIntegrityResolveBody = Body(...),
     user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
     _require_admin_or_super(user)
     return await _apply_resolve_item(
@@ -837,6 +912,7 @@ async def data_integrity_resolve(
         action=body.action,
         target_id=body.target_id,
         user=user,
+        tenant_id=tenant.get("id") if tenant else None,
     )
 
 
@@ -877,6 +953,7 @@ class DataIntegrityResolveBulkBody(BaseModel):
 async def data_integrity_resolve_bulk(
     body: DataIntegrityResolveBulkBody = Body(...),
     user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
     """K41b bulk resolve endpoint.
 
@@ -887,6 +964,13 @@ async def data_integrity_resolve_bulk(
 
     Batch cap: 100.  Idempotency: replay identical response for the
     same ``bulk_batch_id`` within 60s.
+
+    Feb-2026 hard-delete fast-path (recon ruling R2=B): when every
+    item has ``action="hard_delete"`` + ``ref_class="orphaned_customer_refs"``,
+    short-circuit to a SINGLE tenant-scoped ``db.jobs.delete_many``
+    instead of iterating per-item.  Emits N audit events after the
+    delete completes.  Mixed bulks (any non-hard-delete item present)
+    fall back to the per-item loop path — unchanged.
     """
     _require_admin_or_super(user)
 
@@ -900,6 +984,7 @@ async def data_integrity_resolve_bulk(
     _prune_idempotency_cache()
 
     batch_id = (body.bulk_batch_id or "").strip() or _uuid_v4()
+    tenant_id = tenant.get("id") if tenant else None
 
     cached = _bulk_idempotency_cache.get(batch_id)
     if cached is not None:
@@ -907,7 +992,92 @@ async def data_integrity_resolve_bulk(
         _, payload = cached
         return {**payload, "replayed": True}
 
-    results: List[Dict[str, Any]] = []
+    # ── HARD-DELETE fast-path (single delete_many + N audits) ────
+    # Detect when the whole batch is a homogeneous hard-delete on the
+    # only ref_class that supports it.  Any deviation → fall back to
+    # the per-item path so mixed batches keep working.
+    all_hard_delete = (
+        len(body.items) > 0
+        and all(i.action == "hard_delete" for i in body.items)
+        and all(
+            i.ref_class == "orphaned_customer_refs" for i in body.items
+        )
+    )
+    if all_hard_delete:
+        job_ids = [i.job_id for i in body.items]
+        # Capture pre-mutation state — needed for per-row audit
+        # ``before`` field and to distinguish 404 vs deleted in the
+        # results array.
+        find_filter: Dict[str, Any] = {"id": {"$in": job_ids}}
+        if tenant_id:
+            find_filter["tenant_id"] = tenant_id
+        pre_docs: List[Dict[str, Any]] = []
+        async for j in db.jobs.find(
+            find_filter, {"_id": 0, "id": 1, "tenant_id": 1, "status": 1},
+        ):
+            pre_docs.append(j)
+        found_ids = {j.get("id") for j in pre_docs}
+        # Single delete_many — tenant-scoped.
+        del_filter: Dict[str, Any] = {"id": {"$in": job_ids}}
+        if tenant_id:
+            del_filter["tenant_id"] = tenant_id
+        del_result = await db.jobs.delete_many(del_filter)
+        deleted_count = int(
+            getattr(del_result, "deleted_count", 0) or 0,
+        )
+        actor_id = user.get("id") or user.get("_id") or ""
+        # Emit one audit per pre-fetched doc — per-row observability
+        # preserved even though the underlying op was a single call.
+        for j in pre_docs:
+            await _emit_drilldown_audit(
+                tile="data-integrity", field="status",
+                before=j.get("status"), after="hard_deleted",
+                actor_id=actor_id, tenant_id=j.get("tenant_id"),
+                extra={
+                    "job_id": j.get("id"),
+                    "bulk_batch_id": batch_id,
+                    "action": "hard_delete",
+                },
+            )
+        # Build per-item results array matching the shape of the
+        # per-item path so the frontend consumer doesn't care which
+        # branch ran.
+        results: List[Dict[str, Any]] = []
+        for i in body.items:
+            if i.job_id in found_ids:
+                results.append({
+                    "job_id": i.job_id, "ok": True,
+                    "action": "hard_delete", "target_id": None,
+                })
+            else:
+                # Job wasn't visible under the caller's tenant — could
+                # be cross-tenant, already-deleted, or a stale scan
+                # result.  Return same 404 shape as the per-item path.
+                results.append({
+                    "job_id": i.job_id, "ok": False,
+                    "error": "job_not_found",
+                    "status_code": 404,
+                })
+        succeeded = sum(1 for r in results if r["ok"])
+        failed = sum(1 for r in results if not r["ok"])
+        payload = {
+            "ok": failed == 0,
+            "bulk_batch_id": batch_id,
+            "total": len(body.items),
+            "succeeded": succeeded,
+            "failed": failed,
+            "results": results,
+            "deleted_count": deleted_count,
+            "fast_path": "hard_delete_many",
+        }
+        _bulk_idempotency_cache[batch_id] = (
+            time.monotonic() + _BULK_IDEMPOTENCY_TTL_S,
+            payload,
+        )
+        return payload
+
+    # ── Per-item loop path (unchanged for soft-delete + assigns) ─
+    results = []
     succeeded = 0
     failed = 0
 
@@ -919,6 +1089,7 @@ async def data_integrity_resolve_bulk(
                 action=item.action,
                 target_id=item.target_id,
                 user=user,
+                tenant_id=tenant_id,
                 bulk_batch_id=batch_id,
             )
             results.append({

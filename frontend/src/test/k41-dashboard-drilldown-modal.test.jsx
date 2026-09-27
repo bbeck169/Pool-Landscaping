@@ -153,3 +153,120 @@ describe("K41 · Endpoints — modal targets the K41 URL surface", () => {
     expect(MODAL).toMatch(/api\.patch\(`\/quotes\/\$\{row\.invoice_id\}`/);
   });
 });
+
+
+describe("Feb-2026 · Data-Integrity hard-delete upgrade — modal contract", () => {
+  it("relabels the per-row destructive button to 'Hard-delete job' for orphaned customer refs", () => {
+    // Positive — new label present.
+    expect(MODAL).toMatch(/"Hard-delete job"/);
+    // Negative — old "Soft-delete job" label removed from the
+    // orphaned_customer_refs branch.  ``Soft-`` should NOT appear
+    // anywhere in the modal source after the phase lands (S2
+    // hard-delete is the only ref_class touched; other classes'
+    // "Unassign" label survives).
+    expect(MODAL).not.toMatch(/"Soft-delete job"/);
+    expect(MODAL).not.toMatch(/Soft-delete jobs/);
+  });
+
+  it("relabels the BULK destructive button to 'Hard-delete jobs'", () => {
+    // The bulk button's data-testid ``bulk-resolve-mode-delete`` is
+    // PRESERVED (see next test); only the visible label changes.
+    expect(MODAL).toMatch(/Hard-delete jobs/);
+  });
+
+  it("preserves all existing data-testid values on the delete buttons", () => {
+    // Per-row destructive button testid.
+    expect(MODAL).toMatch(/data-testid=\{`di-row-\$\{row\.job_id\}-delete-btn`\}/);
+    // Bulk delete button testid.
+    expect(MODAL).toMatch(/data-testid="bulk-resolve-mode-delete"/);
+    // Selection count + clear buttons + confirm strip testids stable.
+    expect(MODAL).toMatch(/data-testid="bulk-resolve-selection-count"/);
+    expect(MODAL).toMatch(/data-testid="bulk-resolve-clear"/);
+    expect(MODAL).toMatch(/data-testid="bulk-resolve-confirm-strip"/);
+  });
+
+  it("wires the per-row destructive button to send action='hard_delete' for orphaned_customer_refs", () => {
+    // Only orphaned_customer_refs gets hard_delete; technician refs
+    // still send the legacy "delete" action which nulls out the
+    // technician_id (semantic difference documented in surprise S2).
+    expect(MODAL).toMatch(
+      /submit\(refClass === "orphaned_customer_refs"[\s\S]{0,60}\? "hard_delete"[\s\S]{0,60}: "delete"\)/,
+    );
+  });
+
+  it("bulk 'Hard-delete jobs' button fires immediately on first click — no confirm strip for delete mode", () => {
+    // R4=B: top-level button's onClick calls runBulk("hard_delete",
+    // null) DIRECTLY without setMode("delete") — the confirm strip
+    // never renders for the delete flow.
+    expect(MODAL).toMatch(/runBulk\("hard_delete", null\)/);
+    // The bulk delete button MUST NOT open a mode-arm state:
+    //   onClick={() => { setMode("delete"); ... }}
+    // Would re-introduce the 2-step gate.  Regex captures the exact
+    // legacy shape so an accidental revert trips the guard.
+    expect(MODAL).not.toMatch(/setMode\("delete"\);\s*setTarget\(null\);\s*setConfirming\(false\)/);
+  });
+
+  it("bulk 'Hard-delete jobs' button carries the destructive shadcn variant + explicit irreversible tooltip", () => {
+    // R5=A · semantic destructive-red preserved on the hard-delete
+    // button.  Match on the button with the testid to scope
+    // precisely.  Look for the multi-line block containing both
+    // ``variant="destructive"`` and the testid, in either order,
+    // within a bounded window so a future refactor that splits the
+    // JSX doesn't trip the guard.
+    const btnBlock = MODAL.match(
+      /<Button[\s\S]{0,600}data-testid="bulk-resolve-mode-delete"[\s\S]{0,120}>/,
+    );
+    expect(btnBlock).toBeTruthy();
+    expect(btnBlock[0]).toMatch(/variant="destructive"/);
+    // The tooltip must communicate irreversibility.
+    expect(MODAL).toMatch(/irreversible/);
+  });
+
+  it("K41c undo banner is intentionally skipped for delete-mode bulks", () => {
+    // handleBulkComplete now gates setLastBulk on ``meta.mode !== "delete"``.
+    expect(MODAL).toMatch(/meta\.mode !== "delete"/);
+    // And a comment documents the intentional skip so future readers
+    // don't restore the arming call.
+    expect(MODAL).toMatch(/undo intentionally skipped for delete-mode bulks/i);
+    expect(MODAL).toMatch(/hard deletes are irreversible/i);
+  });
+
+  it("runBulk overrides meta.mode='delete' when the action is hard_delete so the undo-skip logic is authoritative", () => {
+    // The top-level Hard-delete button bypasses the ``mode`` state
+    // (never sets it), so the ``mode`` closure inside runBulk would
+    // be "" for the hard-delete path.  runBulk explicitly overrides
+    // to "delete" before calling onBulkComplete so
+    // handleBulkComplete's mode-filter fires reliably.
+    expect(MODAL).toMatch(/act === "hard_delete" \? "delete" : mode/);
+  });
+
+  it("references @/theme tokens (colors.nav.bg + colors.inputBorder) on non-destructive bulk-bar chrome", () => {
+    // R5=A minimal token swap: bulk-bar top border uses
+    // colors.inputBorder; selection-count chip uses colors.nav.bg
+    // (guarded with an optional-chain fallback to onSurface for
+    // themes that don't ship a nav object yet).
+    expect(MODAL).toMatch(/borderTop:\s*`2px solid \$\{colors\.inputBorder\}`/);
+    expect(MODAL).toMatch(/colors\.nav\?\.bg/);
+  });
+
+  it("bulk endpoint is called with the same URL contract as pre-change (regression guard)", () => {
+    // The endpoint URL is unchanged — new hard-delete flow reuses
+    // the existing bulk endpoint, gated by ``action="hard_delete"``
+    // + the fast-path detection on the backend.
+    expect(MODAL).toMatch(/api\.post\(\s*"\/dashboard\/data-integrity\/resolve-bulk"/);
+    // The single-row endpoint URL also unchanged.
+    expect(MODAL).toMatch(/api\.post\("\/dashboard\/data-integrity\/resolve"/);
+  });
+
+  it("confirm strip still renders for assign modes — the R4=B change is scoped to delete", () => {
+    // Guardrail: assign-customer + assign-tech modes STILL open the
+    // confirm strip (target-picker surface).  Ensure the strip's
+    // conditional render still exists.
+    expect(MODAL).toMatch(/\{mode && \(/);
+    // And the fireConfirm handler for assign modes still runs on
+    // click.
+    expect(MODAL).toMatch(/fireConfirm/);
+    expect(MODAL).toMatch(/runBulk\("assign", target\?\.id\)/);
+  });
+});
+

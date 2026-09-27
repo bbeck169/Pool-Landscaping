@@ -69,7 +69,14 @@ describe("K41c · UndoBanner source contract", () => {
   });
 
   it("wires the K41b bar to hand off action metadata to onBulkComplete", () => {
-    expect(MODAL).toMatch(/onBulkComplete\(okIds, \{[\s\S]{0,220}bulkBatchId:[\s\S]{0,80}action: act[\s\S]{0,60}mode,[\s\S]{0,120}targetLabel/);
+    // Feb-2026 · Data-Integrity hard-delete upgrade — the ``mode``
+    // property value is now computed inline (``mode: metaMode``)
+    // instead of the shorthand ``mode,`` so the undo-banner-skip
+    // logic in handleBulkComplete receives an authoritative
+    // ``"delete"`` value for hard-delete flows even when the mode
+    // state closure would still be "".  Regex accepts either the
+    // legacy shorthand or the new explicit form.
+    expect(MODAL).toMatch(/onBulkComplete\(okIds, \{[\s\S]{0,260}bulkBatchId:[\s\S]{0,80}action: act[\s\S]{0,80}mode(?:,|:\s*metaMode,)[\s\S]{0,120}targetLabel/);
   });
 
   it("arms lastBulk state after every successful bulk_resolve", () => {

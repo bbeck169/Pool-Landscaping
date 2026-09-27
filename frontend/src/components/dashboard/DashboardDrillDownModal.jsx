@@ -267,10 +267,11 @@ function DataIntegrityRow({ row, refClass, onResolved, selected, onToggleSelect,
                 size="sm"
                 variant="destructive"
                 disabled={busy}
-                onClick={() => submit("delete")}
+                onClick={() => submit(refClass === "orphaned_customer_refs"
+                                        ? "hard_delete" : "delete")}
                 data-testid={`di-row-${row.job_id}-delete-btn`}
               >
-                {refClass === "orphaned_customer_refs" ? "Soft-delete job" : "Unassign"}
+                {refClass === "orphaned_customer_refs" ? "Hard-delete job" : "Unassign"}
               </Button>
             ) : null}
           </div>
@@ -762,8 +763,12 @@ function BulkResolveBar({
     if (mode === "tech") {
       return `Reassign ${n} job${n === 1 ? "" : "s"} to Technician "${target?.name || target?.email || target?.id || "—"}".`;
     }
+    // Note: the delete mode branch is now dead code from the UI —
+    // R4=B removed the confirm strip for delete.  Preserved as a
+    // defensive fallback in case a future feature re-introduces the
+    // strip for a different delete flavor.
     if (mode === "delete") {
-      return `Soft-delete ${n} orphan job${n === 1 ? "" : "s"} — cannot be undone by user.`;
+      return `Hard-delete ${n} orphan job${n === 1 ? "" : "s"} — cannot be undone.`;
     }
     return "";
   };
@@ -793,10 +798,18 @@ function BulkResolveBar({
       const failedRows = results.filter((r) => !r.ok);
       setFailed(failedRows);
       if (okIds.length > 0) {
+        // Feb-2026 · Force ``mode: "delete"`` in the meta when the
+        // action is ``hard_delete`` so the parent's
+        // ``handleBulkComplete`` skips arming the K41c undo banner.
+        // The top-level Hard-delete button bypasses the mode state
+        // (see onClick above) so ``mode`` in the closure is stale
+        // for the hard-delete path; overriding here keeps the
+        // undo-skip logic authoritative.
+        const metaMode = act === "hard_delete" ? "delete" : mode;
         onBulkComplete(okIds, {
           bulkBatchId: resp?.bulk_batch_id || bulkBatchId,
           action: act,
-          mode,
+          mode: metaMode,
           targetLabel: target?.name || target?.email || null,
         });
         toast.success(
@@ -843,6 +856,12 @@ function BulkResolveBar({
       data-testid="bulk-resolve-bar"
       style={{
         background: colors.surface,
+        // Feb-2026 · Data-Integrity hard-delete upgrade (ruling R5=A).
+        // Reference ``colors.inputBorder`` (#3B82F6) as a subtle top
+        // accent so the bulk-action zone reads as a distinct chrome
+        // surface separate from the row list.  Bottom border stays
+        // ``colors.border`` (neutral zinc) to avoid double-emphasis.
+        borderTop: `2px solid ${colors.inputBorder}`,
         borderBottom: `1px solid ${colors.border}`,
         padding: "10px 14px",
         display: "flex",
@@ -856,7 +875,13 @@ function BulkResolveBar({
       >
         <span
           data-testid="bulk-resolve-selection-count"
-          style={{ fontSize: 13, fontWeight: 600, color: colors.onSurface }}
+          style={{
+            fontSize: 13, fontWeight: 600,
+            // Feb-2026 · ruling R5=A — reference ``colors.nav.bg``
+            // (#1B1F5C) on the selection-count chip so the count
+            // reads as a first-class action-zone identifier.
+            color: colors.nav?.bg || colors.onSurface,
+          }}
         >
           {n} selected
         </span>
@@ -905,18 +930,34 @@ function BulkResolveBar({
           </Button>
         )}
 
-        {/* Soft-delete */}
+        {/* Hard-delete (Feb-2026 · Data-Integrity hard-delete upgrade).
+             Ruling R4=B: this button fires immediately on first click,
+             skipping the outer confirm strip entirely.  Ruling R6:
+             backend soft-delete "action":"delete" preserved; frontend
+             now sends "action":"hard_delete".  The assign modes below
+             still use the confirm strip (unchanged) — the strip is a
+             target-picker surface for them, not a friction gate.
+             K41c undo intentionally skipped for delete-mode bulks —
+             hard deletes are irreversible. See recon surprise S4
+             (2026-02-XX). Backend /undo-bulk endpoint remains
+             defensive for direct API callers on pre-existing
+             soft-delete audit rows. */}
         <Button
           size="sm"
-          variant={mode === "delete" ? "destructive" : "outline"}
+          variant="destructive"
           disabled={busy || !support.delete}
-          onClick={() => { setMode("delete"); setTarget(null); setConfirming(false); }}
+          onClick={() => {
+            // R4=B — single click on top-level button fires the API
+            // call directly.  Do not set ``mode="delete"`` so the
+            // confirm strip does NOT render for this action.
+            runBulk("hard_delete", null);
+          }}
           title={support.delete
-            ? "Soft-delete every selected orphan job"
+            ? "Hard-delete every selected orphan job (irreversible)"
             : "Only enabled when every selected row is a job-type orphan"}
           data-testid="bulk-resolve-mode-delete"
         >
-          Soft-delete jobs
+          Hard-delete jobs
         </Button>
 
         <Button
@@ -1338,12 +1379,22 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
       });
     }, 400);
     // K41c — arm the undo banner with the just-completed batch info.
-    if (meta?.bulkBatchId) {
+    //
+    // Feb-2026 · Data-Integrity hard-delete upgrade (ruling R3=A).
+    // K41c undo intentionally skipped for delete-mode bulks — hard
+    // deletes are irreversible. See recon surprise S4 (2026-02-XX).
+    // Backend /undo-bulk endpoint remains defensive for direct API
+    // callers on pre-existing soft-delete audit rows.  After this
+    // commit the modal's bulk-delete button only emits
+    // ``action: "hard_delete"`` for ``orphaned_customer_refs``, so
+    // this filter has zero effect on live soft-delete-through-UI
+    // flows (no such surface exists today).
+    if (meta?.bulkBatchId && meta.mode !== "delete") {
       setLastBulk({
         bulkBatchId: meta.bulkBatchId,
         count: okIds.length,
-        mode: meta.mode,           // "customer" | "tech" | "delete"
-        action: meta.action,       // "assign" | "delete"
+        mode: meta.mode,           // "customer" | "tech"
+        action: meta.action,       // "assign"
         targetLabel: meta.targetLabel || null,
         expiresAt: Date.now() + UNDO_WINDOW_MS,
       });
