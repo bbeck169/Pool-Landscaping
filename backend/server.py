@@ -3294,6 +3294,48 @@ async def _run_portal_invite_placeholder_rebrace_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# Feb-2026 · MARCO — one-shot seed + orchestrator-field backfill.
+# Ensures every existing tenant has a MARCO row in ``ai_employees``
+# (the boot seeder does this already; this migration also stamps
+# the ``migration_status`` sentinel so ops can audit + reference
+# via the health endpoint) AND that every legacy ``ai_employees``
+# doc carries the new ``orchestrator: bool`` field.  See
+# ``migrations/marco_orchestrator_seed_v1.py`` for the detection
+# passes + rollback recipe.  Ruled ``must_succeed=False`` — a
+# partial run never crashes boot; the sentinel-gate short-circuits
+# already-migrated tenants on the next boot.
+async def _run_marco_orchestrator_seed_v1_boot(db_handle) -> dict:
+    """Run the ``marco_orchestrator_seed_v1`` structural migration.
+    Sentinel-gated internally so a second boot is a no-op.  Routed
+    through ``_run_structural_migration`` so any Mongo hiccup
+    surfaces on
+    ``/api/health.init.structural_migrations.marco_orchestrator_seed_v1``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from migrations.marco_orchestrator_seed_v1 import (
+            run as _marco_seed_run,
+        )
+        res = await _marco_seed_run(db_handle)
+        logger.info(
+            "[marco-orchestrator-seed-v1] structural pass — "
+            "skipped=%s tenants_scanned=%s marco_inserted=%s "
+            "orchestrator_field_added=%s marco_repaired=%s",
+            res.get("skipped"),
+            res.get("tenants_scanned"),
+            res.get("marco_inserted"),
+            res.get("orchestrator_field_added"),
+            res.get("marco_orchestrator_repaired"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "marco_orchestrator_seed_v1", _factory,
+        must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3669,6 +3711,16 @@ async def _run_boot_sequence():
     # ``/api/health.init.structural_migrations.portal_invite_placeholder_rebrace_v1``
     # and the next boot retries.
     await _run_portal_invite_placeholder_rebrace_v1_boot(db)
+    # Feb-2026 · MARCO — one-shot seed + orchestrator field
+    # backfill for every existing tenant.  Adjacent to the portal
+    # invite rebrace so all post-P0 additive structural passes
+    # live in the same STRUCTURAL bucket.  Sentinel-gated
+    # internally — a second boot short-circuits.  Best-effort per
+    # the task brief (``must_succeed=False`` inside the wrapper);
+    # a Mongo hiccup logs to
+    # ``/api/health.init.structural_migrations.marco_orchestrator_seed_v1``
+    # and the next boot retries.
+    await _run_marco_orchestrator_seed_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.

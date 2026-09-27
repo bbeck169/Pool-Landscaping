@@ -157,6 +157,78 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "5. Keep replies clear — 1-4 sentences, currency formatted "
          "as $X.XX, dates as YYYY-MM-DD."
      )},
+    # ─── Feb-2026 · MARCO — Executive Assistant AI (Orchestrator) ──
+    # Additive per Option Z (Hybrid).  MARCO is a NEW admin-audience
+    # persona whose SOLE purpose is to route admin requests to the
+    # correct specialist persona in the roster.  Only MARCO carries
+    # ``orchestrator=True`` — the guard on ``delegate_task`` (shipped
+    # in Sub-phase B) enforces that no other persona can hijack the
+    # delegation path.  Does NOT touch the standalone Lana subsystem
+    # (``services/lana/*``, ``/business-os/lana/chat``,
+    # ``LanaAndPlans.jsx``) — Lana keeps her existing chat + todos
+    # surface; MARCO is a parallel orchestrator surfaced via the AI
+    # Employees conversation API.
+    #
+    # Display copy ships the BRIAN acronym expansion (Business
+    # Response & Intelligent Appointment Navigation) inside the
+    # system prompt per the rescoped brief.
+    {"key": "marco_executive", "name": "MARCO: Executive Assistant AI",
+     "role": "Executive Assistant (Orchestrator)",
+     "audience": "admin",
+     "avatar_emoji": "🧭",
+     "avatar_url": "/avatars/personas/marco_executive.jpg",
+     "orchestrator": True,
+     "system_prompt": (
+         "You are MARCO, the Executive Assistant AI serving the "
+         "admin team.  MARCO stands for the BRIAN charter — "
+         "Business Response & Intelligent Appointment Navigation — "
+         "your job is to receive every admin request, decide which "
+         "specialist AI Employee owns the work, and hand it off to "
+         "them by name.\n\n"
+         "Roster you can delegate to (specialist → their domain):\n"
+         "• Casey — directory listings (Google, Yelp, BBB, Angi, "
+         "HomeAdvisor).\n"
+         "• Emmie — email marketing (drafts, subject lines, A/B "
+         "variants, campaign analysis).\n"
+         "• Buddy — growth analytics (weekly briefs, pipeline win "
+         "rate, InstaQuote conversion, seasonal trends).\n"
+         "• Vizzy — the admin's morning brief (jobs today, open "
+         "estimates, hot deals, mentions).\n"
+         "• Dexter — ad-hoc analytics (natural-language questions "
+         "against the CRM data warehouse).\n"
+         "• Soshie — social media (FB/IG/LinkedIn drafts, "
+         "before/after posts, blog publishing).\n"
+         "• Scouty — recruiting (job ads, interview scheduling, "
+         "resume screening).\n"
+         "• Commet — funnels and landing-page copy (draft copy + "
+         "CTAs, propose sections).\n\n"
+         "Rules you must obey:\n"
+         "1. When a request maps cleanly to ONE specialist, call "
+         "the ``delegate_task`` tool immediately.  Include a "
+         "one-sentence task_description AND the relevant snippets "
+         "from the admin's message under ``context``.  NEVER "
+         "attempt the specialist's work yourself.\n"
+         "2. Always NAME the specialist you delegated to in your "
+         "reply to the admin (e.g. \"Handing this off to Casey — "
+         "she'll draft the Angi update and land it in the "
+         "approval queue.\").\n"
+         "3. If the request spans multiple specialists, delegate "
+         "each slice in the same conversation turn.  Summarise "
+         "the plan first, then fire the delegations.\n"
+         "4. If the request is a task-creation intent (\"remind "
+         "me to...\", \"add a follow-up for...\", \"schedule a "
+         "call with...\"), call the ``create_admin_todo`` tool "
+         "instead of delegating.  Extract the title, due date, "
+         "and priority from the utterance.\n"
+         "5. If NO specialist owns the work (e.g. an out-of-scope "
+         "product question, an admin-team org question), answer "
+         "yourself briefly and offer to route to a human.\n"
+         "6. Never claim to have completed a specialist's work.  "
+         "Your reply always ends with the specialist's name + a "
+         "short status of what they'll do next.\n"
+         "7. Keep replies conversational and short — 2-4 "
+         "sentences unless the admin explicitly asks for a plan."
+     )},
 ]
 
 CASEY_ACTIONS = {
@@ -278,6 +350,14 @@ class EmployeePatch(BaseModel):
     read_access_scope: Optional[str] = Field(
         None, pattern="^(customer_scoped|tenant_all)$",
     )
+    # Feb-2026 · MARCO — orchestrator flag.  Only ``True`` on MARCO
+    # (Executive Assistant AI) by seed.  Flipping ANY persona to
+    # ``orchestrator=True`` is gated to super_admin in the patch
+    # handler — regular admins can flip an orchestrator BACK to
+    # False (safe direction) but cannot mint new orchestrators.
+    # This blocks a rogue-admin path where a delegate_task-capable
+    # persona gets minted outside of the vetted MARCO seed.
+    orchestrator: Optional[bool] = None
 
 
 class BrandBrainPatch(BaseModel):
@@ -342,9 +422,11 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
     n = 0
     for e in DEFAULT_EMPLOYEES:
         audience = e.get("audience", "admin")
+        orchestrator = bool(e.get("orchestrator", False))
         exists = await db.ai_employees.find_one(
             {"tenant_id": tenant_id, "key": e["key"]},
-            {"_id": 0, "id": 1, "audience": 1},
+            {"_id": 0, "id": 1, "audience": 1, "read_access_scope": 1,
+             "orchestrator": 1},
         )
         if exists:
             # Backfill the ``audience`` field on legacy rows.
@@ -363,6 +445,25 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
                     {"$set": {"read_access_scope": "customer_scoped",
                               "updated_at": now_iso()}},
                 )
+            # Feb-2026 · MARCO — backfill ``orchestrator`` on legacy
+            # rows.  The field is ADDITIVE per Option Z: every
+            # legacy row defaults to ``False``.  Only the MARCO seed
+            # gets ``True``; if a legacy MARCO row exists (from a
+            # partial seed roll-forward) it is repaired to the
+            # canonical ``True`` posture here so the delegate_task
+            # guard (Sub-phase B) works on the first admin touch.
+            if "orchestrator" not in exists:
+                await db.ai_employees.update_one(
+                    {"id": exists["id"]},
+                    {"$set": {"orchestrator": orchestrator,
+                              "updated_at": now_iso()}},
+                )
+            elif orchestrator and not exists.get("orchestrator"):
+                await db.ai_employees.update_one(
+                    {"id": exists["id"]},
+                    {"$set": {"orchestrator": True,
+                              "updated_at": now_iso()}},
+                )
             continue
         doc = {
             "id": new_id(), "tenant_id": tenant_id, "key": e["key"],
@@ -372,6 +473,7 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
             "system_prompt": e["system_prompt"],
             "audience": audience,
             "read_access_scope": "customer_scoped",
+            "orchestrator": orchestrator,
             "active": True,
             "created_at": now_iso(), "updated_at": now_iso(),
         }
@@ -617,6 +719,15 @@ async def patch_employee(eid: str, body: EmployeePatch,
             and user.get("role") != "super_admin"):
         raise HTTPException(
             403, "Only super_admin can grant tenant_all read access",
+        )
+    # Feb-2026 · MARCO — mirrors the ``tenant_all`` guard above.
+    # Only super_admin can mint a new orchestrator; regular admins
+    # can flip an orchestrator back to False (safe direction).
+    if (updates.get("orchestrator") is True
+            and user.get("role") != "super_admin"):
+        raise HTTPException(
+            403,
+            "Only super_admin can grant the orchestrator flag",
         )
     updates["updated_at"] = now_iso()
     r = await db.ai_employees.update_one(
