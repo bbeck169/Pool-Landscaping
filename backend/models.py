@@ -321,6 +321,17 @@ class LineItem(BaseModel):
     # manually-typed lines).  Nullable + Optional so the router
     # accepts writes that omit the field entirely.
     item_name: Optional[str] = None
+    # PDF-FIX-D · Feb-2026 — line_total verbatim from PDF import.
+    # Preserves the printed per-line total from the source PDF
+    # (may reflect discounts / rounding invisible to a naive
+    # ``qty × unit_price`` recompute).  Nullable for legacy /
+    # non-PDF lines that never populated it — read paths
+    # (FE display + tax reports) fall back to ``qty × unit_price``
+    # when None.  Pydantic v2 ``extra='ignore'`` on the parent
+    # collection means the field silently drops from legacy line
+    # writes; PDF import path passes it through the raw dict at
+    # commit-time.
+    line_total: Optional[float] = None
     # Feb-2026 · Income Category enforcement — optional per line.
     income_category_id: Optional[str] = None
     # Phase K71 · Feb-2026 — Estimate line-item edit + Service/Income

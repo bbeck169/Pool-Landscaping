@@ -110,6 +110,15 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
     SKU alongside the long description.  Defaults to ``None`` for
     grandfather compat with fixtures that pre-date Sub-phase A's
     ``ExtractedLineItem.item_name`` field.
+
+    PDF-FIX-D · Feb-2026 — ``line_total`` now passes through
+    verbatim so the commit path can preserve the PDF's printed
+    per-line total instead of recomputing ``qty × unit_price``.
+    A PDF's printed line_total may reflect discounts / rounding
+    the extractor cannot see; recomputing silently loses that
+    signal.  ``None`` when the extractor didn't capture one —
+    downstream consumers (FE display, commit path) fall back to
+    ``qty × unit_price``.
     """
     qty = li.qty if li.qty is not None else 1.0
     unit_price = li.cost_rate
@@ -122,6 +131,9 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
         "description": li.description,
         "quantity": qty,
         "unit_price": float(unit_price) if unit_price is not None else 0.0,
+        # PDF-FIX-D · Feb-2026 — verbatim pass-through from
+        # extractor.  Never overwritten by qty × unit_price math.
+        "line_total": float(li.line_total) if li.line_total is not None else None,
     }
 
 
@@ -404,15 +416,35 @@ async def map_extracted_to_quote_in(
         "doc_number": doc.doc_number,
         "doc_date": doc.doc_date.isoformat() if doc.doc_date else None,
         "line_items": wire_items,
-        "tax_rate": 0.0,  # H.1 does NOT try to reverse-engineer the
-                            # rate; the extractor's ``tax_total`` is
-                            # captured in warnings for H.2 audit.
+        # PDF-FIX-D · Feb-2026 — tax_rate now passes through
+        # verbatim from the extractor (was hardcoded 0.0 pre-D).
+        # Falls back to 0.0 only when the PDF didn't print a rate.
+        # ``tax_rate`` is a PERCENTAGE (6.25 == 6.25%) per PDF-FIX-C
+        # schema.
+        "tax_rate": (
+            float(doc.tax_rate) if doc.tax_rate is not None else 0.0
+        ),
+        # PDF-FIX-D · Feb-2026 — subtotal + tax_total now surface
+        # on quote_in verbatim so commit can persist them without
+        # re-derivation.  Both may be None when the PDF didn't
+        # print them; commit path falls back to line-item recompute
+        # only when the ``imported_totals_verbatim`` flag is False
+        # OR the values are None.
+        "subtotal": doc.subtotal,
+        "tax_total": doc.tax_total,
         "grand_total": grand_total_value,
         "total_due": doc.total_due,
         "amount_paid": doc.amount_paid,
         "payment_method": doc.payment_method,
         "notes": doc.notes,
         "import_batch_id": batch_id,
+        # PDF-FIX-D · Feb-2026 — provenance flag. Signals to
+        # downstream commit + read paths + reports that these
+        # totals were extracted from a PDF and should NOT be
+        # re-derived (tax_rate × subtotal math would silently
+        # drift the persisted numbers away from the PDF the
+        # operator uploaded).
+        "imported_totals_verbatim": True,
     }
     if created_at_dt is not None:
         quote_in["created_at"] = created_at_dt.isoformat()
@@ -431,13 +463,14 @@ async def map_extracted_to_quote_in(
             "resolved_by": "phase_h2_commit_path",
         })
 
-    # Extractor warnings that surface tax / discrepancy audit
-    # notes for H.2.
-    if doc.tax_total is not None and doc.tax_total > 0:
-        report.warnings.append(
-            f"tax_total={doc.tax_total} present but tax_rate=0 on the "
-            f"QuoteIn preview — Phase H.2 must reconcile before commit."
-        )
+    # PDF-FIX-D · Feb-2026 — the old "tax_total present but
+    # tax_rate=0" warning is stale.  ``tax_rate`` is now
+    # preserved verbatim (see the quote_in construction above),
+    # so a mismatch there is no longer a mapper concern — the
+    # extractor's ``_check_totals_consistency`` handles the
+    # cross-field reconciliation and logs a warning if
+    # ``subtotal + tax_total != grand_total``.  We no longer
+    # emit a mapper-side warning for the same signal.
 
     report.quote_in = quote_in
     return report

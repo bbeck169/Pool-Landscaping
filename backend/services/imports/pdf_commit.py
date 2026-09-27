@@ -571,10 +571,39 @@ def _build_quote_doc_from_preview(
         "doc_type": doc_type,
         "line_items": line_items,
         "tax_rate": float(qi.get("tax_rate") or 0.0),
-        # Totals are set by _apply_totals below.
-        "subtotal": 0.0,
-        "tax": 0.0,
-        "total": 0.0,
+        # PDF-FIX-D · Feb-2026 — totals now sourced from the
+        # extractor's verbatim values on ``quote_in`` when the
+        # mapper stamped ``imported_totals_verbatim=True``.
+        # ``_apply_totals`` (called below) gates its recompute
+        # on that flag + values-present, so legacy paths that
+        # emit None totals still fall through to line-item math
+        # for backwards compat.  ``total`` sources from
+        # grand_total (PDF-FIX-A priority) falling back to
+        # total_due; both may be None if the PDF didn't print
+        # them, in which case _apply_totals will recompute.
+        "subtotal": (
+            float(qi["subtotal"])
+            if qi.get("subtotal") is not None else 0.0
+        ),
+        "tax": (
+            float(qi["tax_total"])
+            if qi.get("tax_total") is not None else 0.0
+        ),
+        "total": (
+            float(qi["grand_total"])
+            if qi.get("grand_total") is not None
+            else (
+                float(qi["total_due"])
+                if qi.get("total_due") is not None else 0.0
+            )
+        ),
+        # PDF-FIX-D · Feb-2026 — provenance flag from mapper.
+        # Downstream (reports, tax recalculation, admin edits)
+        # reads this to decide whether to re-derive totals or
+        # trust the persisted values.
+        "imported_totals_verbatim": bool(
+            qi.get("imported_totals_verbatim")
+        ),
         "amount_paid": float(qi.get("amount_paid") or 0.0),
         "due_date": qi.get("due_date"),
         # §A ruling: historicals default to sent, not draft.
@@ -853,7 +882,30 @@ def _apply_totals(doc: Dict[str, Any]) -> None:
     """Recompute subtotal / tax / total from the persisted
     line-item list.  Mirrors ``routers.quotes.compute_totals``
     without importing it (avoid circular imports at test time).
+
+    PDF-FIX-D · Feb-2026 — verbatim-preservation gate.  When
+    the doc carries ``imported_totals_verbatim=True`` AND the
+    extractor-authoritative values are present (non-zero
+    subtotal + total, matching the ``qty × price`` math OR
+    intentionally differing due to PDF discounts / rounding),
+    the recompute is SKIPPED — the extractor's numbers land
+    verbatim on Mongo.
+
+    Legacy path (``imported_totals_verbatim`` absent / False,
+    OR totals are 0.0 sentinel because the PDF didn't print
+    them): recompute from line items — matches Sub-phase C
+    behaviour and every pre-PDF-FIX-D test.
     """
+    # PDF-FIX-D gate — trust the extractor's values when the
+    # mapper stamped verbatim + a non-zero total is present.
+    # ``subtotal == 0.0 and total == 0.0`` is the sentinel for
+    # "no PDF totals available" — fall through to recompute.
+    if (
+        doc.get("imported_totals_verbatim") is True
+        and (doc.get("total") or 0.0) != 0.0
+    ):
+        return
+
     line_items = doc.get("line_items") or []
     subtotal = 0.0
     for li in line_items:

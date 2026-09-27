@@ -1601,7 +1601,13 @@ export function PreviewRow({
                   const descCell = hasName ? (li.description || "—") : "—";
                   const qty = Number(li.quantity ?? 0);
                   const unit = Number(li.unit_price ?? 0);
-                  const lineTotal = qty * unit;
+                  // PDF-FIX-D · Feb-2026 — prefer the extractor's
+                  // verbatim ``line_total`` (may reflect PDF
+                  // discounts / rounding invisible to a naive
+                  // ``qty × unit`` computation) over the FE fallback
+                  // math.  ``??`` treats ``0`` as valid — a
+                  // legitimately-zero line still renders "$0.00".
+                  const lineTotal = li.line_total ?? qty * unit;
                   return (
                     <tr key={idx}>
                       <td
