@@ -63,6 +63,36 @@ def _mk_tid() -> str:
 
 async def _clean_tenant(db, tenant_id: str) -> None:
     await db.marketing_templates.delete_many({"tenant_id": tenant_id})
+    # Feb-2026 · Portal-invite merge-tags fix — the send-path now
+    # fetches the tenant record for the ``{{COMPANY_*}}`` catalog
+    # resolvers; any synthetic tenant row seeded by a test must be
+    # removed alongside the templates so re-runs stay hermetic.
+    await db.tenants.delete_many({"id": tenant_id})
+
+
+async def _seed_synthetic_tenant(
+    db, tenant_id: str,
+    *,
+    company_name: str = "TE Synthetic Pool Co.",
+    company_phone: str = "555-000-0001",
+) -> None:
+    """Feb-2026 · Portal-invite merge-tags fix — insert a synthetic
+    tenant row so the ``_try_send_reset_email`` pre-send branding
+    check (needs ``{{COMPANY_NAME}}`` + ``{{COMPANY_PHONE}}``
+    non-empty) doesn't abort the send.  Mirrors the shape the live
+    Business Card editor writes.
+    """
+    await db.tenants.insert_one({
+        "id": tenant_id,
+        "slug": f"te-synth-{tenant_id}",
+        "name": company_name,
+        "settings": {
+            "business_card": {
+                "company_name": company_name,
+                "phone": company_phone,
+            },
+        },
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -86,7 +116,11 @@ def test_get_template_by_code_returns_row_when_present():
             assert row["code"] == "portal_invite_email"
             assert row["tenant_id"] == tid
             assert row["subject"] == "Your customer portal login"
-            assert "<code>{temp_password}</code>" in row["body"]
+            # Feb-2026 · Portal-invite merge-tags fix — seed body
+            # now uses double-brace ``{{TEMP_PASSWORD}}``.
+            assert "<code>{{TEMP_PASSWORD}}</code>" in row["body"]
+            # Legacy single-brace must NOT be present in the seed.
+            assert "{temp_password}" not in row["body"]
 
             row2 = await get_template_by_code("job_completion_sms", tid)
             assert row2 is not None
@@ -177,7 +211,14 @@ def test_get_template_by_code_enforces_tenant_isolation():
 def test_try_send_reset_email_uses_db_template_when_present(monkeypatch):
     """When a DB row is present, its ``body``/``subject`` reaches the
     Resend send. We monkeypatch the Resend SDK to capture what would
-    have been sent, so no network I/O occurs."""
+    have been sent, so no network I/O occurs.
+
+    Feb-2026 · Portal-invite merge-tags fix — the send-path now
+    routes through ``merge_tags.render_template`` (double-brace
+    only), so the marker body uses ``{{NAME}}`` / ``{{LOGIN_URL}}``.
+    A synthetic tenant with a populated Business Card is seeded so
+    the pre-send branding check passes.
+    """
     from migrations.te_portal_job_templates_seed import seed_for_tenant
     import routers.portal_admin as _pa
     import config as _cfg
@@ -186,6 +227,7 @@ def test_try_send_reset_email_uses_db_template_when_present(monkeypatch):
         tid = _mk_tid()
         await _clean_tenant(db, tid)
         try:
+            await _seed_synthetic_tenant(db, tid)
             await seed_for_tenant(tid)
             # Mutate the DB row so we can prove it's the source of
             # truth (a hardcoded copy is byte-identical, so a
@@ -194,8 +236,8 @@ def test_try_send_reset_email_uses_db_template_when_present(monkeypatch):
             await db.marketing_templates.update_one(
                 {"tenant_id": tid, "code": "portal_invite_email"},
                 {"$set": {"body":
-                          "<p>Hi {name}, marker=" + marker
-                          + " login={login_url}</p>"}},
+                          "<p>Hi {{NAME}}, marker=" + marker
+                          + " login={{LOGIN_URL}}</p>"}},
             )
             # Force RESEND_API_KEY truthy so the function reaches
             # the send branch.
@@ -237,45 +279,288 @@ def test_try_send_reset_email_falls_back_to_hardcoded_when_no_db_row(
     monkeypatch,
 ):
     """No DB row for the tenant → the hardcoded constants win. Byte-
-    identical to pre-TE output."""
+    identical rendered surface to pre-TE output (subject unchanged,
+    signature phrase present, name substituted).
+
+    Feb-2026 · Portal-invite merge-tags fix — synthetic tenant is
+    seeded so the pre-send branding check passes on the fallback
+    path.
+    """
     import routers.portal_admin as _pa
     import config as _cfg
 
     async def _go(db):
         tid = _mk_tid()
-        # No seed — collection is empty for this synthetic tenant.
-        monkeypatch.setattr(_cfg, "RESEND_API_KEY", "test-key-x",
-                            raising=False)
-        monkeypatch.setattr(_cfg, "EMAIL_FROM",
-                            "test@example.com", raising=False)
+        # No template seed — collection is empty for this synthetic
+        # tenant.  The tenant record IS seeded so the branding gate
+        # doesn't abort the send.
+        try:
+            await _seed_synthetic_tenant(db, tid)
+            monkeypatch.setattr(_cfg, "RESEND_API_KEY", "test-key-x",
+                                raising=False)
+            monkeypatch.setattr(_cfg, "EMAIL_FROM",
+                                "test@example.com", raising=False)
 
-        captured: Dict[str, Any] = {}
+            captured: Dict[str, Any] = {}
 
-        class _FakeEmails:
-            @staticmethod
-            def send(payload):
-                captured.update(payload)
-                return {"id": "resend-fake-id-99"}
+            class _FakeEmails:
+                @staticmethod
+                def send(payload):
+                    captured.update(payload)
+                    return {"id": "resend-fake-id-99"}
 
-        class _FakeResendModule:
-            api_key: Optional[str] = None
-            Emails = _FakeEmails
+            class _FakeResendModule:
+                api_key: Optional[str] = None
+                Emails = _FakeEmails
 
-        monkeypatch.setitem(__import__("sys").modules, "resend",
-                            _FakeResendModule)
+            monkeypatch.setitem(__import__("sys").modules, "resend",
+                                _FakeResendModule)
 
-        email_id = await _pa._try_send_reset_email(
-            "no-db@example.com", "Nobody", "Tempp1234",
-            "https://x/login", tenant_id=tid,
-        )
-        assert email_id == "resend-fake-id-99"
-        # Hardcoded subject wins.
-        assert captured.get("subject") == "Your customer portal login"
-        # Hardcoded HTML body — signature phrase.
-        assert "Your portal login is ready" in captured.get("html", "")
-        assert "Nobody" in captured.get("html", "")
+            email_id = await _pa._try_send_reset_email(
+                "no-db@example.com", "Nobody", "Tempp1234",
+                "https://x/login", tenant_id=tid,
+            )
+            assert email_id == "resend-fake-id-99"
+            # Hardcoded subject wins.
+            assert captured.get("subject") == "Your customer portal login"
+            # Hardcoded HTML body — signature phrase.
+            assert "Your portal login is ready" in captured.get("html", "")
+            assert "Nobody" in captured.get("html", "")
+        finally:
+            await _clean_tenant(db, tid)
 
     run_test(_go)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · Portal-invite merge-tags fix — new coverage
+# ═══════════════════════════════════════════════════════════════════
+def test_try_send_reset_email_resolves_company_tokens_from_tenant(
+    monkeypatch,
+):
+    """Happy path for the merge-tags fix — a DB template that
+    references ``{{COMPANY_NAME}}`` and ``{{COMPANY_PHONE}}`` renders
+    to the tenant's Business Card values (NOT literal placeholder
+    text)."""
+    from migrations.te_portal_job_templates_seed import seed_for_tenant
+    import routers.portal_admin as _pa
+    import config as _cfg
+
+    async def _go(db):
+        tid = _mk_tid()
+        await _clean_tenant(db, tid)
+        try:
+            await _seed_synthetic_tenant(
+                db, tid,
+                company_name="TE Merge-Tag Co.",
+                company_phone="555-424-2424",
+            )
+            await seed_for_tenant(tid)
+            await db.marketing_templates.update_one(
+                {"tenant_id": tid, "code": "portal_invite_email"},
+                {"$set": {"body":
+                          "<p>Hi {{NAME}} — from {{COMPANY_NAME}}"
+                          " ({{COMPANY_PHONE}})</p>"}},
+            )
+            monkeypatch.setattr(_cfg, "RESEND_API_KEY", "test-key-x",
+                                raising=False)
+            monkeypatch.setattr(_cfg, "EMAIL_FROM",
+                                "test@example.com", raising=False)
+
+            captured: Dict[str, Any] = {}
+
+            class _FakeEmails:
+                @staticmethod
+                def send(payload):
+                    captured.update(payload)
+                    return {"id": "resend-mt-1"}
+
+            class _FakeResendModule:
+                api_key: Optional[str] = None
+                Emails = _FakeEmails
+
+            monkeypatch.setitem(__import__("sys").modules, "resend",
+                                _FakeResendModule)
+
+            email_id = await _pa._try_send_reset_email(
+                "sam@example.com", "Sam", "Tempp1234",
+                "https://x/login", tenant_id=tid,
+            )
+            assert email_id == "resend-mt-1"
+            html = captured.get("html", "")
+            # Company tokens resolved — no literal placeholder syntax
+            # survives in the rendered body.
+            assert "TE Merge-Tag Co." in html
+            assert "555-424-2424" in html
+            assert "{{COMPANY_NAME}}" not in html
+            assert "{{COMPANY_PHONE}}" not in html
+        finally:
+            await _clean_tenant(db, tid)
+
+    run_test(_go)
+
+
+def test_try_send_reset_email_aborts_when_tenant_branding_missing(
+    monkeypatch,
+):
+    """Missing-branding safety rail — when the tenant record lacks
+    a resolvable ``COMPANY_NAME`` / ``COMPANY_PHONE`` (business card
+    absent AND legacy fallbacks empty AND no per-slug default), the
+    send is aborted with ``None`` return.  Compatible with P34's
+    ``Optional[str]`` contract."""
+    import routers.portal_admin as _pa
+    import config as _cfg
+
+    async def _go(db):
+        tid = _mk_tid()
+        await _clean_tenant(db, tid)
+        try:
+            # Insert a tenant with EMPTY business card fields AND
+            # NO legacy phone fields — nothing for the cascade to
+            # resolve.  ``slug`` is set to a value NOT present in
+            # ``_BUSINESS_CARD_DEFAULTS`` so the per-slug fallback
+            # also yields empty.
+            await db.tenants.insert_one({
+                "id": tid,
+                "slug": f"te-empty-{tid}",
+                "name": "",  # legacy COMPANY_NAME fallback empty too
+                "settings": {"business_card": {}},
+            })
+            monkeypatch.setattr(_cfg, "RESEND_API_KEY", "test-key-x",
+                                raising=False)
+            monkeypatch.setattr(_cfg, "EMAIL_FROM",
+                                "test@example.com", raising=False)
+
+            send_called = {"n": 0}
+
+            class _FakeEmails:
+                @staticmethod
+                def send(payload):
+                    send_called["n"] += 1
+                    return {"id": "should-not-fire"}
+
+            class _FakeResendModule:
+                api_key: Optional[str] = None
+                Emails = _FakeEmails
+
+            monkeypatch.setitem(__import__("sys").modules, "resend",
+                                _FakeResendModule)
+
+            email_id = await _pa._try_send_reset_email(
+                "abort@example.com", "Aborted", "Tempp1234",
+                "https://x/login", tenant_id=tid,
+            )
+            # Abort branch — None return, no Resend call.
+            assert email_id is None
+            assert send_called["n"] == 0
+        finally:
+            await _clean_tenant(db, tid)
+
+    run_test(_go)
+
+
+def test_source_lint_send_reset_email_uses_merge_tags_not_format():
+    """Feb-2026 · Portal-invite merge-tags fix — source lint asserts
+    the engine swap actually landed:
+
+    * The function's executable body must NOT call ``.format(``
+      anywhere (the ``str.format`` engine is gone).  Docstrings
+      that reference the historical engine are stripped before
+      the scan.
+    * ``render_template`` from ``services.marketing.merge_tags`` MUST
+      appear (the new engine).
+    """
+    import ast
+    import inspect
+    import routers.portal_admin as _pa
+
+    src = inspect.getsource(_pa._try_send_reset_email)
+    # Strip the docstring before scanning — it legitimately
+    # references ``str.format(**kw)`` as the historical engine and
+    # we don't want to lock that documentation out of the file.
+    tree = ast.parse(src)
+    fn = tree.body[0]
+    assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+    if (fn.body and isinstance(fn.body[0], ast.Expr)
+            and isinstance(fn.body[0].value, ast.Constant)
+            and isinstance(fn.body[0].value.value, str)):
+        # Drop the docstring node in-place, then unparse.
+        fn.body = fn.body[1:]
+    executable_src = ast.unparse(tree)
+
+    assert ".format(" not in executable_src, (
+        "_try_send_reset_email executable body must not use"
+        " str.format — swap regressed to the pre-fix engine"
+    )
+    assert "render_template(" in executable_src, (
+        "_try_send_reset_email must call render_template from"
+        " services.marketing.merge_tags"
+    )
+    assert "services.marketing.merge_tags" in executable_src, (
+        "_try_send_reset_email must import from"
+        " services.marketing.merge_tags"
+    )
+
+
+def test_source_lint_hardcoded_fallback_uses_double_brace():
+    """Feb-2026 · Portal-invite merge-tags fix — the module-level
+    hardcoded fallback constants must use double-brace
+    ``{{TOKEN}}`` syntax to match the new renderer.  A regression
+    to single-brace would silently render as literal placeholder
+    text when the DB row is missing / inactive."""
+    import routers.portal_admin as _pa
+
+    for const_name in ("_HARDCODED_INVITE_HTML_TPL",
+                       "_HARDCODED_INVITE_TEXT_TPL"):
+        body = getattr(_pa, const_name)
+        assert "{{NAME}}" in body, (
+            f"{const_name} must contain double-brace {{{{NAME}}}}"
+        )
+        assert "{{TO}}" in body, (
+            f"{const_name} must contain double-brace {{{{TO}}}}"
+        )
+        assert "{{TEMP_PASSWORD}}" in body, (
+            f"{const_name} must contain double-brace"
+            f" {{{{TEMP_PASSWORD}}}}"
+        )
+        assert "{{LOGIN_URL}}" in body, (
+            f"{const_name} must contain double-brace {{{{LOGIN_URL}}}}"
+        )
+        # Legacy single-brace placeholders must NOT survive the
+        # rebrace edit.
+        for legacy in ("{name}", "{to}", "{temp_password}",
+                       "{login_url}"):
+            assert legacy not in body, (
+                f"{const_name} still contains legacy single-brace"
+                f" placeholder {legacy!r}"
+            )
+
+
+def test_source_lint_seed_migration_uses_double_brace():
+    """Feb-2026 · Portal-invite merge-tags fix — the seed migration's
+    ``PORTAL_INVITE_EMAIL_BODY_HTML`` constant must use double-brace
+    tokens so new-tenant seeding lands in the correct shape (the
+    boot-time rebrace migration handles historical rows)."""
+    from migrations import te_portal_job_templates_seed as _seed
+
+    body = _seed.PORTAL_INVITE_EMAIL_BODY_HTML
+    for canonical in ("{{NAME}}", "{{TO}}", "{{TEMP_PASSWORD}}",
+                      "{{LOGIN_URL}}"):
+        assert canonical in body, (
+            f"seed body must contain {canonical}"
+        )
+    for legacy in ("{name}", "{to}", "{temp_password}", "{login_url}"):
+        assert legacy not in body, (
+            f"seed body still contains legacy single-brace"
+            f" placeholder {legacy!r}"
+        )
+    # SMS constants are UNRELATED and must NOT have been touched by
+    # this edit.  Locking the byte-shape of the SMS body prevents a
+    # future maintainer from bleeding portal-invite work into the
+    # SMS surface.
+    assert "{first_name}" in _seed.JOB_COMPLETION_SMS_BODY
+    assert "{portal_link}" in _seed.JOB_COMPLETION_SMS_BODY
+    assert "{{" not in _seed.JOB_COMPLETION_SMS_BODY
 
 
 # ═══════════════════════════════════════════════════════════════════

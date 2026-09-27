@@ -194,10 +194,20 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
 
 # ══════════════════════════════════════════════════════════════════
 # TE-portal-job · Feb-2026 — module-level hardcoded fallback
-# constants for the portal-invite email. Byte-identical to the
-# pre-TE inline f-string composition. Used when the tenant has no
-# row in ``marketing_templates`` for ``code=portal_invite_email`` OR
-# when the DB read fails / the caller omits ``tenant_id``.
+# constants for the portal-invite email.
+#
+# Feb-2026 · Portal-invite merge-tags fix — placeholders switched
+# from single-brace ``{name}`` / ``{to}`` / ``{temp_password}`` /
+# ``{login_url}`` to double-brace ``{{NAME}}`` / ``{{TO}}`` /
+# ``{{TEMP_PASSWORD}}`` / ``{{LOGIN_URL}}`` so the same
+# ``services.marketing.merge_tags.render_template`` pass that
+# resolves catalog tags (``{{COMPANY_NAME}}`` / ``{{COMPANY_PHONE}}``)
+# also resolves the local value tokens.  ``str.format(...)`` is
+# gone — see ``_try_send_reset_email``.
+#
+# Used when the tenant has no row in ``marketing_templates`` for
+# ``code=portal_invite_email`` OR when the DB read fails / the
+# caller omits ``tenant_id``.
 #
 # ANY EDIT HERE MUST BE MIRRORED in
 # ``migrations/te_portal_job_templates_seed.py`` so the DB seed and
@@ -205,20 +215,20 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
 # ══════════════════════════════════════════════════════════════════
 _HARDCODED_INVITE_SUBJECT = "Your customer portal login"
 _HARDCODED_INVITE_HTML_TPL = (
-    "<p>Hi {name},</p>"
+    "<p>Hi {{NAME}},</p>"
     "<p>Your portal login is ready.</p>"
-    "<p><strong>Email:</strong> {to}<br>"
+    "<p><strong>Email:</strong> {{TO}}<br>"
     "<strong>Temporary password:</strong> "
-    "<code>{temp_password}</code></p>"
-    "<p><a href='{login_url}'>Sign in here</a> and change "
+    "<code>{{TEMP_PASSWORD}}</code></p>"
+    "<p><a href='{{LOGIN_URL}}'>Sign in here</a> and change "
     "your password from Profile.</p>"
 )
 _HARDCODED_INVITE_TEXT_TPL = (
-    "Hi {name},\n\n"
+    "Hi {{NAME}},\n\n"
     "Your portal login is ready.\n\n"
-    "Email: {to}\n"
-    "Temporary password: {temp_password}\n\n"
-    "Sign in here: {login_url}\n"
+    "Email: {{TO}}\n"
+    "Temporary password: {{TEMP_PASSWORD}}\n\n"
+    "Sign in here: {{LOGIN_URL}}\n"
     "and change your password from Profile."
 )
 
@@ -254,6 +264,34 @@ async def _try_send_reset_email(
     template — the DB row only carries the HTML variant, and the
     text-only fallback path is a rare secondary render used by
     HTML-averse clients.
+
+    Feb-2026 · Portal-invite merge-tags fix
+    ────────────────────────────────────────
+    Rendering is now handled by
+    ``services.marketing.merge_tags.render_template(body, ctx,
+    missing='empty')`` instead of the fragile ``str.format(**kw)``
+    (which silently ignored missing keys and rendered
+    ``{{COMPANY_NAME}}`` as a literal ``{COMPANY_NAME}`` after brace
+    de-doubling).  The tenant record is fetched from Mongo and
+    injected into ``ctx`` so the catalog resolvers for
+    ``{{COMPANY_NAME}}`` / ``{{COMPANY_PHONE}}`` /
+    ``{{COMPANY_EMAIL}}`` etc. hit their preferred
+    ``settings.business_card`` source of truth.
+
+    Pre-send safety rail — INTENTIONAL DIVERGENCE from other send
+    paths (``referral_watcher``, ``equipment_trackers_cron``, etc.)
+    which pass ``missing='empty'`` and let missing tokens render as
+    blank strings. Portal invites carry more customer-trust weight
+    than the periodic notification paths, so a first-touch email
+    with a blank company name / phone is aborted in favor of a
+    delayed retry. Company-name AND company-phone resolvers each
+    cascade through
+    ``settings.business_card`` → legacy tenant fields → per-slug
+    ``_BUSINESS_CARD_DEFAULTS`` so the abort ONLY fires on genuinely
+    broken tenant data. Compatible with P34's ``Optional[str]``
+    contract — abort returns ``None`` and the caller treats it as a
+    send failure (a retry re-fires the branding check on the fresh
+    tenant record).
     """
     from config import RESEND_API_KEY, EMAIL_FROM
     if not RESEND_API_KEY:
@@ -261,6 +299,8 @@ async def _try_send_reset_email(
     # TE-portal-job · Feb-2026 — Tier 1 · try the tenant's DB row.
     subject = _HARDCODED_INVITE_SUBJECT
     body_tpl = _HARDCODED_INVITE_HTML_TPL
+    text_tpl = _HARDCODED_INVITE_TEXT_TPL
+    tenant_record: dict = {}
     if tenant_id:
         try:
             from services.marketing_template_lookup import (
@@ -278,6 +318,60 @@ async def _try_send_reset_email(
                 "[te-portal-job] portal_invite_email DB lookup "
                 "failed for tenant=%s: %s", tenant_id, _exc,
             )
+        # Fetch the tenant record so the ``{{COMPANY_*}}`` catalog
+        # resolvers reach the source-of-truth ``settings.business_card``
+        # data.  Best-effort — a Mongo hiccup logs a warning and
+        # falls through to an empty tenant dict; the pre-send
+        # branding check below will then abort the send.
+        try:
+            tenant_record = await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0},
+            ) or {}
+        except Exception as _exc:
+            logger.warning(
+                "[portal-invite] tenant record lookup failed for "
+                "tenant=%s: %s", tenant_id, _exc,
+            )
+            tenant_record = {}
+
+    # Build the render context.  Flat keys resolve at cascade level
+    # 1 in ``render_template``; ``tenant`` is nested so the catalog
+    # ``_company_name`` / ``_company_phone`` resolvers can walk
+    # ``ctx['tenant']['settings']['business_card']``.
+    ctx: dict = {
+        "name": name or "",
+        "to": to,
+        "temp_password": temp_password,
+        "login_url": login_url,
+        "tenant": tenant_record,
+    }
+
+    # Pre-send safety rail — verify company_name AND company_phone
+    # resolve to non-empty strings.  See the docstring for the
+    # rationale (intentional divergence from the other send paths).
+    from services.marketing.merge_tags import (
+        render_template,
+        _company_name as _resolve_company_name,
+        _company_phone as _resolve_company_phone,
+    )
+    company_name = _resolve_company_name(ctx)
+    company_phone = _resolve_company_phone(ctx)
+    if not company_name or not company_phone:
+        logger.warning(
+            "[portal-invite] aborting send for %s — missing tenant"
+            " branding (company_name=%r, company_phone=%r,"
+            " tenant_id=%s). Fix the tenant's Business Card"
+            " settings and retry.",
+            to, company_name, company_phone, tenant_id,
+        )
+        return None
+
+    # Render the three surfaces through the same engine so a token
+    # that appears in only one surface still resolves uniformly.
+    subject_rendered, _ = render_template(subject, ctx, missing="empty")
+    inner_html, _ = render_template(body_tpl, ctx, missing="empty")
+    text_body, _ = render_template(text_tpl, ctx, missing="empty")
+
     try:
         import resend
         resend.api_key = RESEND_API_KEY
@@ -288,21 +382,13 @@ async def _try_send_reset_email(
         # only (NOT a full document) and returns a full
         # ``<!doctype html>...`` shell around it.
         from services.email.theming import wrap_html_in_shell
-        inner_html = body_tpl.format(
-            name=name or "", to=to,
-            temp_password=temp_password, login_url=login_url,
-        )
         wrapped_html = wrap_html_in_shell(inner_html, branding=None)
-        text_fallback = _HARDCODED_INVITE_TEXT_TPL.format(
-            name=name or "", to=to,
-            temp_password=temp_password, login_url=login_url,
-        )
         resp = resend.Emails.send({
             "from": EMAIL_FROM or "onboarding@resend.dev",
             "to": [to],
-            "subject": subject,
+            "subject": subject_rendered,
             "html": wrapped_html,
-            "text": text_fallback,
+            "text": text_body,
         })
         # Resend SDK returns a dict-shaped response: ``{"id": "..."}``.
         # If the shape is unexpected we still report a truthy sentinel

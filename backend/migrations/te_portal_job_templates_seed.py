@@ -24,9 +24,15 @@ hardcoded strings at the two call sites:
 
 Any change here MUST be paired with a change in the fallback
 constants living next to the call sites so DB and hardcoded fallback
-never drift. Callers render single-brace placeholders via
-``str.format(**kw)`` — see the ``variables`` allowlist on each doc
-for the accepted keys.
+never drift. Callers render via
+``services.marketing.merge_tags.render_template`` (double-brace
+``{{TOKEN}}`` syntax, catalog- and flat-key-aware) as of the Feb-
+2026 portal-invite merge-tags fix.  Historical rows that were
+seeded BEFORE this migration ship with single-brace placeholders
+and are rewritten by
+``services/migrations/portal_invite_placeholder_rebrace_v1.py`` on
+the next boot so the swap is compat-safe.  See the ``variables``
+allowlist on each doc for the accepted keys.
 """
 from __future__ import annotations
 
@@ -46,16 +52,22 @@ MIGRATION_NAME = "te_portal_job_templates_seed"
 
 # ── portal_invite_email ────────────────────────────────────────
 PORTAL_INVITE_EMAIL_SUBJECT = "Your customer portal login"
-# Single-brace placeholders — ``str.format(**kw)`` at the call site.
-# Placeholder keys mirror ``_try_send_reset_email``'s current f-string
-# variable names (see recon #3 + user ruling #6a).
+# Double-brace merge-tag placeholders — resolved at send time by
+# ``services.marketing.merge_tags.render_template`` (which handles
+# both the catalog resolvers like ``{{COMPANY_NAME}}`` /
+# ``{{COMPANY_PHONE}}`` AND the flat-key overrides ``{{NAME}}`` /
+# ``{{TO}}`` / ``{{TEMP_PASSWORD}}`` / ``{{LOGIN_URL}}`` populated
+# inline by the send path).  Historical rows shipped with single-
+# brace placeholders and are rewritten by
+# ``services/migrations/portal_invite_placeholder_rebrace_v1.py``
+# on the first boot after the portal-invite merge-tags fix landed.
 PORTAL_INVITE_EMAIL_BODY_HTML = (
-    "<p>Hi {name},</p>"
+    "<p>Hi {{NAME}},</p>"
     "<p>Your portal login is ready.</p>"
-    "<p><strong>Email:</strong> {to}<br>"
+    "<p><strong>Email:</strong> {{TO}}<br>"
     "<strong>Temporary password:</strong> "
-    "<code>{temp_password}</code></p>"
-    "<p><a href='{login_url}'>Sign in here</a> and change "
+    "<code>{{TEMP_PASSWORD}}</code></p>"
+    "<p><a href='{{LOGIN_URL}}'>Sign in here</a> and change "
     "your password from Profile.</p>"
 )
 PORTAL_INVITE_EMAIL_VARIABLES = ["name", "to", "temp_password", "login_url"]

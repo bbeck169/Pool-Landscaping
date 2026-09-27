@@ -3249,6 +3249,51 @@ async def _run_chemical_usage_backfill_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# Feb-2026 · Portal-invite placeholder rebrace — one-shot template-
+# body normalization companion to the portal-invite merge-tags fix
+# in ``routers/portal_admin.py::_try_send_reset_email``. The renderer
+# swap (str.format → merge_tags.render_template) would silently
+# break every existing tenant's portal invite unless historical
+# ``marketing_templates`` rows are rewritten from single-brace
+# ``{name}`` / ``{to}`` / ``{temp_password}`` / ``{login_url}`` to
+# their double-brace equivalents. See
+# ``services/migrations/portal_invite_placeholder_rebrace_v1.py`` for
+# the detection query, per-row idempotency guard, and rollback
+# recipe. Ruled ``must_succeed=False`` — a partial run never
+# crashes boot; the sentinel-gate short-circuits already-normalized
+# rows on the next boot.
+async def _run_portal_invite_placeholder_rebrace_v1_boot(db_handle) -> dict:
+    """Run the ``portal_invite_placeholder_rebrace_v1`` structural
+    migration.  Sentinel-gated internally so a second boot is a
+    no-op.  Routed through ``_run_structural_migration`` so any
+    Mongo hiccup surfaces on
+    ``/api/health.init.structural_migrations.portal_invite_placeholder_rebrace_v1``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from services.migrations.portal_invite_placeholder_rebrace_v1 import (
+            run as _rebrace_run,
+        )
+        res = await _rebrace_run(db_handle)
+        logger.info(
+            "[portal-invite-placeholder-rebrace-v1] structural pass — "
+            "skipped=%s scanned=%s rebrace=%s skipped_no_legacy=%s "
+            "failed=%s",
+            res.get("skipped"),
+            res.get("rows_scanned"),
+            res.get("rows_rebrace"),
+            res.get("rows_skipped_no_legacy"),
+            res.get("rows_failed"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "portal_invite_placeholder_rebrace_v1", _factory,
+        must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3608,6 +3653,22 @@ async def _run_boot_sequence():
     # ``/api/health.init.structural_migrations.chemical_usage_backfill_v1``
     # and the next boot retries.
     await _run_chemical_usage_backfill_v1_boot(db)
+    # Feb-2026 · Portal-invite placeholder rebrace — companion to
+    # the portal-invite merge-tags fix in
+    # ``routers/portal_admin.py::_try_send_reset_email``. Rewrites
+    # legacy single-brace placeholders on every historical
+    # ``marketing_templates`` row where ``code=portal_invite_email``
+    # so the swap to ``merge_tags.render_template`` (double-brace
+    # only) doesn't silently break existing tenants. Line-adjacent
+    # to ``chemical_usage_backfill_v1`` so both post-P0 structural
+    # passes live in the same STRUCTURAL bucket and a boot-order
+    # regression is caught by the pre-yield lint. Sentinel-gated
+    # internally — a second boot short-circuits without a DB touch.
+    # Best-effort per the task brief (``must_succeed=False`` inside
+    # the wrapper); a Mongo hiccup logs to
+    # ``/api/health.init.structural_migrations.portal_invite_placeholder_rebrace_v1``
+    # and the next boot retries.
+    await _run_portal_invite_placeholder_rebrace_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
