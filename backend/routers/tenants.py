@@ -1065,6 +1065,162 @@ async def patch_own_settings(body: TenantSettingsUpdate,
     return doc
 
 
+# ═════════════════════════════════════════════════════════════════════
+# LDM-A · Feb-2026 — Tenant automation rules.
+#
+# The four fields below feed two downstream services that ship in
+# later sub-phases of the AI Live Dispatcher + Predictive Maintenance
+# track (see ``memory/SPEC_LIVE_DISPATCHER_AND_MAINTENANCE.md``):
+#
+#   * ``services/live_dispatcher.py`` — reads
+#     ``dispatch_delay_threshold_mins`` +
+#     ``dispatch_sms_customer_count`` on every 5-minute scan.
+#   * ``services/maintenance_scanner.py`` — reads
+#     ``filter_clean_interval_months`` +
+#     ``salt_cell_replacement_months`` on every daily scan.
+#
+# LDM-A only lands the persistence layer + admin edit endpoint.
+# LDM-B / LDM-C wire the services themselves.
+#
+# Persistence lives under ``tenant.settings.automation_rules.{key}``
+# (dotted-path mongo write, matching the ``settings.business_card``
+# pattern already in this file). The backfill migration is at
+# ``backend/migrations/automation_rules_v1.py`` — sentinel-gated
+# via ``migration_status[key="automation_rules_v1"]``.
+#
+# Range bounds enforced at the Pydantic layer per the LDM-A brief:
+#   * dispatch_delay_threshold_mins  : 1 – 240   (1 min → 4 hours)
+#   * dispatch_sms_customer_count    : 1 – 10
+#   * filter_clean_interval_months   : 1 – 24    (1 month → 2 years)
+#   * salt_cell_replacement_months   : 12 – 120  (1 year → 10 years)
+# ═════════════════════════════════════════════════════════════════════
+AUTOMATION_RULE_DEFAULTS: dict = {
+    "dispatch_delay_threshold_mins": 20,
+    "dispatch_sms_customer_count": 3,
+    "filter_clean_interval_months": 6,
+    "salt_cell_replacement_months": 36,
+}
+
+
+class AutomationRulesPatch(BaseModel):
+    """Partial-update payload for ``PATCH /tenants/mine/automation-rules``.
+
+    All four fields are optional so an admin can nudge one slider at
+    a time. Ranges enforced by Pydantic — an out-of-range value gets
+    422 at request-body validation before the handler runs.
+    """
+    dispatch_delay_threshold_mins: Optional[int] = Field(
+        None, ge=1, le=240,
+        description=(
+            "Minutes of projected delay before MARCO fans out "
+            "customer SMS. Range 1–240 (up to 4 hours)."
+        ),
+    )
+    dispatch_sms_customer_count: Optional[int] = Field(
+        None, ge=1, le=10,
+        description=(
+            "How many next-in-route customers get the delay SMS "
+            "when the threshold is breached. Range 1–10."
+        ),
+    )
+    filter_clean_interval_months: Optional[int] = Field(
+        None, ge=1, le=24,
+        description=(
+            "Months since last filter clean before the predictive-"
+            "maintenance scanner drafts a cross-sell action. "
+            "Range 1–24."
+        ),
+    )
+    salt_cell_replacement_months: Optional[int] = Field(
+        None, ge=12, le=120,
+        description=(
+            "Months since last salt-cell replacement before the "
+            "predictive-maintenance scanner drafts a cross-sell "
+            "action. Range 12–120 (1–10 years)."
+        ),
+    )
+
+
+def _read_automation_rules(tenant: dict) -> dict:
+    """Return the automation-rules block hydrated with defaults.
+
+    Falls back to ``AUTOMATION_RULE_DEFAULTS`` per-field so a pod
+    that comes up before the ``automation_rules_v1`` migration
+    lands still serves a sane API response. Audit stamps
+    (``updated_at`` / ``updated_by``) are surfaced only when the
+    field is actually set.
+    """
+    rules = ((tenant.get("settings") or {}).get("automation_rules") or {})
+    out: dict = {**AUTOMATION_RULE_DEFAULTS}
+    for k in AUTOMATION_RULE_DEFAULTS:
+        if k in rules and rules[k] is not None:
+            out[k] = rules[k]
+    if "updated_at" in rules:
+        out["updated_at"] = rules["updated_at"]
+    if "updated_by" in rules:
+        out["updated_by"] = rules["updated_by"]
+    return out
+
+
+@router.get(
+    "/tenants/mine/automation-rules", tags=["tenants"],
+    operation_id="tenants.readAutomationRules",
+    summary="Read tenant automation rules (admin/manager only)",
+)
+async def get_own_automation_rules(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin or manager access required")
+    return _read_automation_rules(tenant)
+
+
+@router.patch(
+    "/tenants/mine/automation-rules", tags=["tenants"],
+    operation_id="tenants.updateAutomationRules",
+    summary="Update tenant automation rules (admin only)",
+)
+async def patch_own_automation_rules(
+    request: Request,
+    body: AutomationRulesPatch,
+    user: dict = Depends(get_current_user),
+):
+    # Role gate — techs / customers / members can't flip automation.
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    # LDM-A cross-tenant safety — body-supplied ``tenant_id`` is a
+    # forgery attempt. The JWT session is the only source of truth
+    # for tenant scoping; even echoing the caller's own tenant back
+    # in the body is rejected loudly so the frontend never grows a
+    # habit of sending it. Read raw payload once, check for the
+    # forbidden key, then let the Pydantic body finish validation.
+    try:
+        raw = await request.json()
+    except Exception:  # noqa: BLE001
+        raw = {}
+    if isinstance(raw, dict) and "tenant_id" in raw:
+        raise HTTPException(
+            403,
+            "tenant_id is derived from JWT; body-supplied tenant_id "
+            "is forbidden.",
+        )
+    upd: dict = {}
+    for k, v in body.dict(exclude_unset=True).items():
+        if v is not None:
+            upd[f"settings.automation_rules.{k}"] = v
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    upd["settings.automation_rules.updated_at"] = now_iso()
+    upd["settings.automation_rules.updated_by"] = user.get("id")
+    await db.tenants.update_one({"id": tid}, {"$set": upd})
+    doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
+    return _read_automation_rules(doc or {})
+
+
 # ─── Feb-2026 · F4 Enhancement — Widget-Embed tenant settings ─────
 class WidgetEmbedSettingsUpdate(BaseModel):
     """Fields settable via ``PATCH /api/tenants/settings/widget-embed``.

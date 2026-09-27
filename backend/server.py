@@ -3361,6 +3361,42 @@ async def _run_marco_orchestrator_seed_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# LDM-A · Feb-2026 — Structural: tenant automation_rules backfill.
+# Idempotent seed of the four automation-rule sub-keys on every
+# tenant document that lacks them (see
+# ``memory/SPEC_LIVE_DISPATCHER_AND_MAINTENANCE.md`` §LDM-A and the
+# migration module docstring for the shape). Sentinel-gated
+# internally via ``migration_status[key="automation_rules_v1"]``
+# so a second boot is a no-op. Best-effort (``must_succeed=False``)
+# — a Mongo hiccup logs to
+# ``/api/health.init.structural_migrations.automation_rules_v1``
+# and boot continues; the API layer falls back to
+# ``AUTOMATION_RULE_DEFAULTS`` when the persisted sub-doc is missing.
+async def _run_automation_rules_v1_boot(db_handle) -> dict:
+    """Run the ``automation_rules_v1`` structural migration."""
+    async def _factory():
+        from migrations.automation_rules_v1 import (
+            run as _ar_run,
+        )
+        res = await _ar_run(dry_run=False, force=False, db_client=db_handle)
+        logger.info(
+            "[automation-rules-v1] structural pass — "
+            "skipped_by_marker=%s tenants_scanned=%s "
+            "tenants_backfilled=%s fields_written=%s",
+            res.get("skipped_by_marker"),
+            res.get("tenants_scanned"),
+            res.get("tenants_backfilled"),
+            res.get("fields_written"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "automation_rules_v1", _factory,
+        must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3746,6 +3782,22 @@ async def _run_boot_sequence():
     # ``/api/health.init.structural_migrations.marco_orchestrator_seed_v1``
     # and the next boot retries.
     await _run_marco_orchestrator_seed_v1_boot(db)
+    # LDM-A · Feb-2026 — tenant.settings.automation_rules backfill.
+    # Seeds the four automation-rule sub-keys (dispatch_delay_
+    # threshold_mins, dispatch_sms_customer_count, filter_clean_
+    # interval_months, salt_cell_replacement_months) on every
+    # tenant that lacks them. First structural pass of the AI Live
+    # Dispatcher + Predictive Maintenance track. Adjacent to
+    # ``marco_orchestrator_seed_v1``'s call so all recent MARCO-
+    # adjacent structural passes stay in the same STRUCTURAL bucket
+    # and a boot-order regression is caught by the pre-yield lint.
+    # Sentinel-gated internally via
+    # ``migration_status[key="automation_rules_v1"]``. Best-effort
+    # (``must_succeed=False`` inside the wrapper); a Mongo hiccup
+    # logs to
+    # ``/api/health.init.structural_migrations.automation_rules_v1``
+    # and the next boot retries.
+    await _run_automation_rules_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
