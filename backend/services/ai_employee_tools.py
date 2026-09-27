@@ -49,7 +49,16 @@ log = logging.getLogger("ai_employee_tools")
 # ────────────────────────────────────────────────────────────────
 SCOPE_TENANT_ALL = "tenant_all"
 SCOPE_CUSTOMER = "customer_scoped"
-VALID_SCOPES = frozenset({SCOPE_TENANT_ALL, SCOPE_CUSTOMER})
+# Feb-2026 · MARCO · Sub-phase B — orchestrator-only scope.  Only
+# personas seeded with ``orchestrator=True`` may invoke tools tagged
+# with this scope.  Currently there is exactly one such tool:
+# ``delegate_task``.  The scope is orthogonal to
+# ``read_access_scope`` (a persona can be ``tenant_all`` OR
+# ``customer_scoped`` AND independently ``orchestrator=True``).
+SCOPE_ORCHESTRATOR = "orchestrator"
+VALID_SCOPES = frozenset(
+    {SCOPE_TENANT_ALL, SCOPE_CUSTOMER, SCOPE_ORCHESTRATOR},
+)
 
 # Rate-limit windows (calls / seconds).
 PER_PERSONA_LIMIT = (100, 60)
@@ -65,10 +74,20 @@ class ToolSpec:
     description: str
     params: List[str]                                 # informational only
     handler: Callable[..., Awaitable[Any]]
-    required_scope: str                               # SCOPE_TENANT_ALL or SCOPE_CUSTOMER
+    required_scope: str                               # SCOPE_TENANT_ALL / SCOPE_CUSTOMER / SCOPE_ORCHESTRATOR
     # True if the tool needs a ``customer_id`` argument (either
     # provided or auto-injected from the caller's session).
     needs_customer_id: bool
+    # Feb-2026 · MARCO · Sub-phase B — orchestrator tools
+    # (currently ``delegate_task``) need extra conversation state
+    # that the standard read-only tools don't carry: the
+    # conversation id, the invoking persona doc, the requesting
+    # admin user doc, etc.  When ``needs_conversation_context`` is
+    # True the dispatcher expects the caller to pass a
+    # ``conversation_context`` dict alongside the tool args; the
+    # handler receives it as a kwarg.  Read-only tools default to
+    # False and never see the extra state.
+    needs_conversation_context: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -349,6 +368,191 @@ async def _t_search_customers(tenant_id: str, *, query: str,
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · MARCO · Sub-phase B — orchestrator tools.
+#
+# ``delegate_task`` — the ONLY tool with ``SCOPE_ORCHESTRATOR``.
+# Ships MARCO's ability to hand off admin requests to a specialist
+# persona.  Guard rail order (all in ``dispatch_tool``):
+#
+#   1. Scope guard: invoking persona must carry ``orchestrator=True``.
+#   2. Target guard: target_employee_key must exist, be admin
+#      audience, and NOT itself be an orchestrator (blocks
+#      delegate-to-orchestrator loops even before the target's
+#      system prompt tells them not to re-delegate).
+#
+# On success the tool appends a system-style transcript entry to
+# the CURRENT conversation (so the audit trail shows the hand-off),
+# runs the target persona's turn against the SAME conversation
+# history + brand_brain, persists the target's reply stamped with
+# ``sender_employee_id = target.id`` + ``delegated_by_employee_id
+# = invoker.id``, and returns a compact summary to MARCO's tool
+# loop.
+# ═══════════════════════════════════════════════════════════════════
+async def _t_delegate_task(
+    tenant_id: str,
+    *,
+    target_employee_key: str,
+    task_description: str,
+    context: Optional[Dict[str, Any]] = None,
+    conversation_context: Dict[str, Any],
+) -> Any:
+    """Orchestrator delegation.  See module-level block-comment for
+    guard-rail order and side-effect summary."""
+    from config import db as _db
+
+    cid = conversation_context.get("conversation_id")
+    invoker = conversation_context.get("invoker_persona") or {}
+    ctx_tenant = conversation_context.get("tenant_id") or tenant_id
+    _user = conversation_context.get("user") or {}
+
+    if not cid or not invoker.get("id"):
+        return {
+            "error": "bad_context",
+            "detail": "conversation_context missing conversation_id or"
+                        " invoker_persona",
+        }
+    if not target_employee_key:
+        return {
+            "error": "bad_args",
+            "detail": "target_employee_key required",
+        }
+    if not task_description:
+        return {
+            "error": "bad_args",
+            "detail": "task_description required",
+        }
+
+    # ── Target guard ───────────────────────────────────────────
+    target = await _db.ai_employees.find_one(
+        {"tenant_id": ctx_tenant, "key": target_employee_key,
+          "$or": [
+              {"audience": "admin"},
+              {"audience": {"$exists": False}},
+          ]},
+        {"_id": 0},
+    )
+    if not target:
+        return {
+            "error": "unknown_target",
+            "detail": (
+                f"no admin-audience AI employee with key "
+                f"{target_employee_key!r}"
+            ),
+        }
+    if target.get("orchestrator") is True:
+        return {
+            "error": "cannot_delegate_to_orchestrator",
+            "detail": (
+                "orchestrators cannot delegate to other"
+                " orchestrators — the delegation chain must"
+                " terminate on a specialist"
+            ),
+        }
+    if target.get("active") is False:
+        return {
+            "error": "target_inactive",
+            "detail": (
+                f"target persona {target_employee_key!r} is"
+                f" disabled — the admin needs to re-enable it"
+                f" from the AI Employees dock first"
+            ),
+        }
+
+    # ── System transcript entry (visible to both participants) ─
+    from datetime import datetime as _dt, timezone as _tz
+    def _now() -> str:
+        return _dt.now(_tz.utc).isoformat().replace("+00:00", "Z")
+    def _nid() -> str:
+        # Match the utils.new_id shape without importing from utils
+        # here (keeps the tool file free of routers/utils cycles).
+        return hashlib.sha1(f"{_now()}-{_dt.now(_tz.utc).timestamp()}".encode()).hexdigest()[:24]
+
+    sys_msg = {
+        "id": _nid(), "tenant_id": ctx_tenant,
+        "conversation_id": cid,
+        "employee_id": invoker.get("id"),
+        "sender_employee_id": invoker.get("id"),
+        "role": "system",
+        "text": (
+            f"[{invoker.get('name') or invoker.get('key')}]"
+            f" delegated to [{target.get('name') or target.get('key')}]"
+            f" — {task_description}"
+        ),
+        "kind": "delegation_handoff",
+        "delegated_to_employee_id": target["id"],
+        "created_at": _now(),
+    }
+    await _db.ai_employee_messages.insert_one(sys_msg)
+
+    # ── Ensure target is a participant on the conversation ────
+    await _db.ai_employee_conversations.update_one(
+        {"id": cid, "tenant_id": ctx_tenant},
+        {"$addToSet": {"participant_employee_ids": target["id"]}},
+    )
+
+    # ── Build target's system prompt with delegation preamble ─
+    from routers.ai_employees import (
+        _get_brand_brain, _brand_brain_summary, _llm_chat,
+    )
+    bb = await _get_brand_brain(ctx_tenant)
+    ctx_dump = json.dumps(context or {}, default=str)[:600]
+    preamble = (
+        f"You are being delegated to by "
+        f"{invoker.get('name') or invoker.get('key')}. "
+        f"Task: {task_description}. "
+        f"Context from {invoker.get('name') or invoker.get('key')}: "
+        f"{ctx_dump}. "
+        f"Respond directly to the admin — do not re-delegate."
+    )
+    target_system_prompt = (
+        f"{preamble}\n\n{target['system_prompt']}\n\n"
+        f"— Shared brand brain —\n{_brand_brain_summary(bb)}"
+    )
+
+    # ── Fetch full conversation transcript for shared context ─
+    history = await _db.ai_employee_messages.find(
+        {"tenant_id": ctx_tenant, "conversation_id": cid,
+          "role": {"$in": ["user", "assistant", "system"]}},
+        {"_id": 0, "role": 1, "text": 1},
+    ).sort("created_at", 1).to_list(50)
+
+    # ── Invoke target persona ─────────────────────────────────
+    r = await _llm_chat(target_system_prompt, task_description, history)
+    reply_text = (r.get("text") or "").strip() or (
+        "[stub] " + task_description[:200]
+    )
+
+    # ── Persist target's reply stamped with its own identity ──
+    reply_msg = {
+        "id": _nid(), "tenant_id": ctx_tenant,
+        "conversation_id": cid,
+        "employee_id": target["id"],
+        "sender_employee_id": target["id"],
+        "role": "assistant",
+        "text": reply_text,
+        "provider": r.get("provider") or "stub",
+        "delegated_by_employee_id": invoker.get("id"),
+        "kind": "delegation_reply",
+        "created_at": _now(),
+    }
+    await _db.ai_employee_messages.insert_one(reply_msg)
+
+    # ── Bump conversation counters for the two extra messages ─
+    await _db.ai_employee_conversations.update_one(
+        {"id": cid, "tenant_id": ctx_tenant},
+        {"$set": {"updated_at": _now()},
+          "$inc": {"message_count": 2}},
+    )
+
+    return {
+        "delegated_to": target.get("name") or target.get("key"),
+        "delegated_to_key": target.get("key"),
+        "delegated_to_employee_id": target["id"],
+        "target_reply_excerpt": reply_text[:400],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Registry.
 # ═══════════════════════════════════════════════════════════════════
 TOOL_REGISTRY: Dict[str, ToolSpec] = {
@@ -428,6 +632,26 @@ TOOL_REGISTRY: Dict[str, ToolSpec] = {
         required_scope=SCOPE_TENANT_ALL,
         needs_customer_id=False,
     ),
+    # ─── Feb-2026 · MARCO · Sub-phase B · orchestrator tool ────
+    "delegate_task": ToolSpec(
+        name="delegate_task",
+        description=(
+            "Hand off the current admin request to a specialist AI "
+            "employee.  Only MARCO (the orchestrator) can call this "
+            "tool.  ``target_employee_key`` must be one of the "
+            "specialist personas (casey / emmie / buddy / vizzy / "
+            "dexter / soshie / scouty / commet).  ``task_description``"
+            " is a one-sentence brief for the specialist.  "
+            "``context`` is an optional dict with any snippets the "
+            "specialist should see (excerpts from the admin's "
+            "message, ids, etc.)."
+        ),
+        params=["target_employee_key", "task_description", "context?"],
+        handler=_t_delegate_task,
+        required_scope=SCOPE_ORCHESTRATOR,
+        needs_customer_id=False,
+        needs_conversation_context=True,
+    ),
 }
 
 
@@ -497,6 +721,11 @@ async def dispatch_tool(
     caller_customer_id: Optional[str] = None,
     tool_name: str,
     args: Optional[Dict[str, Any]] = None,
+    # Feb-2026 · MARCO · Sub-phase B — extra state for orchestrator
+    # tools.  ONLY consumed when the tool's ``needs_conversation_context``
+    # flag is True; ignored for read-only tools.  Keeps the read-only
+    # dispatch path byte-identical to pre-B behavior.
+    conversation_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Single entrypoint — every tool call goes through here.
 
@@ -508,6 +737,7 @@ async def dispatch_tool(
     args = dict(args or {})
     persona_id = persona.get("id") or ""
     persona_scope = (persona.get("read_access_scope") or SCOPE_CUSTOMER).strip()
+    persona_is_orchestrator = bool(persona.get("orchestrator"))
 
     audit_row: Dict[str, Any] = {
         "id": _args_hash(f"{persona_id}:{tool_name}:{datetime.now(timezone.utc).timestamp()}"),
@@ -515,6 +745,7 @@ async def dispatch_tool(
         "persona_id": persona_id,
         "persona_key": persona.get("key"),
         "persona_scope": persona_scope,
+        "persona_is_orchestrator": persona_is_orchestrator,
         "tool_name": tool_name,
         "args_hash": _args_hash(args),
         "called_by_user_id": caller_id if caller_kind == "admin" else None,
@@ -528,6 +759,45 @@ async def dispatch_tool(
         audit_row["result_status"] = "unknown_tool"
         await _audit(audit_row)
         return {"error": "unknown_tool", "detail": f"tool '{tool_name}' does not exist"}
+
+    # ── Feb-2026 · MARCO · Sub-phase B · Orchestrator scope guard.
+    # ``delegate_task`` is the only tool tagged SCOPE_ORCHESTRATOR
+    # today.  Non-orchestrator personas are refused with a clear
+    # message the LLM can politely surface.  Runs BEFORE the
+    # read-only scope guard below so a customer-scoped, non-
+    # orchestrator persona hits the orchestrator refusal (which is
+    # the tighter, more informative message) instead of the
+    # tenant_all refusal.
+    if spec.required_scope == SCOPE_ORCHESTRATOR:
+        if not persona_is_orchestrator:
+            audit_row["result_status"] = "permission_denied"
+            audit_row["result_summary"] = (
+                "orchestrator tool from non-orchestrator persona"
+            )
+            await _audit(audit_row)
+            return {
+                "error": "permission_denied",
+                "detail": (
+                    "Only the executive orchestrator (MARCO) can"
+                    " delegate to other AI employees.  This persona"
+                    " must respond directly."
+                ),
+            }
+        # Also refuse a customer-scoped orchestrator caller — the
+        # only orchestrator persona (MARCO) is admin-audience, but
+        # defence-in-depth against a mis-configured seed.
+        if caller_kind == "customer":
+            audit_row["result_status"] = "permission_denied"
+            audit_row["result_summary"] = (
+                "orchestrator tool from customer caller"
+            )
+            await _audit(audit_row)
+            return {
+                "error": "permission_denied",
+                "detail": (
+                    "delegation is an admin-only capability"
+                ),
+            }
 
     # ── Persona-scope × tool-scope guard ────────────────────────
     # A customer-scoped persona can only invoke tools with
@@ -584,8 +854,27 @@ async def dispatch_tool(
                                     "please try again in a moment"}
 
     # ── Execute ─────────────────────────────────────────────────
+    # Feb-2026 · MARCO · Sub-phase B — inject conversation_context
+    # kwarg for orchestrator tools that need it.  Other tools
+    # never see the extra state.
+    handler_kwargs: Dict[str, Any] = dict(args)
+    if spec.needs_conversation_context:
+        if conversation_context is None:
+            audit_row["result_status"] = "bad_context"
+            audit_row["result_summary"] = (
+                "orchestrator tool called without conversation_context"
+            )
+            await _audit(audit_row)
+            return {
+                "error": "bad_context",
+                "detail": (
+                    "conversation_context required for this tool"
+                ),
+            }
+        handler_kwargs["conversation_context"] = conversation_context
+
     try:
-        result = await spec.handler(tenant_id, **args)
+        result = await spec.handler(tenant_id, **handler_kwargs)
         audit_row["result_status"] = ("tool_error"
                                               if isinstance(result, dict)
                                               and result.get("error")
@@ -610,10 +899,28 @@ def tool_schema_prompt_snippet(persona: Dict[str, Any]) -> str:
     """Return the tool-schema block that should be appended to the
     persona's system prompt at conversation time. Filters tools by
     the persona's ``read_access_scope`` so a customer-scoped persona
-    never sees ``tenant_all`` tools in its option list."""
+    never sees ``tenant_all`` tools in its option list.
+
+    Feb-2026 · MARCO · Sub-phase B — orchestrator tools
+    (``delegate_task``) are surfaced ONLY on personas seeded with
+    ``orchestrator=True``.  Non-orchestrator personas never see the
+    delegation tool in their option list, so the LLM has no route
+    to attempt it and hit the ``dispatch_tool`` refusal.
+    """
     scope = (persona.get("read_access_scope") or SCOPE_CUSTOMER).strip()
-    available = [t for t in TOOL_REGISTRY.values()
-                     if scope == SCOPE_TENANT_ALL or t.required_scope == SCOPE_CUSTOMER]
+    is_orch = bool(persona.get("orchestrator"))
+    available: List[ToolSpec] = []
+    for t in TOOL_REGISTRY.values():
+        if t.required_scope == SCOPE_ORCHESTRATOR:
+            if is_orch:
+                available.append(t)
+            continue
+        if t.required_scope == SCOPE_TENANT_ALL:
+            if scope == SCOPE_TENANT_ALL:
+                available.append(t)
+            continue
+        # SCOPE_CUSTOMER — always visible.
+        available.append(t)
     lines = ["# TOOLS AVAILABLE (read-only)"]
     for t in available:
         lines.append(f"- **{t.name}**({', '.join(t.params)}): {t.description}")

@@ -648,6 +648,14 @@ async def send_customer_message(
     user_msg = {
         "id": new_id(), "tenant_id": tenant["id"],
         "conversation_id": cid_conv, "employee_id": eid,
+        # Feb-2026 · MARCO · Sub-phase B — stamp every message with
+        # ``sender_employee_id`` so a multi-persona transcript can
+        # be re-assembled per-speaker.  Customer-facing personas
+        # never participate in delegation loops (only admin
+        # personas with ``orchestrator=True`` can call
+        # ``delegate_task``), but the field is stamped uniformly
+        # across both send paths to keep the message schema flat.
+        "sender_employee_id": eid,
         "role": "user", "text": body.text,
         "created_at": now_iso(),
     }
@@ -788,6 +796,11 @@ async def send_customer_message(
     assistant_msg = {
         "id": new_id(), "tenant_id": tenant["id"],
         "conversation_id": cid_conv, "employee_id": eid,
+        # Feb-2026 · MARCO · Sub-phase B — sender is the persona
+        # replying to the customer.  Customer-facing personas
+        # (Skedra, Billy) can't delegate, so sender is always the
+        # URL-path employee.
+        "sender_employee_id": eid,
         "role": "assistant", "text": assistant_text,
         "escalated": escalated,
         "escalate_reason": escalate_reason,

@@ -376,6 +376,14 @@ class BrandBrainPatch(BaseModel):
 
 class ConversationCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=120)
+    # Feb-2026 · MARCO · Sub-phase B — additive multi-persona
+    # support.  Callers may specify additional participant employee
+    # ids beyond the URL-path ``eid``; the URL-path ``eid`` is
+    # always included as the primary participant regardless of what
+    # arrives here.  Left None for legacy single-persona callers —
+    # the create handler wraps the URL ``eid`` into a single-
+    # element list.  Duplicates are de-duped server-side.
+    participant_employee_ids: Optional[List[str]] = None
 
 
 class MessageIn(BaseModel):
@@ -594,6 +602,143 @@ async def _get_employee(tenant_id: str, eid: str,
         if actual != expected_audience:
             raise HTTPException(403, "AI employee not available in this scope")
     return emp
+
+
+
+# Feb-2026 · MARCO · Sub-phase B — orchestrator tool-loop cap.
+# The admin ``send_message`` path invokes
+# ``_run_orchestrator_tool_loop`` after the initial LLM reply for
+# personas with ``orchestrator=True``.  If the loop hits the cap
+# without the model returning a terminal reply we replace the
+# assistant text with the terminal message specified in Sub-phase
+# B ruling #1 and log a warning.  Read-only tool loops on the
+# customer path (``customer_ai.py``) still run at their existing
+# cap of 3 — unchanged.
+_ORCH_TOOL_LOOP_MAX_ITERS = 5
+_ORCH_TOOL_LOOP_TERMINAL_MSG = (
+    "Delegation depth exceeded — please rephrase or split the"
+    " request."
+)
+
+
+async def _run_orchestrator_tool_loop(
+    *,
+    tenant: Dict[str, Any],
+    user: Dict[str, Any],
+    emp: Dict[str, Any],
+    cid: str,
+    system_prompt: str,
+    assistant_text: str,
+) -> str:
+    """Run the orchestrator's tool-call loop.
+
+    Called immediately after the initial LLM reply for personas
+    with ``orchestrator=True``.  Parses ``\\`\\`\\`tool`` fences from
+    ``assistant_text``, dispatches them (special-casing
+    ``delegate_task`` with the conversation-context payload it
+    needs), persists each tool result as a ``role="tool"`` row for
+    auditability, then re-prompts the model with the tool output
+    history.  Loops until:
+
+      * The model's next reply has no tool fence (terminal reply —
+        returned to the caller).
+      * The iteration cap (``_ORCH_TOOL_LOOP_MAX_ITERS = 5``) is
+        hit — returns the terminal-message string per Sub-phase B
+        ruling #1 with a warning logged.
+    """
+    from services.ai_employee_tools import (
+        parse_tool_fence, dispatch_tool,
+    )
+    iters = 0
+    while iters < _ORCH_TOOL_LOOP_MAX_ITERS:
+        parsed = parse_tool_fence(assistant_text)
+        if not parsed:
+            return assistant_text
+        iters += 1
+        tname, targs = parsed
+
+        # Build the conversation_context payload — orchestrator
+        # tools like ``delegate_task`` need enough state to append
+        # messages to the CURRENT conversation and to attribute
+        # the delegation-handoff transcript entry to the invoking
+        # persona.
+        conv_ctx: Dict[str, Any] = {
+            "conversation_id": cid,
+            "tenant_id": tenant["id"],
+            "invoker_persona": emp,
+            "user": user,
+        }
+        outcome = await dispatch_tool(
+            tenant_id=tenant["id"],
+            persona=emp,
+            caller_kind="admin",
+            caller_id=user.get("id"),
+            tool_name=tname,
+            args=targs,
+            conversation_context=conv_ctx,
+        )
+
+        # Persist the tool call itself as a ``role="tool"`` row so
+        # the transcript audit shows exactly what MARCO fetched /
+        # delegated on this turn.  Sender is MARCO (``emp["id"]``)
+        # since MARCO is the caller.  For delegate_task the target
+        # persona's actual reply row was already inserted inside
+        # ``_t_delegate_task`` stamped with the target's own
+        # sender_employee_id.
+        tool_msg = {
+            "id": new_id(), "tenant_id": tenant["id"],
+            "conversation_id": cid, "employee_id": emp["id"],
+            "sender_employee_id": emp["id"],
+            "role": "tool",
+            "tool_name": tname,
+            "text": (str(outcome)[:2000] if outcome is not None
+                       else ""),
+            "outcome_status": ("error" if isinstance(outcome, dict)
+                                    and outcome.get("error") else "ok"),
+            "created_at": now_iso(),
+        }
+        try:
+            await db.ai_employee_messages.insert_one(tool_msg)
+        except Exception as _exc:                               # noqa: BLE001
+            logger.warning(
+                "[marco] tool-row persist skipped for cid=%s: %s",
+                cid, _exc,
+            )
+
+        # Re-prompt the model with the tool outcome inlined.  The
+        # history read pulls the transcript we just extended so
+        # the model sees every prior turn + tool row + the
+        # delegation reply (if delegate_task fired).
+        payload_preview = (
+            outcome.get("result") if isinstance(outcome, dict)
+            and "result" in outcome else outcome
+        )
+        follow = (
+            f"Tool `{tname}` returned:\n"
+            f"```json\n{payload_preview!r}\n```\n"
+            "Continue.  If the specialist replied, summarize"
+            " their answer for the admin and name the specialist."
+            "  If a tool failed, explain briefly and offer to"
+            " route to a human."
+        )
+        history = await db.ai_employee_messages.find(
+            {"tenant_id": tenant["id"], "conversation_id": cid},
+            {"_id": 0, "role": 1, "text": 1},
+        ).sort("created_at", 1).to_list(50)
+        r = await _llm_chat(system_prompt, follow, history)
+        assistant_text = (r.get("text") or "").strip()
+
+    # Cap reached without a terminal reply — post the ruling's
+    # terminal message and log.
+    if parse_tool_fence(assistant_text):
+        logger.warning(
+            "[marco] orchestrator tool-loop depth exceeded for"
+            " cid=%s eid=%s user=%s iters=%s",
+            cid, emp.get("id"), user.get("id"), iters,
+        )
+        return _ORCH_TOOL_LOOP_TERMINAL_MSG
+    return assistant_text
+
 
 
 async def _llm_chat(system_prompt: str, user_text: str,
@@ -837,9 +982,45 @@ async def create_conversation(eid: str, body: ConversationCreate,
                                 user: dict = Depends(require_admin),
                                 tenant: dict = Depends(get_current_tenant)):
     await _get_employee(tenant["id"], eid, expected_audience="admin")
+    # Feb-2026 · MARCO · Sub-phase B — multi-persona conversation
+    # support.  The URL-path ``eid`` is always the primary
+    # participant; the request body MAY carry additional
+    # participant employee ids.  Legacy callers omit
+    # ``participant_employee_ids`` entirely and get a single-
+    # element list.  We validate every extra id exists + is
+    # admin-audience under the same tenant so an admin can't
+    # accidentally add a customer-audience persona (or worse, one
+    # from another tenant) to an admin conversation.
+    participant_ids = [eid]
+    if body.participant_employee_ids:
+        seen = {eid}
+        for pid in body.participant_employee_ids:
+            if not pid or pid in seen:
+                continue
+            other = await db.ai_employees.find_one(
+                {"tenant_id": tenant["id"], "id": pid,
+                  "$or": [
+                      {"audience": "admin"},
+                      {"audience": {"$exists": False}},
+                  ]},
+                {"_id": 0, "id": 1},
+            )
+            if not other:
+                raise HTTPException(
+                    404,
+                    f"participant employee {pid!r} not found or"
+                    f" not admin-audience",
+                )
+            participant_ids.append(pid)
+            seen.add(pid)
     doc = {
         "id": new_id(), "tenant_id": tenant["id"],
         "employee_id": eid, "user_id": user["id"],
+        # Feb-2026 · MARCO · Sub-phase B — always persist the
+        # full participant roster so ``_load_conversation`` can
+        # hydrate every participant regardless of whether the
+        # caller sent a legacy single-persona request.
+        "participant_employee_ids": participant_ids,
         "title": body.title or "New conversation",
         "message_count": 0,
         "created_at": now_iso(), "updated_at": now_iso(),
@@ -857,6 +1038,39 @@ async def _load_conversation(tenant_id: str, eid: str, cid: str,
     )
     if not conv:
         raise HTTPException(404, "Conversation not found")
+    # Feb-2026 · MARCO · Sub-phase B — hydrate every participant so
+    # downstream code (tool loop, delegate_task) has the persona
+    # docs ready without additional round-trips.  Legacy rows that
+    # predate ``participant_employee_ids`` are lazily backfilled to
+    # a single-element list containing the URL-path ``eid``.
+    participant_ids = list(conv.get("participant_employee_ids") or [eid])
+    if not participant_ids or participant_ids == [None]:
+        participant_ids = [eid]
+    if not conv.get("participant_employee_ids"):
+        # Best-effort lazy backfill.  Skipping the update on a
+        # Mongo hiccup is fine — the hydration below is still
+        # correct for this call.
+        try:
+            await db.ai_employee_conversations.update_one(
+                {"id": cid, "tenant_id": tenant_id},
+                {"$set": {
+                    "participant_employee_ids": participant_ids,
+                    "updated_at": now_iso(),
+                }},
+            )
+        except Exception as _exc:
+            logger.warning(
+                "[ae1] lazy participant backfill skipped for cid=%s: %s",
+                cid, _exc,
+            )
+    participants: List[Dict[str, Any]] = []
+    async for row in db.ai_employees.find(
+        {"tenant_id": tenant_id, "id": {"$in": participant_ids}},
+        {"_id": 0},
+    ):
+        participants.append(row)
+    conv["participants"] = participants
+    conv["participant_employee_ids"] = participant_ids
     return conv
 
 
@@ -892,6 +1106,11 @@ async def send_message(eid: str, cid: str, body: MessageIn,
     user_msg = {
         "id": new_id(), "tenant_id": tenant["id"],
         "conversation_id": cid, "employee_id": eid,
+        # Feb-2026 · MARCO · Sub-phase B — stamp every message with
+        # ``sender_employee_id`` so a multi-persona transcript can
+        # be re-assembled per-speaker.  For user turns the sender
+        # is the URL-path employee (the admin is talking TO them).
+        "sender_employee_id": eid,
         "role": "user", "text": body.text,
         "created_at": now_iso(),
     }
@@ -957,17 +1176,57 @@ async def send_message(eid: str, cid: str, body: MessageIn,
             system_prompt=system_prompt, user_text=body.text,
         )
     else:
+        # Feb-2026 · MARCO · Sub-phase B — for orchestrator personas
+        # surface the tool schema (including ``delegate_task``) so
+        # the LLM knows to call the delegation tool via the standard
+        # ```tool``` fence.  Non-orchestrator personas keep the
+        # pre-B system prompt untouched.
+        chat_system_prompt = system_prompt
+        if emp.get("orchestrator"):
+            from services.ai_employee_tools import (
+                tool_schema_prompt_snippet,
+            )
+            chat_system_prompt = (
+                f"{system_prompt}\n\n{tool_schema_prompt_snippet(emp)}"
+            )
+
         history = await db.ai_employee_messages.find(
             {"tenant_id": tenant["id"], "conversation_id": cid},
             {"_id": 0, "role": 1, "text": 1},
         ).sort("created_at", 1).to_list(20)
-        r = await _llm_chat(system_prompt, body.text, history)
+        r = await _llm_chat(chat_system_prompt, body.text, history)
         assistant_text = r["text"]
+
+        # Feb-2026 · MARCO · Sub-phase B — tool-call loop.  Runs
+        # ONLY for orchestrator personas (currently just MARCO).
+        # Non-orchestrator personas don't see the tool schema and
+        # so never emit a fence; the loop is a no-op for them.
+        # Capped at 5 iterations per admin ``send_message`` request
+        # per ruling; if the model still emits a fence after the
+        # cap we replace the reply with the terminal message and
+        # log a warning.
+        if emp.get("orchestrator"):
+            assistant_text = await _run_orchestrator_tool_loop(
+                tenant=tenant,
+                user=user,
+                emp=emp,
+                cid=cid,
+                system_prompt=chat_system_prompt,
+                assistant_text=assistant_text,
+            )
 
     # 5) Persist the assistant turn.
     assistant_msg = {
         "id": new_id(), "tenant_id": tenant["id"],
         "conversation_id": cid, "employee_id": eid,
+        # Feb-2026 · MARCO · Sub-phase B — stamp the ASSISTANT-side
+        # of the transcript.  For MARCO's own reply the sender is
+        # MARCO (``eid``).  Delegated replies persisted by
+        # ``_t_delegate_task`` carry the target persona's id in
+        # ``sender_employee_id`` — this final assistant_msg is the
+        # tool-loop's terminal turn (or the plain chat reply for
+        # non-orchestrator personas).
+        "sender_employee_id": eid,
         "role": "assistant", "text": assistant_text,
         "action_id": (action_doc or {}).get("id"),
         # Phase Feb-2026 · KB RAG — attach the retrieved sources so
