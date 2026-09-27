@@ -1459,7 +1459,7 @@ const ON_DUPLICATE_LABELS = {
 };
 
 
-function PreviewRow({ preview, duplicate, fileId }) {
+export function PreviewRow({ preview, duplicate, fileId }) {
   const isDup = Boolean(duplicate);
   const q = preview.quote_in || {};
   return (
@@ -1479,8 +1479,16 @@ function PreviewRow({ preview, duplicate, fileId }) {
       <td className="px-3 py-2">
         {formatIsoDate(q.doc_date)}
       </td>
-      <td className="px-3 py-2 text-right">
-        {formatCurrency(q.total_due ?? q.amount_paid)}
+      <td className="px-3 py-2 text-right" data-testid={`pdf-import-preview-row-${fileId}-${preview.source_doc_index}-total`}>
+        {/* PDF-FIX-A · Feb-2026 — Total column prioritises the
+            extractor's ``grand_total`` (the "Total" / "Total Due"
+            line on the source PDF) over the legacy ``total_due``,
+            which is $0.00 on fully-paid invoices. Falls back to
+            ``total_due`` → ``amount_paid`` (Sub-phase B legacy path
+            for fully-paid receipts) → 0. ``??`` treats 0 as valid,
+            so a legitimately-waived invoice (grand_total = 0)
+            still renders as "$0.00" verbatim per PDF-FIX §1. */}
+        {formatCurrency(q.grand_total ?? q.total_due ?? q.amount_paid ?? 0)}
       </td>
       <td className="px-3 py-2">
         <CustomerCell preview={preview} />

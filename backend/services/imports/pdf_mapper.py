@@ -381,6 +381,21 @@ async def map_extracted_to_quote_in(
     # surface them.  Sub-phase E owns the preview-table columns
     # themselves; Sub-phase B ships the strict-superset data
     # payload so E has something to render.
+    # PDF-FIX-A · Feb-2026 — surface ``grand_total`` on the quote_in
+    # preview so the FE Preview table can render the invoice's stated
+    # total (the "Total" or "Total Due" line on the PDF) instead of
+    # falling back to ``total_due`` — which is $0.00 on fully-paid
+    # invoices and produced the "$0.00 for a paid $400 invoice"
+    # display regression.  Priority chain: prefer the extractor's
+    # ``grand_total`` when present (including verbatim $0.00 for
+    # legitimately-waived invoices), else fall back to
+    # ``total_due``.  ``total_due`` is kept as a sibling field
+    # because downstream commit + audit logic already reads it.
+    # ``!= None`` check (not truthiness) so ``grand_total = 0.0``
+    # is preserved verbatim per PDF-FIX rulings §1.
+    grand_total_value = (
+        doc.grand_total if doc.grand_total is not None else doc.total_due
+    )
     quote_in: Dict[str, Any] = {
         "customer_id": customer_id_field,
         "customer_name": doc.customer_name,
@@ -392,6 +407,7 @@ async def map_extracted_to_quote_in(
         "tax_rate": 0.0,  # H.1 does NOT try to reverse-engineer the
                             # rate; the extractor's ``tax_total`` is
                             # captured in warnings for H.2 audit.
+        "grand_total": grand_total_value,
         "total_due": doc.total_due,
         "amount_paid": doc.amount_paid,
         "payment_method": doc.payment_method,
