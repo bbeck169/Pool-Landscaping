@@ -71,6 +71,18 @@ _VALID_SOURCES = {
     "website_form", "admin_manual", "phone", "walk_in",
     "referral", "widget_chat", "import",
 }
+# LS-C · Feb-2026 — System-source whitelist. Machine-generated
+# lead entries (Lead-Sense conversions, future pixel-source
+# ingestions) tag ``source`` from this set. NEVER accepted from
+# the authenticated admin form (``create_lead`` continues to
+# validate strictly against ``_VALID_SOURCES`` only). Consumed
+# by the LS-C conversion endpoint at ``/api/lead-sense/convert``
+# which persists rows directly to ``db.leads`` — the code path
+# is the trust boundary, not the source string. Kept as a
+# separate frozenset (not merged into ``_VALID_SOURCES``) so
+# the admin manual-add dropdown stays curated to human-generated
+# labels.
+_SYSTEM_SOURCES = frozenset({"MARCO Lead-Sense"})
 _VALID_INTERESTS = {"Pool", "Landscape", "Both"}
 _INBOUND_MANAGER_ROLES = {"admin", "super_admin", "manager"}
 

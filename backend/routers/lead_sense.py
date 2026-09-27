@@ -334,3 +334,332 @@ async def track_visitor_intent(
 @router.get("/health", include_in_schema=False)
 async def _health():
     return {"ok": True, "surface": "lead-sense"}
+
+
+# ═════════════════════════════════════════════════════════════════════
+# LS-C · Feb-2026 — Visitor intent → Lead conversion
+# ─────────────────────────────────────────────────────────────────────
+# Bridges the passive tracker (LS-B) into the leads pipeline. Called
+# by the tenant's website form-submit handler with the widget's
+# session_id + whatever contact fields the visitor filled in.
+#
+# Trust boundary
+# ──────────────
+# This endpoint writes ``source = "MARCO Lead-Sense"`` directly to
+# ``db.leads`` — bypassing the ``_VALID_SOURCES`` guard on
+# ``routers.leads.create_lead`` (which stays enforced for the
+# authenticated admin form). The bypass is code-path-based:
+# the source string is trusted BECAUSE the request survived the
+# ls_id resolution + origin allow-list + rate-limit gates. See
+# ``routers.leads._SYSTEM_SOURCES`` for the sibling whitelist that
+# documents system-generated source labels.
+#
+# Idempotency contract
+# ────────────────────
+# A repeat submission with the same ``(tenant_id, session_id,
+# email)`` within 24h UPDATES the existing lead instead of
+# creating a duplicate. Form-double-submit noise (visitor clicks
+# submit twice, browser retries on a flaky link) collapses to a
+# single lead row. After 24h the semantics flip — a new lead is
+# created because a legitimate return visit deserves its own
+# attribution snapshot.
+# ═════════════════════════════════════════════════════════════════════
+
+
+class LeadSenseConvertIn(BaseModel):
+    """Payload posted by the tenant's website form-submit handler."""
+    ls_id: str = Field(
+        ...,
+        min_length=6, max_length=64,
+        description="Tenant's ``marco_lead_sense_id`` (LS-A).",
+    )
+    session_id: str = Field(
+        ...,
+        min_length=8, max_length=64,
+        description="Widget session id (LS-B ``marco_ls_session``).",
+    )
+    name: Optional[str] = Field(None, max_length=200)
+    email: Optional[str] = Field(None, max_length=320)
+    phone: Optional[str] = Field(None, max_length=50)
+    message: Optional[str] = Field(None, max_length=5000)
+    custom_fields: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Arbitrary tenant-defined form fields. Persisted "
+            "verbatim on the lead row under ``custom_fields``. "
+            "Capped at 20 keys server-side to avoid a poisoned "
+            "form dropping unbounded blobs into Mongo."
+        ),
+    )
+
+    @field_validator("session_id")
+    @classmethod
+    def _session_id_shape(cls, v: str) -> str:
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9\-_]{8,64}", v or ""):
+            raise ValueError(
+                "session_id must be 8-64 alphanumeric / dash / underscore"
+            )
+        return v
+
+    @field_validator("custom_fields")
+    @classmethod
+    def _cap_custom_fields(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, dict):
+            raise ValueError("custom_fields must be an object")
+        if len(v) > 20:
+            raise ValueError("custom_fields exceeds max keys (20)")
+        return v
+
+
+_CONVERSION_DEDUP_WINDOW_HOURS = 24
+_INTENT_HISTORY_CAP = 25  # most recent N pages per session
+_LEAD_SENSE_SOURCE = "MARCO Lead-Sense"
+
+
+def _has_contact_info(payload: LeadSenseConvertIn) -> bool:
+    """Require at least one of ``name``/``email``/``phone``. A row
+    with zero contact fields is useless — the admin can't follow up.
+    Matches the guardrail in ``routers.leads.create_lead``."""
+    return any(
+        (getattr(payload, k) or "").strip()
+        for k in ("name", "email", "phone")
+    )
+
+
+async def _fetch_intent_snapshot(*, tenant_id: str, session_id: str):
+    """Return ``(intent_history, intent_ids, mismatch_count)``.
+
+    Grabs the most recent ``_INTENT_HISTORY_CAP`` intent rows for
+    the caller session, restricted to the resolved tenant. A
+    cross-tenant row (session_id somehow shared across tenants —
+    shouldn't happen but the LS-B unique-index-per-collection isn't
+    tenant-scoped) is counted separately so the caller can log a
+    security event.
+    """
+    history: List[Dict[str, Any]] = []
+    intent_ids: List[str] = []
+    mismatch = 0
+    cursor = db.visitor_intent.find(
+        {"session_id": session_id},
+        {
+            "_id": 0, "id": 1, "tenant_id": 1,
+            "current_url": 1, "referrer": 1, "occurred_at": 1,
+        },
+    ).sort("occurred_at", -1).limit(_INTENT_HISTORY_CAP * 2)
+    async for row in cursor:
+        if row.get("tenant_id") != tenant_id:
+            mismatch += 1
+            continue
+        if len(history) >= _INTENT_HISTORY_CAP:
+            continue
+        history.append({
+            "url": row.get("current_url"),
+            "referrer": row.get("referrer"),
+            "occurred_at": row.get("occurred_at"),
+        })
+        rid = row.get("id")
+        if isinstance(rid, str):
+            intent_ids.append(rid)
+    # Return oldest-first so the timeline reads naturally.
+    history.reverse()
+    return history, intent_ids, mismatch
+
+
+def _iso_hours_ago(hours: int) -> str:
+    from datetime import timedelta
+    return (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+
+
+def _lead_search_query(tenant_id: str, payload: LeadSenseConvertIn) -> dict:
+    """Idempotency lookup — the same ``session_id`` + normalised
+    ``email`` (or ``phone`` fallback) inside the dedup window is
+    treated as the same submission."""
+    since = _iso_hours_ago(_CONVERSION_DEDUP_WINDOW_HOURS)
+    q: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "session_id": payload.session_id,
+        "source": _LEAD_SENSE_SOURCE,
+        "created_at": {"$gte": since},
+    }
+    if (payload.email or "").strip():
+        q["email"] = payload.email.strip().lower()
+    return q
+
+
+@router.post("/convert", include_in_schema=False)
+@_apply_rate_limit
+async def convert_lead(request: Request, response: Response):
+    """Persist a visitor-intent-attributed lead.
+
+    See module docstring for the full status-code contract; this
+    handler mirrors ``track_visitor_intent`` for tenant resolution
+    + origin enforcement + rate-limit gating, then diverges into
+    the lead-creation / idempotent-update flow.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Malformed JSON body.")
+
+    try:
+        payload = LeadSenseConvertIn.model_validate(body)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(422, f"Invalid payload: {exc}")
+
+    if not _has_contact_info(payload):
+        raise HTTPException(
+            422,
+            "At least one of name / email / phone is required.",
+        )
+
+    # Resolve tenant — same opaque-error convention as /track.
+    tenant = await db.tenants.find_one(
+        {"marco_lead_sense_id": payload.ls_id},
+        {"_id": 0, "id": 1, "lead_sense_allowed_origins": 1},
+    )
+    if tenant is None:
+        raise HTTPException(404, "invalid_tracker")
+
+    tenant_id = tenant.get("id")
+    allowed = tenant.get("lead_sense_allowed_origins") or []
+    if not isinstance(allowed, list):
+        allowed = []
+
+    caller_origin = _caller_origin(request)
+    if caller_origin is None:
+        logger.warning(
+            "[lead_sense.security] convert_origin_missing "
+            "ls_id=%s tenant_id=%s session_id=%s",
+            payload.ls_id, tenant_id, payload.session_id,
+        )
+        raise HTTPException(403, "origin_required")
+    if caller_origin not in {o.lower() for o in allowed}:
+        logger.warning(
+            "[lead_sense.security] convert_origin_rejected "
+            "ls_id=%s tenant_id=%s origin=%s allowed_count=%s",
+            payload.ls_id, tenant_id, caller_origin, len(allowed),
+        )
+        raise HTTPException(403, "origin_not_allowed")
+
+    # CORS reflection (matches /track).
+    response.headers["Access-Control-Allow-Origin"] = caller_origin
+    response.headers["Vary"] = "Origin"
+
+    # Pull intent snapshot for attribution.
+    intent_history, intent_ids, cross_tenant_hits = (
+        await _fetch_intent_snapshot(
+            tenant_id=tenant_id, session_id=payload.session_id,
+        )
+    )
+    if cross_tenant_hits:
+        logger.warning(
+            "[lead_sense.security] cross_tenant_conversion_mismatch "
+            "ls_id=%s tenant_id=%s session_id=%s "
+            "mismatched_intents_skipped=%s",
+            payload.ls_id, tenant_id, payload.session_id,
+            cross_tenant_hits,
+        )
+
+    now_iso_val = datetime.now(timezone.utc).isoformat()
+
+    # Idempotency check — repeat submission collapses to update.
+    dup = await db.leads.find_one(
+        _lead_search_query(tenant_id, payload),
+        {"_id": 0, "id": 1},
+    )
+    email_norm = (payload.email or "").strip().lower() or None
+    lead_fields_common: Dict[str, Any] = {
+        "name": (payload.name or "").strip() or None,
+        "email": email_norm,
+        "phone": (payload.phone or "").strip() or None,
+        "notes": (payload.message or "").strip() or None,
+        "session_id": payload.session_id,
+        "visitor_intent_ids": intent_ids,
+        "intent_history": intent_history,
+        "custom_fields": payload.custom_fields or {},
+        "source": _LEAD_SENSE_SOURCE,
+        "source_channel": _LEAD_SENSE_SOURCE,
+        "updated_at": now_iso_val,
+    }
+
+    lead_id: str
+    if dup is not None:
+        lead_id = dup["id"]
+        await db.leads.update_one(
+            {"id": lead_id, "tenant_id": tenant_id},
+            {"$set": lead_fields_common,
+             "$push": {"timeline": {
+                 "kind": "lead_sense_resubmit",
+                 "at": now_iso_val,
+                 "matched_intents": len(intent_ids),
+             }}},
+        )
+    else:
+        lead_id = str(uuid.uuid4())
+        row = dict(lead_fields_common)
+        row.update({
+            "id": lead_id,
+            "tenant_id": tenant_id,
+            "created_at": now_iso_val,
+            "status": "new",
+            "archived_at": None,
+            "loss_reason": None,
+            "converted_customer_id": None,
+            "timeline": [{
+                "kind": "lead_sense_created",
+                "at": now_iso_val,
+                "matched_intents": len(intent_ids),
+                "session_id": payload.session_id,
+            }],
+        })
+        try:
+            await db.leads.insert_one(row)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "[lead_sense] lead insert failed: %s", exc,
+            )
+            # Best-effort — surface a 202 rather than a 5xx so the
+            # tenant's form submit shows a soft-fail. The intent
+            # trail is still queryable from the admin side.
+            return Response(
+                content='{"status":"accepted","lead_id":null,'
+                        '"matched_intents":0}',
+                media_type="application/json",
+                status_code=202,
+            )
+
+    # Stamp matched intents with converted_at + lead_id for reverse
+    # lookup (admin reports "who converted this session").
+    if intent_ids:
+        try:
+            await db.visitor_intent.update_many(
+                {
+                    "tenant_id": tenant_id,
+                    "id": {"$in": intent_ids},
+                },
+                {"$set": {
+                    "converted_at": now_iso_val,
+                    "converted_lead_id": lead_id,
+                }},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[lead_sense] intent stamp failed (non-fatal): %s",
+                exc,
+            )
+
+    import json as _json
+    return Response(
+        content=_json.dumps({
+            "status": "recorded",
+            "lead_id": lead_id,
+            "matched_intents": len(intent_ids),
+        }),
+        media_type="application/json",
+        status_code=200,
+    )
