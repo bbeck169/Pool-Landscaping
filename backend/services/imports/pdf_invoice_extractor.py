@@ -138,12 +138,13 @@ _EXTRACTION_USER_TMPL = (
     '  "payment_method": "cash"|"check"|"card"|"ach"|"other"|null,\n'
     '  "payment_reference": str | null,\n'
     '  "line_items": [\n'
-    '    {{"item_name": str|null, "description": str, '
+    '    {{"item_name": str|null, "description": str|null, '
     '"cost_rate": float|null, "qty": float|null, "tax_pct": float|null, '
     '"line_total": float|null, "confidence": 0.0-1.0}}\n'
     "  ],\n"
     '  "subtotal": float | null,\n'
     '  "tax_total": float | null,\n'
+    '  "tax_rate": float | null,\n'
     '  "grand_total": float | null,\n'
     '  "amount_paid": float | null,\n'
     '  "total_due": float | null,\n'
@@ -158,14 +159,36 @@ _EXTRACTION_USER_TMPL = (
     "are operators; capture the whole line verbatim in "
     "raw_operator_audit_line and NEVER use it for customer_name.\n"
     "- ``item_name`` is the SHORT SKU / product-catalog label "
-    "(e.g. 'Chlorine tabs', 'Filter cartridge') suitable for a "
-    "one-line inventory column; ``description`` is the LONG, "
-    "human-readable line the invoice actually prints (e.g. "
-    "'2x Chlorine tabs delivered on 3/12 during weekly service'). "
-    "When the source PDF has only ONE text label per line, "
-    "populate BOTH with the same string so downstream consumers "
-    "always have a non-null item_name.\n"
+    "(e.g. 'CL-4LB', 'FLT-CART') suitable for a one-line "
+    "inventory column; ``description`` is the LONG, human-"
+    "readable narrative the invoice actually prints (e.g. "
+    "'Chlorine 4-lb tablets delivered on 3/12 during weekly "
+    "service').  These are DIFFERENT fields — extract each "
+    "separately as it appears on the PDF.\n"
+    "- If the invoice line has only ONE text label (no separate "
+    "SKU + description), put it in ``item_name`` and leave "
+    "``description`` null.  Do NOT duplicate the string.\n"
+    "- ``line_total`` MUST be extracted verbatim from the PDF's "
+    "line-item column.  Do NOT compute it as qty × price — a "
+    "PDF's printed line_total may reflect discounts or rounding "
+    "the extractor cannot see.  Leave null only when the PDF "
+    "literally does not print a per-line total.\n"
+    "- ``subtotal`` is the pre-tax total; ``tax_total`` is the "
+    "tax value in DOLLARS; ``tax_rate`` is the tax value as a "
+    "PERCENTAGE (e.g. 6.25 for 6.25%).  ``grand_total`` is the "
+    "final amount owed — the 'Total' or 'Total Due' line.  "
+    "When all three are visible, verify that "
+    "``subtotal + tax_total ≈ grand_total`` (small rounding "
+    "differences <$0.01 are fine).\n"
 )
+
+# PDF-FIX-C · Feb-2026 — prompt-version stamp for A/B measurement
+# across extraction runs. Bumped whenever the extractor prompt
+# semantic contract changes (new required fields, altered rules).
+# Emitted on the ``[pdf_extract.start]`` log line at every
+# ``extract()`` invocation so downstream analytics can bucket
+# extraction quality by prompt revision.
+EXTRACTOR_PROMPT_VERSION = "v2_deep_extraction"
 
 
 # ── Payment-method normalization ───────────────────────────────
@@ -408,11 +431,23 @@ def _ensure_document(raw: Dict[str, Any], warnings: List[str],
         payment_method=normalize_payment_method(raw.get("payment_method")),
         payment_reference=raw.get("payment_reference"),
         line_items=[
-            ExtractedLineItem(**li) for li in (raw.get("line_items") or [])
-            if isinstance(li, dict) and li.get("description")
+            ExtractedLineItem(
+                **{**li, "description": li.get("description") or ""}
+            )
+            for li in (raw.get("line_items") or [])
+            # PDF-FIX-C · Feb-2026 — accept items with EITHER
+            # ``item_name`` OR non-empty ``description``.  The
+            # new prompt allows ``description=null`` when only a
+            # SKU is on the invoice line, so filtering strictly
+            # on ``description`` would drop legitimate SKU-only
+            # rows.  Empty-both items still drop (matches the
+            # PDF-FIX-B FE fallback which also skips them).
+            if isinstance(li, dict)
+            and (li.get("item_name") or (li.get("description") or "").strip())
         ],
         subtotal=raw.get("subtotal"),
         tax_total=raw.get("tax_total"),
+        tax_rate=raw.get("tax_rate"),
         grand_total=raw.get("grand_total"),
         amount_paid=raw.get("amount_paid"),
         total_due=raw.get("total_due"),
@@ -445,7 +480,47 @@ def _ensure_document(raw: Dict[str, Any], warnings: List[str],
     if doc.doc_kind in ("invoice", "estimate") and not doc.line_items:
         warnings.append(f"document {doc_position_hint}: line_items empty")
 
+    # PDF-FIX-C · Feb-2026 — soft totals-consistency check.
+    # When ``subtotal``, ``tax_total``, and ``grand_total`` are
+    # all extracted, verify that ``subtotal + tax_total ≈
+    # grand_total`` within $0.01. Mismatches are logged as
+    # warnings (rulings §3) but never reject the document —
+    # scanned invoices legitimately show rounding drift and we
+    # can't distinguish that from an extractor error at write
+    # time.  Downstream admin surfaces read the log for spot-
+    # checks.
+    _check_totals_consistency(doc, doc_position_hint)
+
     return doc
+
+
+def _check_totals_consistency(
+    doc: ExtractedDocument, doc_position_hint: int,
+) -> None:
+    """Log a warning when ``subtotal + tax_total`` diverges
+    from ``grand_total`` by more than $0.01. No-op when any of
+    the three fields is null (nothing to reconcile). Never
+    raises — the extractor's write path stays fault-tolerant.
+    """
+    subtotal = doc.subtotal
+    tax = doc.tax_total
+    grand = doc.grand_total
+    if subtotal is None or tax is None or grand is None:
+        return
+    computed = subtotal + tax
+    delta = computed - grand
+    # Round to pennies before the threshold check so IEEE-754
+    # noise (e.g. ``100.00 - 100.01 = -0.01000...5``) doesn't
+    # trigger a false-positive warning on legitimate
+    # penny-level totals.  Semantic intent per rulings §3:
+    # "$0.01 delta is exactly a penny and should NOT warn."
+    if round(abs(delta), 2) > 0.01:
+        logger.warning(
+            f"[pdf_extract.consistency] subtotal_tax_mismatch "
+            f"doc={doc_position_hint} subtotal={subtotal:.2f} "
+            f"tax={tax:.2f} grand={grand:.2f} "
+            f"computed={computed:.2f} delta={delta:+.2f}"
+        )
 
 
 # ── Public entrypoint ──────────────────────────────────────────
@@ -486,6 +561,13 @@ async def extract(
     started = datetime.now(timezone.utc)
     batch_id = batch_id or str(uuid.uuid4())
     sha = hashlib.sha256(pdf_bytes).hexdigest()
+    # PDF-FIX-C · Feb-2026 — prompt-version stamp on every run.
+    # Downstream analytics can bucket extraction quality by
+    # ``prompt_version`` across time.
+    logger.info(
+        f"[pdf_extract.start] prompt_version={EXTRACTOR_PROMPT_VERSION} "
+        f"batch_id={batch_id} sha={sha[:8]} filename={source_filename!r}"
+    )
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_count = doc.page_count

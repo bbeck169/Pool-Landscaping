@@ -81,6 +81,13 @@ class ExtractedDocument(BaseModel):
     subtotal: Optional[float] = None
     tax_total: Optional[float] = None
     grand_total: Optional[float] = None
+    # PDF-FIX-C · Feb-2026 — verbatim tax RATE captured from the
+    # source PDF when the invoice prints one (e.g., "6.25%" in a
+    # dedicated tax row). Stored as a percentage float — 6.25
+    # means 6.25%, NOT 0.0625.  Kept as a sibling of
+    # ``tax_total`` (the dollar amount).  Null when the PDF
+    # shows only a tax amount without a rate.
+    tax_rate: Optional[float] = None
     amount_paid: Optional[float] = None
     total_due: Optional[float] = None
     notes: Optional[str] = None
