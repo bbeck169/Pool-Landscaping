@@ -34,10 +34,29 @@ export default function PublicLeadIntake() {
   // default (pre-K34) app look is preserved for tenants that
   // haven't picked a theme yet.
   const [theme, setTheme] = useState(null);
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+  // Optional hero band configuration mirrors ``schema.hero`` on the
+  // dynamic widget path. Tenants that want a hero banner on the
+  // hardcoded lead-intake page publish it via
+  // ``window.__TENANT_CONFIG__.form_hero`` following the same shape
+  // Phase 3's HeroEditor emits (heading_html, subheading_html,
+  // background{kind,color|url|gradient}, badge). Null → renders
+  // exactly as pre-Phase-4.
+  //
+  // Note: ``column_span`` is intentionally NOT applied on this page
+  // because ``PublicLeadIntake`` renders a hardcoded set of fields
+  // (name / email / phone / address / interest / notes) rather than
+  // iterating over a dynamic ``schema.fields`` array. Column-span
+  // is a widget-only feature — dynamic layout only makes sense on
+  // the dynamic renderer.
+  const [hero, setHero] = useState(null);
   useEffect(() => {
     const t = (typeof window !== "undefined"
                 && window.__TENANT_CONFIG__?.form_theme) || null;
     if (t) setTheme(t);
+    const h = (typeof window !== "undefined"
+                && window.__TENANT_CONFIG__?.form_hero) || null;
+    if (h) setHero(h);
   }, []);
 
   const submit = async (e) => {
@@ -99,6 +118,7 @@ export default function PublicLeadIntake() {
 
   return (
     <ThemedFormShell theme={theme}
+                      hero={hero}
                       testid="public-lead-intake-page"
                       className={theme
                         ? "min-h-screen py-10 px-4"

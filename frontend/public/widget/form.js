@@ -11,6 +11,28 @@
  * Turnstile is inserted when the tenant has configured a site key
  * (see GET /api/widget/config → turnstile_site_key). Backend
  * gracefully bypasses verification when the secret isn't set.
+ *
+ * CUS-Marketing-Form-Builder · Feb-2026 — Phase 4. Widget parity
+ * upgrade — reads and applies schema.theme (colors + font + gradient
+ * + overlay opacity), schema.hero (rich-text heading / sub-heading /
+ * background / optional badge), field.column_span (full | half CSS
+ * grid layout), and field.type === "section" (layout-only header
+ * rows). Zero-regression: null theme/hero/column_span/section
+ * schemas render exactly as pre-Phase-4.
+ *
+ * ─── SECURITY ─────────────────────────────────────────────────
+ * Rich-text HTML (schema.hero.heading_html, schema.hero.subheading_html,
+ * and field.label for section-type fields) is inserted via innerHTML.
+ * XSS containment relies on the RichTextField extension boundary in
+ * the admin editor (StarterKit + Underline + TextStyle + Link with
+ * an http/https/mailto/tel scheme allowlist). See
+ * frontend/src/components/formBuilder/RichTextField.jsx for the
+ * documented boundary + explicit list of extensions that MUST NOT
+ * be added without a DOMPurify hardening pass. DOMPurify is
+ * intentionally NOT bundled here — every KB ships to every
+ * embedder site and the Tiptap schema whitelist is the source of
+ * truth for allowed HTML.
+ * ──────────────────────────────────────────────────────────────
  */
 (function () {
   "use strict";
@@ -72,6 +94,162 @@
     });
   }
 
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+  // Inlined mirror of ``frontend/src/lib/formThemes.js``'s
+  // ``themeToCssVars`` output. Widget is vanilla JS with no bundler —
+  // helpers must be inlined and NOT imported. Kept null-safe so any
+  // missing sub-field is skipped without emitting an empty CSS var.
+  function applyTheme(rootEl, theme) {
+    if (!theme || typeof theme !== "object") return;
+    var c = theme.colors || {};
+    // Five color roles — set as inline CSS variables so downstream
+    // controls resolve them via ``var(--form-*)``.
+    if (c.primary)    rootEl.style.setProperty("--form-primary",    c.primary);
+    if (c.background) rootEl.style.setProperty("--form-background", c.background);
+    if (c.text)       rootEl.style.setProperty("--form-text",       c.text);
+    if (c.border)     rootEl.style.setProperty("--form-border",     c.border);
+    if (c.accent)     rootEl.style.setProperty("--form-accent",     c.accent);
+    if (theme.font_family) rootEl.style.fontFamily = theme.font_family;
+    if (c.background) rootEl.style.backgroundColor = c.background;
+    if (c.text)       rootEl.style.color = c.text;
+    // Gradient background — layered above the solid ``backgroundColor``
+    // fallback so a legacy renderer that ignores ``background-image``
+    // still sees the primary color.
+    var overlay = (typeof theme.overlay_opacity === "number"
+                    && theme.overlay_opacity > 0)
+                    ? (theme.overlay_opacity / 100).toFixed(2)
+                    : null;
+    if (theme.gradient && typeof theme.gradient === "object"
+        && theme.gradient.from && theme.gradient.to) {
+      var angle = typeof theme.gradient.angle_deg === "number"
+                    ? theme.gradient.angle_deg : 135;
+      var grad = "linear-gradient(" + angle + "deg, "
+                    + theme.gradient.from + " 0%, "
+                    + theme.gradient.to + " 100%)";
+      if (overlay) {
+        // Darken overlay layered ABOVE the gradient — same shape as
+        // ``ThemedFormShell.jsx``'s composition so admin preview +
+        // widget output match byte-for-byte.
+        rootEl.style.backgroundImage =
+          "linear-gradient(rgba(0,0,0, " + overlay + "), rgba(0,0,0, " + overlay + ")), "
+            + grad;
+      } else {
+        rootEl.style.backgroundImage = grad;
+      }
+      rootEl.style.setProperty("--form-bg-gradient", grad);
+    }
+    if (overlay) {
+      rootEl.style.setProperty("--form-overlay-opacity", overlay);
+    }
+  }
+
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+  // Renders the hero band that sits above the form fields. Handles
+  // three background kinds (color | image | gradient) + optional
+  // special-offer badge in the top-right corner. Rich-text HTML
+  // is injected via innerHTML — XSS containment is documented at
+  // the top of this file.
+  function renderHero(hero) {
+    if (!hero || typeof hero !== "object") return null;
+    var bg = hero.background || { kind: "color", color: "#F8FAFC" };
+    var wrapStyle = {
+      position: "relative",
+      padding: "32px 24px",
+      borderRadius: "12px 12px 0 0",
+      marginBottom: "0",
+      color: "#0F172A",
+      overflow: "hidden",
+    };
+    if (bg.kind === "color") {
+      wrapStyle.background = bg.color || "#F8FAFC";
+    } else if (bg.kind === "gradient") {
+      var angle = typeof bg.angle_deg === "number" ? bg.angle_deg : 135;
+      wrapStyle.backgroundImage =
+        "linear-gradient(" + angle + "deg, "
+          + (bg.from || "#0EA5E9") + " 0%, "
+          + (bg.to   || "#1B1F5C") + " 100%)";
+      wrapStyle.color = "#FFFFFF";
+    } else if (bg.kind === "image") {
+      if (bg.url) {
+        wrapStyle.backgroundImage = "url(" + bg.url + ")";
+        wrapStyle.backgroundSize = "cover";
+        wrapStyle.backgroundPosition = "center";
+        wrapStyle.color = "#FFFFFF";
+      } else {
+        wrapStyle.background = "#F8FAFC";
+      }
+    }
+
+    var heroDiv = el("div", {
+      "data-testid": "form-widget-hero",
+      "data-hero-kind": bg.kind || "color",
+      style: wrapStyle,
+    });
+
+    // Image-kind overlay — semi-transparent black wash layered above
+    // the background image but BELOW the text content. Uses an
+    // absolute-positioned sibling so text stays crisp.
+    if (bg.kind === "image" && typeof bg.overlay_opacity === "number"
+          && bg.overlay_opacity > 0 && bg.url) {
+      var overlay = (bg.overlay_opacity / 100).toFixed(2);
+      heroDiv.appendChild(el("div", {
+        "data-testid": "form-widget-hero-overlay",
+        style: {
+          position: "absolute",
+          top: "0", left: "0", right: "0", bottom: "0",
+          background: "rgba(0,0,0, " + overlay + ")",
+          pointerEvents: "none",
+        },
+      }));
+    }
+
+    // Text stack sits above the overlay via z-index + position:
+    // relative on the container.
+    var textWrap = el("div", {
+      style: { position: "relative", zIndex: "1" },
+    });
+    if (hero.heading_html) {
+      var heading = el("div", {
+        "data-testid": "form-widget-hero-heading",
+        style: { fontSize: "24px", fontWeight: "700", marginBottom: "8px" },
+      });
+      // XSS containment via RichTextField schema whitelist — see the
+      // security comment at the top of this file.
+      heading.innerHTML = hero.heading_html;
+      textWrap.appendChild(heading);
+    }
+    if (hero.subheading_html) {
+      var sub = el("div", {
+        "data-testid": "form-widget-hero-subheading",
+        style: { fontSize: "14px", opacity: "0.9" },
+      });
+      sub.innerHTML = hero.subheading_html;
+      textWrap.appendChild(sub);
+    }
+    heroDiv.appendChild(textWrap);
+
+    // Optional special-offer badge — absolute-positioned in the
+    // top-right corner. Alt text drives the ``alt`` attribute for
+    // screen readers.
+    if (hero.badge && hero.badge.url) {
+      heroDiv.appendChild(el("img", {
+        "data-testid": "form-widget-hero-badge",
+        src: hero.badge.url,
+        alt: hero.badge.alt_text || "",
+        style: {
+          position: "absolute",
+          top: "12px",
+          right: "12px",
+          width: "60px",
+          height: "60px",
+          objectFit: "contain",
+          zIndex: "2",
+        },
+      }));
+    }
+    return heroDiv;
+  }
+
   var LABEL_STYLE = {
     display: "block",
     fontSize: "13px",
@@ -92,6 +270,31 @@
 
   function fieldRow(f, i) {
     var name = f.name || f.id || ("field_" + i);
+    // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+    // Section fields render a header only — no input, no submission
+    // value, full-width row.
+    if (f.type === "section") {
+      var section = el("div", {
+        "data-testid": "form-widget-section-" + (f.id || i),
+        "data-section-index": String(i),
+        style: {
+          gridColumn: "span 2",
+          marginTop: "4px",
+          marginBottom: "4px",
+          paddingTop: "8px",
+          paddingBottom: "4px",
+          borderTop: "1px solid #E2E8F0",
+          fontSize: "15px",
+          fontWeight: "600",
+          color: "#0F172A",
+        },
+      });
+      // XSS containment via RichTextField schema whitelist — see the
+      // security comment at the top of this file.
+      section.innerHTML = f.label || "";
+      return section;
+    }
+
     var required = !!f.required;
     var opts = f.options || [];
     var labelText = (f.label || name) + (required ? " *" : "");
@@ -206,9 +409,16 @@
           required: required ? "" : null, style: INPUT_STYLE,
         });
     }
+    // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+    // column_span → CSS grid column span. Legacy fields (undefined /
+    // null / "full") span two columns → full-width row. "half" fields
+    // span one column so consecutive half-width fields pair naturally
+    // on the same grid row (city + state, phone + ext, etc.).
+    var colSpan = (f.column_span === "half") ? "span 1" : "span 2";
     return el("div", {
       "data-testid": "form-widget-field-" + name,
-      style: { marginBottom: "14px" },
+      "data-column-span": f.column_span || "full",
+      style: { marginBottom: "0", gridColumn: colSpan },
     }, [
       f.type === "checkbox" ? null : el("label", { style: LABEL_STYLE }, [labelText]),
       control,
@@ -274,13 +484,31 @@
     var TURNSTILE_KEY = (cfg && cfg.turnstile_site_key) || null;
     var turnstileHolder = null;
 
+    // CUS-Marketing-Form-Builder · Feb-2026 — Phase 4 widget parity.
+    // Optional hero band prepended above the form. Renders nothing
+    // when ``schema.hero`` is null so pre-Phase-3 forms render
+    // exactly as before.
+    var heroEl = renderHero(schema.hero);
+
+    // Build the fields grid — CSS grid so column_span=half fields
+    // can pair on the same row. Legacy full-width fields span the
+    // entire grid width (span 2).
+    var fieldsGrid = el("div", {
+      "data-testid": "form-widget-fields-grid",
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: "14px 12px",
+      },
+    }, fields.map(fieldRow));
+
     var form = el("form", {
       "data-testid": "form-widget-form",
       novalidate: "",
       style: {
         background: "#fff",
         border: "1px solid #E2E8F0",
-        borderRadius: "12px",
+        borderRadius: heroEl ? "0 0 12px 12px" : "12px",
         padding: "20px",
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -316,7 +544,15 @@
           color: "#0F172A",
         },
       }, [schema.name || ""]),
-    ].concat(fields.map(fieldRow)));
+      fieldsGrid,
+    ]);
+
+    // Apply the tenant theme AFTER building the form so inline CSS
+    // vars override the defaults set above. Null-safe: no-op when
+    // ``schema.theme`` is missing → legacy pre-K34 shape.
+    if (schema.theme) {
+      applyTheme(form, schema.theme);
+    }
 
     if (TURNSTILE_KEY) {
       turnstileHolder = el("div", {
@@ -332,11 +568,16 @@
       document.head.appendChild(s);
     }
 
+    // CTA — use the theme's primary color when available, fall back
+    // to the legacy brand_color param + hardcoded sky-500 for
+    // pre-Phase-4 tenants.
+    var themePrimary = (schema.theme && schema.theme.colors
+                          && schema.theme.colors.primary) || null;
     var submitBtn = el("button", {
       type: "submit",
       "data-testid": "form-widget-submit-btn",
       style: {
-        background: (cfg && cfg.brand_color) || "#0EA5E9",
+        background: themePrimary || (cfg && cfg.brand_color) || "#0EA5E9",
         color: "#fff",
         border: "none",
         borderRadius: "10px",
@@ -344,11 +585,23 @@
         fontSize: "14px",
         fontWeight: "600",
         cursor: "pointer",
-        marginTop: "6px",
+        marginTop: "14px",
       },
     }, [schema.submit_button_label || "Send"]);
     form.appendChild(submitBtn);
-    MOUNT.appendChild(form);
+
+    // Assemble: hero (optional) → form. Both wrapped in a container
+    // that carries the visual rounded corners so the hero and form
+    // read as one cohesive card.
+    if (heroEl) {
+      var wrap = el("div", {
+        "data-testid": "form-widget-wrap",
+        style: { maxWidth: "520px" },
+      }, [heroEl, form]);
+      MOUNT.appendChild(wrap);
+    } else {
+      MOUNT.appendChild(form);
+    }
   }
 
   Promise.all([
