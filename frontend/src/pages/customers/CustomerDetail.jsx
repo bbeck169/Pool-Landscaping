@@ -44,10 +44,11 @@ import { useSetDynamicCrumb }
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
-// Feb-2026 · N5-T1 · PageHeader adoption sweep (Option B: add
-// above the existing navy identity strip; the strip's data-rich
-// action row + the header card's VIP + geocode chrome stay put).
-import PageHeader from "@/components/layout/PageHeader";
+// Feb-2026 · Customer name relocation — the PageHeader import
+// was removed alongside the JSX call site.  The customer name
+// now lives INSIDE the identity card (see the inline
+// customer-detail-inline-h1 render near the address line) so a
+// separate page-chrome header is no longer needed.
 
 
 /**
@@ -575,15 +576,15 @@ export default function CustomerDetail() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customer-detail">
-      {/* Feb-2026 · N5-T1 · PageHeader adoption (Option B). Sits
-          ABOVE the "All customers" back button + navy identity
-          strip so the customer's name reads as the page title
-          without disturbing the existing action-row / VIP / call
-          chrome. The inline <h1> in the Header card below is
-          replaced with a screen-reader-only stub so existing
-          tests keying off ``customer-detail`` still resolve while
-          the visible title lives in PageHeader. */}
-      <PageHeader title={customer.name} />
+      {/* Feb-2026 · Customer profile name relocation — the
+          PageHeader-rendered H1 used to sit here above the "All
+          customers" back button.  Moved into the identity card
+          (below the customer-since / VIP / ACTIVE row, above the
+          address line) so the name reads as part of the card
+          identity rather than the page chrome.  Semantic H1
+          preserved on the new inline element; the sr-only stub
+          that lived inside the pill row was removed in the same
+          diff. */}
 
       <button
         onClick={() => navigate("/customers")}
@@ -762,9 +763,6 @@ export default function CustomerDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="sr-only" data-testid="customer-detail-inline-h1">
-                {customer.name}
-              </h1>
               {customer.customer_since ? (
                 <span
                   data-testid="customer-since-label"
@@ -825,6 +823,22 @@ export default function CustomerDetail() {
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
             </div>
+            {/* Feb-2026 · Customer name relocated INTO the identity
+                card (was rendered at page-chrome level via
+                PageHeader).  Sits directly above the address line
+                so the name + property + geocode read as one
+                cohesive identity block.  H1 semantic preserved
+                per accessibility (screen readers key off page
+                landmarks); text-2xl matches the sibling
+                cd-customer-name-secondary echo inside the
+                Overview tab body for visual continuity. */}
+            <h1
+              className="text-2xl font-bold mt-3 mb-1"
+              style={{ color: colors.onSurface }}
+              data-testid="customer-detail-inline-h1"
+            >
+              {customer.name}
+            </h1>
             {/* Feb-2026 · Customer profile — primary-property address
                 line under the name. Clickable → Google Maps
                 directions in a new tab. Falls back to a muted
