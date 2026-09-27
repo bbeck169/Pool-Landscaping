@@ -110,6 +110,22 @@ class ExtractedBatch(BaseModel):
     # persistence, legacy router responses) keep working while
     # frontend banner code migrates to the structured list.
     structured_warnings: List[Dict[str, Any]] = []
+    # PDF Importer Sub-phase D · Feb-2026 — additive tile-summary
+    # block populated by :mod:`services.imports.pdf_tiled_extractor`
+    # when the source PDF crosses the ``TILE_PAGE_THRESHOLD`` gate
+    # (>36 pages). ``None`` for single-shot extractions to keep the
+    # small-PDF happy path byte-identical and the response payload
+    # slim. Shape::
+    #
+    #     {
+    #         "total_pages": int,
+    #         "tiles_used": int,
+    #         "docs_pre_merge": int,
+    #         "docs_post_merge": int,
+    #         "cross_tile_merges": int,
+    #         "warnings": [ {code, tile_index, message}, ... ],
+    #     }
+    tile_summary: Optional[Dict[str, Any]] = None
     model_used: str
     extraction_started_at: datetime
     extraction_finished_at: datetime

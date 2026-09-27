@@ -80,6 +80,7 @@ from fastapi import (
 from config import db
 from services.imports.extraction_schema import ExtractedBatch, MapperReport
 from services.imports.pdf_invoice_extractor import extract
+from services.imports.pdf_tiled_extractor import extract_with_tiling
 from services.imports.pdf_mapper import map_extracted_to_quote_in
 from utils import require_admin
 
@@ -375,7 +376,11 @@ async def _run_pipeline(
 
     try:
         # ── Extract ─────────────────────────────────────────
-        batch: ExtractedBatch = await extract(
+        # PDF Importer Sub-phase D · Feb-2026 — routed through the
+        # tiled orchestrator. Small PDFs (≤36 pages) fast-path
+        # straight to the original ``extract`` call byte-identically;
+        # larger PDFs are sliced into overlapping tiles + merged.
+        batch: ExtractedBatch = await extract_with_tiling(
             pdf_bytes=pdf_bytes,
             tenant_id=tenant_id,
             source_filename=source_filename,
@@ -425,6 +430,13 @@ async def _run_pipeline(
                 "extraction_started_at": batch.extraction_started_at.isoformat(),
                 "extraction_finished_at": batch.extraction_finished_at.isoformat(),
                 "warnings": batch.warnings,
+                # PDF Importer Sub-phase D · Feb-2026 — persist the
+                # tile-summary alongside the batch so Sub-phase E's
+                # frontend banner can render "78 pages · 4 tiles · 3
+                # merges" without having to re-extract. ``None`` for
+                # ≤36-page single-shot batches — the field is
+                # additive-only.
+                "tile_summary": batch.tile_summary,
                 "extracted_documents_full": [
                     d.model_dump(mode="json") for d in batch.documents
                 ],
