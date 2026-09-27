@@ -83,7 +83,7 @@ describe("App.js · Settings hub route wiring", () => {
 });
 
 describe("SettingsHub · sidebar entries stay in sync with the router", () => {
-  it("SECTIONS array contains exactly the 7 canonical keys", () => {
+  it("SECTIONS array contains exactly the canonical keys", () => {
     // Extract the SECTIONS declaration and count `key:` entries.
     // Phase I1.5.b · Feb-2026 — added ``theme`` (tenant palette
     // editor + live preview). Bumped from 4 → 5 canonical keys.
@@ -94,8 +94,22 @@ describe("SettingsHub · sidebar entries stay in sync with the router", () => {
     // (25-checkbox multi-select tenant vertical picker).
     // Bumped from 6 → 7 → 9 canonical keys (Feb-2026: added
     // ``org-notifications`` for Ticket #3 + ``ai-configuration``
-    // for Ticket #4). Any future addition MUST update this list
-    // AND wire the route in ``App.js``.
+    // for Ticket #4).
+    // Feb-2026 · Sprint 3b — added ``chemistry-configuration``
+    // (per-tenant chemistry targets + dosing formulas).
+    // Feb-2026 · Sprint 3c — added ``feature-marketplace``
+    // (four premium add-ons: Zillow, SEO Heatmap, AI Analytics,
+    // AI Copilot).
+    // Feb-2026 · Phase P16 — added ``master-services`` (catalog
+    // of services with name, category, default price).
+    // Feb-2026 · Proposal Analytics feature — added
+    // ``proposal-analytics``.
+    // LDM-D · Feb-2026 — added ``automations`` (Manage Automations
+    // tab with sliders for the four settings.automation_rules
+    // fields; AI Live Dispatcher + Predictive Maintenance
+    // thresholds).
+    // Any future addition MUST update this list AND wire the
+    // route in ``App.js``.
     const start = HUB_SRC.indexOf("const SECTIONS = [");
     const end = HUB_SRC.indexOf("];", start);
     expect(start).toBeGreaterThan(-1);
@@ -104,9 +118,11 @@ describe("SettingsHub · sidebar entries stay in sync with the router", () => {
     const keys = (block.match(/key:\s*"([^"]+)"/g) || [])
       .map((s) => s.match(/"([^"]+)"/)[1]);
     expect(keys.sort()).toEqual(
-      ["ai-configuration", "branding", "business", "general",
-        "industries", "integrations", "org-notifications",
-        "social", "theme"],
+      ["ai-configuration", "automations", "branding", "business",
+        "chemistry-configuration", "feature-marketplace",
+        "general", "industries", "integrations",
+        "master-services", "org-notifications",
+        "proposal-analytics", "social", "theme"],
     );
   });
 

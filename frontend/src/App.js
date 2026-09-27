@@ -198,6 +198,8 @@ const IndustriesSettings = React.lazy(() => import(/* webpackChunkName: "p-setti
 // Feb-2026 · Consolidated Settings Hub — shared layout + Social tab.
 import SettingsHub, { SettingsGeneral } from "@/layouts/SettingsHub";
 const ProposalAnalyticsPage = React.lazy(() => import(/* webpackChunkName: "p-settings-proposalanalyticspage" */ "@/pages/settings/ProposalAnalyticsPage"));
+// LDM-D · Feb-2026 — Manage Automations settings tab.
+const ManageAutomationsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-manageautomationssettings" */ "@/pages/settings/ManageAutomationsSettings"));
 // Feb-2026 · Ticket #3 + #4 — Org Notifications + AI Configuration tabs.
 const OrgNotificationsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-orgnotificationssettings" */ "@/pages/settings/OrgNotificationsSettings"));
 const AIConfigurationSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-aiconfigurationsettings" */ "@/pages/settings/AIConfigurationSettings"));
@@ -1534,6 +1536,11 @@ export default function App() {
                   engagement dashboard. Admin-only via the parent
                   <AdminOnly> wrapper on the ``settings`` route. */}
               <Route path="proposal-analytics" element={<ProposalAnalyticsPage />} />
+              {/* LDM-D · Feb-2026 — Manage Automations tab. Sliders
+                  for the four settings.automation_rules fields
+                  (see routers/tenants.py). Admin-only via the
+                  parent <AdminOnly> wrapper. */}
+              <Route path="automations" element={<ManageAutomationsSettings />} />
             </Route>
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

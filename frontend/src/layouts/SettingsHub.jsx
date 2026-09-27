@@ -30,6 +30,7 @@ import {
   ShoppingBag,
   BarChart3,
   Wrench,
+  Zap,
 } from "lucide-react";
 import TenantIndustryBadges from "@/components/tenant/TenantIndustryBadges";
 
@@ -128,6 +129,16 @@ const SECTIONS = [
     label: "Proposal Analytics",
     Icon: BarChart3,
     hint: "Anonymized engagement for flipbook estimates — opens, clicks, page views, time on page",
+  },
+  {
+    // LDM-D · Feb-2026 — Manage Automations tab. Standalone (per
+    // LDM-D ruling #2) — TCH-D "Manage AI Workforce" can join as
+    // a peer tab when TCH-D actually ships.
+    key: "automations",
+    to: "/settings/automations",
+    label: "Automations",
+    Icon: Zap,
+    hint: "AI Live Dispatcher + Predictive Maintenance thresholds",
   },
 ];
 
