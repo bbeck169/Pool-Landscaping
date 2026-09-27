@@ -208,3 +208,13 @@ frontend/node_modules/.vite/
 
 frontend/node_modules/.cache/default-development/48.pack
 frontend/node_modules/.cache/default-development/64.pack
+
+# Feb-2026 — Prevent the platform auto-commit hook from sweeping
+# in-flight phase specs and follow-up notes into random commits.
+# Existing already-tracked files (per ``git ls-files memory/``)
+# stay tracked; this rule only affects future untracked additions
+# under the ``SPEC_`` / ``FOLLOWUP_`` prefixes. Everything else in
+# ``memory/`` (``PRD.md``, ``auth_testing.md``, diag / audit /
+# feature / runbook / diagnostic docs) remains freely trackable.
+memory/SPEC_*.md
+memory/FOLLOWUP_*.md
