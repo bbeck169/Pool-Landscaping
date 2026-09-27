@@ -30,7 +30,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
@@ -103,12 +103,22 @@ async def _verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> N
 # widget builder type round-trips: text, email, phone, textarea,
 # number, url, address_google, dropdown, multiselect, checkbox, radio,
 # date, file, select (alias for dropdown for backwards compat).
+#
+# CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Adds ``"section"``
+# as a LAYOUT-ONLY marker: renders a section heading in the public
+# form but collects no submission value. Skips the usual ``name`` /
+# submission-key handling in ``_validate_field_defs``.
 _FIELD_TYPES = {
     "text", "email", "phone", "textarea", "number", "url", "date",
     "address_google", "dropdown", "select", "multiselect",
-    "checkbox", "radio", "file",
+    "checkbox", "radio", "file", "section",
 }
 _OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
+# CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Layout-only types
+# have no submission value. Skipped for duplicate-name checks + do
+# not require ``name`` to be non-empty.
+_LAYOUT_TYPES = {"section"}
+_COLUMN_SPAN_VALUES = {"full", "half"}
 
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,63})$")
 _FIELD_ID_RE = re.compile(r"[^a-z0-9]+")
@@ -136,8 +146,14 @@ class FormField(BaseModel):
     # Both ``id`` and ``name`` are stored. ``id`` is auto-generated
     # from ``name`` when the client doesn't provide one, so submissions
     # can key by either while the frontend renders by ``id``/``order``.
+    #
+    # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. ``name`` is now
+    # optional so ``"section"``-type layout markers can omit it. Every
+    # non-layout type still requires a non-empty name; enforced in
+    # ``_validate_field_defs`` (Pydantic-level laxity kept minimal so
+    # the type-based rule is the single source of truth).
     id: Optional[str] = Field(None, max_length=60)
-    name: str = Field(..., min_length=1, max_length=60)
+    name: Optional[str] = Field(None, max_length=60)
     label: str = Field(..., min_length=1, max_length=120)
     type: str = Field(..., description=f"one of {sorted(_FIELD_TYPES)}")
     required: bool = False
@@ -150,6 +166,13 @@ class FormField(BaseModel):
     # Client can set explicit order; when absent we assign the array
     # index on save.
     order: Optional[int] = None
+    # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Optional layout
+    # hint. ``None`` means "renderer default" — today the widget +
+    # ``ThemedFormShell`` render every field full-width, so ``None``
+    # and ``"full"`` are equivalent on the wire. Left truly optional
+    # (no server-side default coercion) so pre-Phase-1 forms round-
+    # trip byte-identical.
+    column_span: Optional[Literal["full", "half"]] = None
 
 
 class SubmitConfig(BaseModel):
@@ -187,6 +210,32 @@ class FormIn(BaseModel):
     # doesn't require a Pydantic schema bump. Defaults to None so
     # legacy forms render with the app's default look.
     theme: Optional[Dict[str, Any]] = None
+    # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Hero designer
+    # payload. Persisted opaquely (frontend owns the sub-schema); the
+    # shape below is the contract enforced by the builder UI and
+    # renderers:
+    #
+    #   {
+    #     "heading_html":     "<p>...</p>",     # Tiptap HTML output
+    #     "subheading_html":  "<p>...</p>",     # Tiptap HTML output
+    #     "background": {                        # discriminated union
+    #       "kind": "color" | "image" | "gradient",
+    #       # kind=color:    "color": "#hex"
+    #       # kind=image:    "url": "https://...",
+    #       #                "overlay_opacity": int 0-100 (default 30)
+    #       # kind=gradient: "angle_deg": int, "from": "#hex", "to": "#hex"
+    #     },
+    #     "badge": {                             # optional 'Special Offer'
+    #       "url": "https://...",                # from MediaLibraryPicker
+    #       "alt_text": "..."
+    #     }
+    #   }
+    #
+    # Mirrors the K34 ``theme`` pattern — untyped-dict-through so the
+    # frontend can evolve the sub-schema without a backend bump. None
+    # for pre-Phase-1 forms → renderers skip hero and render the form
+    # body only.
+    hero: Optional[Dict[str, Any]] = None
 
 
 class FormPatch(BaseModel):
@@ -199,6 +248,10 @@ class FormPatch(BaseModel):
     active: Optional[bool] = None
     # K34 · Feb-2026 — patch surface for the unified form theme.
     theme: Optional[Dict[str, Any]] = None
+    # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Patch surface
+    # for the hero designer payload. See ``FormIn.hero`` docstring for
+    # the frontend-owned shape.
+    hero: Optional[Dict[str, Any]] = None
 
 
 class FormSubmit(BaseModel):
@@ -213,7 +266,16 @@ class FormSubmit(BaseModel):
 
 def _validate_field_defs(fields: List[FormField]) -> List[Dict[str, Any]]:
     """Validate + normalise. Auto-populates ``id`` and ``order``.
-    Returns the plain-dict list ready for persistence."""
+    Returns the plain-dict list ready for persistence.
+
+    CUS-Marketing-Form-Builder · Feb-2026 — Phase 1 changes:
+      * ``"section"``-type fields are LAYOUT markers — no submission
+        value, ``name`` is optional (auto-derived from ``label`` when
+        missing), and duplicate-name checks are skipped for them.
+      * ``column_span`` when present MUST be ``"full"`` or ``"half"``
+        — anything else raises 422. ``None`` is allowed and means
+        "renderer default" (currently full-width).
+    """
     if not fields:
         raise HTTPException(422, "form must have at least one field")
     seen_names: set = set()
@@ -222,15 +284,38 @@ def _validate_field_defs(fields: List[FormField]) -> List[Dict[str, Any]]:
     for idx, f in enumerate(fields):
         if f.type not in _FIELD_TYPES:
             raise HTTPException(422, f"field '{f.name}': unsupported type '{f.type}'")
-        if f.name in seen_names:
+        is_layout = f.type in _LAYOUT_TYPES
+        # Non-layout fields still require a non-empty ``name``. Layout
+        # markers may omit it (they're addressed by ``id``/``order``
+        # only and never appear in submission answers).
+        if not is_layout and not (f.name or "").strip():
+            raise HTTPException(
+                422,
+                f"field of type '{f.type}' requires a non-empty name",
+            )
+        if not is_layout and f.name in seen_names:
             raise HTTPException(422, f"duplicate field name '{f.name}'")
-        seen_names.add(f.name)
+        if not is_layout:
+            seen_names.add(f.name)
         if f.type in _OPTIONS_REQUIRED_TYPES and not f.options:
             raise HTTPException(
                 422,
                 f"field '{f.name}': {f.type} fields need options",
             )
-        fid = _norm_field_id(f.id or f.name)
+        # ``column_span`` — enum-validate. Pydantic v2 also enforces
+        # via ``Literal`` at model-parse time, but re-checking here
+        # gives a clearer error message for the dict-input PATCH path.
+        if f.column_span is not None and f.column_span not in _COLUMN_SPAN_VALUES:
+            raise HTTPException(
+                422,
+                f"field '{f.name or f.label}': column_span must be "
+                f"one of {sorted(_COLUMN_SPAN_VALUES)}",
+            )
+        # Layout markers derive their id from ``label`` (or a stable
+        # ``section-{idx}`` fallback) so they still have a
+        # deterministic key for React ``key=`` props on the renderer.
+        base_key = f.id or f.name or (f.label if is_layout else "")
+        fid = _norm_field_id(base_key or f"section_{idx}")
         # Ensure id uniqueness (auto-suffix if collides).
         base = fid; n = 2
         while fid in seen_ids:
@@ -312,6 +397,9 @@ async def create_form(body: FormIn,
         # K34 · Feb-2026 — untyped dict passthrough. None until the
         # builder picks a preset / customizes colors.
         "theme": body.theme,
+        # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Untyped
+        # dict passthrough. None for legacy / pre-Phase-1 forms.
+        "hero": body.hero,
     }
     await db.marketing_forms.insert_one(doc)
     doc.pop("_id", None)
@@ -415,7 +503,12 @@ async def get_widget_form(fid: str,
          # K34 · Feb-2026 — surface the theme so the public widget
          # renderer can apply it. Absent for legacy forms → renderer
          # falls back to the app default.
-         "theme": 1},
+         "theme": 1,
+         # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Surface
+         # the hero designer payload so the widget can render the
+         # heading + subheading + background. Absent for legacy
+         # forms → renderer skips the hero band.
+         "hero": 1},
     )
     if not doc:
         raise HTTPException(404, "Form not found or not active")
