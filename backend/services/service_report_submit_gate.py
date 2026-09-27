@@ -173,3 +173,78 @@ async def stamp_sms_sent(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[p45] stamp_sms_sent soft-fail: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# P0 · Feb-2026 — Chemical-snapshot-before-status-flip rollback path.
+# ═══════════════════════════════════════════════════════════════════════
+async def rollback_submit_claim(
+    *,
+    tenant_id: str,
+    report_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    tech_id: Optional[str] = None,
+) -> bool:
+    """Undo the atomic stamps written by :func:`claim_submit_or_none`.
+
+    Called EXCLUSIVELY from the chemical-snapshot-before-status-flip
+    P0 fix path in ``routers/service_reports.py``. When
+    ``snapshot_chemical_usage`` raises AFTER the P45 claim has
+    stamped ``submitted_at`` but BEFORE the job status flips to
+    ``completed``, we must unstamp the claim so a retry can
+    re-fire the snapshot — otherwise the L708 ``submitted_at``
+    idempotency short-circuit would permanently lose the
+    chemistry ledger for that report.
+
+    Unsets the exact triple :func:`claim_submit_or_none` sets:
+    ``submitted_at``, ``email_pending_at``, ``sms_pending_at``.
+    No other field is touched — this is intentionally narrow so
+    the rollback never clobbers state written by other side-effects
+    that happened to fire between claim and snapshot failure.
+
+    Idempotent: a second call on a row where the fields are already
+    absent is a no-op ``update_one`` (matched_count may be 0 or 1
+    depending on whether a doc matches the tenant/report filter at
+    all; either is safe).
+
+    Returns ``True`` when the update matched a row, ``False``
+    otherwise (used by callers / tests to assert rollback fired).
+    """
+    if not tenant_id:
+        raise ValueError("rollback_submit_claim: tenant_id required")
+    if not (report_id or job_id):
+        raise ValueError(
+            "rollback_submit_claim: one of report_id / job_id required",
+        )
+    filt: dict = {"tenant_id": tenant_id}
+    if report_id:
+        filt["id"] = report_id
+    else:
+        filt["job_id"] = job_id
+        if tech_id:
+            filt["tech_id"] = tech_id
+    unset = {"$unset": {
+        "submitted_at": "",
+        "email_pending_at": "",
+        "sms_pending_at": "",
+    }}
+    try:
+        res = await db.service_reports.update_one(filt, unset)
+    except Exception as exc:  # noqa: BLE001
+        # Bubble — a rollback failure while ALREADY handling a
+        # snapshot failure means we can't guarantee retry
+        # correctness. Caller must know so the 500 payload can
+        # carry both errors for ops triage.
+        logger.error(
+            "[p45] rollback_submit_claim failed tenant=%s report=%s"
+            " job=%s: %s",
+            tenant_id, report_id or "-", job_id or "-", exc,
+        )
+        raise
+    logger.info(
+        "[p45] rollback_submit_claim tenant=%s report=%s job=%s"
+        " matched=%s modified=%s",
+        tenant_id, report_id or "-", job_id or "-",
+        res.matched_count, res.modified_count,
+    )
+    return bool(res.matched_count)

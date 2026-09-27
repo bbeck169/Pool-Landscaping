@@ -79,6 +79,21 @@ def adb(loop):
     import config as _cfg
     from routers import service_reports as _sr_mod
     from routers import referrals as _ref_mod
+    # Feb-2026 · P0 · Chemical snapshot BEFORE status flip — after
+    # the P0 fix in ``routers/service_reports.py`` the
+    # ``snapshot_chemical_usage`` call fires INSIDE the submit path
+    # (previously it ran silently swallowed AFTER the status flip).
+    # A snapshot Mongo op runs on ``routers.chemical_products.db``,
+    # which — like every other module's ``db`` — is bound at import
+    # time via ``from config import db``.  Without this rebind, the
+    # snapshot's ``db.chemical_costs.find(...)`` would resolve to
+    # whichever loop config.db happened to bind first (chem_gate's
+    # ``_LOOP`` when co-run in sequence) and would raise a cross-
+    # loop RuntimeError inside our loop.  The P0 handler correctly
+    # surfaces that as ``HTTPException(500, chemistry_snapshot_failed)``,
+    # which would break every test in this file.  Rebinding here
+    # keeps this suite hermetic.
+    from routers import chemical_products as _chem_mod
     from services import service_report_submit_gate as _gate_mod
     from services import credits_apply as _credits_mod
     from services import invoice_numbering as _inv_num_mod
@@ -88,6 +103,7 @@ def adb(loop):
         "cfg": getattr(_cfg, "db", None),
         "sr": getattr(_sr_mod, "db", None),
         "ref": getattr(_ref_mod, "db", None),
+        "chem": getattr(_chem_mod, "db", None),
         "gate": getattr(_gate_mod, "db", None),
         "credits": getattr(_credits_mod, "db", None),
         "inv_num": getattr(_inv_num_mod, "db", None),
@@ -96,6 +112,7 @@ def adb(loop):
     _cfg.db = _adb
     _sr_mod.db = _adb
     _ref_mod.db = _adb
+    _chem_mod.db = _adb
     _gate_mod.db = _adb
     _credits_mod.db = _adb
     _inv_num_mod.db = _adb
@@ -107,6 +124,7 @@ def adb(loop):
     _cfg.db = _orig["cfg"]
     _sr_mod.db = _orig["sr"]
     _ref_mod.db = _orig["ref"]
+    _chem_mod.db = _orig["chem"]
     _gate_mod.db = _orig["gate"]
     _credits_mod.db = _orig["credits"]
     _inv_num_mod.db = _orig["inv_num"]

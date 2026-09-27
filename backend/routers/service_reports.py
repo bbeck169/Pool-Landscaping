@@ -876,6 +876,124 @@ async def submit_service_report(
         except Exception:
             pass
 
+    # ── P0 · Feb-2026 · Chemical snapshot BEFORE status flip ─────
+    # Prior implementation ran ``snapshot_chemical_usage`` AFTER
+    # the ``db.jobs.update_one({"status": "completed"})`` call
+    # below AND silently swallowed any snapshot failure via
+    # ``logger.warning``. Result: chemicals were silently missing
+    # from customer reports on every transient snapshot failure
+    # (Mongo write pressure, catalog drift, per-line coerce
+    # errors, ...) while the job was already marked completed.
+    #
+    # Fix:
+    #   1. Snapshot fires HERE — after the P45 atomic claim
+    #      (which stamps ``submitted_at`` on the report row) but
+    #      BEFORE the job status flips to ``completed``.
+    #   2. On failure, ``rollback_submit_claim`` unsets the P45
+    #      stamps (``submitted_at`` / ``email_pending_at`` /
+    #      ``sms_pending_at``) so the L708 idempotency
+    #      short-circuit does NOT fire on retry — the client can
+    #      re-submit and the snapshot re-fires cleanly.
+    #   3. HTTPException(500) propagates so the caller knows the
+    #      ledger commit failed. Diagnostic log line preserved
+    #      for ops triage (not swallowed).
+    #
+    # Snapshot is idempotent per ``service_report_id`` (delete_many
+    # + insert loop inside the helper), so a legitimate double-fire
+    # never double-counts. The retry-after-rollback path is safe.
+    #
+    # See ``services.service_report_submit_gate.rollback_submit_claim``
+    # for the exact field-list mirrored from ``claim_submit_or_none``.
+    try:
+        from routers.chemical_products import snapshot_chemical_usage
+        # Re-fetch to catch any client PATCH that landed between the
+        # initial L703 fetch and the P45 claim write at L840. The
+        # snapshot must see the freshest ``chemicals_added`` /
+        # ``water_bodies`` on the report doc.
+        _sr_for_snapshot = await db.service_reports.find_one(
+            {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
+            {"_id": 0},
+        ) or rep
+        # Feb-2026 · Multi-body Phase 1 · Option 2 · Bug 2 rework —
+        # prefer ``water_bodies`` so each event carries a
+        # ``water_body_id`` for the chemical-cost report's
+        # per-body rollup. Legacy top-level ``chemicals_added`` is
+        # kept as the fallback so a single-body report (or a
+        # report loaded from cache with only the legacy fields)
+        # still snapshots correctly under the ``Legacy`` bucket.
+        _snapshot_bodies = _sr_for_snapshot.get("water_bodies") or None
+        await snapshot_chemical_usage(
+            tenant_id=tenant["id"],
+            job_id=jid,
+            service_report_id=_sr_for_snapshot.get("id") or rep.get("id"),
+            customer_id=job.get("customer_id"),
+            chemicals_added=(
+                None if _snapshot_bodies
+                else (_sr_for_snapshot.get("chemicals_added") or [])
+            ),
+            water_bodies=_snapshot_bodies,
+            occurred_at=job.get("scheduled_date")
+                         or job.get("scheduled_start")
+                         or now,
+            actor_user_id=user.get("id"),
+        )
+    except Exception as _snap_e:                                # noqa: BLE001
+        # Preserve the diagnostic log line — ops needs the report/
+        # tenant/exception surface to triage. Then roll back the
+        # P45 claim so a retry re-fires the snapshot cleanly, and
+        # raise 500 so the caller knows the submit was NOT applied.
+        logger.warning(
+            "chemistry snapshot failed job=%s tenant=%s report=%s"
+            " — rolling back P45 claim: %s",
+            jid, tenant["id"], rep.get("id"), _snap_e,
+        )
+        try:
+            from services.service_report_submit_gate import (
+                rollback_submit_claim,
+            )
+            await rollback_submit_claim(
+                tenant_id=tenant["id"],
+                report_id=rep.get("id"),
+                job_id=jid, tech_id=tech_id,
+            )
+        except Exception as _rb_e:                              # noqa: BLE001
+            # Rollback failure ON TOP of snapshot failure — surface
+            # both in the 500 payload so ops can triage without a
+            # log-dive. Doc row may now be in a mixed state
+            # (submitted_at set, no ledger, no status flip) — the
+            # next submit retry will hit L708 idempotency and
+            # return the cached rep; ops must manually unstamp.
+            logger.error(
+                "P45 rollback also failed job=%s tenant=%s report=%s"
+                " — MANUAL INTERVENTION REQUIRED: %s",
+                jid, tenant["id"], rep.get("id"), _rb_e,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "chemistry_snapshot_failed_rollback_failed",
+                    "message": (
+                        "Chemistry ledger commit failed AND P45"
+                        " claim rollback failed — manual"
+                        " intervention required."
+                    ),
+                    "snapshot_error": str(_snap_e),
+                    "rollback_error": str(_rb_e),
+                },
+            ) from _snap_e
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "chemistry_snapshot_failed",
+                "message": (
+                    "Chemistry ledger commit failed — submit"
+                    " rolled back. Please retry."
+                ),
+                "error": str(_snap_e),
+            },
+        ) from _snap_e
+    # ── /P0 · Chemical snapshot BEFORE status flip ───────────────
+
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
         {"$set": _stop_updates},
@@ -963,48 +1081,18 @@ async def submit_service_report(
     # ``GET /pools/{pool_id}/chemical-profitability`` rollup (and
     # the Chemistry History page) aggregate over.
     #
-    # ``snapshot_chemical_usage`` is idempotent per
-    # ``service_report_id`` (it does a ``delete_many`` before the
-    # insert), so this remains safe under:
-    #   * Re-submits (blocked upstream by the ``submitted_at``
-    #     idempotency check, but the snapshot itself would be a
-    #     no-op replace regardless).
-    #   * Legacy PUT /jobs/{jid} co-writes — the newer submit will
-    #     just supersede the older snapshot.
-    #
-    # Best-effort: a snapshot failure NEVER blocks the submit
-    # response (mirrors the pattern used by the auto-invoice
-    # accrue call in ``routers/jobs.py``).
-    try:
-        from routers.chemical_products import snapshot_chemical_usage
-        _sr_for_snapshot = (
-            fresh_rep if 'fresh_rep' in locals() and fresh_rep else rep
-        )
-        # Feb-2026 · Multi-body Phase 1 · Option 2 · Bug 2 rework —
-        # prefer ``water_bodies`` so each event carries a
-        # ``water_body_id`` for the chemical-cost report's
-        # per-body rollup. Legacy top-level ``chemicals_added`` is
-        # kept as the fallback so a single-body report (or a
-        # report loaded from cache with only the legacy fields)
-        # still snapshots correctly under the ``Legacy`` bucket.
-        _snapshot_bodies = _sr_for_snapshot.get("water_bodies") or None
-        await snapshot_chemical_usage(
-            tenant_id=tenant["id"],
-            job_id=jid,
-            service_report_id=_sr_for_snapshot.get("id") or rep.get("id"),
-            customer_id=job.get("customer_id"),
-            chemicals_added=(
-                None if _snapshot_bodies
-                else (_sr_for_snapshot.get("chemicals_added") or [])
-            ),
-            water_bodies=_snapshot_bodies,
-            occurred_at=job.get("scheduled_date")
-                         or job.get("scheduled_start")
-                         or now,
-            actor_user_id=user.get("id"),
-        )
-    except Exception as _snap_e:
-        logger.warning(f"chemistry snapshot failed: {_snap_e}")
+    # ── P0 · Feb-2026 · MOVED ─────────────────────────────────────
+    # The ``snapshot_chemical_usage`` call previously ran HERE
+    # (AFTER the ``db.jobs.update_one`` status flip above and
+    # wrapped in a silent ``logger.warning`` swallow).  It was
+    # relocated to fire BEFORE the status flip so a snapshot
+    # failure no longer leaves the job marked completed with no
+    # ledger.  On snapshot failure the P45 claim is rolled back
+    # and a 500 propagates so the tech can retry cleanly.  See
+    # the ``P0 · Feb-2026 · Chemical snapshot BEFORE status flip``
+    # comment block earlier in this handler for the reasoning +
+    # the exact call site.
+    # ──────────────────────────────────────────────────────────────
 
     # Phase 39 · Step 3b — Flip reservations for this job → consumed.
     # `decrement_from_service_report()` above already reduced the shared
