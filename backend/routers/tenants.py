@@ -1221,6 +1221,351 @@ async def patch_own_automation_rules(
     return _read_automation_rules(doc or {})
 
 
+# ═════════════════════════════════════════════════════════════════════
+# LS-A · Feb-2026 — MARCO Lead-Sense tenant field.
+#
+# Persistence lives directly on the tenant document (top-level fields,
+# NOT inside ``settings``) so LS-B's ``/api/lead-sense/track`` intake
+# can resolve tenants via a unique index on ``marco_lead_sense_id``
+# without descending into a sub-document. The backfill migration at
+# ``backend/migrations/marco_lead_sense_id_v1.py`` seeds both fields
+# + ensures the unique partial index on first boot.
+#
+# Two fields:
+#   * ``marco_lead_sense_id``       — 12-char URL-safe id, tenant-
+#     unique. Auto-generated on first GET if missing so a tenant
+#     that predates the migration can still hydrate on-demand.
+#   * ``lead_sense_allowed_origins`` — list of scheme://host[:port]
+#     origins the LS-B intake will accept. Empty list = no origins
+#     allowed (safe default). Wildcards / null / malformed entries
+#     are rejected at write time.
+#
+# Auth ladder (see LS-A rulings #1 / #7):
+#   * GET   — admin OR super_admin (readers can see + rotate).
+#   * PATCH ``rotate: true``         — admin OR super_admin.
+#   * PATCH ``lead_sense_allowed_origins`` — admin OR super_admin.
+#   * PATCH ``marco_lead_sense_id: "<explicit>"`` — super_admin ONLY
+#     (prevents accidental clobber into a coordination collision).
+# ═════════════════════════════════════════════════════════════════════
+import re as _ls_re
+import secrets as _ls_secrets
+
+_LEAD_SENSE_ID_NBYTES = 9  # → 12 base64url chars
+_LEAD_SENSE_ID_LENGTH = 12
+_LEAD_SENSE_ID_PATTERN = _ls_re.compile(r"^[A-Za-z0-9_\-]{6,64}$")
+# Origin validation — matches
+# ``scheme://host[:port]`` with no path, no query, no wildcards.
+# Scheme must be http OR https (case-insensitive). Host is any
+# non-empty run of letters/digits/hyphens/dots (RFC 1123 domain).
+_ORIGIN_RE = _ls_re.compile(
+    r"^https?://"                          # scheme
+    r"([A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)"  # host label
+    r"(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)*"  # dot-parts
+    r"(:\d{1,5})?$",                       # optional port
+    _ls_re.IGNORECASE,
+)
+_MAX_LEAD_SENSE_ORIGINS = 20
+_LEAD_SENSE_ROTATE_MAX_RETRIES = 3
+
+
+def _new_lead_sense_id() -> str:
+    """Return a fresh 12-char URL-safe id. Kept in lockstep with
+    ``migrations.marco_lead_sense_id_v1._new_lead_sense_id``."""
+    return _ls_secrets.token_urlsafe(_LEAD_SENSE_ID_NBYTES)
+
+
+def _validate_origin(raw: str) -> Optional[str]:
+    """Return a normalised origin string, or ``None`` if invalid.
+
+    Normalisation rules:
+      * Strip surrounding whitespace.
+      * Strip a single trailing slash.
+      * Lowercase the scheme + host (preserve the port digits).
+      * Reject empty strings, wildcards (``*`` / ``null``), and
+        anything with a path/query/fragment component.
+    """
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    # Explicit wildcard bans — cover both the CORS ``*`` and the
+    # RFC-7230 ``null`` sentinel, which some browsers set for
+    # ``file://`` / sandboxed iframes and which would otherwise
+    # match ``https?://null`` (impossible but locked).
+    if s in ("*", "null") or "*" in s:
+        return None
+    # Strip trailing slash before pattern match — a lot of admins
+    # will paste ``https://acme.com/`` and expect it to work.
+    if s.endswith("/"):
+        s = s[:-1]
+    # Any remaining ``/`` implies a path component → reject.
+    if "/" in s.split("://", 1)[-1]:
+        return None
+    # No query / fragment / userinfo allowed.
+    if "?" in s or "#" in s or "@" in s:
+        return None
+    m = _ORIGIN_RE.match(s)
+    if not m:
+        return None
+    # Split scheme + rest so we can lowercase both halves safely.
+    try:
+        scheme, rest = s.split("://", 1)
+    except ValueError:
+        return None
+    return f"{scheme.lower()}://{rest.lower()}"
+
+
+class LeadSenseIdPatch(BaseModel):
+    """Partial-update payload for
+    ``PATCH /api/tenants/mine/lead-sense-id``.
+
+    All three fields are optional so an admin can rotate the id,
+    edit the origin list, and (as super_admin) pin a specific id
+    each in isolation:
+
+      * ``rotate`` — flip ``true`` to generate a fresh id.
+      * ``marco_lead_sense_id`` — pin a specific id (super_admin
+        only). Format-validated against
+        ``[A-Za-z0-9_\\-]{6,64}``.
+      * ``lead_sense_allowed_origins`` — replace the current list.
+        Each entry must pass ``_validate_origin``; list capped
+        at ``_MAX_LEAD_SENSE_ORIGINS`` entries.
+    """
+    rotate: Optional[bool] = None
+    marco_lead_sense_id: Optional[str] = Field(
+        None,
+        description=(
+            "Super-admin-only. Pin a specific id (12–64 chars, "
+            "URL-safe). Reject a body that supplies this field "
+            "without super_admin role (403)."
+        ),
+    )
+    lead_sense_allowed_origins: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Replace the tenant's allowed-origins list. Each "
+            "entry must be a valid scheme://host[:port] with no "
+            "path/query. Wildcards forbidden."
+        ),
+    )
+
+
+def _read_lead_sense(tenant: dict) -> dict:
+    """Return the lead-sense block hydrated with defaults.
+
+    Empty list for origins when the field is missing (pre-
+    migration tenants) so callers never see ``None`` there.
+    """
+    lead_id = tenant.get("marco_lead_sense_id")
+    origins = tenant.get("lead_sense_allowed_origins")
+    if not isinstance(origins, list):
+        origins = []
+    out = {
+        "marco_lead_sense_id": lead_id if isinstance(lead_id, str) else None,
+        "lead_sense_allowed_origins": list(origins),
+    }
+    if "lead_sense_updated_at" in tenant:
+        out["lead_sense_updated_at"] = tenant["lead_sense_updated_at"]
+    if "lead_sense_updated_by" in tenant:
+        out["lead_sense_updated_by"] = tenant["lead_sense_updated_by"]
+    return out
+
+
+async def _generate_unique_lead_sense_id(*, exclude_tenant_id: Optional[str] = None) -> str:
+    """Generate a lead-sense id that doesn't collide with any
+    other tenant's stored id.
+
+    ``exclude_tenant_id`` is passed when the caller is rotating
+    their own id — we don't count the caller's current id as a
+    collision, but that's a moot point because a rotate replaces
+    the value atomically. Kept for callers that want to reserve
+    the id in a separate pre-check.
+    """
+    for _ in range(_LEAD_SENSE_ROTATE_MAX_RETRIES + 1):
+        cand = _new_lead_sense_id()
+        q: dict = {"marco_lead_sense_id": cand}
+        if exclude_tenant_id:
+            q["id"] = {"$ne": exclude_tenant_id}
+        hit = await db.tenants.find_one(q, {"_id": 0, "id": 1})
+        if hit is None:
+            return cand
+    raise HTTPException(
+        500,
+        "Failed to generate a collision-free lead-sense id after "
+        f"{_LEAD_SENSE_ROTATE_MAX_RETRIES + 1} attempts",
+    )
+
+
+@router.get(
+    "/tenants/mine/lead-sense-id", tags=["tenants"],
+    operation_id="tenants.readLeadSenseId",
+    summary="Read tenant MARCO Lead-Sense id + allowed origins",
+)
+async def get_own_lead_sense_id(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the caller tenant's ``marco_lead_sense_id`` +
+    ``lead_sense_allowed_origins``. Auto-generates the id on
+    first-read if the tenant lacks one (a pre-migration tenant
+    that predates the LS-A backfill sweep). Admin / super_admin
+    only — techs / managers / customers get 403."""
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = tenant.get("id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    current = tenant.get("marco_lead_sense_id")
+    if not (isinstance(current, str) and current):
+        # Auto-generate on first-read. Uniqueness-checked so a
+        # concurrent rotate on another tenant can't accidentally
+        # collide.
+        new_id = await _generate_unique_lead_sense_id()
+        await db.tenants.update_one(
+            {"id": tid},
+            {"$set": {
+                "marco_lead_sense_id": new_id,
+                "lead_sense_updated_at": now_iso(),
+                "lead_sense_updated_by": user.get("id"),
+            }},
+        )
+        tenant = await db.tenants.find_one(
+            {"id": tid}, {"_id": 0},
+        ) or tenant
+    return _read_lead_sense(tenant)
+
+
+@router.patch(
+    "/tenants/mine/lead-sense-id", tags=["tenants"],
+    operation_id="tenants.updateLeadSenseId",
+    summary=(
+        "Update tenant Lead-Sense id / origins "
+        "(admin: rotate + origins; super_admin: explicit id)"
+    ),
+)
+async def patch_own_lead_sense_id(
+    request: Request,
+    body: LeadSenseIdPatch,
+    user: dict = Depends(get_current_user),
+):
+    """Rotate the id, replace the origin allow-list, or pin a
+    specific id.
+
+    Role gate summary (ruling LS-A · #1 / #7):
+      * ``rotate``                     — admin OR super_admin.
+      * ``lead_sense_allowed_origins`` — admin OR super_admin.
+      * ``marco_lead_sense_id`` (explicit) — super_admin ONLY.
+
+    Cross-tenant safety mirrors ``patch_own_automation_rules``:
+    a body-supplied ``tenant_id`` (even matching the caller's
+    own JWT tenant) raises 403 loud so the frontend never grows
+    the habit of sending it.
+    """
+    role = user.get("role")
+    if role not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+
+    # Cross-tenant guard — body ``tenant_id`` forbidden.
+    try:
+        raw = await request.json()
+    except Exception:  # noqa: BLE001
+        raw = {}
+    if isinstance(raw, dict) and "tenant_id" in raw:
+        raise HTTPException(
+            403,
+            "tenant_id is derived from JWT; body-supplied tenant_id "
+            "is forbidden.",
+        )
+
+    # Super-admin gate on the explicit-id write path.
+    if body.marco_lead_sense_id is not None and role != "super_admin":
+        raise HTTPException(
+            403,
+            "Only super_admin may pin an explicit marco_lead_sense_id "
+            "value; use ``rotate: true`` instead.",
+        )
+
+    upd: dict = {}
+
+    # Explicit id path (super_admin only, already gated above).
+    if body.marco_lead_sense_id is not None:
+        cand = body.marco_lead_sense_id.strip()
+        if not _LEAD_SENSE_ID_PATTERN.match(cand):
+            raise HTTPException(
+                422,
+                "marco_lead_sense_id must be 6-64 URL-safe chars "
+                "(letters, digits, underscore, hyphen).",
+            )
+        # Uniqueness check — must not collide with another tenant.
+        clash = await db.tenants.find_one(
+            {"marco_lead_sense_id": cand, "id": {"$ne": tid}},
+            {"_id": 0, "id": 1},
+        )
+        if clash is not None:
+            raise HTTPException(
+                409,
+                "marco_lead_sense_id is already in use by another "
+                "tenant. Choose a different value.",
+            )
+        upd["marco_lead_sense_id"] = cand
+
+    # Rotate path.
+    if body.rotate:
+        if "marco_lead_sense_id" in upd:
+            # Both ``rotate`` and an explicit ``marco_lead_sense_id``
+            # would race — reject the ambiguity.
+            raise HTTPException(
+                422,
+                "Cannot combine rotate=true with an explicit "
+                "marco_lead_sense_id value.",
+            )
+        upd["marco_lead_sense_id"] = await _generate_unique_lead_sense_id(
+            exclude_tenant_id=tid,
+        )
+
+    # Origins path.
+    if body.lead_sense_allowed_origins is not None:
+        origins = body.lead_sense_allowed_origins
+        if len(origins) > _MAX_LEAD_SENSE_ORIGINS:
+            raise HTTPException(
+                422,
+                f"lead_sense_allowed_origins accepts at most "
+                f"{_MAX_LEAD_SENSE_ORIGINS} entries "
+                f"(got {len(origins)}).",
+            )
+        normalised: List[str] = []
+        seen: set = set()
+        for raw_o in origins:
+            norm = _validate_origin(raw_o)
+            if norm is None:
+                raise HTTPException(
+                    422,
+                    f"Invalid origin {raw_o!r}. Expected "
+                    f"scheme://host[:port] with no path/query, "
+                    f"and no wildcards.",
+                )
+            if norm in seen:
+                continue
+            seen.add(norm)
+            normalised.append(norm)
+        upd["lead_sense_allowed_origins"] = normalised
+
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+
+    upd["lead_sense_updated_at"] = now_iso()
+    upd["lead_sense_updated_by"] = user.get("id")
+    await db.tenants.update_one({"id": tid}, {"$set": upd})
+    doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
+    return _read_lead_sense(doc or {})
+
+
+
+
 # ─── Feb-2026 · F4 Enhancement — Widget-Embed tenant settings ─────
 class WidgetEmbedSettingsUpdate(BaseModel):
     """Fields settable via ``PATCH /api/tenants/settings/widget-embed``.

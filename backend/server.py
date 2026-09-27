@@ -3439,6 +3439,48 @@ async def _run_automation_rules_v1_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# LS-A · Feb-2026 — Structural: tenant marco_lead_sense_id backfill.
+# Idempotent seed of the two Lead-Sense fields (``marco_lead_sense_id``
+# 12-char nanoid + ``lead_sense_allowed_origins: []``) on every
+# tenant document that lacks them (see
+# ``memory/SPEC_MARCO_LEAD_SENSE.md`` §LS-A and the migration module
+# docstring for the shape). Also ensures the unique partial index on
+# ``tenants.marco_lead_sense_id`` so LS-B's intake endpoint can
+# resolve tenants by id in O(1) without a full-scan risk. Sentinel-
+# gated internally via ``migration_status[key="marco_lead_sense_id_v1"]``
+# so a second boot is a no-op. Best-effort (``must_succeed=False``);
+# a Mongo hiccup logs to
+# ``/api/health.init.structural_migrations.marco_lead_sense_id_v1``
+# and the API layer falls back to auto-generating on first GET so
+# a partial-backfill state still hydrates a working id.
+async def _run_marco_lead_sense_id_v1_boot(db_handle) -> dict:
+    """Run the ``marco_lead_sense_id_v1`` structural migration."""
+    async def _factory():
+        from migrations.marco_lead_sense_id_v1 import (
+            run as _ls_run,
+        )
+        res = await _ls_run(dry_run=False, force=False, db_client=db_handle)
+        logger.info(
+            "[marco-lead-sense-id-v1] structural pass — "
+            "skipped_by_marker=%s tenants_scanned=%s "
+            "tenants_backfilled=%s ids_generated=%s "
+            "origins_seeded=%s index_ensured=%s",
+            res.get("skipped_by_marker"),
+            res.get("tenants_scanned"),
+            res.get("tenants_backfilled"),
+            res.get("ids_generated"),
+            res.get("origins_seeded"),
+            res.get("index_ensured"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "marco_lead_sense_id_v1", _factory,
+        must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3840,6 +3882,18 @@ async def _run_boot_sequence():
     # ``/api/health.init.structural_migrations.automation_rules_v1``
     # and the next boot retries.
     await _run_automation_rules_v1_boot(db)
+    # LS-A · Feb-2026 — Structural: tenant marco_lead_sense_id
+    # backfill + unique index. Wrapped through
+    # ``_run_structural_migration`` inside the helper so a Mongo
+    # hiccup surfaces on
+    # ``/api/health.init.structural_migrations.marco_lead_sense_id_v1``
+    # and a boot-order regression is caught by the pre-yield lint.
+    # Sentinel-gated internally via
+    # ``migration_status[key="marco_lead_sense_id_v1"]``. Best-effort
+    # (``must_succeed=False`` inside the wrapper); a Mongo hiccup
+    # logs and the next boot retries — API layer falls back to
+    # auto-generate on first GET when the persisted field is missing.
+    await _run_marco_lead_sense_id_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
