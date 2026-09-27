@@ -5432,6 +5432,29 @@ async def _run_boot_sequence():
             logger.warning(f"ae1 ai_employees seed crashed: {e}")
     asyncio.create_task(_bg_ae1_ai_employees_seed())
 
+    # ── AIHUB-A · Feb-2026 · 18-employee workforce migration ─────
+    # Env-gated one-shot idempotent sweep.  When
+    # ``AI_HUB_AUTO_MIGRATE=true`` this runs the manual
+    # ``scripts/migrate_ai_hub_18_employees`` migration in the
+    # background — safe to re-run, additive, never overwrites
+    # user customisations.  Any other value (unset, "0", "false")
+    # is a silent no-op — the manual CLI path remains the only
+    # invocation.  Migration is also functionally covered by
+    # ``seed_ai_employees_for_tenant`` on every tenant boot, so
+    # this hook is a belt-and-braces for pods that predate the
+    # AIHUB-A rollout.
+    async def _bg_ai_hub_migrate():
+        try:
+            from scripts.migrate_ai_hub_18_employees import (
+                run_if_env_enabled,
+            )
+            res = await run_if_env_enabled(db)
+            if not res.get("skipped"):
+                logger.info(f"[ai-hub] AIHUB-A migration — {res}")
+        except Exception as e:
+            logger.warning(f"[ai-hub] AIHUB-A migration crashed: {e}")
+    asyncio.create_task(_bg_ai_hub_migrate())
+
     # G3b Batch A · Feb-2026 — REMOVED from boot path.
     # Task JJ dedupe is a one-shot cleanup that already ran on every
     # environment. Run manually via ``python -m

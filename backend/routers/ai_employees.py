@@ -335,6 +335,22 @@ class EmployeePatch(BaseModel):
     system_prompt: Optional[str] = Field(None, max_length=4000)
     active: Optional[bool] = None
     avatar_emoji: Optional[str] = Field(None, max_length=8)
+    # AIHUB-A · Feb-2026 — SAFE-SEND-A public-use authorization
+    # gate.  Off by default; admin flips per employee via
+    # ``PATCH /ai-employees/{eid}/authorize``.  ``services.ai_hub.
+    # context_stamping.stamp_agent_context`` reads this to force
+    # ``CommsContext.AGENT`` on every AI-driven send from an
+    # unauthorized employee.  Also exposed here for direct
+    # inline patches (super_admin can flip via ``PATCH
+    # /ai-employees/{eid}`` if that's ergonomic).
+    authorized_for_public_use: Optional[bool] = None
+    # AIHUB-A · Feb-2026 — monthly action budget (default 60k
+    # from ``services.ai_hub.employee_registry.DEFAULT_ACTION_
+    # LIMIT_MONTHLY``).  Persistence only — enforcement lands
+    # in AIHUB-B (quota gating).
+    action_limit_monthly: Optional[int] = Field(
+        None, ge=0, le=10_000_000,
+    )
     # Task RR/SS Phase 2 follow-on · Feb 2026 — per-persona portrait
     # URL. Nullable string; when unset the frontend falls back to the
     # emoji. Not tenant-branded — every tenant sees the same shared
@@ -443,6 +459,14 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
     (``"admin"`` or ``"customer"``). Existing rows without the field
     are lazily backfilled to ``"admin"`` since every pre-Slice-5
     employee is admin-only.
+
+    AIHUB-A · Feb-2026 — also seeds the 18-employee spec registry
+    (``services.ai_hub.employee_registry.EMPLOYEES``) alongside the
+    legacy ``DEFAULT_EMPLOYEES``.  Every row (legacy + spec) is
+    backfilled on existing rows with the AIHUB-A new fields
+    (``authorized_for_public_use=False``, ``action_limit_monthly=
+    60000``, plus spec fields for the 18 roster).  Legacy rows are
+    stamped ``is_legacy=True``, spec rows ``is_legacy=False``.
     """
     n = 0
     for e in DEFAULT_EMPLOYEES:
@@ -451,7 +475,10 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
         exists = await db.ai_employees.find_one(
             {"tenant_id": tenant_id, "key": e["key"]},
             {"_id": 0, "id": 1, "audience": 1, "read_access_scope": 1,
-             "orchestrator": 1},
+             "orchestrator": 1, "authorized_for_public_use": 1,
+             "action_limit_monthly": 1, "codename": 1, "role_title": 1,
+             "org_department": 1, "hierarchy_order": 1, "manager_key": 1,
+             "human_name": 1, "is_legacy": 1, "role": 1},
         )
         if exists:
             # Backfill the ``audience`` field on legacy rows.
@@ -469,6 +496,26 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
                     {"id": exists["id"]},
                     {"$set": {"read_access_scope": "customer_scoped",
                               "updated_at": now_iso()}},
+                )
+            # AIHUB-A · Feb-2026 — backfill the SAFE-SEND authorization
+            # + action-limit fields + spec §5 legacy shape (codename,
+            # role_title, is_legacy).  All ADDITIVE — never overwrite.
+            _ai_hub_patch: Dict[str, Any] = {}
+            if "authorized_for_public_use" not in exists:
+                _ai_hub_patch["authorized_for_public_use"] = False
+            if "action_limit_monthly" not in exists:
+                _ai_hub_patch["action_limit_monthly"] = 60000
+            if not exists.get("codename"):
+                _ai_hub_patch["codename"] = e["key"].upper()
+            if not exists.get("role_title") and (e.get("role") or exists.get("role")):
+                _ai_hub_patch["role_title"] = e.get("role") or exists.get("role")
+            if "is_legacy" not in exists:
+                _ai_hub_patch["is_legacy"] = True
+            if _ai_hub_patch:
+                _ai_hub_patch["updated_at"] = now_iso()
+                await db.ai_employees.update_one(
+                    {"id": exists["id"]},
+                    {"$set": _ai_hub_patch},
                 )
             # Feb-2026 · MARCO — backfill ``orchestrator`` on legacy
             # rows.  The field is ADDITIVE per Option Z: every
@@ -500,10 +547,29 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
             "read_access_scope": "customer_scoped",
             "orchestrator": orchestrator,
             "active": True,
+            # AIHUB-A · Feb-2026 — new fields on every fresh insert.
+            "authorized_for_public_use": False,
+            "action_limit_monthly": 60000,
+            "codename": e["key"].upper(),
+            "role_title": e.get("role"),
+            "is_legacy": True,
             "created_at": now_iso(), "updated_at": now_iso(),
         }
         await db.ai_employees.insert_one(doc)
         n += 1
+
+    # AIHUB-A · Feb-2026 — also seed the 18 spec personas.  Delegates
+    # to the shared migration helper so seed + manual migration share
+    # a single code path (single writer, single set of defaults).
+    try:
+        from scripts.migrate_ai_hub_18_employees import _migrate_one_tenant
+        _spec_counts = await _migrate_one_tenant(db, tenant_id)
+        n += _spec_counts.get("employees_inserted", 0)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "[ai-hub] spec-18 seed for tenant=%s failed: %s",
+            tenant_id, exc,
+        )
     return n
 
 
@@ -902,6 +968,59 @@ async def patch_employee(eid: str, body: EmployeePatch,
     )
     if r.matched_count == 0:
         raise HTTPException(404, "AI employee not found")
+    return await db.ai_employees.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+
+
+# ─── AIHUB-A · Feb-2026 · SAFE-SEND public-use authorization gate ────
+# Dedicated flip endpoint per AIHUB-A brief.  Admin-only (regular
+# admin, not super_admin — matches the semantic "tenant owner
+# chooses which AI employees can send real customer comms").
+# Emits an INFO-level audit line with the tenant_id, actor
+# user_id, employee key, and before/after state so ops can
+# reconstruct the authorization history without a separate audit
+# table.
+class _AuthorizePatch(BaseModel):
+    authorized_for_public_use: bool
+
+
+@router.patch("/ai-employees/{eid}/authorize")
+async def authorize_employee(eid: str, body: _AuthorizePatch,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Toggle an employee's ``authorized_for_public_use`` flag.
+
+    When flipped ON — the SAFE-SEND-A gate stops forcing AGENT
+    context for this employee's AI-driven sends, so admin-vetted
+    campaigns can reach real customers.
+
+    When flipped OFF (default) — every AI-driven send for this
+    employee is redirected to the tenant admin per SAFE-SEND-A.
+    """
+    row = await db.ai_employees.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "AI employee not found")
+    before = bool(row.get("authorized_for_public_use", False))
+    after = bool(body.authorized_for_public_use)
+    if before == after:
+        # No-op — return current state, don't log churn.
+        return row
+    await db.ai_employees.update_one(
+        {"id": eid, "tenant_id": tenant["id"]},
+        {"$set": {
+            "authorized_for_public_use": after,
+            "updated_at": now_iso(),
+        }},
+    )
+    logger.info(
+        "ai_hub.authorize employee_id=%s employee_key=%s tenant_id=%s "
+        "actor_user_id=%s before=%s after=%s",
+        eid, row.get("key"), tenant["id"], user.get("id"),
+        before, after,
+    )
     return await db.ai_employees.find_one(
         {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
     )

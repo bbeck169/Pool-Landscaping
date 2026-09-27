@@ -114,6 +114,20 @@ async def list_employees(admin: dict = Depends(require_admin),
     for r in rows:
         if "avatar_url" not in r:
             r["avatar_url"] = None
+        # AIHUB-A · Feb-2026 — null-safe SAFE-SEND authorization
+        # + registry fields.  Same rationale as ``avatar_url`` —
+        # the FE roster surface reads these unconditionally and
+        # must not KeyError on legacy rows that haven't yet been
+        # touched by the seed.
+        r.setdefault("authorized_for_public_use", False)
+        r.setdefault("action_limit_monthly", 60000)
+        r.setdefault("codename", (r.get("key") or "").upper() or None)
+        r.setdefault("role_title", r.get("role"))
+        r.setdefault("human_name", r.get("name"))
+        r.setdefault("org_department", None)
+        r.setdefault("hierarchy_order", None)
+        r.setdefault("manager_key", None)
+        r.setdefault("is_legacy", True)
     return rows
 
 

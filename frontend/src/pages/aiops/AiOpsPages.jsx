@@ -40,6 +40,102 @@ function H({ title, subtitle, right }) {
 }
 
 // ─── AI Employees ──────────────────────────────────────────────────────────
+
+// AIHUB-A · Feb-2026 — SAFE-SEND-A public-use authorization badge.
+// Renders next to every roster row so admins can eyeball each
+// employee's send posture at a glance:
+//   • ``authorized_for_public_use=false`` (default) → red pill
+//     "Sandbox — All comms redirect to admin".
+//   • ``authorized_for_public_use=true``  → green pill "Live".
+// Exported for direct import + FE unit-testing.
+export function AuthorizationBadge({ authorized }) {
+  return authorized ? (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+      style={{ backgroundColor: "#DCFCE7", color: "#166534",
+                border: "1px solid #86EFAC" }}
+      data-testid="ai-hub-authorized-pill"
+    >
+      <span className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: "#16A34A" }} />
+      Live
+    </span>
+  ) : (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+      style={{ backgroundColor: "#FEE2E2", color: "#7F1D1D",
+                border: "1px solid #FCA5A5" }}
+      data-testid="ai-hub-sandbox-pill"
+      title="All AI-drafted comms redirect to your admin inbox until you authorize this employee for real customer sends."
+    >
+      <span className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: "#DC2626" }} />
+      Sandbox
+    </span>
+  );
+}
+
+// AIHUB-A · Feb-2026 — inline authorize toggle button.  Admin-only.
+// POSTs the flip to ``/ai-employees/{eid}/authorize`` and calls
+// ``onFlip(nextValue)`` on success so the parent row can update
+// its badge without a full refetch.
+export function AuthorizeToggle({ employeeId, authorized, onFlip }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const handleClick = async (ev) => {
+    // Row is inside a <Link>; stop the click from navigating away.
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const nextValue = !authorized;
+      const res = await api.patch(
+        `/ai-employees/${employeeId}/authorize`,
+        { authorized_for_public_use: nextValue },
+      );
+      const actual = Boolean(res?.authorized_for_public_use);
+      onFlip?.(actual);
+      sonnerToast.success(
+        actual
+          ? "Employee authorized for real customer sends."
+          : "Employee reverted to sandbox mode.",
+      );
+    } catch (e) {
+      setErr(e?.message || "Couldn't update authorization");
+      sonnerToast.error("Authorization flip failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const label = authorized ? "Revoke" : "Authorize";
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={busy}
+      className="text-[10px] font-semibold px-2 py-1 rounded-full transition-opacity"
+      style={{
+        backgroundColor: authorized ? "#FEE2E2" : "#DCFCE7",
+        color: authorized ? "#7F1D1D" : "#166534",
+        border: `1px solid ${authorized ? "#FCA5A5" : "#86EFAC"}`,
+        opacity: busy ? 0.5 : 1,
+        cursor: busy ? "wait" : "pointer",
+      }}
+      data-testid={`ai-hub-authorize-toggle-${employeeId}`}
+      aria-label={
+        authorized
+          ? "Revoke public-use authorization"
+          : "Authorize for public use"
+      }
+      title={err || undefined}
+    >
+      {busy ? "…" : label}
+    </button>
+  );
+}
+
 export function AiEmployeesList() {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState("");
@@ -55,6 +151,19 @@ export function AiEmployeesList() {
       .then((r) => { setRows(Array.isArray(r) ? r : []); setErr(""); })
       .catch((e) => setErr(e?.message || "Couldn't load AI Employees"));
   }, []);
+  // AIHUB-A · Feb-2026 — global banner reflects the aggregate state.
+  // Any unauthorized employee → red "Sandbox" banner so admin knows
+  // some AI-drafted comms are still redirecting to their inbox.
+  const anyUnauthorized = rows.some(
+    (e) => e.authorized_for_public_use !== true,
+  );
+  const flipRow = React.useCallback((eid, nextValue) => {
+    setRows((prev) => prev.map(
+      (r) => r.id === eid
+        ? { ...r, authorized_for_public_use: nextValue }
+        : r,
+    ));
+  }, []);
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="ai-employees-list">
       <H title="AI Employees" subtitle="Persistent AI personas with role-specific prompts + guardrails" />
@@ -69,42 +178,102 @@ export function AiEmployeesList() {
           {err}
         </div>
       ) : null}
+      {rows.length > 0 && anyUnauthorized ? (
+        <div
+          className="rounded-xl p-3 mb-4 text-sm flex items-start gap-2"
+          style={{ backgroundColor: "#FEF2F2", color: "#7F1D1D",
+                    border: "1px solid #FCA5A5" }}
+          data-testid="ai-hub-sandbox-banner"
+          role="status"
+        >
+          <span className="w-2 h-2 mt-1 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: "#DC2626" }} />
+          <div>
+            <strong>Sandbox mode</strong> — All AI-drafted comms from
+            unauthorized employees redirect to your admin inbox.
+            Flip <em>Authorize</em> per employee below to unlock
+            real customer sends.
+          </div>
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {rows.map((e) => (
-          <Link key={e.id} to={`/ai-employees/${e.id}`}
-                className="rounded-2xl p-4 hover:brightness-95 flex items-start gap-3"
-                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                data-testid={`ai-emp-${e.slug}`}>
-            {/* Phase 50 · Feb-2026 — animated Lottie avatar replaces the
-                static emoji. Falls back gracefully — the ``src`` prop
-                is optional; if the row has no ``avatar_url`` the
-                Lottie idle loop is the only visual. */}
-            <AIAvatar
-              size={56}
-              src={e.avatar_url || undefined}
-              name={e.name}
-              alt={e.name}
-              testId={`ai-lottie-avatar-${e.slug || e.id}`}
-            />
-            <div>
-              <div className="font-semibold" style={{ color: colors.onSurface }}>{e.name}</div>
-              <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{e.role}</div>
-              <div className="text-xs mt-1" style={{ color: colors.muted }}>
-                {/* Phase 50.2 · Feb-2026 — read from ``active`` (the
-                    backend's authoritative field written by
-                    ``seed_ai_employees_for_tenant`` and confirmed by
-                    Phase 50's activation migration). The pre-Phase-50
-                    UI read from ``enabled``, which the current seed
-                    stopped writing — every card was rendering a stale
-                    "disabled" label even though the row was active.
-                    Testids expose the state cleanly for parity tests. */}
-                <span data-testid={`ai-emp-state-${e.slug || e.id}`}>
-                  {e.active ? "✓ Active" : "○ Disabled"}
-                </span>
-                {e.memory_scope ? ` · ${e.memory_scope}` : ""}
+          <div key={e.id}
+               className="rounded-2xl p-4 flex items-start gap-3"
+               style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}` }}
+               data-testid={`ai-emp-${e.slug || e.id}`}>
+            <Link to={`/ai-employees/${e.id}`}
+                  className="flex items-start gap-3 flex-1 min-w-0 hover:brightness-95"
+                  data-testid={`ai-emp-link-${e.slug || e.id}`}>
+              {/* Phase 50 · Feb-2026 — animated Lottie avatar replaces the
+                  static emoji. Falls back gracefully — the ``src`` prop
+                  is optional; if the row has no ``avatar_url`` the
+                  Lottie idle loop is the only visual. */}
+              <AIAvatar
+                size={56}
+                src={e.avatar_url || undefined}
+                name={e.human_name || e.name}
+                alt={e.human_name || e.name}
+                testId={`ai-lottie-avatar-${e.slug || e.id}`}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="font-semibold truncate"
+                          style={{ color: colors.onSurface }}
+                          data-testid={`ai-emp-name-${e.id}`}>
+                    {e.human_name || e.name}
+                  </div>
+                  <AuthorizationBadge
+                    authorized={e.authorized_for_public_use === true}
+                  />
+                </div>
+                {/* Role-title line — spec §6 hierarchy.  Codename
+                    surfaces as a muted small tag beside it so the
+                    all-caps identifier is still visible without
+                    dominating the header. */}
+                <div className="text-xs mt-0.5"
+                        style={{ color: colors.muted }}
+                        data-testid={`ai-emp-role-${e.id}`}>
+                  {e.role_title || e.role}
+                  {e.codename ? (
+                    <span className="ml-2 opacity-70"
+                            data-testid={`ai-emp-codename-${e.id}`}>
+                      · {e.codename}
+                    </span>
+                  ) : null}
+                </div>
+                {e.org_department ? (
+                  <div className="text-[10px] mt-1 uppercase tracking-wide"
+                          style={{ color: colors.muted }}
+                          data-testid={`ai-emp-department-${e.id}`}>
+                    {e.org_department}
+                  </div>
+                ) : null}
+                <div className="text-xs mt-1" style={{ color: colors.muted }}>
+                  {/* Phase 50.2 · Feb-2026 — read from ``active`` (the
+                      backend's authoritative field written by
+                      ``seed_ai_employees_for_tenant`` and confirmed by
+                      Phase 50's activation migration). The pre-Phase-50
+                      UI read from ``enabled``, which the current seed
+                      stopped writing — every card was rendering a stale
+                      "disabled" label even though the row was active.
+                      Testids expose the state cleanly for parity tests. */}
+                  <span data-testid={`ai-emp-state-${e.slug || e.id}`}>
+                    {e.active ? "✓ Active" : "○ Disabled"}
+                  </span>
+                  {e.memory_scope ? ` · ${e.memory_scope}` : ""}
+                </div>
               </div>
+            </Link>
+            <div className="flex-shrink-0">
+              <AuthorizeToggle
+                employeeId={e.id}
+                authorized={e.authorized_for_public_use === true}
+                onFlip={(next) => flipRow(e.id, next)}
+              />
             </div>
-          </Link>
+          </div>
         ))}
       </div>
     </div>
