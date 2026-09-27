@@ -395,7 +395,9 @@ def assert_required_items_present(industry: str,
 
 
 def derive_industry_for_job(job: Optional[Dict[str, Any]],
-                                tenant: Optional[Dict[str, Any]]) -> str:
+                                tenant: Optional[Dict[str, Any]],
+                                *,
+                                strict_mode: bool = False) -> str:
     """Best-effort mapping from a job → one of :data:`INDUSTRY_SLUGS`.
 
     Priority chain (loosest → strictest wins on tie):
@@ -414,6 +416,18 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
     — the function falls through to ``industry`` (and onwards) so
     stale clients emitting a bad override key still land on a
     sensible slug.
+
+    ``strict_mode`` (LS-A · POOL-A · Feb-2026) — when True, disables
+    steps 4 + 5 (tenant-industry fallback + hardcoded ``"pool"``
+    default). A job with no explicit industry and no keyword hit
+    returns ``"other"`` under strict mode instead of falling back
+    to the caller's tenant industry. Used by
+    ``routers.jobs.compute_pool_service`` so a job with a null /
+    keyword-less ``service_type`` is excluded from the Pool Service
+    Report rather than silently counting because the tenant is a
+    pool company. Default False preserves the existing byte-
+    identical behaviour for every non-report consumer (industry
+    checklist templates, chemistry gate, etc.).
     """
     if isinstance(job, dict):
         # Phase D3 · Feb 2026 — ``checklist_industry`` wins over
@@ -474,6 +488,11 @@ def derive_industry_for_job(job: Optional[Dict[str, Any]],
         for needle, slug in keyword_map:
             if needle in hay:
                 return slug
+    # POOL-A · Feb-2026 — strict-mode short-circuit. Callers that
+    # want reporting-grade precision (no tenant-industry silent
+    # bleed-through) opt in here.
+    if strict_mode:
+        return "other"
     if isinstance(tenant, dict):
         primary: Optional[str] = None
         inds = tenant.get("industries")

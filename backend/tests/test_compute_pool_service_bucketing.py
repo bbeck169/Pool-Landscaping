@@ -118,12 +118,15 @@ def test_compute_pool_service_buckets_by_tech_id_not_name():
     db_.jobs.rows = [
         {"id": "j1", "tenant_id": "tA", "technician_id": "tech-eth",
           "technician_name": "Ethan Smith",         # canonical
+          "service_type": "Pool Cleaning",           # POOL-A · industry tag
           "status": "completed", "scheduled_date": "2026-01-06"},
         {"id": "j2", "tenant_id": "tA", "technician_id": "tech-eth",
           "technician_name": "Ethan  Smith",        # stale — extra space
+          "service_type": "Pool Cleaning",           # POOL-A · industry tag
           "status": "completed", "scheduled_date": "2026-01-07"},
         {"id": "j3", "tenant_id": "tA", "technician_id": "tech-eth",
           "technician_name": "E. Smith",            # stale — nickname
+          "service_type": "Pool Cleaning",           # POOL-A · industry tag
           "status": "skipped", "scheduled_date": "2026-01-08"},
     ]
     with patch.object(_mod, "db", db_):
@@ -151,6 +154,7 @@ def test_compute_pool_service_no_tech_id_but_name_resolves_uniquely():
     db_.jobs.rows = [
         {"id": "jn1", "tenant_id": "tA",
           "technician_name": "ETHAN SMITH",   # case-differs; unique match
+          "service_type": "Pool Cleaning",     # POOL-A · industry tag
           "status": "completed", "scheduled_date": "2026-01-06"},
     ]
     with patch.object(_mod, "db", db_):
@@ -171,6 +175,7 @@ def test_compute_pool_service_ambiguous_name_lands_in_unassigned():
     db_.jobs.rows = [
         {"id": "ja", "tenant_id": "tA",
           "technician_name": "Ambiguous Al",  # 2 users match
+          "service_type": "Pool Cleaning",     # POOL-A · industry tag
           "status": "completed", "scheduled_date": "2026-01-06"},
     ]
     with patch.object(_mod, "db", db_):

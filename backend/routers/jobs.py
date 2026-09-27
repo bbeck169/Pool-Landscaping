@@ -4722,12 +4722,53 @@ async def compute_pool_service(tenant_id: str,
     else:
         week_start, week_end = _service_week(date_from or date_to)
 
+    # POOL-A · Feb-2026 — Industry filter.
+    # Fetch the tenant once so ``derive_industry_for_job`` has the
+    # (strict-mode) context it needs to correctly bucket a job with
+    # an explicit ``industry`` / ``checklist_industry`` override
+    # even when ``service_type`` doesn't carry an obvious keyword.
+    # Defensive read — a Mongo hiccup / test double without a
+    # ``.tenants`` attribute falls through to an empty dict so the
+    # strict-mode classifier still runs on keyword-only signals.
+    try:
+        tenant_doc = await db.tenants.find_one(
+            {"id": tenant_id},
+            {"_id": 0, "id": 1, "industries": 1, "industry": 1},
+        ) or {"id": tenant_id}
+    except Exception:  # noqa: BLE001
+        tenant_doc = {"id": tenant_id}
+
     date_range = {"$gte": week_start, "$lte": week_end}
     from utils import not_deleted_filter as _nd
+    # POOL-A · projection extended to carry every field the industry
+    # classifier reads (see ``routers.industry_checklists.derive_
+    # industry_for_job``): ``service_type`` / ``job_type`` / ``title``
+    # for keyword match + ``industry`` / ``checklist_industry`` for
+    # explicit override. Without the projection extend, every job
+    # arrived at the classifier with those fields missing and the
+    # classifier fell through to the (now-suppressed-in-strict-mode)
+    # tenant-industry default, defeating the whole filter.
     jobs = await db.jobs.find(
         {"tenant_id": tenant_id, "scheduled_date": date_range, **_nd()},
-        {"_id": 0, "technician_id": 1, "technician_name": 1, "status": 1, "scheduled_date": 1},
+        {"_id": 0, "technician_id": 1, "technician_name": 1,
+         "status": 1, "scheduled_date": 1,
+         "service_type": 1, "job_type": 1, "title": 1,
+         "industry": 1, "checklist_industry": 1},
     ).to_list(10000)
+
+    # POOL-A · industry filter — strict mode so a job with no
+    # explicit industry AND no keyword hit falls to ``"other"``
+    # (excluded) rather than silently inheriting the tenant's
+    # primary industry. Exclusion path also covers landscape,
+    # HVAC, cleaning, etc. — the Pool Service Report is a pool-
+    # only surface.
+    from routers.industry_checklists import (
+        derive_industry_for_job as _derive_industry,
+    )
+    jobs = [
+        j for j in jobs
+        if _derive_industry(j, tenant_doc, strict_mode=True) == "pool"
+    ]
 
     tids = list({j.get("technician_id") for j in jobs if j.get("technician_id")})
     from services.service_report_view import resolve_technicians
