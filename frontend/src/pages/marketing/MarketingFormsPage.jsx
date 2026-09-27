@@ -14,22 +14,58 @@ import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown } from "lucide-react";
 import ThemePanel from "@/components/formBuilder/ThemePanel";
+import HeroEditor from "@/components/formBuilder/HeroEditor";
+import RichTextField from "@/components/formBuilder/RichTextField";
 import AddressAutocomplete from "@/components/common/AddressAutocomplete";
+import { colors as themeColors } from "@/theme";
 
+// CUS-Marketing-Form-Builder · Feb-2026 — Phase 3.
+//
+// Branding swap: the legacy sky-500 brand constant + local
+// slate-flavored neutral chrome aliases below are replaced with
+// the canonical ``@/theme`` tokens. This aligns the form builder
+// with the app-wide navy + blue-focus palette used by the K64 nav
+// restyle and every N1/N2 input surface. Semantic colors (error
+// red, status green, status neutral gray) are preserved verbatim
+// inline because they map to meaning-not-brand and should not
+// shift when the brand palette does.
+//   - legacy sky-500  → ``themeColors.inputBorder`` (#3B82F6)
+//   - legacy slate-900 → ``themeColors.nav.bg`` (#1B1F5C) — the
+//                        form-builder chrome is a navy family
+//                        surface; using the same navy as the
+//                        admin nav keeps the drawer cohesive
+//                        on top of the navy shell.
+//   - legacy slate-500 → ``themeColors.muted`` (#71717A)
+//   - legacy slate-200 → ``themeColors.border`` (#E4E4E7)
+//   - legacy white     → ``themeColors.surface`` (#FFFFFF)
+//   - legacy slate-50  → ``themeColors.surfaceSecondary`` (#F4F4F5)
 const colors = {
-  brand: "#0EA5E9",
-  onSurface: "#0F172A",
-  muted: "#64748B",
-  border: "#E2E8F0",
-  surface: "#FFFFFF",
-  surfaceSecondary: "#F8FAFC",
+  brand: themeColors.inputBorder,
+  onSurface: themeColors.nav.bg,
+  muted: themeColors.muted,
+  border: themeColors.border,
+  surface: themeColors.surface,
+  surfaceSecondary: themeColors.surfaceSecondary,
 };
 
+// CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. ``"section"`` is
+// a layout-only marker (backend contract in Phase 1) — no submission
+// value, no ``required`` toggle, no options, no placeholder. Renders
+// as a divider heading in the public form.
 const FIELD_TYPES = [
   "text", "email", "phone", "textarea", "number", "url", "date",
   "address_google", "dropdown", "multiselect", "checkbox", "radio", "file",
+  "section",
 ];
+const FIELD_TYPE_LABELS = {
+  section: "Section heading (layout only)",
+};
 const OPTION_TYPES = new Set(["dropdown", "multiselect", "radio"]);
+// CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout-only
+// field types skip name/placeholder/required/options in the editor
+// row (see FieldEditorRow below) + let the backend accept a missing
+// ``name`` at save time.
+const LAYOUT_TYPES = new Set(["section"]);
 
 function slugify(s) {
   return (s || "").toString().toLowerCase()
@@ -45,6 +81,10 @@ const empty_field = () => ({
   required: false,
   placeholder: "",
   options: [],
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout column
+  // span. ``"full"`` (default) or ``"half"``. Backend contract in
+  // Phase 1 accepts both + null (treats null as full).
+  column_span: "full",
 });
 
 export default function MarketingFormsPage() {
@@ -140,7 +180,7 @@ export default function MarketingFormsPage() {
         {forms.map((f) => (
           <div key={f.id}
                data-testid={`form-row-${f.id}`}
-               className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 cursor-pointer"
+               className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-[#1B1F5C]/5 cursor-pointer"
                style={{ borderBottom: `1px solid ${colors.border}` }}
                onClick={() => setEditing(f)}>
             <div className="col-span-4 font-semibold" style={{ color: colors.onSurface }}>
@@ -195,6 +235,11 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
   // until the user picks a preset; renderer falls back to the app
   // default when null → zero regression for legacy forms.
   const [theme, setTheme] = useState(form.theme || null);
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Hero band
+  // designer state. ``null`` until the admin enables the toggle →
+  // renderer skips the hero band. Backwards-compatible for every
+  // form that predates Phase 3.
+  const [hero, setHero] = useState(form.hero || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [previewNonce, setPreviewNonce] = useState(0);
@@ -233,14 +278,26 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
   const save = async () => {
     setBusy(true); setError("");
     try {
-      const cleanFields = fields.map((f, i) => ({
-        ...f,
-        name: f.name || slugify(f.label) || `field_${i + 1}`,
-        label: f.label || f.name || `Field ${i + 1}`,
-        options: OPTION_TYPES.has(f.type)
-          ? (Array.isArray(f.options) ? f.options : String(f.options || "").split(",").map((s) => s.trim()).filter(Boolean))
-          : null,
-      }));
+      const cleanFields = fields.map((f, i) => {
+        // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout-only
+        // types (``section``) can omit ``name`` per the Phase 1
+        // backend contract. Non-layout types still require a fallback
+        // name so the submission payload is stable.
+        const isLayout = LAYOUT_TYPES.has(f.type);
+        return {
+          ...f,
+          name: isLayout
+            ? (f.name || "")
+            : (f.name || slugify(f.label) || `field_${i + 1}`),
+          label: f.label || f.name || `Field ${i + 1}`,
+          options: OPTION_TYPES.has(f.type)
+            ? (Array.isArray(f.options) ? f.options : String(f.options || "").split(",").map((s) => s.trim()).filter(Boolean))
+            : null,
+          // Preserve column_span verbatim — backend accepts
+          // "full" | "half" | null.
+          column_span: f.column_span || "full",
+        };
+      });
       const payload = {
         name,
         fields: cleanFields,
@@ -248,6 +305,7 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
         success_message: successMsg,
         submit_config: submitCfg,
         theme,
+        hero,
       };
       let out;
       if (form._new) out = await api.post("/admin/forms", payload);
@@ -296,6 +354,14 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
                  className="w-full px-3 py-2 rounded-lg text-sm mb-4 outline-none"
                  style={{ border: `1px solid ${colors.border}` }}
                  data-testid="form-name-input" />
+
+          {/* CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Hero-band
+              designer. Sits ABOVE the field list so the admin builds
+              the top-of-form banner first; renderer skips the band
+              entirely when ``hero`` is null (backwards compat). */}
+          <div className="mb-4">
+            <HeroEditor value={hero} onChange={setHero} />
+          </div>
 
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
@@ -477,6 +543,7 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
 
 
 function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
+  const isLayout = LAYOUT_TYPES.has(f.type);
   const needsOptions = OPTION_TYPES.has(f.type);
   return (
     <div className="mb-2 p-3 rounded-lg"
@@ -485,14 +552,29 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
       <div className="grid grid-cols-12 gap-2 items-start">
         <div className="col-span-5">
           <label className="block text-[10px] font-bold uppercase mb-1"
-                 style={{ color: colors.muted }}>Label</label>
-          <input value={f.label}
-                 onChange={(e) => onChange({ label: e.target.value,
-                                              name: f.name || slugify(e.target.value) })}
-                 placeholder="Full name"
-                 className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
-                 style={{ border: `1px solid ${colors.border}` }}
-                 data-testid={`form-field-label-${idx}`} />
+                 style={{ color: colors.muted }}>
+            {isLayout ? "Section heading" : "Label"}
+          </label>
+          {isLayout ? (
+            // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Section
+            // headings persist as rich-text HTML on ``field.label``.
+            // Narrow Tiptap extension set caps XSS surface — see
+            // RichTextField.jsx security boundary comment.
+            <RichTextField
+              value={f.label || ""}
+              onChange={(html) => onChange({ label: html })}
+              placeholder="e.g. <strong>Step 2</strong> — Contact details"
+              testid={`form-field-section-label-${idx}`}
+            />
+          ) : (
+            <input value={f.label}
+                   onChange={(e) => onChange({ label: e.target.value,
+                                                name: f.name || slugify(e.target.value) })}
+                   placeholder="Full name"
+                   className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid={`form-field-label-${idx}`} />
+          )}
         </div>
         <div className="col-span-3">
           <label className="block text-[10px] font-bold uppercase mb-1"
@@ -502,16 +584,24 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
                   className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
                   style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
                   data-testid={`form-field-type-${idx}`}>
-            {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {FIELD_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {FIELD_TYPE_LABELS[t] || t}
+              </option>
+            ))}
           </select>
         </div>
         <div className="col-span-2 pt-6">
-          <label className="flex items-center gap-1 text-xs">
-            <input type="checkbox" checked={!!f.required}
-                   onChange={(e) => onChange({ required: e.target.checked })}
-                   data-testid={`form-field-required-${idx}`} />
-            Required
-          </label>
+          {/* Layout-only types (section) skip the required toggle —
+              they have no submission value. */}
+          {!isLayout && (
+            <label className="flex items-center gap-1 text-xs">
+              <input type="checkbox" checked={!!f.required}
+                     onChange={(e) => onChange({ required: e.target.checked })}
+                     data-testid={`form-field-required-${idx}`} />
+              Required
+            </label>
+          )}
         </div>
         <div className="col-span-2 pt-6 flex items-center justify-end gap-1">
           <button onClick={() => onMove(-1)} title="Move up" className="p-1"
@@ -531,25 +621,48 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
         </div>
       </div>
       <div className="grid grid-cols-12 gap-2 mt-2">
+        {/* CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Column
+            span selector. Full-width (default) or half-width so
+            paired fields (city + state, phone + ext, etc.) live on
+            one row in the renderer. Always visible, including for
+            layout-only ``section`` markers where "half" produces a
+            centered mid-page divider. */}
         <div className="col-span-6">
           <label className="block text-[10px] font-bold uppercase mb-1"
-                 style={{ color: colors.muted }}>Field name (slug)</label>
-          <input value={f.name || ""}
-                 onChange={(e) => onChange({ name: slugify(e.target.value) })}
-                 placeholder="full_name"
-                 className="w-full px-2 py-1.5 rounded-lg text-sm outline-none font-mono"
-                 style={{ border: `1px solid ${colors.border}` }}
-                 data-testid={`form-field-name-${idx}`} />
+                 style={{ color: colors.muted }}>Column span</label>
+          <select value={f.column_span || "full"}
+                  onChange={(e) => onChange({ column_span: e.target.value })}
+                  className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                  style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                  data-testid={`form-field-column-span-${idx}`}>
+            <option value="full">Full width</option>
+            <option value="half">Half width</option>
+          </select>
         </div>
-        <div className="col-span-6">
-          <label className="block text-[10px] font-bold uppercase mb-1"
-                 style={{ color: colors.muted }}>Placeholder</label>
-          <input value={f.placeholder || ""}
-                 onChange={(e) => onChange({ placeholder: e.target.value })}
-                 className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
-                 style={{ border: `1px solid ${colors.border}` }}
-                 data-testid={`form-field-placeholder-${idx}`} />
-        </div>
+        {/* Layout-only types skip name / placeholder / options / preview. */}
+        {!isLayout && (
+          <div className="col-span-6">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Field name (slug)</label>
+            <input value={f.name || ""}
+                   onChange={(e) => onChange({ name: slugify(e.target.value) })}
+                   placeholder="full_name"
+                   className="w-full px-2 py-1.5 rounded-lg text-sm outline-none font-mono"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid={`form-field-name-${idx}`} />
+          </div>
+        )}
+        {!isLayout && (
+          <div className="col-span-12">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Placeholder</label>
+            <input value={f.placeholder || ""}
+                   onChange={(e) => onChange({ placeholder: e.target.value })}
+                   className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid={`form-field-placeholder-${idx}`} />
+          </div>
+        )}
         {needsOptions && (
           <div className="col-span-12">
             <label className="block text-[10px] font-bold uppercase mb-1"
