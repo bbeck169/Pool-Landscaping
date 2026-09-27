@@ -185,6 +185,19 @@ export default function AdminSidebar() {
             color: isActive ? "#fff" : colors.onSurface,
             fontWeight: isActive ? 600 : 400,
           })}
+          onMouseEnter={(e) => {
+            // NAV-restyle · Feb-2026 — layer the blue hover glow on
+            // top of the K75 hover-scale + sky-50 hover-bg. Guarded
+            // via ``aria-current="page"`` so active rows (which
+            // already carry the K52 navy→green gradient) stay
+            // static. Ruling R11 · Option A.
+            if (e.currentTarget.getAttribute("aria-current") !== "page") {
+              e.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.boxShadow = "";
+          }}
         >
           <Icon size={15} className="transition-colors duration-200 group-hover:text-sky-600" />
           <span className="truncate transition-colors duration-200">{e.label}</span>
@@ -232,12 +245,23 @@ export default function AdminSidebar() {
           <GripVertical size={13} />
         </button>
         <NavLink to={e.to}
-                  className={() => "flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm"}
+                  className={() => "flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-all duration-200 ease-out"}
                   style={({ isActive }) => ({
                     background: isActive ? gradients.navyToGreen.css : "transparent",
                     color: isActive ? "#fff" : colors.onSurface,
                     fontWeight: isActive ? 600 : 400,
-                  })}>
+                  })}
+                  onMouseEnter={(evt) => {
+                    // NAV-restyle · Feb-2026 — layer blue hover glow;
+                    // suppressed on active pinned rows so the K52
+                    // navy→green gradient stays clean. Ruling R11 · A.
+                    if (evt.currentTarget.getAttribute("aria-current") !== "page") {
+                      evt.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+                    }
+                  }}
+                  onMouseLeave={(evt) => {
+                    evt.currentTarget.style.boxShadow = "";
+                  }}>
           <Icon size={15} />
           <span className="truncate">{e.label}</span>
         </NavLink>

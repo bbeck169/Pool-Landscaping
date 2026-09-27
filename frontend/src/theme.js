@@ -164,6 +164,16 @@ export const colors = {
     fgActive: "#1B1F5C",     // legacy pill text — retained for portal preview
     fgMuted: "rgba(255, 255, 255, 0.72)",
     border: "rgba(255, 255, 255, 0.10)",
+    // NAV-restyle · Feb-2026 — blue outer-shadow glow layered on
+    // hover across every nav-item surface (sidebar, top-bar chips,
+    // top-bar dropdown menuitems, quick-pins rail, mobile drawer
+    // entries, mobile bottom-nav chips, universal-menu entry rows).
+    // Value is a single 10px blur radius using ``colors.inputBorder``
+    // (#3B82F6) so the glow reads as the app's canonical blue-focus
+    // colour. Suppressed on active items (see per-file mouse-enter
+    // handlers gated on ``aria-current="page"`` / ``data-state="open"``)
+    // so idle+hover and active are visually distinct.
+    hoverGlow: "0 0 10px #3B82F6",
   },
 
   // ═══════════════════════════════════════════════════════════════

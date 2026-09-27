@@ -166,12 +166,23 @@ function TopNavChip({ item }) {
         color: colors.nav.fg,
         background: isActive ? colors.nav.bgActiveNavy : "transparent",
       })}
-      onMouseEnter={(e) => { e.currentTarget.style.background = colors.nav.bgActiveNavy; }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = colors.nav.bgActiveNavy;
+        // NAV-restyle · Feb-2026 — layer the blue hover glow on
+        // top of the K64 navy hover-bg + K75 scale. Suppressed on
+        // active items (``aria-current="page"``) so the active
+        // pill stays static and the idle/hover distinction is
+        // crisp. Ruling R11 · Option A.
+        if (e.currentTarget.getAttribute("aria-current") !== "page") {
+          e.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+        }
+      }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background =
           e.currentTarget.getAttribute("aria-current") === "page"
             ? colors.nav.bgActiveNavy
             : "transparent";
+        e.currentTarget.style.boxShadow = "";
       }}
       data-testid={`top-nav-${key}`}
       aria-label={label}
@@ -207,11 +218,21 @@ function CategoryDropdown({ group }) {
           // JS handler racing the Radix state.
           "--nav-bg-active-navy": colors.nav.bgActiveNavy,
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = colors.nav.bgActiveNavy; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = colors.nav.bgActiveNavy;
+          // NAV-restyle · Feb-2026 — layer the blue hover glow.
+          // Suppressed while the dropdown is OPEN (``data-state``)
+          // so the open trigger reads as a static pinned pill.
+          // Ruling R11 · Option A.
+          if (e.currentTarget.getAttribute("data-state") !== "open") {
+            e.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+          }
+        }}
         onMouseLeave={(e) => {
           if (e.currentTarget.getAttribute("data-state") !== "open") {
             e.currentTarget.style.background = "transparent";
           }
+          e.currentTarget.style.boxShadow = "";
         }}
         data-testid={`admin-topbar-${group.key}`}
         aria-label={group.label}
@@ -222,7 +243,7 @@ function CategoryDropdown({ group }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/25"
+        className="min-w-[280px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[role=menuitem]:hover]:shadow-[0_0_10px_#3B82F6] [&_[role=menuitem]:focus]:shadow-[0_0_10px_#3B82F6] [&_[role=menuitem]]:transition-shadow [&_[role=menuitem]]:duration-200 [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/25"
         style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg }}
         data-testid={`admin-topbar-${group.key}-menu`}
         data-k52-navy-popover="true"

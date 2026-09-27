@@ -506,6 +506,11 @@ function AppLayout() {
           type="button"
           onClick={onLogout}
           className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+          // NAV-restyle · Feb-2026 — blue hover glow on the rail-
+          // Logout tile so it visually joins the pin/entry hover
+          // family. Non-route surface → no ``aria-current`` gate.
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = colors.nav.hoverGlow; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = ""; }}
           style={{
             color:       colors.nav.fg,
             borderColor: colors.nav.border,
@@ -555,6 +560,11 @@ function AppLayout() {
               <button
                 onClick={() => setDrawerOpen(true)}
                 className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200 ease-out hover:scale-[1.02] hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02]"
+                // NAV-restyle · Feb-2026 — blue hover glow on the
+                // mobile drawer-open trigger. Non-route surface →
+                // no ``aria-current`` gate.
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = colors.nav.hoverGlow; }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = ""; }}
                 style={{
                   // Phase K50 extension — hamburger sits on navy;
                   // render as transparent-with-white-border so the
@@ -810,10 +820,20 @@ function AppLayout() {
                 key={item.to}
                 to={item.to}
                 end={item.end}
-                className="flex-1 flex flex-col items-center justify-center py-2 text-[10px] font-semibold"
+                className="flex-1 flex flex-col items-center justify-center py-2 text-[10px] font-semibold transition-all duration-200 ease-out"
                 style={({ isActive }) => ({
                   color: isActive ? colors.brand : colors.muted,
                 })}
+                onMouseEnter={(e) => {
+                  // NAV-restyle · Feb-2026 — blue hover glow on
+                  // mobile bottom-nav chips. Suppressed on the
+                  // active tab so idle+hover and active are
+                  // visually distinct. Ruling R11 · A.
+                  if (e.currentTarget.getAttribute("aria-current") !== "page") {
+                    e.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+                  }
+                }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = ""; }}
                 data-testid={`btm-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
               >
                 <Icon size={20} />

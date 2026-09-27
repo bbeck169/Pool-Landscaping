@@ -354,7 +354,14 @@ export default function UniversalMenu({
                   return (
                     <div
                       key={e.to}
-                      className="flex items-center gap-2 px-2 py-2 rounded-md hover:bg-gray-50"
+                      className="flex items-center gap-2 px-2 py-2 rounded-md transition-all duration-200 ease-out hover:bg-gray-50"
+                      // NAV-restyle · Feb-2026 — blue hover glow on
+                      // universal-menu entry rows. Non-route-active
+                      // surface (rows navigate on click but don't
+                      // maintain isActive state), so no gate — glow
+                      // applies uniformly on hover.
+                      onMouseEnter={(ev) => { ev.currentTarget.style.boxShadow = colors.nav.hoverGlow; }}
+                      onMouseLeave={(ev) => { ev.currentTarget.style.boxShadow = ""; }}
                     >
                       <Link
                         to={e.to}

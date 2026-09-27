@@ -118,12 +118,19 @@ function SortableRailPin({ pin, onRequestRemove }) {
         })}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = colors.nav.bgActiveNavy;
+          // NAV-restyle · Feb-2026 — layer the blue hover glow.
+          // Suppressed on active pins so the active pill stays
+          // static. Ruling R11 · Option A.
+          if (e.currentTarget.getAttribute("aria-current") !== "page") {
+            e.currentTarget.style.boxShadow = colors.nav.hoverGlow;
+          }
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background =
             e.currentTarget.getAttribute("aria-current") === "page"
               ? colors.nav.bgActiveNavy
               : "transparent";
+          e.currentTarget.style.boxShadow = "";
         }}
         data-testid={`rail-nav-${key}`}
         aria-label={_displayLabel(pin.label)}
