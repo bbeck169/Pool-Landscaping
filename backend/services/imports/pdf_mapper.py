@@ -125,6 +125,94 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
     }
 
 
+# ═════════════════════════════════════════════════════════════════════
+# PDF Importer Sub-phase C · Feb-2026 — payment-preview builder +
+# shared helpers.
+# ═════════════════════════════════════════════════════════════════════
+async def _resolve_customer_or_pending(
+    doc: ExtractedDocument, *, db, tenant_id: str, batch_id: str,
+    report: MapperReport,
+) -> str:
+    """Shared customer-resolution used by the payment_receipt path
+    (PDF-C). Returns the resolved customer_id or a ``PENDING::``
+    sentinel. Side-effects the ``report``'s customer_resolution /
+    matched_customer_id / match_score / pending_customer_id fields
+    to mirror what the invoice path writes.
+
+    Kept as a separate helper so the invoice-path customer
+    resolution block stays byte-identical for the existing H.1
+    regression suite — this new helper only owns the payment lane.
+    """
+    if doc.customer_name:
+        match = await _fuzzy_match_customer(
+            db, tenant_id=tenant_id, extracted_name=doc.customer_name,
+        )
+        if match and match["customer"]:
+            report.customer_resolution = "matched"
+            report.matched_customer_id = match["customer"]["id"]
+            report.match_score = float(match["score"])
+            return match["customer"]["id"]
+        pending_id = await _insert_pending_customer(
+            db, tenant_id=tenant_id, batch_id=batch_id, extracted=doc,
+        )
+        report.customer_resolution = "pending"
+        report.pending_customer_id = pending_id
+        if match:
+            report.match_score = float(match["score"])
+            report.warnings.append(
+                f"below-threshold near-match: score={match['score']:.1f} "
+                f"candidate={match['candidate_name']!r}"
+            )
+        return f"PENDING::{pending_id}"
+    # No customer_name on the payment receipt — write a pending
+    # row so the commit path can require operator resolution.
+    pending_id = await _insert_pending_customer(
+        db, tenant_id=tenant_id, batch_id=batch_id, extracted=doc,
+    )
+    report.customer_resolution = "pending"
+    report.pending_customer_id = pending_id
+    return f"PENDING::{pending_id}"
+
+
+def _emit_warning(report: MapperReport, *, code: str, message: str) -> None:
+    """Push a structured warning into ``MapperReport.warnings``.
+    Kept small on purpose — the structured-warnings field lives on
+    the ExtractionResult layer (Sub-phase B), the mapper layer just
+    accumulates human-readable strings for the H.1 response body."""
+    report.warnings.append(f"[{code}] {message}")
+
+
+def _build_payment_in(
+    *, doc: ExtractedDocument, customer_id_field: str, batch_id: str,
+) -> Dict[str, Any]:
+    """Shape the payment preview dict the commit path consumes.
+
+    Mirrors ``db.payments`` (see stripe_billing_history_sync for
+    the canonical schema) plus PDF-import provenance fields.
+    ``invoice_id`` is deliberately absent here — the commit path
+    does the best-effort ``db.quotes`` lookup by ``doc_number``
+    and stamps it if a match exists.
+    """
+    return {
+        "customer_id": customer_id_field,
+        "customer_name": doc.customer_name,
+        # Payment receipts inherit doc_number from the receipt itself;
+        # commit uses it to look up the matching invoice number.
+        "doc_number": doc.doc_number,
+        # ``paid_at`` preferred; falls back to ``doc_date``; commit
+        # falls back to ``now`` when both are absent (last-resort).
+        "paid_at": (
+            doc.paid_at.isoformat() if doc.paid_at
+            else (doc.doc_date.isoformat() if doc.doc_date else None)
+        ),
+        "amount_paid": doc.amount_paid,
+        "payment_method": doc.payment_method,
+        "payment_reference": doc.payment_reference,
+        "notes": doc.notes,
+        "import_batch_id": batch_id,
+    }
+
+
 async def map_extracted_to_quote_in(
     doc: ExtractedDocument,
     *,
@@ -142,9 +230,43 @@ async def map_extracted_to_quote_in(
         customer_resolution="unresolved",
     )
 
-    # ── Payment receipts skip QuoteIn generation ────────────
+    # ── Payment receipts — build a payment_in preview ───────
+    # PDF Importer Sub-phase C · Feb-2026 — payment receipts now
+    # take their own commit lane (``mapped_target = "payment_in"``)
+    # instead of a permanent H.4 deferral. Do the same customer-
+    # resolution dance as the invoice path so ``payment_in`` lands
+    # with a resolved (or PENDING::) customer_id ready for the
+    # commit-side ``db.payments`` write.
     if doc.doc_kind == "payment_receipt":
-        report.mapped_target = "deferred_to_h4"
+        customer_id_field = await _resolve_customer_or_pending(
+            doc, db=db, tenant_id=tenant_id, batch_id=batch_id,
+            report=report,
+        )
+        # Payment-specific data-quality warnings (per PDF-C
+        # ruling #7 — warn, do NOT block the commit).
+        if doc.amount_paid is None:
+            _emit_warning(
+                report, code="amount_paid_missing",
+                message=(
+                    "amount_paid missing on payment receipt — "
+                    "the commit will store a $0 payment placeholder."
+                ),
+            )
+        if doc.paid_at is None and doc.doc_date is None:
+            _emit_warning(
+                report, code="paid_at_missing",
+                message=(
+                    "paid_at and doc_date both missing on payment "
+                    "receipt — commit will stamp paid_at=now."
+                ),
+            )
+        report.mapped_target = "payment_in"
+        report.payment_in = _build_payment_in(
+            doc=doc, customer_id_field=customer_id_field,
+            batch_id=batch_id,
+        )
+        # H.2 pending_payment_actions kept for backward compat —
+        # older readers (audit trail) still consume this.
         if doc.amount_paid is not None:
             report.pending_payment_actions.append({
                 "kind": "record_payment",
@@ -152,7 +274,7 @@ async def map_extracted_to_quote_in(
                 "paid_at": doc.paid_at.isoformat() if doc.paid_at else None,
                 "payment_method": doc.payment_method,
                 "payment_reference": doc.payment_reference,
-                "resolved_by": "phase_h4_receipt_handler",
+                "resolved_by": "pdf_c_payment_commit_path",
             })
         return report
 

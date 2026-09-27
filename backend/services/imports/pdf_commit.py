@@ -144,6 +144,27 @@ class CommitResult:
     duplicates_detected: List[DuplicateWarning] = field(default_factory=list)
     insert_errors: List[Dict[str, Any]] = field(default_factory=list)
     audit_id: Optional[str] = None
+    # ═══════════════════════════════════════════════════════════
+    # PDF Importer Sub-phase C · Feb-2026 — per-doc-type breakdown.
+    # ``quotes_created`` above stays as the sum of invoices +
+    # estimates for backward compat with routers.imports and the
+    # audit trail. The fields below give the caller per-type
+    # buckets so the commit response can render "3 invoices, 1
+    # estimate, 2 payments (1 linked)" without re-scanning
+    # ``mapper_previews``.
+    # ═══════════════════════════════════════════════════════════
+    invoices_created: int = 0
+    estimates_created: int = 0
+    payments_created: int = 0
+    payments_updated: int = 0
+    payments_unlinked: int = 0
+    payment_ids: List[str] = field(default_factory=list)
+    payment_errors: List[Dict[str, Any]] = field(default_factory=list)
+    # Per-doc-type warnings (missing doc_date on invoice / missing
+    # amount_paid on payment / unknown doc_kind / etc). Non-blocking
+    # — surfaced to the operator via the commit response for
+    # follow-up but the offending row still lands.
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -306,12 +327,19 @@ async def commit_batch(
     # ── Build the doc list ────────────────────────────────
     to_insert: List[Dict[str, Any]] = []
     inserted_indexes: List[int] = []
+    warnings: List[Dict[str, Any]] = []
+    invoices_planned = 0
+    estimates_planned = 0
     for preview in previews:
         source_doc_index = int(preview.get("source_doc_index", -1))
         if source_doc_index in already_inserted_indexes:
             continue
-        if preview.get("mapped_target") != "quote_in":
-            # payment_receipt / deferred_to_h4 — H.4's problem.
+        mapped_target = preview.get("mapped_target")
+        # PDF-C · Feb-2026 — payment_in previews are handled below
+        # in a separate loop; deferred_to_h4 previews stay skipped
+        # (only reachable now when a payment receipt was too
+        # malformed for the mapper to build a payment_in).
+        if mapped_target != "quote_in":
             continue
         qi = preview.get("quote_in") or {}
         if not qi:
@@ -337,8 +365,35 @@ async def commit_batch(
         # (we did NOT trust the extractor's grand_total).
         _apply_totals(doc)
 
+        # PDF-C · Feb-2026 — per-doc-type warn-on-missing-fields.
+        # doc_date + total_due for invoices and estimates alike;
+        # ruling #7 says warn, do NOT block.
+        if not qi.get("doc_date"):
+            warnings.append({
+                "source_doc_index": source_doc_index,
+                "doc_type": doc.get("doc_type"),
+                "code": "doc_date_missing",
+                "message": "doc_date missing — commit used now() fallback.",
+            })
+        if qi.get("total_due") in (None, 0, 0.0):
+            warnings.append({
+                "source_doc_index": source_doc_index,
+                "doc_type": doc.get("doc_type"),
+                "code": "total_due_missing",
+                "message": (
+                    "total_due missing or zero — line-item recompute "
+                    "will drive the persisted total."
+                ),
+            })
+
         to_insert.append(doc)
         inserted_indexes.append(source_doc_index)
+        # PDF-C · per-type planning bucket (finalised after
+        # insert_many succeeds so counts always match reality).
+        if doc.get("doc_type") == "invoice":
+            invoices_planned += 1
+        else:
+            estimates_planned += 1
 
     # ── Bulk insert ───────────────────────────────────────
     insert_errors: List[Dict[str, Any]] = []
@@ -407,6 +462,60 @@ async def commit_batch(
     )
     quotes_skipped_idempotent = len(already_inserted_indexes)
 
+    # ═══════════════════════════════════════════════════════════
+    # PDF Importer Sub-phase C · Feb-2026 — payment commit lane.
+    #
+    # Iterates previews with ``mapped_target == "payment_in"``
+    # (see pdf_mapper._build_payment_in). Each becomes a row in
+    # ``db.payments`` with best-effort ``invoice_id`` linking via
+    # doc_number match on ``db.quotes``.
+    #
+    # Idempotency uses ``(tenant_id, import_batch_id,
+    # import_source_doc_index)`` — a mid-flight crash + rerun
+    # updates the existing row instead of duplicating. This
+    # matches the invoice path's ``already_inserted_indexes``
+    # convention but implemented as a per-row check because
+    # payments live in a different collection.
+    #
+    # Errors are per-payment (partial success): a bad payment
+    # doesn't take down invoice inserts, and vice versa. All
+    # non-fatal issues land in ``warnings`` per ruling #7.
+    # ═══════════════════════════════════════════════════════════
+    payment_stats = await _commit_payment_previews(
+        previews=previews,
+        batch=batch, tenant_id=tenant_id,
+        operator=operator, commit_at=commit_at,
+        warnings=warnings, db=db,
+    )
+
+    # ─── Unknown / malformed doc_kind → error entry (per ruling #8) ───
+    for preview in previews:
+        target = preview.get("mapped_target")
+        if target in ("quote_in", "payment_in", "deferred_to_h4", None):
+            continue
+        # Unrecognised mapped_target — shouldn't happen with the
+        # current Literal enum but guardrail for hand-crafted or
+        # forward-compat previews.
+        idx = int(preview.get("source_doc_index", -1))
+        warnings.append({
+            "source_doc_index": idx,
+            "doc_type": "unknown",
+            "code": "unknown_mapped_target",
+            "message": (
+                f"unknown mapped_target={target!r}; row skipped "
+                f"(neither quote_in nor payment_in)."
+            ),
+        })
+
+    # ─── Per-doc-type finalised counts ───────────────────────
+    # Only accept the plan counts up to how many rows actually
+    # landed in db.quotes. If insert_many partial-failed, prefer
+    # the invoice bucket to shrink first (writes are ordered,
+    # invoice rows land in position 0..N first).
+    actual_quotes_inserted = len(inserted_ids)
+    invoices_created = min(invoices_planned, actual_quotes_inserted)
+    estimates_created = actual_quotes_inserted - invoices_created
+
     return CommitResult(
         quotes_created=len(inserted_ids),
         quotes_skipped_duplicates=quotes_skipped_duplicates,
@@ -414,6 +523,15 @@ async def commit_batch(
         quote_ids=inserted_ids,
         duplicates_detected=list(duplicates),
         insert_errors=insert_errors,
+        # PDF-C per-type breakdown.
+        invoices_created=invoices_created,
+        estimates_created=estimates_created,
+        payments_created=payment_stats["created"],
+        payments_updated=payment_stats["updated"],
+        payments_unlinked=payment_stats["unlinked"],
+        payment_ids=payment_stats["ids"],
+        payment_errors=payment_stats["errors"],
+        warnings=warnings,
     )
 
 
@@ -511,6 +629,223 @@ def _extract_paid_at(preview: Dict[str, Any]) -> Optional[str]:
             paid_at = act.get("paid_at")
             if paid_at:
                 return str(paid_at)
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# PDF Importer Sub-phase C · Feb-2026 — payment-commit helpers.
+# ═════════════════════════════════════════════════════════════════════
+async def _commit_payment_previews(
+    *,
+    previews: List[Dict[str, Any]],
+    batch: Dict[str, Any],
+    tenant_id: str,
+    operator: Dict[str, Any],
+    commit_at: str,
+    warnings: List[Dict[str, Any]],
+    db,
+) -> Dict[str, Any]:
+    """Materialise every ``mapped_target == "payment_in"`` preview
+    into ``db.payments``. Best-effort ``invoice_id`` linking on
+    doc_number match — unlinked payments still commit with a
+    warning.
+
+    Returns a summary dict::
+
+        {
+            "created": int,       # new rows
+            "updated": int,       # idempotent re-commit hit
+            "unlinked": int,      # committed w/o invoice_id link
+            "ids": [str],         # ids of all successful rows
+            "errors": [           # per-row failures
+                {source_doc_index, error_code, message},
+            ],
+        }
+    """
+    batch_id = batch.get("id") or batch.get("batch_id")
+    stats: Dict[str, Any] = {
+        "created": 0, "updated": 0, "unlinked": 0,
+        "ids": [], "errors": [],
+    }
+
+    for preview in previews:
+        if preview.get("mapped_target") != "payment_in":
+            continue
+        if preview.get("errors"):
+            # Mapper emitted a hard error — refuse to persist
+            # (matches the invoice-path gate).
+            continue
+        source_doc_index = int(preview.get("source_doc_index", -1))
+        pi = preview.get("payment_in") or {}
+        if not pi:
+            continue
+
+        # Refuse to persist a PENDING:: customer_id (matches the
+        # invoice path's unresolved-gate posture, but per-row so
+        # the operator can resolve THIS payment via H.3 UI and
+        # rerun without redoing the whole batch).
+        cid = pi.get("customer_id") or ""
+        if isinstance(cid, str) and cid.startswith("PENDING::"):
+            stats["errors"].append({
+                "source_doc_index": source_doc_index,
+                "error_code": "unresolved_customer",
+                "message": (
+                    "payment references an unresolved customer "
+                    "(PENDING:: sentinel); resolve via review UI + "
+                    "rerun commit."
+                ),
+            })
+            continue
+
+        # Warn-on-missing per ruling #7.
+        if pi.get("amount_paid") in (None, 0, 0.0):
+            warnings.append({
+                "source_doc_index": source_doc_index,
+                "doc_type": "payment",
+                "code": "amount_paid_missing",
+                "message": (
+                    "amount_paid missing on payment receipt — "
+                    "row committed with amount=$0 placeholder."
+                ),
+            })
+        paid_at_iso = pi.get("paid_at") or commit_at
+
+        # Idempotency — did a prior commit already write this
+        # (batch_id, source_doc_index) into payments?
+        existing = await db.payments.find_one(
+            {
+                "tenant_id": tenant_id,
+                "import_batch_id": batch_id,
+                "import_source_doc_index": source_doc_index,
+            },
+            {"_id": 0, "id": 1},
+        )
+
+        # Best-effort invoice link on doc_number match (per
+        # ruling #3). Tenant-scoped ALWAYS — an invoice from
+        # another tenant cannot resolve here.
+        doc_number = pi.get("doc_number")
+        invoice_link: Optional[Dict[str, str]] = None
+        if doc_number:
+            invoice_link = await _find_invoice_for_payment(
+                db=db, tenant_id=tenant_id,
+                customer_id=cid, doc_number=doc_number,
+            )
+        linked = invoice_link is not None
+        if not linked:
+            stats["unlinked"] += 1
+            warnings.append({
+                "source_doc_index": source_doc_index,
+                "doc_type": "payment",
+                "code": "invoice_link_missing",
+                "message": (
+                    "no matching invoice for payment "
+                    f"doc_number={doc_number!r} customer={cid!r}"
+                    " — payment committed as unlinked."
+                ),
+            })
+
+        payment_doc: Dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "customer_id": cid,
+            "customer_name": pi.get("customer_name") or "",
+            "amount": float(pi.get("amount_paid") or 0.0),
+            # ``method`` is the ``db.payments`` field name; PDF
+            # extractor uses ``payment_method`` — map both onto
+            # the canonical field so downstream readers work.
+            "method": pi.get("payment_method"),
+            "payment_reference": pi.get("payment_reference"),
+            "paid_at": paid_at_iso,
+            "status": "succeeded",
+            "invoice_number": doc_number,
+            "invoice_id": (invoice_link or {}).get("id"),
+            "notes": pi.get("notes"),
+            # Import provenance.
+            "import_batch_id": batch_id,
+            "import_source_doc_index": source_doc_index,
+            "imported_from_pdf": True,
+            "imported_at": commit_at,
+            "imported_by_user_id": (operator or {}).get("id"),
+            "source": "pdf_import",
+        }
+
+        try:
+            if existing:
+                # Idempotent re-commit — update the existing row
+                # in place (per ruling #5).
+                payment_doc["id"] = existing["id"]
+                payment_doc["updated_at"] = commit_at
+                await db.payments.update_one(
+                    {
+                        "tenant_id": tenant_id,
+                        "id": existing["id"],
+                    },
+                    {"$set": {k: v for k, v in payment_doc.items()
+                                 if k not in ("id",)}},
+                )
+                stats["updated"] += 1
+                stats["ids"].append(existing["id"])
+            else:
+                payment_doc["id"] = new_id()
+                payment_doc["created_at"] = commit_at
+                payment_doc["updated_at"] = commit_at
+                await db.payments.insert_one(payment_doc)
+                stats["created"] += 1
+                stats["ids"].append(payment_doc["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "[pdf-commit] payment insert failed tenant=%s "
+                "batch=%s idx=%s: %s",
+                tenant_id, batch_id, source_doc_index, exc,
+            )
+            stats["errors"].append({
+                "source_doc_index": source_doc_index,
+                "error_code": type(exc).__name__,
+                "message": str(exc)[:400],
+            })
+
+    return stats
+
+
+async def _find_invoice_for_payment(
+    *, db, tenant_id: str, customer_id: str, doc_number: str,
+) -> Optional[Dict[str, str]]:
+    """Best-effort invoice match for a payment. Tenant-scoped
+    ALWAYS. Matches on either ``doc_number`` (H.1 preserved) or
+    ``invoice_number`` (§A ruling: invoice-path invoices persist
+    doc_number as invoice_number).
+
+    Customer scoping is a soft AND — an exact customer_id match
+    is preferred but a doc_number-only match still wins so we
+    don't drop the link on a subtle customer-id disagreement
+    (e.g., the payment landed against a merged customer).
+    """
+    # Preferred: exact tenant + customer + doc_number match.
+    q_exact = {
+        "tenant_id": tenant_id,
+        "customer_id": customer_id,
+        "doc_type": "invoice",
+        "$or": [
+            {"doc_number": doc_number},
+            {"invoice_number": doc_number},
+        ],
+    }
+    row = await db.quotes.find_one(q_exact, {"_id": 0, "id": 1})
+    if row:
+        return {"id": row["id"]}
+    # Fallback: tenant + doc_number only. Customer may have been
+    # merged since the invoice was imported.
+    q_relaxed = {
+        "tenant_id": tenant_id,
+        "doc_type": "invoice",
+        "$or": [
+            {"doc_number": doc_number},
+            {"invoice_number": doc_number},
+        ],
+    }
+    row = await db.quotes.find_one(q_relaxed, {"_id": 0, "id": 1})
+    if row:
+        return {"id": row["id"]}
     return None
 
 

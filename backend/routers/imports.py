@@ -889,6 +889,26 @@ async def commit_pdf_invoice_batch(
         ),
         "insert_errors": commit_result.insert_errors,
         "audit_id": audit_id,
+        # PDF Importer Sub-phase C · Feb-2026 — per-doc-type
+        # breakdown so the operator UI can render "3 invoices,
+        # 1 estimate, 2 payments (1 unlinked)" without re-scanning
+        # ``mapper_previews``.
+        "committed": {
+            "invoices": {
+                "created": commit_result.invoices_created,
+            },
+            "estimates": {
+                "created": commit_result.estimates_created,
+            },
+            "payments": {
+                "created": commit_result.payments_created,
+                "updated": commit_result.payments_updated,
+                "unlinked": commit_result.payments_unlinked,
+                "ids": commit_result.payment_ids,
+                "errors": commit_result.payment_errors,
+            },
+        },
+        "warnings": commit_result.warnings,
     }
 
 

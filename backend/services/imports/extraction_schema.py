@@ -122,13 +122,29 @@ class MapperReport(BaseModel):
     live commit endpoints."""
     source_doc_index: int
     doc_kind: Literal["invoice", "estimate", "payment_receipt"]
-    mapped_target: Literal["quote_in", "deferred_to_h4"]
+    # PDF Importer Sub-phase C · Feb-2026 — bumped from a two-
+    # value enum ({"quote_in", "deferred_to_h4"}) to a three-value
+    # one so payment receipts get their own commit lane instead of
+    # a permanent H.4 deferral. When ``doc_kind == "payment_receipt"``
+    # the mapper now populates ``payment_in`` and sets
+    # ``mapped_target == "payment_in"``. ``deferred_to_h4`` remains
+    # as a last-resort fallback for payment receipts whose data was
+    # too malformed to build a payment doc from (e.g. no
+    # ``amount_paid``, no customer resolution possible at all).
+    mapped_target: Literal["quote_in", "payment_in", "deferred_to_h4"]
 
     # QuoteIn preview (None when doc_kind=payment_receipt).
     # Stored as a dict rather than a QuoteIn to keep the response
     # JSON-friendly + avoid a circular import from models.py at
     # schema-load time.
     quote_in: Optional[Dict[str, Any]] = None
+
+    # PDF-C · Feb-2026 — Payment preview (None when
+    # ``mapped_target != "payment_in"``). Dict shape mirrors the
+    # ``db.payments`` document expected by commit_batch's
+    # payment-write path — see :func:`services.imports.pdf_mapper.
+    # _build_payment_in` for the canonical builder.
+    payment_in: Optional[Dict[str, Any]] = None
 
     # Customer resolution outcome.
     customer_resolution: Literal["matched", "pending", "unresolved"]

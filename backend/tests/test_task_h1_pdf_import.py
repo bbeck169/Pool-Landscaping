@@ -18,7 +18,7 @@ Fixtures:
 
 Integration test — the sole real-vision test — is marked with
 ``@pytest.mark.integration`` so ``pytest -m 'not integration'``
-skips it by default. It runs only when ``EMERGENT_LLM_KEY`` is
+skips it by default. It runs only when ``EMERGENT_LLM_KEY_INTEGRATION`` is
 set in the environment (skips gracefully otherwise).
 """
 from __future__ import annotations
@@ -652,7 +652,7 @@ async def test_call_vision_model_result_unwrapping(
 @pytest.mark.anyio
 async def test_extractor_real_vision_gpt4o_sanity(aquaterra_id, adb):
     """Opt-in integration test.  Only runs with ``-m integration``
-    AND when ``EMERGENT_LLM_KEY`` is set.  Asserts LOOSE structural
+    AND when ``EMERGENT_LLM_KEY_INTEGRATION`` is set.  Asserts LOOSE structural
     invariants only — the real model's JSON reply can vary run-to-
     run (empty markdown-fenced payload, extra prose prefix, rate-
     limited fallback, ...).  We tolerate any of those by asserting
@@ -663,8 +663,8 @@ async def test_extractor_real_vision_gpt4o_sanity(aquaterra_id, adb):
       * ``model_used`` names the wired model,
       * IF documents landed, structural shape checks apply.
     """
-    if not os.environ.get("EMERGENT_LLM_KEY"):
-        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+    if not os.environ.get("EMERGENT_LLM_KEY_INTEGRATION"):
+        pytest.skip("EMERGENT_LLM_KEY_INTEGRATION not set — skip integration")
 
     from services.imports.pdf_invoice_extractor import extract
 
@@ -745,10 +745,10 @@ async def test_integration_receipt_single_document(aquaterra_id, adb):
 
     The payment-receipt fixture is a 1-page single document; a
     correct segmentation MUST return exactly one document.  Skips
-    gracefully when ``EMERGENT_LLM_KEY`` is not set (unit-only run).
+    gracefully when ``EMERGENT_LLM_KEY_INTEGRATION`` is not set (unit-only run).
     """
-    if not os.environ.get("EMERGENT_LLM_KEY"):
-        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+    if not os.environ.get("EMERGENT_LLM_KEY_INTEGRATION"):
+        pytest.skip("EMERGENT_LLM_KEY_INTEGRATION not set — skip integration")
 
     from services.imports.pdf_invoice_extractor import extract
 
@@ -776,8 +776,8 @@ async def test_integration_2page_invoice_single_document_1item(
     returned as a single document.  Stub-continuation rule
     regression guard.
     """
-    if not os.environ.get("EMERGENT_LLM_KEY"):
-        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+    if not os.environ.get("EMERGENT_LLM_KEY_INTEGRATION"):
+        pytest.skip("EMERGENT_LLM_KEY_INTEGRATION not set — skip integration")
 
     from services.imports.pdf_invoice_extractor import extract
 
@@ -805,8 +805,8 @@ async def test_integration_2page_invoice_single_document_multiline(
     stub) MUST be returned as a single document.  Regression
     guard for the multiline variant of the stub-continuation bug.
     """
-    if not os.environ.get("EMERGENT_LLM_KEY"):
-        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+    if not os.environ.get("EMERGENT_LLM_KEY_INTEGRATION"):
+        pytest.skip("EMERGENT_LLM_KEY_INTEGRATION not set — skip integration")
 
     from services.imports.pdf_invoice_extractor import extract
 
@@ -850,8 +850,8 @@ async def test_integration_batch_segmentation_band(aquaterra_id, adb):
     the dominant real-world use case -- remain a strict `== 1`
     assertion (see Tests 16, 17).
     """
-    if not os.environ.get("EMERGENT_LLM_KEY"):
-        pytest.skip("EMERGENT_LLM_KEY not set — skip integration")
+    if not os.environ.get("EMERGENT_LLM_KEY_INTEGRATION"):
+        pytest.skip("EMERGENT_LLM_KEY_INTEGRATION not set — skip integration")
 
     from services.imports.pdf_invoice_extractor import extract
 
