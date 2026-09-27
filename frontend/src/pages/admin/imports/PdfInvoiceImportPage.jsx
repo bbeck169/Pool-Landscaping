@@ -44,14 +44,19 @@ import {
   ShieldCheck,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Clock,
   History,
   X,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
+  Layers,
+  RefreshCw,
 } from "lucide-react";
 import { PageHeader, Button } from "@/components/ui-kit";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { colors } from "@/theme";
 
 
@@ -1108,6 +1113,7 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
   const [dupError, setDupError] = useState(null);
   const [onDuplicate, setOnDuplicate] = useState(DEFAULT_ON_DUPLICATE);
   const [commitError, setCommitError] = useState(null);
+  const [commitErrorStatus, setCommitErrorStatus] = useState(null);
   const [commitOutcome, setCommitOutcome] = useState(null);
 
   useEffect(() => {
@@ -1154,6 +1160,7 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
 
   const handleCommit = useCallback(async () => {
     setCommitError(null);
+    setCommitErrorStatus(null);
     onCommitStart?.(fileId);
     try {
       const envelope = await commitBatch(batch.id || batch.batch_id, {
@@ -1163,6 +1170,7 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
       onCommitSuccess?.(fileId, envelope);
     } catch (err) {
       setCommitError(err?.message || "Commit failed.");
+      setCommitErrorStatus(err?.status || null);
       onCommitFailure?.(fileId, err);
     }
   }, [batch, fileId, onDuplicate, onCommitStart,
@@ -1286,115 +1294,152 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
 
           {/* Commit / Rollback footer. */}
           <div
-            className="mt-3 flex flex-wrap items-center gap-3 text-sm"
+            className="mt-3 flex flex-col gap-3 text-sm"
             data-testid={`pdf-import-preview-actions-${fileId}`}
           >
             {isTerminal ? (
               <>
-                {isCommitted ? (
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800"
-                    data-testid={`pdf-import-preview-committed-badge-${fileId}`}
-                  >
-                    <CheckCircle2 size={12} />
-                    Committed
-                    {commitOutcome?.quotes_created !== undefined
-                      ? ` · ${commitOutcome.quotes_created} created`
-                      : null}
-                    {commitOutcome?.quotes_skipped_duplicates
-                      ? ` · ${commitOutcome.quotes_skipped_duplicates} skipped`
-                      : null}
-                  </span>
+                {/* Unified committed summary (PDF-E). Renders when
+                    the commit response carries the ``committed``
+                    per-doc-type block. Falls back to the legacy
+                    single-pill for pre-PDF-C response shapes so
+                    older tests + audit-log replays stay green. */}
+                {isCommitted && commitOutcome?.committed ? (
+                  <CommittedSummary
+                    fileId={fileId}
+                    outcome={commitOutcome}
+                    batchId={batch.id || batch.batch_id}
+                    tileSummary={batch.tile_summary}
+                  />
                 ) : null}
-                {isRolledBack ? (
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-200 text-slate-800"
-                    data-testid={`pdf-import-preview-rolledback-badge-${fileId}`}
-                  >
-                    <History size={12} />
-                    Rolled back
-                  </span>
-                ) : null}
-                {isCommitted ? (
-                  <Button
-                    variant="secondary"
-                    onClick={handleRollback}
-                    disabled={isRollingBack}
-                    testid={`pdf-import-rollback-btn-${fileId}`}
-                    title={rollbackTitle}
-                  >
-                    {isRollingBack ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <Loader2 size={14} className="animate-spin" />
-                        Rolling back…
-                      </span>
-                    ) : "Rollback"}
-                  </Button>
-                ) : null}
+                {/* Legacy committed pill — always rendered on
+                    ``isCommitted`` so the integration test at
+                    ``pdf-invoice-import-integration.test.jsx``
+                    (which uses a legacy response shape) keeps
+                    matching the ``preview-committed-badge`` test-
+                    id + " · N created" copy. */}
+                <div className="flex flex-wrap items-center gap-3">
+                  {isCommitted ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800"
+                      data-testid={`pdf-import-preview-committed-badge-${fileId}`}
+                    >
+                      <CheckCircle2 size={12} />
+                      Committed
+                      {commitOutcome?.quotes_created !== undefined
+                        ? ` · ${commitOutcome.quotes_created} created`
+                        : null}
+                      {commitOutcome?.quotes_skipped_duplicates
+                        ? ` · ${commitOutcome.quotes_skipped_duplicates} skipped`
+                        : null}
+                    </span>
+                  ) : null}
+                  {isRolledBack ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-slate-200 text-slate-800"
+                      data-testid={`pdf-import-preview-rolledback-badge-${fileId}`}
+                    >
+                      <History size={12} />
+                      Rolled back
+                    </span>
+                  ) : null}
+                  {isCommitted ? (
+                    <Button
+                      variant="secondary"
+                      onClick={handleRollback}
+                      disabled={isRollingBack}
+                      testid={`pdf-import-rollback-btn-${fileId}`}
+                      title={rollbackTitle}
+                    >
+                      {isRollingBack ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 size={14} className="animate-spin" />
+                          Rolling back…
+                        </span>
+                      ) : "Rollback"}
+                    </Button>
+                  ) : null}
+                </div>
               </>
             ) : (
               <>
-                {/* On-duplicate radio group. */}
-                <div
-                  className="flex flex-wrap items-center gap-3 text-xs"
-                  data-testid={`pdf-import-preview-on-dup-${fileId}`}
-                >
-                  <span
-                    className="font-medium"
-                    style={{ color: colors.muted }}
-                  >
-                    On duplicate:
-                  </span>
-                  {ON_DUPLICATE_MODES.map((mode) => (
-                    <label
-                      key={mode}
-                      className="inline-flex items-center gap-1.5 cursor-pointer"
-                      data-testid={`pdf-import-on-dup-${mode}-${fileId}`}
-                    >
-                      <input
-                        type="radio"
-                        name={`on-dup-${fileId}`}
-                        value={mode}
-                        checked={onDuplicate === mode}
-                        onChange={() => setOnDuplicate(mode)}
-                        disabled={isCommitting}
-                        className="cursor-pointer"
-                      />
-                      <span
-                        className={onDuplicate === mode
-                          ? "font-semibold" : ""}
-                        style={{ color: colors.onSurface }}
-                      >
-                        {ON_DUPLICATE_LABELS[mode]}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                {commitError ? (
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-red-100 text-red-800"
-                    data-testid={`pdf-import-preview-commit-error-${fileId}`}
-                  >
-                    <AlertCircle size={12} />
-                    {commitError}
-                  </span>
-                ) : null}
-                <div className="ml-auto">
-                  <Button
-                    variant="primary"
-                    onClick={handleCommit}
+                {/* PDF-E · Whole-commit failure banner (5xx). Shown
+                    above the retry-friendly on-duplicate strip so
+                    the operator sees a clear "server failed, retry?"
+                    call-to-action separate from the inline typed-
+                    error pill used for 4xx validation failures. */}
+                {commitError && commitErrorStatus && commitErrorStatus >= 500 ? (
+                  <CommitErrorBanner
+                    fileId={fileId}
+                    error={commitError}
+                    uploadedFilename={fileMeta?.name}
+                    onRetry={handleCommit}
                     disabled={isCommitting}
-                    testid={`pdf-import-commit-btn-${fileId}`}
+                  />
+                ) : null}
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* On-duplicate radio group. */}
+                  <div
+                    className="flex flex-wrap items-center gap-3 text-xs"
+                    data-testid={`pdf-import-preview-on-dup-${fileId}`}
                   >
-                    {isCommitting ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <Loader2 size={14} className="animate-spin" />
-                        Committing…
-                      </span>
-                    ) : (
-                      `Commit ${totalCount} invoice${totalCount === 1 ? "" : "s"}`
-                    )}
-                  </Button>
+                    <span
+                      className="font-medium"
+                      style={{ color: colors.muted }}
+                    >
+                      On duplicate:
+                    </span>
+                    {ON_DUPLICATE_MODES.map((mode) => (
+                      <label
+                        key={mode}
+                        className="inline-flex items-center gap-1.5 cursor-pointer"
+                        data-testid={`pdf-import-on-dup-${mode}-${fileId}`}
+                      >
+                        <input
+                          type="radio"
+                          name={`on-dup-${fileId}`}
+                          value={mode}
+                          checked={onDuplicate === mode}
+                          onChange={() => setOnDuplicate(mode)}
+                          disabled={isCommitting}
+                          className="cursor-pointer"
+                        />
+                        <span
+                          className={onDuplicate === mode
+                            ? "font-semibold" : ""}
+                          style={{ color: colors.onSurface }}
+                        >
+                          {ON_DUPLICATE_LABELS[mode]}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {commitError && (!commitErrorStatus || commitErrorStatus < 500) ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-red-100 text-red-800"
+                      data-testid={`pdf-import-preview-commit-error-${fileId}`}
+                    >
+                      <AlertCircle size={12} />
+                      {commitError}
+                    </span>
+                  ) : null}
+                  <div className="ml-auto">
+                    <Button
+                      variant="primary"
+                      onClick={handleCommit}
+                      disabled={isCommitting}
+                      testid={`pdf-import-commit-btn-${fileId}`}
+                    >
+                      {isCommitting ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 size={14} className="animate-spin" />
+                          Committing…
+                        </span>
+                      ) : (
+                        `Commit ${totalCount} invoice${totalCount === 1 ? "" : "s"}`
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
@@ -1517,6 +1562,486 @@ export function prettyStage(stage) {
                     .replace(/\b\w/g, (c) => c.toUpperCase());
   return suffix ? `${label} ${suffix}` : label;
 }
+
+// ═════════════════════════════════════════════════════════════
+// PDF Importer Sub-phase E · Feb-2026 — Unified commit-result UI
+// ─────────────────────────────────────────────────────────────
+// The four sub-components below render the post-commit dashboard
+// that replaces the pre-E single-pill summary. Every component
+// is a pure render of props (no local fetching) so the parent
+// ``PreviewSurface`` owns the data lifecycle and these can be
+// mounted directly in vitest for tight per-component assertions.
+//
+// Rendering rules:
+//
+//   * ``CommittedSummary``      — always shown once the commit
+//     response carries a ``committed`` block (PDF-C shape).
+//   * ``WarningsBanner``        — shown iff ``warnings.length > 0``.
+//   * ``TileSummarySection``    — shown iff a non-null
+//     ``tile_summary`` was persisted onto the batch row (PDF-D,
+//     only for PDFs > 36 pages).
+//   * ``ErrorsPerTypeSection``  — shown iff either
+//     ``insert_errors[]`` or ``committed.payments.errors[]`` is
+//     non-empty.
+//   * ``CommitErrorBanner``     — shown iff a whole-commit 5xx
+//     failure surfaced. Preserves the uploaded file in row state
+//     via the parent's existing revert-to-PREVIEW_READY logic so
+//     the retry is one click.
+// ═════════════════════════════════════════════════════════════
+
+
+/**
+ * PDF-E — Three count cards + per-type deep-links.
+ *
+ * Renders side-by-side stat cards for invoices / estimates /
+ * payments with click-to-navigate behaviour (each card links to
+ * the corresponding admin list page filtered by
+ * ``import_batch_id``). Payments card carries a secondary
+ * ``unlinked`` count (payments that landed without a matching
+ * invoice — needs operator review before dispatch).
+ *
+ * Backward-compat: this component is only rendered when
+ * ``outcome.committed`` is present. Pre-PDF-C responses fall
+ * through to the legacy single-pill in ``PreviewSurface``.
+ */
+export function CommittedSummary({ fileId, outcome, batchId, tileSummary }) {
+  const committed = outcome?.committed || {};
+  const invoices = committed.invoices || {};
+  const estimates = committed.estimates || {};
+  const payments = committed.payments || {};
+  const warnings = Array.isArray(outcome?.warnings)
+    ? outcome.warnings : [];
+  const insertErrors = Array.isArray(outcome?.insert_errors)
+    ? outcome.insert_errors : [];
+  const paymentErrors = Array.isArray(payments.errors)
+    ? payments.errors : [];
+
+  const hrefFor = (target) => (batchId
+    ? `/${target}?import_batch_id=${encodeURIComponent(batchId)}`
+    : null);
+
+  return (
+    <div
+      data-testid={`pdf-import-committed-${fileId}`}
+      className="flex flex-col gap-3"
+    >
+      <div
+        className="grid grid-cols-1 gap-3 md:grid-cols-3"
+        data-testid={`pdf-import-committed-cards-${fileId}`}
+      >
+        <CountCard
+          fileId={fileId}
+          testidSuffix="invoices"
+          label="Invoices"
+          created={Number(invoices.created || 0)}
+          updated={0}
+          errors={insertErrors.length}
+          href={hrefFor("invoices")}
+        />
+        <CountCard
+          fileId={fileId}
+          testidSuffix="estimates"
+          label="Estimates"
+          created={Number(estimates.created || 0)}
+          updated={0}
+          errors={0}
+          href={hrefFor("estimates")}
+        />
+        <CountCard
+          fileId={fileId}
+          testidSuffix="payments"
+          label="Payments"
+          created={Number(payments.created || 0)}
+          updated={Number(payments.updated || 0)}
+          errors={paymentErrors.length}
+          unlinked={Number(payments.unlinked || 0)}
+          href={hrefFor("payments")}
+        />
+      </div>
+      {warnings.length > 0 ? (
+        <WarningsBanner fileId={fileId} warnings={warnings} />
+      ) : null}
+      {tileSummary ? (
+        <TileSummarySection fileId={fileId} tileSummary={tileSummary} />
+      ) : null}
+      {(insertErrors.length > 0 || paymentErrors.length > 0) ? (
+        <ErrorsPerTypeSection
+          fileId={fileId}
+          insertErrors={insertErrors}
+          paymentErrors={paymentErrors}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+
+/**
+ * PDF-E — One count card (invoices / estimates / payments).
+ * Rendered as a semantic ``<a>`` when ``href`` is present so
+ * click-through works without a Router context (deep-link
+ * navigates via native browser). Renders as a non-clickable
+ * ``<div>`` when ``href`` is null — keeps 0-count cards
+ * visible without misleading affordance.
+ */
+function CountCard({ fileId, testidSuffix, label, created, updated, errors, unlinked, href }) {
+  const isClickable = Boolean(href);
+  const commonClass = "group flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition";
+  const clickableClass = isClickable
+    ? " hover:brightness-110 cursor-pointer"
+    : " cursor-default";
+  const style = {
+    borderColor: colors.border,
+    backgroundColor: colors.brand || "#1B1F5C",
+    color: "#F8FAFF",
+  };
+  const inner = (
+    <>
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium uppercase tracking-wider opacity-75">
+          {label}
+        </span>
+        <span className="text-2xl font-semibold leading-none">
+          {created}
+        </span>
+        <span className="text-[11px] leading-tight opacity-80">
+          {`created${updated ? ` · ${updated} updated` : ""}${errors ? ` · ${errors} errors` : ""}`}
+        </span>
+        {unlinked !== undefined && unlinked > 0 ? (
+          <span
+            className="mt-1 inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+            style={{
+              backgroundColor: "#FEF3C7",
+              color: "#78350F",
+            }}
+            data-testid={`pdf-import-payments-unlinked-${fileId}`}
+          >
+            <AlertTriangle size={10} />
+            {unlinked} unlinked
+          </span>
+        ) : null}
+      </div>
+      {isClickable ? (
+        <ExternalLink
+          size={14}
+          className="opacity-60 transition group-hover:opacity-100"
+        />
+      ) : null}
+    </>
+  );
+  if (isClickable) {
+    return (
+      <a
+        href={href}
+        data-testid={`pdf-import-count-${testidSuffix}-${fileId}`}
+        className={commonClass + clickableClass}
+        style={style}
+      >
+        {inner}
+      </a>
+    );
+  }
+  return (
+    <div
+      data-testid={`pdf-import-count-${testidSuffix}-${fileId}`}
+      className={commonClass + clickableClass}
+      style={style}
+    >
+      {inner}
+    </div>
+  );
+}
+
+
+/**
+ * PDF-E — Amber warnings banner. Wraps the shadcn ``Alert``
+ * primitive with amber styling + a browser-native ``<details>``
+ * collapse so the banner starts collapsed on batches with lots
+ * of warnings (a common scanner-batch scenario) and opens on
+ * click without extra state juggling.
+ */
+export function WarningsBanner({ fileId, warnings }) {
+  const list = Array.isArray(warnings) ? warnings : [];
+  if (list.length === 0) return null;
+  return (
+    <Alert
+      data-testid={`pdf-import-warnings-banner-${fileId}`}
+      className="border-amber-300 bg-amber-50 text-amber-900"
+    >
+      <AlertTriangle className="h-4 w-4 text-amber-700" />
+      <AlertTitle className="text-amber-900">
+        {`${list.length} warning${list.length === 1 ? "" : "s"} — review before dispatch`}
+      </AlertTitle>
+      <AlertDescription>
+        <details className="mt-1 group">
+          <summary
+            className="cursor-pointer list-none text-xs font-medium underline underline-offset-2 group-open:mb-2"
+            data-testid={`pdf-import-warnings-toggle-${fileId}`}
+          >
+            <span className="group-open:hidden">Show all</span>
+            <span className="hidden group-open:inline">Hide details</span>
+          </summary>
+          <ul className="flex flex-col gap-1 text-xs">
+            {list.map((w, idx) => (
+              <li
+                key={idx}
+                data-testid={`pdf-import-warning-item-${fileId}`}
+                className="flex gap-2"
+              >
+                <span className="font-mono text-amber-800">
+                  {typeof w === "string" ? "" : (w?.code ? `${w.code}:` : "")}
+                </span>
+                <span>
+                  {typeof w === "string"
+                    ? w
+                    : (w?.message || w?.code || JSON.stringify(w))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+
+/**
+ * PDF-E — Tile summary section. Renders the per-tile
+ * segmentation stats persisted by ``pdf_tiled_extractor`` for
+ * PDFs whose page count exceeded ``TILE_PAGE_THRESHOLD``
+ * (currently 36). Small-PDF batches see nothing (this
+ * component returns null when ``tileSummary`` is falsy).
+ */
+export function TileSummarySection({ fileId, tileSummary }) {
+  if (!tileSummary || typeof tileSummary !== "object") return null;
+  const tileWarnings = Array.isArray(tileSummary.warnings)
+    ? tileSummary.warnings : [];
+  return (
+    <div
+      data-testid={`pdf-import-tile-summary-${fileId}`}
+      className="rounded-xl border p-4"
+      style={{
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      }}
+    >
+      <div className="mb-3 flex items-center gap-2 text-sm font-semibold"
+           style={{ color: colors.onSurface }}>
+        <Layers size={16} className="text-blue-600" />
+        Large PDF processed with tiled extraction
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs md:grid-cols-4">
+        <TileStat
+          label="Total pages"
+          value={tileSummary.total_pages}
+          testid={`pdf-import-tile-pages-${fileId}`}
+        />
+        <TileStat
+          label="Tiles used"
+          value={tileSummary.tiles_used}
+          testid={`pdf-import-tile-count-${fileId}`}
+        />
+        <TileStat
+          label="Documents"
+          value={`${tileSummary.docs_pre_merge ?? 0} → ${tileSummary.docs_post_merge ?? 0}`}
+          testid={`pdf-import-tile-docs-${fileId}`}
+        />
+        <TileStat
+          label="Cross-tile merges"
+          value={tileSummary.cross_tile_merges}
+          testid={`pdf-import-tile-merges-${fileId}`}
+        />
+      </dl>
+      {tileWarnings.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-1 border-t pt-2 text-xs"
+            style={{ borderColor: colors.border }}>
+          {tileWarnings.map((w, idx) => (
+            <li
+              key={idx}
+              data-testid={`pdf-import-tile-warning-${fileId}`}
+              className="flex gap-2 text-amber-800"
+            >
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>
+                <span className="font-mono mr-1">
+                  {w?.code || "warning"}:
+                </span>
+                {w?.message || w?.tile_index || ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+
+function TileStat({ label, value, testid }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <dt className="text-[10px] font-medium uppercase tracking-wider"
+          style={{ color: colors.muted }}>
+        {label}
+      </dt>
+      <dd
+        className="text-sm font-semibold"
+        style={{ color: colors.onSurface }}
+        data-testid={testid}
+      >
+        {value ?? "—"}
+      </dd>
+    </div>
+  );
+}
+
+
+/**
+ * PDF-E — Errors-per-type expandable section. First 10 error
+ * entries per doc-type render inline; if more exist, a
+ * ``Show all N`` toggle expands to the full list. Non-blocking
+ * — the offending row still lands in the audit trail; this
+ * just surfaces them so the operator can chase down anomalies
+ * without paging through the audit log.
+ */
+export function ErrorsPerTypeSection({ fileId, insertErrors, paymentErrors }) {
+  const invErr = Array.isArray(insertErrors) ? insertErrors : [];
+  const payErr = Array.isArray(paymentErrors) ? paymentErrors : [];
+  if (invErr.length === 0 && payErr.length === 0) return null;
+  return (
+    <div
+      data-testid={`pdf-import-errors-section-${fileId}`}
+      className="flex flex-col gap-2"
+    >
+      {invErr.length > 0 ? (
+        <ErrorList
+          fileId={fileId}
+          label="Invoice errors"
+          items={invErr}
+          testidPrefix="invoice"
+        />
+      ) : null}
+      {payErr.length > 0 ? (
+        <ErrorList
+          fileId={fileId}
+          label="Payment errors"
+          items={payErr}
+          testidPrefix="payment"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+
+function ErrorList({ fileId, label, items, testidPrefix }) {
+  const [expanded, setExpanded] = useState(false);
+  const HEAD_CAP = 10;
+  const hiddenCount = Math.max(0, items.length - HEAD_CAP);
+  const shown = expanded ? items : items.slice(0, HEAD_CAP);
+  return (
+    <div
+      className="rounded-lg border px-3 py-2"
+      style={{
+        borderColor: "#FCA5A5",
+        backgroundColor: "#FEF2F2",
+      }}
+    >
+      <div className="mb-1 flex items-center justify-between text-xs font-semibold text-red-900">
+        <span className="inline-flex items-center gap-1.5">
+          <AlertCircle size={12} />
+          {label} · {items.length}
+        </span>
+        {hiddenCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid={`pdf-import-errors-expand-${testidPrefix}-${fileId}`}
+            className="underline underline-offset-2 hover:opacity-80"
+          >
+            {expanded
+              ? "Show fewer"
+              : `Show all ${items.length} errors`}
+          </button>
+        ) : null}
+      </div>
+      <ul className="flex flex-col gap-1 text-[11px] text-red-900">
+        {shown.map((e, idx) => (
+          <li
+            key={idx}
+            data-testid={`pdf-import-error-item-${fileId}`}
+            className="flex gap-2"
+          >
+            <span className="font-mono">
+              {e?.code || e?.error || "error"}:
+            </span>
+            <span>
+              {e?.message
+                || (typeof e === "string" ? e : JSON.stringify(e))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+
+/**
+ * PDF-E — Whole-commit failure banner + retry. Shown when a
+ * commit request returns HTTP >= 500 (server-side / unexpected
+ * failure). Preserves the uploaded file's row state in
+ * PREVIEW_READY so the retry click is a single tap.
+ *
+ * 4xx typed errors continue to render via the compact inline
+ * pill in the actions strip (existing UX) — this banner is
+ * specifically for server failures where a retry is the right
+ * next action.
+ */
+export function CommitErrorBanner({ fileId, error, uploadedFilename, onRetry, disabled }) {
+  return (
+    <Alert
+      data-testid={`pdf-import-commit-error-banner-${fileId}`}
+      className="border-red-300 bg-red-50 text-red-900"
+    >
+      <AlertCircle className="h-4 w-4 text-red-700" />
+      <AlertTitle className="text-red-900">Commit failed</AlertTitle>
+      <AlertDescription>
+        <div className="flex flex-col gap-2">
+          <p className="text-xs">
+            {error || "The server returned an unexpected error."}
+            {uploadedFilename ? (
+              <>
+                {" "}
+                <span className="opacity-80">
+                  (Your upload of{" "}
+                  <span className="font-mono">{uploadedFilename}</span>
+                  {" "}is preserved — no need to re-select the file.)
+                </span>
+              </>
+            ) : null}
+          </p>
+          <div>
+            <Button
+              variant="primary"
+              onClick={onRetry}
+              disabled={disabled}
+              testid={`pdf-import-retry-${fileId}`}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <RefreshCw size={14} />
+                Retry commit
+              </span>
+            </Button>
+          </div>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+
 
 
 const STATUS_TONE = {
