@@ -26,7 +26,9 @@ Contract summary (see also ``memory/PRD.md`` § Task H0):
   * Future / ancient thresholds:
       * ``> now + 60s``  → 400 ``future_date_not_allowed``  (60s
         allows for clock skew between client + server).
-      * ``< now - 10y``  → 400 ``date_too_old``.
+      * ``< now - 50y``  → 400 ``date_too_old``  (Feb-2026 ·
+        PDF Importer Sub-phase A relaxed the floor from 10 years
+        so genuinely old paper invoices can be back-imported).
 
   * Audit fields on the persisted doc (set only when the override
     was applied — never on the ``now()`` fallback path):
@@ -67,10 +69,18 @@ from fastapi import HTTPException
 
 _DEFAULT_ADMIN_ALLOWLIST = frozenset({"admin", "super_admin", "owner"})
 _FUTURE_SLACK_SECONDS = 60
-_ANCIENT_DAYS = 365 * 10   # ~10 years; the halt report allowed the
-                            # ``timedelta`` approximation over
-                            # ``relativedelta`` since the leap-year
-                            # slop is trivial next to the 10-year bar.
+# Feb-2026 · PDF Importer Sub-phase A — relaxed from ~10 years to
+# ~50 years per ruling R6=B.  Rationale: the PDF Importer needs to
+# accept genuinely old paper invoices (small-shop accounting binders
+# that predate the CRM by decades); a 10-year floor silently dropped
+# those imports as "date_too_old".  50 years still rejects the
+# 1970/1900 phishing/poison payloads while accommodating every
+# in-service paper invoice a small-business admin would import.
+# The FUTURE ceiling stays at ~now (see ``_FUTURE_SLACK_SECONDS``
+# above) — no change to the future-date guard.  ``timedelta``
+# approximation retained per the H0 halt-report reasoning; the
+# leap-year slop is trivial next to the 50-year bar.
+_ANCIENT_DAYS = 365 * 50
 
 logger = logging.getLogger("quotes.date_override")
 
@@ -183,7 +193,7 @@ def resolve_date_override(
             detail={
                 "error": "date_too_old",
                 "message": (
-                    f"{field_name} override may not be more than 10 "
+                    f"{field_name} override may not be more than 50 "
                     f"years in the past (received={coerced.isoformat()})."
                 ),
                 "field": field_name,

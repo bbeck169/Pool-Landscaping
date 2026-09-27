@@ -866,3 +866,88 @@ async def test_integration_batch_segmentation_band(aquaterra_id, adb):
         f"{len(batch.documents)} documents, expected 25-50 "
         f"(warnings: {batch.warnings[:5]})"
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · PDF Importer Sub-phase A — model-level schema additions
+# ═════════════════════════════════════════════════════════════════════
+def test_line_item_item_name_field_accepts_none_and_string():
+    """``LineItem.item_name`` (Sub-phase A) accepts both ``None``
+    (legacy grandfathering) and a string.  Zero-arg construction
+    (description-only) still works because ``item_name`` defaults
+    to ``None`` — extractor prompt gains the field in Sub-phase B."""
+    from models import LineItem
+    # Grandfather — no item_name argument at all.
+    li = LineItem(description="Chlorine tabs")
+    assert li.item_name is None
+    # Explicit None still works.
+    li2 = LineItem(description="Bulk salt", item_name=None)
+    assert li2.item_name is None
+    # Non-None value round-trips.
+    li3 = LineItem(description="10lb of muriatic acid", item_name="Muriatic acid")
+    assert li3.item_name == "Muriatic acid"
+
+
+def test_quote_in_doc_date_field_accepts_none_and_iso_string():
+    """``QuoteIn.doc_date`` (Sub-phase A) is ``Optional[str]`` so
+    both non-PDF creates and PDF creates parse cleanly."""
+    from models import QuoteIn
+    # Manual quote creation — no doc_date supplied.
+    qi = QuoteIn(customer_id="c-1", title="Q1")
+    assert qi.doc_date is None
+    # PDF-import path with an ISO string date.
+    qi2 = QuoteIn(customer_id="c-2", title="Q2", doc_date="2015-06-15")
+    assert qi2.doc_date == "2015-06-15"
+    # Full ISO 8601 timestamp — also accepted.
+    qi3 = QuoteIn(
+        customer_id="c-3", title="Q3",
+        doc_date="2015-06-15T00:00:00+00:00",
+    )
+    assert qi3.doc_date == "2015-06-15T00:00:00+00:00"
+
+
+def test_payment_model_constructs_with_all_pdf_import_fields():
+    """New ``Payment`` model (Sub-phase A) validates + shapes rows
+    the PDF Importer Sub-phase C will write into ``db.payments``."""
+    from models import Payment
+    p = Payment(
+        tenant_id="t-1",
+        customer_id="c-42",
+        invoice_id="inv-99",
+        amount_cents=12500,
+        currency="USD",
+        payment_method="check",
+        reference="check#1487",
+        doc_date="2018-03-20",
+        created_at="2018-03-20T00:00:00+00:00",
+        imported_from="pdf_import",
+        imported_at="2026-02-15T12:34:56+00:00",
+        matched=True,
+    )
+    assert p.tenant_id == "t-1"
+    assert p.amount_cents == 12500
+    assert p.currency == "USD"
+    assert p.imported_from == "pdf_import"
+    assert p.matched is True
+
+
+def test_payment_model_defaults_grandfather_for_stripe_shape():
+    """The ``Payment`` model's shape mirrors
+    ``stripe_billing_history_sync`` inserts — ``id``, ``customer_id``,
+    ``invoice_id``, dates, and ``reference`` are all optional so the
+    stripe sync's dict-shaped inserts remain schema-compatible."""
+    from models import Payment
+    p = Payment(tenant_id="t-1", amount_cents=999)
+    # Defaults per Sub-phase A brief.
+    assert p.id is None
+    assert p.customer_id is None
+    assert p.invoice_id is None
+    assert p.currency == "USD"
+    assert p.payment_method is None
+    assert p.reference is None
+    assert p.doc_date is None
+    assert p.created_at is None
+    assert p.imported_from == "pdf_import"  # sentinel default
+    assert p.imported_at is None
+    assert p.matched is False
+

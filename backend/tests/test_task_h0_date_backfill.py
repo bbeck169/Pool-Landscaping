@@ -240,9 +240,14 @@ def test_future_created_at_rejected(admin_h, h0_customer_id):
         assert "future" in str(detail).lower()
 
 
-# ── 5) Ancient override (> 10y) → 400 date_too_old ─────────────
+# ── 5) Ancient override (> 50y post-Feb-2026 Sub-phase A) → 400 date_too_old ─
 def test_ancient_created_at_rejected(admin_h, h0_customer_id):
-    ancient = (datetime.now(timezone.utc) - timedelta(days=365 * 11)).isoformat()
+    # Feb-2026 · PDF Importer Sub-phase A relaxed ``_ANCIENT_DAYS``
+    # from 10 years to 50 years (ruling R6=B) so the H0 date
+    # override can accept genuinely-old paper invoices.  Bump the
+    # boundary sample here to 51 years so this test continues to
+    # exercise the ancient-rejection path with the new limit.
+    ancient = (datetime.now(timezone.utc) - timedelta(days=365 * 51)).isoformat()
     r = requests.post(
         f"{API}/quotes", headers=admin_h,
         json=_make_quote_payload(h0_customer_id, created_at=ancient),
@@ -254,7 +259,9 @@ def test_ancient_created_at_rejected(admin_h, h0_customer_id):
         assert detail.get("error") == "date_too_old", detail
         assert detail.get("field") == "created_at", detail
     else:
-        assert "too old" in str(detail).lower() or "10 years" in str(detail)
+        # Post-Feb-2026 · Sub-phase A the copy now reads "50 years";
+        # the "too old" phrase covers both wordings.
+        assert "too old" in str(detail).lower() or "50 years" in str(detail)
 
 
 # ── 6) Naive datetime coerced to UTC ───────────────────────────

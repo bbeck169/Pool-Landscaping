@@ -43,6 +43,13 @@ class ExtractedLineItem(BaseModel):
     fields optional because the model may see a description-only
     row (e.g. "Notes:" section) and we shouldn't 422 on it."""
     description: str
+    # Feb-2026 · PDF Importer Sub-phase A — short-label distinct
+    # from ``description``.  The extractor prompt gains the field
+    # in Sub-phase B; until then this defaults to ``None`` on every
+    # extraction result and the mapper's copy-through is a no-op.
+    # Nullable + Optional so existing extraction fixtures without
+    # the field parse cleanly.
+    item_name: Optional[str] = None
     cost_rate: Optional[float] = None
     qty: Optional[float] = None
     tax_pct: Optional[float] = None

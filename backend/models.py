@@ -314,6 +314,13 @@ class LineItem(BaseModel):
     quantity: float = 1
     unit_price: float = 0.0
     category: str = "Pool"
+    # Feb-2026 · PDF Importer Sub-phase A — short-label distinct
+    # from the free-text ``description``.  Populated by the vision
+    # extractor in Sub-phase B; grandfathers to None for every row
+    # written before this ships (including all legacy pricebook +
+    # manually-typed lines).  Nullable + Optional so the router
+    # accepts writes that omit the field entirely.
+    item_name: Optional[str] = None
     # Feb-2026 · Income Category enforcement — optional per line.
     income_category_id: Optional[str] = None
     # Phase K71 · Feb-2026 — Estimate line-item edit + Service/Income
@@ -391,6 +398,19 @@ class QuoteIn(BaseModel):
     # dropped, no override audit fields written, no log. This is
     # the foundation the Task H PDF Invoice Importer plugs into.
     created_at: Optional[datetime] = None
+    # Feb-2026 · PDF Importer Sub-phase A — historical document date
+    # as embedded in the source paper/PDF invoice (distinct from the
+    # ``created_at`` ingest timestamp).  Persisted as an ISO string
+    # (``YYYY-MM-DD`` or full ISO 8601) so the wire format matches
+    # the neighbouring ``due_date`` convention.  On the PDF-import
+    # path (Sub-phase B/C) the mapper stamps BOTH ``doc_date`` and
+    # ``created_at`` with the extracted historical date per rulings
+    # R1/R2; existing PDF imports get ``doc_date`` back-filled from
+    # ``created_at`` via ``services/migrations/pdf_doc_date_backfill_v1``.
+    # Nullable + Optional so non-PDF writes (manual quote creation,
+    # legacy DB rows) grandfather to ``None`` cleanly.  Reports are
+    # extended to ``$or`` this field in a later sub-phase per R7.
+    doc_date: Optional[str] = None
     # Feb-2026 MP1.5 — Multi-property billing plumbing. Optional pointer
     # to the ``properties`` row this doc bills against. When the customer
     # owns exactly one active property the router auto-assigns it. When
@@ -407,6 +427,48 @@ class QuoteIn(BaseModel):
     # so they keep the itemized view their author designed.
     customer_group_display: Optional[bool] = True
     customer_group_descriptions: Optional[Dict[str, str]] = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · PDF Importer Sub-phase A — first-class Payment model.
+# ═══════════════════════════════════════════════════════════════════
+class Payment(BaseModel):
+    """Payment row persisted in ``db.payments``.
+
+    Historically ``db.payments`` was populated only by
+    ``services/stripe_billing_history_sync.py`` (dict-shaped inserts).
+    Sub-phase A introduces this first-class Pydantic model so the
+    PDF Importer's Sub-phase C commit path can validate + shape
+    payment rows uniformly.  Field shape mirrors the stripe sync
+    doc so both provenance families round-trip through a single
+    read query.
+
+    * ``amount_cents`` — integer cents; matches the stripe sync
+      convention.  Never store amounts as float.
+    * ``imported_from`` — provenance sentinel; ``"stripe_billing_history_sync"``
+      for the stripe path, ``"pdf_import"`` for Sub-phase C.
+    * ``doc_date`` — the PDF-embedded payment date; distinct from the
+      audit-only ``imported_at`` (actual DB insert time) and from
+      ``created_at`` which is stamped with the same historical date
+      per rulings R1/R2 so revenue/profit reports bucket correctly.
+    * ``matched`` — set to ``True`` only when both ``customer_id``
+      AND ``invoice_id`` were resolved by the mapper; ``False``
+      surfaces the row in the Sub-phase E review UI so an admin can
+      manually pair it.
+    """
+    id: Optional[str] = None
+    tenant_id: str
+    customer_id: Optional[str] = None
+    invoice_id: Optional[str] = None
+    amount_cents: int
+    currency: str = "USD"
+    payment_method: Optional[str] = None  # check | cash | card | ach | other
+    reference: Optional[str] = None  # check # / txn ref / confirmation code
+    doc_date: Optional[str] = None
+    created_at: Optional[str] = None
+    imported_from: str = "pdf_import"
+    imported_at: Optional[str] = None
+    matched: bool = False
 
 
 class QuoteUpdate(BaseModel):

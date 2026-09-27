@@ -3168,6 +3168,45 @@ async def _run_perf_customers_v2_boot(db_handle) -> dict:
     return res if res is not None else {"ok": False, "error": "see logs"}
 
 
+# Feb-2026 · PDF Importer Sub-phase A — one-shot backfill of
+# ``doc_date`` from ``created_at`` on every PDF-imported quote row.
+# See ``services/migrations/pdf_doc_date_backfill_v1.py`` for the
+# full contract + rollback recipe.  Line-adjacent to the
+# ``perf_customers_v2`` invocation so both structural passes live in
+# the same STRUCTURAL bucket and a boot-order regression is caught
+# by the pre-yield lint + the migration sentinel gate.  Ruled
+# ``must_succeed=False`` — the underlying update is copy-forward
+# only + never crashes boot; a Mongo hiccup writes an error field
+# on the sentinel and the next boot retries.
+async def _run_pdf_doc_date_backfill_v1_boot(db_handle) -> dict:
+    """Run the ``pdf_doc_date_backfill_v1`` structural migration.
+
+    Sentinel-gated internally so a second boot is a no-op. Routed
+    through ``_run_structural_migration`` so any Mongo hiccup
+    surfaces on
+    ``/api/health.init.structural_migrations.pdf_doc_date_backfill_v1``
+    with the full traceback in the boot log.
+    """
+    async def _factory():
+        from services.migrations.pdf_doc_date_backfill_v1 import (
+            run as _pdf_doc_date_backfill_run,
+        )
+        res = await _pdf_doc_date_backfill_run(db_handle)
+        logger.info(
+            "[pdf-doc-date-backfill-v1] structural pass — skipped=%s "
+            "matched=%s modified=%s",
+            res.get("skipped"),
+            res.get("matched"),
+            res.get("modified"),
+        )
+        return res
+
+    res = await _run_structural_migration(
+        "pdf_doc_date_backfill_v1", _factory, must_succeed=False,
+    )
+    return res if res is not None else {"ok": False, "error": "see logs"}
+
+
 async def _run_boot_sequence():
     """P21 · Feb-2026 — the pre-yield synchronous boot sequence.
 
@@ -3501,6 +3540,17 @@ async def _run_boot_sequence():
     # _lifespan_yield) + the CUS-perf sibling lint. Best-effort per
     # ruling R1 (must_succeed=False inside the wrapper).
     await _run_perf_customers_v2_boot(db)
+    # Feb-2026 · PDF Importer Sub-phase A — historical ``doc_date``
+    # backfill.  Copies ``created_at`` → ``doc_date`` on every
+    # ``imported_from_pdf=True`` quote missing the new field.  Line-
+    # adjacent to v2's call so a boot-order regression is caught by
+    # the same STRUCTURAL pre-yield lint.  Sentinel-gated internally —
+    # a second boot short-circuits without a DB touch.  Best-effort
+    # per Sub-phase A brief (``must_succeed=False`` inside the
+    # wrapper); a Mongo hiccup logs to
+    # ``/api/health.init.structural_migrations.pdf_doc_date_backfill_v1``
+    # and the next boot retries.
+    await _run_pdf_doc_date_backfill_v1_boot(db)
     # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
     # indexes at boot (self-healing safety net; the script can also be
     # run manually). Wrapped so a Mongo hiccup can't block boot.
