@@ -132,9 +132,57 @@ export function presetByKey(key) {
     || FORM_THEME_PRESETS[0];
 }
 
+// ── CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 helpers ────
+
+/**
+ * Clamp an integer between ``[lo, hi]``. Non-integers, ``null``, and
+ * ``undefined`` all return ``null`` (signals "not set"). Used by
+ * ``coerceTheme`` to normalise the two new optional fields
+ * (``gradient.angle_deg`` and ``overlay_opacity``) without silently
+ * accepting garbage — invalid input becomes a clean ``null`` /
+ * clamped value at the boundary.
+ */
+function _clampInt(v, lo, hi) {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+/**
+ * Validate + normalise a gradient sub-object. Returns ``null`` when
+ * the input is missing or malformed; otherwise returns a fresh
+ * ``{angle_deg, from, to}`` triple with the angle clamped to
+ * ``[0, 360]`` and hex values passed through verbatim (frontend
+ * pickers already emit valid ``#RRGGBB``).
+ *
+ * The full-null return is the "no gradient" contract — every
+ * theme in K34 pre-Phase-2 carried a stable ``null`` here so
+ * ``themeToCssVars`` omits ``--form-bg-gradient`` and the K34
+ * output is byte-identical.
+ */
+function _coerceGradient(g) {
+  if (!g || typeof g !== "object") return null;
+  const angle = _clampInt(g.angle_deg, 0, 360);
+  const from = typeof g.from === "string" ? g.from : "";
+  const to   = typeof g.to   === "string" ? g.to   : "";
+  if (angle === null || !from || !to) return null;
+  return { angle_deg: angle, from, to };
+}
+
 /**
  * Normalize whatever the caller passes into a fully-populated theme
- * object.  Guarantees the shape ``{preset, colors:{5 roles}, font_family}``.
+ * object.  Guarantees the shape ``{preset, colors:{5 roles}, font_family,
+ * gradient, overlay_opacity}``.
+ *
+ * CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 additions:
+ *   - ``gradient`` — ``null`` or ``{angle_deg 0-360, from #hex, to #hex}``.
+ *   - ``overlay_opacity`` — ``null`` or an integer clamped to ``[0, 100]``.
+ *
+ * Backwards-compat guarantee: every K34 curated preset round-trips
+ * byte-identical through ``coerceTheme(preset)`` because both new
+ * fields default to ``null`` (the "not set" sentinel) and are only
+ * populated when the caller explicitly opts in.
  */
 export function coerceTheme(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
@@ -152,17 +200,36 @@ export function coerceTheme(raw) {
     accent:     src?.colors?.accent     || base.colors.accent,
   };
   const font_family = src.font_family || fontStackById(base.font_family_id);
-  return { preset, colors, font_family };
+  return {
+    preset, colors, font_family,
+    gradient:        _coerceGradient(src.gradient),
+    overlay_opacity: _clampInt(src.overlay_opacity, 0, 100),
+  };
 }
 
 /**
  * Turn a theme object into a ``style`` dict suitable for React's
  * ``style=`` prop on the root element.  Emits CSS variables that
  * renderers reference for consistent styling.
+ *
+ * CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 additions:
+ *   - ``--form-bg-gradient`` — emitted ONLY when the theme carries
+ *     a non-null gradient. Value is the fully-composed
+ *     ``linear-gradient(<angle>deg, <from> 0%, <to> 100%)`` string
+ *     ready to plug into ``background-image``.
+ *   - ``--form-overlay-opacity`` — emitted ONLY when the theme
+ *     carries a non-null overlay_opacity. Value is a decimal in
+ *     ``[0.00, 1.00]`` (int/100) suitable for ``rgba(0,0,0, var(...))``.
+ *
+ * Both are omitted (NOT emitted as empty strings) when null so a
+ * K34 preset's ``themeToCssVars`` output is byte-identical to the
+ * pre-Phase-2 shape. Consumers of the vars should treat absence as
+ * "no gradient / no overlay" and fall back to the solid
+ * ``--form-background``.
  */
 export function themeToCssVars(theme) {
   const t = coerceTheme(theme);
-  return {
+  const out = {
     "--form-primary":    t.colors.primary,
     "--form-background": t.colors.background,
     "--form-text":       t.colors.text,
@@ -172,4 +239,16 @@ export function themeToCssVars(theme) {
     backgroundColor: t.colors.background,
     color: t.colors.text,
   };
+  if (t.gradient) {
+    out["--form-bg-gradient"] =
+      `linear-gradient(${t.gradient.angle_deg}deg, `
+      + `${t.gradient.from} 0%, ${t.gradient.to} 100%)`;
+  }
+  if (t.overlay_opacity !== null) {
+    // Decimal string with 2 fixed digits so 30 → "0.30", not "0.3"
+    // — makes source-lint regexes deterministic + matches CSS
+    // convention.
+    out["--form-overlay-opacity"] = (t.overlay_opacity / 100).toFixed(2);
+  }
+  return out;
 }
