@@ -31,6 +31,11 @@ from routers import (
     invoice_line_items,
     marco,
     audio_transcribe,
+    # Feb-2026 · MARCO Sub-phase D — admin_todos CRUD (marco_admin_todos
+    # collection, distinct from Lana's admin_todos).  Voice-to-task
+    # pipeline writes here via the create_admin_todo tool; the
+    # Sub-phase E proactive cron reads from here.
+    admin_todos,
     search as search_router,
     realtime, csat, signatures,
     analytics, onboarding,
@@ -1207,6 +1212,7 @@ for module in [notifications_router,
                invoice_line_items,
                marco,
                audio_transcribe,
+               admin_todos,
                search_router,
                realtime, csat, signatures,
                analytics, onboarding,

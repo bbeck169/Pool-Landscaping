@@ -367,27 +367,6 @@ async def _t_search_customers(tenant_id: str, *, query: str,
     } for r in rows]
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Feb-2026 · MARCO · Sub-phase B — orchestrator tools.
-#
-# ``delegate_task`` — the ONLY tool with ``SCOPE_ORCHESTRATOR``.
-# Ships MARCO's ability to hand off admin requests to a specialist
-# persona.  Guard rail order (all in ``dispatch_tool``):
-#
-#   1. Scope guard: invoking persona must carry ``orchestrator=True``.
-#   2. Target guard: target_employee_key must exist, be admin
-#      audience, and NOT itself be an orchestrator (blocks
-#      delegate-to-orchestrator loops even before the target's
-#      system prompt tells them not to re-delegate).
-#
-# On success the tool appends a system-style transcript entry to
-# the CURRENT conversation (so the audit trail shows the hand-off),
-# runs the target persona's turn against the SAME conversation
-# history + brand_brain, persists the target's reply stamped with
-# ``sender_employee_id = target.id`` + ``delegated_by_employee_id
-# = invoker.id``, and returns a compact summary to MARCO's tool
-# loop.
-# ═══════════════════════════════════════════════════════════════════
 async def _t_delegate_task(
     tenant_id: str,
     *,
@@ -553,6 +532,107 @@ async def _t_delegate_task(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · MARCO · Sub-phase D — ``create_admin_todo`` tool.
+#
+# Writes a new row to the ``marco_admin_todos`` collection (distinct
+# from Lana's Phase 49 ``admin_todos`` collection per the Sub-phase
+# D ruling #1 fork).  Called by MARCO when the LLM detects a task-
+# creation intent in the admin's utterance.  ``created_via`` is
+# derived from ``conversation_context.source_channel`` — the FE
+# mic path (Sub-phase C) sends ``"voice"``; chat-only interactions
+# omit it and default to ``marco_chat``.
+#
+# Not orchestrator-restricted — any admin-audience persona COULD
+# call it (say a future 'admin-facing' persona shipped after
+# MARCO).  Scope is SCOPE_TENANT_ALL so customer-facing personas
+# never see the tool in their option list.  See ruling #5 for the
+# design rationale.
+# ═══════════════════════════════════════════════════════════════════
+async def _t_create_admin_todo(
+    tenant_id: str,
+    *,
+    title: str,
+    due_at: str,
+    priority: str = "med",
+    notes: Optional[str] = None,
+    conversation_context: Dict[str, Any],
+) -> Any:
+    """Insert an admin todo.  See module block-comment above."""
+    from config import db as _db
+
+    if not title or not isinstance(title, str) or not title.strip():
+        return {"error": "bad_args", "detail": "title required"}
+    if not due_at or not isinstance(due_at, str):
+        return {"error": "bad_args", "detail": "due_at required"}
+    if priority not in ("low", "med", "high", "urgent"):
+        priority = "med"
+
+    # Past-date guard — 5 min lookback tolerance per Sub-phase D
+    # ruling #5.  Re-import the helper each call so a unit test can
+    # monkeypatch ``datetime.now`` in the parser module without
+    # cache invalidation surprises.
+    try:
+        from services.marco_task_parser import due_at_is_in_past
+        if due_at_is_in_past(due_at):
+            return {
+                "error": "due_at_in_past",
+                "detail": (
+                    "the requested due time is more than 5 minutes"
+                    " in the past — please ask the admin to"
+                    " restate the time"
+                ),
+            }
+    except Exception as _exc:                                    # noqa: BLE001
+        log.warning(
+            "[marco-create-admin-todo] past-date guard skipped: %s",
+            _exc,
+        )
+
+    user = conversation_context.get("user") or {}
+    ctx_tenant = conversation_context.get("tenant_id") or tenant_id
+    source_channel = (
+        conversation_context.get("source_channel") or "chat"
+    ).strip().lower()
+    created_via = (
+        "marco_voice" if source_channel == "voice"
+        else "marco_chat"
+    )
+
+    from datetime import datetime as _dt, timezone as _tz
+    from uuid import uuid4 as _uuid4
+    now = _dt.now(_tz.utc).isoformat().replace("+00:00", "Z")
+    doc = {
+        "id": _uuid4().hex[:24],
+        "tenant_id": ctx_tenant,
+        "title": title.strip()[:280],
+        "due_at": due_at,
+        "priority": priority,
+        "notes": (notes or None),
+        "status": "open",
+        "created_by": user.get("id") or "marco-tool",
+        "created_via": created_via,
+        "created_at": now,
+        "updated_at": now,
+        "completed_at": None,
+        "marco_pinged_at": None,
+    }
+    await _db.marco_admin_todos.insert_one(dict(doc))
+
+    # Cheap human-readable summary for MARCO to fold back into the
+    # admin-facing reply ("Added — 'Call the Johnson family',
+    # due tomorrow at 3pm, high priority.").
+    return {
+        "ok": True,
+        "todo_id": doc["id"],
+        "created_via": created_via,
+        "priority": priority,
+        "due_at": due_at,
+        "summary": f"Added — '{doc['title']}', due {due_at}, {priority}.",
+    }
+
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Registry.
 # ═══════════════════════════════════════════════════════════════════
 TOOL_REGISTRY: Dict[str, ToolSpec] = {
@@ -649,6 +729,24 @@ TOOL_REGISTRY: Dict[str, ToolSpec] = {
         params=["target_employee_key", "task_description", "context?"],
         handler=_t_delegate_task,
         required_scope=SCOPE_ORCHESTRATOR,
+        needs_customer_id=False,
+        needs_conversation_context=True,
+    ),
+    # ─── Feb-2026 · MARCO · Sub-phase D · admin-write tool ────
+    "create_admin_todo": ToolSpec(
+        name="create_admin_todo",
+        description=(
+            "Persist a new admin todo (marco_admin_todos collection)"
+            " when the admin asks MARCO to remember, remind them, or"
+            " add a task.  ``title`` is a concise action phrase."
+            "  ``due_at`` is an ISO 8601 datetime.  ``priority`` is"
+            " one of low/med/high/urgent (default 'med').  ``notes``"
+            " is optional context.  Confirm the created task back"
+            " to the admin with the due time in your reply."
+        ),
+        params=["title", "due_at", "priority?", "notes?"],
+        handler=_t_create_admin_todo,
+        required_scope=SCOPE_TENANT_ALL,
         needs_customer_id=False,
         needs_conversation_context=True,
     ),

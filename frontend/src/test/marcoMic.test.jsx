@@ -252,6 +252,9 @@ describe("MarcoVoiceCard · Sub-phase C", () => {
       .toBe("/ai-employees/marco-1/conversations/conv-marco-42/messages");
     expect(msgPost.body.text)
       .toBe("MARCO please have Casey audit the home page.");
+    // Feb-2026 · Sub-phase D — mic path stamps source_channel="voice"
+    // so ``create_admin_todo`` correctly attributes ``created_via``.
+    expect(msgPost.body.source_channel).toBe("voice");
   });
 
   // ════════════════════════════════════════════════════════════════

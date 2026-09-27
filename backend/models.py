@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator, AliasChoices
-from typing import List, Optional, Any, Dict
+from typing import List, Literal, Optional, Any, Dict
 from datetime import datetime
 import re
 
@@ -1388,3 +1388,63 @@ class PricebookSupplier(BaseModel):
     created_at: Optional[str] = None
     created_by_user_id: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+
+
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · MARCO · Sub-phase D — admin_todo Pydantic models.
+#
+# Persists to the ``marco_admin_todos`` collection (NOT Lana's
+# Phase 49 ``admin_todos`` — those live under a distinct bucket
+# per the Sub-phase D ruling #1 fork).  Rows are UI-driven from
+# ``POST /api/admin/todos`` and tool-driven from
+# ``create_admin_todo`` in the AI Employees tool loop.
+# Sub-phase E's proactive cron will consume ``due_at`` +
+# ``marco_pinged_at`` to dispatch reminder pings.
+# ══════════════════════════════════════════════════════════════════
+MARCO_ADMIN_TODOS_COLLECTION = "marco_admin_todos"
+
+TodoPriority = Literal["low", "med", "high", "urgent"]
+TodoStatus = Literal["open", "done", "snoozed", "deleted"]
+TodoCreatedVia = Literal["marco_voice", "marco_chat", "admin_manual"]
+
+
+class AdminTodoIn(BaseModel):
+    """Request body for POST /api/admin/todos (manual admin create)."""
+    title: str = Field(..., min_length=1, max_length=280)
+    due_at: str = Field(..., min_length=1)   # ISO datetime (tz-aware)
+    priority: TodoPriority = "med"
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class AdminTodoPatch(BaseModel):
+    """Partial-update body for PATCH /api/admin/todos/{id}.
+
+    All fields optional — router applies only non-None fields.
+    Status transitions to ``done`` auto-stamp ``completed_at``.
+    """
+    title: Optional[str] = Field(None, min_length=1, max_length=280)
+    due_at: Optional[str] = None
+    priority: Optional[TodoPriority] = None
+    notes: Optional[str] = Field(None, max_length=2000)
+    status: Optional[TodoStatus] = None
+
+
+class AdminTodoOut(BaseModel):
+    """Response shape returned from GET / POST / PATCH."""
+    id: str
+    tenant_id: str
+    title: str
+    due_at: str
+    priority: TodoPriority
+    notes: Optional[str] = None
+    status: TodoStatus = "open"
+    created_by: str
+    created_via: TodoCreatedVia = "admin_manual"
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str] = None
+    # Reserved for Sub-phase E — proactive cron stamps this after a
+    # notification-bell + SSE dispatch to prevent double-fires.
+    marco_pinged_at: Optional[str] = None

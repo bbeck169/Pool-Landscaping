@@ -217,9 +217,16 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "the plan first, then fire the delegations.\n"
          "4. If the request is a task-creation intent (\"remind "
          "me to...\", \"add a follow-up for...\", \"schedule a "
-         "call with...\"), call the ``create_admin_todo`` tool "
-         "instead of delegating.  Extract the title, due date, "
-         "and priority from the utterance.\n"
+         "call with...\", \"note to self...\"), call the "
+         "``create_admin_todo`` tool.  Extract a concise action "
+         "title (strip filler like 'please' or 'remind me to'), "
+         "resolve the ``due_at`` to an ISO 8601 timestamp in the "
+         "user's timezone, pick a ``priority`` (low/med/high/urgent"
+         " — words like 'urgent' / 'asap' / 'critical' → urgent, "
+         "'high priority' or 'by end of day' → high, else 'med'), "
+         "and confirm the created task back to the admin with the "
+         "due time.  NEVER answer 'I'll remember that for you' "
+         "without calling the tool — the reminder must persist.\n"
          "5. If NO specialist owns the work (e.g. an out-of-scope "
          "product question, an admin-team org question), answer "
          "yourself briefly and offer to route to a human.\n"
@@ -394,6 +401,16 @@ class MessageIn(BaseModel):
     # in the ai_employee_actions queue awaiting approval.
     action: Optional[str] = None
     action_params: Optional[Dict[str, Any]] = None
+    # Feb-2026 · MARCO Sub-phase D — origin channel signal so
+    # tools that need to distinguish voice vs chat (e.g. the
+    # ``create_admin_todo`` tool stamps ``created_via`` = "marco_voice"
+    # vs "marco_chat") can attribute the row correctly.  Accepted
+    # values: "voice" | "chat".  Legacy callers omit → treated as
+    # "chat".  Threaded into ``conversation_context.source_channel``
+    # by the orchestrator tool loop.
+    source_channel: Optional[str] = Field(
+        None, pattern="^(voice|chat)$",
+    )
 
 
 class ActionDecision(BaseModel):
@@ -629,6 +646,7 @@ async def _run_orchestrator_tool_loop(
     cid: str,
     system_prompt: str,
     assistant_text: str,
+    source_channel: Optional[str] = None,
 ) -> str:
     """Run the orchestrator's tool-call loop.
 
@@ -667,6 +685,10 @@ async def _run_orchestrator_tool_loop(
             "tenant_id": tenant["id"],
             "invoker_persona": emp,
             "user": user,
+            # Feb-2026 · MARCO Sub-phase D — carries "voice" | "chat"
+            # so ``create_admin_todo`` can stamp ``created_via``
+            # correctly.  None → the tool treats it as chat.
+            "source_channel": source_channel,
         }
         outcome = await dispatch_tool(
             tenant_id=tenant["id"],
@@ -1213,6 +1235,7 @@ async def send_message(eid: str, cid: str, body: MessageIn,
                 cid=cid,
                 system_prompt=chat_system_prompt,
                 assistant_text=assistant_text,
+                source_channel=body.source_channel,
             )
 
     # 5) Persist the assistant turn.

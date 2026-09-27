@@ -103,10 +103,15 @@ async function _resolveMarcoConversation(marcoId, userId) {
 }
 
 async function _sendToMarco(marcoId, convId, text, userId) {
+  // Feb-2026 · MARCO Sub-phase D — the mic path is the only caller
+  // that sets source_channel="voice" so ``create_admin_todo``
+  // stamps ``created_via`` = "marco_voice".  Chat-only interactions
+  // omit the flag and default to "marco_chat" server-side.
+  const body = { text, source_channel: "voice" };
   try {
     const r = await api.post(
       `/ai-employees/${marcoId}/conversations/${convId}/messages`,
-      { text },
+      body,
     );
     return r;
   } catch (e) {
@@ -119,7 +124,7 @@ async function _sendToMarco(marcoId, convId, text, userId) {
       const freshId = await _resolveMarcoConversation(marcoId, userId);
       return await api.post(
         `/ai-employees/${marcoId}/conversations/${freshId}/messages`,
-        { text },
+        body,
       );
     }
     throw e;
