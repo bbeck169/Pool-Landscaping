@@ -328,13 +328,54 @@ export function MarketingTemplateDetailPage() {
     if (!row || !testTo.trim()) return;
     setTestSending(true);
     try {
+      // SAFE-SEND-B · Feb-2026 — every test-send from the FE stamps
+      // ``context: "test"`` on the payload.  Server-side SAFE-SEND-A
+      // treats this as the client-allow-listed context, redirects
+      // the send to the tenant admin's ``business_card.email`` when
+      // the adapter fires, and stamps ``[MARCO TEST]`` on the subject.
+      // Client cannot spoof ``system|agent`` — the server returns
+      // HTTP 400 with ``error_code: "invalid_comms_context"`` which
+      // we surface below as a spoofing-detected toast.
       const res = await api.post(`/marketing/templates/${id}/test-send`, {
         to: testTo.trim(),
+        context: "test",
       });
       setLastSent(res);
-      if (res.ok) toast.success("Test send OK");
-      else toast.error(res.error_message || "Test send reported failure");
+      // SAFE-SEND-B · Feb-2026 — ``skipped_no_redirect_target`` is
+      // the SAFE-SEND-A.1 suppression marker for AGENT/TEST sends
+      // that had no admin address to redirect to.  Surface the
+      // remediation copy directly.
+      if (res?.provider_status === "skipped_no_redirect_target"
+          || res?.status === "skipped_no_redirect_target") {
+        toast.warning(
+          "Redirect target missing — set business_card.email in " +
+          "Tenant Settings before test-sending.",
+        );
+        return;
+      }
+      if (res.ok) {
+        toast.success(
+          "Sent to admin — production comms sandbox (context: TEST)",
+        );
+      } else {
+        toast.error(res.error_message || "Test send reported failure");
+      }
     } catch (e) {
+      // SAFE-SEND-B · Feb-2026 — HTTP 400 with ``error_code:
+      // invalid_comms_context`` fires when the client-side payload
+      // carries a privileged ``context`` (``system|agent``).  This
+      // should never happen from our own testSend (which stamps
+      // ``test``), but a compromised bundle or a MITM tampering
+      // could try; surface an explicit spoofing-detected toast so
+      // the admin can respond.
+      if (e?.status === 400
+          && e?.data?.error_code === "invalid_comms_context") {
+        toast.error(
+          "Send blocked — context spoofing detected. Only TEST " +
+          "allowed from UI.",
+        );
+        return;
+      }
       const msg = e.message || "Test send failed";
       if (/429|too many/i.test(msg)) {
         toast.error("Rate-limited — wait 60s and try again.");
