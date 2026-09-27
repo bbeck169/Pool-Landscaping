@@ -2790,6 +2790,28 @@ async def _background_seed():
                 logger.warning(
                     "[live_dispatcher.cron] register failed: %s", _ld_exc,
                 )
+            # LDM-C · Feb-2026 — hourly-cadence Predictive
+            # Maintenance Scanner. Sibling of live_dispatcher; runs
+            # every hour on the hour and only actually scans a
+            # tenant when their local wall-clock hour is 06 (see
+            # services.maintenance_scanner.CRON_HOUR_LOCAL). At that
+            # gate, iterates active-pool-subscription customers and
+            # drafts MARCO cross-sell actions in ai_employee_actions
+            # for overdue filter cleaning / salt-cell replacement
+            # (thresholds from settings.automation_rules). Detection
+            # reads structured last_cleaned_at from the P11
+            # equipment_service_trackers collection — no free-text
+            # visit history grep needed.
+            try:
+                from services.maintenance_scanner import (
+                    register_maintenance_scanner_cron,
+                )
+                register_maintenance_scanner_cron(scheduler)
+            except Exception as _mx_exc:  # pragma: no cover
+                logger.warning(
+                    "[maintenance_scanner.cron] register failed: %s",
+                    _mx_exc,
+                )
             # Phase 51d · Feb-2026 — minute-cadence walkie cleanup tick.
             try:
                 from services.walkie.cleanup_cron import register_walkie_cleanup_cron
