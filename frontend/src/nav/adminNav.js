@@ -469,7 +469,7 @@ export function filterNavByIndustries(entries, industries) {
 }
 
 export const KEYBOARD_SHORTCUTS = [
-  { keys: "⌘K / Ctrl+K", label: "Open command palette" },
+  { keys: "⌘K / Ctrl+K", label: "Focus global search" },
   { keys: "G then D", label: "Dashboard" },
   { keys: "G then J", label: "Jobs" },
   { keys: "G then C", label: "Customers" },

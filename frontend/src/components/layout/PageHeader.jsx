@@ -76,6 +76,12 @@ function _customerAddressLine(c) {
 export function PageHeader({ title, subtitle, actions, filterBar = null }) {
   const navigate = useNavigate();
   const inputRef = useRef(null);
+  // Task C · Feb-2026 — Cmd+K global shortcut. Populated on
+  // shortcut-open; consumed by ``clearAndClose`` on Escape to
+  // restore focus to whatever was focused before the ⌘K press.
+  // ``null`` means the user landed on the input via mouse-click
+  // (no shortcut invocation), so Escape does not touch focus.
+  const previousActiveElementRef = useRef(null);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const { pages, customers, documents, loading, error }
@@ -105,10 +111,91 @@ export function PageHeader({ title, subtitle, actions, filterBar = null }) {
     setHighlight(0);
   }, [query]);
 
+  // Task C · Feb-2026 — global ⌘K / Ctrl+K shortcut.
+  //
+  // Focuses the inline search input from anywhere on the page.
+  // Suppressed inside <input>, <textarea>, <select>, and
+  // contenteditable — EXCEPT when the focused element IS the
+  // search input itself (idempotent re-press: no-op, no scroll,
+  // no re-select). The ⌘K hint at ``page-header-search-kbd-hint``
+  // finally matches the wire semantics with this listener.
+  //
+  // ``previousActiveElementRef`` is captured BEFORE focus moves
+  // so Escape (see ``clearAndClose``) can restore focus to the
+  // element the user was in when they pressed the shortcut. If
+  // ``document.activeElement`` is already the search input the
+  // capture is skipped (no self-reference on idempotent re-press).
+  useEffect(() => {
+    const onKey = (e) => {
+      const isMetaK = (e.metaKey || e.ctrlKey)
+        && (e.key || "").toLowerCase() === "k";
+      if (!isMetaK) return;
+
+      const target = e.target;
+      const tag = ((target && target.tagName) || "").toUpperCase();
+      const contentEditable = !!(
+        target && target.getAttribute
+        && target.getAttribute("contenteditable") === "true"
+      );
+      const inEditable =
+        tag === "INPUT"
+        || tag === "TEXTAREA"
+        || tag === "SELECT"
+        || contentEditable;
+
+      // Suppression policy: bail when focus is in another editable
+      // surface. Sole exception — target IS the search input (in
+      // which case ⌘K is a no-op re-press).
+      if (inEditable && target !== inputRef.current) return;
+
+      // ⌘K is ours from here on — swallow before the browser
+      // location-bar shortcut can hijack.
+      e.preventDefault();
+
+      const input = inputRef.current;
+      if (!input) return;
+
+      // Idempotent re-press guard: input is already focused —
+      // do nothing (no re-select, no scroll, no ref capture).
+      if (document.activeElement === input) return;
+
+      // Capture the pre-open focus target BEFORE moving focus so
+      // Escape can restore it. Body is a legal capture — Escape
+      // will focus body harmlessly if there was no prior element.
+      previousActiveElementRef.current = document.activeElement || null;
+
+      // Best-effort scroll (JSDOM lacks scrollIntoView on some
+      // elements; guard with a typeof-function check).
+      if (typeof input.scrollIntoView === "function") {
+        try { input.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+        catch { /* older jsdom rejects behavior option — silent */ }
+      }
+      try { input.focus(); } catch { /* silent */ }
+      // ``select()`` is optional per platform; VSCode / Slack UX
+      // standard — pressing ⌘K a second time to replace the prior
+      // query gets a highlighted selection.
+      if (typeof input.select === "function") {
+        try { input.select(); } catch { /* non-text inputs — silent */ }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const clearAndClose = useCallback(() => {
     setQuery("");
     setHighlight(0);
     if (inputRef.current) inputRef.current.blur();
+    // Task C · Feb-2026 — restore focus to the element that had it
+    // before ⌘K was pressed. Guarded by ref-existence so a manual
+    // click → Escape (no shortcut invocation) does NOT touch focus.
+    // Ref is cleared after restore so a subsequent
+    // click-then-Escape doesn't jump to a stale prior element.
+    const prev = previousActiveElementRef.current;
+    if (prev && typeof prev.focus === "function") {
+      try { prev.focus(); } catch { /* jsdom / detached node — silent */ }
+    }
+    previousActiveElementRef.current = null;
   }, []);
 
   const commit = useCallback((row) => {

@@ -101,9 +101,11 @@ export default function AdminSidebar() {
   useEffect(() => {
     let gArmed = false, gTimer = null;
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault(); setPaletteOpen(true); return;
-      }
+      // Task C · Feb-2026 — the legacy ⌘K → paletteOpen branch
+      // that used to live here was removed. ⌘K now targets the
+      // PageHeader global-search input (see PageHeader.jsx).
+      // The palette itself remains reachable via its click
+      // trigger button below (data-testid="nav-palette-trigger").
       if (e.key === "?" && !e.target.matches("input,textarea")) {
         e.preventDefault(); setHelpOpen(true); return;
       }
