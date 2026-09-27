@@ -98,6 +98,18 @@ class ExtractedBatch(BaseModel):
     tenant_id: str
     documents: List[ExtractedDocument]
     warnings: List[str] = []
+    # Feb-2026 · PDF Importer Sub-phase B — additive structured
+    # warnings alongside the legacy ``warnings: List[str]`` list.
+    # Each entry is a dict with at minimum ``code`` (short machine
+    # tag, e.g. ``"doc_date_missing"``), ``message`` (the same
+    # human-readable string that also lands in ``warnings``), and
+    # ``doc_position`` (1-indexed source_doc_index the warning
+    # belongs to — used by Sub-phase E's per-row yellow-border
+    # banner treatment per R8 · C ruling).  New entries land in
+    # BOTH lists so consumers that still read ``warnings`` (Mongo
+    # persistence, legacy router responses) keep working while
+    # frontend banner code migrates to the structured list.
+    structured_warnings: List[Dict[str, Any]] = []
     model_used: str
     extraction_started_at: datetime
     extraction_finished_at: datetime

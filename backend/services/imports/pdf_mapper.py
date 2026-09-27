@@ -29,10 +29,14 @@ from .extraction_schema import ExtractedDocument, MapperReport
 
 logger = logging.getLogger("imports.pdf_mapper")
 
-# Task H.1 spec §Fuzzy-match threshold — the halt-report locked
-# in 87.  Below that the mapper writes a pending_import_customers
-# row instead of silently binding to a near-miss customer.
-_FUZZY_THRESHOLD = 87
+# Task H.1 spec §Fuzzy-match threshold — Sub-phase A halt-report
+# locked 87.  Feb-2026 · PDF Importer Sub-phase B · R3 ruling —
+# relaxed to 80 (rapidfuzz 0-100 scale) after Aquaterra fixture
+# review showed 87 was rejecting legitimate near-misses (typo
+# families, transposed characters).  Below the threshold the
+# mapper writes a pending_import_customers row instead of silently
+# binding to a near-miss customer.
+_FUZZY_THRESHOLD = 80
 
 # Task H.1 spec §Response payload cap — 25 line items per doc.
 _LINE_ITEM_CAP = 25
@@ -98,7 +102,15 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
     ``QuoteIn`` expects.  ``LineItem`` schema (models.py:335) has
     fields ``description``, ``quantity``, ``unit_price``, +
     optional taxonomy — we populate the numeric fields from the
-    extractor with sensible fallbacks."""
+    extractor with sensible fallbacks.
+
+    Feb-2026 · PDF Importer Sub-phase B — copy through
+    ``item_name`` from the extractor when populated so the
+    preview-table + downstream commit path can render the short
+    SKU alongside the long description.  Defaults to ``None`` for
+    grandfather compat with fixtures that pre-date Sub-phase A's
+    ``ExtractedLineItem.item_name`` field.
+    """
     qty = li.qty if li.qty is not None else 1.0
     unit_price = li.cost_rate
     if unit_price is None and li.line_total is not None and qty:
@@ -106,6 +118,7 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
         # rate wasn't visible on the invoice.
         unit_price = li.line_total / qty if qty else li.line_total
     return {
+        "item_name": li.item_name,
         "description": li.description,
         "quantity": qty,
         "unit_price": float(unit_price) if unit_price is not None else 0.0,
@@ -236,14 +249,30 @@ async def map_extracted_to_quote_in(
     doc_type = "invoice" if doc.doc_kind == "invoice" else "quote"
 
     # ── Assemble QuoteIn dict ──────────────────────────────
+    # Feb-2026 · PDF Importer Sub-phase B — the preview-table
+    # consumer in PdfInvoiceImportPage.jsx reads five extractor
+    # fields directly off the mapper's ``quote_in`` output:
+    # doc_number, doc_date, customer_name, total_due, amount_paid,
+    # payment_method.  Pre-Sub-phase B those columns rendered "—"
+    # because the fields weren't copied through — the extractor
+    # captured them but the mapper's ``quote_in`` dict didn't
+    # surface them.  Sub-phase E owns the preview-table columns
+    # themselves; Sub-phase B ships the strict-superset data
+    # payload so E has something to render.
     quote_in: Dict[str, Any] = {
         "customer_id": customer_id_field,
+        "customer_name": doc.customer_name,
         "title": doc.doc_number and f"Import #{doc.doc_number}" or "Imported document",
         "doc_type": doc_type,
+        "doc_number": doc.doc_number,
+        "doc_date": doc.doc_date.isoformat() if doc.doc_date else None,
         "line_items": wire_items,
         "tax_rate": 0.0,  # H.1 does NOT try to reverse-engineer the
                             # rate; the extractor's ``tax_total`` is
                             # captured in warnings for H.2 audit.
+        "total_due": doc.total_due,
+        "amount_paid": doc.amount_paid,
+        "payment_method": doc.payment_method,
         "notes": doc.notes,
         "import_batch_id": batch_id,
     }

@@ -138,8 +138,8 @@ _EXTRACTION_USER_TMPL = (
     '  "payment_method": "cash"|"check"|"card"|"ach"|"other"|null,\n'
     '  "payment_reference": str | null,\n'
     '  "line_items": [\n'
-    '    {{"description": str, "cost_rate": float|null, '
-    '"qty": float|null, "tax_pct": float|null, '
+    '    {{"item_name": str|null, "description": str, '
+    '"cost_rate": float|null, "qty": float|null, "tax_pct": float|null, '
     '"line_total": float|null, "confidence": 0.0-1.0}}\n'
     "  ],\n"
     '  "subtotal": float | null,\n'
@@ -157,6 +157,14 @@ _EXTRACTION_USER_TMPL = (
     "- 'Added by X' / 'Processed by X' / 'Received by X' names "
     "are operators; capture the whole line verbatim in "
     "raw_operator_audit_line and NEVER use it for customer_name.\n"
+    "- ``item_name`` is the SHORT SKU / product-catalog label "
+    "(e.g. 'Chlorine tabs', 'Filter cartridge') suitable for a "
+    "one-line inventory column; ``description`` is the LONG, "
+    "human-readable line the invoice actually prints (e.g. "
+    "'2x Chlorine tabs delivered on 3/12 during weekly service'). "
+    "When the source PDF has only ONE text label per line, "
+    "populate BOTH with the same string so downstream consumers "
+    "always have a non-null item_name.\n"
 )
 
 
@@ -361,10 +369,23 @@ async def _call_vision_model(
 
 # ── Document normalization ─────────────────────────────────────
 def _ensure_document(raw: Dict[str, Any], warnings: List[str],
-                       doc_position_hint: int) -> ExtractedDocument:
+                       doc_position_hint: int,
+                       structured_warnings: Optional[
+                           List[Dict[str, Any]]
+                       ] = None) -> ExtractedDocument:
     """Coerce a loose model dict into an ``ExtractedDocument``,
     normalising payment_method + dates, and appending warnings
-    for every mapper-blocking optional that landed null."""
+    for every mapper-blocking optional that landed null.
+
+    Feb-2026 · PDF Importer Sub-phase B — the caller may pass a
+    ``structured_warnings`` list; when the ``doc_date`` gate fires
+    the extractor ALSO appends a machine-readable entry
+    ``{code, message, doc_position}`` to that list so downstream
+    UI (Sub-phase E) can render per-row yellow-border banners
+    per R8 · C.  Kept optional so unit tests that only care about
+    the ``warnings: List[str]`` legacy behavior don't need to
+    plumb the extra list.
+    """
     doc_kind = raw.get("doc_kind") or "invoice"
     if doc_kind not in ("invoice", "estimate", "payment_receipt"):
         warnings.append(
@@ -407,7 +428,20 @@ def _ensure_document(raw: Dict[str, Any], warnings: List[str],
     if doc.doc_number in (None, ""):
         warnings.append(f"document {doc_position_hint}: doc_number missing")
     if doc.doc_date is None:
-        warnings.append(f"document {doc_position_hint}: doc_date missing / unparseable")
+        # Feb-2026 · Sub-phase B — sharpen the doc_date warning with a
+        # structured code so Sub-phase E's per-row banner treatment
+        # can identify + link to the offending row without regex
+        # parsing the legacy string list.  R8 · C ruling.
+        msg = (
+            f"document {doc_position_hint}: doc_date missing / unparseable"
+        )
+        warnings.append(msg)
+        if structured_warnings is not None:
+            structured_warnings.append({
+                "code": "doc_date_missing",
+                "message": msg,
+                "doc_position": doc_position_hint,
+            })
     if doc.doc_kind in ("invoice", "estimate") and not doc.line_items:
         warnings.append(f"document {doc_position_hint}: line_items empty")
 
@@ -456,6 +490,11 @@ async def extract(
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_count = doc.page_count
     warnings: List[str] = []
+    # Feb-2026 · PDF Importer Sub-phase B — additive structured
+    # warnings list threaded through ``_ensure_document`` so
+    # ``doc_date_missing`` entries carry a ``code`` + ``doc_position``
+    # per R8 · C for Sub-phase E's per-row banner treatment.
+    structured_warnings: List[Dict[str, Any]] = []
 
     async def _emit(stage: str, current: Optional[int] = None,
                      total: Optional[int] = None,
@@ -551,7 +590,10 @@ async def extract(
         # that hallucinate wider ranges).
         raw = dict(ext_result["parsed"])
         raw["source_page_range"] = [p_start, p_end]
-        documents.append(_ensure_document(raw, warnings, idx + 1))
+        documents.append(_ensure_document(
+            raw, warnings, idx + 1,
+            structured_warnings=structured_warnings,
+        ))
 
         # Per-segment progress hint — the router persists this to
         # the batch row's ``stage`` field so admins see live
@@ -572,6 +614,7 @@ async def extract(
         tenant_id=tenant_id,
         documents=documents,
         warnings=warnings,
+        structured_warnings=structured_warnings,
         model_used=_MODEL_NAME,
         extraction_started_at=started,
         extraction_finished_at=finished,

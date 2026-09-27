@@ -951,3 +951,252 @@ def test_payment_model_defaults_grandfather_for_stripe_shape():
     assert p.imported_at is None
     assert p.matched is False
 
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb-2026 · PDF Importer Sub-phase B — extractor prompt + mapper
+# copy-through + fuzzy 80 + warn-on-missing structured envelope.
+#
+# Tests 1-3 build ``ExtractedDocument`` directly and drive the mapper
+# so the item_name / quote_in copy-through contracts are verified
+# without adding a new vision-response fixture JSON.  Test 4 is a
+# pure module-constant lint.  Test 5 rides the extractor's
+# ``_ensure_document`` normalizer to exercise the structured-warning
+# emission path.  Test 6 is a regex on the extraction prompt.
+# ═════════════════════════════════════════════════════════════════════
+def _b_synth_extracted_doc(**overrides) -> "Any":
+    """Build a full-shape ``ExtractedDocument`` for the mapper
+    copy-through tests.  All overridable — a caller that wants to
+    exercise a specific field null sets it to ``None`` here."""
+    from datetime import date
+    from services.imports.extraction_schema import (
+        ExtractedDocument, ExtractedLineItem,
+    )
+    defaults: Dict[str, Any] = {
+        "doc_kind": "invoice",
+        "source_page_range": [1, 1],
+        "customer_name": "Test Customer A",
+        "customer_email": None,
+        "customer_phone": None,
+        "customer_address": None,
+        "doc_number": "SUBB-1001",
+        "doc_date": date(2026, 2, 12),
+        "due_date": None,
+        "paid_at": None,
+        "payment_method": "check",
+        "payment_reference": "chk#9987",
+        "line_items": [
+            ExtractedLineItem(
+                item_name="Chlorine",
+                description="Chlorine tabs — weekly service",
+                qty=2.0, cost_rate=25.0, tax_pct=0.0, line_total=50.0,
+                confidence=0.99,
+            ),
+        ],
+        "subtotal": 50.0,
+        "tax_total": 0.0,
+        "grand_total": 50.0,
+        "amount_paid": 20.0,
+        "total_due": 30.0,
+        "notes": None,
+        "raw_operator_audit_line": None,
+        "extraction_confidence": 0.98,
+    }
+    defaults.update(overrides)
+    return ExtractedDocument(**defaults)
+
+
+# ── Test SubB-1 · item_name round-trips through the mapper ─────
+@pytest.mark.anyio
+async def test_subb_line_item_item_name_populated_round_trips_via_mapper(
+    aquaterra_id, adb, h1_customer,
+):
+    """Sub-phase B contract — an ``ExtractedLineItem.item_name``
+    populated by the extractor lands verbatim on the mapper's
+    ``quote_in.line_items[i].item_name``."""
+    from services.imports.pdf_mapper import map_extracted_to_quote_in
+
+    doc = _b_synth_extracted_doc()
+    report = await map_extracted_to_quote_in(
+        doc, db=adb, tenant_id=aquaterra_id,
+        batch_id="subb-batch-item-name",
+        operator_user={"id": "admin-1", "role": "admin"},
+        source_doc_index=0,
+    )
+    assert report.quote_in is not None
+    items = report.quote_in["line_items"]
+    assert len(items) == 1
+    assert items[0]["item_name"] == "Chlorine"
+    # Description still present + independent of item_name.
+    assert items[0]["description"] == "Chlorine tabs — weekly service"
+
+
+# ── Test SubB-2 · item_name absent → None survives ─────────────
+@pytest.mark.anyio
+async def test_subb_line_item_item_name_absent_maps_to_none(
+    aquaterra_id, adb, h1_customer,
+):
+    """Sub-phase B contract — when the extractor did NOT populate
+    ``item_name`` (legacy fixtures / gpt-4o omission), the mapper
+    surfaces ``item_name = None`` on the wire shape rather than
+    raising or defaulting to the description."""
+    from services.imports.extraction_schema import ExtractedLineItem
+    from services.imports.pdf_mapper import map_extracted_to_quote_in
+
+    doc = _b_synth_extracted_doc(line_items=[
+        ExtractedLineItem(
+            item_name=None,
+            description="Description-only line — no short SKU",
+            qty=1.0, cost_rate=10.0,
+        ),
+    ])
+    report = await map_extracted_to_quote_in(
+        doc, db=adb, tenant_id=aquaterra_id,
+        batch_id="subb-batch-item-name-none",
+        operator_user={"id": "admin-1", "role": "admin"},
+        source_doc_index=0,
+    )
+    assert report.quote_in is not None
+    items = report.quote_in["line_items"]
+    assert len(items) == 1
+    assert items[0]["item_name"] is None
+    assert items[0]["description"] == (
+        "Description-only line — no short SKU"
+    )
+
+
+# ── Test SubB-3 · quote_in copy-through completeness ───────────
+@pytest.mark.anyio
+async def test_subb_quote_in_copies_through_all_display_columns(
+    aquaterra_id, adb, h1_customer,
+):
+    """Sub-phase B contract — the mapper's ``quote_in`` dict now
+    surfaces the six extractor fields the preview table + display
+    columns need: doc_number, doc_date (ISO string), customer_name,
+    total_due, amount_paid, payment_method.  Locked as a strict
+    superset — any missing key would silently regress the display
+    columns to `—` again."""
+    from services.imports.pdf_mapper import map_extracted_to_quote_in
+
+    doc = _b_synth_extracted_doc()
+    report = await map_extracted_to_quote_in(
+        doc, db=adb, tenant_id=aquaterra_id,
+        batch_id="subb-batch-copy-through",
+        operator_user={"id": "admin-1", "role": "admin"},
+        source_doc_index=0,
+    )
+    qi = report.quote_in
+    assert qi is not None
+
+    # Copy-through — every key populated from the ExtractedDocument.
+    assert qi["doc_number"] == "SUBB-1001"
+    assert qi["doc_date"] == "2026-02-12"   # ISO string, not date obj
+    assert qi["customer_name"] == "Test Customer A"
+    assert qi["total_due"] == 30.0
+    assert qi["amount_paid"] == 20.0
+    assert qi["payment_method"] == "check"
+
+    # Sanity — strict superset (existing keys still present).
+    for key in ("customer_id", "title", "doc_type", "line_items",
+                "tax_rate", "notes", "import_batch_id"):
+        assert key in qi, f"strict-superset regression: missing {key!r}"
+
+
+# ── Test SubB-4 · fuzzy threshold source-lint ──────────────────
+def test_subb_fuzzy_threshold_relaxed_to_80():
+    """R3 ruling — _FUZZY_THRESHOLD relaxed 87 → 80 (rapidfuzz
+    0-100 scale).  Source-lint locks the constant so a future
+    tuning pass doesn't silently regress to 87.  If tuning is
+    intentional the ruling must be updated alongside this test."""
+    from services.imports import pdf_mapper
+    assert pdf_mapper._FUZZY_THRESHOLD == 80, (
+        f"Sub-phase B locks _FUZZY_THRESHOLD=80 (R3 ruling);"
+        f" got {pdf_mapper._FUZZY_THRESHOLD}"
+    )
+
+
+# ── Test SubB-5 · warn-on-missing-date structured envelope ─────
+def test_subb_warn_on_missing_doc_date_emits_structured_code():
+    """R8 · C ruling — when the extractor's ``_ensure_document``
+    normalizer sees ``doc_date=None``, it appends BOTH the legacy
+    human-readable string to ``warnings`` AND a structured entry
+    ``{code, message, doc_position}`` to ``structured_warnings``.
+    Downstream (Sub-phase E) UI reads the structured list to render
+    per-row yellow-border banners without regex-parsing the legacy
+    strings."""
+    from services.imports.pdf_invoice_extractor import _ensure_document
+
+    warnings: List[str] = []
+    structured: List[Dict[str, Any]] = []
+    raw = {
+        "doc_kind": "invoice",
+        "source_page_range": [1, 1],
+        "customer_name": "Test Customer",
+        "customer_email": None,
+        "doc_number": "INV-42",
+        "doc_date": None,   # trip the gate
+        "line_items": [
+            {"description": "Chlorine", "qty": 1.0, "cost_rate": 10.0},
+        ],
+    }
+    _ensure_document(raw, warnings, 3,
+                     structured_warnings=structured)
+
+    # Legacy string surface — unchanged for backward compat.
+    assert any("doc_date missing" in w for w in warnings), warnings
+
+    # Structured surface — new in Sub-phase B.
+    matches = [e for e in structured
+                 if e.get("code") == "doc_date_missing"]
+    assert len(matches) == 1, (
+        f"expected exactly one doc_date_missing structured entry,"
+        f" got {structured}"
+    )
+    entry = matches[0]
+    assert entry["doc_position"] == 3
+    assert "doc_date missing" in entry["message"]
+
+    # Grandfather — omitting structured_warnings kwarg still works
+    # (legacy call sites unchanged).
+    warnings2: List[str] = []
+    _ensure_document(raw, warnings2, 1)
+    assert any("doc_date missing" in w for w in warnings2)
+
+
+# ── Test SubB-6 · extraction prompt schema includes item_name ──
+def test_subb_extraction_prompt_schema_includes_item_name():
+    """Sub-phase B contract — the vision extraction prompt's
+    ``line_items[]`` JSON schema block now instructs the model to
+    return an ``item_name`` field alongside the existing
+    ``description``.  Source-lint on the module constant so a
+    future prompt reshuffle doesn't drop the instruction
+    silently."""
+    import re
+    from services.imports import pdf_invoice_extractor as _pie
+
+    tmpl = _pie._EXTRACTION_USER_TMPL
+    # The item_name field must appear inside the line_items[] JSON
+    # schema declaration.  Regex hunts for the field-name substring
+    # inside the ``line_items`` block so a reordering of fields
+    # doesn't break the check.
+    schema_block = re.search(
+        r'"line_items":\s*\[[\s\S]{20,600}?\]',
+        tmpl,
+    )
+    assert schema_block, (
+        "line_items JSON schema block not found in extraction"
+        " prompt"
+    )
+    assert '"item_name"' in schema_block.group(0), (
+        "Sub-phase B requires the extraction prompt to declare an"
+        " item_name field in the line_items[] JSON schema"
+    )
+
+    # The prompt REMINDERS section must also carry the operational
+    # rule ("short SKU vs long description"; when only one label
+    # exists populate BOTH) so gpt-4o has an unambiguous choice
+    # rule.  Loose lint — checks for the "item_name" keyword and
+    # the "short" hint inside a REMINDER-adjacent block.
+    assert re.search(r'item_name.{0,200}short', tmpl, re.IGNORECASE), (
+        "extraction prompt must instruct the model on item_name"
+        " (short SKU vs long description) in the REMINDERS block"
+    )
