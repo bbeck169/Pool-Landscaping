@@ -530,20 +530,55 @@ export function PortalServiceReportDetail() {
   // photos (``sr.photos``) keep their attribution intact.
   const jobPhotos = Array.isArray(sr.job_photos) ? sr.job_photos : [];
   const algae = algaeLine(sr);
-  // Phase CHEM4 · Feb-2026 — Hybrid Pool + additional-body layout.
+  // Feb-2026 · PS-B — Portal chemicals display fallback.
   //
-  //   Flat "Pool" block at the top → sourced from the report's
-  //   TOP-LEVEL ``chemical_readings`` + ``chemicals_added``. Never
-  //   recomputed from ``water_bodies[0]``.
+  //   Some tenants persist chemistry ONLY under ``water_bodies[0]``
+  //   (single-body pool reports keyed via the WaterBodyManager
+  //   editor) without mirroring to the top-level ``chemical_readings``
+  //   / ``chemicals_added`` surfaces the portal was originally coded
+  //   against.  When the top-level surfaces are effectively empty we
+  //   read the primary body's ``readings`` / ``chemicals_used``
+  //   arrays instead so the customer still sees the visit summary.
   //
-  //   Additional bodies (Spa, Fountain, Water Feature, Other) →
-  //   iterate ``water_bodies`` starting at INDEX 1. Each renders in
-  //   its own card with per-body chemistry + chemicals.
+  //   Aggregation policy (ruling #1) — PER-BODY.  The primary block
+  //   below only ever renders ONE body's chemistry (top-level or
+  //   ``water_bodies[0]`` on fallback).  Additional bodies at
+  //   indices 1+ render in their own cards via the existing
+  //   ``additionalBodies.map`` loop further down — no cross-body
+  //   summing (would obscure per-body chemistry) and no re-labelled
+  //   flattening.  The existing hybrid layout already labels each
+  //   body by name; PS-B just fills the primary slot when it would
+  //   otherwise render "No chemistry recorded" despite body data
+  //   being present.
   //
-  //   Single-body reports (or reports with only the primary pool in
-  //   ``water_bodies``) render the flat block only — no cards.
+  //   "Empty" for fallback purposes (ruling #3): null / undefined /
+  //   empty string / empty array / 0-amount entries.  Readings with
+  //   value 0 stay meaningful (0 ppm chlorine is a real measurement)
+  //   — the 0-amount check applies only to ``chemicals_added``.
+  //   A partially-filled top-level entry (name-only, no amount)
+  //   renders as-is; only if EVERY top-level chemical has a
+  //   0/blank amount do we fall back.
   const bodies = Array.isArray(sr.water_bodies) ? sr.water_bodies : [];
   const additionalBodies = bodies.slice(1);
+  const primaryBody = bodies[0] || null;
+  const _bodyReadings = primaryBody && Array.isArray(primaryBody.readings)
+    ? primaryBody.readings.filter(
+        (r) => r && (r.label || (r.value !== null && r.value !== undefined && r.value !== "")),
+      )
+    : [];
+  const _bodyChemicals = primaryBody && Array.isArray(primaryBody.chemicals_used)
+    ? primaryBody.chemicals_used.filter((c) => c && (c.name || c.chemical))
+    : [];
+  const _topReadingsHaveAny = readings.length > 0;
+  // Any top-level chemical with a non-zero amount OR name-only
+  // (partially filled) is enough to keep top-level rendering.
+  const _topChemicalsMeaningful = chemicalsAdded.some((c) => {
+    const a = c?.amount ?? c?.qty ?? c?.quantity;
+    if (a === null || a === undefined || a === "") return true;
+    return Number(a) !== 0;
+  });
+  const effectiveReadings = _topReadingsHaveAny ? readings : _bodyReadings;
+  const effectiveChemicalsAdded = _topChemicalsMeaningful ? chemicalsAdded : _bodyChemicals;
   const primaryLabel = (bodies[0]?.label
                          || bodies[0]?.name
                          || BODY_TYPE_LABELS[bodies[0]?.type]
@@ -727,7 +762,7 @@ export function PortalServiceReportDetail() {
           title={primaryLabel}
           testid="portal-service-report-primary-pool"
         >
-          {readings.length === 0 && chemicalsAdded.length === 0 ? (
+          {effectiveReadings.length === 0 && effectiveChemicalsAdded.length === 0 ? (
             <div
               className="text-sm italic"
               style={{ color: colors.muted }}
@@ -737,12 +772,12 @@ export function PortalServiceReportDetail() {
             </div>
           ) : (
             <>
-              {readings.length > 0 ? (
+              {effectiveReadings.length > 0 ? (
                 <ul
                   className="grid grid-cols-1 sm:grid-cols-2 gap-2"
                   data-testid="portal-service-report-readings-list"
                 >
-                  {readings.map((r, i) => {
+                  {effectiveReadings.map((r, i) => {
                     // Feb-2026 hotfix — prefer the server-attached
                     // classification when present, else derive from
                     // the numeric value using the SAME thresholds
@@ -783,9 +818,9 @@ export function PortalServiceReportDetail() {
                   })}
                 </ul>
               ) : null}
-              {chemicalsAdded.length > 0 ? (
+              {effectiveChemicalsAdded.length > 0 ? (
                 <div
-                  className={readings.length > 0 ? "mt-4" : ""}
+                  className={effectiveReadings.length > 0 ? "mt-4" : ""}
                   data-testid="portal-service-report-chemicals-block"
                 >
                   <div
@@ -795,7 +830,7 @@ export function PortalServiceReportDetail() {
                     Chemicals added
                   </div>
                   <ul className="space-y-1.5">
-                    {chemicalsAdded.map((c, i) => {
+                    {effectiveChemicalsAdded.map((c, i) => {
                       const name = c.name || c.chemical || "Chemical";
                       const amount = c.amount ?? c.qty ?? c.quantity ?? "";
                       const unit = c.unit || c.default_unit || "";
