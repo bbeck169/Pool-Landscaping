@@ -1277,7 +1277,7 @@ async def list_customers(
         if page is None:
             page = 1
         if page_size is None:
-            page_size = 100
+            page_size = 25
         if page < 1:
             raise HTTPException(
                 status_code=400,
@@ -1285,11 +1285,18 @@ async def list_customers(
                           "message": "page must be >= 1",
                           "page": page},
             )
-        if page_size < 1 or page_size > 500:
+        # SEARCH-SPEED · Feb-2026 — Customers list page_size cap
+        # dropped from 500 → 100.  ``page_size > 100`` requests are
+        # rejected with ``error_code: page_size_too_large``.  The
+        # cap keeps the payload size + fanout cost bounded and
+        # matches the FE list-card render budget (25-100 rows).
+        if page_size < 1 or page_size > 100:
             raise HTTPException(
                 status_code=400,
-                detail={"detail": "invalid_page_size",
-                          "message": "page_size must be between 1 and 500",
+                detail={"error_code": "page_size_too_large",
+                          "detail": "invalid_page_size",
+                          "message":
+                            "page_size must be between 1 and 100",
                           "page_size": page_size},
             )
 

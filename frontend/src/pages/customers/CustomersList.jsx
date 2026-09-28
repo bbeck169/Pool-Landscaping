@@ -1492,11 +1492,23 @@ export default function CustomersList() {
             onClick={async () => {
               try {
                 // Re-fetch waitlist ids at click time (no stale
-                // state; page_size cap = 500 matches H1 batch cap).
+                // state).  SEARCH-SPEED · Feb-2026: page_size cap
+                // dropped from 500 → 100 server-side; drop the
+                // pagination params entirely so this bulk-invite
+                // click hits the legacy bare-array path (2000-cap,
+                // matches H1 batch cap semantics).  A single-tenant
+                // waitlist rarely exceeds a few hundred so this is
+                // a strictly-safer round trip.
                 const listRes = await api.get(
-                  "/customers?waitlisted=true&page=1&page_size=500",
+                  "/customers?waitlisted=true",
                 );
-                const ids = (listRes?.items || [])
+                // Bare-array response — API returns the customer
+                // rows directly; the paginated envelope only kicks
+                // in when ``page`` or ``page_size`` are supplied.
+                const rows = Array.isArray(listRes)
+                  ? listRes
+                  : (listRes?.items || []);
+                const ids = rows
                   .map((c) => c.id).filter(Boolean);
                 if (!ids.length) {
                   sonnerToast.info?.("No waitlisted customers to invite.");

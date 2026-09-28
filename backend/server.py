@@ -6006,6 +6006,28 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             "tenant_ai_rules indexes NOT bound",
         )
 
+    # SEARCH-SPEED · Feb-2026 — customers-list soft-delete-aware
+    # compound indexes (default sort, name sort, email/phone lookup).
+    # Idempotent; batch-fallback per-index-create if the batch fails.
+    try:
+        from config import db as _ss_db
+        from services.customers_perf_indexes import (
+            ensure_customers_perf_indexes,
+        )
+        _ss_summary = await ensure_customers_perf_indexes(_ss_db)
+        logger.info(
+            "[startup] phase=search_speed_customers_indexes "
+            "created=%s already=%s errors=%s",
+            len(_ss_summary.get("created", [])),
+            len(_ss_summary.get("already", [])),
+            len(_ss_summary.get("errors", [])),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=search_speed_customers_indexes failed — "
+            "customers perf indexes NOT bound",
+        )
+
     try:
         yield
     finally:
