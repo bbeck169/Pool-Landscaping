@@ -76,10 +76,10 @@ describe("CAD-2 · wall polyline tool", () => {
 
     fireEvent.click(screen.getByTestId("cad-tool-wall"));
     expect(screen.getByTestId("cad-wall-finish")).toBeTruthy();
-    const canvas = screen.getByTestId("cad-canvas");
-    fireEvent.mouseDown(canvas, { clientX: 80, clientY: 100 });
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 100 });
-    fireEvent.mouseDown(canvas, { clientX: 720, clientY: 100 });
+    const stage = screen.getByTestId("cad-konva-stage");
+    fireEvent.mouseDown(stage, { clientX: 80, clientY: 100 });
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 100 });
+    fireEvent.mouseDown(stage, { clientX: 720, clientY: 100 });
     expect(screen.getByTestId("cad-wall-inprogress")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("cad-wall-finish"));

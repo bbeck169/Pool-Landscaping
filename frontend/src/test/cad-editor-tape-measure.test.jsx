@@ -87,9 +87,9 @@ describe("CAD-2 · tape measure", () => {
     const cb = screen.getByTestId("cad-tape-persist-checkbox");
     expect(cb.checked).toBe(false);
 
-    const canvas = screen.getByTestId("cad-canvas");
-    fireEvent.mouseDown(canvas, { clientX: 100, clientY: 250 });
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 250 });
+    const stage = screen.getByTestId("cad-konva-stage");
+    fireEvent.mouseDown(stage, { clientX: 100, clientY: 250 });
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 250 });
 
     // Overlay rendered with 12' 6"-format label ("22' 6\"" here).
     const overlay = screen.getByTestId("cad-tape-inprogress");
@@ -112,9 +112,9 @@ describe("CAD-2 · tape measure", () => {
 
     fireEvent.click(screen.getByTestId("cad-tool-tape"));
     fireEvent.click(screen.getByTestId("cad-tape-persist-checkbox"));
-    const canvas = screen.getByTestId("cad-canvas");
-    fireEvent.mouseDown(canvas, { clientX: 100, clientY: 250 });
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 250 });
+    const stage2 = screen.getByTestId("cad-konva-stage");
+    fireEvent.mouseDown(stage2, { clientX: 100, clientY: 250 });
+    fireEvent.mouseDown(stage2, { clientX: 400, clientY: 250 });
 
     await waitFor(() => expect(putSpy).toHaveBeenCalled());
     const [_path, body] = putSpy.mock.calls[putSpy.mock.calls.length - 1];

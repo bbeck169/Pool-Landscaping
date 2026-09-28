@@ -83,13 +83,13 @@ describe("CAD-2 · paver polygon tool", () => {
     fireEvent.click(screen.getByTestId("cad-tool-paver"));
     expect(screen.getByTestId("cad-paver-finish")).toBeTruthy();
 
-    const canvas = screen.getByTestId("cad-canvas");
+    const stage = screen.getByTestId("cad-konva-stage");
     // Triangle vertices: (0.1, 0.1), (0.9, 0.1), (0.5, 0.9) → area
     // in pixel space = 0.5 * 0.8 * 0.8 = 0.32 (normalized), scaled
     // to 60×40 ft = 60 * 40 * 0.32 = 768 sq ft.
-    fireEvent.mouseDown(canvas, { clientX: 80, clientY: 50 });
-    fireEvent.mouseDown(canvas, { clientX: 720, clientY: 50 });
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 450 });
+    fireEvent.mouseDown(stage, { clientX: 80, clientY: 50 });
+    fireEvent.mouseDown(stage, { clientX: 720, clientY: 50 });
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 450 });
     // Preview polygon rendered.
     expect(screen.getByTestId("cad-paver-inprogress")).toBeTruthy();
 

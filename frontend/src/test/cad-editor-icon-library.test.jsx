@@ -87,8 +87,8 @@ describe("CAD-2 · icon library", () => {
     // Pick tree.
     fireEvent.click(screen.getByTestId("cad-icon-tree"));
     // Place on canvas.
-    const canvas = screen.getByTestId("cad-canvas");
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 250 });
+    const stage = screen.getByTestId("cad-konva-stage");
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 250 });
 
     await waitFor(() => expect(putSpy).toHaveBeenCalled());
     const lastCall = putSpy.mock.calls[putSpy.mock.calls.length - 1];

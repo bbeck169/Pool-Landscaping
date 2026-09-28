@@ -84,13 +84,13 @@ describe("CAD-2 · property-line snapping", () => {
       expect(screen.queryByTestId("cad-editor-page")).toBeTruthy(),
     );
     fireEvent.click(screen.getByTestId("cad-tool-paver"));
-    const canvas = screen.getByTestId("cad-canvas");
+    const stage = screen.getByTestId("cad-konva-stage");
     // Vertex 1 — solidly interior.
-    fireEvent.mouseDown(canvas, { clientX: 200, clientY: 250 });
+    fireEvent.mouseDown(stage, { clientX: 200, clientY: 250 });
     // Vertex 2 — 6px above the bottom edge → should snap to y=1.
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 494 });
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 494 });
     // Vertex 3 — interior again.
-    fireEvent.mouseDown(canvas, { clientX: 600, clientY: 250 });
+    fireEvent.mouseDown(stage, { clientX: 600, clientY: 250 });
     fireEvent.click(screen.getByTestId("cad-paver-finish"));
 
     await waitFor(() => expect(putSpy).toHaveBeenCalled());

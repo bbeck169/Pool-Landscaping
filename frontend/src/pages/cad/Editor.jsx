@@ -235,13 +235,20 @@ export default function CadEditor() {
     return snapPoint(normPt, snapEdges, snapThresholdPx, canvasSize);
   }, [snapEdges, snapThresholdPx, canvasSize.w, canvasSize.h]);
 
-  // ── Canvas click handler ──────────────────────────────────────
-  const onCanvasMouseDown = (e) => {
+  // ── Stage click handler (Phase CAD-2-FIX · Feb-2026 —
+  // real Konva swap: event handlers now live on the Konva
+  // ``<Stage>`` itself, not on the outer positioning div. The
+  // handler accepts both a Konva SyntheticEvent shape
+  // (``e.evt.clientX``) AND a plain DOM MouseEvent shape so the
+  // react-konva mock used in tests still delivers a working event
+  // without pulling in the real Konva runtime).
+  const onStageMouseDown = (e) => {
     if (!design) return;
     if (tool === "pointer" && !placingIcon) return;
+    const native = (e && e.evt) ? e.evt : e;
     const rect = canvasRef.current.getBoundingClientRect();
-    const rawX = (e.clientX - rect.left) / rect.width;
-    const rawY = (e.clientY - rect.top) / rect.height;
+    const rawX = (native.clientX - rect.left) / rect.width;
+    const rawY = (native.clientY - rect.top) / rect.height;
     const snapped = maybeSnap({ x: rawX, y: rawY });
     const x = snapped.x;
     const y = snapped.y;
@@ -553,7 +560,6 @@ export default function CadEditor() {
         <div className="lg:col-span-3">
           <div
             ref={canvasRef}
-            onMouseDown={onCanvasMouseDown}
             className="relative rounded-2xl overflow-hidden"
             style={{
               width: "100%", aspectRatio: `${canvasSize.w}/${canvasSize.h}`,
@@ -575,12 +581,15 @@ export default function CadEditor() {
                 style={{ zIndex: 0 }}
               />
             )}
-            {/* Konva vector layer */}
+            {/* Konva vector layer — PRIMARY interactive surface.
+                All mouseDown handling lives here (Phase CAD-2-FIX).
+                The outer div is now a positioning wrapper only. */}
             <Stage
               width={canvasSize.w}
               height={canvasSize.h}
+              onMouseDown={onStageMouseDown}
               data-testid="cad-konva-stage"
-              className="absolute inset-0 pointer-events-none"
+              className="absolute inset-0"
               style={{ zIndex: 1, width: "100%", height: "100%" }}
             >
               <Layer data-testid="cad-konva-layer">

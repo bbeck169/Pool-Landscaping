@@ -150,4 +150,73 @@ describe("CAD-2 · MARCO Designer sidebar", () => {
     // No PUT was issued.
     expect(putSpy).not.toHaveBeenCalled();
   });
+
+  it("Regenerate re-fires /cad/generate and REPLACES the preview "
+     + "shapes (does not stack them)", async () => {
+    getSpy.mockResolvedValue({
+      id: "design-marco", name: "Marco regen",
+      canvas_w_ft: 60, canvas_h_ft: 40,
+      elements: [], boundary: [],
+    });
+    // Two distinct MARCO payloads. First a pool + a tree; second a
+    // single wall (nothing else). If Regenerate stacks instead of
+    // replacing, we'd still see the first payload's shapes.
+    postSpy.mockResolvedValueOnce({
+      generation_id: "gen-v1",
+      shapes: [
+        { type: "pool",
+          coords: [{ x: 0.2, y: 0.3 }, { x: 0.5, y: 0.3 },
+                   { x: 0.5, y: 0.6 }, { x: 0.2, y: 0.6 }],
+          icon: null, label: "Pool v1" },
+        { type: "icon", icon: "tree",
+          coords: [{ x: 0.1, y: 0.1 }],
+          label: null },
+      ],
+      reasoning: "First take — pool + tree.",
+      warnings: [],
+    });
+    postSpy.mockResolvedValueOnce({
+      generation_id: "gen-v2",
+      shapes: [
+        { type: "wall",
+          coords: [{ x: 0.1, y: 0.9 }, { x: 0.9, y: 0.9 }],
+          icon: null, label: null },
+      ],
+      reasoning: "Regenerated — just a retaining wall.",
+      warnings: [],
+    });
+    render(<CadEditor />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("cad-editor-page")).toBeTruthy(),
+    );
+    // Generate the first preview.
+    fireEvent.change(screen.getByTestId("cad-marco-textarea"),
+                     { target: { value: "design v1" } });
+    fireEvent.click(screen.getByTestId("cad-marco-generate"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("cad-preview-shape-1")).toBeTruthy(),
+    );
+    // Two preview shapes rendered.
+    expect(screen.getByTestId("cad-preview-shape-0")).toBeTruthy();
+    expect(screen.getByTestId("cad-preview-shape-1")).toBeTruthy();
+    expect(screen.getByTestId("cad-marco-reasoning").textContent)
+      .toContain("First take");
+    // Button label flips to "Regenerate" once a preview exists.
+    expect(screen.getByTestId("cad-marco-generate").textContent)
+      .toMatch(/Regenerate/i);
+
+    // Click Regenerate.
+    fireEvent.click(screen.getByTestId("cad-marco-generate"));
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(2));
+    // Reasoning updated.
+    await waitFor(() =>
+      expect(screen.getByTestId("cad-marco-reasoning").textContent)
+        .toContain("Regenerated"),
+    );
+    // Preview REPLACED — exactly one shape now (the wall).
+    expect(screen.queryByTestId("cad-preview-shape-0")).toBeTruthy();
+    expect(screen.queryByTestId("cad-preview-shape-1")).toBeNull();
+    // No PUT — regenerate does not commit.
+    expect(putSpy).not.toHaveBeenCalled();
+  });
 });

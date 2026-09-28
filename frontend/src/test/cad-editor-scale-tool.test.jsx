@@ -102,13 +102,13 @@ describe("CAD-1 · CadEditor scale calibration tool", () => {
 
     // Activate the scale tool.
     fireEvent.click(screen.getByTestId("cad-tool-scale"));
-    const canvas = screen.getByTestId("cad-canvas");
+    const stage = screen.getByTestId("cad-konva-stage");
     // Click 1 — (100, 100) in the 800x500 bounding rect.
-    fireEvent.mouseDown(canvas, { clientX: 100, clientY: 100 });
+    fireEvent.mouseDown(stage, { clientX: 100, clientY: 100 });
     // First marker rendered.
     expect(screen.getByTestId("cad-scale-marker-0")).toBeTruthy();
     // Click 2 — (400, 500). Pixel distance = sqrt(300^2 + 400^2) = 500.
-    fireEvent.mouseDown(canvas, { clientX: 400, clientY: 500 });
+    fireEvent.mouseDown(stage, { clientX: 400, clientY: 500 });
     // Prompt fired, we returned "10". Expected ft/px = 10/500 = 0.02.
     expect(promptSpy).toHaveBeenCalled();
     await waitFor(() => expect(putSpy).toHaveBeenCalled());

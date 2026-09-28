@@ -12,7 +12,7 @@
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("react-konva", async () => {
   const React = await import("react");
@@ -90,5 +90,45 @@ describe("CAD-2 · react-konva swap", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     // No auto-persist on a freshly-loaded design.
     expect(putSpy).not.toHaveBeenCalled();
+  });
+
+  it("event handling lives on the Konva Stage — mouseDown on the "
+     + "Stage fires the active tool; mouseDown on the outer div "
+     + "does NOT (real swap, not an overlay)", async () => {
+    getSpy.mockResolvedValue({
+      id: "design-konva", name: "Real swap",
+      canvas_w_ft: 60, canvas_h_ft: 40,
+      elements: [], boundary: [],
+    });
+    // Stub the canvas ref so coord math is deterministic.
+    Element.prototype.getBoundingClientRect = function () {
+      return { left: 0, top: 0, right: 800, bottom: 500,
+               width: 800, height: 500, x: 0, y: 0,
+               toJSON() { return this; } };
+    };
+    render(<CadEditor />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("cad-editor-page")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("cad-tool-paver"));
+    const stage = screen.getByTestId("cad-konva-stage");
+    const outerCanvas = screen.getByTestId("cad-canvas");
+
+    // Firing mouseDown on the Stage adds a paver vertex — the
+    // primary tool handler is wired to the Konva Stage.
+    fireEvent.mouseDown(stage, { clientX: 200, clientY: 200 });
+    expect(screen.getByTestId("cad-paver-inprogress")).toBeTruthy();
+    // Preview has exactly one vertex circle.
+    const afterStage = screen.getByTestId("cad-paver-inprogress")
+      .querySelectorAll('[data-konva-kind="Circle"]').length;
+    expect(afterStage).toBe(1);
+
+    // Firing mouseDown on the outer div MUST NOT add another
+    // vertex — the outer wrapper is a positioning container only,
+    // it has no handler wired anymore.
+    fireEvent.mouseDown(outerCanvas, { clientX: 600, clientY: 400 });
+    const afterOuter = screen.getByTestId("cad-paver-inprogress")
+      .querySelectorAll('[data-konva-kind="Circle"]').length;
+    expect(afterOuter).toBe(1);
   });
 });
