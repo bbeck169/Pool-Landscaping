@@ -27133,3 +27133,49 @@ spy count assertion all still pass).
   Phase K41d "Bulk Operations audit summary" dashboard tile using
   `db.audit_events.distinct(...)` which the test suite's fake
   collection stub doesn't implement. Parked as pre-existing.
+
+---
+
+## FLEET-B — Mobile GPS Emission + Manual Check-ins (Phase FLEET-B · Mobile)
+
+**Shipped**: 2026-09-28
+**Commit**: cedc6d5f87fc001273e34878170b23a9f2915618
+
+### Overview
+Foreground-only GPS emission service for technicians in the Expo mobile app, enabling real-time dispatch board tracking on the admin web panel. Includes manual check-in UI ("On My Way" / "Arrived") on the job detail screen, a persistent Fleet status indicator chip in the header, and a settings toggle to temporarily pause tracking.
+
+### Backend Endpoints Used (unchanged, no modifications)
+- `POST /api/fleet/ping` — GPS position emission (lat, lng, accuracy, speed, heading, battery, device_time)
+- `POST /api/fleet/checkin` — Manual check-in (kind: "on_the_way" | "arrived", job_id, lat?, lng?)
+- `GET /api/fleet/membership` — Admin-only fleet membership management
+
+### Components Created
+| Component | File | Description |
+|-----------|------|-------------|
+| locationEmitter | `src/services/fleet/locationEmitter.ts` | Foreground-only GPS emission; 15s active / 60s idle; battery-aware (<20% = 60s/300s); AppState lifecycle management |
+| FleetStatusChip | `src/components/fleet/FleetStatusChip.tsx` | Header chip (Green=Active, Yellow=Idle/Paused, Red=Off); tap opens status modal |
+| CheckInButtons | `src/components/fleet/CheckInButtons.tsx` | "On My Way" / "Arrived" buttons on job detail + checklist screens |
+| FleetPauseToggle | `src/components/fleet/FleetPauseToggle.tsx` | Settings toggle "Pause tracking for this shift"; persisted in AsyncStorage |
+| useFleetEmitter | `src/hooks/useFleetEmitter.ts` | Root hook that starts emitter for tech users on app launch |
+
+### Key Behaviors
+1. **Foreground-only**: Emitter stops completely when app goes to background (AppState !== "active")
+2. **Battery-aware**: Cadence degrades when battery < 20% (60s active / 300s idle vs normal 15s / 60s)
+3. **Error handling**: 403 → stop (not in fleet); 400 → skip (time skew); 429 → skip (rate limited); network error → retry once 5s backoff
+4. **Check-in dedup**: Backend handles idempotent check-ins; frontend shows appropriate toast
+5. **Pause toggle**: Persisted in AsyncStorage, survives app restart
+
+### Files Modified
+- `app/_layout.tsx` — Added `useFleetEmitter()` hook
+- `app/(app)/_layout.tsx` — Added FleetStatusChip to header
+- `app/(app)/more.tsx` — Added FleetPauseToggle in "Fleet Tracking" section
+- `app/job/[id].tsx` — Added CheckInButtons
+- `app/job/[id]/checklist.tsx` — Added CheckInButtons (primary entry from schedule)
+
+### Dependencies Added
+- `expo-battery` — Battery level monitoring for adaptive GPS cadence
+
+### Not in Scope
+- Background location tracking (foreground-only by design)
+- Drawing pad signature
+- Backend modifications
