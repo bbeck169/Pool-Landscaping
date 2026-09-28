@@ -42,6 +42,74 @@ _FUZZY_THRESHOLD = 80
 _LINE_ITEM_CAP = 25
 
 
+# ═════════════════════════════════════════════════════════════════════
+# FIN-PARITY-C · Feb-2026 — canonical date derivation
+# ═════════════════════════════════════════════════════════════════════
+# Shared helper used by both the live mapper and the
+# ``backfill_pdf_dates_v1`` migration.  Given the extractor's raw
+# doc dict (an ``ExtractedDocument.model_dump(mode="json")`` shape
+# — dates are already ISO strings, so we do NOT re-parse them),
+# returns the canonical ``{doc_date, due_date, paid_at}`` mapping
+# that ``pdf_commit`` consumes:
+#
+#   * ``doc_date``, ``due_date`` — pass-through (invoice / quote /
+#     payment; nullable).
+#   * ``paid_at`` — for a payment receipt, prefers ``paid_at`` then
+#     falls back to ``doc_date`` (mirrors the existing
+#     ``_build_payment_in`` logic, kept in one place so the
+#     backfill migration produces byte-identical output to the
+#     live mapper).  Invoices ONLY carry ``paid_at`` when the
+#     source PDF captured it explicitly.  Estimates never get a
+#     ``paid_at``.
+#
+# Byte-identical to the live mapper's existing behaviour — this
+# helper does not change any wire shape; it consolidates the
+# isoformat-or-fallback branches into one function the backfill
+# migration can reuse.
+def derive_pdf_dates(
+    extracted: Dict[str, Any],
+) -> Dict[str, Optional[str]]:
+    """Return canonical ``{doc_date, due_date, paid_at}`` ISO
+    strings (or None) from a raw ExtractedDocument dict.
+
+    ``extracted`` is the ``model_dump(mode="json")`` output of an
+    ``ExtractedDocument`` — dates are already ISO ``YYYY-MM-DD``
+    strings (or ``None``) so no parsing is required.  Intentionally
+    string-in / string-out to be reusable by the FIN-PARITY-C
+    backfill migration which reads ``import_batches
+    .extracted_documents_full`` (already JSON-serialised).
+    """
+    doc_kind = extracted.get("doc_kind")
+    doc_date = extracted.get("doc_date")
+    due_date = extracted.get("due_date")
+    paid_at = extracted.get("paid_at")
+    # Payment receipt: ``paid_at`` prefers the extractor's own
+    # value, falls back to ``doc_date``.  Same logic as
+    # ``_build_payment_in`` (kept in sync).
+    if doc_kind == "payment_receipt":
+        return {
+            "doc_date": doc_date,
+            # Payment receipts have no ``due_date`` concept.
+            "due_date": None,
+            "paid_at": paid_at or doc_date,
+        }
+    # Estimates never get a ``paid_at`` — a quote isn't a paid
+    # instrument.  Zero out any stray value the extractor might
+    # have picked up (rare — an image classifier misfire).
+    if doc_kind == "estimate":
+        return {
+            "doc_date": doc_date,
+            "due_date": due_date,
+            "paid_at": None,
+        }
+    # Invoice (default).
+    return {
+        "doc_date": doc_date,
+        "due_date": due_date,
+        "paid_at": paid_at,
+    }
+
+
 async def _fuzzy_match_customer(
     db, *, tenant_id: str, extracted_name: str,
 ) -> Optional[Dict[str, Any]]:
