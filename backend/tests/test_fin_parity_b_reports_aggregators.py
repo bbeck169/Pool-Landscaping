@@ -225,18 +225,66 @@ def test_paid_amt_returns_amount_paid_verbatim_for_partial():
     assert _paid_amt(row) == 275.50
 
 
-def test_paid_amt_legacy_shim_preserved_for_paid_status_without_amount():
-    """Legacy backward-compat: paid_status=paid with amount_paid=0
-    still returns total (matches pre-FIN-PARITY-A behavior for rows
-    that never got a reconciler pass)."""
+def test_paid_amt_shim_removed_only_reads_amount_paid():
+    """FIN-PARITY-C · Feb-2026 — the legacy ``payment_status==paid``
+    → ``return total`` fallback has been removed.  Post-migration
+    (``recompute_amount_paid_v1``), every historic invoice tagged
+    ``paid`` carries a positive ``amount_paid``; the aggregators
+    now read that field alone.  Rows still in the pathological
+    ``paid without amount_paid`` state correctly report $0 until
+    an operator resolves the flagged data-integrity audit."""
     from routers.reports import _paid_amt
 
-    row = {
+    # Pathological pre-migration row — no amount_paid AND
+    # payment_status=paid.  Old shim returned ``total`` (400.0);
+    # post-C2 the function returns 0.0 (no fake inflation).
+    pathological = {
         "amount_paid": 0.0,
         "payment_status": "paid",
         "total": 400.0,
     }
-    assert _paid_amt(row) == 400.0
+    assert _paid_amt(pathological) == 0.0
+
+    # Also assert None on amount_paid still resolves to 0.0
+    # (defensive: the field may be absent on very old rows).
+    row_no_amount = {
+        "payment_status": "paid",
+        "total": 400.0,
+    }
+    assert _paid_amt(row_no_amount) == 0.0
+
+    # And a healthy post-migration row returns amount_paid verbatim.
+    healthy = {
+        "amount_paid": 275.50,
+        "payment_status": "partial",
+        "total": 500.0,
+    }
+    assert _paid_amt(healthy) == 275.50
+
+
+def test_paid_amt_source_no_longer_references_payment_status():
+    """Source-level guardrail so a future refactor can't
+    accidentally re-introduce the ``payment_status`` fallback
+    (would silently re-inflate Collected on pathological rows)."""
+    import inspect
+    from routers.reports import _paid_amt
+
+    source = inspect.getsource(_paid_amt)
+    # Strip comments so the rationale narrative can freely
+    # reference ``payment_status`` without tripping this guard;
+    # the guard's real target is any executable line that reads
+    # the field.
+    executable_lines = [
+        line.split("#", 1)[0]
+        for line in source.splitlines()
+    ]
+    executable = "\n".join(executable_lines)
+    assert "payment_status" not in executable, (
+        "_paid_amt appears to reference payment_status in "
+        "executable code again — the FIN-PARITY-C shim removal was "
+        "reverted or a new fallback was added. Update "
+        "recompute_amount_paid_v1 rationale first."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
