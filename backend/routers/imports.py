@@ -63,7 +63,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Final, List, Optional
 
 import fitz  # PyMuPDF — used at kickoff to compute page_count
 from fastapi import (
@@ -478,6 +478,48 @@ async def _run_pipeline(
 # ─────────────────────────────────────────────────────────────
 # Kickoff endpoint (POST → 202)
 # ─────────────────────────────────────────────────────────────
+# PDF-HUB · Feb-2026 — Document Type hint whitelist.
+#
+# The FE dropdown emits one of ``invoice`` / ``estimate`` /
+# ``payment`` (or an empty/omitted value = auto-detect). The
+# extractor internally uses ``payment_receipt`` as the doc-kind
+# literal — we normalise ``payment → payment_receipt`` at the
+# router boundary so the wire vocabulary stays FE-friendly while
+# the pipeline still sees its canonical value.
+_HINT_DOC_KIND_ALLOWED: Final = frozenset({"invoice", "estimate", "payment", "payment_receipt"})
+
+
+def _normalise_hint_doc_kind(raw: Optional[str]) -> Optional[str]:
+    """Validate + normalise the ``hint_doc_kind`` form field.
+
+    * ``None`` / empty → returns ``None`` (auto-detect).
+    * ``invoice`` / ``estimate`` → returned as-is.
+    * ``payment`` → normalised to ``payment_receipt`` (the
+      extractor's internal literal).
+    * ``payment_receipt`` → accepted for callers that already
+      know the internal literal (existing tests + integrations).
+    * Anything else → raises ``HTTPException(400,
+      error_code="invalid_hint_doc_kind")``.
+    """
+    if raw is None or raw == "":
+        return None
+    if raw not in _HINT_DOC_KIND_ALLOWED:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "invalid_hint_doc_kind",
+                "message": (
+                    f"hint_doc_kind={raw!r} is not one of "
+                    "{'invoice', 'estimate', 'payment'} (or empty for "
+                    "auto-detect)."
+                ),
+            },
+        )
+    if raw == "payment":
+        return "payment_receipt"
+    return raw
+
+
 @router.post("/pdf-invoice", status_code=202)
 async def import_pdf_invoice(
     response: Response,
@@ -501,6 +543,11 @@ async def import_pdf_invoice(
         }
     """
     tenant_id = tenant["id"]
+
+    # PDF-HUB · Feb-2026 — validate the doc-kind hint BEFORE the
+    # 415 MIME check so an invalid hint returns 400 rather than
+    # being masked by a downstream 415 from a non-PDF payload.
+    hint_doc_kind = _normalise_hint_doc_kind(hint_doc_kind)
 
     # ── 415 MIME check ────────────────────────────────────
     content_type = (file.content_type or "").lower()

@@ -95,6 +95,10 @@ describe("Vendor Bills · relocated to Finance/Invoicing " +
     expect(vendorIdx).toBeLessThan(lateFeesIdx);
     // No other invoicing rows sneak between PDF Import and
     // Vendor Bills — window guard.
-    expect(vendorIdx - pdfImportIdx).toBeLessThan(1000);
+    // PDF-HUB · Feb-2026 — bumped from 1000 → 1100 because the
+    // PDF Import Hub row grew ~18 chars (label rename + extra
+    // backward-compat alias). Still tight enough to catch a
+    // real insertion between the two rows.
+    expect(vendorIdx - pdfImportIdx).toBeLessThan(1100);
   });
 });

@@ -240,7 +240,8 @@ export function messageForUploadError(status, detail) {
  * Exported so the vitest can drive success + typed-error paths
  * without mounting the page.
  */
-export async function postPdfInvoice(file, { baseUrl, token } = {}) {
+export async function postPdfInvoice(file, opts = {}) {
+  const { baseUrl, token } = opts;
   const BASE = baseUrl || process.env.REACT_APP_BACKEND_URL || "";
   const TOKEN = token || (
     typeof localStorage !== "undefined"
@@ -249,6 +250,16 @@ export async function postPdfInvoice(file, { baseUrl, token } = {}) {
   );
   const fd = new FormData();
   fd.append("file", file);
+  // PDF-HUB · Feb-2026 — optional Document Type hint from the
+  // upload-area dropdown. When the value is "" (Auto-Detect) we
+  // OMIT the field entirely so the router's normaliser branches
+  // straight to auto-detect (None). Any explicit selection is
+  // forwarded verbatim; the router boundary maps ``payment`` →
+  // ``payment_receipt`` before it reaches the extractor.
+  const hint = (opts && opts.hintDocKind) || "";
+  if (hint) {
+    fd.append("hint_doc_kind", hint);
+  }
   const res = await fetch(`${BASE}/api/imports/pdf-invoice`, {
     method: "POST",
     // NOTE: no Content-Type header — the browser sets the
@@ -490,6 +501,43 @@ export function formatIsoDate(dateStr) {
 }
 
 
+// PDF-HUB · Feb-2026 — Type-column pill component.
+// Renders a color-coded badge for the AI-classified doc_kind:
+//   * ``invoice``         → Blue
+//   * ``estimate``        → Green (emerald)
+//   * ``payment_receipt`` → Purple (violet)
+//   * anything else       → Neutral slate (fallback so the column
+//                           never renders blank)
+// The internal literal for payments is ``payment_receipt`` — the
+// user-facing label collapses that to "Payment" so the column
+// header + copy stay concise. Exported so the vitest suite can
+// mount + assert on it without spinning up the whole PreviewRow.
+export function DocKindPill({ docKind, testid }) {
+  const spec = (() => {
+    switch (docKind) {
+      case "invoice":
+        return { label: "Invoice", cls: "bg-blue-100 text-blue-800" };
+      case "estimate":
+        return { label: "Estimate", cls: "bg-emerald-100 text-emerald-800" };
+      case "payment_receipt":
+      case "payment":
+        return { label: "Payment", cls: "bg-violet-100 text-violet-800" };
+      default:
+        return { label: "Unknown", cls: "bg-slate-100 text-slate-700" };
+    }
+  })();
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${spec.cls}`}
+      data-testid={testid}
+      data-doc-kind={docKind || "unknown"}
+    >
+      {spec.label}
+    </span>
+  );
+}
+
+
 // Local counter so React reconciliation doesn't confuse pending
 // rows when the operator quickly re-selects.  A monotonic counter
 // scoped to the module works because a single PdfInvoiceImportPage
@@ -509,6 +557,12 @@ export default function PdfInvoiceImportPage() {
   // Track which PREVIEW_READY rows have their preview surface
   // expanded.  Set<fileId>.
   const [expandedIds, setExpandedIds] = useState(() => new Set());
+  // PDF-HUB · Feb-2026 — Document Type hint. Empty string =
+  // Auto-Detect (backend receives no field). Explicit selection
+  // forwards through the multipart form as ``hint_doc_kind``.
+  const [hintDocKind, setHintDocKind] = useState("");
+  const hintDocKindRef = useRef("");
+  useEffect(() => { hintDocKindRef.current = hintDocKind; }, [hintDocKind]);
   // Pool-slot counter kept in a ref so the pump can read/write it
   // synchronously without a re-render round-trip.
   const inFlightRef = useRef(0);
@@ -565,7 +619,10 @@ export default function PdfInvoiceImportPage() {
       }
       // Fire the POST — resolve or fail branches BOTH release
       // the slot and re-pump.
-      postPdfInvoice(next.file)
+      // PDF-HUB · Feb-2026 — forward the page-level hint via the
+      // ref so a hint selected AFTER queueing still reaches the
+      // POST body without a stale-closure bug.
+      postPdfInvoice(next.file, { hintDocKind: hintDocKindRef.current })
         .then((envelope) => {
           setFiles((prev) => prev.map(
             (f) => (f.id === fileId
@@ -875,14 +932,65 @@ export default function PdfInvoiceImportPage() {
       className="mx-auto max-w-5xl px-4 py-6"
     >
       <PageHeader
-        title="PDF Invoice Import"
+        title="PDF Import Hub"
         subtitle={
-          "Upload one or more supplier PDFs and turn them into "
-          + "draft invoices.  Preview the extracted rows, review "
-          + "duplicates, then commit — or roll back within the same "
-          + "batch.  Admin-only."
+          "Upload PDFs for automatic extraction and commit — "
+          + "supports Invoices, Estimates, and Payment History. "
+          + "Preview extracted rows, review duplicates, then "
+          + "commit — or roll back within the same batch. "
+          + "Admin-only."
         }
       />
+
+      {/* PDF-HUB · Feb-2026 — Document Type dropdown. Sits above
+          the drop zone so the operator picks the doc kind BEFORE
+          selecting files. Empty value = Auto-Detect (no hint
+          forwarded); explicit selections plumb straight through
+          the multipart form as ``hint_doc_kind``. */}
+      <div
+        data-testid="pdf-hub-doc-type-container"
+        className="mt-6 flex flex-col gap-1"
+      >
+        <label
+          htmlFor="pdf-hub-doc-type-select"
+          className="text-sm font-medium"
+          style={{ color: colors.onSurface }}
+        >
+          Document Type
+        </label>
+        <select
+          id="pdf-hub-doc-type-select"
+          data-testid="pdf-hub-doc-type-select"
+          value={hintDocKind}
+          onChange={(e) => setHintDocKind(e.target.value)}
+          className="w-full max-w-sm rounded-md border px-3 py-2 text-sm"
+          style={{
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+            color: colors.onSurface,
+          }}
+        >
+          <option value="" data-testid="pdf-hub-doc-type-option-auto">
+            Auto-Detect
+          </option>
+          <option value="invoice" data-testid="pdf-hub-doc-type-option-invoice">
+            Invoice
+          </option>
+          <option value="estimate" data-testid="pdf-hub-doc-type-option-estimate">
+            Estimate
+          </option>
+          <option value="payment" data-testid="pdf-hub-doc-type-option-payment">
+            Payment History
+          </option>
+        </select>
+        <span
+          className="text-xs"
+          style={{ color: colors.muted }}
+          data-testid="pdf-hub-doc-type-hint"
+        >
+          Auto-detect uses AI classification.
+        </span>
+      </div>
 
       {/* Idle upload zone — always visible.  Commit 4 will add
           the preview surface below this block. */}
@@ -1368,6 +1476,12 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
               >
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Invoice #</th>
+                  <th
+                    className="px-3 py-2 text-left font-medium"
+                    data-testid={`pdf-import-preview-th-type-${fileId}`}
+                  >
+                    Type
+                  </th>
                   <th className="px-3 py-2 text-left font-medium">Date</th>
                   <th className="px-3 py-2 text-right font-medium">Total</th>
                   <th className="px-3 py-2 text-left font-medium">Customer</th>
@@ -1607,6 +1721,20 @@ export function PreviewRow({
         </button>
         {q.doc_number || "—"}
       </td>
+      {/* PDF-HUB · Feb-2026 — Type column. Color-coded pill from
+          the AI-classified ``doc_kind`` field on the preview
+          MapperReport. Blue = Invoice, Green = Estimate, Purple
+          = Payment (payment_receipt). Unknown falls back to
+          neutral slate so the column never renders blank. */}
+      <td
+        className="px-3 py-2"
+        data-testid={`pdf-import-preview-row-${fileId}-${sourceIdx}-type-cell`}
+      >
+        <DocKindPill
+          docKind={preview.doc_kind}
+          testid={`pdf-import-preview-row-${fileId}-${sourceIdx}-type-pill`}
+        />
+      </td>
       <td className="px-3 py-2">
         {formatIsoDate(q.doc_date)}
       </td>
@@ -1695,7 +1823,7 @@ export function PreviewRow({
         data-testid={`pdf-import-line-items-expanded-${fileId}-${sourceIdx}`}
         style={{ borderTop: `1px solid ${colors.border}` }}
       >
-        <td colSpan={5} className="px-3 py-3" style={{ backgroundColor: colors.surfaceSecondary }}>
+        <td colSpan={6} className="px-3 py-3" style={{ backgroundColor: colors.surfaceSecondary }}>
           {renderableItems.length === 0 ? (
             <div
               className="text-sm italic"

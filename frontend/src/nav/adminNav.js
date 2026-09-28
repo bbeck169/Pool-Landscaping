@@ -44,7 +44,7 @@ export const ADMIN_NAV_V2 = [
     // Finance/Invoicing, and Vendor Bills was relocated to sit
     // directly after PDF Import (see Commit 1.5 · Vendor Bills
     // relocation, below).
-    { to: "/admin/imports/pdf-invoice",  label: "PDF Import",         icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only", aliases: ["PDF Upload", "Bulk Import", "Import PDFs", "Upload Invoices", "PDF Invoice Importer"] },
+    { to: "/admin/imports/pdf-invoice",  label: "PDF Import Hub",     icon: UploadCloud, feature: "invoices",  subsection: "Invoicing", hard_rule: "admin_only", aliases: ["PDF Import", "PDF Upload", "Bulk Import", "Import PDFs", "Upload Invoices", "PDF Invoice Importer"] },
     // Task B · Commit 1.5 · Feb-2026 — Vendor Bills relocation.
     // Vendor Bills was historically mis-grouped inside the
     // Reports group (opened line 294) despite being a Finance /

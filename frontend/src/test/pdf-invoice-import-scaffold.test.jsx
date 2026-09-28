@@ -157,7 +157,7 @@ describe("Task B · Commit 1 route + sidebar wiring (source-inspect)", () => {
     expect(importSlice).toMatch(/hard_rule:\s*"admin_only"/);
     expect(importSlice).toMatch(/feature:\s*"invoices"/);
     expect(importSlice).toMatch(/subsection:\s*"Invoicing"/);
-    expect(importSlice).toMatch(/label:\s*"PDF Import"/);
+    expect(importSlice).toMatch(/label:\s*"PDF Import Hub"/);
     expect(importSlice).toMatch(/icon:\s*UploadCloud/);
   });
 
