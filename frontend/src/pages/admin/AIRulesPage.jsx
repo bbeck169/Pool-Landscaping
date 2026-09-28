@@ -209,6 +209,7 @@ export default function AIRulesPage() {
             overrideMap={data.override_map}
             platformValue={platformFallback("auto_action_allowlist")}
             actionInventory={data.action_inventory}
+            employeeKeys={data.employee_keys}
             onSaved={loadTenant}
             onReset={loadTenant}
           />

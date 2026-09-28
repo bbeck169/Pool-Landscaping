@@ -10,7 +10,7 @@
  * existing ``TimezoneSelect`` picker (P15) so we don't reinvent
  * the IANA-vs-legacy handling.
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { RotateCcw, Save, Clock, Plus, Trash2 } from "lucide-react";
 import { api } from "@/api";
@@ -147,6 +147,46 @@ export default function WorkingHoursCard({
       return { display: "unknown", inside: false };
     }
   }, [tz, flat, nowRef]);
+
+  // MTH-D · Feb-2026 — server-driven live preview.  Debounced 500 ms
+  // on any edit so we don't rain requests on the LLM-free preview
+  // endpoint while the operator is typing.  Falls back to the
+  // client-computed strip above if the fetch fails or is disabled.
+  const [serverPreview, setServerPreview] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [probeDatetime, setProbeDatetime] = useState("");
+
+  useEffect(() => {
+    if (readOnly) return undefined;
+    let alive = true;
+    const timer = setTimeout(async () => {
+      setPreviewBusy(true);
+      try {
+        const res = await api.post("/tenant-ai-rules/preview", {
+          category: "working_hours",
+          pending_value: {
+            enabled,
+            timezone: tz,
+            windows: flat,
+          },
+          preview_kind: "working_hours_status",
+          preview_input: probeDatetime
+            ? { probe_datetime: probeDatetime }
+            : {},
+        });
+        if (alive) setServerPreview(res);
+      } catch (e) {
+        if (alive) setServerPreview(null);
+      } finally {
+        if (alive) setPreviewBusy(false);
+      }
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, tz, flat, probeDatetime, readOnly]);
 
   const setDayEntry = (day, idx, field, val) => {
     setWindowsMap((prev) => {
@@ -388,17 +428,52 @@ export default function WorkingHoursCard({
       <div
         className="rounded-lg p-3 text-sm"
         style={{
-          background: preview.inside ? "#DCFCE7" : "#FEF3C7",
-          color: preview.inside ? "#166534" : "#92400E",
-          border: `1px solid ${preview.inside ? "#BBF7D0" : "#FDE68A"}`,
+          background: (serverPreview?.output?.inside_window ?? preview.inside)
+            ? "#DCFCE7"
+            : "#FEF3C7",
+          color: (serverPreview?.output?.inside_window ?? preview.inside)
+            ? "#166534"
+            : "#92400E",
+          border: `1px solid ${
+            (serverPreview?.output?.inside_window ?? preview.inside)
+              ? "#BBF7D0"
+              : "#FDE68A"
+          }`,
         }}
         data-testid="ai-rules-working-hours-preview"
       >
-        <div className="text-xs font-bold mb-0.5">RIGHT NOW</div>
-        {preview.display} —{" "}
-        <strong data-testid="ai-rules-working-hours-preview-status">
-          {preview.inside ? "inside window" : "outside window"}
-        </strong>
+        <div className="text-xs font-bold mb-0.5 flex items-center justify-between">
+          <span>RIGHT NOW {previewBusy ? "· updating…" : ""}</span>
+          <label className="text-[10px] opacity-70 font-normal">
+            Probe:{" "}
+            <input
+              type="datetime-local"
+              value={probeDatetime}
+              onChange={(e) => setProbeDatetime(e.target.value)}
+              className="ml-1 px-1 py-0.5 rounded border text-xs"
+              style={{ borderColor: "#E2E8F0", color: "#334155",
+                        background: "#fff" }}
+              data-testid="ai-rules-working-hours-preview-probe"
+            />
+          </label>
+        </div>
+        {serverPreview?.output?.summary ? (
+          <div data-testid="ai-rules-working-hours-preview-summary">
+            {serverPreview.output.summary}
+          </div>
+        ) : (
+          <div>
+            {preview.display} —{" "}
+            <strong data-testid="ai-rules-working-hours-preview-status">
+              {preview.inside ? "inside window" : "outside window"}
+            </strong>
+          </div>
+        )}
+        {serverPreview?.output?.inside_window !== undefined ? (
+          <div className="mt-1 text-[10px] opacity-60">
+            server-verified · tz {serverPreview.output.timezone_used}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2">

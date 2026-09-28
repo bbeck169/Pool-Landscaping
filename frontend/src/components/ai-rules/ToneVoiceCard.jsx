@@ -10,9 +10,9 @@
  * currently-selected tone applied client-side — no server call in
  * this phase (that lands in MTH-D "test surface").
  */
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { toast } from "sonner";
-import { RotateCcw, Save, Sparkles } from "lucide-react";
+import { RotateCcw, Save, Sparkles, Zap, Loader2 } from "lucide-react";
 import { api } from "@/api";
 import { Button, TextInput, Chip } from "@/components/ui-kit";
 import RulesReasonModal from "./RulesReasonModal";
@@ -25,15 +25,7 @@ const STYLE_OPTIONS = [
 ];
 
 const CUSTOM_DIRECTIVE_MAX = 500;
-
-const SAMPLES = {
-  formal:
-    "Good afternoon, Mrs. Nguyen. Your service report is attached. Please review the water chemistry summary and reach out with any questions.",
-  friendly:
-    "Hey Lisa! Just wrapped up at your pool — everything's balanced and swim-ready. Photo + report attached, ping me if anything looks off. 🙂",
-  technical:
-    "Lisa — Free chlorine 3.2 ppm (target 2–4), pH 7.6 (target 7.4–7.6), TA 90 ppm. Cyanuric 42 ppm; recommend a partial drain by mid-June. Report attached.",
-};
+const DEFAULT_USER_MESSAGE = "When can you come clean my pool?";
 
 export default function ToneVoiceCard({
   value,
@@ -56,6 +48,43 @@ export default function ToneVoiceCard({
     setDirective(value?.custom_directive || "");
   }, [value]);
 
+  // MTH-D · Feb-2026 — server-driven "Test this rule" preview.
+  const [previewUserMsg, setPreviewUserMsg] = useState(DEFAULT_USER_MESSAGE);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewResult, setPreviewResult] = useState(null);
+  const [previewGeneratedAt, setPreviewGeneratedAt] = useState(null);
+
+  const runPreview = async () => {
+    if (previewBusy) return;
+    setPreviewBusy(true);
+    setPreviewResult(null);
+    try {
+      const res = await api.post("/tenant-ai-rules/preview", {
+        category: "tone_voice",
+        pending_value: {
+          style,
+          custom_directive: directive.slice(0, CUSTOM_DIRECTIVE_MAX),
+        },
+        preview_kind: "response",
+        preview_input: {
+          user_message: previewUserMsg || DEFAULT_USER_MESSAGE,
+        },
+      });
+      setPreviewResult(res);
+      setPreviewGeneratedAt(new Date());
+      if (res?.output?.error === "llm_unavailable") {
+        toast.warning("Preview couldn't reach the language model.");
+      }
+    } catch (e) {
+      const msg = e?.data?.detail?.message || e?.message || "unknown";
+      toast.error(`Preview failed: ${msg}`);
+      setPreviewResult({ output: { error: "request_failed", message: msg } });
+      setPreviewGeneratedAt(new Date());
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
   const isOverridden =
     (overrideMap?.["tone_voice.style"] === "tenant") ||
     (overrideMap?.["tone_voice.custom_directive"] === "tenant");
@@ -63,14 +92,6 @@ export default function ToneVoiceCard({
     overrideMap?.["tone_voice.style"] === "tenant",
     overrideMap?.["tone_voice.custom_directive"] === "tenant",
   ].filter(Boolean).length;
-
-  const preview = useMemo(() => {
-    const base = SAMPLES[style] || SAMPLES.friendly;
-    if (directive && directive.trim().length > 0) {
-      return `${base}\n\n(Custom directive applied: "${directive.trim()}")`;
-    }
-    return base;
-  }, [style, directive]);
 
   const doSave = async (reason) => {
     try {
@@ -214,7 +235,7 @@ export default function ToneVoiceCard({
       </div>
 
       <div
-        className="rounded-lg p-3 text-sm"
+        className="rounded-lg p-3 space-y-2"
         style={{
           background: "#F8FAFC",
           color: "#334155",
@@ -222,10 +243,110 @@ export default function ToneVoiceCard({
         }}
         data-testid="ai-rules-tone-voice-preview"
       >
-        <div className="text-xs font-semibold mb-1 opacity-70">
-          MARCO PREVIEW
+        <div className="text-xs font-semibold opacity-70 flex items-center gap-2">
+          <Zap size={12} /> TEST THIS RULE
         </div>
-        <div className="whitespace-pre-wrap">{preview}</div>
+        <TextInput
+          value={previewUserMsg}
+          onChange={(e) =>
+            setPreviewUserMsg(e.target.value.slice(0, 500))
+          }
+          placeholder={DEFAULT_USER_MESSAGE}
+          testid="ai-rules-tone-voice-preview-user-msg"
+          disabled={previewBusy || readOnly}
+          label="Sample customer message"
+        />
+        <div className="flex items-center justify-end">
+          <Button
+            variant="primary"
+            onClick={runPreview}
+            disabled={previewBusy || readOnly}
+            testid="ai-rules-tone-voice-preview-run"
+          >
+            {previewBusy ? (
+              <>
+                <Loader2 size={12} className="animate-spin" /> Generating…
+              </>
+            ) : (
+              <>
+                <Zap size={12} /> Test this rule
+              </>
+            )}
+          </Button>
+        </div>
+        {previewResult ? (
+          previewResult?.output?.error ? (
+            <div
+              className="rounded-md p-2 text-xs"
+              style={{
+                background: "#FEF3C7",
+                color: "#92400E",
+                border: "1px solid #FDE68A",
+              }}
+              data-testid="ai-rules-tone-voice-preview-error"
+            >
+              <div className="font-semibold mb-0.5">
+                Preview unavailable
+              </div>
+              <div>
+                {previewResult.output.message
+                  || "The language model didn't return a response. Try again."}
+              </div>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  variant="ghost"
+                  onClick={runPreview}
+                  disabled={previewBusy}
+                  testid="ai-rules-tone-voice-preview-retry"
+                >
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="text-sm whitespace-pre-wrap rounded-md p-2 bg-white border"
+              style={{ borderColor: "#E2E8F0" }}
+              data-testid="ai-rules-tone-voice-preview-response"
+            >
+              {previewResult?.output?.sample_response || "(no response)"}
+            </div>
+          )
+        ) : (
+          <div
+            className="text-xs opacity-60"
+            data-testid="ai-rules-tone-voice-preview-empty"
+          >
+            Click <strong>Test this rule</strong> to generate a live MARCO
+            reply using the currently-edited tone.
+          </div>
+        )}
+        {previewGeneratedAt ? (
+          <div
+            className="text-[10px] opacity-60"
+            data-testid="ai-rules-tone-voice-preview-meta"
+          >
+            Preview generated at {previewGeneratedAt.toLocaleTimeString()}
+            {previewResult?.output?.model
+              ? ` — model: ${previewResult.output.model}`
+              : previewResult?.output?.provider
+                ? ` — provider: ${previewResult.output.provider}`
+                : null}
+            {previewResult?.output?.llm_ms
+              ? ` — ${previewResult.output.llm_ms}ms`
+              : null}
+          </div>
+        ) : null}
+        {(previewResult?.warnings || []).map((w, i) => (
+          <div
+            key={i}
+            className="text-[11px] opacity-80"
+            style={{ color: "#92400E" }}
+            data-testid={`ai-rules-tone-voice-preview-warning-${i}`}
+          >
+            ⚠ {w}
+          </div>
+        ))}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2 pt-1">

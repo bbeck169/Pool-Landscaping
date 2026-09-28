@@ -27,6 +27,14 @@ from services.tenant_ai_rules import (
 from services.tenant_ai_rules import cache as _cache
 from services.tenant_ai_rules import store
 from services.tenant_ai_rules.resolver import resolve_rules_for_tenant
+from services.tenant_ai_rules.preview import (
+    preview_rules as _preview_rules, PreviewError,
+)
+from services.tenant_ai_rules.rate_limit import (
+    check_and_record as _preview_check_rl,
+    DEFAULT_LIMIT as _PREVIEW_LIMIT,
+    DEFAULT_WINDOW_S as _PREVIEW_WINDOW,
+)
 
 
 router = APIRouter(tags=["Tenant AI Rules"])
@@ -284,6 +292,79 @@ async def put_platform_default_category(
         "category": category,
         "revision_number": doc["revision_number"],
     }
+
+
+# ─── MTH-D · Preview endpoint ─────────────────────────────────────
+
+
+class PreviewBody(BaseModel):
+    """MTH-D · Feb-2026 — Body for
+    ``POST /api/tenant-ai-rules/preview``.
+
+    Preview runs a synthetic evaluation of a pending rule change
+    WITHOUT persisting anything.  ``preview_kind`` selects which
+    projector to run (see :mod:`services.tenant_ai_rules.preview`).
+    """
+    category: str = Field(..., min_length=1)
+    pending_value: Any
+    preview_kind: str = Field(..., min_length=1)
+    preview_input: Optional[Dict[str, Any]] = None
+
+
+@router.post("/tenant-ai-rules/preview")
+async def preview_rule_change(
+    body: PreviewBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """MTH-D · Feb-2026 — Preview a pending rule change.
+
+    Never persists.  Rate-limited to
+    ``rate_limit.DEFAULT_LIMIT`` calls per
+    ``rate_limit.DEFAULT_WINDOW_S`` seconds per user.
+    ``response`` kind caps LLM output at 400 tokens.
+    """
+    user_id = str(user.get("id") or user.get("email") or "")
+    allowed, remaining, retry_after = _preview_check_rl(user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error_code": "preview_rate_limit_exceeded",
+                "message": (
+                    f"Preview rate limit hit — {_PREVIEW_LIMIT} per "
+                    f"{_PREVIEW_WINDOW}s per user. Retry in "
+                    f"{retry_after}s."
+                ),
+                "retry_after_seconds": retry_after,
+                "limit": _PREVIEW_LIMIT,
+                "window_seconds": _PREVIEW_WINDOW,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        result = await _preview_rules(
+            tenant_id=tenant["id"],
+            category=body.category,
+            pending_value=body.pending_value,
+            preview_kind=body.preview_kind,
+            preview_input=body.preview_input,
+        )
+    except PreviewError as exc:
+        raise HTTPException(
+            status_code=exc.http_status,
+            detail={
+                "error_code": exc.code,
+                "message": exc.message,
+                **(exc.detail or {}),
+            },
+        )
+    result["rate_limit"] = {
+        "limit": _PREVIEW_LIMIT,
+        "window_seconds": _PREVIEW_WINDOW,
+        "remaining": remaining,
+    }
+    return result
 
 
 # ─── Test-only debug ping (not part of the public surface) ────────

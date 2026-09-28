@@ -83,12 +83,20 @@ def _merge_scalar_category(
 
 async def resolve_rules_for_tenant(
     tenant_id: str, *, use_cache: bool = True,
+    overlay: Dict[str, Any] | None = None,
 ) -> ResolvedRules:
     """Return the fully-resolved rules payload for ``tenant_id``.
 
     Cache-first — a fresh entry short-circuits the DB reads.  On a
     miss (or ``use_cache=False``), pulls the tenant doc + platform
     defaults, merges, caches, returns.
+
+    ``overlay`` (MTH-D · Feb-2026) — optional per-category dict
+    that is merged on top of the tenant's stored rules BEFORE the
+    platform-defaults fallback.  Used by the ``preview`` endpoint
+    to compute the shape of a rule change WITHOUT persisting it.
+    An overlay ALWAYS bypasses the cache (both read and write) so
+    a preview call cannot poison the shared 30-s cache.
 
     Response shape::
 
@@ -108,18 +116,33 @@ async def resolve_rules_for_tenant(
           "platform_revision_number": int,
           "last_updated_at": iso,
           "cached": bool,
+          "overlay_applied": bool,
         }
     """
-    if use_cache:
+    has_overlay = bool(overlay)
+    if use_cache and not has_overlay:
         cached = cache.get(tenant_id)
         if cached is not None:
             cached["cached"] = True
+            cached["overlay_applied"] = False
             return cached
 
     tenant_doc = await store.get_tenant_rules(tenant_id)      # lazy-init OK
     platform_doc = await store.get_platform_defaults()
     platform_rules = platform_doc.get("rules") or default_rules_doc()
     tenant_rules = tenant_doc.get("rules") or {}
+
+    # Apply the pending overlay ON TOP OF the stored tenant rules.
+    # ``overlay`` is a category → value dict; the tenant's stored
+    # value for each overlaid category is replaced wholesale (a
+    # partial dict inside a category is still treated as an
+    # explicit tenant override so the override_map reflects it).
+    if has_overlay:
+        tenant_rules = copy.deepcopy(tenant_rules)
+        for cat_key, cat_val in (overlay or {}).items():
+            if cat_key not in RULE_CATEGORIES:
+                continue
+            tenant_rules[cat_key] = copy.deepcopy(cat_val)
 
     override_map: Dict[str, str] = {}
     resolved: Dict[str, Any] = {}
@@ -176,7 +199,8 @@ async def resolve_rules_for_tenant(
         ),
         "last_updated_at": tenant_doc.get("last_updated_at"),
         "cached": False,
+        "overlay_applied": has_overlay,
     }
-    if use_cache:
+    if use_cache and not has_overlay:
         cache.set(tenant_id, payload)
     return payload

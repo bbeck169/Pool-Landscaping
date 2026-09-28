@@ -135,6 +135,7 @@ export default function PlatformDefaultsTab({ isSuper }) {
         overrideMap={null}
         platformValue={data.rules?.auto_action_allowlist}
         actionInventory={data.action_inventory}
+        employeeKeys={data.employee_keys}
         onSaved={load}
         endpointPrefix={PREFIX}
         showReset={false}

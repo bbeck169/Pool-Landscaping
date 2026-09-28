@@ -10,9 +10,11 @@
  */
 import React, { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { RotateCcw, Save, ListChecks } from "lucide-react";
+import {
+  RotateCcw, Save, ListChecks, Zap, Loader2, Check, X,
+} from "lucide-react";
 import { api } from "@/api";
-import { Button, Chip, TextInput } from "@/components/ui-kit";
+import { Button, Chip, TextInput, Modal } from "@/components/ui-kit";
 import { groupActions, actionLabel } from "@/lib/aiRulesActionLabels";
 import RulesReasonModal from "./RulesReasonModal";
 
@@ -28,11 +30,18 @@ export default function AutoActionAllowlistCard({
   readOnly = false,
   endpointPrefix = "/tenant-ai-rules",
   showReset = true,
+  employeeKeys,
 }) {
   const [draft, setDraft] = useState(value || {});
   const [search, setSearch] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  // MTH-D · Feb-2026 — auto-action walkthrough modal state.
+  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
+  const [walkthroughAction, setWalkthroughAction] = useState(null);
+  const [walkthroughEmp, setWalkthroughEmp] = useState("");
+  const [walkthroughBusy, setWalkthroughBusy] = useState(false);
+  const [walkthroughResult, setWalkthroughResult] = useState(null);
 
   React.useEffect(() => {
     setDraft(value || {});
@@ -65,6 +74,42 @@ export default function AutoActionAllowlistCard({
 
   const setAction = (key, mode) => {
     setDraft((prev) => ({ ...prev, [key]: mode }));
+  };
+
+  const openWalkthrough = (actionKey) => {
+    setWalkthroughAction(actionKey);
+    // Preselect the namespace as the employee_key for the first
+    // pick — matches convention (marco.* → marco_executive is
+    // aliased; casey.* → casey).  Admin can change in the modal.
+    const [ns] = actionKey.split(".");
+    const guess = ns === "marco" ? "marco_executive" : ns;
+    setWalkthroughEmp(guess);
+    setWalkthroughResult(null);
+    setWalkthroughOpen(true);
+  };
+
+  const runWalkthrough = async () => {
+    if (walkthroughBusy || !walkthroughAction || !walkthroughEmp) return;
+    setWalkthroughBusy(true);
+    setWalkthroughResult(null);
+    try {
+      const res = await api.post("/tenant-ai-rules/preview", {
+        category: "auto_action_allowlist",
+        pending_value: draft,
+        preview_kind: "auto_action_walkthrough",
+        preview_input: {
+          employee_key: walkthroughEmp,
+          action_key: walkthroughAction,
+        },
+      });
+      setWalkthroughResult(res);
+    } catch (e) {
+      toast.error(
+        `Test failed: ${e?.data?.detail?.message || e?.message || "unknown"}`,
+      );
+    } finally {
+      setWalkthroughBusy(false);
+    }
   };
 
   const doSave = async (reason) => {
@@ -209,6 +254,20 @@ export default function AutoActionAllowlistCard({
                               testid={`ai-rules-auto-action-row-${a}-override`}
                             />
                           ) : null}
+                          <button
+                            type="button"
+                            onClick={() => openWalkthrough(a)}
+                            className="text-xs px-2 py-1 rounded-md opacity-70 hover:opacity-100"
+                            style={{
+                              background: "#F1F5F9",
+                              color: "#334155",
+                              border: "1px solid #E2E8F0",
+                            }}
+                            title="Test this action"
+                            data-testid={`ai-rules-auto-action-row-${a}-test`}
+                          >
+                            <Zap size={12} />
+                          </button>
                           <div
                             role="radiogroup"
                             className="inline-flex rounded-full overflow-hidden text-[11px] font-semibold"
@@ -289,6 +348,102 @@ export default function AutoActionAllowlistCard({
         confirmVariant="danger"
         testidPrefix="ai-rules-auto-actions-reset-reason"
       />
+
+      <Modal
+        open={walkthroughOpen}
+        onClose={() => setWalkthroughOpen(false)}
+        title={
+          walkthroughAction
+            ? `Walkthrough: ${walkthroughAction}`
+            : "Auto-action walkthrough"
+        }
+        testid="ai-rules-auto-actions-walkthrough-modal"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setWalkthroughOpen(false)}
+              testid="ai-rules-auto-actions-walkthrough-close"
+            >
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <div>
+            <label className="text-xs font-semibold tracking-wide"
+                    style={{ color: "#334155" }}>
+              PICK AN EMPLOYEE
+            </label>
+            <select
+              value={walkthroughEmp}
+              onChange={(e) => setWalkthroughEmp(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg text-sm bg-white border"
+              style={{ borderColor: "#E2E8F0" }}
+              data-testid="ai-rules-auto-actions-walkthrough-employee"
+            >
+              <option value="">— Select —</option>
+              {(employeeKeys || []).map((k) => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              onClick={runWalkthrough}
+              disabled={walkthroughBusy || !walkthroughEmp}
+              testid="ai-rules-auto-actions-walkthrough-run"
+            >
+              {walkthroughBusy ? (
+                <><Loader2 size={12} className="animate-spin" /> Checking…</>
+              ) : (
+                <><Zap size={12} /> Run walkthrough</>
+              )}
+            </Button>
+          </div>
+          {walkthroughResult?.output?.reason_chain ? (
+            <div
+              className="space-y-1"
+              data-testid="ai-rules-auto-actions-walkthrough-chain"
+            >
+              {walkthroughResult.output.reason_chain.map((step, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 rounded-md p-2 border"
+                  style={{
+                    background: step.ok ? "#DCFCE7" : "#FEE2E2",
+                    color: step.ok ? "#166534" : "#991B1B",
+                    borderColor: step.ok ? "#BBF7D0" : "#FCA5A5",
+                  }}
+                  data-testid={`ai-rules-auto-actions-walkthrough-step-${i}`}
+                >
+                  {step.ok
+                    ? <Check size={14} className="shrink-0 mt-0.5" />
+                    : <X size={14} className="shrink-0 mt-0.5" />}
+                  <div>
+                    <div className="font-semibold">{step.check}</div>
+                    <div className="text-xs opacity-80">{step.reason}</div>
+                  </div>
+                </div>
+              ))}
+              <div
+                className="mt-2 rounded-md p-2 text-xs font-semibold"
+                style={{
+                  background: walkthroughResult.output.would_auto_execute
+                    ? "#DCFCE7" : "#FEF3C7",
+                  color: walkthroughResult.output.would_auto_execute
+                    ? "#166534" : "#92400E",
+                }}
+                data-testid="ai-rules-auto-actions-walkthrough-verdict"
+              >
+                Final verdict: {walkthroughResult.output.final_verdict}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Modal>
     </div>
   );
 }
