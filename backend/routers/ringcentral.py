@@ -689,6 +689,28 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
             })
         except Exception as _e:
             logger.warning(f"[phase7b] sms_inbound insert failed: {_e}")
+        # MTH-C · Feb-2026 — escalation-rule scan on every inbound SMS.
+        # Fires against the tenant's ``escalation_rules`` array;
+        # first match writes an ``ai_escalations`` row + notifies the
+        # target-role admins via SAFE-SEND SYSTEM.  Non-fatal — the
+        # webhook path never crashes on a bad rule.
+        if doc.get("tenant_id"):
+            try:
+                from services.ai_hub.escalation_detector import (
+                    scan_and_escalate,
+                )
+                await scan_and_escalate(
+                    tenant_id=doc["tenant_id"],
+                    source="sms",
+                    message_body=msg or "",
+                    customer_id=doc.get("customer_id"),
+                    lead_id=doc.get("lead_id"),
+                )
+            except Exception as _mth_c_esc:                       # noqa: BLE001
+                logger.warning(
+                    "[mth-c] escalation scan failed for sms: %s",
+                    _mth_c_esc,
+                )
         # Phase 7B · STOP-keyword auto-suppress — this replaced the
         # Twilio ``/webhooks/twilio/inbound`` handler. When a customer
         # replies STOP / UNSUBSCRIBE / QUIT etc. we materialise a

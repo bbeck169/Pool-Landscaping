@@ -134,12 +134,23 @@ async def stamp_agent_context_with_gate(
         )
         return base
     if not allowed:
-        logger.warning(
-            "ai_hub.context_downgraded reason=%s tenant=%s "
-            "employee=%s attempted=%s → agent",
-            reason, tenant_id, (employee or {}).get("key"),
-            base.value,
-        )
+        # MTH-C · Feb-2026 — differentiate master-switch-off in the
+        # log so ops can spot tenant-wide blocks vs per-employee /
+        # working-hour blocks.  Same fail-safe redirect either way.
+        if reason == "master_switch_off":
+            logger.warning(
+                "ai_hub.master_switch_blocked tenant=%s "
+                "employee=%s attempted=%s → agent",
+                tenant_id, (employee or {}).get("key"),
+                base.value,
+            )
+        else:
+            logger.warning(
+                "ai_hub.context_downgraded reason=%s tenant=%s "
+                "employee=%s attempted=%s → agent",
+                reason, tenant_id, (employee or {}).get("key"),
+                base.value,
+            )
         return CommsContext.AGENT
     return base
 

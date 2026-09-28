@@ -717,6 +717,26 @@ async def send_customer_message(
             + _format_context_for_prompt(ctx) + "\n\n"
             + tool_schema_prompt_snippet(emp)
         )
+        # MTH-C · Feb-2026 — prepend the tenant's tone-voice directive
+        # so per-tenant tone rules take effect at request time.
+        try:
+            from services.tenant_ai_rules.prompt_injection import (
+                build_tone_directive,
+            )
+            from services.tenant_ai_rules.resolver import (
+                resolve_rules_for_tenant,
+            )
+            _mth_c_resolved = await resolve_rules_for_tenant(tenant["id"])
+            _mth_c_directive = build_tone_directive(
+                _mth_c_resolved.get("rules") or {},
+            )
+            if _mth_c_directive:
+                system_prompt = f"{_mth_c_directive}\n\n{system_prompt}"
+        except Exception as _mth_c_exc:                            # noqa: BLE001
+            logger.warning(
+                "[mth-c] tone directive skipped for tenant=%s: %s",
+                tenant.get("id"), _mth_c_exc,
+            )
 
         history = await db.ai_employee_messages.find(
             {"tenant_id": tenant["id"], "conversation_id": cid_conv},

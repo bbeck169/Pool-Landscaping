@@ -1272,6 +1272,28 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         f"{emp['system_prompt']}\n\n"
         f"— Shared brand brain —\n{_brand_brain_summary(bb)}"
     )
+    # MTH-C · Feb-2026 — prepend the tenant tone-voice directive
+    # for the 18-employee chat path.  Resolves rules AT request
+    # time (30s cache from MTH-A absorbs the read cost).  Failures
+    # log-and-skip so a broken rule doc never breaks employee chat.
+    try:
+        from services.tenant_ai_rules.prompt_injection import (
+            build_tone_directive,
+        )
+        from services.tenant_ai_rules.resolver import (
+            resolve_rules_for_tenant,
+        )
+        _mth_c_resolved = await resolve_rules_for_tenant(tenant["id"])
+        _mth_c_directive = build_tone_directive(
+            _mth_c_resolved.get("rules") or {},
+        )
+        if _mth_c_directive:
+            system_prompt = f"{_mth_c_directive}\n\n{system_prompt}"
+    except Exception as _mth_c_exc:                                # noqa: BLE001
+        logger.warning(
+            "[mth-c] tone directive skipped for tenant=%s: %s",
+            tenant.get("id"), _mth_c_exc,
+        )
 
     # 3.a) Phase Feb-2026 · KB RAG — retrieve top-5 relevant
     # ai_knowledge_base docs and prepend them to the system prompt.
@@ -1548,7 +1570,127 @@ async def _create_action(*, tenant_id: str, user_id: str, employee_id: str,
         "updated_at": now_iso(),
     }
     await db.ai_employee_actions.insert_one(doc)
+    # MTH-C · Feb-2026 — Auto-approval hook.  When the tenant's AI
+    # rules allow this (action_key, employee_key) to auto-execute
+    # (see services.ai_employee_actions.auto_approval), route the
+    # action through the same executor path an admin would trigger,
+    # write an audit trail, and return the FINAL (approved/executed)
+    # doc to the caller.  Master switch off / employee disabled /
+    # allowlist=admin_approval all short-circuit to the pending
+    # queue path — pre-MTH-C behavior.
+    try:
+        auto_doc = await _maybe_auto_execute(
+            action_doc=doc, tenant=await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0},
+            ) or {"id": tenant_id},
+        )
+    except Exception:                                              # noqa: BLE001
+        logger.exception(
+            "[mth-c] auto-approval failed for action=%s tenant=%s "
+            "→ falling through to admin-approval queue",
+            doc.get("id"), tenant_id,
+        )
+        auto_doc = None
+    if auto_doc:
+        return _strip(auto_doc)
     return _strip(doc)
+
+
+async def _maybe_auto_execute(
+    *, action_doc: Dict[str, Any], tenant: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """MTH-C helper — auto-approves + executes when tenant rules
+    allow.  Returns the updated doc on auto-execution, else None
+    (caller keeps the pending row).
+
+    Deliberately narrow: ``soshie.publish_blog`` is NEVER
+    auto-approved because it requires the moderation-flag
+    confirmation the approve endpoint enforces.  Every other
+    branch mirrors :func:`approve_action`'s per-employee logic.
+    """
+    from services.ai_employee_actions.auto_approval import (
+        should_auto_execute, write_audit,
+    )
+    action_key = action_doc.get("action")
+    employee_key = action_doc.get("employee_key")
+    tenant_id = action_doc.get("tenant_id")
+
+    # Hard-decline for the moderation-gated publisher.
+    if employee_key == "soshie" and action_key == "soshie.publish_blog":
+        return None
+
+    decision = await should_auto_execute(
+        tenant_id, action_key, employee_key,
+    )
+    if not decision.get("auto"):
+        return None
+
+    aid = action_doc["id"]
+    upd: Dict[str, Any] = {
+        "status": "approved",
+        "decided_by": "system:auto_allowlist",
+        "decision_note": (
+            f"auto_action_allowlist rule_source="
+            f"{decision.get('rule_source') or 'unknown'}"
+        ),
+        "auto_approved": True,
+        "updated_at": now_iso(),
+    }
+    # Mirror approve_action's per-employee executor.  Kept in this
+    # helper so both admin + auto paths converge on the same result.
+    if employee_key == "casey":
+        upd["status"] = "executed"
+        upd["executed_at"] = now_iso()
+        upd["result"] = {
+            "kind": "casey_draft_ready",
+            "draft": action_doc.get("draft"),
+        }
+    elif employee_key == "emmie":
+        try:
+            emmie_upd = await _emmie_apply_approval(action_doc, tenant)
+            upd = {**upd, **emmie_upd}
+        except Exception:                                          # noqa: BLE001
+            logger.exception(
+                "[mth-c] emmie auto-apply failed action=%s", aid,
+            )
+            return None
+    elif employee_key == "buddy":
+        upd["status"] = "executed"
+        upd["executed_at"] = now_iso()
+        upd["result"] = {
+            "kind": "buddy_brief_acknowledged",
+            "action": action_key,
+            "note": "Auto-approved via allowlist — audit only.",
+        }
+    elif employee_key in ("soshie", "scouty", "commet"):
+        # Non-publish Soshie / Scouty / Commet drafts are audit-only.
+        upd["status"] = "executed"
+        upd["executed_at"] = now_iso()
+        upd["result"] = {
+            "kind": f"{employee_key}_draft_ready",
+            "action": action_key,
+            "draft": action_doc.get("draft"),
+        }
+    else:
+        # Unknown employee → mark approved but don't invent an
+        # executor path.  Auto-approval is still surfaced in the
+        # audit trail so admins can spot mis-classified allowlist
+        # entries.
+        pass
+
+    await db.ai_employee_actions.update_one(
+        {"id": aid, "tenant_id": tenant_id}, {"$set": upd},
+    )
+    await write_audit(
+        tenant_id=tenant_id, action_id=aid,
+        action_key=action_key or "",
+        employee_key=employee_key or "",
+        rule_source=decision.get("rule_source"),
+        reason="auto_action_allowlist",
+    )
+    return await db.ai_employee_actions.find_one(
+        {"id": aid, "tenant_id": tenant_id}, {"_id": 0},
+    )
 
 
 @router.get("/ai-employees/actions/{aid}")

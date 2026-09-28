@@ -6028,6 +6028,23 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             "customers perf indexes NOT bound",
         )
 
+    # MTH-C · Feb-2026 — APScheduler binds for deferred AI-comms
+    # flush (5 min) + escalation SLA-breach scan (1 min).  The
+    # module honours MTH_C_SCHEDULERS_ENABLED + the
+    # PYTEST_CURRENT_TEST bypass so unit tests stay deterministic.
+    try:
+        from services.ai_comms import scheduler as _mth_c_sched
+        _mth_c_bound = _mth_c_sched.start()
+        logger.info(
+            "[startup] phase=mth_c_schedulers bound=%s jobs=%s",
+            _mth_c_bound is not None, _mth_c_sched.job_ids(),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=mth_c_schedulers failed — "
+            "MTH-C schedulers NOT bound",
+        )
+
     try:
         yield
     finally:
@@ -6051,6 +6068,13 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             await _hd_b_sched.stop()
         except Exception:  # noqa: BLE001
             logger.exception("[shutdown] hd-b nightly-purge scheduler stop failed")
+        # MTH-C · Feb-2026 — graceful shutdown of the deferred-comms +
+        # escalation-SLA-breach schedulers.
+        try:
+            from services.ai_comms import scheduler as _mth_c_sched
+            await _mth_c_sched.stop()
+        except Exception:  # noqa: BLE001
+            logger.exception("[shutdown] mth-c schedulers stop failed")
         await _p21_shutdown_sequence()
 
 
