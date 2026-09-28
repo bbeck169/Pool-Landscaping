@@ -174,6 +174,8 @@ export default function CadEditor() {
   const [marcoPrompt, setMarcoPrompt] = useState("");
   const [marcoLoading, setMarcoLoading] = useState(false);
   const [marcoPreview, setMarcoPreview] = useState(null);
+  // ── Phase CAD-3 · Site Plan PDF ───────────────────────────────
+  const [sitePlanLoading, setSitePlanLoading] = useState(false);
   // Sidebar-controlled zoom.
   const [zoomOverride, setZoomOverride] = useState(null);
   const isNarrow = useIsNarrow(768);
@@ -463,6 +465,38 @@ export default function CadEditor() {
     _persistDesign(next);
   };
   const marcoDiscard = () => setMarcoPreview(null);
+
+  // ── Site Plan PDF actions (Phase CAD-3) ───────────────────────
+  const generateSitePlanPdf = async () => {
+    if (!id || sitePlanLoading) return;
+    setSitePlanLoading(true);
+    try {
+      const body = await api.post(
+        `/cad/designs/${id}/site-plan-pdf`, {},
+      );
+      // Append to the local design's ``media_attachments`` so the
+      // sidebar strip updates without a full refetch. Prepend so
+      // the latest render sits at the top (matches BE ordering).
+      setDesign((d) => (d ? {
+        ...d,
+        media_attachments: [{
+          id: body.media_id,
+          kind: "site_plan_pdf",
+          filename: body.filename,
+          url: body.media_url,
+          size_bytes: body.size_bytes,
+          generated_at: body.generated_at,
+        }, ...(d.media_attachments || [])],
+      } : d));
+      setToast("Site plan PDF generated");
+    } catch (e) {
+      const code = e?.body?.detail?.error_code || e?.message
+        || "site_plan_failed";
+      setToast(`Site plan failed · ${code}`);
+    } finally {
+      setSitePlanLoading(false);
+    }
+  };
 
   if (!design) return <div className="p-8 text-sm" style={{ color: colors.onSurfaceSecondary }}>Loading design…</div>;
 
@@ -855,6 +889,56 @@ export default function CadEditor() {
                 </div>
               </>
             )}
+          </section>
+
+          {/* CAD-3 Site Plan PDF export */}
+          <section className="rounded-2xl p-3 space-y-2"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid="cad-site-plan-section">
+            <div className="text-xs font-semibold uppercase tracking-wider"
+                 style={{ color: colors.onSurfaceSecondary }}>
+              Site Plan PDF
+            </div>
+            <button
+              onClick={generateSitePlanPdf}
+              disabled={sitePlanLoading || !design.customer_id}
+              className="w-full px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+              style={{
+                backgroundColor: colors.brand,
+                opacity: (sitePlanLoading || !design.customer_id) ? 0.5 : 1,
+              }}
+              data-testid="cad-generate-site-plan-pdf">
+              {sitePlanLoading ? "Generating…" : "Generate Site Plan PDF"}
+            </button>
+            {!design.customer_id && (
+              <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+                Link a customer to enable export.
+              </div>
+            )}
+            <div className="space-y-1" data-testid="cad-attachments-strip">
+              {(design.media_attachments || []).length === 0 && (
+                <div className="text-xs italic"
+                     style={{ color: colors.onSurfaceSecondary }}
+                     data-testid="cad-attachments-empty">
+                  No PDFs generated yet.
+                </div>
+              )}
+              {(design.media_attachments || []).map((m) => (
+                <a key={m.id}
+                   href={m.url} target="_blank" rel="noopener noreferrer"
+                   className="flex items-center justify-between text-xs rounded p-2"
+                   style={{ backgroundColor: colors.surfaceSecondary,
+                            color: colors.onSurfaceSecondary,
+                            textDecoration: "none" }}
+                   data-testid={`cad-attachment-${m.id}`}>
+                  <span className="truncate mr-2">
+                    <strong>{m.filename}</strong>
+                    {" · "}{Math.round((m.size_bytes || 0) / 1024)} KB
+                  </span>
+                  <span style={{ color: colors.brand }}>View PDF</span>
+                </a>
+              ))}
+            </div>
           </section>
         </aside>
       </div>

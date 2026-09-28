@@ -125,6 +125,14 @@ async def get_design(did: str,
     d = await db.designs.find_one({"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Design not found")
+    # Phase CAD-3 · Feb-2026 — surface media attachments (site plan
+    # PDFs etc.) inline on the design payload so the editor can
+    # render an attachments strip without a second round-trip.
+    media = await db.design_media.find(
+        {"design_id": did, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    ).sort("generated_at", -1).to_list(50)
+    d["media_attachments"] = media
     return d
 
 
@@ -676,3 +684,143 @@ async def cad_generate(
         "reasoning": (parsed.get("reasoning") or "").strip()[:2000],
         "warnings": warnings,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase CAD-3 · Site Plan PDF export
+# ═══════════════════════════════════════════════════════════════════
+from pathlib import Path as _Path  # noqa: E402
+
+
+_SITE_PLAN_UPLOAD_ROOT = _Path("/app/backend/uploads/design_pdfs")
+
+
+def _pdf_filename(design: Dict[str, Any]) -> str:
+    """Human-safe filename: ``site-plan-<slug>-YYYY-MM-DD.pdf``.
+    Slug is a whitespace-collapsed, non-word-stripped design name."""
+    raw = (design.get("name") or "untitled").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or "design"
+    ymd = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"site-plan-{slug}-{ymd}.pdf"
+
+
+@router.post("/cad/designs/{did}/site-plan-pdf")
+async def generate_site_plan_pdf(
+    did: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Render + persist a 2-page Site Plan PDF for the design.
+    Bytes are written to pod-local ``uploads/design_pdfs/{tenant}/
+    {media_id}.pdf`` and served via the existing legacy
+    ``/api/uploads/{path}`` handler in ``routers/objects.py``.
+    Every call creates a NEW ``design_media`` row (versioning) —
+    prior PDFs are never overwritten.
+    """
+    design = await db.designs.find_one(
+        {"id": did, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not design:
+        raise HTTPException(404, {"error_code": "design_not_found"})
+    if not design.get("customer_id"):
+        raise HTTPException(
+            400,
+            {"error_code": "design_customer_missing",
+             "detail": "Design must reference a customer_id before "
+                       "a site plan PDF can be generated."},
+        )
+    customer = await db.customers.find_one(
+        {"id": design["customer_id"], "tenant_id": tenant["id"]},
+        {"_id": 0},
+    )
+
+    # Attempt to fetch the satellite backdrop when the design has
+    # persisted coordinates. Failures degrade to a blank backdrop
+    # (Page 2 renders a "No satellite backdrop available" caption).
+    map_bytes: Optional[bytes] = None
+    if (
+        design.get("map_center_lat") is not None
+        and design.get("map_center_lng") is not None
+    ):
+        try:
+            map_bytes = await _fetch_static_map_bytes(
+                lat=float(design["map_center_lat"]),
+                lng=float(design["map_center_lng"]),
+                zoom=int(design.get("map_zoom") or 19),
+                width=int((design.get("map_size_px") or {}).get("w") or 800),
+                height=int((design.get("map_size_px") or {}).get("h") or 500),
+            )
+        except HTTPException as e:
+            logger.info(
+                f"[cad-3] map backdrop unavailable "
+                f"({getattr(e, 'status_code', '?')}) — falling back "
+                f"to blank white background",
+            )
+            map_bytes = None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[cad-3] map fetch error: {e}")
+            map_bytes = None
+
+    # Build render context + PDF bytes.
+    from services.cad.site_plan_pdf import (
+        build_render_context, render_pdf,
+    )
+    ctx = build_render_context(
+        design=design, customer=customer, tenant=tenant,
+        map_bytes=map_bytes, generated_by=user.get("id"),
+    )
+    # Brand hex — reuse tenant primary token if configured.
+    brand_hex = (tenant.get("brand_primary_hex")
+                 or "#0B4A6F")
+    try:
+        pdf_bytes = render_pdf(ctx, brand_hex=brand_hex)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[cad-3] render_pdf failed")
+        raise HTTPException(
+            500,
+            {"error_code": "site_plan_render_failed",
+             "detail": str(e)[:200]},
+        )
+
+    # Persist bytes to pod-local disk under a UUID so repeat calls
+    # never collide (versioning). Served via /api/uploads/{path}.
+    media_id = new_id()
+    tenant_dir = _SITE_PLAN_UPLOAD_ROOT / tenant["id"]
+    try:
+        tenant_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[cad-3] mkdir failed")
+        raise HTTPException(
+            500,
+            {"error_code": "site_plan_storage_unavailable",
+             "detail": str(e)[:200]},
+        )
+    filepath = tenant_dir / f"{media_id}.pdf"
+    filepath.write_bytes(pdf_bytes)
+    media_url = f"/api/uploads/design_pdfs/{tenant['id']}/{media_id}.pdf"
+
+    filename = _pdf_filename(design)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    media_doc = {
+        "id": media_id,
+        "tenant_id": tenant["id"],
+        "design_id": did,
+        "kind": "site_plan_pdf",
+        "filename": filename,
+        "url": media_url,
+        "size_bytes": len(pdf_bytes),
+        "generated_at": generated_at,
+        "generated_by": user.get("id"),
+    }
+    await db.design_media.insert_one(dict(media_doc))
+    media_doc.pop("_id", None)
+
+    return {
+        "media_id": media_id,
+        "media_url": media_url,
+        "filename": filename,
+        "pages": ctx["page_count"],
+        "size_bytes": len(pdf_bytes),
+        "generated_at": generated_at,
+    }
+
