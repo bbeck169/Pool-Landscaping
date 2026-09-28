@@ -12,6 +12,17 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
+vi.mock("react-konva", async () => {
+  const React = await import("react");
+  const p = (kind) => (({ children, ...props }) =>
+    React.createElement("div", { "data-konva-kind": kind, ...props }, children));
+  return {
+    Stage: p("Stage"), Layer: p("Layer"), Group: p("Group"),
+    Rect: p("Rect"), Circle: p("Circle"), Line: p("Line"),
+    Text: p("KText"), Image: p("Image"),
+  };
+});
+
 const { getSpy, putSpy } = vi.hoisted(() => ({
   getSpy: vi.fn(),
   putSpy: vi.fn(),
@@ -64,11 +75,13 @@ describe("CAD-1 · CadEditor extraction", () => {
     );
     // API fetched the design once at mount.
     expect(getSpy).toHaveBeenCalledWith("/designs/design-extraction");
-    // Every original tool is present, plus the new ``scale`` tool.
+    // Every original CAD-1 tool is present, plus the new
+    // ``scale`` tool. (CAD-2 later relocates the tree/cactus tools
+    // into the sidebar icon library — the CAD-1 tool set no longer
+    // includes them as standalone tool buttons.)
     expect(screen.getByTestId("cad-tool-pointer")).toBeTruthy();
     expect(screen.getByTestId("cad-tool-rect")).toBeTruthy();
     expect(screen.getByTestId("cad-tool-circle")).toBeTruthy();
-    expect(screen.getByTestId("cad-tool-tree")).toBeTruthy();
     expect(screen.getByTestId("cad-tool-scale")).toBeTruthy();
     // Canvas surface exists.
     expect(screen.getByTestId("cad-canvas")).toBeTruthy();

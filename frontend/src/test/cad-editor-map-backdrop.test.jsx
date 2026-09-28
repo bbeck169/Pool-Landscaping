@@ -18,6 +18,17 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
+vi.mock("react-konva", async () => {
+  const React = await import("react");
+  const p = (kind) => (({ children, ...props }) =>
+    React.createElement("div", { "data-konva-kind": kind, ...props }, children));
+  return {
+    Stage: p("Stage"), Layer: p("Layer"), Group: p("Group"),
+    Rect: p("Rect"), Circle: p("Circle"), Line: p("Line"),
+    Text: p("KText"), Image: p("Image"),
+  };
+});
+
 const { getSpy, putSpy } = vi.hoisted(() => ({
   getSpy: vi.fn(),
   putSpy: vi.fn(),

@@ -48,6 +48,10 @@ class DesignIn(BaseModel):
     map_zoom: Optional[int] = None
     feet_per_pixel: Optional[float] = None
     map_size_px: Optional[Dict[str, int]] = None
+    # Phase CAD-2 · Feb-2026 — precision-tools snapping threshold.
+    # In on-canvas pixel units; the frontend snaps vertices within
+    # this radius of any existing edge (boundary + element edges).
+    snap_threshold_px: Optional[int] = 8
 
 
 def _doc_public(d: dict) -> dict:
@@ -75,6 +79,7 @@ def _design_write_dict(body: DesignIn) -> Dict[str, Any]:
         "map_zoom": body.map_zoom,
         "feet_per_pixel": body.feet_per_pixel,
         "map_size_px": body.map_size_px,
+        "snap_threshold_px": body.snap_threshold_px,
     }
 
 
@@ -366,3 +371,308 @@ async def get_map_tile(
                 "X-Feet-Per-Pixel, X-Geocode-Source",
         },
     )
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase CAD-2 · MARCO AI shape generation
+# ═══════════════════════════════════════════════════════════════════
+import json as _json  # noqa: E402  (kept scoped to the CAD-2 block)
+
+from services.geometry import clamp_normalized_coords  # noqa: E402
+
+
+# The valid ``type`` values the generator is allowed to return.
+# Anything else is discarded post-parse with a warning — we don't
+# want the LLM inventing new shape types the FE has no renderer for.
+_MARCO_ALLOWED_SHAPE_TYPES = {"pool", "spa", "paver", "wall", "icon"}
+_MARCO_ALLOWED_ICONS = {
+    # Plants
+    "tree", "shrub", "bush", "palm", "grass",
+    # Lighting
+    "path_light", "spot_light", "wall_light",
+    # Legacy — MARCO may still emit these; keep supported.
+    "cactus", "firepit",
+}
+
+
+class GenerateContext(BaseModel):
+    canvas_w_ft: Optional[float] = None
+    canvas_h_ft: Optional[float] = None
+    feet_per_pixel: Optional[float] = None
+    boundary: Optional[List[Any]] = None
+    existing_elements: Optional[List[Any]] = None
+
+
+class GenerateBody(BaseModel):
+    design_id: Optional[str] = None
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    context: Optional[GenerateContext] = None
+
+
+def _marco_system_prompt(
+    *, canvas_w_ft: float, canvas_h_ft: float,
+    feet_per_pixel: Optional[float],
+    boundary: List[Any], existing_elements: List[Any],
+    tone_directive: str,
+) -> str:
+    """Compose the strict-JSON MARCO system prompt. All numeric
+    fields are inlined so the LLM has zero excuse to invent
+    dimensions outside the property canvas."""
+    fpp_line = (
+        f"feet_per_pixel: {feet_per_pixel:.4f}\n"
+        if feet_per_pixel else "feet_per_pixel: unknown\n"
+    )
+    boundary_line = (
+        f"boundary_polygon: {_json.dumps(boundary)}\n"
+        if boundary else "boundary_polygon: (no property line supplied)\n"
+    )
+    existing_line = (
+        f"existing_elements: {_json.dumps(existing_elements[:40])}\n"
+        if existing_elements else "existing_elements: []\n"
+    )
+    return (
+        "You are MARCO, the property-design assistant for a pool + "
+        "landscaping business. You will design outdoor spaces in a "
+        "top-down 2D layout.\n"
+        f"{tone_directive}\n\n"
+        "Canvas + scale (all coordinates are normalized 0..1 relative "
+        "to this canvas):\n"
+        f"  canvas_w_ft: {canvas_w_ft}\n"
+        f"  canvas_h_ft: {canvas_h_ft}\n"
+        f"  {fpp_line}"
+        f"  {boundary_line}"
+        f"  {existing_line}"
+        "\n"
+        "Return ONLY valid strict JSON matching this schema:\n"
+        '{"shapes": [{"type": "pool"|"spa"|"paver"|"wall"|"icon", '
+        '"coords": [{"x": 0..1, "y": 0..1}, ...], '
+        '"dims_ft": {"w": number, "h": number} | '
+        '{"length_ft": number} | null, '
+        '"icon": "tree"|"shrub"|"bush"|"palm"|"grass"|"path_light"|'
+        '"spot_light"|"wall_light" | null, '
+        '"label": string | null}], '
+        '"reasoning": "one-paragraph explanation of the layout"}\n'
+        "\n"
+        "Rules:\n"
+        "  * pool/spa: 4-corner rectangle (coords length == 4).\n"
+        "  * paver: closed polygon (3+ vertices).\n"
+        "  * wall: open polyline (2+ vertices).\n"
+        "  * icon: single-point (coords length == 1) + icon key.\n"
+        "  * coords MUST stay in [0..1]. If a shape must extend beyond "
+        "the boundary, prefer to shrink it — the server will clamp "
+        "anything out of range and warn.\n"
+        "  * Never invent new shape types.\n"
+        "  * Do not wrap the JSON in backticks or prose. Return the "
+        "JSON object and nothing else.\n"
+    )
+
+
+def _try_parse_json_body(raw: str) -> Optional[Dict[str, Any]]:
+    """Robust JSON parse — accepts bare object, code-fenced object,
+    or JSON preceded/followed by prose (matches the tolerance the
+    ``ai_measure`` extractor already ships to callers)."""
+    if not raw or not isinstance(raw, str):
+        return None
+    txt = raw.strip()
+    # Strip ```json fences if present.
+    if txt.startswith("```"):
+        # Drop leading fence + optional language tag.
+        first_nl = txt.find("\n")
+        if first_nl != -1:
+            txt = txt[first_nl + 1:]
+        if txt.rstrip().endswith("```"):
+            txt = txt.rstrip()[:-3].rstrip()
+    try:
+        return _json.loads(txt)
+    except Exception:
+        pass
+    # Fallback — find the first ``{`` and try to json-load from there.
+    start = txt.find("{")
+    end = txt.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return _json.loads(txt[start:end + 1])
+    except Exception:
+        return None
+
+
+def _sanitize_shapes(
+    raw_shapes: List[Any],
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Filter to allowed types, clamp coords, return
+    ``(shapes, warnings)``. Never silently drops a shape — a
+    disallowed type surfaces as a warning so the caller can see the
+    LLM misbehaved."""
+    shapes: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    if not isinstance(raw_shapes, list):
+        return shapes, ["shapes field missing or not a list"]
+    for idx, s in enumerate(raw_shapes):
+        if not isinstance(s, dict):
+            warnings.append(f"shape {idx} skipped — not an object")
+            continue
+        stype = s.get("type")
+        if stype not in _MARCO_ALLOWED_SHAPE_TYPES:
+            warnings.append(
+                f"shape {idx} skipped — unknown type {stype!r}",
+            )
+            continue
+        coords_in = s.get("coords") or []
+        if not isinstance(coords_in, list):
+            warnings.append(
+                f"shape {idx} skipped — coords is not a list",
+            )
+            continue
+        coords_out, was_clamped = clamp_normalized_coords(coords_in)
+        if was_clamped:
+            warnings.append(
+                f"shape {idx} ({stype}) extends beyond property "
+                f"boundary — clamped",
+            )
+        icon = s.get("icon")
+        if stype == "icon":
+            if icon not in _MARCO_ALLOWED_ICONS:
+                # Downgrade unknown icons to ``tree`` rather than
+                # dropping the placement — MARCO's spatial intent
+                # is preserved, only the glyph is defaulted.
+                warnings.append(
+                    f"shape {idx} — unknown icon {icon!r} → 'tree'",
+                )
+                icon = "tree"
+        else:
+            icon = None
+        # Only carry through fields the FE renders.
+        shapes.append({
+            "type": stype,
+            "coords": coords_out,
+            "dims_ft": s.get("dims_ft"),
+            "icon": icon,
+            "label": s.get("label"),
+        })
+    return shapes, warnings
+
+
+@router.post("/cad/generate")
+async def cad_generate(
+    body: GenerateBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """MARCO AI shape generation. Returns a preview batch of
+    shapes the FE renders (in-memory) until the operator hits
+    Accept. Persistence happens via the existing ``PUT /designs/
+    {did}`` — this endpoint never writes to ``db.designs``."""
+    if not (os.environ.get("EMERGENT_LLM_KEY") or "").strip():
+        raise HTTPException(
+            424, {"error_code": "emergent_llm_key_missing"},
+        )
+    # Resolve canvas + boundary + existing elements. Priority:
+    # explicit body context → loaded design → fail with 400.
+    canvas_w_ft: Optional[float] = None
+    canvas_h_ft: Optional[float] = None
+    feet_per_pixel: Optional[float] = None
+    boundary: List[Any] = []
+    existing_elements: List[Any] = []
+    if body.design_id:
+        design = await db.designs.find_one(
+            {"id": body.design_id, "tenant_id": tenant["id"]},
+            {"_id": 0},
+        )
+        if not design:
+            raise HTTPException(404, {"error_code": "design_not_found"})
+        canvas_w_ft = float(design.get("canvas_w_ft") or 60.0)
+        canvas_h_ft = float(design.get("canvas_h_ft") or 40.0)
+        fpp_val = design.get("feet_per_pixel")
+        feet_per_pixel = float(fpp_val) if fpp_val else None
+        boundary = list(design.get("boundary") or [])
+        existing_elements = list(design.get("elements") or [])
+    if body.context:
+        if body.context.canvas_w_ft is not None:
+            canvas_w_ft = float(body.context.canvas_w_ft)
+        if body.context.canvas_h_ft is not None:
+            canvas_h_ft = float(body.context.canvas_h_ft)
+        if body.context.feet_per_pixel is not None:
+            feet_per_pixel = float(body.context.feet_per_pixel)
+        if body.context.boundary is not None:
+            boundary = list(body.context.boundary)
+        if body.context.existing_elements is not None:
+            existing_elements = list(body.context.existing_elements)
+    if canvas_w_ft is None or canvas_h_ft is None:
+        raise HTTPException(
+            400,
+            {"error_code": "missing_canvas_context",
+             "detail": "Either design_id or context.canvas_w_ft + "
+                       "canvas_h_ft must be provided."},
+        )
+
+    # Persona directive — try to fetch tenant AI-rules tone, but
+    # fall back silently to a sane default if the resolver errors
+    # (unrelated tenant provisioning gaps must not gate MARCO).
+    tone_directive = (
+        "Persona: concise, technical, prioritise usability + code "
+        "compliance. Never overpromise. Prefer real-world dimensions "
+        "over stylistic flourishes."
+    )
+    try:
+        from services.tenant_ai_rules.resolver import (
+            resolve_rules_for_tenant,
+        )
+        resolved = await resolve_rules_for_tenant(tenant["id"])
+        tone = (resolved.get("rules") or {}).get("tone_voice") or {}
+        style = (tone.get("style") or "").strip()
+        directive = (tone.get("custom_directive") or "").strip()
+        if style or directive:
+            tone_directive = (
+                f"Persona style: {style or 'default'}.\n"
+                + (f"Directive: {directive}" if directive else "")
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+    sys_prompt = _marco_system_prompt(
+        canvas_w_ft=canvas_w_ft, canvas_h_ft=canvas_h_ft,
+        feet_per_pixel=feet_per_pixel,
+        boundary=boundary, existing_elements=existing_elements,
+        tone_directive=tone_directive,
+    )
+    user_text = body.prompt.strip()
+
+    # Lazy import so tests can ``monkeypatch.setattr("routers.cad.
+    # dispatch_ai_completion", ...)`` without dragging the real
+    # LLM chain in at collection time.
+    from services.ai import dispatch_ai_completion
+
+    async def _one_completion() -> Optional[Dict[str, Any]]:
+        try:
+            result = await dispatch_ai_completion(
+                tenant_id=tenant["id"],
+                system_prompt=sys_prompt,
+                user_text=user_text,
+                parse_json=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[cad] MARCO dispatch failed: {e}")
+            return None
+        content = getattr(result, "content", None) or ""
+        return _try_parse_json_body(content)
+
+    parsed = await _one_completion()
+    if parsed is None or not isinstance(parsed.get("shapes"), list):
+        # Retry once.
+        logger.info("[cad] MARCO invalid-JSON — retrying once")
+        parsed = await _one_completion()
+    if parsed is None or not isinstance(parsed.get("shapes"), list):
+        raise HTTPException(
+            502,
+            {"error_code": "marco_invalid_shape_json"},
+        )
+
+    shapes, warnings = _sanitize_shapes(parsed.get("shapes") or [])
+    return {
+        "generation_id": new_id(),
+        "shapes": shapes,
+        "reasoning": (parsed.get("reasoning") or "").strip()[:2000],
+        "warnings": warnings,
+    }
