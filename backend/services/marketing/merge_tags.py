@@ -223,15 +223,46 @@ def _customer_balance(ctx: Dict[str, Any]) -> str:
     return _open_balance(ctx.get("customer") or {})
 
 
+_COMPANY_NAME_ULTIMATE_FALLBACK = "Your Service Provider"
+
+
 def _company_name(ctx: Dict[str, Any]) -> str:
-    """Company display name. Phase 21 · Feb 2026 — prefers
-    ``tenant.settings.business_card.company_name`` (the source of truth
-    for the admin-editable brand) and falls back to legacy
-    ``tenant.name`` so pre-rebrand tenants keep working."""
+    """Company display name.
+
+    Feb-2026 · Portal-invite merge-tag fix — widened the fallback
+    chain so the resolver NEVER returns an empty string.  A blank
+    company name in a customer-trust send (portal invite, password
+    reset, invoice, etc.) is a data-integrity signal we prefer to
+    surface via a WARN log + a human-readable placeholder rather
+    than a literal ``{{COMPANY_NAME}}`` in the rendered body.
+
+    Cascade order:
+
+      1. ``tenant.settings.business_card.company_name`` — source of
+         truth (admin editor at Settings → Business Card).
+      2. ``tenant.settings.company_name`` — legacy nested field
+         still populated by a handful of pre-rebrand seed rows.
+      3. ``tenant.name`` — legacy root field.
+      4. ``"Your Service Provider"`` — ultimate fallback; logs a
+         WARN so ops can spot the broken tenant record.
+    """
     t = ctx.get("tenant") or {}
     settings = t.get("settings") or {}
     card = settings.get("business_card") or {}
-    return _safe_str(card.get("company_name") or t.get("name") or "")
+    for candidate in (card.get("company_name"),
+                       settings.get("company_name"),
+                       t.get("name")):
+        val = _safe_str(candidate).strip()
+        if val:
+            return val
+    logger.warning(
+        "[merge_tags] COMPANY_NAME resolver fell through to ultimate"
+        " fallback %r — tenant_id=%s slug=%s.  Fix Settings →"
+        " Business Card → Company Name to remove this warning.",
+        _COMPANY_NAME_ULTIMATE_FALLBACK,
+        t.get("id"), t.get("slug"),
+    )
+    return _COMPANY_NAME_ULTIMATE_FALLBACK
 
 
 def _invoice_amount(ctx: Dict[str, Any]) -> str:
@@ -1396,6 +1427,55 @@ MERGE_TAGS: List[Dict[str, Any]] = [
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]
                                         for t in MERGE_TAGS}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · Portal-invite merge-tag fix — single-brace catalog
+# token upgrader.
+#
+# Some legacy / user-edited ``marketing_templates`` rows carry
+# CATALOG tokens in the single-brace form (``{COMPANY_NAME}``)
+# instead of the canonical double-brace form (``{{COMPANY_NAME}}``).
+# The ``render_template`` regex only matches double-brace tokens by
+# design (so unrelated brace literals in prose / JSON snippets are
+# left alone), and the pre-existing rebrace migration only covers
+# four lowercase send-path tokens — so a single-brace catalog
+# reference ships literally in the rendered body.
+#
+# This helper upgrades a single-brace token to its double-brace
+# form ONLY when the token maps to a resolver in ``_TAG_INDEX``.
+# Non-catalog braces (``{2024}``, ``{some prose}``, JSON bodies)
+# are left byte-identical.  Scoped to the portal-invite send path
+# per the Feb-2026 fix brief — other template surfaces stay on
+# their own rebrace pipelines.
+# ═══════════════════════════════════════════════════════════════════
+_SINGLE_BRACE_TOKEN_RE = re.compile(
+    r"(?<!\{)\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}(?!\})"
+)
+
+
+def rebrace_single_brace_catalog_tokens(body: str) -> str:
+    """Rewrite ``{TOKEN}`` → ``{{TOKEN}}`` for every catalog token.
+
+    A "catalog token" is any identifier whose uppercase form is a
+    key in ``_TAG_INDEX`` — i.e. it has a registered resolver. Any
+    other single-brace substring (``{2024}``, ``{prose}``, etc.)
+    is preserved verbatim.
+
+    Idempotent: already-double-braced tokens are ignored by the
+    negative lookbehind/lookahead in the pattern, so calling this
+    helper twice yields identical output.
+    """
+    if not isinstance(body, str) or not body:
+        return body or ""
+
+    def _upgrade(match: "re.Match[str]") -> str:
+        token = match.group(1)
+        if token.upper() in _TAG_INDEX:
+            return "{{" + token + "}}"
+        return match.group(0)
+
+    return _SINGLE_BRACE_TOKEN_RE.sub(_upgrade, body)
 
 
 # ═══════════════════════════ Renderer ════════════════════════════════

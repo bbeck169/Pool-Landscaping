@@ -351,6 +351,7 @@ async def _try_send_reset_email(
     # rationale (intentional divergence from the other send paths).
     from services.marketing.merge_tags import (
         render_template,
+        rebrace_single_brace_catalog_tokens,
         _company_name as _resolve_company_name,
         _company_phone as _resolve_company_phone,
     )
@@ -365,6 +366,19 @@ async def _try_send_reset_email(
             to, company_name, company_phone, tenant_id,
         )
         return None
+
+    # Feb-2026 · Portal-invite merge-tag fix — legacy / user-edited
+    # DB rows sometimes carry catalog tokens in the single-brace
+    # form (``{COMPANY_NAME}``) which the double-brace-only
+    # ``render_template`` regex ignores.  Upgrade every recognised
+    # catalog token to its canonical double-brace form BEFORE the
+    # render pass so ``{COMPANY_NAME}`` / ``{COMPANY_PHONE}`` /
+    # ``{CUSTOMER_FULL_NAME}`` / ``{CUSTOMER_PORTAL_LINK}`` / etc.
+    # all resolve.  Non-catalog braces (``{2024}`` etc.) are left
+    # byte-identical.  Scoped to this send path per the fix brief.
+    subject = rebrace_single_brace_catalog_tokens(subject)
+    body_tpl = rebrace_single_brace_catalog_tokens(body_tpl)
+    text_tpl = rebrace_single_brace_catalog_tokens(text_tpl)
 
     # Render the three surfaces through the same engine so a token
     # that appears in only one surface still resolves uniformly.
