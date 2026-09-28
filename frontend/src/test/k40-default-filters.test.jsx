@@ -50,9 +50,23 @@ const SOCIAL    = read("src/pages/social/SocialExtras.jsx");
 // Rule 1 · Default "all" / "" on every filter dropdown
 // ═════════════════════════════════════════════════════════════════
 describe("K40 · Rule 1 — filter dropdowns default to 'all' / no-filter", () => {
-  it("InvoicesList status filter defaults to '' (all statuses)", () => {
-    // URL-derived: params.get('status') || ""
+  it("InvoicesList payment_status filter defaults to 'unpaid' (FIN-PARITY-B exception)", () => {
+    // FIN-PARITY-B · Feb-2026 — the invoices list has an
+    // intentional K40 carve-out analogous to the Customers →
+    // Active exception (Rule 3): the default view is the
+    // outstanding-receivables slice (``unpaid``) because that
+    // matches operator intent ("what's still owed?") rather than
+    // the historical grand ledger. URL param renamed from
+    // ``status`` → ``payment_status`` so the querystring matches
+    // the backend ``list_quotes`` filter exactly.
     expect(INVOICES).toMatch(
+      /const paymentStatusFilter = params\.get\("payment_status"\)\s*\|\|\s*"unpaid"/,
+    );
+    // Belt-and-braces: legacy ``status`` URL param no longer
+    // participates in the InvoicesList filter — a lingering
+    // ``params.get("status")`` here would silently reintroduce
+    // the pre-FIN-PARITY-B default-to-all behavior.
+    expect(INVOICES).not.toMatch(
       /const status = params\.get\("status"\)\s*\|\|\s*""/,
     );
   });
@@ -204,10 +218,13 @@ describe("K40 · Rule 4 — no persistence across page loads", () => {
 // Rule 4 · URL params still win
 // ═════════════════════════════════════════════════════════════════
 describe("K40 · Rule 4 (b) — explicit URL params still honored", () => {
-  it("InvoicesList status is read directly from searchParams", () => {
-    // Every mount hydrates from the URL — so /invoices?status=unpaid
-    // still lands on the Unpaid filter even after K40.
-    expect(INVOICES).toMatch(/params\.get\("status"\)/);
+  it("InvoicesList payment_status is read directly from searchParams", () => {
+    // FIN-PARITY-B · Feb-2026 — URL param renamed from ``status`` →
+    // ``payment_status`` so it matches the backend enum surface.
+    // Every mount hydrates from the URL — so
+    // /invoices?payment_status=paid still lands on the Paid filter
+    // even after K40's default-to-nothing rule.
+    expect(INVOICES).toMatch(/params\.get\("payment_status"\)/);
   });
 
   it("QuotesList status is read directly from searchParams", () => {

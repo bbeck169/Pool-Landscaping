@@ -29,6 +29,22 @@ linked invoice at all).
       deferred to the caller (PDF commit does not fire
       ``invoice.paid`` events; that's a FIN-PARITY-B decision).
 
+**FIN-PARITY-B guardrail — DO NOT fire ``invoice.paid`` events
+from this helper.** Imported historicals routinely represent
+invoices that were paid years ago; wiring an
+``automation_engine.emit("invoice.paid")`` here would trigger a
+present-day "thanks for paying!" drip against 2023 invoices,
+generate outbound SMS / email storms against customers who have
+long since moved on, and pollute marketing analytics with
+back-dated conversions. This restriction is architectural, not
+temporary — even if a future track lands a "historical
+suppression" flag on the automation engine, the reconciler stays
+event-silent so the guardrail can never be bypassed by a
+misconfigured tenant.  Downstream state (invoice card, reports
+aggregators) reads from ``db.quotes`` directly and picks up the
+reconciled ``payment_status`` / ``amount_paid`` on the next
+render — no event bus needed.
+
 **Idempotency:** the reconciler is a full-recompute from
 ``db.payments.find({tenant_id, invoice_id})`` — calling it twice
 with the same payment set produces identical results (modulo the

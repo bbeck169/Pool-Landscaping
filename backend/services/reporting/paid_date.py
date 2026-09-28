@@ -78,6 +78,13 @@ def build_paid_window_filter(start: str, end: str) -> dict:
 # ``payment_status`` is the literal string "paid". Kept as a
 # module-level constant so every metric picks up the same
 # definition of "paid".
+#
+# FIN-PARITY-B · Feb-2026 — the ``amount_paid > 0`` branch is
+# what makes PDF-imported payments show up in revenue metrics
+# automatically. ``payment_reconciler.reconcile_invoice_after_payment``
+# always writes ``amount_paid`` on the linked invoice, so a
+# fully-paid or partial-paid imported invoice satisfies the $or
+# without a schema migration or a paid_flag backfill.
 PAID_STATUS_FILTER = {
     "$or": [
         {"amount_paid": {"$gt": 0}},
@@ -91,11 +98,21 @@ PAID_STATUS_FILTER = {
 # reader-visible states. Drafts + cancelled + null-status rows
 # are excluded so AR aging doesn't over-count. See R1 audit §2 in
 # ``PHASE_R1_A_FINANCIAL_BACKEND.md``.
+#
+# FIN-PARITY-B · Feb-2026 — ``partial`` is now a first-class
+# ``payment_status`` value written by both ``record_payment`` and
+# the FIN-PARITY-A ``payment_reconciler``. Add it to the eligible
+# statuses so a partial-paid invoice still contributes its
+# remaining balance (``total - amount_paid``) to AR-aging /
+# unpaid-invoices metrics.  The trailing ``payment_status != "paid"``
+# guard remains as belt-and-braces.
 OUTSTANDING_STATUS_FILTER = {
     "$and": [
         {"doc_type": "invoice"},
         {"$or": [
-            {"payment_status": {"$in": ["unpaid", "pending_reconciliation"]}},
+            {"payment_status": {"$in": [
+                "unpaid", "partial", "pending_reconciliation",
+            ]}},
             {"payment_status": {"$in": [None, ""]}},
         ]},
         # Must have been issued/sent/accepted to count as owed.

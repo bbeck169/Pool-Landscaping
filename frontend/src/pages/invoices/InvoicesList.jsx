@@ -86,7 +86,20 @@ export default function InvoicesList() {
   const [pmByInvoice, setPmByInvoice] = useState({});
   const [summary, setSummary] = useState(null);
   const [q, setQ] = useState(params.get("q") || "");
-  const status = params.get("status") || "";
+  // FIN-PARITY-B · Feb-2026 — Invoice list defaults to Unpaid.
+  // URL param renamed from ``status`` → ``payment_status`` so the
+  // querystring name matches the backend ``list_quotes`` filter
+  // exactly. K40's "filters default to all" rule has a documented
+  // exception for this filter (analogous to Customers → Active);
+  // see ``k40-default-filters.test.jsx`` FIN-PARITY-B block.
+  //
+  // Accepted URL values: ``unpaid`` (default) / ``partial`` /
+  // ``paid`` / ``all``. Anything else (or missing → defaults to
+  // ``unpaid``). The value is forwarded verbatim to the backend
+  // as ``/quotes?payment_status=<value>``; the backend's enum
+  // validation raises 400 with ``error_code=invalid_payment_status``
+  // on garbage input.
+  const paymentStatusFilter = params.get("payment_status") || "unpaid";
   const hasLateFee = params.get("late_fee") === "1";
   // Phase C · Feb-2026 — "Has declined items" filter chip.
   const hasDeclined = params.get("has_declined") === "1";
@@ -127,9 +140,14 @@ export default function InvoicesList() {
   const [bulkChargeAchOpen, setBulkChargeAchOpen] = useState(false);
 
   const setStatus = (v) => {
+    // FIN-PARITY-B · Feb-2026 — dropdown writes to
+    // ``?payment_status=<value>``. ``""`` from the legacy "All
+    // statuses" option maps to ``all`` for URL-symmetry with the
+    // backend enum. Empty / null clears the param entirely so
+    // the default (``unpaid``) resumes on next load.
     const s = new URLSearchParams(params);
-    if (v) s.set("status", v);
-    else s.delete("status");
+    if (v && v !== "unpaid") s.set("payment_status", v);
+    else s.delete("payment_status");
     setParams(s, { replace: true });
   };
 
@@ -154,6 +172,14 @@ export default function InvoicesList() {
     // Feb-2026 · Item 2 — customer-scoped filter, additive to every
     // other filter. Backend enforces tenant scope.
     if (customerFilter) qs.set("customer_id", customerFilter);
+    // FIN-PARITY-B · Feb-2026 — server-side payment_status filter.
+    // Value comes from ``paymentStatusFilter`` (URL-derived, defaults
+    // to ``unpaid``). ``all`` is forwarded verbatim so the backend
+    // treats it as "no filter".  Any other value the URL might
+    // carry is passed through; the backend returns 400 with a
+    // stable ``error_code=invalid_payment_status`` we surface as
+    // an empty grid rather than a client-side coerced fallback.
+    qs.set("payment_status", paymentStatusFilter);
     api.get(`/quotes?${qs.toString()}`).then((r) => setRows(r || [])).catch(() => setRows([]));
     api.get("/payments/summary").then(setSummary).catch(() => {});
     // Bulk-pay iteration 1 · pull PM enrichment from /invoices/overview.
@@ -176,7 +202,7 @@ export default function InvoicesList() {
   useEffect(() => {
     loadRows();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategories.join("|"), customerFilter]);
+  }, [selectedCategories.join("|"), customerFilter, paymentStatusFilter]);
 
   // Phase 14b — load category dropdown options once (admin surfaces only).
   useEffect(() => {
@@ -240,7 +266,11 @@ export default function InvoicesList() {
       };
     });
     let out = enriched
-      .filter((r) => (status ? (r.payment_status || "unpaid") === status : true))
+      // FIN-PARITY-B · Feb-2026 — client-side ``payment_status``
+      // filter removed; the backend ``list_quotes`` filter now
+      // narrows the row set server-side. Left as an inline noop
+      // for diff reviewability; the client-side filter used to be
+      // ``.filter((r) => (status ? r.payment_status === status : true))``.
       .filter((r) => (hasLateFee ? (r.line_items || []).some((li) => li.is_late_fee) : true))
       .filter((r) => (hasDeclined ? Boolean(r.has_declined_lines) : true))
       .filter((r) =>
@@ -274,7 +304,7 @@ export default function InvoicesList() {
       });
     }
     return out;
-  }, [rows, pmByInvoice, status, hasLateFee, hasDeclined, q, cardFilter, sort]);
+  }, [rows, pmByInvoice, hasLateFee, hasDeclined, q, cardFilter, sort]);
 
   // Phase 34 · Task BB · Feb 2026 — visible-page selection helpers.
   const visibleIds = filtered.map((r) => r.id);
@@ -376,7 +406,23 @@ export default function InvoicesList() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="invoices-page">
       <PageHeader
         title="Invoices"
-        subtitle={summary ? summary.month_label : ""}
+        subtitle={(() => {
+          // FIN-PARITY-B · Feb-2026 — subtitle now reflects the
+          // current server-side ``payment_status`` filter so a user
+          // arriving at the default (unpaid) view sees a truthful
+          // header count ("N unpaid invoices") rather than the
+          // legacy month label. Falls back to the month label when
+          // the row count is still loading (rows === null).
+          const count = rows === null ? null : (filtered || []).length;
+          const monthLbl = (summary && summary.month_label) || "";
+          if (count === null) return monthLbl;
+          const suffix = (
+            paymentStatusFilter === "all"
+              ? "invoices"
+              : `${paymentStatusFilter} invoices`
+          );
+          return `${count} ${suffix}${monthLbl ? ` · ${monthLbl}` : ""}`;
+        })()}
         right={
           <>
             <Button variant="ghost" onClick={() => navigate("/invoices/master")} testid="inv-master-list">
@@ -448,14 +494,20 @@ export default function InvoicesList() {
           data-testid="inv-search"
         />
         <NavyFilterBar.Select
-          value={status}
+          value={paymentStatusFilter}
           onChange={setStatus}
           data-testid="inv-filter-status"
         >
-          <option value="">All statuses</option>
+          {/* FIN-PARITY-B · Feb-2026 — options match the backend
+              ``payment_status`` enum verbatim. Default is
+              ``Unpaid`` (the URL param is absent on first load,
+              which resolves to ``unpaid`` above).  ``All`` maps
+              to the sentinel ``all`` on the URL, which the
+              backend treats as "no filter". */}
           <option value="unpaid">Unpaid</option>
           <option value="partial">Partial</option>
           <option value="paid">Paid</option>
+          <option value="all">All statuses</option>
         </NavyFilterBar.Select>
         <NavyFilterBar.Chip
           active={hasLateFee}

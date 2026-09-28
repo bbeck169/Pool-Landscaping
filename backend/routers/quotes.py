@@ -25,6 +25,16 @@ router = APIRouter()
 
 
 # ----------------------- Quotes / Invoices -----------------------
+# FIN-PARITY-B · Feb-2026 — enum of accepted ``payment_status`` values
+# for the ``list_quotes`` server-side filter. ``"all"`` is a sentinel
+# for "no filter" (equivalent to omitting the param); the other three
+# match the ``payment_status`` values written by both native
+# ``record_payment`` and the FIN-PARITY-A reconciler.
+_LIST_QUOTES_PAYMENT_STATUS_VALUES = frozenset(
+    ["unpaid", "partial", "paid", "all"]
+)
+
+
 def compute_totals(line_items: List[dict], tax_rate: float):
     subtotal = sum(li["quantity"] * li["unit_price"] for li in line_items)
     tax = round(subtotal * (tax_rate / 100.0), 2)
@@ -248,14 +258,51 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # Feb-2026 · Item 2 — customer-scoped filter for
                       # the Invoices + Quotes list pages. Additive to
                       # every existing filter; tenant scope preserved.
-                      customer_id: Optional[str] = Query(None)):
+                      customer_id: Optional[str] = Query(None),
+                      # FIN-PARITY-B · Feb-2026 — server-side
+                      # ``payment_status`` filter. Accepted values:
+                      # ``unpaid`` / ``partial`` / ``paid`` (all three
+                      # written by the FIN-PARITY-A reconciler + native
+                      # ``record_payment``) and ``all`` (sentinel: no
+                      # filter, equivalent to omitting the param).
+                      # Any other value returns HTTP 400 with a stable
+                      # ``error_code`` so the FE can render a
+                      # deterministic error toast.
+                      payment_status: Optional[str] = Query(None)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
+    # FIN-PARITY-B · payment_status validation — accept the four
+    # enum values (unpaid/partial/paid/all) and treat None + all as
+    # "no filter". Reject anything else with a stable error_code.
+    if payment_status is not None:
+        if payment_status not in _LIST_QUOTES_PAYMENT_STATUS_VALUES:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "invalid_payment_status",
+                    "message": (
+                        f"payment_status must be one of "
+                        f"{sorted(_LIST_QUOTES_PAYMENT_STATUS_VALUES)!r}, "
+                        f"got {payment_status!r}"
+                    ),
+                    "accepted_values": sorted(
+                        _LIST_QUOTES_PAYMENT_STATUS_VALUES
+                    ),
+                },
+            )
     q: dict = {"tenant_id": tenant["id"]}
     if user.get("role") == "customer":
         q["customer_id"] = user.get("customer_id")
     if doc_type:
         q["doc_type"] = doc_type
+    # FIN-PARITY-B · Feb-2026 — Mongo filter emission. ``all`` +
+    # None are no-ops (falls through to the existing behavior);
+    # the three concrete enum values narrow on ``payment_status``
+    # directly. The compound index
+    # ``k44_quotes_tenant_doctype_paymentstatus_deleted`` (added in
+    # migrations.k44_perf_indexes) covers this predicate.
+    if payment_status and payment_status != "all":
+        q["payment_status"] = payment_status
     # Feb-2026 · Item 2 — admin/super_admin/manager may narrow the list
     # to a single customer. If a customer-role user drove the request,
     # their own scope filter already set customer_id above; the admin

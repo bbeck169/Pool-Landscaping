@@ -38,6 +38,15 @@ def _in_range(iso: str | None, dfrom: str | None, dto: str | None) -> bool:
 
 
 def _paid_amt(q: dict) -> float:
+    # FIN-PARITY-B · Feb-2026 — legacy-fallback shim.  Post-FIN-
+    # PARITY-A, every reconciled invoice carries ``amount_paid``
+    # verbatim (see services.imports.payment_reconciler), so the
+    # first branch below is the primary source of truth for
+    # PDF-imported historicals.  The ``payment_status=paid`` →
+    # ``total`` fallback stays for pre-reconciler rows that were
+    # marked paid without a numeric ``amount_paid`` write (the
+    # legacy ``paid_flag`` pattern flagged in the FIN-PARITY-B
+    # design forks).  Do NOT delete without a data backfill.
     paid = q.get("amount_paid")
     if not paid:
         paid = q.get("total", 0) if q.get("payment_status") == "paid" else 0

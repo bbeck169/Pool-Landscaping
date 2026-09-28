@@ -82,6 +82,17 @@ _INDEXES: List[Tuple[str, str, List[Tuple[str, int]]]] = [
     ("quotes", "k21_quotes_tenant_customer_doctype_created",
      [("tenant_id", 1), ("customer_id", 1),
       ("doc_type", 1), ("created_at", -1)]),
+    # ── FIN-PARITY-B (Feb-2026) — server-side ``payment_status``
+    # filter on ``list_quotes``. Compound key mirrors the exact
+    # predicate emitted by ``routers.quotes.list_quotes`` when the
+    # ``payment_status`` query param is set: ``tenant_id`` +
+    # ``doc_type`` + ``payment_status`` + ``deleted_at``. Idempotent
+    # via the k44 ``list_indexes`` cache check; background=True keeps
+    # the initial build from blocking writes on a live cluster.
+    ("quotes",
+     "k44_quotes_tenant_doctype_paymentstatus_deleted",
+     [("tenant_id", 1), ("doc_type", 1),
+      ("payment_status", 1), ("deleted_at", 1)]),
     ("properties", "k21_properties_id",
      [("id", 1)]),
     ("chat_messages", "k21_chat_msgs_tenant_customer_time",
