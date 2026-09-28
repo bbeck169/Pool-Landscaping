@@ -119,6 +119,16 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
     signal.  ``None`` when the extractor didn't capture one —
     downstream consumers (FE display, commit path) fall back to
     ``qty × unit_price``.
+
+    PDF-MIRROR · Feb-2026 — three more verbatim pass-throughs:
+      * ``sku`` — dedicated part-number column when present.
+      * ``tax_pct`` — per-line tax rate.
+      * ``tax_line`` — per-line tax dollar amount.
+    Plus ``description`` retains its embedded newlines verbatim
+    (Python string round-trips ``\\n`` correctly through Pydantic
+    → JSON → Mongo). Multi-line descriptions the extractor
+    emitted with ``\\n`` joiners land on Mongo with the same
+    joiners intact.
     """
     qty = li.qty if li.qty is not None else 1.0
     unit_price = li.cost_rate
@@ -128,12 +138,21 @@ def _line_item_to_quote_shape(li) -> Dict[str, Any]:
         unit_price = li.line_total / qty if qty else li.line_total
     return {
         "item_name": li.item_name,
+        # PDF-MIRROR · Feb-2026 — dedicated SKU column (distinct
+        # from ``item_name``). ``None`` when the extractor didn't
+        # capture one.
+        "sku": li.sku,
         "description": li.description,
         "quantity": qty,
         "unit_price": float(unit_price) if unit_price is not None else 0.0,
         # PDF-FIX-D · Feb-2026 — verbatim pass-through from
         # extractor.  Never overwritten by qty × unit_price math.
         "line_total": float(li.line_total) if li.line_total is not None else None,
+        # PDF-MIRROR · Feb-2026 — per-line tax pass-through
+        # (rate + amount). Nullable so pre-MIRROR previews still
+        # round-trip cleanly.
+        "tax_pct": float(li.tax_pct) if li.tax_pct is not None else None,
+        "tax_line": float(li.tax_line) if li.tax_line is not None else None,
     }
 
 
@@ -445,6 +464,16 @@ async def map_extracted_to_quote_in(
         # drift the persisted numbers away from the PDF the
         # operator uploaded).
         "imported_totals_verbatim": True,
+        # PDF-MIRROR · Feb-2026 — sibling sentinel to
+        # ``imported_totals_verbatim``. Signals that
+        # ``line_items[*]`` were shaped by ``_line_item_to_quote_
+        # shape`` with the verbatim pass-through of description
+        # (multi-line preserved), sku, line_total, tax_pct, and
+        # tax_line — i.e. every field the extractor captured is
+        # present without commit-side re-derivation. Downstream
+        # reporting reads this to opt out of re-deriving
+        # per-line totals from ``qty × unit_price``.
+        "line_items_preserved_verbatim": True,
     }
     if created_at_dt is not None:
         quote_in["created_at"] = created_at_dt.isoformat()

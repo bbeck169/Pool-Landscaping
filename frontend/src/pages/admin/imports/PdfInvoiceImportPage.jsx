@@ -1167,6 +1167,43 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
   const totalCount = invoicePreviews.length;
   const dupCount = dupIndex.size;
 
+  // PDF-MIRROR · Feb-2026 — needs_review derivation.  A preview
+  // is flagged when the extractor produced no grand_total AND
+  // the line-item recompute also came up $0.00 (see
+  // ``pdf_commit._apply_totals`` — ``total_source ==
+  // 'zero_total_unrecoverable'``). Backend refuses to commit
+  // these; FE surfaces a banner + disables the commit button
+  // until admin explicitly acknowledges via the override
+  // checkbox.
+  const _isNeedsReview = (p) => {
+    const qi = p?.quote_in || {};
+    // The extractor's grand_total AND total_due are both empty,
+    // AND the mapper's line-items sum to zero → preview will be
+    // marked ``zero_total_unrecoverable`` by the backend on
+    // commit. Compute FE-side so the badge renders pre-commit.
+    const gt = qi.grand_total;
+    const td = qi.total_due;
+    if ((gt !== null && gt !== undefined && Number(gt) !== 0)
+        || (td !== null && td !== undefined && Number(td) !== 0)) {
+      return false;
+    }
+    const items = Array.isArray(qi.line_items) ? qi.line_items : [];
+    let sum = 0;
+    for (const li of items) {
+      const lt = li?.line_total;
+      if (lt !== null && lt !== undefined) {
+        sum += Number(lt) || 0;
+      } else {
+        sum += (Number(li?.quantity) || 0) * (Number(li?.unit_price) || 0);
+      }
+    }
+    return sum === 0;
+  };
+  const needsReviewPreviews = invoicePreviews.filter(_isNeedsReview);
+  const needsReviewCount = needsReviewPreviews.length;
+
+  const [needsReviewAcked, setNeedsReviewAcked] = useState(false);
+
   const isCommitting = fileStatus === FILE_STATUS.COMMITTING;
   const isCommitted  = fileStatus === FILE_STATUS.COMMITTED;
   const isRollingBack = fileStatus === FILE_STATUS.ROLLING_BACK;
@@ -1272,6 +1309,49 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
         </div>
       ) : (
         <>
+          {/* PDF-MIRROR · Feb-2026 — Needs Review banner. Renders
+              when ≥1 preview row's grand_total AND line-item sum
+              are both $0 — the backend will refuse to commit these
+              (``zero_total_unrecoverable``). Admin must
+              acknowledge before the commit button re-enables. */}
+          {needsReviewCount > 0 ? (
+            <div
+              className="mb-3 rounded-md border p-3 flex items-start gap-3"
+              style={{
+                borderColor: "#F59E0B",
+                backgroundColor: "#FFFBEB",
+              }}
+              data-testid={`pdf-import-needs-review-banner-${fileId}`}
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0"
+                            style={{ color: "#B45309" }} />
+              <div className="flex-1 text-sm" style={{ color: "#78350F" }}>
+                <div className="font-semibold">
+                  {needsReviewCount} invoice{needsReviewCount === 1 ? "" : "s"} need review
+                </div>
+                <div className="mt-1 text-xs" style={{ color: "#92400E" }}>
+                  Extractor produced no grand total AND line items
+                  sum to $0 — these will NOT be committed unless
+                  you acknowledge below. Fix the source PDF or
+                  edit the extracted values before proceeding.
+                </div>
+                <label
+                  className="mt-2 inline-flex items-center gap-2 cursor-pointer"
+                  data-testid={`pdf-import-needs-review-ack-label-${fileId}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={needsReviewAcked}
+                    onChange={(e) => setNeedsReviewAcked(e.target.checked)}
+                    data-testid={`pdf-import-needs-review-ack-${fileId}`}
+                  />
+                  <span className="text-xs font-medium">
+                    I understand — commit the rest anyway (the {needsReviewCount} zero-total row{needsReviewCount === 1 ? "" : "s"} will be skipped server-side)
+                  </span>
+                </label>
+              </div>
+            </div>
+          ) : null}
           <div
             className="max-h-[70vh] overflow-auto rounded"
             style={{ backgroundColor: colors.surface }}
@@ -1444,7 +1524,8 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
                     <Button
                       variant="primary"
                       onClick={handleCommit}
-                      disabled={isCommitting}
+                      disabled={isCommitting
+                        || (needsReviewCount > 0 && !needsReviewAcked)}
                       testid={`pdf-import-commit-btn-${fileId}`}
                     >
                       {isCommitting ? (
@@ -1539,6 +1620,50 @@ export function PreviewRow({
             so a legitimately-waived invoice (grand_total = 0)
             still renders as "$0.00" verbatim per PDF-FIX §1. */}
         {formatCurrency(q.grand_total ?? q.total_due ?? q.amount_paid ?? 0)}
+        {/* PDF-MIRROR · Feb-2026 — total_source badge. Rendered
+            below the amount so the operator can distinguish
+            verbatim / reconstructed / needs-review origins at a
+            glance. Priority: needs-review > reconstructed >
+            verbatim (default when we can't tell). */}
+        {(() => {
+          // Compute badge state client-side. Backend adds a
+          // ``total_source`` field on the persisted doc; before
+          // commit we approximate from the preview's quote_in.
+          const gt = q.grand_total;
+          const td = q.total_due;
+          const hasVerbatim =
+            (gt !== null && gt !== undefined && Number(gt) !== 0)
+            || (td !== null && td !== undefined && Number(td) !== 0);
+          let badge = "Verbatim";
+          let bg = "bg-emerald-50 text-emerald-800";
+          if (!hasVerbatim) {
+            const items = Array.isArray(q.line_items) ? q.line_items : [];
+            let sum = 0;
+            for (const li of items) {
+              const lt = li?.line_total;
+              if (lt !== null && lt !== undefined) {
+                sum += Number(lt) || 0;
+              } else {
+                sum += (Number(li?.quantity) || 0) * (Number(li?.unit_price) || 0);
+              }
+            }
+            if (sum === 0) {
+              badge = "Needs Review";
+              bg = "bg-amber-100 text-amber-900";
+            } else {
+              badge = "Reconstructed";
+              bg = "bg-sky-50 text-sky-800";
+            }
+          }
+          return (
+            <div
+              className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${bg}`}
+              data-testid={`pdf-import-preview-row-${fileId}-${preview.source_doc_index}-total-source-badge`}
+            >
+              {badge}
+            </div>
+          );
+        })()}
       </td>
       <td className="px-3 py-2">
         <CustomerCell preview={preview} />
@@ -1617,7 +1742,7 @@ export function PreviewRow({
                         {nameCell}
                       </td>
                       <td
-                        className="px-2 py-1"
+                        className="px-2 py-1 whitespace-pre-wrap"
                         data-testid={`pdf-import-line-item-${fileId}-${sourceIdx}-${idx}-description`}
                       >
                         {descCell}

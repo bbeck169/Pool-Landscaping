@@ -257,7 +257,11 @@ def test_h_prompt_version_constant_and_extract_start_log_reference():
     byte scaffolding, no vision-call mock).
     """
     from services.imports import pdf_invoice_extractor as mod
-    assert mod.EXTRACTOR_PROMPT_VERSION == "v2_deep_extraction"
+    # PDF-MIRROR · Feb-2026 — prompt bumped to v3_pdf_mirror after
+    # the CHEM-LOCK / PDF-FIX-D cut. Whenever the extractor prompt's
+    # semantic contract changes (new required fields, altered
+    # rules), bump this constant AND update this pin.
+    assert mod.EXTRACTOR_PROMPT_VERSION == "v3_pdf_mirror"
 
     # Source-level check that extract() actually references
     # the constant in its start-line log — catches accidental

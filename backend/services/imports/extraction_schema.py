@@ -50,9 +50,20 @@ class ExtractedLineItem(BaseModel):
     # Nullable + Optional so existing extraction fixtures without
     # the field parse cleanly.
     item_name: Optional[str] = None
+    # PDF-MIRROR · Feb-2026 — verbatim SKU / part number when the
+    # PDF prints one in its own column (distinct from the short
+    # ``item_name``). Nullable so pre-MIRROR extraction fixtures
+    # continue to parse.
+    sku: Optional[str] = None
     cost_rate: Optional[float] = None
     qty: Optional[float] = None
     tax_pct: Optional[float] = None
+    # PDF-MIRROR · Feb-2026 — verbatim per-line TAX AMOUNT
+    # (dollars) when the PDF prints a per-line tax column.
+    # Distinct from ``tax_pct`` (rate) — some vendors show both,
+    # some show only the amount. Nullable so pre-MIRROR fixtures
+    # continue to parse.
+    tax_line: Optional[float] = None
     line_total: Optional[float] = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 

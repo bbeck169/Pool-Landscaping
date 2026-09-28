@@ -365,6 +365,27 @@ async def commit_batch(
         # (we did NOT trust the extractor's grand_total).
         _apply_totals(doc)
 
+        # PDF-MIRROR · Feb-2026 — Refuse to silently commit a $0
+        # invoice. When ``_apply_totals`` couldn't derive a
+        # non-zero total from EITHER the extractor's verbatim
+        # values OR the line-item recompute, the doc is
+        # flagged ``zero_total_unrecoverable`` and pushed to the
+        # needs_review warnings bucket rather than into the
+        # quotes collection. Operator resolves manually.
+        if doc.get("total_source") == "zero_total_unrecoverable":
+            warnings.append({
+                "source_doc_index": source_doc_index,
+                "doc_type": doc.get("doc_type"),
+                "code": "needs_review",
+                "reason": "zero_total_unrecoverable",
+                "message": (
+                    "Extractor produced no grand_total AND recompute "
+                    "from line items yielded $0.00 — invoice needs "
+                    "operator review before commit. NOT persisted."
+                ),
+            })
+            continue
+
         # PDF-C · Feb-2026 — per-doc-type warn-on-missing-fields.
         # doc_date + total_due for invoices and estimates alike;
         # ruling #7 says warn, do NOT block.
@@ -604,8 +625,34 @@ def _build_quote_doc_from_preview(
         "imported_totals_verbatim": bool(
             qi.get("imported_totals_verbatim")
         ),
+        # PDF-MIRROR · Feb-2026 — sibling sentinel: line_items
+        # were shaped by pdf_mapper._line_item_to_quote_shape
+        # with every extractor field preserved (description
+        # newlines, sku, line_total, tax_pct, tax_line).
+        "line_items_preserved_verbatim": bool(
+            qi.get("line_items_preserved_verbatim")
+        ),
         "amount_paid": float(qi.get("amount_paid") or 0.0),
         "due_date": qi.get("due_date"),
+        # PDF-MIRROR · Feb-2026 — historical-date preservation.
+        # ``doc_date`` from the source PDF now lands on the
+        # persisted quote doc explicitly (previously it was
+        # only reachable via ``created_at`` after Task H0's
+        # resolve_date_override coerced it). Nullable when the
+        # extractor didn't capture one.
+        "doc_date": qi.get("doc_date"),
+        # PDF-MIRROR · Feb-2026 — provenance sentinels so audit /
+        # reports can distinguish an extracted date from a
+        # commit-time fallback without re-reading the source PDF.
+        #   * ``extracted`` — value came from the extractor.
+        #   * ``commit_time_fallback`` — commit stamped now()
+        #     because the PDF didn't print one.
+        "doc_date_source": (
+            "extracted" if qi.get("doc_date") else "commit_time_fallback"
+        ),
+        "due_date_source": (
+            "extracted" if qi.get("due_date") else "commit_time_fallback"
+        ),
         # §A ruling: historicals default to sent, not draft.
         "status": qi.get("status") or "sent",
         # §A ruling: preserve extracted payment_status if present.
@@ -895,6 +942,21 @@ def _apply_totals(doc: Dict[str, Any]) -> None:
     OR totals are 0.0 sentinel because the PDF didn't print
     them): recompute from line items — matches Sub-phase C
     behaviour and every pre-PDF-FIX-D test.
+
+    PDF-MIRROR · Feb-2026 — additive ``total_source`` sentinel.
+    Every branch of ``_apply_totals`` stamps the doc with one
+    of three values so downstream readers (audit, needs-review
+    filter, FE badge) can distinguish the origin:
+      * ``verbatim`` — extractor produced a valid non-zero total
+        and we trusted it (unchanged PDF-FIX-D path).
+      * ``reconstructed_from_lines`` — recompute from line-items
+        yielded a non-zero total (this is the new fallback for
+        PDFs with only subtotals + tax lines but no explicit
+        Total row).
+      * ``zero_total_unrecoverable`` — everything came up 0.0.
+        The commit-loop refuses to insert docs with this
+        sentinel (see :func:`commit_batch`); the preview is
+        flagged for operator review instead.
     """
     # PDF-FIX-D gate — trust the extractor's values when the
     # mapper stamped verbatim + a non-zero total is present.
@@ -904,6 +966,7 @@ def _apply_totals(doc: Dict[str, Any]) -> None:
         doc.get("imported_totals_verbatim") is True
         and (doc.get("total") or 0.0) != 0.0
     ):
+        doc["total_source"] = "verbatim"
         return
 
     line_items = doc.get("line_items") or []
@@ -912,16 +975,31 @@ def _apply_totals(doc: Dict[str, Any]) -> None:
         try:
             qty = float(li.get("quantity") or 0)
             up = float(li.get("unit_price") or 0)
+            # PDF-MIRROR · Feb-2026 — prefer the verbatim
+            # ``line_total`` when present so recompute can
+            # capture PDF-side discounts / rounding invisible
+            # to the naive ``qty × up`` math. Falls through to
+            # ``qty × up`` when the extractor didn't capture a
+            # line total.
+            lt = li.get("line_total")
+            if lt is None:
+                subtotal += qty * up
+            else:
+                subtotal += float(lt)
         except (TypeError, ValueError):
-            qty = 0.0
-            up = 0.0
-        subtotal += qty * up
+            continue
     tax_rate = float(doc.get("tax_rate") or 0.0)
     tax = round(subtotal * (tax_rate / 100.0), 2)
     total = round(subtotal + tax, 2)
     doc["subtotal"] = round(subtotal, 2)
     doc["tax"] = tax
     doc["total"] = total
+    if total == 0.0:
+        # Nothing to persist — the caller will refuse to insert
+        # this doc and route it to the needs_review bucket.
+        doc["total_source"] = "zero_total_unrecoverable"
+    else:
+        doc["total_source"] = "reconstructed_from_lines"
 
 
 # ═════════════════════════════════════════════════════════════

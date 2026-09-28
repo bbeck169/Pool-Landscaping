@@ -138,9 +138,10 @@ _EXTRACTION_USER_TMPL = (
     '  "payment_method": "cash"|"check"|"card"|"ach"|"other"|null,\n'
     '  "payment_reference": str | null,\n'
     '  "line_items": [\n'
-    '    {{"item_name": str|null, "description": str|null, '
+    '    {{"item_name": str|null, "sku": str|null, "description": str|null, '
     '"cost_rate": float|null, "qty": float|null, "tax_pct": float|null, '
-    '"line_total": float|null, "confidence": 0.0-1.0}}\n'
+    '"tax_line": float|null, "line_total": float|null, '
+    '"confidence": 0.0-1.0}}\n'
     "  ],\n"
     '  "subtotal": float | null,\n'
     '  "tax_total": float | null,\n'
@@ -165,21 +166,41 @@ _EXTRACTION_USER_TMPL = (
     "'Chlorine 4-lb tablets delivered on 3/12 during weekly "
     "service').  These are DIFFERENT fields — extract each "
     "separately as it appears on the PDF.\n"
+    "- ``sku`` is a distinct SKU / part-number column when the "
+    "PDF prints one alongside item_name (rare — most vendors "
+    "conflate the two).  Leave null when the PDF has only one "
+    "identifier column; use ``item_name`` for the primary "
+    "label in that case.\n"
     "- If the invoice line has only ONE text label (no separate "
     "SKU + description), put it in ``item_name`` and leave "
     "``description`` null.  Do NOT duplicate the string.\n"
+    "- PRESERVE MULTI-LINE DESCRIPTIONS VERBATIM.  If a line "
+    "item's description wraps across multiple visual lines on "
+    "the PDF, join them with ``\\n`` (newline) — do NOT "
+    "concatenate with spaces and do NOT truncate.  Every "
+    "character the PDF shows in the description column must "
+    "round-trip into the ``description`` field.\n"
     "- ``line_total`` MUST be extracted verbatim from the PDF's "
     "line-item column.  Do NOT compute it as qty × price — a "
     "PDF's printed line_total may reflect discounts or rounding "
     "the extractor cannot see.  Leave null only when the PDF "
     "literally does not print a per-line total.\n"
+    "- ``tax_line`` is the per-line tax AMOUNT in dollars when "
+    "the PDF prints a per-line tax column.  Distinct from "
+    "``tax_pct`` (per-line tax rate).  Leave null when the PDF "
+    "shows only a single roll-up ``tax_total`` at the bottom.\n"
     "- ``subtotal`` is the pre-tax total; ``tax_total`` is the "
     "tax value in DOLLARS; ``tax_rate`` is the tax value as a "
     "PERCENTAGE (e.g. 6.25 for 6.25%).  ``grand_total`` is the "
-    "final amount owed — the 'Total' or 'Total Due' line.  "
-    "When all three are visible, verify that "
-    "``subtotal + tax_total ≈ grand_total`` (small rounding "
-    "differences <$0.01 are fine).\n"
+    "final amount owed — capture it from ANY of the following "
+    "printed labels: 'Total', 'Total Due', 'Amount Due', "
+    "'Balance Due', 'Grand Total', 'Invoice Total', or the "
+    "final bold row of the totals block.  If the PDF prints "
+    "ONLY a subtotal + tax_total with no explicit grand-total "
+    "line, still capture ``grand_total`` as the sum. "
+    "When all three (subtotal / tax_total / grand_total) are "
+    "visible, verify that ``subtotal + tax_total ≈ grand_total`` "
+    "(small rounding differences <$0.01 are fine).\n"
 )
 
 # PDF-FIX-C · Feb-2026 — prompt-version stamp for A/B measurement
@@ -188,7 +209,7 @@ _EXTRACTION_USER_TMPL = (
 # Emitted on the ``[pdf_extract.start]`` log line at every
 # ``extract()`` invocation so downstream analytics can bucket
 # extraction quality by prompt revision.
-EXTRACTOR_PROMPT_VERSION = "v2_deep_extraction"
+EXTRACTOR_PROMPT_VERSION = "v3_pdf_mirror"
 
 
 # ── Payment-method normalization ───────────────────────────────
@@ -214,19 +235,61 @@ def normalize_payment_method(raw: Optional[str]) -> Optional[str]:
     return "other"
 
 
-def _coerce_date(raw: Any) -> Optional[date]:
-    """Accept ``YYYY-MM-DD`` ISO, ``Month DD, YYYY``, and
-    ``MM/DD/YYYY`` variants.  Returns ``None`` on unparseable
-    input — ``None`` bubbles up as a warning through the
-    ``_ensure_document`` normalizer, never a hard error."""
+def _coerce_date(
+    raw: Any,
+    *,
+    dayfirst: bool = False,
+    log_ambiguous: bool = True,
+) -> Optional[date]:
+    """Accept every date shape the PDFs in the field print:
+    ``YYYY-MM-DD``, ``MM/DD/YYYY``, ``DD/MM/YYYY``, ``Month DD, YYYY``,
+    ``DD Month YYYY``, ``MMM DD YYYY``. Returns ``None`` on
+    unparseable input — ``None`` bubbles up as a warning through
+    the ``_ensure_document`` normalizer, never a hard error.
+
+    PDF-MIRROR · Feb-2026 additions:
+
+    * ``dayfirst`` — passed through to ``dateutil.parser.parse``
+      so tenants configured with a non-US locale
+      (``settings.locale != "en_US"``) parse ambiguous slash-
+      separated dates as DD/MM/YYYY. Default False (US).
+    * ``log_ambiguous`` — when True (default) an ambiguous
+      ``NN/NN/YYYY`` where the first two digits could be either
+      month or day (both ≤ 12) is logged at WARN so ops can
+      cross-check the imported date against the source PDF.
+      No parse behaviour change — the WARN is diagnostic only;
+      the value returned still respects ``dayfirst``.
+    """
     if raw is None or raw == "":
         return None
     if isinstance(raw, date):
         return raw
-    try:
-        return _du_parser.parse(str(raw)).date()
-    except (ValueError, TypeError, OverflowError):
+    raw_str = str(raw).strip()
+    if not raw_str:
         return None
+    try:
+        parsed = _du_parser.parse(raw_str, dayfirst=dayfirst).date()
+    except (ValueError, TypeError, OverflowError):
+        logger.warning(
+            "[pdf_extract.date] unparseable date %r — returning None",
+            raw_str,
+        )
+        return None
+
+    if log_ambiguous:
+        # Detect ``NN/NN/YYYY`` (or ``NN-NN-YYYY``) where BOTH
+        # NNs are ≤ 12 — genuinely ambiguous without locale.
+        m = re.match(r"^\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})\s*$",
+                     raw_str)
+        if m:
+            a, b, _ = int(m.group(1)), int(m.group(2)), m.group(3)
+            if 1 <= a <= 12 and 1 <= b <= 12 and a != b:
+                logger.warning(
+                    "[pdf_extract.date] ambiguous %r — parsed as "
+                    "%s (dayfirst=%s). Verify tenant locale.",
+                    raw_str, parsed.isoformat(), dayfirst,
+                )
+    return parsed
 
 
 # ── PDF → image rendering (PyMuPDF) ────────────────────────────
