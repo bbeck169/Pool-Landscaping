@@ -119,6 +119,7 @@ async def send_from_queue(
     try:
         import resend  # type: ignore
         resend.api_key = resend_key
+        # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
         resp = resend.Emails.send({
             "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
             "to": [to_email],

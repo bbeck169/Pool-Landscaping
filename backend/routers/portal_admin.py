@@ -383,6 +383,7 @@ async def _try_send_reset_email(
         # ``<!doctype html>...`` shell around it.
         from services.email.theming import wrap_html_in_shell
         wrapped_html = wrap_html_in_shell(inner_html, branding=None)
+        # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
         resp = resend.Emails.send({
             "from": EMAIL_FROM or "onboarding@resend.dev",
             "to": [to],

@@ -146,6 +146,7 @@ async def _send_renewal_confirmation(
     try:
         import resend
         resend.api_key = RESEND_API_KEY
+        # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
         resend.Emails.send({
             "from":    EMAIL_FROM,
             "to":      to,

@@ -1,7 +1,15 @@
-import resend
 from typing import Optional
 
-from config import db, logger, RESEND_API_KEY, EMAIL_FROM, APP_PUBLIC_URL
+from config import db, logger, RESEND_API_KEY, APP_PUBLIC_URL
+# SAFE-SEND-C · Feb-2026 — migrated from direct ``resend.Emails.send``
+# to the SAFE-SEND-gated adapter.  All three send fns now pass
+# ``context=CommsContext.SYSTEM`` (production transactional).  The
+# adapter runs suppression, is_comm_allowed, K72 kill-switch,
+# ``guard_outbound``, BYO probe, testmode, and the retry loop
+# internally; we consume its envelope + return the legacy ``bool``
+# contract to callers.
+from services.comms_env_guard import CommsContext
+from services.email.resend_adapter import send as _resend_send
 # Feb-2026 · Email Base Template Theming — shared brand shell.
 # ``wrap_html_in_shell`` is a PURE function; callers must resolve
 # ``branding`` via ``get_effective_business_settings(...)`` in their
@@ -171,19 +179,23 @@ async def send_completion_email(job: dict) -> bool:
     from services.email_body_i18n import t_email_body
     _locale = resolve_email_locale(recipient=cust, tenant=_tenant)
     try:
-        resend.api_key = RESEND_API_KEY
-        resend.Emails.send({
-            "from": EMAIL_FROM,
-            "to": to_email,
-            "subject": t_email_body(
+        res = await _resend_send(
+            to=to_email,
+            subject=t_email_body(
                 _locale, "email.job_completed.subject",
                 service_type=job.get("service_type", "service"),
             ),
-            "html": _completion_html(
+            html=_completion_html(
                 job, cust.get("name", "there"), locale=_locale,
             ),
-        })
-        return True
+            category="transactional",
+            tenant_id=job.get("tenant_id"),
+            audience="customer",
+            context=CommsContext.SYSTEM,
+        )
+        return res.get("provider_status") in (
+            "sent", "queued", "mocked", "dry_run",
+        )
     except Exception as e:
         logger.warning(f"Completion email failed: {e}")
         return False
@@ -528,7 +540,6 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
     # empty string here and keep the kwarg for API compatibility.
     portal_cta_url = ""
     try:
-        resend.api_key = RESEND_API_KEY
         # Feb-2026 · P0 subject fix — no more "Payment reminder —
         # Estimate" chimera. Use the invoice's display number.
         subject_num = _invoice_display_number(inv)
@@ -552,16 +563,21 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
                              locale=_locale),
             branding,
         )
-        resend.Emails.send({
-            "from": EMAIL_FROM,
-            "to": to_email,
-            "subject": t_email_body(
+        res = await _resend_send(
+            to=to_email,
+            subject=t_email_body(
                 _locale, "email.invoice_reminder.subject",
                 invoice_number=subject_num,
             ),
-            "html": themed_html,
-        })
-        return True
+            html=themed_html,
+            category="transactional",
+            tenant_id=inv.get("tenant_id"),
+            audience="customer",
+            context=CommsContext.SYSTEM,
+        )
+        return res.get("provider_status") in (
+            "sent", "queued", "mocked", "dry_run",
+        )
     except Exception as e:
         logger.warning(f"Reminder email failed: {e}")
         return False
@@ -666,7 +682,6 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
          else "email.estimate_reminder.doc_type.estimate"),
     )
     try:
-        resend.api_key = RESEND_API_KEY
         # Feb-2026 · Email Base Template Theming — wrap in shared shell.
         try:
             branding = await get_effective_business_settings(
@@ -687,16 +702,21 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
             ),
             branding,
         )
-        resend.Emails.send({
-            "from": EMAIL_FROM,
-            "to": to_email,
-            "subject": t_email_body(
+        res = await _resend_send(
+            to=to_email,
+            subject=t_email_body(
                 _locale, "email.estimate_reminder.subject",
                 doc_type_label=_localized_dt_label, company=company,
             ),
-            "html": themed_html,
-        })
-        return True
+            html=themed_html,
+            category="transactional",
+            tenant_id=(tenant or {}).get("id") or inv.get("tenant_id"),
+            audience="customer",
+            context=CommsContext.SYSTEM,
+        )
+        return res.get("provider_status") in (
+            "sent", "queued", "mocked", "dry_run",
+        )
     except Exception as e:
         logger.warning(f"Estimate reminder email failed: {e}")
         return False

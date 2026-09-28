@@ -87,16 +87,33 @@ async def fire_due_reminders(db) -> int:
 
 
 async def _send_live_sms(row: Dict[str, Any]) -> None:
-    """Send via the tenant's RingCentral integration. Isolated so the
-    dry-run path doesn't drag the RC SDK into every test import."""
+    """Send via the tenant's RingCentral integration through the
+    SAFE-SEND-gated adapter.  Isolated so the dry-run path doesn't
+    drag the RC SDK into every test import.
+
+    SAFE-SEND-C · Feb-2026 — migrated from the retired
+    ``services.sms_provider`` module (which routed to a
+    non-SAFE-SEND path) to ``services.sms.rc_adapter.send``.
+    Passes ``context=CommsContext.SYSTEM`` because Lana admin
+    reminders are internal system-triggered pings; the recipient
+    is a tenant admin (``audience="internal"``) so the K72
+    customer-comms kill-switch does not suppress the reminder
+    during an incident.
+    """
     try:
-        from services.sms_provider import send_sms  # type: ignore
+        from services.sms.rc_adapter import send as _rc_send
+        from services.comms_env_guard import CommsContext
     except Exception:
-        # No RingCentral module in-tree yet — treat as dry-run.
+        # RC adapter (or its transitive deps) unavailable — treat as dry-run.
         logger.info("[lana.reminders] SMS module unavailable; treating as dry_run")
         return
     tag = "[LANA reminder] "
-    await send_sms(
-        to_phone=row["phone"],
+    await _rc_send(
+        to=row["phone"],
         body=tag + (row.get("text") or ""),
+        category="transactional",
+        tenant_id=row.get("tenant_id"),
+        customer_id=row.get("user_id"),
+        audience="internal",
+        context=CommsContext.SYSTEM,
     )

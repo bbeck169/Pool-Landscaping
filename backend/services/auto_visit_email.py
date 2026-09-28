@@ -1470,6 +1470,7 @@ async def send_visit_summary_email(tenant: dict, job: dict, sr: dict) -> Optiona
                 _from_header = (
                     f"{_safe_name} <{_bare_from}>" if _safe_name else _bare_from
                 )
+                # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
                 resp = resend.Emails.send({
                     "from": _from_header,
                     "to": [to_email],

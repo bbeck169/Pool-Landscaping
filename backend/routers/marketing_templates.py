@@ -40,6 +40,10 @@ from services.marketing.merge_tags import (
 # module load so a broken path fails FAST at boot instead of only when
 # a user hits the ``test-send`` endpoint.
 from services.email.resend_adapter import send as _resend_send
+# SAFE-SEND-C · Feb-2026 — the test-send endpoint passes
+# ``CommsContext.TEST`` into the adapter so AGENT/TEST redirects to
+# the tenant admin sandbox instead of the caller-supplied recipient.
+from services.comms_env_guard import CommsContext
 
 router = APIRouter()
 
@@ -553,6 +557,10 @@ async def test_send_template(
                 category="transactional", tenant_id=tenant["id"],
                 idempotency_key=(f"tpl-testsend:{tid}:{user.get('id')}:"
                                     f"{int(_phase9_time.time())}"),
+                # SAFE-SEND-C · Feb-2026 — TEST context redirects the
+                # send to the tenant admin sandbox and enriches the
+                # returned envelope with the six safe-send fields.
+                context=CommsContext.TEST,
             )
         except Exception as exc:  # pragma: no cover
             provider_res = {"provider": "ringcentral",
@@ -560,7 +568,9 @@ async def test_send_template(
                              "provider_response_id": None,
                              "error": str(exc)}
         return {
-            "ok": provider_res.get("provider_status") == "sent",
+            "ok": provider_res.get("provider_status") in (
+                "sent", "queued", "mocked", "dry_run",
+            ),
             "channel": "sms",
             "recipient": to_field,
             "provider": provider_res.get("provider"),
@@ -569,6 +579,20 @@ async def test_send_template(
             "rendered_body": rendered_plain,
             "unresolved_tokens": sorted(set(list(sub_missing) + list(body_missing))),
             "missing_vars": sorted(set(missing)),
+            # SAFE-SEND-C · Feb-2026 — expose the safe-send envelope
+            # so the FE test-send badge (SAFE-SEND-B) can render the
+            # "redirected to admin" state and the audit-metadata pair.
+            "redirected": provider_res.get("redirected", False),
+            "safe_send_context": provider_res.get(
+                "safe_send_context", CommsContext.TEST.value,
+            ),
+            "intended_recipient_redacted": provider_res.get(
+                "intended_recipient_redacted",
+            ),
+            "actual_recipient_redacted": provider_res.get(
+                "actual_recipient_redacted",
+            ),
+            "was_mock": provider_res.get("provider") == "mock",
         }
 
     # ─── email
@@ -583,6 +607,10 @@ async def test_send_template(
             to=to_field, subject=subject_rendered or "(test)",
             html=body_rendered or "",
             category="transactional", tenant_id=tenant["id"],
+            # SAFE-SEND-C · Feb-2026 — TEST context redirects the
+            # send to the tenant admin sandbox and enriches the
+            # returned envelope with the six safe-send fields.
+            context=CommsContext.TEST,
         )
     except Exception as exc:
         logger.exception(
@@ -597,7 +625,9 @@ async def test_send_template(
             "error_message": str(exc),
         }
     return {
-        "ok": provider_res.get("provider_status") in ("sent", "queued", "mocked"),
+        "ok": provider_res.get("provider_status") in (
+            "sent", "queued", "mocked", "dry_run",
+        ),
         "channel": "email",
         "recipient": to_field,
         "provider": provider_res.get("provider"),
@@ -609,6 +639,20 @@ async def test_send_template(
         "missing_vars": sorted(set(missing)),
         "error_type": provider_res.get("error_type"),
         "error_message": provider_res.get("error_message") or provider_res.get("error"),
+        # SAFE-SEND-C · Feb-2026 — expose the safe-send envelope so
+        # the FE test-send badge (SAFE-SEND-B) can render the
+        # "redirected to admin" state and the audit-metadata pair.
+        "redirected": provider_res.get("redirected", False),
+        "safe_send_context": provider_res.get(
+            "safe_send_context", CommsContext.TEST.value,
+        ),
+        "intended_recipient_redacted": provider_res.get(
+            "intended_recipient_redacted",
+        ),
+        "actual_recipient_redacted": provider_res.get(
+            "actual_recipient_redacted",
+        ),
+        "was_mock": provider_res.get("provider") == "mock",
     }
 
 

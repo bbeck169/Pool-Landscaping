@@ -25,12 +25,15 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import httpx
 
 from config import logger
 from services.ringcentral.rc_client import RingCentralError, RingCentralService
+
+if TYPE_CHECKING:
+    from services.comms_env_guard import CommsContext
 
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
@@ -138,7 +141,17 @@ class RingCentralSMSAdapter:
                     idempotency_key: Optional[str] = None,
                     tenant_id: Optional[str] = None,
                     customer_id: Optional[str] = None,
-                    audience: str = "customer") -> Dict[str, Any]:
+                    audience: str = "customer",
+                    # SAFE-SEND-C · Feb-2026 — accept optional
+                    # CommsContext so callers can opt into the
+                    # redirect gate.  ``None`` defaults to
+                    # ``SYSTEM`` (production transactional).  Callers
+                    # who need AGENT/TEST semantics — marketing
+                    # test-send, AI-drafted sends — pass the value
+                    # explicitly.  See
+                    # ``services.comms_env_guard.CommsContext``.
+                    context: Optional["CommsContext"] = None,
+                    ) -> Dict[str, Any]:
         """Send an SMS via RingCentral. Never raises.
 
         P0 Fix 2b · Feb 2026 — when ``idempotency_key`` is provided the
@@ -158,12 +171,119 @@ class RingCentralSMSAdapter:
         the tenant's outbound comms stream is fully paused during
         an incident. Internal / admin SMS (staff alerts, on-call
         pager, etc.) pass ``audience="internal"`` to bypass.
+
+        SAFE-SEND-C · Feb-2026 — ``context`` (optional
+        ``CommsContext``, default ``SYSTEM``) enables the redirect
+        gate.  When ``AGENT`` or ``TEST``, the recipient is rewritten
+        to the tenant's admin sandbox target BEFORE any suppression /
+        consent / cap gate fires; a ``[MARCO TEST]`` prefix is added
+        to the body; ``audience`` is forced to ``"internal"`` so the
+        K72 customer kill-switch doesn't suppress the visibility copy;
+        every return envelope carries the six SAFE-SEND fields
+        (``redirected``, ``safe_send_context``,
+        ``intended_recipient_redacted``, ``actual_recipient_redacted``,
+        ``provider_status``, ``was_mock``).  On
+        ``RedirectTargetMissing`` the send is SUPPRESSED with
+        ``provider_status="skipped_no_redirect_target"``.
         """
         addr_e164 = normalize_phone_e164(to)
         if not addr_e164:
             return {"provider": "ringcentral", "provider_status": "failed",
                     "provider_response_id": None, "attempts": 0,
                     "error": "invalid_phone"}
+
+        # ═══ SAFE-SEND-C · Feb-2026 — redirect preflight ═════════════
+        # Resolve the effective ``CommsContext`` — default ``SYSTEM``
+        # for legacy callers who don't pass one.  If the context is
+        # ``AGENT`` or ``TEST``, resolve the tenant's redirect target
+        # (business_card.phone → admin-user fallback), rewrite
+        # ``addr_e164`` + prepend ``[MARCO TEST]`` on the body, and
+        # force ``audience="internal"`` so K72 doesn't suppress the
+        # visibility copy.  Idempotency, consent, gate, kill-switch,
+        # BYO probe, testmode, and mocked-mode all re-evaluate against
+        # the redirected number below — which is what we want.
+        #
+        # On ``RedirectTargetMissing`` the send is SUPPRESSED
+        # (never falls through to the customer) and the response
+        # envelope carries ``skipped_no_redirect_target`` plus the
+        # SAFE-SEND audit-metadata fields.
+        from services.comms_env_guard import (
+            CommsContext as _SafeCtx,
+            RedirectTargetMissing as _SafeRedirMissing,
+            get_redirect_targets as _safe_get_targets,
+            should_redirect_to_admin as _safe_should_redir,
+        )
+        from services.comms_send_log import _redact as _safe_redact
+        _safe_ctx = context if context is not None else _SafeCtx.SYSTEM
+        _safe_original_to = addr_e164
+        _safe_redirected = False
+        if _safe_should_redir(_safe_ctx):
+            try:
+                from config import db as _safe_db
+                _tenant_doc = None
+                if tenant_id:
+                    _tenant_doc = await _safe_db.tenants.find_one(
+                        {"id": tenant_id}, {"_id": 0, "settings": 1},
+                    )
+                _tenant_settings = (
+                    (_tenant_doc or {}).get("settings") or {}
+                )
+                _targets = await _safe_get_targets(
+                    tenant_settings=_tenant_settings,
+                    tenant_id=tenant_id, channel="sms", db=_safe_db,
+                )
+            except _SafeRedirMissing as _rex:
+                logger.warning(
+                    "[safe-send-c] rc-sms redirect target missing "
+                    "context=%s tenant=%s original_to=%s err=%s — "
+                    "SUPPRESSING send",
+                    _safe_ctx.value, tenant_id, _safe_original_to, _rex,
+                )
+                return {
+                    "provider": "ringcentral",
+                    "provider_status": "skipped_no_redirect_target",
+                    "provider_response_id": None,
+                    "attempts": 0,
+                    "error": str(_rex),
+                    "redirected": True,
+                    "safe_send_context": _safe_ctx.value,
+                    "intended_recipient_redacted": _safe_redact(
+                        _safe_original_to,
+                    ),
+                    "actual_recipient_redacted": None,
+                    "original_to": _safe_original_to,
+                }
+            addr_e164 = _targets.phone or addr_e164
+            body = f"[MARCO TEST] {body or ''}".strip()
+            _safe_redirected = True
+            # A redirected send is delivered to an internal admin.
+            # Override ``audience`` locally so the K72 customer-comms
+            # kill-switch + ``guard_outbound`` treat it as internal —
+            # otherwise an incident would silently drop AGENT/TEST
+            # visibility copies too.
+            audience = "internal"
+            logger.info(
+                "[safe-send-c] rc-sms redirected context=%s tenant=%s "
+                "original_to=%s redirected_to=%s",
+                _safe_ctx.value, tenant_id, _safe_original_to, addr_e164,
+            )
+
+        # SAFE-SEND-C · Feb-2026 — envelope enrichment closure.  Every
+        # return path below runs through ``_safe_env`` so the response
+        # dict carries the six SAFE-SEND audit fields.  Adds keys —
+        # never removes / renames — so legacy callers that only read
+        # ``provider_status`` see zero change.
+        def _safe_env(env: Dict[str, Any]) -> Dict[str, Any]:
+            env.setdefault("redirected", _safe_redirected)
+            env.setdefault("safe_send_context", _safe_ctx.value)
+            env.setdefault(
+                "intended_recipient_redacted",
+                _safe_redact(_safe_original_to),
+            )
+            env.setdefault(
+                "actual_recipient_redacted", _safe_redact(addr_e164),
+            )
+            return env
 
         # 0. Idempotency cache — return cached envelope on repeat.
         _terminal_ok = {"sent", "queued", "delivered", "mocked", "dry_run"}
@@ -183,7 +303,7 @@ class RingCentralSMSAdapter:
                         "[rc-sms] idempotency cache hit tenant=%s key=%s",
                         tenant_id, _idem_key,
                     )
-                    return env
+                    return _safe_env(env)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
                     "[rc-sms] idempotency lookup failed — continuing: %s", exc,
@@ -192,8 +312,10 @@ class RingCentralSMSAdapter:
         # 1. Suppression check (marketing only).
         if await self._suppressed(tenant_id=tenant_id, to_e164=addr_e164,
                                     category=category):
-            return {"provider": "ringcentral", "provider_status": "suppressed",
-                    "provider_response_id": None, "attempts": 0, "error": None}
+            return _safe_env({"provider": "ringcentral",
+                              "provider_status": "suppressed",
+                              "provider_response_id": None,
+                              "attempts": 0, "error": None})
 
         # K31 · Feb-2026 — Affirmative-consent gate. Opt-IN per tenant
         # (``tenants.sms_consent_gate_enabled``). When the flag is off
@@ -214,7 +336,7 @@ class RingCentralSMSAdapter:
                     "provider_response_id": None, "attempts": 0,
                     "error": None}
             await _cache_sms_envelope(tenant_id, _idem_key, env)
-            return env
+            return _safe_env(env)
 
         # Feb-2026 · Comms whitelist gate (P0 safety directive).
         try:
@@ -233,9 +355,10 @@ class RingCentralSMSAdapter:
             logger.warning("[rc-sms] gate errored — failing closed: %s", exc)
             allowed = False
         if not allowed:
-            return {"provider": "ringcentral",
-                    "provider_status": "suppressed_not_demo",
-                    "provider_response_id": None, "attempts": 0, "error": None}
+            return _safe_env({"provider": "ringcentral",
+                              "provider_status": "suppressed_not_demo",
+                              "provider_response_id": None,
+                              "attempts": 0, "error": None})
 
         # Phase 34 · Task L · Feb-2026 — outbound safety guard.
         # ``APP_ENV != production`` (or non-allow-listed number) blocks
@@ -250,7 +373,7 @@ class RingCentralSMSAdapter:
             )
             env = verdict.dry_run_response(provider="ringcentral")
             await _cache_sms_envelope(tenant_id, _idem_key, env)
-            return env
+            return _safe_env(env)
 
         # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
         # See the mirror comment in
@@ -274,7 +397,7 @@ class RingCentralSMSAdapter:
             _byo = None
         if _byo is not None:
             await _cache_sms_envelope(tenant_id, _idem_key, _byo)
-            return _byo
+            return _safe_env(_byo)
 
         # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
         # for the platform (non-BYO) path. Runs AFTER every pre-flight
@@ -302,7 +425,7 @@ class RingCentralSMSAdapter:
                 "rc_status": "Queued",
             }
             await _cache_sms_envelope(tenant_id, _idem_key, env)
-            return env
+            return _safe_env(env)
 
         # 2. Graceful mocked mode when RC not configured.
         if not self.enabled:
@@ -313,7 +436,7 @@ class RingCentralSMSAdapter:
             env = {"provider": "mock", "provider_status": "mocked",
                     "provider_response_id": None, "attempts": 0, "error": None}
             await _cache_sms_envelope(tenant_id, _idem_key, env)
-            return env
+            return _safe_env(env)
 
         # 3. Compliance suffix + hard cap.
         payload_body = _ensure_stop_suffix((body or "").strip(), category)
@@ -342,7 +465,7 @@ class RingCentralSMSAdapter:
                         "attempts": attempt, "error": None,
                         "rc_status": res.get("status")}
                 await _cache_sms_envelope(tenant_id, _idem_key, env)
-                return env
+                return _safe_env(env)
             except RingCentralError as exc:
                 last_err = exc
                 last_status = exc.status
@@ -378,12 +501,13 @@ class RingCentralSMSAdapter:
                     break
                 await asyncio.sleep(2 ** (attempt - 1))
 
-        return {"provider": "ringcentral", "provider_status": "failed",
-                "provider_response_id": None,
-                "attempts": _MAX_ATTEMPTS if last_err else 1,
-                "error": f"{type(last_err).__name__}: {last_err}"
-                if last_err else "unknown",
-                "http_status": last_status}
+        return _safe_env({"provider": "ringcentral",
+                          "provider_status": "failed",
+                          "provider_response_id": None,
+                          "attempts": _MAX_ATTEMPTS if last_err else 1,
+                          "error": f"{type(last_err).__name__}: {last_err}"
+                          if last_err else "unknown",
+                          "http_status": last_status})
 
 
 # ─── SMS idempotency cache (Fix 2b) ──────────────────────────────────

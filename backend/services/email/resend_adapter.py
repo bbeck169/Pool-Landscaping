@@ -35,9 +35,12 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from config import logger
+
+if TYPE_CHECKING:
+    from services.comms_env_guard import CommsContext
 
 # Known Resend error codes / status codes for retry classification.
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
@@ -167,6 +170,13 @@ class ResendEmailAdapter:
         from_email: Optional[str] = None,
         allow_off_allowlist: bool = False,
         audience: str = "customer",
+        # SAFE-SEND-C · Feb-2026 — accept optional CommsContext so
+        # callers can opt into the redirect gate.  ``None`` defaults
+        # to ``SYSTEM`` (production transactional).  Callers who need
+        # AGENT/TEST semantics — marketing test-send, AI-drafted
+        # sends — pass the value explicitly.  See
+        # ``services.comms_env_guard.CommsContext``.
+        context: Optional["CommsContext"] = None,
     ) -> Dict[str, Any]:
         """Send an email through Resend.  Never raises; every failure
         path yields a status string the caller can persist verbatim.
@@ -205,12 +215,112 @@ class ResendEmailAdapter:
                     "provider_response_id": None, "attempts": 0,
                     "error": "empty recipient"}
 
+        # ═══ SAFE-SEND-C · Feb-2026 — redirect preflight ═════════════
+        # Resolve the effective ``CommsContext`` — default ``SYSTEM``
+        # for legacy callers who don't pass one.  If the context is
+        # ``AGENT`` or ``TEST``, resolve the tenant's redirect target
+        # (business_card.email → admin-user fallback), rewrite ``addr``
+        # + prepend ``[MARCO TEST]`` on subject, and stamp SAFE-SEND
+        # headers on the SDK payload so ``sdk_intercept`` can thread
+        # them into the ``comms_send_log`` audit row.  ``guard_outbound``
+        # + K72 kill-switch + BYO probe below all re-evaluate against
+        # the redirected address — which is what we want (a redirected
+        # send is a send to admin, not a customer send).
+        #
+        # On ``RedirectTargetMissing`` the send is SUPPRESSED (never
+        # falls through to the customer) and the response envelope
+        # carries the ``skipped_no_redirect_target`` marker + the
+        # SAFE-SEND-A.1 audit-metadata fields.
+        from services.comms_env_guard import (
+            CommsContext as _SafeCtx,
+            RedirectTargetMissing as _SafeRedirMissing,
+            get_redirect_targets as _safe_get_targets,
+            should_redirect_to_admin as _safe_should_redir,
+        )
+        from services.comms_send_log import _redact as _safe_redact
+        _safe_ctx = context if context is not None else _SafeCtx.SYSTEM
+        _safe_original_to = addr
+        _safe_redirected = False
+        _safe_headers: Dict[str, str] = {
+            "X-MARCO-Safe-Send-Context": _safe_ctx.value,
+            "X-MARCO-Original-To": _safe_original_to,
+        }
+        if _safe_should_redir(_safe_ctx):
+            try:
+                from config import db as _safe_db
+                _tenant_doc = None
+                if tenant_id:
+                    _tenant_doc = await _safe_db.tenants.find_one(
+                        {"id": tenant_id}, {"_id": 0, "settings": 1},
+                    )
+                _tenant_settings = (
+                    (_tenant_doc or {}).get("settings") or {}
+                )
+                _targets = await _safe_get_targets(
+                    tenant_settings=_tenant_settings,
+                    tenant_id=tenant_id, channel="email", db=_safe_db,
+                )
+            except _SafeRedirMissing as _rex:
+                logger.warning(
+                    "[safe-send-c] resend redirect target missing "
+                    "context=%s tenant=%s original_to=%s err=%s — "
+                    "SUPPRESSING send",
+                    _safe_ctx.value, tenant_id, _safe_original_to, _rex,
+                )
+                return {
+                    "provider": "resend",
+                    "provider_status": "skipped_no_redirect_target",
+                    "provider_response_id": None,
+                    "attempts": 0,
+                    "error": str(_rex),
+                    "redirected": True,
+                    "safe_send_context": _safe_ctx.value,
+                    "intended_recipient_redacted": _safe_redact(
+                        _safe_original_to,
+                    ),
+                    "actual_recipient_redacted": None,
+                    "original_to": _safe_original_to,
+                }
+            addr = _targets.email or addr
+            subject = f"[MARCO TEST] {subject or ''}".strip()
+            _safe_redirected = True
+            _safe_headers["X-MARCO-Redirected"] = "true"
+            # A redirected send is delivered to an internal admin.
+            # Override ``audience`` locally so K72 kill-switch +
+            # ``guard_outbound`` treat it as internal — otherwise the
+            # customer-mail kill-switch would suppress AGENT/TEST
+            # visibility copies during an incident.
+            audience = "internal"
+            logger.info(
+                "[safe-send-c] resend redirected context=%s tenant=%s "
+                "original_to=%s redirected_to=%s",
+                _safe_ctx.value, tenant_id, _safe_original_to, addr,
+            )
+
+        # SAFE-SEND-C · Feb-2026 — envelope enrichment closure.  Every
+        # return path below runs through ``_safe_env`` so the response
+        # dict carries the SAFE-SEND audit fields.  Adds four keys —
+        # never removes / renames — so legacy callers that only read
+        # ``provider_status`` see zero change.
+        def _safe_env(env: Dict[str, Any]) -> Dict[str, Any]:
+            env.setdefault("redirected", _safe_redirected)
+            env.setdefault("safe_send_context", _safe_ctx.value)
+            env.setdefault(
+                "intended_recipient_redacted",
+                _safe_redact(_safe_original_to),
+            )
+            env.setdefault(
+                "actual_recipient_redacted", _safe_redact(addr),
+            )
+            return env
+
         # 1. Suppression pre-check (marketing only).
         if await self._suppressed(tenant_id=tenant_id, to=addr.lower(),
                                     category=category):
-            return {"provider": "resend", "provider_status": "suppressed",
-                    "provider_response_id": None, "attempts": 0,
-                    "error": None}
+            return _safe_env({"provider": "resend",
+                              "provider_status": "suppressed",
+                              "provider_response_id": None, "attempts": 0,
+                              "error": None})
 
         # Feb-2026 · Comms whitelist gate (P0 safety directive).
         # Only recipients flagged ``is_demo_account=True`` may receive
@@ -243,10 +353,10 @@ class ResendEmailAdapter:
                 logger.warning("[resend] gate errored — failing closed: %s", exc)
                 allowed = False
             if not allowed:
-                return {"provider": "resend",
-                        "provider_status": "suppressed_not_demo",
-                        "provider_response_id": None, "attempts": 0,
-                        "error": None}
+                return _safe_env({"provider": "resend",
+                                  "provider_status": "suppressed_not_demo",
+                                  "provider_response_id": None,
+                                  "attempts": 0, "error": None})
 
         # Phase 34 · Task L · Feb-2026 — outbound safety guard.
         # When ``APP_ENV != production`` (or when the recipient is not
@@ -274,7 +384,7 @@ class ResendEmailAdapter:
                 "subject=%r cat=%s tenant=%s (allow_off_allowlist=%s)",
                 addr, subject, category, tenant_id, allow_off_allowlist,
             )
-            return verdict.dry_run_response(provider="resend")
+            return _safe_env(verdict.dry_run_response(provider="resend"))
         if allow_off_allowlist:
             logger.warning(
                 "[resend] allow_off_allowlist=True — bypassing guard_outbound "
@@ -289,7 +399,7 @@ class ResendEmailAdapter:
                     "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s reason=%s",
                     addr, subject, category, tenant_id, verdict.reason,
                 )
-                return verdict.dry_run_response(provider="resend")
+                return _safe_env(verdict.dry_run_response(provider="resend"))
 
         # Phase I1.7.e · chunk 1 · Feb-2026 — tenant-BYO first hop.
         # If the tenant has a BYO email provider configured, route
@@ -315,7 +425,7 @@ class ResendEmailAdapter:
             )
             _byo = None
         if _byo is not None:
-            return _byo
+            return _safe_env(_byo)
 
         # Phase I1.7.e · Feb-2026 — MESSAGING_TESTMODE_MOCK short-circuit
         # for the platform (non-BYO) path. Runs AFTER every pre-flight
@@ -334,14 +444,14 @@ class ResendEmailAdapter:
             # Modern adapter shape — map legacy keys to modern names
             # so the adapter's contract (provider / provider_status /
             # provider_response_id) is preserved.
-            return {
+            return _safe_env({
                 "provider": _env.get("provider") or "mock",
                 "provider_status": _env["provider_status"],
                 "provider_response_id": _env["provider_response_id"],
                 "attempts": 1,
                 "error": None,
                 "routed_via": _env["routed_via"],
-            }
+            })
 
         # 2. Graceful mocked mode — no API key set. Log + return.
         if not self.enabled:
@@ -349,9 +459,10 @@ class ResendEmailAdapter:
                 "[resend] disabled — would have sent to %s subj=%r cat=%s",
                 addr, subject, category,
             )
-            return {"provider": "mock", "provider_status": "mocked",
-                    "provider_response_id": None, "attempts": 0,
-                    "error": None}
+            return _safe_env({"provider": "mock",
+                              "provider_status": "mocked",
+                              "provider_response_id": None,
+                              "attempts": 0, "error": None})
 
         # Phase 21 — resolve sender identity with verified-domain
         # fallback. Overrides are honored only when their domain is
@@ -406,6 +517,21 @@ class ResendEmailAdapter:
             params["reply_to"] = reply_to
         if idempotency_key:
             params.setdefault("headers", {})["Idempotency-Key"] = idempotency_key
+        # SAFE-SEND-C · Feb-2026 — stamp X-MARCO-* headers so
+        # ``sdk_intercept`` can thread SAFE-SEND fields into the
+        # audit row.  Rendered on the SDK payload so a raw
+        # ``resend.Emails.send(params)`` call by another caller
+        # (there shouldn't be one, but defense in depth) would
+        # ALSO get audited with the correct provenance.
+        _existing_headers = params.setdefault("headers", {})
+        for _k, _v in _safe_headers.items():
+            _existing_headers[_k] = _v
+        # Tenant-id header enables sdk_intercept to write a tenant-
+        # scoped audit row (existing behaviour — see sdk_intercept.py
+        # line ~140).  Callers who already stamp their own
+        # ``X-Tenant-Id`` keep it verbatim (we don't clobber).
+        if tenant_id and "X-Tenant-Id" not in _existing_headers:
+            _existing_headers["X-Tenant-Id"] = tenant_id
 
         # 4. Retry loop with exponential backoff for transient failures.
         last_err = None
@@ -417,9 +543,10 @@ class ResendEmailAdapter:
                 rid = None
                 if isinstance(result, dict):
                     rid = result.get("id") or (result.get("data") or {}).get("id")
-                return {"provider": "resend", "provider_status": "sent",
-                        "provider_response_id": rid, "attempts": attempt,
-                        "error": None}
+                return _safe_env({"provider": "resend",
+                                  "provider_status": "sent",
+                                  "provider_response_id": rid,
+                                  "attempts": attempt, "error": None})
             except Exception as exc:  # pragma: no cover — network path
                 last_err = exc
                 code = _extract_status(exc)
@@ -431,11 +558,12 @@ class ResendEmailAdapter:
                     break
                 await asyncio.sleep(2 ** (attempt - 1))  # 1s, 2s
 
-        return {"provider": "resend", "provider_status": "failed",
-                "provider_response_id": None,
-                "attempts": _MAX_ATTEMPTS if last_err else 1,
-                "error": f"{type(last_err).__name__}: {last_err}"
-                if last_err else "unknown"}
+        return _safe_env({"provider": "resend",
+                          "provider_status": "failed",
+                          "provider_response_id": None,
+                          "attempts": _MAX_ATTEMPTS if last_err else 1,
+                          "error": f"{type(last_err).__name__}: {last_err}"
+                          if last_err else "unknown"})
 
 
 def _extract_status(exc: Any) -> Optional[int]:

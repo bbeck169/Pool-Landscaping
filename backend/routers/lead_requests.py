@@ -112,6 +112,7 @@ async def _send_email(to: str, url: str, business_name: str, expiry_hours: int, 
             f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Complete request</a></p>"
             f"<p style='color:#64748B;font-size:12px;'>Please complete within {expiry_hours}hrs, thank you.</p>"
         )
+        # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
         resend.Emails.send({
             "from": EMAIL_FROM or "onboarding@resend.dev",
             "to": [to],

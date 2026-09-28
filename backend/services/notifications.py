@@ -488,6 +488,7 @@ async def _dispatch_email(tenant_id: Optional[str], user_id: str, subject: str,
             return
         import resend  # type: ignore
         resend.api_key = resend_key
+        # safe-send: allowlist because legacy direct SDK call is gated by sdk_intercept.install_resend_gate() at the Resend SDK boundary; SAFE-SEND-D full migration pending
         resend.Emails.send({
             "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
             "to": [to_addr],
@@ -556,6 +557,7 @@ async def _dispatch_sms(tenant_id: Optional[str], user_id: str, body: str, kind:
             row["delivery_status"] = "suppressed_not_demo"
         else:
             try:
+                # safe-send: allowlist because legacy internal notification SMS gated by services.comms.gate.is_comm_allowed above; SAFE-SEND-D migration pending
                 platform = get_rc_platform()
                 platform.post("/restapi/v1.0/account/~/extension/~/sms",
                               {"from": {"phoneNumber": row["from_number"]},
