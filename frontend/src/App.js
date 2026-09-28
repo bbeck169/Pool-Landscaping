@@ -421,7 +421,7 @@ const PublicForm = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase
 import { PermissionsProvider } from "@/hooks/usePermissions";
 const LandscapeAI = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.LandscapeAI })));
 const CadList = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.CadList })));
-const CadEditor = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.CadEditor })));
+const CadEditor = React.lazy(() => import(/* webpackChunkName: "p-cad-editor" */ "@/pages/cad/Editor.jsx"));
 const SatelliteMeasure = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.SatelliteMeasure })));
 const VirtualBid = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.VirtualBid })));
 const DigitalCardList = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.DigitalCardList })));
