@@ -499,6 +499,7 @@ const PublicLeadRequestPage = React.lazy(() => import(/* webpackChunkName: "p-pu
 const WidgetDemoPage = React.lazy(() => import(/* webpackChunkName: "p-widget-widgetdemopage" */ "@/pages/widget/WidgetDemoPage"));
 const MarketingFormsPage = React.lazy(() => import(/* webpackChunkName: "p-marketing-marketingformspage" */ "@/pages/marketing/MarketingFormsPage"));
 const LeadsDashboardPage = React.lazy(() => import(/* webpackChunkName: "p-leads-leadsdashboardpage" */ "@/pages/leads/LeadsDashboardPage"));
+const LeadsIntentPage = React.lazy(() => import(/* webpackChunkName: "p-leads-leadsintentpage" */ "@/pages/leads/LeadsIntentPage"));
 const TenantsAdminPage = React.lazy(() => import(/* webpackChunkName: "p-tenants-tenantsadminpage" */ "@/pages/tenants/TenantsAdminPage"));
 const TenantBrandSettings = React.lazy(() => import(/* webpackChunkName: "p-tenants-tenantsadminpage" */ "@/pages/tenants/TenantsAdminPage").then(m => ({ default: m.TenantBrandSettings })));
 import {
@@ -1419,6 +1420,8 @@ export default function App() {
             {/* Phase 8 · Feb 2026 — /leads points at the real dashboard,
                 replacing the pre-Phase-8 GapClosures placeholder. */}
             <Route path="leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />
+            {/* LSP-1 · Feb-2026 — MARCO Lead-Sense visitor-intent dashboard. */}
+            <Route path="leads/intent" element={<AdminOnly><LeadsIntentPage /></AdminOnly>} />
             <Route path="checkins" element={<AdminOnly><CheckinsList /></AdminOnly>} />
 
             {/* Phase 14 additions */}

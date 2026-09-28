@@ -3,7 +3,7 @@
 // Table + drawer detail. Filters (source, status, date range). Convert
 // action calls existing POST /api/leads/{id}/convert.
 import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -390,14 +390,25 @@ export default function LeadsDashboardPage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto" data-testid="admin-leads-page">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }}>
-          Leads
-        </h1>
-        <p className="text-sm" style={{ color: colors.muted }}>
-          Every chat conversation with contact info and every form submission
-          lands here. Convert to a customer with one click.
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }}>
+            Leads
+          </h1>
+          <p className="text-sm" style={{ color: colors.muted }}>
+            Every chat conversation with contact info and every form submission
+            lands here. Convert to a customer with one click.
+          </p>
+        </div>
+        {/* LSP-1 · Feb-2026 — Lead-Sense visitor-intent dashboard entry. */}
+        <Link
+          to="/leads/intent"
+          className="text-sm underline hover:no-underline whitespace-nowrap"
+          style={{ color: colors.brand }}
+          data-testid="leads-intent-link"
+        >
+          Visitor Intent →
+        </Link>
       </div>
 
       {/* ── Phase P48 · Feb-2026 · Active / Archive tab switcher ─────
@@ -594,7 +605,8 @@ export default function LeadsDashboardPage() {
           </div>
         )}
         {visible.map((l) => (
-          <div key={l.id}
+          <React.Fragment key={l.id}>
+          <div
                data-testid={`lead-row-${l.id}`}
                className={`grid grid-cols-12 gap-2 px-4 ${rowPad} items-center text-sm hover:bg-slate-50 cursor-pointer transition-colors`}
                style={{
@@ -767,6 +779,35 @@ export default function LeadsDashboardPage() {
               )}
             </div>
           </div>
+          {l.intent_history?.length > 0 && (
+            <details
+              data-testid={`lead-row-intent-${l.id}`}
+              className="px-4 py-1 text-[10px]"
+              style={{
+                borderBottom: `1px solid ${colors.border}`,
+                background:   colors.surfaceSecondary,
+                color:        colors.muted,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary className="cursor-pointer select-none font-semibold">
+                Intent · {l.intent_history.length} page{l.intent_history.length === 1 ? "" : "s"}
+              </summary>
+              <div className="mt-1 grid gap-0.5">
+                <div>First: {l.intent_history[0]?.occurred_at || "—"}</div>
+                <div>Last: {l.intent_history[l.intent_history.length - 1]?.occurred_at || "—"}</div>
+                <div>
+                  Top pages:
+                  <ul className="list-disc ml-4">
+                    {Array.from(new Set(l.intent_history.slice(-25).map((h) => h.url).filter(Boolean))).slice(0, 3).map((u) => (
+                      <li key={u} className="truncate">{u}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </details>
+          )}
+          </React.Fragment>
         ))}
       </Card>
 

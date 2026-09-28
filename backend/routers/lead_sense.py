@@ -663,3 +663,339 @@ async def convert_lead(request: Request, response: Response):
         media_type="application/json",
         status_code=200,
     )
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# LSP-1 · Feb-2026 — Admin read surface + fallback pixel
+# ─────────────────────────────────────────────────────────────────────
+# Three additive routes:
+#
+#   GET /api/lead-sense/intents           — paginated tenant-scoped list
+#   GET /api/lead-sense/intents/summary   — aggregate window stats
+#   GET /api/lead-sense/pixel             — 1×1 GIF fallback beacon
+#
+# The existing POST /track, POST /convert, GET /health handlers are
+# UNTOUCHED. ``db.visitor_intent`` schema is not extended — the pixel
+# handler writes an optional ``capture_mode: "pixel"`` marker; legacy
+# rows continue to render fine on the admin surface with an implicit
+# ``capture_mode == "beacon"`` fallback interpreted client-side.
+#
+# Filter surface note: ``since`` / ``until`` query params are compared
+# against the intent row's ``occurred_at`` field (LS-B stamps this ISO
+# string on every write). The ``created_at_(a|de)sc`` sort enum keeps
+# the label consumers reason about even though the underlying field
+# is ``occurred_at`` — matches the intake write-side.
+# ═════════════════════════════════════════════════════════════════════
+from datetime import timedelta as _timedelta_lsp1  # noqa: E402
+from fastapi import Depends, Query  # noqa: E402
+from utils import require_admin  # noqa: E402
+from routers.tenants import get_current_tenant  # noqa: E402
+
+
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 200
+_SORT_ENUM = {
+    "created_at_desc": ("occurred_at", -1),
+    "created_at_asc":  ("occurred_at",  1),
+}
+_SUMMARY_DEFAULT_WINDOW_DAYS = 30
+_TOP_N = 10
+
+# 1×1 transparent GIF byte-string (mirrors marketing_campaigns._PIXEL).
+_PIXEL_GIF = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\xff\xff\xff"
+    b"!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01"
+    b"\x00\x00\x02\x02D\x01\x00;"
+)
+_PIXEL_HEADERS = {"Cache-Control": "no-store, no-cache, must-revalidate"}
+
+
+def _lsp_parse_iso(v: Optional[str], *, field: str) -> Optional[datetime]:
+    """Parse an ISO datetime query param. Returns ``None`` on empty."""
+    if v is None or v == "":
+        return None
+    try:
+        s = v.replace("Z", "+00:00") if isinstance(v, str) and v.endswith("Z") else v
+        return datetime.fromisoformat(s)
+    except Exception:
+        raise HTTPException(400, f"invalid ISO datetime for '{field}'")
+
+
+def _lsp_iso_str(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _lsp_project_intent(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Trim to the admin-facing shape. Never leaks
+    ``marco_lead_sense_id`` (that field lives on the tenant doc,
+    NOT on the intent row — so nothing to filter here, but this
+    helper documents the boundary)."""
+    return {
+        "id":                row.get("id"),
+        "tenant_id":         row.get("tenant_id"),
+        "session_id":        row.get("session_id"),
+        "current_url":       row.get("current_url"),
+        "referrer":          row.get("referrer"),
+        "user_agent":        row.get("user_agent"),
+        "page_title":        row.get("page_title"),
+        "viewport":          row.get("viewport"),
+        "company":           row.get("company"),
+        "occurred_at":       row.get("occurred_at"),
+        "converted_at":      row.get("converted_at"),
+        "converted_lead_id": row.get("converted_lead_id"),
+        "source_channel":    row.get("source_channel"),
+        "capture_mode":      row.get("capture_mode"),
+        "has_converted":     bool(row.get("converted_at")),
+    }
+
+
+@router.get("/intents")
+async def list_intents(
+    session_id: Optional[str] = Query(None),
+    converted:  Optional[bool] = Query(None),
+    since:      Optional[str]  = Query(None),
+    until:      Optional[str]  = Query(None),
+    page:       int = Query(1, ge=1),
+    page_size:  int = Query(_DEFAULT_PAGE_SIZE, ge=1),
+    sort:       str = Query("created_at_desc"),
+    user:   dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Tenant-scoped, paginated visitor-intent list."""
+    if sort not in _SORT_ENUM:
+        raise HTTPException(400, f"invalid sort '{sort}'")
+    if page_size > _MAX_PAGE_SIZE:
+        page_size = _MAX_PAGE_SIZE
+
+    since_dt = _lsp_parse_iso(since, field="since")
+    until_dt = _lsp_parse_iso(until, field="until")
+
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if session_id:
+        q["session_id"] = session_id
+    if converted is True:
+        q["converted_at"] = {"$ne": None}
+    elif converted is False:
+        q["converted_at"] = None
+    rng: Dict[str, Any] = {}
+    if since_dt:
+        rng["$gte"] = _lsp_iso_str(since_dt)
+    if until_dt:
+        rng["$lt"] = _lsp_iso_str(until_dt)
+    if rng:
+        q["occurred_at"] = rng
+
+    total = await db.visitor_intent.count_documents(q)
+    sort_field, sort_dir = _SORT_ENUM[sort]
+    skip = (page - 1) * page_size
+    cursor = (
+        db.visitor_intent.find(q, {"_id": 0})
+        .sort(sort_field, sort_dir).skip(skip).limit(page_size)
+    )
+    items = [_lsp_project_intent(r) async for r in cursor]
+    total_pages = ((total + page_size - 1) // page_size) if page_size else 1
+    if total == 0:
+        total_pages = 1
+    return {
+        "items":       items,
+        "page":        page,
+        "page_size":   page_size,
+        "total":       total,
+        "total_pages": total_pages,
+    }
+
+
+@router.get("/intents/summary")
+async def intents_summary(
+    since:  Optional[str] = Query(None),
+    until:  Optional[str] = Query(None),
+    user:   dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Aggregate visitor-intent window stats.
+
+    Defaults: ``since = now - 30d``, ``until = now``. Returns
+    distinct-session counts (total + converted), conversion rate,
+    and top-10 pages / referrers / utm sources. All buckets are
+    computed server-side via a single ``$facet`` aggregation —
+    no raw-row scan into memory.
+    """
+    now = datetime.now(timezone.utc)
+    since_dt = _lsp_parse_iso(since, field="since") or (
+        now - _timedelta_lsp1(days=_SUMMARY_DEFAULT_WINDOW_DAYS)
+    )
+    until_dt = _lsp_parse_iso(until, field="until") or now
+    if since_dt >= until_dt:
+        raise HTTPException(400, "since must be strictly less than until")
+
+    since_iso = _lsp_iso_str(since_dt)
+    until_iso = _lsp_iso_str(until_dt)
+
+    pipeline: List[Dict[str, Any]] = [
+        {"$match": {
+            "tenant_id":   tenant["id"],
+            "occurred_at": {"$gte": since_iso, "$lt": until_iso},
+        }},
+        {"$addFields": {
+            "_ref_host": {
+                "$let": {
+                    "vars": {"m": {"$regexFind": {
+                        "input": {"$ifNull": ["$referrer", ""]},
+                        "regex": r"^https?://([^/]+)",
+                    }}},
+                    "in": {"$arrayElemAt": ["$$m.captures", 0]},
+                }
+            },
+            "_utm": {
+                "$let": {
+                    "vars": {"m": {"$regexFind": {
+                        "input": {"$ifNull": ["$current_url", ""]},
+                        "regex": r"[?&]utm_source=([^&#]+)",
+                    }}},
+                    "in": {"$arrayElemAt": ["$$m.captures", 0]},
+                }
+            },
+        }},
+        {"$facet": {
+            "total_intents":       [{"$count": "v"}],
+            "sessions":            [{"$group": {"_id": "$session_id"}},
+                                    {"$count": "v"}],
+            "converted_sessions":  [
+                {"$match": {"converted_at": {"$ne": None}}},
+                {"$group": {"_id": "$session_id"}},
+                {"$count": "v"},
+            ],
+            "top_pages": [
+                {"$match": {"current_url": {"$ne": None}}},
+                {"$group": {"_id": "$current_url", "count": {"$sum": 1}}},
+                {"$sort":  {"count": -1, "_id": 1}},
+                {"$limit": _TOP_N},
+            ],
+            "top_referrers": [
+                {"$match": {"_ref_host": {"$ne": None}}},
+                {"$group": {"_id": "$_ref_host", "count": {"$sum": 1}}},
+                {"$sort":  {"count": -1, "_id": 1}},
+                {"$limit": _TOP_N},
+            ],
+            "top_utm_sources": [
+                {"$match": {"_utm": {"$ne": None}}},
+                {"$group": {"_id": "$_utm", "count": {"$sum": 1}}},
+                {"$sort":  {"count": -1, "_id": 1}},
+                {"$limit": _TOP_N},
+            ],
+        }},
+    ]
+    agg = await db.visitor_intent.aggregate(pipeline).to_list(length=1)
+    doc = agg[0] if agg else {}
+
+    def _v(bucket: str) -> int:
+        b = doc.get(bucket) or []
+        return int(b[0]["v"]) if b else 0
+
+    def _top(bucket: str, label: str) -> List[Dict[str, Any]]:
+        return [{label: r["_id"], "count": r["count"]}
+                for r in (doc.get(bucket) or [])]
+
+    total_intents       = _v("total_intents")
+    total_sessions      = _v("sessions")
+    converted_sessions  = _v("converted_sessions")
+    conv_rate = (
+        round(100.0 * converted_sessions / total_sessions, 2)
+        if total_sessions else 0.0
+    )
+    return {
+        "window_since":         since_iso,
+        "window_until":         until_iso,
+        "total_sessions":       total_sessions,
+        "total_intents":        total_intents,
+        "converted_sessions":   converted_sessions,
+        "conversion_rate_pct":  conv_rate,
+        "top_pages":            _top("top_pages",       "page"),
+        "top_referrers":        _top("top_referrers",   "referrer"),
+        "top_utm_sources":      _top("top_utm_sources", "utm_source"),
+    }
+
+
+@router.get("/pixel", include_in_schema=False)
+@_apply_rate_limit
+async def pixel(
+    request: Request,
+    ls_id: str = Query(..., min_length=6, max_length=64),
+    sid:   str = Query(..., min_length=8, max_length=64),
+    p:  Optional[str] = Query(None, max_length=2048),
+    r:  Optional[str] = Query(None, max_length=2048),
+    t:  Optional[str] = Query(None, max_length=512),
+    ua: Optional[str] = Query(None, max_length=1024),
+):
+    """Fallback 1×1 GIF beacon.
+
+    ALWAYS returns the pixel (200 + image/gif), even on invalid
+    ls_id / origin / session — email clients would otherwise
+    render a broken-image icon. Silent-fail via *no DB write*.
+
+    Origin policy is deliberately lenient: if Origin / Referer is
+    absent (email-open context) we still record; if present AND
+    tenant has an allow-list AND origin doesn't match, we drop
+    the write and log a security event. Matches ``/track`` for
+    the browser-embedded path while unlocking email-open capture.
+    """
+    gif = Response(
+        content=_PIXEL_GIF, media_type="image/gif", headers=_PIXEL_HEADERS,
+    )
+
+    # session_id shape guard (silent).
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9\-_]{8,64}", sid or ""):
+        logger.info("[lead_sense.pixel] bad_sid ls_id=%s", ls_id)
+        return gif
+
+    tenant = await db.tenants.find_one(
+        {"marco_lead_sense_id": ls_id},
+        {"_id": 0, "id": 1, "lead_sense_allowed_origins": 1},
+    )
+    if tenant is None:
+        logger.info("[lead_sense.pixel] unknown_ls_id ls_id=%s", ls_id)
+        return gif
+
+    tenant_id = tenant.get("id")
+    allowed = tenant.get("lead_sense_allowed_origins") or []
+    if not isinstance(allowed, list):
+        allowed = []
+
+    caller_origin = _caller_origin(request)
+    if caller_origin is not None and allowed:
+        if caller_origin.lower() not in {o.lower() for o in allowed}:
+            logger.warning(
+                "[lead_sense.security] pixel_origin_rejected ls_id=%s "
+                "tenant_id=%s origin=%s allowed_count=%s",
+                ls_id, tenant_id, caller_origin, len(allowed),
+            )
+            return gif
+    # caller_origin is None → email-open context → allow (lenient).
+
+    now_iso_val = datetime.now(timezone.utc).isoformat()
+    row: Dict[str, Any] = {
+        "id":            str(uuid.uuid4()),
+        "tenant_id":     tenant_id,
+        "session_id":    sid,
+        "current_url":   p,
+        "referrer":      r,
+        "ip":            _extract_client_ip(request),
+        "company":       None,
+        "user_agent":    ua or (request.headers.get("user-agent") or None),
+        "page_title":    t,
+        "viewport":      None,
+        "occurred_at":   now_iso_val,
+        "source_channel": SOURCE_CHANNEL,
+        "capture_mode":  "pixel",
+    }
+    try:
+        await db.visitor_intent.insert_one(row)
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort — never surface an error via the pixel.
+        logger.exception("[lead_sense.pixel] write_failed: %s", exc)
+
+    return gif
