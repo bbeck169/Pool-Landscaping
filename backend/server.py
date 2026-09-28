@@ -557,6 +557,16 @@ api_router.include_router(_hd_a_hard_delete.router)
 from routers import fleet as _fleet_a_fleet  # noqa: E402
 api_router.include_router(_fleet_a_fleet.router)
 
+# MTH-A · Feb-2026 — Multi-Tenant Hub · per-tenant AI rules.
+# Endpoints under /api/tenant-ai-rules/** + /api/platform-ai-rules/**.
+# Admin + super for tenant surface; super-only for platform defaults
+# and the master safety switch. Rule categories: tone_voice,
+# auto_action_allowlist, employee_enable_disable, working_hours,
+# escalation_rules. Lazy-init on first tenant read (no bulk
+# migration for the 700 tenants).
+from routers import tenant_ai_rules as _mth_a_tenant_ai_rules  # noqa: E402
+api_router.include_router(_mth_a_tenant_ai_rules.router)
+
 # Phase A5 · Feb-2026 · Proactive Intelligence — tech smart-brief.
 # ``GET /api/jobs/{job_id}/smart-brief`` — assigned tech / admin /
 # super_admin / manager only; everyone else 403
@@ -5979,6 +5989,21 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
     except Exception:  # noqa: BLE001
         logger.exception(
             "[startup] phase=fleet_a_indexes failed — fleet indexes NOT bound",
+        )
+
+    # MTH-A · Feb-2026 — ensure tenant_ai_rules indexes at boot.
+    # Idempotent — reruns are no-ops per PyMongo semantics.
+    try:
+        from config import db as _mth_db
+        from services.tenant_ai_rules.indexes import (
+            ensure_tenant_ai_rules_indexes,
+        )
+        await ensure_tenant_ai_rules_indexes(_mth_db)
+        logger.info("[startup] phase=mth_a_indexes bound=True")
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=mth_a_indexes failed — "
+            "tenant_ai_rules indexes NOT bound",
         )
 
     try:
