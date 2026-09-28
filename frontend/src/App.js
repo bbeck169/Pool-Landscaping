@@ -272,6 +272,8 @@ const DispatchBoard = React.lazy(() => import(/* webpackChunkName: "p-dispatch-d
 const WeatherReschedule = React.lazy(() => import(/* webpackChunkName: "p-dispatch-dispatchpages" */ "@/pages/dispatch/DispatchPages").then(m => ({ default: m.WeatherReschedule })));
 // Phase 17 · Feb 2026 — Google Maps + Directions redesigned dispatch board.
 const DispatchBoardPage = React.lazy(() => import(/* webpackChunkName: "p-dispatch-dispatchboardpage" */ "@/pages/dispatch/DispatchBoardPage"));
+// EMV · Feb-2026 — Enterprise Map View (7-day bird's-eye across all techs).
+const EnterpriseMapView = React.lazy(() => import(/* webpackChunkName: "p-dispatch-enterprisemapview" */ "@/pages/dispatch/EnterpriseMapView"));
 // Feb-2026 · P1 diagnostic — wrap DispatchBoardPage in an ErrorBoundary
 // so mobile crashes surface a friendly panel instead of a blank screen,
 // and get reported to /api/client-errors for admin review.
@@ -1380,6 +1382,7 @@ export default function App() {
                 + Directions redesigned board. Admin-only; techs never
                 see pricing/routing. Legacy path preserved at /ops/dispatch. */}
             <Route path="dispatch" element={<AdminOnly><DispatchErrorBoundary component="DispatchBoard" componentLabel="Dispatch Board"><DispatchBoardPage /></DispatchErrorBoundary></AdminOnly>} />
+            <Route path="dispatch/enterprise-view" element={<AdminOnly><DispatchErrorBoundary component="EnterpriseMapView" componentLabel="Enterprise Map View"><EnterpriseMapView /></DispatchErrorBoundary></AdminOnly>} />
             <Route path="admin/diagnostics/errors" element={<AdminOnly><AdminDiagnosticsErrorsPage /></AdminOnly>} />
             <Route path="ops/dispatch" element={<OpsHub />} />
             <Route path="dispatch/map" element={<AdminOnly><DispatchMap /></AdminOnly>} />

@@ -1164,6 +1164,14 @@ api_router.include_router(_schedule_reorder_router.router)
 from routers import schedule_ai as _schedule_ai_router  # noqa: E402
 api_router.include_router(_schedule_ai_router.router)
 
+# EMV · Feb-2026 — Enterprise Map View (dispatch bird's-eye).
+# Read-only ``GET /api/dispatch/enterprise-view`` — admin/manager
+# only; 7-day default window, 14-day max span, 2000-job truncation
+# cap, deterministic per-request color fallback (no DB mutation),
+# HD-A soft-delete filter respected. See routers/dispatch_enterprise.py.
+from routers import dispatch_enterprise as _emv_dispatch_router  # noqa: E402
+api_router.include_router(_emv_dispatch_router.router)
+
 # Phase 11 · Feb-2026 — Invoice reconciliation log (super-admin only).
 from routers import invoice_reconciliation as _invoice_reconciliation_router  # noqa: E402
 api_router.include_router(_invoice_reconciliation_router.router)
