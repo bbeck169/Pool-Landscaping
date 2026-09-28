@@ -216,6 +216,11 @@ export const ADMIN_NAV_V2 = [
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },
+    // HARD-DELETE · Sub-phase HD-A · Feb-2026 — Admin Trash view for
+    // soft-deleted rows across every eligible entity. Admin +
+    // super_admin see the tile; the route wrapper is AdminOnly. Purge
+    // controls inside the page self-gate to super_admin only.
+    { to: "/admin/trash",              label: "Trash",             icon: AlertTriangleIcon, feature: "settings", subsection: "Workforce", hard_rule: "admin_only" },
     { to: "/admin/time-entries",       label: "Time Entries",     icon: Clock,       feature: "jobs", subsection: "Workforce" },
     { to: "/crews?t=crews",             label: "Crews",            icon: UserCog,     feature: "jobs", subsection: "Workforce" },
     { to: "/timesheets?t=timesheets",   label: "Timesheets",       icon: Clock,       feature: "jobs", subsection: "Workforce" },

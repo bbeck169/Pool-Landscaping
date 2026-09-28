@@ -51,6 +51,7 @@ const JobNew = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobnew" */ "
 const JobDetail = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobdetail" */ "@/pages/jobs/JobDetail"));
 const JobsList = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobslist" */ "@/pages/jobs/JobsList"));
 const AdminUsersList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminuserslist" */ "@/pages/admin/AdminUsersList"));
+const TrashPage = React.lazy(() => import(/* webpackChunkName: "p-admin-trash" */ "@/pages/admin/TrashPage"));
 const AdminTagsList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintagslist" */ "@/pages/admin/AdminTagsList"));
 const AdminCommsSuppressionLog = React.lazy(() => import(/* webpackChunkName: "p-admin-admincommssuppressionlog" */ "@/pages/admin/AdminCommsSuppressionLog"));
 const AdminServiceReportsList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminservicereportslist" */ "@/pages/admin/AdminServiceReportsList"));
@@ -891,6 +892,10 @@ export default function App() {
             <Route path="admin/jobs" element={<AdminOnly><JobsList /></AdminOnly>} />
             {/* Task OO · Feb 2026 — P1 bulk-select admin surfaces. */}
             <Route path="admin/users" element={<AdminOnly><AdminUsersList /></AdminOnly>} />
+            {/* HARD-DELETE · Sub-phase HD-A · Feb-2026 — Trash view.
+                Admin + super_admin see soft-deleted rows and can Restore.
+                Only super_admin sees the Purge action (backend enforced). */}
+            <Route path="admin/trash" element={<AdminOnly><TrashPage /></AdminOnly>} />
             <Route path="admin/tags" element={<AdminOnly><AdminTagsList /></AdminOnly>} />
             {/* Queue Item 4 · Feb-2026 — comms whitelist Suppression
                 Log viewer, super_admin-only per P0 safety directive. */}

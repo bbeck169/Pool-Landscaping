@@ -544,6 +544,13 @@ api_router.include_router(_p39_telematics.router)
 # Phase A1 · Feb-2026 · Proactive Intelligence — alert bell store.
 api_router.include_router(intelligence_alerts.router)
 
+# HARD-DELETE · Sub-phase HD-A · Feb-2026 — Two-step delete tool with
+# Trash + tombstone audit. Endpoints live at /api/hard-delete/*. See
+# services.hard_delete for the cascade / tombstone / nightly-purge
+# implementation.
+from routers import hard_delete as _hd_a_hard_delete  # noqa: E402
+api_router.include_router(_hd_a_hard_delete.router)
+
 # Phase A5 · Feb-2026 · Proactive Intelligence — tech smart-brief.
 # ``GET /api/jobs/{job_id}/smart-brief`` — assigned tech / admin /
 # super_admin / manager only; everyone else 403
