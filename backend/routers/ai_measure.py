@@ -101,16 +101,15 @@ def meters_per_pixel(*, lat: float, zoom: int, scale: int = 1) -> float:
 def polygon_area_pixels(polygon: List[List[float]]) -> float:
     """Shoelace formula on a pixel-space polygon. Returns absolute
     signed area in square pixels. Order (CW / CCW) doesn't matter —
-    we take ``abs`` at the end."""
-    n = len(polygon)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = polygon[i][0], polygon[i][1]
-        x2, y2 = polygon[(i + 1) % n][0], polygon[(i + 1) % n][1]
-        s += (x1 * y2) - (x2 * y1)
-    return abs(s) / 2.0
+    we take ``abs`` at the end.
+
+    Phase CAD-2 · Feb-2026 — the implementation now lives in
+    ``services.geometry`` so the CAD router can share it without
+    pulling in the Google + Vision stack. This wrapper is preserved
+    verbatim for import-compat with existing call-sites + tests.
+    """
+    from services.geometry import polygon_area_pixels as _impl
+    return _impl(polygon)
 
 
 def area_to_sqft_sqyd(*, area_pixels: float, mpp: float) -> Tuple[float, float]:
