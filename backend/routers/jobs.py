@@ -4718,6 +4718,85 @@ async def least_profitable_services(
 async def compute_pool_service(tenant_id: str,
                                date_from: Optional[str] = None,
                                date_to: Optional[str] = None):
+    """Weekly pool-service aggregation, split by ``work_class``.
+
+    POOL-A · Feb-2026 — landscape-industry jobs are filtered out via
+    ``derive_industry_for_job(job, tenant, strict_mode=True) == "pool"``.
+    Jobs whose industry doesn't classify as ``"pool"`` (landscape,
+    HVAC, cleaning, other, unknown) never enter any bucket — the
+    Pool Service Report is pool-only.
+
+    POOL-B · Feb-2026 — the surviving pool jobs are split by
+    ``work_class`` into three buckets:
+      * ``pools_serviced`` — ``work_class == "service"``.
+      * ``repairs_completed`` — ``work_class == "repair"``.
+      * ``other`` — any other value (``None``, missing, or an
+        unrecognised string like ``"inspection"``).  These are
+        tracked but never silently counted as ``service``; when
+        ``other`` exceeds 10 % of the completed pool volume for the
+        period we emit a WARN so ops can spot data-integrity drift.
+
+    ``skipped`` (existing) still counts every pool job whose status
+    is in :data:`SKIPPED_STATUSES` regardless of ``work_class`` —
+    a skipped visit isn't yet a completed service or repair.
+
+    Response shape (POOL-B keeps the pre-B legacy keys for
+    backward-compatibility and adds spec-preferred + brief-preferred
+    fields side-by-side):
+
+    .. code-block:: python
+
+        {
+          # Legacy — preserved verbatim
+          "week_start": "YYYY-MM-DD",
+          "week_end":   "YYYY-MM-DD",
+          "total_completed": int,   # NEW SEMANTIC: pools_serviced only
+                                     # (per SPEC §200 — a repair no
+                                     # longer counts here)
+          "total_skipped": int,
+          "rows": [ tech-row, ... ],  # concat of maintenance+repairs+other
+
+          # Brief-compatible additions
+          "period": {"start": ..., "end": ...},
+          "summary": {
+            "total_pool_visits": int,     # = maintenance + repairs + other
+            "maintenance_visits": int,    # work_class=service
+            "repair_visits":       int,   # work_class=repair
+            "other_visits":        int,   # work_class unknown
+          },
+          "maintenance": [ tech-row filtered to pools_serviced>0 ],
+          "repairs":     [ tech-row filtered to repairs_completed>0 ],
+          "other":       [ tech-row filtered to other>0 ],
+          "visits":      [ maintenance + repairs + other concat ],
+
+          # SPEC §210-228 preferred additions
+          "totals": {
+            "pools_serviced":    int,
+            "repairs_completed": int,
+          },
+          "by_technician": [
+            {
+              "technician_id":     str,
+              "technician_name":   str,
+              "technician_active": bool,
+              "pools_serviced":    int,
+              "repairs_completed": int,
+              "other":             int,
+              "skipped":           int,
+              # legacy alias — same value as pools_serviced so the old
+              # FE reads the SPEC-correct number (repair visits no
+              # longer inflate the "serviced" count).
+              "completed":         int,
+            }, ...
+          ],
+        }
+
+    New callers should read ``by_technician`` / ``totals`` (spec) or
+    ``summary`` / ``maintenance`` / ``repairs`` / ``other`` (brief).
+    Legacy callers keep the ``rows`` / ``total_completed`` /
+    ``total_skipped`` view; the ``completed`` semantic is intentionally
+    narrowed to service-only per the SPEC.
+    """
     if date_from and date_to:
         week_start, week_end = date_from, date_to
     else:
@@ -4749,12 +4828,18 @@ async def compute_pool_service(tenant_id: str,
     # arrived at the classifier with those fields missing and the
     # classifier fell through to the (now-suppressed-in-strict-mode)
     # tenant-industry default, defeating the whole filter.
+    # POOL-B · Feb-2026 — projection extended to include
+    # ``work_class`` so the service/repair split has the raw value
+    # per-job (we intentionally DO NOT go through ``infer_work_class``
+    # here — the SPEC ruling §274 requires unknown / null values to
+    # bucket into ``other`` rather than default to ``"service"``).
     jobs = await db.jobs.find(
         {"tenant_id": tenant_id, "scheduled_date": date_range, **_nd()},
         {"_id": 0, "technician_id": 1, "technician_name": 1,
          "status": 1, "scheduled_date": 1,
          "service_type": 1, "job_type": 1, "title": 1,
-         "industry": 1, "checklist_industry": 1},
+         "industry": 1, "checklist_industry": 1,
+         "work_class": 1},
     ).to_list(10000)
 
     # POOL-A · industry filter — strict mode so a job with no
@@ -4837,7 +4922,14 @@ async def compute_pool_service(tenant_id: str,
             cached_name_by_tid[tid_j] = nm
 
     agg: dict = {}
-    unassigned = {"completed": 0, "skipped": 0}
+    unassigned = {"pools_serviced": 0, "repairs_completed": 0,
+                   "other": 0, "skipped": 0}
+    # POOL-B · Feb-2026 — data-integrity counter.  When the ``other``
+    # bucket exceeds 10 % of the completed pool volume for the
+    # period we emit a WARN so ops can see legacy / mis-classified
+    # rows drift into the report.
+    _unknown_wc_period = 0
+    _completed_pool_period = 0
     for j in jobs:
         tid = j.get("technician_id")
         # Feb 2026 · Effective-ID rescue for name-only jobs.
@@ -4845,19 +4937,47 @@ async def compute_pool_service(tenant_id: str,
             nm = (j.get("technician_name") or "").strip()
             if nm:
                 tid = name_to_uid.get(nm)
-        if not tid:
-            status = (j.get("status") or "").lower()
-            if status == "completed":
-                unassigned["completed"] += 1
-            elif status in SKIPPED_STATUSES:
-                unassigned["skipped"] += 1
-            continue
-        a = agg.setdefault(tid, {"completed": 0, "skipped": 0})
         status = (j.get("status") or "").lower()
+        # POOL-B · read the raw ``work_class`` value — DO NOT call
+        # ``infer_work_class`` here.  Per SPEC §274 unknown / null
+        # values bucket to ``other``, not to service-by-default.
+        raw_wc = j.get("work_class")
+        wc = str(raw_wc).strip().lower() if isinstance(raw_wc, str) else None
+        bucket_key = None
         if status == "completed":
-            a["completed"] += 1
+            _completed_pool_period += 1
+            if wc == "service":
+                bucket_key = "pools_serviced"
+            elif wc == "repair":
+                bucket_key = "repairs_completed"
+            else:
+                bucket_key = "other"
+                _unknown_wc_period += 1
         elif status in SKIPPED_STATUSES:
-            a["skipped"] += 1
+            bucket_key = "skipped"
+        else:
+            continue
+        if not tid:
+            unassigned[bucket_key] += 1
+            continue
+        a = agg.setdefault(tid, {"pools_serviced": 0,
+                                  "repairs_completed": 0,
+                                  "other": 0, "skipped": 0})
+        a[bucket_key] += 1
+
+    # POOL-B · WARN when >10 % of completed pool jobs land in
+    # ``other`` — data-integrity signal per SPEC §274-278.
+    if _completed_pool_period > 0:
+        _unknown_pct = _unknown_wc_period / _completed_pool_period
+        if _unknown_pct > 0.10:
+            logger.warning(
+                "[pool-service] work_class=unknown/null count %d / %d "
+                "(%.1f%%) exceeds 10%% for tenant=%s week=%s..%s — "
+                "data-integrity check recommended",
+                _unknown_wc_period, _completed_pool_period,
+                _unknown_pct * 100, tenant_id, week_start, week_end,
+            )
+
     rows = []
     for tid, a in agg.items():
         info = tmap.get(tid) or {}
@@ -4867,26 +4987,83 @@ async def compute_pool_service(tenant_id: str,
                                  or cached_name_by_tid.get(tid)
                                  or tid,
             "technician_active": info.get("active", True),
-            "completed": a["completed"],
-            "skipped": a["skipped"],
+            "pools_serviced":    a["pools_serviced"],
+            "repairs_completed": a["repairs_completed"],
+            "other":             a["other"],
+            "skipped":           a["skipped"],
+            # Legacy alias — the SPEC narrows ``completed`` to
+            # ``pools_serviced`` so old FE consumers read the
+            # service-only count (repairs no longer inflate it).
+            "completed":         a["pools_serviced"],
         })
     # Surface the "Unassigned" bucket at the tail so it doesn't
     # crowd the top of the report but is still visible.
-    if unassigned["completed"] or unassigned["skipped"]:
+    if (unassigned["pools_serviced"] or unassigned["repairs_completed"]
+            or unassigned["other"] or unassigned["skipped"]):
         rows.append({
             "technician_id": None,
             "technician_name": "Unassigned",
             "technician_active": True,
-            "completed": unassigned["completed"],
-            "skipped": unassigned["skipped"],
+            "pools_serviced":    unassigned["pools_serviced"],
+            "repairs_completed": unassigned["repairs_completed"],
+            "other":             unassigned["other"],
+            "skipped":           unassigned["skipped"],
+            "completed":         unassigned["pools_serviced"],
         })
-    rows.sort(key=lambda r: (r["technician_id"] is None, -r["completed"]))
+    rows.sort(key=lambda r: (r["technician_id"] is None,
+                              -r["pools_serviced"],
+                              -r["repairs_completed"]))
+
+    # POOL-B · slice the rows into three brief-compatible buckets.
+    # ``maintenance`` = techs with ≥1 pools_serviced, etc.  A tech
+    # with pools_serviced=2, repairs_completed=1 appears in BOTH
+    # the ``maintenance`` and ``repairs`` arrays — same underlying
+    # row shape, filtered by which counter is non-zero.
+    maintenance_rows = [r for r in rows if r["pools_serviced"] > 0]
+    repairs_rows     = [r for r in rows if r["repairs_completed"] > 0]
+    other_rows       = [r for r in rows if r["other"] > 0]
+
+    total_pools_serviced    = sum(r["pools_serviced"] for r in rows)
+    total_repairs_completed = sum(r["repairs_completed"] for r in rows)
+    total_other             = sum(r["other"] for r in rows)
+    total_skipped           = sum(r["skipped"] for r in rows)
+
     return {
+        # ─── Legacy fields — preserved shape ─────────────────────
         "week_start": week_start,
-        "week_end": week_end,
-        "total_completed": sum(r["completed"] for r in rows),
-        "total_skipped": sum(r["skipped"] for r in rows),
+        "week_end":   week_end,
+        # NEW SEMANTIC per SPEC §200 — legacy ``total_completed``
+        # now reflects service-only visits (a repair no longer
+        # inflates it).  Old FE that reads this reads the correct
+        # "pools serviced" count.
+        "total_completed": total_pools_serviced,
+        "total_skipped":   total_skipped,
         "rows": rows,
+
+        # ─── Brief-compatible additions ──────────────────────────
+        "period": {"start": week_start, "end": week_end},
+        "summary": {
+            "total_pool_visits": (total_pools_serviced
+                                    + total_repairs_completed
+                                    + total_other),
+            "maintenance_visits": total_pools_serviced,
+            "repair_visits":       total_repairs_completed,
+            "other_visits":        total_other,
+        },
+        "maintenance": maintenance_rows,
+        "repairs":     repairs_rows,
+        "other":       other_rows,
+        # Legacy top-level "visits" key populated with all three
+        # concatenated for backward-compat with any consumer we
+        # haven't found yet (brief mandate).
+        "visits": maintenance_rows + repairs_rows + other_rows,
+
+        # ─── SPEC §210-228 preferred additions ───────────────────
+        "totals": {
+            "pools_serviced":    total_pools_serviced,
+            "repairs_completed": total_repairs_completed,
+        },
+        "by_technician": rows,
     }
 
 

@@ -102,13 +102,22 @@ def _seed_job(dbc, *, tenant_id: str, tech_id: str = None,
                  tech_name: str = None, service_type: Any = "Pool Cleaning",
                  status: str = "completed",
                  scheduled_date: str = None,
-                 industry: str = None) -> str:
+                 industry: str = None,
+                 work_class: str = "service") -> str:
     jid = _fresh("JOB")
     row: Dict[str, Any] = {
         "id": jid,
         "tenant_id": tenant_id,
         "status": status,
         "scheduled_date": scheduled_date or "2026-02-16",
+        # POOL-B · Feb-2026 — SPEC §280 backfill assumption: any
+        # historical pool row missing ``work_class`` defaults to
+        # ``"service"``.  Fixture seeds mirror that default so the
+        # legacy POOL-A assertions on ``total_completed`` / row-
+        # level ``completed`` count continue to pass after POOL-B
+        # narrowed both to service-only.  Individual POOL-A tests
+        # that need a repair / unknown row pass ``work_class=`` verbatim.
+        "work_class": work_class,
     }
     if service_type is not None:
         row["service_type"] = service_type

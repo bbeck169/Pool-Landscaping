@@ -27,20 +27,63 @@ from utils import now_iso, new_id
 
 
 def _compose_html(tenant_name: str, report: Dict[str, Any]) -> str:
-    rows_html = ""
-    for r in (report.get("rows") or []):
-        rows_html += (
-            f"<tr>"
-            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0'>{r.get('technician_name', '—')}</td>"
-            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:600'>{r.get('completed', 0)}</td>"
-            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:right;color:#B45309'>{r.get('skipped', 0)}</td>"
-            f"</tr>"
-        )
-    if not rows_html:
-        rows_html = (
-            "<tr><td colspan='3' style='padding:16px;text-align:center;color:#64748B;'>"
-            "No pool jobs completed this week.</td></tr>"
-        )
+    """Compose the weekly pool-service admin digest email.
+
+    POOL-B · Feb-2026 — renders two sections side-by-side:
+      * **Maintenance Visits** — techs with ``pools_serviced > 0``
+        (``work_class == "service"``).
+      * **Repairs Completed** — techs with ``repairs_completed > 0``
+        (``work_class == "repair"``).
+    Bottom-of-email summary: ``Maintenance: N · Repairs: M · Total: N+M``.
+    Landscape jobs are filtered at the aggregation query (see
+    ``compute_pool_service``), not in the template.
+    """
+    summary = report.get("summary") or {}
+    total_service = int(summary.get("maintenance_visits") or 0)
+    total_repair  = int(summary.get("repair_visits") or 0)
+    total_other   = int(summary.get("other_visits") or 0)
+    total_skipped = int(report.get("total_skipped") or 0)
+
+    def _tech_rows_html(rows, count_key, count_label, empty_text):
+        rows = rows or []
+        if not rows:
+            return (
+                "<tr><td colspan='3' style='padding:16px;text-align:center;"
+                f"color:#64748B;'>{empty_text}</td></tr>"
+            )
+        html = ""
+        for r in rows:
+            html += (
+                "<tr>"
+                "<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0'>"
+                f"{r.get('technician_name', '—')}</td>"
+                "<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;"
+                f"text-align:right;font-weight:600'>{int(r.get(count_key) or 0)}</td>"
+                "<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;"
+                f"text-align:right;color:#B45309'>{int(r.get('skipped') or 0)}</td>"
+                "</tr>"
+            )
+        return html
+
+    maintenance_html = _tech_rows_html(
+        report.get("maintenance"), "pools_serviced",
+        "Pools Serviced",
+        "No maintenance visits this week.",
+    )
+    repairs_html = _tech_rows_html(
+        report.get("repairs"), "repairs_completed",
+        "Repairs Completed",
+        "No repairs completed this week.",
+    )
+    other_html = ""
+    if total_other > 0:
+        other_html = f"""
+        <div style="margin-top:20px;font-size:12px;color:#B45309;
+                    background:#FEF3C7;padding:10px 14px;border-radius:8px;">
+          <b>{total_other}</b> completed pool visit(s) with unknown
+          <code>work_class</code> — please check the raw job records.
+        </div>
+        """
     return f"""
     <div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0F172A;">
       <div style="background:#0EA5E9;padding:20px;border-radius:10px 10px 0 0;color:#fff;">
@@ -50,22 +93,44 @@ def _compose_html(tenant_name: str, report: Dict[str, Any]) -> str:
         </div>
       </div>
       <div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 10px 10px;padding:16px;background:#fff;">
-        <div style="margin-bottom:12px;font-size:13px;color:#334155;">
-          Total pools serviced this week:
-          <b>{report.get('total_completed', 0)}</b>
-          &nbsp;·&nbsp;
-          Skipped: <b style="color:#B45309;">{report.get('total_skipped', 0)}</b>
-        </div>
+
+        <h2 style="margin:4px 0 8px;font-size:15px;color:#0F172A;">Maintenance Visits</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;">
+          <thead>
+            <tr style="background:#F1F5F9;">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Technician</th>
+              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Pools Serviced</th>
+              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Skipped</th>
+            </tr>
+          </thead>
+          <tbody>{maintenance_html}</tbody>
+        </table>
+
+        <h2 style="margin:4px 0 8px;font-size:15px;color:#0F172A;">Repairs Completed</h2>
         <table style="width:100%;border-collapse:collapse;font-size:13px;">
           <thead>
             <tr style="background:#F1F5F9;">
               <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Technician</th>
-              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Completed</th>
+              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Repairs</th>
               <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Skipped</th>
             </tr>
           </thead>
-          <tbody>{rows_html}</tbody>
+          <tbody>{repairs_html}</tbody>
         </table>
+
+        {other_html}
+
+        <div style="margin-top:20px;font-size:13px;color:#334155;
+                    padding-top:14px;border-top:1px solid #E2E8F0;">
+          <b>Maintenance: {total_service}</b>
+          &nbsp;·&nbsp;
+          <b>Repairs: {total_repair}</b>
+          &nbsp;·&nbsp;
+          <b>Total: {total_service + total_repair}</b>
+          &nbsp;·&nbsp;
+          <span style="color:#B45309;">Skipped: {total_skipped}</span>
+        </div>
+
         <div style="margin-top:16px;font-size:12px;color:#64748B;">
           <a href="{APP_PUBLIC_URL or ''}/admin/reports/pool-service" style="color:#0EA5E9;text-decoration:underline;">
             View full report in the app →

@@ -1,8 +1,22 @@
 /**
- * Phase 46.4 — Pool Service Report (Admin).
+ * Phase 46.4 · POOL-B — Pool Service Report (Admin).
  *
- * Table view of per-tech pools serviced / skipped for a chosen week.
- * Wires to `GET /api/reports/pool-service?week_start=YYYY-MM-DD`.
+ * Table view of per-tech pools serviced / repairs completed / skipped
+ * for a chosen week.  Wires to
+ * `GET /api/reports/pool-service?date_from=...&date_to=...`.
+ *
+ * POOL-B (Feb-2026) — reads the new response shape:
+ *   - ``summary.maintenance_visits``  → total pools serviced
+ *   - ``summary.repair_visits``       → total repairs completed
+ *   - ``summary.other_visits``        → completed jobs w/ unknown
+ *                                       ``work_class`` (defensive)
+ *   - ``by_technician[]``             → per-tech split rows with
+ *     ``pools_serviced``, ``repairs_completed``, ``other``, ``skipped``.
+ *
+ * Landscape jobs are filtered at the backend (POOL-A) via
+ * ``derive_industry_for_job(job, tenant, strict_mode=True) == "pool"``
+ * — no client-side filter needed.
+ *
  * Admin + super_admin only (backend also enforces).
  * CSV export runs client-side against the fetched rows so it always
  * matches what the admin is looking at.
@@ -25,16 +39,76 @@ function todayIso() {
 }
 
 function toCsv(rows) {
-  const header = ["Tech Name", "Pools Serviced", "Skipped", "Total Assigned"];
+  const header = [
+    "Tech Name", "Pools Serviced", "Repairs Completed",
+    "Other", "Skipped", "Total Assigned",
+  ];
   const body = rows.map((r) => [
-    r.tech_name,
+    r.technician_name,
     r.pools_serviced,
+    r.repairs_completed,
+    r.other,
     r.skipped,
-    (r.pools_serviced || 0) + (r.skipped || 0),
+    (r.pools_serviced || 0) + (r.repairs_completed || 0)
+      + (r.other || 0) + (r.skipped || 0),
   ]);
   return [header, ...body]
     .map((line) => line.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+}
+
+/**
+ * Single shared tech-row renderer — one implementation used by both
+ * the Maintenance and Repairs tables so the row markup is never
+ * duplicated (brief rule §"Both sections share the same row-shape
+ * renderer").  ``variant`` picks which counter to render bold in
+ * the middle column + which data-testid suffix to stamp.
+ */
+function TechRow({ row, variant }) {
+  const isRepair = variant === "repairs";
+  const primary = isRepair ? row.repairs_completed : row.pools_serviced;
+  const primaryTestId = isRepair
+    ? `pool-report-tech-row-${row.technician_id || "unassigned"}-repairs`
+    : `pool-report-tech-row-${row.technician_id || "unassigned"}-serviced`;
+  return (
+    <tr
+      key={row.technician_id || row.technician_name}
+      data-testid={`pool-service-row-${row.technician_id || "unassigned"}-${variant}`}
+      style={{ borderBottom: `1px solid ${colors.border}` }}
+    >
+      <td className="px-4 py-2.5 font-semibold" style={{ color: colors.onSurface }}>
+        {row.technician_name}
+      </td>
+      <td
+        className="px-4 py-2.5 text-right font-semibold"
+        style={{ color: colors.onSurface }}
+        data-testid={primaryTestId}
+      >
+        {primary || 0}
+      </td>
+      <td
+        className="px-4 py-2.5 text-right"
+        style={{ color: (row.skipped || 0) > 0 ? "#B45309" : colors.onSurface }}
+      >
+        {row.skipped || 0}
+      </td>
+    </tr>
+  );
+}
+
+function SectionEmpty({ label, testid }) {
+  return (
+    <tr>
+      <td
+        colSpan={3}
+        className="px-4 py-8 text-center text-sm"
+        style={{ color: colors.muted }}
+        data-testid={testid}
+      >
+        {label}
+      </td>
+    </tr>
+  );
 }
 
 export default function PoolServiceReport() {
@@ -42,33 +116,22 @@ export default function PoolServiceReport() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [sortKey, setSortKey] = useState("pools_serviced");
-  const [sortDir, setSortDir] = useState("desc");
-  // Phase 50.G — email delivery history (Auto-Friday cron log).
   const [history, setHistory] = useState([]);
 
   const load = async (ws) => {
     setLoading(true);
     setError(null);
     try {
-      // Existing backend endpoint (jobs.py) expects `date_from` + `date_to`
-      // and returns `{rows: [{technician_id, technician_name, completed, skipped}], total_completed, total_skipped}`.
+      // POOL-B · Feb-2026 — response now includes ``summary`` (four
+      // counts) + ``maintenance`` / ``repairs`` / ``other`` arrays of
+      // tech rows.  Legacy ``rows`` still present for fallback.
       const start = new Date(ws + "T00:00:00");
       const end = new Date(start);
       end.setDate(end.getDate() + 6);
       const df = start.toISOString().slice(0, 10);
       const dt = end.toISOString().slice(0, 10);
       const res = await api.get(`/reports/pool-service?date_from=${df}&date_to=${dt}`);
-      setData({
-        week_start: res.week_start || df,
-        week_end: res.week_end || dt,
-        rows: (res.rows || []).map((r) => ({
-          tech_id: r.technician_id,
-          tech_name: r.technician_name,
-          pools_serviced: r.completed || 0,
-          skipped: r.skipped || 0,
-        })),
-      });
+      setData(res);
     } catch (e) {
       setError(e.message || "Failed to load");
       setData(null);
@@ -81,7 +144,6 @@ export default function PoolServiceReport() {
     load(week);
   }, [week]);
 
-  // Phase 50.G — load Auto-Friday email history (last 10 attempts).
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -93,35 +155,32 @@ export default function PoolServiceReport() {
     return () => { alive = false; };
   }, [week]);
 
-  const rows = useMemo(() => {
-    const src = data?.rows || [];
-    const withTotals = src.map((r) => ({
-      ...r,
-      total: (r.pools_serviced || 0) + (r.skipped || 0),
-    }));
-    const sorted = [...withTotals].sort((a, b) => {
-      const av = a[sortKey] ?? 0;
-      const bv = b[sortKey] ?? 0;
-      if (typeof av === "string") {
-        return sortDir === "asc"
-          ? String(av).localeCompare(String(bv))
-          : String(bv).localeCompare(String(av));
-      }
-      return sortDir === "asc" ? av - bv : bv - av;
-    });
-    return sorted;
-  }, [data, sortKey, sortDir]);
-
-  const toggleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir(key === "tech_name" ? "asc" : "desc");
-    }
+  const maintenance = useMemo(
+    () => data?.maintenance || [], [data],
+  );
+  const repairs = useMemo(
+    () => data?.repairs || [], [data],
+  );
+  const summary = data?.summary || {
+    maintenance_visits: 0,
+    repair_visits: 0,
+    other_visits: 0,
+    total_pool_visits: 0,
   };
+  const totalMaintenance = summary.maintenance_visits || 0;
+  const totalRepairs = summary.repair_visits || 0;
+  const totalOther = summary.other_visits || 0;
+  const totalAll = totalMaintenance + totalRepairs + totalOther;
 
   const downloadCsv = () => {
+    // Union of maintenance + repairs, deduped by technician_id so a
+    // tech with both counts appears once.  Falls back to
+    // ``by_technician`` when either array is missing.
+    const byId = new Map();
+    (data?.by_technician || []).forEach((r) =>
+      byId.set(r.technician_id || `unassigned:${r.technician_name}`, r),
+    );
+    const rows = Array.from(byId.values());
     const csv = toCsv(rows);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -131,24 +190,6 @@ export default function PoolServiceReport() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const SortIcon = ({ col }) => {
-    if (sortKey !== col) return null;
-    return sortDir === "asc"
-      ? <ChevronUp size={12} style={{ display: "inline", verticalAlign: "middle" }} />
-      : <ChevronDown size={12} style={{ display: "inline", verticalAlign: "middle" }} />;
-  };
-
-  const totals = useMemo(() => {
-    return rows.reduce(
-      (acc, r) => {
-        acc.pools_serviced += r.pools_serviced || 0;
-        acc.skipped += r.skipped || 0;
-        return acc;
-      },
-      { pools_serviced: 0, skipped: 0 },
-    );
-  }, [rows]);
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto" data-testid="pool-service-report">
@@ -165,7 +206,7 @@ export default function PoolServiceReport() {
               Pool Service Report
             </h1>
             <p className="text-sm mt-0.5" style={{ color: colors.muted }}>
-              Per-tech counts of pools serviced vs skipped for the selected week.
+              Per-tech counts of pools serviced vs repairs vs skipped for the selected week.
             </p>
           </div>
         </div>
@@ -193,12 +234,12 @@ export default function PoolServiceReport() {
           <button
             type="button"
             onClick={downloadCsv}
-            disabled={!rows.length}
+            disabled={totalAll === 0}
             className="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-md"
             style={{
-              background: rows.length ? colors.brand : colors.surfaceSecondary,
-              color: rows.length ? "#fff" : colors.muted,
-              border: `1px solid ${rows.length ? colors.brand : colors.border}`,
+              background: totalAll > 0 ? colors.brand : colors.surfaceSecondary,
+              color: totalAll > 0 ? "#fff" : colors.muted,
+              border: `1px solid ${totalAll > 0 ? colors.brand : colors.border}`,
             }}
             data-testid="pool-service-csv"
           >
@@ -208,90 +249,166 @@ export default function PoolServiceReport() {
       </div>
 
       {loading ? (
-        <div className="rounded-2xl p-8 text-center text-sm" style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.muted }}>
+        <div
+          className="rounded-2xl p-8 text-center text-sm"
+          style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.muted }}
+        >
           Loading pool service data…
         </div>
       ) : error ? (
-        <div className="rounded-2xl p-4 text-sm" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C" }} data-testid="pool-service-error">
+        <div
+          className="rounded-2xl p-4 text-sm"
+          style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#B91C1C" }}
+          data-testid="pool-service-error"
+        >
           {error}
         </div>
       ) : (
-        <div className="rounded-2xl overflow-hidden" style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
-          <div className="px-4 py-3 text-xs font-semibold flex justify-between" style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
-            <span>
-              Week: {data?.week_start} → {data?.week_end}
+        <>
+          {/* Summary strip — counts + total.  ``Other`` chip hidden
+              when zero per brief §"Empty states". */}
+          <div
+            className="rounded-2xl mb-4 px-4 py-3 flex flex-wrap items-center gap-3 text-sm"
+            style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+            data-testid="pool-service-summary"
+          >
+            <span className="text-xs font-semibold uppercase" style={{ color: colors.muted }}>
+              Week {data?.week_start} → {data?.week_end}
             </span>
-            <span data-testid="pool-service-totals">
-              {totals.pools_serviced} serviced · {totals.skipped} skipped
-            </span>
+            <span className="grow" />
+            <Chip
+              label="Maintenance"
+              value={totalMaintenance}
+              tone="brand"
+              testid="pool-report-total-serviced"
+            />
+            <Chip
+              label="Repairs"
+              value={totalRepairs}
+              tone="repair"
+              testid="pool-report-total-repairs"
+            />
+            {totalOther > 0 && (
+              <Chip
+                label="Other"
+                value={totalOther}
+                tone="warn"
+                testid="pool-report-total-other"
+              />
+            )}
+            <Chip label="Total" value={totalAll} tone="neutral" testid="pool-report-total-all" />
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="pool-service-table">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                  <th
-                    className="text-left px-4 py-2.5 cursor-pointer select-none"
-                    style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}
-                    onClick={() => toggleSort("tech_name")}
-                    data-testid="pool-service-sort-tech"
-                  >
-                    Tech Name <SortIcon col="tech_name" />
-                  </th>
-                  <th
-                    className="text-right px-4 py-2.5 cursor-pointer select-none"
-                    style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}
-                    onClick={() => toggleSort("pools_serviced")}
-                    data-testid="pool-service-sort-serviced"
-                  >
-                    Pools Serviced <SortIcon col="pools_serviced" />
-                  </th>
-                  <th
-                    className="text-right px-4 py-2.5 cursor-pointer select-none"
-                    style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}
-                    onClick={() => toggleSort("skipped")}
-                    data-testid="pool-service-sort-skipped"
-                  >
-                    Skipped <SortIcon col="skipped" />
-                  </th>
-                  <th
-                    className="text-right px-4 py-2.5 cursor-pointer select-none"
-                    style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}
-                    onClick={() => toggleSort("total")}
-                    data-testid="pool-service-sort-total"
-                  >
-                    Total Assigned <SortIcon col="total" />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-8 text-center text-sm" style={{ color: colors.muted }} data-testid="pool-service-empty">
-                      No pool jobs found for this week.
-                    </td>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* ─── Maintenance Visits ────────────────────────── */}
+            <div
+              className="rounded-2xl overflow-hidden"
+              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+              data-testid="pool-service-maintenance-section"
+            >
+              <div
+                className="px-4 py-3 text-xs font-semibold flex justify-between items-center"
+                style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
+              >
+                <span className="uppercase">Maintenance Visits</span>
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold"
+                  style={{ background: colors.brand, color: "#fff" }}
+                >
+                  {totalMaintenance}
+                </span>
+              </div>
+              <table className="w-full text-sm" data-testid="pool-service-maintenance-table">
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <th className="text-left px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Tech Name
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Pools Serviced
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Skipped
+                    </th>
                   </tr>
-                ) : (
-                  rows.map((r) => (
-                    <tr key={r.tech_id} data-testid={`pool-service-row-${r.tech_id}`} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                      <td className="px-4 py-2.5 font-semibold" style={{ color: colors.onSurface }}>
-                        {r.tech_name}
-                      </td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: colors.onSurface }}>
-                        {r.pools_serviced}
-                      </td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: r.skipped > 0 ? "#B45309" : colors.onSurface }}>
-                        {r.skipped}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: colors.onSurface }}>
-                        {r.total}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {maintenance.length === 0 ? (
+                    <SectionEmpty
+                      label="No maintenance visits in this period"
+                      testid="pool-service-maintenance-empty"
+                    />
+                  ) : (
+                    maintenance.map((r) => (
+                      <TechRow
+                        key={`m-${r.technician_id || r.technician_name}`}
+                        row={r}
+                        variant="maintenance"
+                      />
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ─── Repairs Completed ─────────────────────────── */}
+            <div
+              className="rounded-2xl overflow-hidden"
+              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+              data-testid="pool-service-repairs-section"
+            >
+              <div
+                className="px-4 py-3 text-xs font-semibold flex justify-between items-center"
+                style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
+              >
+                <span className="uppercase">Repairs Completed</span>
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold"
+                  style={{ background: "#B45309", color: "#fff" }}
+                >
+                  {totalRepairs}
+                </span>
+              </div>
+              <table className="w-full text-sm" data-testid="pool-service-repairs-table">
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <th className="text-left px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Tech Name
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Repairs
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Skipped
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {repairs.length === 0 ? (
+                    <SectionEmpty
+                      label="No repairs completed in this period"
+                      testid="pool-service-repairs-empty"
+                    />
+                  ) : (
+                    repairs.map((r) => (
+                      <TechRow
+                        key={`r-${r.technician_id || r.technician_name}`}
+                        row={r}
+                        variant="repairs"
+                      />
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Phase 50.G — Auto-Friday email history */}
@@ -356,5 +473,34 @@ export default function PoolServiceReport() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Small labelled count chip used in the summary strip.
+ * Kept private to this file — three tones (brand / repair / warn /
+ * neutral) match the section colouring.
+ */
+function Chip({ label, value, tone, testid }) {
+  const palette = {
+    brand:   { bg: colors.brand, fg: "#fff" },
+    repair:  { bg: "#B45309",     fg: "#fff" },
+    warn:    { bg: "#FEF3C7",     fg: "#92400E" },
+    neutral: { bg: colors.surface, fg: colors.onSurface, border: colors.border },
+  };
+  const p = palette[tone] || palette.neutral;
+  return (
+    <span
+      data-testid={testid}
+      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold"
+      style={{
+        background: p.bg,
+        color: p.fg,
+        border: p.border ? `1px solid ${p.border}` : "none",
+      }}
+    >
+      <span style={{ opacity: 0.85 }}>{label}:</span>
+      <span>{value}</span>
+    </span>
   );
 }
