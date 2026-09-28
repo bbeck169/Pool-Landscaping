@@ -72,6 +72,8 @@ const SoshieModerationQueuePage = React.lazy(() => import(/* webpackChunkName: "
 // Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
 const AiPersonasScopePage = React.lazy(() => import(/* webpackChunkName: "p-admin-aipersonasscopepage" */ "@/pages/admin/AiPersonasScopePage"));
 const AiToolAuditPage = React.lazy(() => import(/* webpackChunkName: "p-admin-aitoolauditpage" */ "@/pages/admin/AiToolAuditPage"));
+// MTH-B · Feb-2026 — Multi-Tenant Hub · Per-tenant AI Rules editor.
+const AIRulesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-airulespage" */ "@/pages/admin/AIRulesPage"));
 const PortalPaymentReturn = React.lazy(() => import(/* webpackChunkName: "p-portal-portalpaymentreturn" */ "@/pages/portal/PortalPaymentReturn"));
 const QuickBooksIntegrationPage = React.lazy(() => import(/* webpackChunkName: "p-admin-integrations-quickbooksintegrationpage" */ "@/pages/admin/integrations/QuickBooksIntegrationPage"));
 import {
@@ -936,6 +938,12 @@ export default function App() {
             {/* Task RR/SS Phase 2 · Feb 2026 */}
             <Route path="admin/ai-personas-scope" element={<AdminOnly><AiPersonasScopePage /></AdminOnly>} />
             <Route path="admin/ai-tool-audit" element={<AdminOnly><AiToolAuditPage /></AdminOnly>} />
+            {/* MTH-B · Feb-2026 — Multi-Tenant Hub AI Rules editor.
+                ``AdminOnly`` matches the backend's require_admin
+                gate on GET/PUT /api/tenant-ai-rules; the master
+                switch + platform-defaults surfaces are additionally
+                super-only both client- and server-side. */}
+            <Route path="admin/ai-rules" element={<AdminOnly><AIRulesPage /></AdminOnly>} />
             {/* Phase A1 · Feb-2026 — Proactive Intelligence full-list
                 page. ``AdminOnly`` already resolves to admin +
                 super_admin (see line 493 wrapper), which matches the
