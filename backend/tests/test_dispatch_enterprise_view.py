@@ -393,3 +393,87 @@ def test_admin_role_allowed():
     tok = _login("admin@aquaterra.com")
     r = _get(tok)
     assert r.status_code == 200, r.text
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 12. Truncation cap — > 2000 jobs → truncated=True + trim to cap +
+#      deterministic ordering across repeat calls
+# ═══════════════════════════════════════════════════════════════════
+def test_truncation_cap_enforced_and_deterministic():
+    tok = _login("super@aquaterra.com")
+    tenant_id = _tenant_of("super@aquaterra.com")
+
+    # 3 techs so the flat jobs array is populated across owners; the
+    # endpoint sort is (scheduled_date, route_index, created_at), so
+    # the truncated slice is fully determined by seeded fields.
+    tech_ids = [
+        _run(_mktech(tenant_id=tenant_id, name=f"TESTemv Bulk {i}"))
+        for i in range(3)
+    ]
+
+    # Seed 2005 jobs across the default window (today..today+6).
+    # ``route_index`` and ``created_at`` are set explicitly per doc so
+    # the sort key is total-ordered → truncation is deterministic.
+    SEED_COUNT = 2005
+    docs = []
+    base_created = datetime.utcnow()
+    for i in range(SEED_COUNT):
+        day_offset = i % 7  # spread across the 7-day window
+        docs.append({
+            "id": f"{TEST_PREFIX}bulk_{i:05d}_{uuid4().hex[:6]}",
+            "tenant_id": tenant_id,
+            "technician_id": tech_ids[i % 3],
+            "scheduled_date": (TODAY + timedelta(days=day_offset)).isoformat(),
+            "status": "scheduled",
+            "customer_id": f"{TEST_PREFIX}bulkc_{i:05d}",
+            "customer_name": f"{TEST_PREFIX}Bulk Customer {i}",
+            "address": "123 Bulk St",
+            "service_type": "pool_service",
+            "title": f"{TEST_PREFIX}Bulk Job {i}",
+            "route_index": i,           # unique per doc → total ordering
+            "created_at": (base_created + timedelta(microseconds=i)).isoformat(),
+            "lat": 33.7 + (i % 100) * 0.001,
+            "lng": -112.2 + (i % 100) * 0.001,
+        })
+    _run(_DB.jobs.insert_many(docs))
+
+    # ── First call ──
+    r1 = _get(tok)  # default window == 7-day window we seeded
+    assert r1.status_code == 200, r1.text
+    body1 = r1.json()
+
+    # Truncation flag + counts
+    assert body1["truncated"] is True, (
+        f"expected truncated=True with {SEED_COUNT} seeded jobs, "
+        f"got total_jobs_matched={body1.get('total_jobs_matched')}"
+    )
+    assert body1["cap"] == 2000
+    assert body1["total_jobs_matched"] >= SEED_COUNT, (
+        f"total_jobs_matched={body1['total_jobs_matched']} < seeded {SEED_COUNT}"
+    )
+    # Trimmed to exactly the cap. Filter to our TESTemv_ IDs so a
+    # shared demo tenant with unrelated seed jobs cannot inflate this.
+    our_jobs_1 = [j for j in body1["jobs"] if j["id"].startswith(f"{TEST_PREFIX}bulk_")]
+    assert len(body1["jobs"]) == 2000, (
+        f"body['jobs'] length={len(body1['jobs'])}, expected exactly cap=2000"
+    )
+    # Overflow == total_matched - cap must be > 0 (proves truncation
+    # actually removed jobs rather than the cap being a no-op).
+    overflow = body1["total_jobs_matched"] - body1["cap"]
+    assert overflow > 0, f"expected overflow > 0, got {overflow}"
+
+    # ── Second call — same window, no seeding between ──
+    r2 = _get(tok)
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+
+    # Deterministic ordering: identical id sequence, identical
+    # truncated slice.
+    ids_1 = [j["id"] for j in body1["jobs"]]
+    ids_2 = [j["id"] for j in body2["jobs"]]
+    assert ids_1 == ids_2, (
+        "truncated slice is not deterministic between two identical calls; "
+        "sort key (scheduled_date, route_index, created_at) is unstable"
+    )
+    assert body2["truncated"] is True
+    assert body2["total_jobs_matched"] == body1["total_jobs_matched"]
