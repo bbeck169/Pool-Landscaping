@@ -4063,6 +4063,57 @@ class BulkReassignIn(BaseModel):
 _TECH_ROLES = {"pool_tech", "landscape_tech", "technician", "tech"}
 _BULK_REASSIGN_CAP = 100
 
+# ═══════════════════════════════════════════════════════════════════
+# BULK-RESCHEDULE · Feb-2026 — bulk scheduled_date move
+# ═══════════════════════════════════════════════════════════════════
+# Cap intentionally matches ``_BULK_REASSIGN_CAP`` so the two schedule
+# bulk actions share the same server-side ceiling.  Above the cap →
+# HTTP 400 ``too_many_job_ids``.  Empty list → HTTP 400
+# ``no_job_ids``.  Rows shielded from the mutation:
+#
+#   * ``not_found``   — id doesn't exist anywhere in Mongo.
+#   * ``wrong_tenant`` — id exists but belongs to another tenant.
+#     Preserved as a distinct skip reason (surfaced to the caller so
+#     an FE audit / mixed-tenant clipboard paste is visible), but no
+#     tenant-scope leakage — the caller already knew the id existed
+#     to submit it.
+#   * ``soft_deleted`` — HD-A rail; ``deleted_at`` is set.
+#   * ``locked``       — CHEM-LOCK rail; ``service_reports.submitted_at``
+#     is set for this job, OR the job is in a terminal
+#     ``completed`` / ``cancelled`` status.  Either way we refuse to
+#     move it.
+#
+# For every non-skipped id the per-job side-effects mirror the
+# single-job PATCH reschedule path:
+#
+#   1. ``jobs.update_one`` — ``scheduled_date`` + ``updated_at``.
+#   2. ``fire_reschedule_notification`` bg task (SAFE-SEND SYSTEM
+#      customer notification — dedicated pipeline in
+#      :mod:`services.notifications_pipeline.service_notifications`).
+#   3. ``notify_customer`` in-app bell rung — "Service scheduled".
+#   4. ``audit_log`` row per job with ``action=job.reschedule``.
+#
+# The bg-task fanout runs one task PER JOB (no batching / no
+# notification suppression) — that's the brief's explicit contract
+# ("each job's customer gets their own notification per current
+# single-job behavior").
+# ═══════════════════════════════════════════════════════════════════
+_BULK_RESCHEDULE_CAP = 100
+_BULK_RESCHEDULE_PAST_LIMIT_DAYS = 90
+
+
+class BulkRescheduleIn(BaseModel):
+    """Payload for POST /jobs/bulk-reschedule.
+
+    ``scheduled_date`` is a bare ``YYYY-MM-DD`` string.  Time-of-day
+    is *not* accepted here — the single-job reschedule path uses a
+    date-only field on the schedule surface, and this endpoint is a
+    strict bulk-superset of that flow.
+    """
+    model_config = ConfigDict(extra="forbid")
+    job_ids: List[str]
+    scheduled_date: str
+
 
 async def _lookup_tech_user(tenant_id: str, tech_id: str) -> Optional[dict]:
     """Resolve a tech identifier to its user row. The frontend may pass
@@ -4286,6 +4337,290 @@ async def bulk_reassign_jobs(body: BulkReassignIn,
               # render the confirmation toast without a re-fetch.
               "new_crew_id": new_crew["id"] if new_crew else None,
               "new_crew_name": (new_crew or {}).get("name") or ""}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BULK-RESCHEDULE endpoint · Feb-2026
+# ═══════════════════════════════════════════════════════════════════
+def _validate_bulk_reschedule_date(raw: str) -> str:
+    """Validate the payload's ``scheduled_date`` string.
+
+    Rules:
+      * Must be non-empty.
+      * Must match ``YYYY-MM-DD`` (strict — time-of-day rejected).
+      * Must parse as a real calendar date (Feb-30 rejected).
+      * Must be no more than ``_BULK_RESCHEDULE_PAST_LIMIT_DAYS``
+        days in the past — protects against operator typos that
+        would silently move jobs to 1970.
+
+    Returns the normalised date string on success; raises
+    :class:`HTTPException` (400 with ``error_code: invalid_scheduled_date``)
+    on any failure.
+    """
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "invalid_scheduled_date",
+                     "message": "scheduled_date must be a "
+                                 "YYYY-MM-DD string"},
+        )
+    s = raw.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "invalid_scheduled_date",
+                     "message": "scheduled_date must be exactly "
+                                 "YYYY-MM-DD",
+                     "received": raw},
+        )
+    try:
+        parsed = datetime.strptime(s, "%Y-%m-%d").replace(
+            tzinfo=timezone.utc,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "invalid_scheduled_date",
+                     "message": "scheduled_date is not a real "
+                                 "calendar date",
+                     "received": raw},
+        )
+    today_utc = datetime.now(timezone.utc)
+    if (today_utc - parsed).days > _BULK_RESCHEDULE_PAST_LIMIT_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "invalid_scheduled_date",
+                     "message":
+                       f"scheduled_date more than "
+                       f"{_BULK_RESCHEDULE_PAST_LIMIT_DAYS} days in "
+                       f"the past — refusing (typo guard).",
+                     "received": raw,
+                     "past_limit_days":
+                        _BULK_RESCHEDULE_PAST_LIMIT_DAYS},
+        )
+    return s
+
+
+_LOCKED_JOB_STATUSES: Tuple[str, ...] = ("completed", "cancelled")
+
+
+async def _is_job_submit_locked(tenant_id: str, job_id: str) -> bool:
+    """Return True when a matching ``service_reports`` row carries a
+    non-null ``submitted_at`` (CHEM-LOCK rail)."""
+    row = await db.service_reports.find_one(
+        {"tenant_id": tenant_id, "job_id": job_id,
+         "submitted_at": {"$ne": None}},
+        {"_id": 0, "id": 1},
+    )
+    return row is not None
+
+
+@router.post("/jobs/bulk-reschedule",
+              operation_id="jobs.bulkReschedule")
+async def bulk_reschedule_jobs(
+    body: BulkRescheduleIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """BULK-RESCHEDULE · Feb-2026 · Schedule multi-select move.
+
+    Bulk equivalent of the single-job ``PATCH /jobs/{jid}`` reschedule
+    path: for every valid job in ``job_ids`` we update
+    ``scheduled_date`` + ``updated_at``, fire the SAFE-SEND SYSTEM
+    customer-facing reschedule notification as a background task,
+    ring the in-app bell channel, and write an ``audit_log`` row.
+
+    Response shape::
+
+        {
+          "rescheduled_count": int,
+          "skipped": [{"job_id": str, "reason": str}, ...],
+          "target_date": "YYYY-MM-DD"
+        }
+
+    Skip reasons: ``not_found``, ``wrong_tenant``, ``soft_deleted``,
+    ``locked``.  Locked = CHEM-LOCK submitted-service-report OR
+    ``status in ("completed", "cancelled")``.  Every non-skipped job
+    is rescheduled and receives the same fanout as if it had been
+    PATCHed individually.
+    """
+    ids = list(dict.fromkeys(body.job_ids or []))
+    if not ids:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "no_job_ids",
+                     "message": "job_ids is empty"},
+        )
+    if len(ids) > _BULK_RESCHEDULE_CAP:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "too_many_job_ids",
+                     "message":
+                       f"bulk reschedule capped at "
+                       f"{_BULK_RESCHEDULE_CAP} rows per call",
+                     "limit": _BULK_RESCHEDULE_CAP,
+                     "received": len(ids)},
+        )
+    target_date = _validate_bulk_reschedule_date(body.scheduled_date)
+
+    tid = tenant["id"]
+    now = now_iso()
+    rescheduled: List[str] = []
+    skipped: List[Dict[str, Any]] = []
+    audit_rows: List[Dict[str, Any]] = []
+    # Per-job (old, new) pairs so we can fanout notifications AFTER
+    # the mutation writes have all persisted — mirrors the single-
+    # job PATCH bg-task ordering.
+    to_notify: List[Dict[str, Any]] = []
+
+    for jid in ids:
+        # Cross-tenant existence check first — surfaced as
+        # ``wrong_tenant`` distinctly from ``not_found`` per brief.
+        # No mutation on either branch.
+        row = await db.jobs.find_one(
+            {"id": jid},
+            {"_id": 0, "id": 1, "tenant_id": 1, "deleted_at": 1,
+             "status": 1, "scheduled_date": 1, "customer_id": 1,
+             "customer_name": 1, "service_type": 1, "title": 1,
+             "technician_id": 1},
+        )
+        if not row:
+            skipped.append({"job_id": jid, "reason": "not_found"})
+            continue
+        if row.get("tenant_id") != tid:
+            skipped.append({"job_id": jid, "reason": "wrong_tenant"})
+            continue
+        if row.get("deleted_at"):
+            skipped.append({"job_id": jid, "reason": "soft_deleted"})
+            continue
+        if (row.get("status") or "").lower() in _LOCKED_JOB_STATUSES:
+            skipped.append({"job_id": jid, "reason": "locked"})
+            continue
+        if await _is_job_submit_locked(tid, jid):
+            skipped.append({"job_id": jid, "reason": "locked"})
+            continue
+
+        old_sd = row.get("scheduled_date")
+        try:
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tid},
+                {"$set": {"scheduled_date": target_date,
+                           "updated_at": now}},
+            )
+        except Exception as exc:                                  # noqa: BLE001
+            logger.warning(
+                "[bulk_reschedule] update failed job=%s tenant=%s: %s",
+                jid, tid, exc,
+            )
+            skipped.append({"job_id": jid,
+                             "reason": "update_failed",
+                             "error": str(exc)[:200]})
+            continue
+
+        rescheduled.append(jid)
+        # Snapshot for the fanout — we re-read the job doc once per
+        # batch below to keep the SAFE-SEND helper's contract
+        # identical to the single-job PATCH.
+        to_notify.append({
+            "job_id": jid, "old_sd": old_sd,
+            "new_sd": target_date, "customer_id": row.get("customer_id"),
+            "service_type": row.get("service_type"),
+            "title": row.get("title"),
+        })
+        audit_rows.append({
+            "id": new_id(),
+            "tenant_id": tid,
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "job.reschedule",
+            "target_job_id": jid,
+            "old_scheduled_date": old_sd,
+            "new_scheduled_date": target_date,
+            "source": "bulk_reschedule",
+            "at": now,
+        })
+
+    # Persist audit rows in one batch — non-fatal if it fails.
+    if audit_rows:
+        try:
+            await db.audit_log.insert_many(audit_rows)
+        except Exception as exc:                                   # noqa: BLE001
+            logger.warning(
+                "[bulk_reschedule] audit insert failed: %s", exc,
+            )
+
+    # Post-mutation fanout.  Each iteration mirrors the single-job
+    # PATCH's reschedule side-effect chain (SAFE-SEND bg task +
+    # in-app bell notification).
+    if to_notify:
+        # Late-import mirrors the single-job PATCH pattern (line
+        # 2500 above) — keeps the ``services.notifications_pipeline``
+        # import off the router load path.
+        import asyncio as _resched_asyncio
+        try:
+            from services.notifications_pipeline.service_notifications import (
+                fire_reschedule_notification,
+            )
+        except Exception as exc:                                   # noqa: BLE001
+            logger.warning(
+                "[bulk_reschedule] pipeline import failed: %s", exc,
+            )
+            fire_reschedule_notification = None                     # type: ignore
+
+        actor_uid = user.get("id")
+        for pair in to_notify:
+            # In-app bell — synchronous like the single-job path.
+            cid = pair.get("customer_id")
+            if cid:
+                try:
+                    await notify_customer(
+                        cid, "Service scheduled",
+                        f"Your service is scheduled for {target_date}.",
+                        job_id=pair["job_id"],
+                    )
+                except Exception as exc:                           # noqa: BLE001
+                    logger.warning(
+                        "[bulk_reschedule] notify_customer failed "
+                        "job=%s: %s", pair["job_id"], exc,
+                    )
+
+            # SAFE-SEND SYSTEM customer notification — bg task per
+            # job, matching the single-job PATCH's fire-and-forget
+            # posture.  Any bg failure logs but never breaks the
+            # response.
+            if fire_reschedule_notification is None:
+                continue
+            _jid = pair["job_id"]
+            _old = pair["old_sd"]
+            _new = pair["new_sd"]
+
+            async def _bg(_jid=_jid, _old=_old, _new=_new):
+                try:
+                    fresh = await db.jobs.find_one(
+                        {"id": _jid, "tenant_id": tid}, {"_id": 0},
+                    )
+                    if not fresh:
+                        return
+                    await fire_reschedule_notification(
+                        job=fresh,
+                        old_scheduled_date=_old,
+                        new_scheduled_date=_new,
+                        actor_user_id=actor_uid,
+                    )
+                except Exception as _bg_exc:                       # noqa: BLE001
+                    logger.warning(
+                        "[bulk_reschedule] SAFE-SEND bg task "
+                        "failed job=%s: %s", _jid, _bg_exc,
+                    )
+
+            _resched_asyncio.create_task(_bg())
+
+    return {
+        "rescheduled_count": len(rescheduled),
+        "rescheduled": rescheduled,
+        "skipped": skipped,
+        "target_date": target_date,
+    }
 
 
 @router.post("/jobs/{jid}/undelete",

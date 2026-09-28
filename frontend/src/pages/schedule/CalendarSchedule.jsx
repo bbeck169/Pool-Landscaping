@@ -34,6 +34,14 @@ import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
 import { runBulkNavigateRoute } from "../../lib/googleMapsRoute";
 
 import { api } from "@/api";
+// BULK-RESCHEDULE · Feb-2026 — imperative confirm before firing the
+// server-side bulk move.  Uses the module-level ``mustConfirm``
+// escape hatch (registered by ``<ConfirmProvider>`` at the app
+// root) so we don't have to hoist a ``useConfirm()`` hook through
+// the deeply-nested pill / grid components.
+import { mustConfirm } from "@/components/ui/confirm-dialog";
+import { bulkReschedule as _bulkRescheduleHelper }
+  from "@/lib/bulkReschedule";
 import { colors, font } from "@/theme";
 // Phase K73 · Feb-2026 — crew-hued deterministic palette for
 // schedule map pins + calendar events. Replaces the pre-K73 flat
@@ -1318,20 +1326,33 @@ export default function CalendarSchedule() {
     toast_(`${ok} closed · ${fail} failed`, fail > ok ? "err" : "info");
     await load();
   };
+  // BULK-RESCHEDULE · Feb-2026 · web — single-call bulk reschedule.
+  //
+  // Replaces the pre-Feb-2026 per-job PUT loop with one server-
+  // side ``POST /api/jobs/bulk-reschedule`` invocation.  The
+  // extracted ``@/lib/bulkReschedule`` helper owns the confirm
+  // dialog, api call, error-code translation, and lifecycle hooks
+  // so the vitest can drive the exact same code path without
+  // mounting this 3.4-kloc calendar component.
   const bulkMove = async () => {
-    if (!checked.size || !/^\d{4}-\d{2}-\d{2}$/.test(moveDate)) {
-      toast_("Pick a target date (YYYY-MM-DD).", "err"); return;
-    }
     setBusy(true);
-    let ok = 0, fail = 0;
-    for (const id of checked) {
-      try { await api.put(`/jobs/${id}`, { scheduled_date: moveDate }); ok++; }
-      catch { fail++; }
+    try {
+      const ids = Array.from(checked);
+      const result = await _bulkRescheduleHelper({
+        ids, date: moveDate,
+        toast: toast_,
+        onClear: () => {
+          setChecked(new Set());
+          setMoveOpen(false);
+          setMoveDate("");
+        },
+        onReload: load,
+        api, mustConfirm,
+      });
+      return result;
+    } finally {
+      setBusy(false);
     }
-    setBusy(false); setChecked(new Set());
-    setMoveOpen(false); setMoveDate("");
-    toast_(`${ok} moved · ${fail} failed`, fail > ok ? "err" : "info");
-    await load();
   };
 
   // Feb-2026 · Optimize Route — non-destructive pre-fill of the
@@ -2462,7 +2483,7 @@ export function GridPanel({
                      opacity: (busy || checked.size === 0) ? 0.4 : 1 }}
             data-testid="grid-bulk-move"
           >
-            <MoveIcon size={12} /> Move these events ({checked.size})
+            <MoveIcon size={12} /> Bulk Reschedule ({checked.size})
           </button>
           <button
             onClick={onOpenBulkReorder}
