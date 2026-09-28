@@ -551,6 +551,12 @@ api_router.include_router(intelligence_alerts.router)
 from routers import hard_delete as _hd_a_hard_delete  # noqa: E402
 api_router.include_router(_hd_a_hard_delete.router)
 
+# FLEET-A · Feb-2026 — Fleet ingestion + ETA + dispatch board.
+# Endpoints at /api/fleet/*. Coexists with legacy telematics
+# (gps_pings) — different consumption surface, different collection.
+from routers import fleet as _fleet_a_fleet  # noqa: E402
+api_router.include_router(_fleet_a_fleet.router)
+
 # Phase A5 · Feb-2026 · Proactive Intelligence — tech smart-brief.
 # ``GET /api/jobs/{job_id}/smart-brief`` — assigned tech / admin /
 # super_admin / manager only; everyone else 403
@@ -5960,6 +5966,19 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
     except Exception:  # noqa: BLE001
         logger.exception(
             "[startup] phase=hd_b_nightly_purge_scheduler failed — scheduler disabled",
+        )
+
+    # FLEET-A · Feb-2026 — ensure fleet collection indexes at boot.
+    # Idempotent; also picks up ``FLEET_BREADCRUMB_RETENTION_DAYS``
+    # env override at start time.
+    try:
+        from config import db as _fleet_db
+        from services.fleet.indexes import ensure_fleet_indexes
+        await ensure_fleet_indexes(_fleet_db)
+        logger.info("[startup] phase=fleet_a_indexes bound=True")
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=fleet_a_indexes failed — fleet indexes NOT bound",
         )
 
     try:

@@ -216,6 +216,10 @@ export const ADMIN_NAV_V2 = [
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
     { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },
+    // FLEET-A · Feb-2026 — dispatch board + fleet membership manager
+    // for on-shift GPS + manual check-ins.
+    { to: "/admin/fleet",              label: "Fleet Board",       icon: Truck,             feature: "jobs", subsection: "Workforce", hard_rule: "admin_only" },
+    { to: "/admin/settings/fleet-membership", label: "Fleet Membership", icon: ShieldCheck, feature: "settings", subsection: "Workforce", hard_rule: "admin_only" },
     // HARD-DELETE · Sub-phase HD-A · Feb-2026 — Admin Trash view for
     // soft-deleted rows across every eligible entity. Admin +
     // super_admin see the tile; the route wrapper is AdminOnly. Purge

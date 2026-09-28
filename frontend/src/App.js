@@ -52,6 +52,8 @@ const JobDetail = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobdetail
 const JobsList = React.lazy(() => import(/* webpackChunkName: "p-jobs-jobslist" */ "@/pages/jobs/JobsList"));
 const AdminUsersList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminuserslist" */ "@/pages/admin/AdminUsersList"));
 const TrashPage = React.lazy(() => import(/* webpackChunkName: "p-admin-trash" */ "@/pages/admin/TrashPage"));
+const FleetDispatchBoard = React.lazy(() => import(/* webpackChunkName: "p-admin-fleet-dispatch" */ "@/pages/admin/DispatchBoard"));
+const FleetMembership = React.lazy(() => import(/* webpackChunkName: "p-admin-fleet-membership" */ "@/pages/admin/FleetMembership"));
 const AdminTagsList = React.lazy(() => import(/* webpackChunkName: "p-admin-admintagslist" */ "@/pages/admin/AdminTagsList"));
 const AdminCommsSuppressionLog = React.lazy(() => import(/* webpackChunkName: "p-admin-admincommssuppressionlog" */ "@/pages/admin/AdminCommsSuppressionLog"));
 const AdminServiceReportsList = React.lazy(() => import(/* webpackChunkName: "p-admin-adminservicereportslist" */ "@/pages/admin/AdminServiceReportsList"));
@@ -896,6 +898,12 @@ export default function App() {
                 Admin + super_admin see soft-deleted rows and can Restore.
                 Only super_admin sees the Purge action (backend enforced). */}
             <Route path="admin/trash" element={<AdminOnly><TrashPage /></AdminOnly>} />
+            {/* FLEET-A · Feb-2026 — Fleet dispatch board + membership.
+                ``/admin/dispatch`` was already taken by the legacy
+                DispatchBoard (dispatch/DispatchPages.jsx); FLEET-A
+                lives at ``/admin/fleet`` to avoid collision. */}
+            <Route path="admin/fleet" element={<AdminOnly><FleetDispatchBoard /></AdminOnly>} />
+            <Route path="admin/settings/fleet-membership" element={<AdminOnly><FleetMembership /></AdminOnly>} />
             <Route path="admin/tags" element={<AdminOnly><AdminTagsList /></AdminOnly>} />
             {/* Queue Item 4 · Feb-2026 — comms whitelist Suppression
                 Log viewer, super_admin-only per P0 safety directive. */}
