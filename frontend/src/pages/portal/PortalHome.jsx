@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Waves, Wrench, Receipt, FileText, MessageSquare, ChevronRight, AlertCircle, Plus, ClipboardCheck, DollarSign, CalendarClock, Wallet, X as XIcon, Send, Sparkles, UserRound, Star, Image as ImageIcon, Video as VideoIcon, Trees, Filter as FilterFunnelIcon } from "lucide-react";
 import { api } from "@/api";
-import { colors, gradients } from '@/theme';
+import { portalColors as colors, gradients } from '@/theme';
 import { useAuth } from "@/auth";
 import BusinessCard from "@/components/business-card/BusinessCard";
 import { Skeleton, StatusPill } from '@/components/ui-kit';

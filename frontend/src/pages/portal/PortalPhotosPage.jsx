@@ -7,9 +7,17 @@
  */
 import React, { useEffect, useState } from "react";
 import { X, Image as ImageIcon } from "lucide-react";
-import { colors } from "@/theme";
+// DTP-1 · Feb-2026 — dark theme pilot. Alias so every inline
+// ``colors.X`` read below resolves to the portal-dark palette
+// without a JSX-body diff.
+import { portalColors as colors } from "@/theme";
 import { api, TOKEN_KEY } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
+// DTP-1 · Feb-2026 — shared portal lightbox (extracted from this
+// file's prior inline implementation). Legacy testids
+// ``portal-photo-lightbox`` / ``-close`` / ``-title`` are preserved
+// via ``testidPrefix``.
+import Lightbox from "@/components/portal/Lightbox";
 
 const PAGE = 24;
 
@@ -38,7 +46,7 @@ export default function PortalPhotosPage() {
   const [items, setItems] = useState(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState(null);
+  const [lightboxIdx, setLightboxIdx] = useState(null);
   const [err, setErr] = useState("");
 
   const load = async (nextOffset) => {
@@ -116,7 +124,7 @@ export default function PortalPhotosPage() {
             {items.map((p) => (
               <button
                 key={p.file_id}
-                onClick={() => setSelected(p)}
+                onClick={() => setLightboxIdx((items || []).findIndex((x) => x.file_id === p.file_id))}
                 className="rounded-xl overflow-hidden transition hover:brightness-95"
                 style={{ background: colors.surfaceSecondary,
                           border: `1px solid ${colors.border}` }}
@@ -157,43 +165,24 @@ export default function PortalPhotosPage() {
         </>
       )}
 
-      {/* Lightbox */}
-      {selected ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.85)" }}
-          onClick={() => setSelected(null)}
-          data-testid="portal-photo-lightbox"
-        >
-          <button
-            onClick={() => setSelected(null)}
-            className="absolute top-4 right-4 text-white"
-            data-testid="portal-photo-lightbox-close"
-          ><X size={28} /></button>
-          <div
-            className="max-w-5xl w-full text-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <img
-              src={authedImgUrl(selected.url)}
-              alt={selected.filename || "photo"}
-              className="max-h-[80vh] mx-auto rounded-xl shadow-2xl"
-              data-testid="portal-photo-lightbox-img"
-            />
-            <div className="mt-3 text-white">
-              <div className="font-semibold" data-testid="portal-photo-lightbox-title">
-                {selected.job_title || selected.filename || "Photo"}
-              </div>
-              <div className="text-xs opacity-80">
-                {selected.uploaded_at
-                  ? new Date(selected.uploaded_at).toLocaleString()
-                  : ""}
-                {selected.purpose ? ` · ${selected.purpose.replace(/_/g, " ")}` : ""}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* Lightbox (DTP-1 · Feb-2026 — extracted to shared
+          <Lightbox> component; legacy testids preserved via
+          testidPrefix). */}
+      <Lightbox
+        items={(items || []).map((p) => ({
+          url:   authedImgUrl(p.url),
+          kind:  "image",
+          title: p.job_title || p.filename || "Photo",
+          subtitle: (p.uploaded_at
+                      ? new Date(p.uploaded_at).toLocaleString()
+                      : "")
+                   + (p.purpose ? ` · ${p.purpose.replace(/_/g, " ")}` : ""),
+        }))}
+        initialIndex={lightboxIdx == null ? 0 : lightboxIdx}
+        open={lightboxIdx !== null}
+        onClose={() => setLightboxIdx(null)}
+        testidPrefix="portal-photo-lightbox"
+      />
     </div>
   );
 }

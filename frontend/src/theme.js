@@ -301,6 +301,77 @@ export const gradients = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// DTP-1 · Feb-2026 — Portal-scoped dark-theme token export.
+//
+// Consumed by ``@/components/portal/PortalThemeShell`` + the
+// portal pilot pages (PortalHome, PortalServiceDetail,
+// PortalPhotosPage). All keys mirror ``colors`` above so a pilot
+// page can drop-in swap the import via
+//   ``import { portalColors as colors } from "@/theme"``
+// and every inline ``colors.X`` read resolves to the dark palette
+// without a JSX-body diff.
+//
+// Nested families (``pool``, ``landscape``, ``accent``, ``status``,
+// ``nav``, ``tile``, ``gradient``, ``destructive``) are inherited
+// from ``colors`` via object-spread — pilot pages don't reach for
+// those directly. DTP-2 will revisit as more portal surfaces migrate.
+// ═══════════════════════════════════════════════════════════════
+export const portalColors = {
+  ...colors,
+  // Surfaces
+  surface:            "#03002e",  // deep navy background
+  surfaceMuted:       "#0a0940",  // raised surface (cards)
+  surfaceRaised:      "#141355",  // highest elevation (modals)
+  surfaceSecondary:   "#0a0940",  // card bg (pilot pages read this)
+  surfaceTertiary:    "#141355",
+  surfaceInverse:     "#F1F5F9",
+  onSurface:          "#F1F5F9",
+  onSurfaceSecondary: "#94A3B8",
+  onSurfaceInverse:   "#03002e",
+  // Brand
+  brand:            "#3B82F6",
+  brandPrimary:     "#3B82F6",
+  onBrandPrimary:   "#F1F5F9",
+  brandSecondary:   "#4ADE80",
+  brandTertiary:    "#1E3A8A",
+  onBrandTertiary:  "#DBEAFE",
+  brandHover:       "#2563EB",
+  // Status
+  success:     "#4ADE80",
+  onSuccess:   "#022C22",
+  warning:     "#FBBF24",
+  onWarning:   "#451A03",
+  error:       "#F87171",
+  onError:     "#450A0A",
+  info:        "#3B82F6",
+  successText: "#4ADE80",
+  warningText: "#FBBF24",
+  dangerText:  "#F87171",
+  // Borders / dividers
+  border:       "#1E293B",
+  borderStrong: "#334155",
+  divider:      "#1E293B",
+  // Muted text
+  muted:        "#94A3B8",
+  // Icons + inputs
+  searchIcon:   "#3B82F6",
+  inputBorder:  "#3B82F6",
+};
+
+export const portalGradients = {
+  // Portal-scoped hero gradient — deep navy → brand blue.
+  navyToBlue: {
+    from:     "#03002e",
+    to:       "#3B82F6",
+    stops:    ["#03002e", "#3B82F6"],
+    css:      "linear-gradient(90deg, #03002e 0%, #3B82F6 100%)",
+    cssHover: "linear-gradient(90deg, #141355 0%, #2563EB 100%)",
+    fg:       "#F1F5F9",
+    textShadow: "0 1px 2px rgba(0, 0, 0, 0.35)",
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // K70.b · Feb-2026 — RETIRED.
 //
 // The deprecated ``brandGradient`` array export and

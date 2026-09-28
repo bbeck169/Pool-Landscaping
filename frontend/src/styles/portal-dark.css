@@ -1,0 +1,59 @@
+/*
+ * DTP-1 · Feb-2026 — Portal-scoped dark-theme overrides.
+ *
+ * Only active inside a ``.portal-dark`` ancestor (wired by
+ * ``<PortalThemeShell>``). Two override layers:
+ *
+ *   1. shadcn CSS-variable palette (--background, --card, etc.)
+ *      so shadcn primitives (Card, Button, Dialog, Input) auto-
+ *      theme to dark inside portal without touching every callsite.
+ *   2. A small set of Tailwind atomics the pilot pages use as
+ *      one-offs (bg-white, bg-slate-50, text-slate-500 …).
+ *      Extend during DTP-2 as more pages migrate.
+ *
+ * Admin surface is untouched — every rule is behind ``.portal-dark``.
+ */
+
+.portal-dark {
+  background-color: #03002e;
+  color: #F1F5F9;
+  min-height: 100vh;
+}
+
+/* ── shadcn CSS-variable overrides ─────────────────────────────
+ * Same shape as ``.dark`` in index.css but tuned to the portal
+ * deep-navy palette. */
+.portal-dark {
+  --background: 244 100% 9%;
+  --foreground: 210 40% 96%;
+  --card: 242 74% 14%;
+  --card-foreground: 210 40% 96%;
+  --popover: 242 70% 19%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 210 40% 96%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 17%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 96%;
+  --border: 215 28% 17%;
+  --input: 215 28% 17%;
+  --ring: 217 91% 60%;
+}
+
+/* ── Tailwind atomic overrides — pilot surfaces only ──────────
+ * Keep the list tight; add more in DTP-2 as portal pages migrate. */
+.portal-dark .bg-white          { background-color: #0a0940 !important; }
+.portal-dark .bg-slate-50       { background-color: #0a0940 !important; }
+.portal-dark .bg-slate-100      { background-color: #141355 !important; }
+.portal-dark .text-slate-500    { color: #94A3B8 !important; }
+.portal-dark .text-slate-600    { color: #94A3B8 !important; }
+.portal-dark .text-slate-700    { color: #CBD5E1 !important; }
+.portal-dark .text-slate-800    { color: #E2E8F0 !important; }
+.portal-dark .text-slate-900    { color: #F1F5F9 !important; }
+.portal-dark .border-slate-200  { border-color: #1E293B !important; }
+.portal-dark .divide-slate-200 > * + *  { border-color: #1E293B !important; }

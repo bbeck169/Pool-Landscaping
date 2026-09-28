@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* DTP-1 · Feb-2026 — portal-scoped dark-theme overrides. Scoped
+ * behind ``.portal-dark`` so admin surfaces are untouched. */
+@import "./styles/portal-dark.css";
+
 html, body, #root {
   min-height: 100%;
 }

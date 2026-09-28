@@ -12,7 +12,11 @@ import {
   Plus,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, gradients } from "@/theme";
+import { colors, money, gradients, portalColors } from "@/theme";
+// DTP-1 · Feb-2026 — Shared portal lightbox for PortalServiceDetail
+// (pilot). Other exports in this file keep their light ``colors``
+// binding untouched.
+import Lightbox from "@/components/portal/Lightbox";
 import { useAuth } from "@/auth";
 import InvoiceView from "@/components/InvoiceView";
 import EstimateView from "@/components/EstimateView";
@@ -104,11 +108,22 @@ export function PortalServices() {
 }
 
 export function PortalServiceDetail() {
+  // DTP-1 · Feb-2026 — pilot dark theme. Local shadow so this one
+  // export reads portal-dark values while the other exports in this
+  // file (PortalServices, PortalInvoices, …) keep their light
+  // ``colors`` binding.
+  const colors = portalColors;
   const { id } = useParams();
   const navigate = useNavigate();
   const [j, setJ] = useState(null);
+  const [lightboxIdx, setLightboxIdx] = useState(null);
   useEffect(() => { api.get(`/jobs/${id}`).then(setJ).catch(() => {}); }, [id]);
   if (!j) return <div className="max-w-3xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
+  const lightboxItems = (j.photos || []).map((p, i) => ({
+    url:   p.url || p.data_url || p,
+    kind:  "image",
+    title: j.title ? `${j.title} · ${i + 1}` : `Photo ${i + 1}`,
+  }));
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-svc-detail">
       <button onClick={() => navigate("/portal/services")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
@@ -149,12 +164,28 @@ export function PortalServiceDetail() {
           <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Photos</h3>
           <div className="grid grid-cols-3 gap-2">
             {j.photos.map((p, i) => (
-              <img key={i} src={p.url || p.data_url || p} alt="" className="w-full aspect-square object-cover rounded-lg"
-                style={{ border: `1px solid ${colors.border}` }} />
+              <button
+                type="button"
+                key={i}
+                onClick={() => setLightboxIdx(i)}
+                className="rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={{ border: `1px solid ${colors.border}` }}
+                data-testid={`portal-service-detail-photo-${i}`}
+                aria-label={`Open photo ${i + 1}`}
+              >
+                <img src={p.url || p.data_url || p} alt="" className="w-full aspect-square object-cover" />
+              </button>
             ))}
           </div>
         </div>
       ) : null}
+      <Lightbox
+        items={lightboxItems}
+        initialIndex={lightboxIdx == null ? 0 : lightboxIdx}
+        open={lightboxIdx !== null}
+        onClose={() => setLightboxIdx(null)}
+        testidPrefix="portal-service-detail-lightbox"
+      />
     </div>
   );
 }

@@ -18,6 +18,8 @@ import QuickPinsRail from "@/components/nav/QuickPinsRail";
 // pending admin-upload UI.
 import BrandLogo from "@/components/branding/BrandLogo";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
+// DTP-1 · Feb-2026 — Portal dark-theme scope wrapper.
+import PortalThemeShell from "@/components/portal/PortalThemeShell";
 import AIDock from "@/components/AIDock/AIDock";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import TosGate from "@/components/legal/TosGate";
@@ -777,17 +779,22 @@ function AppLayout() {
               }
             >
               {/* Phase P43 · Feb-2026 — ``PaymentMethodPromptBanner``
-                  moved from the outer ``flex-row`` slot to sit HERE
-                  as a full-width block ABOVE ``<Outlet />`` inside
-                  the ``max-w-5xl mx-auto`` portal container.  This
-                  stacks the banner vertically instead of letting it
-                  race the sidebar for horizontal space (which caused
-                  content squashing at narrow widths).  Portal-only
-                  branch — admin/staff never render it. */}
+                  sits ABOVE ``<Outlet />``, inside the ``max-w-5xl
+                  mx-auto`` portal container.  Portal-only. */}
               {location.pathname.startsWith("/portal") ? (
                 <PaymentMethodPromptBanner />
               ) : null}
-              <Outlet />
+              {/* DTP-1 · Feb-2026 — portal-scoped dark theme scope
+                  wraps only the ``<Outlet />`` sub-tree so pilot
+                  pages inherit the palette.  Sticky header +
+                  breadcrumbs + banner still render outside the shell
+                  (their light-mode chrome is intentional for the
+                  DTP-1 pilot; DTP-2 will extend the scope). */}
+              {location.pathname.startsWith("/portal") ? (
+                <PortalThemeShell><Outlet /></PortalThemeShell>
+              ) : (
+                <Outlet />
+              )}
             </div>
           </OnboardingGate>
         </DynamicCrumbProvider>
