@@ -34,6 +34,7 @@ import NotesHistoryList from "@/components/customers/NotesHistoryList";
 // DropdownMenu* imports that powered the removed block are gone.
 import { PhoneLink, AddressLink } from "@/components/customer";
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
+import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
@@ -360,6 +361,10 @@ export default function CustomerDetail() {
   );
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" flow uses the
+  // HD-A endpoints in a shared modal. Coexists with the legacy
+  // ``confirmDelete`` mode-aware DELETE surface above.
+  const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
   // Phase M1 · Feb-2026 — Merge Wizard modal open/close.
   const [mergeOpen, setMergeOpen] = useState(false);
   // Feb-2026 · Customer Delete UX overhaul — which mode is currently
@@ -685,6 +690,26 @@ export default function CustomerDetail() {
           >
             <Trash2 size={14} /> Delete
           </Button>
+          {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" button
+              routes through the unified HD-A endpoints. Sits next to
+              the legacy Delete button so both surfaces stay available
+              until HD-C migrates the last of the legacy callers. */}
+          {["admin", "super_admin"].includes(
+              (meRole || "").toLowerCase()) ? (
+            <Button
+              variant="danger"
+              className="px-2.5 py-1 text-xs hover:!bg-orange-400/25 focus:!ring-2 focus:!ring-orange-300/60"
+              onClick={() => setHardDeleteOpen(true)}
+              testid="cd-hard-delete-btn"
+              style={{
+                background: "rgba(251,146,60,0.18)",
+                color: "#FED7AA",
+                border: "1px solid rgba(254,215,170,0.40)",
+              }}
+            >
+              <Trash2 size={14} /> Move to Trash
+            </Button>
+          ) : null}
           {/* Phase M1 · Feb-2026 — Customer Merge Wizard trigger.
                Admin + super_admin only; the wizard modal handles
                role errors gracefully if the backend 403s. */}
@@ -1403,6 +1428,21 @@ export default function CustomerDetail() {
         onCancel={() => setConfirmDelete(false)}
         onSoftDelete={() => doDelete("soft")}
         onHardDelete={() => doDelete("hard")}
+      />
+
+      {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" modal. */}
+      <HardDeleteModal
+        open={hardDeleteOpen}
+        entityType="customer"
+        entityId={id}
+        entityLabel={customer?.name}
+        testidPrefix="cd-hard-delete"
+        onClose={() => setHardDeleteOpen(false)}
+        onSuccess={() => {
+          setHardDeleteOpen(false);
+          setTimeout(() => navigate("/customers"), 400);
+        }}
+        onBlocked={() => setHardDeleteOpen(false)}
       />
 
       {/* Phase M1 · Feb-2026 — Customer Merge Wizard. Admin-only —

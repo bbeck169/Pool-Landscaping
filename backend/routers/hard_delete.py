@@ -28,6 +28,7 @@ from services.hard_delete.cascade import (
     purge_cascade, restore_batch, soft_delete_cascade,
 )
 from services.hard_delete.nightly_purge import dry_run, run_nightly_purge
+from services.hard_delete.preview import preview_cascade
 from services.hard_delete.query_filter import only_trashed_filter
 from services.hard_delete.registry import (
     ELIGIBLE_COLLECTIONS, all_specs, get_spec,
@@ -106,6 +107,39 @@ class PurgeBody(BaseModel):
             "``trash_required`` guard."
         ),
     )
+
+
+# ─── SOFT DELETE ────────────────────────────────────────────────────
+
+
+# ─── PREVIEW CASCADE (HD-B) ─────────────────────────────────────────
+
+@router.post("/{entity_type}/{doc_id}/preview-cascade")
+async def preview_cascade_endpoint(
+    entity_type: str,
+    doc_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Read-only cascade preview.
+
+    Returns descendant counts + external refs WITHOUT mutating any
+    state. Wired to the FE's entity-detail-page HardDeleteModal so
+    admins see exactly what the /soft call will affect before
+    confirming.
+    """
+    _require_soft_restore_role(user)
+    spec = _resolve_spec(entity_type)
+    result = await preview_cascade(
+        spec.entity_type, doc_id, tenant["id"],
+    )
+    if result.get("error_code") == "not_found":
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "not_found",
+                     "entity_type": spec.entity_type, "id": doc_id},
+        )
+    return {"ok": True, **result}
 
 
 # ─── SOFT DELETE ────────────────────────────────────────────────────

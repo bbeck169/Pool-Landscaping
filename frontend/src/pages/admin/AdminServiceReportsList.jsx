@@ -4,10 +4,11 @@
  * Locked-state: rows with evidence_invoice_id refuse hard delete.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { ClipboardList, RefreshCw } from "lucide-react";
+import { ClipboardList, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 import {
   useBulkSelect, BulkSelectAll, BulkSelectRow,
   BulkActionBar, BulkConfirmModal, LockedPill,
@@ -18,6 +19,8 @@ export default function AdminServiceReportsList() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
+  // HARD-DELETE · HD-B · Feb-2026 — per-row "Move to Trash" modal.
+  const [trashTarget, setTrashTarget] = useState(null);
   const load = () => api.get("/service-reports")
     .then((r) => setRows(Array.isArray(r) ? r : (r?.reports || r?.items || [])))
     .catch(() => setRows([]));
@@ -88,11 +91,12 @@ export default function AdminServiceReportsList() {
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Job / customer</th>
               <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Submitted</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Visibility</th>
+              <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {(rows || []).length === 0 && rows !== null ? (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-sm"
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="admin-service-reports-empty">
                 No service reports yet.
               </td></tr>
@@ -123,6 +127,21 @@ export default function AdminServiceReportsList() {
                 <td className="px-3 py-3 text-xs" style={{ color: colors.muted }}>
                   {r.is_customer_visible ? "Visible" : "Hidden"}
                 </td>
+                <td className="px-3 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => setTrashTarget(r)}
+                    data-testid={`asr-hard-delete-${r.id}`}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
+                    style={{
+                      background: "#FEF2F2",
+                      color: "#B91C1C",
+                      border: "1px solid #FECACA",
+                    }}
+                  >
+                    <Trash2 size={12} /> Trash
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -148,6 +167,24 @@ export default function AdminServiceReportsList() {
         confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
         busy={busy}
       />
+      {/* HARD-DELETE · HD-B · Feb-2026 — per-row "Move to Trash". */}
+      {trashTarget ? (
+        <HardDeleteModal
+          open={!!trashTarget}
+          entityType="service_report"
+          entityId={trashTarget.id}
+          entityLabel={
+            trashTarget.customer_name || trashTarget.job_title || `Report ${(trashTarget.id || "").slice(0, 8)}`
+          }
+          testidPrefix={`asr-hard-delete-modal-${trashTarget.id}`}
+          onClose={() => setTrashTarget(null)}
+          onSuccess={() => {
+            setTrashTarget(null);
+            load();
+          }}
+          onBlocked={() => setTrashTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }

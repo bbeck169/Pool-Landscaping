@@ -37,6 +37,7 @@ import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog"
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 // Feb-2026 · Hard-delete quotes — admin+super only surface.
 import HardDeleteQuoteModal from "@/components/quotes/HardDeleteQuoteModal";
+import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 // Feb-2026 · P0 — Duplicate quote (admin/super_admin only).
 import DuplicateQuoteModal from "@/components/quotes/DuplicateQuoteModal";
 // Feb-2026 · UX Polish Batch B — Send quote to customer (composed
@@ -184,6 +185,10 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // Feb-2026 · Hard-delete quote — admin+super only. Separate state
   // from the soft-delete surfaces above.
   const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+  // HARD-DELETE · HD-B · Feb-2026 — separate state for the HD-A
+  // "Move to Trash" modal. Distinct from ``hardDeleteOpen`` above
+  // which powers the legacy per-doc HardDeleteQuoteModal.
+  const [hdaTrashOpen, setHdaTrashOpen] = useState(false);
   // Feb-2026 · P0 — Duplicate quote modal (admin/super_admin only).
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   // Feb-2026 · UX Polish Batch B — Send quote to customer modal
@@ -513,7 +518,26 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           signed chips, customer link, due date, total, History
           button) stays put as data-rich in-body chrome. The inline
           H1 further down was removed to prevent duplication. */}
-      <PageHeader title={doc?.title || (isInvoice ? "Invoice" : "Quote")} />
+      <PageHeader
+        title={doc?.title || (isInvoice ? "Invoice" : "Quote")}
+        actions={
+          isStaff ? (
+            <div className="flex gap-2" data-testid="qid-header-actions">
+              {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash"
+                  routes through the unified HD-A soft-delete
+                  surface. Note the separate state var from the
+                  legacy Hard-Delete-Quote modal to avoid collision. */}
+              <Button
+                variant="danger"
+                onClick={() => setHdaTrashOpen(true)}
+                testid="qid-hard-delete-btn"
+              >
+                <Trash2 size={14} /> Move to Trash
+              </Button>
+            </div>
+          ) : null
+        }
+      />
 
       {/* Phase LZ4 (Feb 2026) — StripeCheckoutReturn removed with
           the Stripe SDK retirement. Payment success is now surfaced
@@ -1359,6 +1383,23 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         onError={(detail) => {
           setToast({ tone: "error", message: String(detail) });
         }}
+      />
+      {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" modal
+          routes through /api/hard-delete. Coexists with the legacy
+          HardDeleteQuoteModal above. */}
+      <HardDeleteModal
+        open={hdaTrashOpen}
+        entityType="quote"
+        entityId={doc?.id}
+        entityLabel={doc?.title}
+        testidPrefix="qid-hard-delete"
+        onClose={() => setHdaTrashOpen(false)}
+        onSuccess={() => {
+          setHdaTrashOpen(false);
+          const target = isInvoice ? "/invoices" : "/quotes";
+          setTimeout(() => navigate(target), 400);
+        }}
+        onBlocked={() => setHdaTrashOpen(false)}
       />
       {/* Feb-2026 · P0 — Duplicate quote modal.  Navigates to the
           fresh draft on success; keeps the modal open + surfaces the

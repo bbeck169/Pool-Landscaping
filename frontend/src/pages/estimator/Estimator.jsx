@@ -16,6 +16,8 @@ import {
 import MediaUploader from "@/components/media/MediaUploader";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
+import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
+import { useAuth } from "@/auth";
 
 // ────── Estimates list ──────
 export function EstimatesList() {
@@ -337,6 +339,10 @@ export function EstimatorTemplates() {
 export function EstimatorEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = ["admin", "super_admin"].includes(
+    (user?.role || "").toLowerCase()
+  );
   const isNew = !id || id === "new";
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState({
@@ -351,6 +357,8 @@ export function EstimatorEditor() {
   const [termsDefault, setTermsDefault] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  // HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" modal state.
+  const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
 
   useEffect(() => {
     api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
@@ -471,7 +479,18 @@ export function EstimatorEditor() {
         />
       </div>
 
-      <div className="flex justify-end mt-4 pb-8"><Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save estimate"}</Button></div>
+      <div className="flex justify-end mt-4 pb-8 gap-2">
+        {!isNew && isAdmin ? (
+          <Button
+            variant="danger"
+            onClick={() => setHardDeleteOpen(true)}
+            testid="est-hard-delete-btn"
+          >
+            <Trash2 size={14} /> Move to Trash
+          </Button>
+        ) : null}
+        <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save estimate"}</Button>
+      </div>
 
       {!isNew ? (
         <div className="rounded-2xl p-5 mb-8"
@@ -492,6 +511,26 @@ export function EstimatorEditor() {
       ) : null}
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* HARD-DELETE · HD-B · Feb-2026 — shared "Move to Trash" modal.
+          Estimates route through the ``quote`` HD-A entity type
+          because estimates and invoices share the ``quotes``
+          collection distinguished by ``doc_type``. */}
+      {!isNew ? (
+        <HardDeleteModal
+          open={hardDeleteOpen}
+          entityType="quote"
+          entityId={id}
+          entityLabel={form.title}
+          testidPrefix="est-hard-delete"
+          onClose={() => setHardDeleteOpen(false)}
+          onSuccess={() => {
+            setHardDeleteOpen(false);
+            setTimeout(() => navigate("/estimator"), 400);
+          }}
+          onBlocked={() => setHardDeleteOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

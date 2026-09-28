@@ -13,6 +13,7 @@ import LineItemsSection from "@/pages/jobs/LineItemsSection";
 import TimelineSection from "@/pages/jobs/TimelineSection";
 import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
+import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 import { CustomerLink, AddressLink } from "@/components/customer";
 import JobNew from "@/pages/jobs/JobNew";
 // Feb-2026 · Slice 6 — 24h post-completion edit window UI.
@@ -37,6 +38,9 @@ export default function JobDetail() {
   const [toast, setToast] = useState(null);
   const [emailModal, setEmailModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" flow uses the
+  // HD-A endpoints in a shared modal.
+  const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   // Task L+P · Feb-2026 — independent lightbox state for the new
   // Service Report Photos section.  Separate from ``lightbox``
@@ -311,6 +315,15 @@ export default function JobDetail() {
               </Button>
               <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="jd-delete">
                 <Trash2 size={14} /> Delete
+              </Button>
+              {/* HARD-DELETE · HD-B · Feb-2026 — routes through the
+                  unified HD-A soft-delete surface. */}
+              <Button
+                variant="danger"
+                onClick={() => setHardDeleteOpen(true)}
+                testid="jd-hard-delete-btn"
+              >
+                <Trash2 size={14} /> Move to Trash
               </Button>
             </div>
           ) : null
@@ -867,6 +880,22 @@ export default function JobDetail() {
           This removes the job permanently.
         </p>
       </Modal>
+
+      {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" modal. */}
+      <HardDeleteModal
+        open={hardDeleteOpen}
+        entityType="job"
+        entityId={id}
+        entityLabel={job?.title}
+        testidPrefix="jd-hard-delete"
+        onClose={() => setHardDeleteOpen(false)}
+        onSuccess={() => {
+          setHardDeleteOpen(false);
+          const parent = job?.customer_id ? `/customers/${job.customer_id}` : "/jobs";
+          setTimeout(() => navigate(parent), 400);
+        }}
+        onBlocked={() => setHardDeleteOpen(false)}
+      />
 
       {/* Feb-2026 · "+ New Scheduled Job" modal. Reuses <JobNew> in
           modal mode with pre-filled defaults inherited from the

@@ -5945,6 +5945,23 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             "[startup] phase=p39_geotab_poller failed — poller disabled",
         )
 
+    # HARD-DELETE · HD-B · Feb-2026 — APScheduler cron for the
+    # nightly retention purge. ``services.hard_delete.scheduler.start``
+    # honours HD_NIGHTLY_PURGE_ENABLED and the PYTEST_CURRENT_TEST
+    # env-var bypass — it will refuse to bind under pytest so
+    # tests stay deterministic.
+    try:
+        from services.hard_delete import scheduler as _hd_b_sched
+        _hd_b_bound = _hd_b_sched.start()
+        logger.info(
+            "[startup] phase=hd_b_nightly_purge_scheduler bound=%s",
+            _hd_b_bound is not None,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[startup] phase=hd_b_nightly_purge_scheduler failed — scheduler disabled",
+        )
+
     try:
         yield
     finally:
@@ -5962,6 +5979,12 @@ async def lifespan(app):  # noqa: ANN001 — FastAPI passes the app
             await _p39_stop()
         except Exception:  # noqa: BLE001
             logger.exception("[shutdown] p39 poller stop failed")
+        # HD-B — graceful shutdown of the nightly-purge scheduler.
+        try:
+            from services.hard_delete import scheduler as _hd_b_sched
+            await _hd_b_sched.stop()
+        except Exception:  # noqa: BLE001
+            logger.exception("[shutdown] hd-b nightly-purge scheduler stop failed")
         await _p21_shutdown_sequence()
 
 
