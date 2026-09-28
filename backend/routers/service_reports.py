@@ -928,6 +928,18 @@ async def submit_service_report(
     if not rep.get("public_uuid"):
         _submit_updates["public_uuid"] = new_id()
         rep["public_uuid"] = _submit_updates["public_uuid"]
+    # CHEM-LOCK · Feb-2026 — resubmit stale-report flag.
+    # If this SR was previously submitted and then admin-unlocked
+    # (``previously_submitted_at`` set by ``POST /jobs/{jid}/unlock``),
+    # stamp ``superseded_at`` with the ORIGINAL submitted_at so the
+    # portal renderer can show the "Report updated after original
+    # send" banner. Also clear ``previously_submitted_at`` so a
+    # third submit cycle doesn't re-stamp with a stale value.
+    _p45_claim_rep = _p45_claim or {}
+    if _p45_claim_rep.get("previously_submitted_at"):
+        _submit_updates["superseded_at"] = _p45_claim_rep[
+            "previously_submitted_at"]
+        _submit_updates["superseded_by_submit_at"] = now
     await db.service_reports.update_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
         {"$set": _submit_updates},
@@ -1087,7 +1099,13 @@ async def submit_service_report(
 
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]},
-        {"$set": _stop_updates},
+        {"$set": _stop_updates,
+         # CHEM-LOCK · Feb-2026 — auto-relock on resubmit. Clear
+         # the admin-unlock stamps so the job returns to the
+         # "submitted and locked" state; the SR's ``submitted_at``
+         # (just set by the P45 claim gate) IS the lock.
+         "$unset": {"unlocked_at": "", "unlocked_by": "",
+                    "unlocked_by_email": "", "unlocked_reason": ""}},
     )
     # Feb-2026 · Job Timers Phase 1 — close every open ``job_timers``
     # row for this job. Runs after the job doc has been flipped to

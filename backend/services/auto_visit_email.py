@@ -426,18 +426,37 @@ def _pool_body_sections(sr: dict, palette: Dict[str, str]) -> list[dict]:
                           f"border-collapse:collapse'>{''.join(html_rows)}</table>"),
                 "text": "\n".join(text_rows),
             })
-    added = sr.get("chemicals_added") or []
-    if added:
-        items = "".join(
-            f"<li style='margin:4px 0'>{c.get('name', c.get('type', 'Chemical'))} — "
-            f"{c.get('amount', '')} {c.get('unit', '')}</li>"
-            for c in added if isinstance(c, dict)
-        )
+    # CHEM-LOCK · Feb-2026 — route every chem row through
+    # ``normalize_chemical`` so both ``quantity``- and ``amount``-only
+    # writes render. Skip genuinely-blank rows (no name + no qty +
+    # no label) rather than emit empty <li>s. Prior implementation
+    # was ``amount``-only, silently dropping every ``quantity``-only
+    # row and rendering "Chemical — " for blanks.
+    from services.chemical_normalizer import normalize_chemical
+    added_raw = sr.get("chemicals_added") or []
+    added_norm = [n for n in (normalize_chemical(c) for c in added_raw)
+                    if n is not None]
+    if added_norm:
+        def _row_html(n: dict) -> str:
+            name = n["name"] or "Chemical"
+            qty = "" if n["quantity"] is None else str(n["quantity"])
+            unit = n["unit"] or ""
+            return (
+                f"<li style='margin:4px 0'>{name} — "
+                f"{qty} {unit}</li>"
+            )
+
+        def _row_text(n: dict) -> str:
+            name = n["name"] or "Chemical"
+            qty = "" if n["quantity"] is None else str(n["quantity"])
+            unit = n["unit"] or ""
+            return f"  • {name} — {qty} {unit}"
+
+        items = "".join(_row_html(n) for n in added_norm)
         sections.append({
             "title": "Chemicals added",
             "html": f"<ul style='padding-left:18px;margin:8px 0'>{items}</ul>",
-            "text": "\n".join(f"  • {c.get('name', 'Chemical')} — {c.get('amount', '')} {c.get('unit', '')}"
-                              for c in added if isinstance(c, dict)),
+            "text": "\n".join(_row_text(n) for n in added_norm),
         })
     checklist = sr.get("checklist_completed") or sr.get("checklist_items") or []
     done = [c for c in checklist

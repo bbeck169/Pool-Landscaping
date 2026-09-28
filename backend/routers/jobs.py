@@ -3667,6 +3667,253 @@ async def list_job_edits(
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# CHEM-LOCK · Feb-2026 — Admin-controlled submitted-job unlock
+# ═════════════════════════════════════════════════════════════════════════
+#
+# The service-report submit flow stamps ``submitted_at`` via the P45
+# atomic claim gate (services/service_report_submit_gate.py). Once
+# stamped, the report is locked — PATCH returns 409 for admin, and
+# the tech FE hides edit controls.
+#
+# Admins occasionally need to correct a submitted visit (typo in a
+# chemical quantity, wrong reading, forgot to check a box). The
+# ``POST /api/jobs/{jid}/unlock`` endpoint below is the ONE surface
+# that opens the door back up, with a hard-required reason string
+# and full audit trail in ``db.job_edits``.
+#
+# Semantics:
+#   1. Guard: ``admin`` / ``super_admin`` / ``owner`` / ``manager``
+#      only. Tech role → 403 (that's the whole point).
+#   2. Reason: required, min 8 chars, stored verbatim (max 500 chars).
+#   3. Effect on service_report:
+#        - Captures the current ``submitted_at`` as
+#          ``previously_submitted_at`` (so a later resubmit can
+#          stamp ``superseded_at`` — see the stale-report banner
+#          in service_reports.submit).
+#        - Unsets ``submitted_at`` + the notification queue markers
+#          (``email_pending_at`` / ``sms_pending_at``) so the P45
+#          claim gate will grant the next submit cleanly.
+#   4. Effect on job doc:
+#        - Sets ``unlocked_at`` / ``unlocked_by`` / ``unlocked_reason``.
+#        - Preserves ``status: completed`` — we're not reopening.
+#          (Reopen is a separate flow with its own semantics.)
+#   5. Audit: writes to ``db.job_edits`` (the SAME collection K6
+#      uses for the completion-edit audit sidebar) so the existing
+#      ``GET /api/jobs/{jid}/edits`` surface picks it up for free.
+#   6. Warnings: response includes ``warnings: [...]`` — currently
+#      the single ``"invoice_paid"`` flag when the linked invoice
+#      has ``payment_status in (paid, partial, partially_paid)``.
+#      NOT a hard block — brief §Edge cases §3.
+#   7. Auto-relock: handled by the submit path itself — the P45
+#      gate re-stamps ``submitted_at`` on the next submit, which
+#      is the lock.
+#   8. Multiple unlocks: allowed. Each writes its own audit row
+#      with ``previous_state`` capturing the ``submitted_at``
+#      value BEFORE the unlock.
+class JobUnlockIn(BaseModel):
+    reason: str
+
+
+@router.post("/jobs/{jid}/unlock",
+              operation_id="jobs.unlock_submitted")
+async def unlock_submitted_job(
+    jid: str, body: JobUnlockIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """CHEM-LOCK · Feb-2026 — Unlock a submitted-and-locked service
+    report for admin-supervised retroactive edits.
+
+    Response
+    --------
+    ``{
+        "ok": True,
+        "warnings": ["invoice_paid"?],
+        "audit_id": <db.job_edits.id>,
+        "unlocked_at": <ISO>,
+        "job": {..., "unlocked_at": ..., "unlocked_by": ...},
+    }``
+
+    Errors
+    ------
+    * ``400`` — missing / short reason (< 8 chars).
+    * ``403`` — non-admin role.
+    * ``404`` — job not found / soft-deleted.
+    * ``409`` — job is not currently submitted (nothing to unlock).
+    """
+    role = (user.get("role") or "").strip().lower()
+    _ADMIN_ROLES = {"admin", "super_admin", "owner", "manager"}
+    if role not in _ADMIN_ROLES:
+        # Tech / customer / viewer / … — hard block. This is the
+        # WHOLE point of the feature; oversight belongs to admin.
+        raise HTTPException(403, "Only admin roles can unlock submitted jobs")
+
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(
+            400,
+            detail={"detail": "reason_required",
+                    "message": "A reason is required to unlock a submitted job"},
+        )
+    if len(reason) < 8:
+        raise HTTPException(
+            400,
+            detail={"detail": "reason_too_short",
+                    "message": "Reason must be at least 8 characters"},
+        )
+
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "photos.data": 0},
+    )
+    if not job or job.get("deleted_at"):
+        raise HTTPException(404, "Job not found")
+
+    # Locate the associated service report(s) — a job may have one
+    # SR per tech in a crew scenario. We unlock every submitted SR
+    # attached to this job so the tech(s) can correct their entries.
+    sr_rows = await db.service_reports.find(
+        {"tenant_id": tenant["id"], "job_id": jid},
+        {"_id": 0, "id": 1, "submitted_at": 1, "tech_id": 1,
+         "previously_submitted_at": 1},
+    ).to_list(20)
+    submitted_sr = [r for r in sr_rows if r.get("submitted_at")]
+
+    if not submitted_sr:
+        # Job was completed but the SR was never stamped (unusual
+        # legacy path) OR the SR was already unlocked by a prior
+        # call. Idempotent 409 — nothing to do.
+        raise HTTPException(
+            409,
+            detail={"detail": "not_locked",
+                    "message": ("No submitted service report on this "
+                                "job — nothing to unlock.")},
+        )
+
+    now = now_iso()
+
+    # ── Snapshot previous_state for the audit row ─────────────────
+    # ``previous_state`` captures the fields we are about to clear
+    # so the audit history is reconstructable even after multiple
+    # unlocks. Cheap dict copy — no PII fields.
+    previous_state = {
+        "service_reports": [
+            {
+                "id": r.get("id"),
+                "tech_id": r.get("tech_id"),
+                "submitted_at": r.get("submitted_at"),
+                "previously_submitted_at": r.get("previously_submitted_at"),
+            }
+            for r in submitted_sr
+        ],
+        "job_unlocked_at": job.get("unlocked_at"),
+    }
+
+    # ── Unlock the service reports ────────────────────────────────
+    # $set stamps the pre-unlock ``submitted_at`` as
+    # ``previously_submitted_at`` so the resubmit path can flag
+    # ``superseded_at`` for the portal "updated after original send"
+    # banner. We keep the FIRST previously_submitted_at we've ever
+    # seen (setOnInsert semantics — but we're using $set so add a
+    # conditional).
+    for sr in submitted_sr:
+        sr_updates = {
+            "$unset": {
+                "submitted_at": "",
+                "email_pending_at": "",
+                "sms_pending_at": "",
+            },
+            "$set": {"updated_at": now},
+        }
+        # Preserve the ORIGINAL previously_submitted_at (from an
+        # earlier unlock/resubmit cycle) — if it's missing, stamp
+        # this unlock's cleared value.
+        if not sr.get("previously_submitted_at"):
+            sr_updates["$set"]["previously_submitted_at"] = sr["submitted_at"]
+        # Always stamp the MOST RECENT cleared submit — the resubmit
+        # flag uses this to know a delta happened.
+        sr_updates["$set"]["last_unlocked_submitted_at"] = sr["submitted_at"]
+        await db.service_reports.update_one(
+            {"tenant_id": tenant["id"], "id": sr["id"]},
+            sr_updates,
+        )
+
+    # ── Update the job doc ────────────────────────────────────────
+    # Preserve ``status: completed`` — we're NOT reopening. Techs
+    # correct in-place; the resubmit re-stamps submitted_at.
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"$set": {
+            "unlocked_at": now,
+            "unlocked_by": user.get("id"),
+            "unlocked_by_email": user.get("email"),
+            "unlocked_reason": reason[:500],
+            "updated_at": now,
+        }},
+    )
+
+    # ── Paid-invoice warning ──────────────────────────────────────
+    # Non-blocking: brief §Edge cases §3 requires ONLY a warning,
+    # not a hard 409. FE renders a confirmation checkbox.
+    warnings: List[str] = []
+    auto_iid = job.get("auto_invoice_id")
+    linked_invoice = None
+    if auto_iid:
+        linked_invoice = await db.quotes.find_one(
+            {"tenant_id": tenant["id"], "id": auto_iid,
+             "doc_type": "invoice"},
+            {"_id": 0, "id": 1, "payment_status": 1},
+        )
+    if not linked_invoice:
+        linked_invoice = await db.quotes.find_one(
+            {"tenant_id": tenant["id"], "doc_type": "invoice",
+             "scheduled_job_id": jid},
+            {"_id": 0, "id": 1, "payment_status": 1},
+        )
+    if linked_invoice:
+        pay_status = (linked_invoice.get("payment_status") or "").lower()
+        if pay_status in ("paid", "partial", "partially_paid"):
+            warnings.append("invoice_paid")
+
+    # ── Audit row in db.job_edits ─────────────────────────────────
+    # Reusing the K6 collection so the existing ``GET /jobs/{jid}/edits``
+    # surface (JobEditPanel.jsx:97) picks up unlocks for free. The
+    # ``changes`` payload uses the same {before, after} shape as
+    # other job_edits rows so the FE renders naturally.
+    edit_id = new_id()
+    audit_doc = {
+        "id": edit_id,
+        "tenant_id": tenant["id"],
+        "job_id": jid,
+        "edited_by": user.get("id"),
+        "edited_by_name": user.get("name") or user.get("email"),
+        "edited_by_role": role,
+        "edited_at": now,
+        "action": "unlock",
+        "changes": {
+            "lock_state": {"before": "locked", "after": "unlocked"},
+        },
+        "reason": reason[:500],
+        "previous_state": previous_state,
+        "warnings": warnings,
+        "source": "web",
+    }
+    await db.job_edits.insert_one(audit_doc)
+
+    fresh = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "photos.data": 0},
+    )
+    return {
+        "ok": True,
+        "warnings": warnings,
+        "audit_id": edit_id,
+        "unlocked_at": now,
+        "job": fresh,
+    }
+
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Feb-2026 · Schedule multi-select soft-delete
 # ═════════════════════════════════════════════════════════════════════════
 class BulkSoftDeleteIn(BaseModel):

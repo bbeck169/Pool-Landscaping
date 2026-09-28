@@ -127,8 +127,16 @@ export default function ServiceReport() {
     finally { setWaterBusy(false); }
   }, [report, id]);
   const addRecToChemicals = (rec) => {
+    // CHEM-LOCK · Feb-2026 — writer forward-compat.  Every new
+    // chemical row now writes BOTH ``quantity`` (spec-preferred)
+    // AND ``amount`` (legacy mirror) so downstream renderers that
+    // read either key surface a value.  Existing rows in Mongo
+    // are NOT backfilled — the read-side normalizer
+    // (services/chemical_normalizer.py) handles legacy shapes.
     const next = [...(report.chemicals_added || []),
-                    { name: rec.chemical, amount: rec.amount,
+                    { name: rec.chemical,
+                      quantity: rec.amount,
+                      amount: rec.amount,
                       unit: rec.unit,
                       notes: `AI recommended · ${rec.urgency}` }];
     setReport({ ...report, chemicals_added: next });
@@ -205,14 +213,29 @@ export default function ServiceReport() {
     markDirty();
   };
   const addChemical = () => {
+    // CHEM-LOCK · Feb-2026 — writer forward-compat (see
+    // ``addRecToChemicals`` for the same rationale). Emits both
+    // ``quantity`` and ``amount`` so quantity-preferring readers
+    // don't fall through the null branch.
     const next = [...(report.chemicals_added || []),
-      { id: Math.random().toString(36).slice(2), name: "", amount: "", unit: "lb", ts: new Date().toISOString() }];
+      { id: Math.random().toString(36).slice(2), name: "",
+        quantity: "", amount: "",
+        unit: "lb", ts: new Date().toISOString() }];
     setReport({ ...report, chemicals_added: next });
     markDirty();
   };
   const updChemical = (idx, patch) => {
     const next = [...report.chemicals_added];
-    next[idx] = { ...next[idx], ...patch };
+    // CHEM-LOCK · Feb-2026 — mirror amount → quantity (and
+    // vice-versa) so any code path that only writes one field
+    // still produces a dual-keyed row post-normalise.
+    const _patch = { ...patch };
+    if ("amount" in _patch && !("quantity" in _patch)) {
+      _patch.quantity = _patch.amount;
+    } else if ("quantity" in _patch && !("amount" in _patch)) {
+      _patch.amount = _patch.quantity;
+    }
+    next[idx] = { ...next[idx], ..._patch };
     setReport({ ...report, chemicals_added: next });
     markDirty();
   };
@@ -426,6 +449,31 @@ export default function ServiceReport() {
               style={{ color: colors.muted }} data-testid="svc-report-back">
         <ChevronLeft size={16}/> Back
       </button>
+
+      {/* CHEM-LOCK · Feb-2026 — Tech-side "locked" hint.  Renders
+          when the report is submitted AND admin hasn't unlocked.
+          The tech's edit controls are already ``disabled={locked}``
+          throughout this file — this banner just tells them WHY. */}
+      {locked ? (
+        <div
+          className="rounded-2xl p-3 mb-3 flex items-start gap-2 text-sm"
+          style={{
+            background: "#FEF3C7",
+            border: "1px solid #FCD34D",
+            color: "#78350F",
+          }}
+          data-testid="svc-report-locked-hint"
+        >
+          <span aria-hidden className="mt-0.5">🔒</span>
+          <div>
+            <div className="font-semibold">Report is locked</div>
+            <div style={{ color: "#92400E" }}>
+              This visit has been submitted. Ask an admin to unlock
+              it if you need to correct something.
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl p-5 mb-5 text-white flex items-start justify-between gap-4 flex-wrap"
            style={{ background: gradients.navyToGreen.css }} data-testid="svc-report-header">

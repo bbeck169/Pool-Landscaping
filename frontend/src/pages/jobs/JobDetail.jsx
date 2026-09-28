@@ -23,6 +23,8 @@ import JobEditPanel from "@/pages/jobs/JobEditPanel";
 import FollowUpEditor from "@/pages/jobs/FollowUpEditor";
 // Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
 import PageHeader from "@/components/layout/PageHeader";
+// CHEM-LOCK · Feb-2026 — admin "Unlock for Edit" button + modal.
+import JobUnlockButton from "@/pages/jobs/JobUnlockButton";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -411,6 +413,16 @@ export default function JobDetail() {
               🔒 Clock in on mobile to enable actions
             </div>
           ) : null}
+          {/* CHEM-LOCK · Feb-2026 — Admin-only unlock button for
+              submitted-and-locked jobs. Component internally decides
+              whether to render (admin role + locked SR + not
+              already unlocked). Placed at the tail of the action
+              row so it never disturbs the primary action layout. */}
+          <JobUnlockButton
+            job={job}
+            user={user}
+            onUnlocked={() => load()}
+          />
         </div>
 
         {/* Phase K6 · Feb-2026 — Editing-after-completion banner.

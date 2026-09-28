@@ -732,6 +732,37 @@ export function PortalServiceReportDetail() {
         </div>
       </div>
 
+      {/* CHEM-LOCK · Feb-2026 — "Superseded" banner. When admin
+          unlocked and the tech re-submitted, ``sr.superseded_at``
+          carries the ORIGINAL submitted_at (the moment the customer
+          first received the email). Portal viewer needs to know the
+          version they're seeing is a corrected version. */}
+      {sr.superseded_at ? (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-start gap-3"
+          style={{
+            backgroundColor: "#EFF6FF",
+            border: "1px solid #BFDBFE",
+            color: "#1E3A8A",
+          }}
+          data-testid="portal-service-report-superseded-banner"
+        >
+          <Info size={16} className="mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <div className="font-medium">
+              Report updated after original send — corrected version
+            </div>
+            <div
+              className="text-xs mt-1"
+              style={{ color: "#3B82F6" }}
+              data-testid="portal-service-report-superseded-original-at"
+            >
+              Originally sent {fmtDate(sr.superseded_at)}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Algae observation (pool only, customer-friendly language) */}
       {kind === "pool" && algae ? (
         <div
@@ -832,8 +863,17 @@ export function PortalServiceReportDetail() {
                   <ul className="space-y-1.5">
                     {effectiveChemicalsAdded.map((c, i) => {
                       const name = c.name || c.chemical || "Chemical";
-                      const amount = c.amount ?? c.qty ?? c.quantity ?? "";
+                      // CHEM-LOCK · Feb-2026 — prefer ``quantity``
+                      // over ``amount`` (handover-noted field drift).
+                      // ``qty`` retained as a legacy third fallback.
+                      const rawQty = c.quantity ?? c.amount ?? c.qty ?? "";
                       const unit = c.unit || c.default_unit || "";
+                      // Skip genuinely blank rows — no name, no qty,
+                      // no unit → nothing meaningful to render.
+                      const hasContent =
+                        (c.name || c.chemical || c.raw_label) ||
+                        (rawQty !== "" && rawQty !== 0 && rawQty !== "0");
+                      if (!hasContent) return null;
                       return (
                         <li
                           key={i}
@@ -842,7 +882,7 @@ export function PortalServiceReportDetail() {
                         >
                           <span style={{ color: colors.onSurface }}>{name}</span>
                           <span className="font-semibold" style={{ color: colors.onSurface }}>
-                            {amount} {unit}
+                            {rawQty} {unit}
                           </span>
                         </li>
                       );
@@ -1002,8 +1042,14 @@ export function PortalServiceReportDetail() {
                           >
                             {bChems.map((c_, ci) => {
                               const name = c_.name || c_.chemical || "Chemical";
-                              const amount = c_.amount ?? c_.qty ?? c_.quantity ?? "";
+                              // CHEM-LOCK · Feb-2026 — prefer ``quantity``
+                              // over ``amount`` (see block above).
+                              const rawQty = c_.quantity ?? c_.amount ?? c_.qty ?? "";
                               const unit = c_.unit || c_.default_unit || "";
+                              const hasContent =
+                                (c_.name || c_.chemical || c_.raw_label) ||
+                                (rawQty !== "" && rawQty !== 0 && rawQty !== "0");
+                              if (!hasContent) return null;
                               return (
                                 <li
                                   key={ci}
@@ -1015,7 +1061,7 @@ export function PortalServiceReportDetail() {
                                     className="font-semibold"
                                     style={{ color: colors.onSurface }}
                                   >
-                                    {amount} {unit}
+                                    {rawQty} {unit}
                                   </span>
                                 </li>
                               );
