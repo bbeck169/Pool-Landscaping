@@ -1160,6 +1160,10 @@ api_router.include_router(_dispatch_savings_router.router, dependencies=[Depends
 from routers import schedule_reorder as _schedule_reorder_router  # noqa: E402
 api_router.include_router(_schedule_reorder_router.router)
 
+# SO-A · Feb-2026 — AI Schedule Optimizer (recommendation + apply).
+from routers import schedule_ai as _schedule_ai_router  # noqa: E402
+api_router.include_router(_schedule_ai_router.router)
+
 # Phase 11 · Feb-2026 — Invoice reconciliation log (super-admin only).
 from routers import invoice_reconciliation as _invoice_reconciliation_router  # noqa: E402
 api_router.include_router(_invoice_reconciliation_router.router)

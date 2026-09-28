@@ -116,6 +116,12 @@ _EMPLOYEE_ACTIONS: Tuple[str, ...] = (
     "commet.suggest_ab_variants",
     "commet.recommend_cta_changes",
     "commet.funnel_stage_report",
+    # SO-A · Feb-2026 — DISPATCH (Diana) actions.  ``schedule_recommendation``
+    # is the read-only recommendation-synthesis action (always auto in
+    # practice — it's a suggestion, not a mutation); ``reassign`` is the
+    # apply-optimization mutator that admins gate via allowlist.
+    "dispatch.schedule_recommendation",
+    "dispatch.reassign",
 )
 
 ACTION_INVENTORY: Tuple[str, ...] = tuple(sorted(

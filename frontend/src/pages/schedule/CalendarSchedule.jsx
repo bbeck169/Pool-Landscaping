@@ -66,6 +66,9 @@ import ChecklistModal from "@/components/checklist/ChecklistModal";
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import TechWeatherWidget from "@/components/Weather/WeatherWidget";
 import JobRainFlag from "@/components/Weather/JobRainFlag";
+// SO-A · Feb-2026 — MARCO Suggestions right-side drawer.
+import { MarcoSuggestionsPanel } from
+  "@/components/schedule/MarcoSuggestionsPanel";
 import WeekStrip from "@/components/schedule/WeekStrip";
 // Phase 27 follow-up · Feb-2026 — the primary /schedule surface is
 // CalendarSchedule (not TodaySchedule), so the compact tech-avatar
@@ -522,6 +525,11 @@ export default function CalendarSchedule() {
   const canCreateJobs = ["admin", "super_admin"].includes((user?.role || "").toLowerCase());
   // Phase 56.3 follow-up — clock-in gate for landscape techs opening events.
   const clockGate = useClockInGate(user);
+
+  // SO-A · Feb-2026 — MARCO Suggestions panel state.  ``marcoJob`` is the
+  // job we're computing recommendations for; opening the panel is driven
+  // by ``onSelectEvent`` for admins/managers only.
+  const [marcoJob, setMarcoJob] = useState(null);
 
   // Feb-2026 · Schedule multi-select soft-delete state ------------------
   // ``selectedJobIds`` is a Set<string> keyed on job.id. Toolbar only
@@ -1027,6 +1035,14 @@ export default function CalendarSchedule() {
     // before we open the modal. Admins / super_admins / "All" role / pool
     // techs / customers are all bypassed inside the hook.
     clockGate.openJob(ev.id, () => setChecklistJobId(ev.id));
+    // SO-A · Feb-2026 — auto-open MARCO Suggestions for admins so the
+    // best-fit tech is one click away.  The panel is a right-side drawer
+    // that layers under the centered checklist modal without conflicting.
+    const rawJob = ev?.resource?.job || null;
+    const isAdminSelect = (user?.role === "admin"
+      || user?.role === "super_admin"
+      || user?.role === "manager");
+    if (isAdminSelect && rawJob) setMarcoJob(rawJob);
   };
 
   // Feb-2026 · Enhancement 1 — drag-drop reschedule state + handlers.
@@ -2165,6 +2181,19 @@ export default function CalendarSchedule() {
 
       {/* Phase 56.3 follow-up — clock-in gate dialog for landscape techs. */}
       <ClockInGateDialog gate={clockGate} />
+
+      {/* SO-A · Feb-2026 — MARCO Suggestions right-side drawer. */}
+      {marcoJob && isAdminRole ? (
+        <MarcoSuggestionsPanel
+          jobId={marcoJob.id}
+          targetDate={marcoJob.scheduled_date
+            || (marcoJob.scheduled_start
+                ? String(marcoJob.scheduled_start).slice(0, 10)
+                : new Date().toISOString().slice(0, 10))}
+          onClose={() => setMarcoJob(null)}
+          onApplied={async () => { await load({ force: true }); }}
+        />
+      ) : null}
 
       {/* Phase P12 · Feb-2026 — Optimize Route error dialog.
           Fires when ``POST /api/schedule/optimize-route`` throws.

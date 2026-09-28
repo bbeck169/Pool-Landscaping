@@ -28,11 +28,21 @@ from typing import Any, Dict, List, Optional
 
 
 def _match(doc: Dict[str, Any], predicate: Dict[str, Any]) -> bool:
-    """Very small mongo-filter evaluator — enough for MTH-A."""
+    """Very small mongo-filter evaluator — enough for MTH-A + SO-A."""
     for k, v in predicate.items():
+        # SO-A · Feb-2026 — $or / $and top-level operators.
+        if k == "$or":
+            if not isinstance(v, list) or not any(_match(doc, sub) for sub in v):
+                return False
+            continue
+        if k == "$and":
+            if not isinstance(v, list) or not all(_match(doc, sub) for sub in v):
+                return False
+            continue
         if isinstance(v, dict) and set(v.keys()) & {"$in", "$gte",
                                                      "$lte", "$gt",
-                                                     "$lt", "$regex"}:
+                                                     "$lt", "$regex",
+                                                     "$exists", "$ne"}:
             cur = doc.get(k)
             if "$in" in v:
                 if cur not in v["$in"]:
@@ -47,6 +57,13 @@ def _match(doc: Dict[str, Any], predicate: Dict[str, Any]) -> bool:
                 return False
             if "$regex" in v:
                 if not re.search(v["$regex"], str(cur or "")):
+                    return False
+            # SO-A · $exists / $ne.
+            if "$exists" in v:
+                if bool(v["$exists"]) != (k in doc):
+                    return False
+            if "$ne" in v:
+                if cur == v["$ne"]:
                     return False
             continue
         if doc.get(k) != v:

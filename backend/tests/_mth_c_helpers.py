@@ -28,6 +28,10 @@ class MTHCFakeDB(_MTHAFakeDB):
         self.users = _Coll("users")
         self.sms_messages = _Coll("sms_messages")
         self.sms_inbound = _Coll("sms_inbound")
+        # SO-A · Feb-2026 — schedule optimizer collections.
+        self.tech_locations = _Coll("tech_locations")
+        self.jobs = _Coll("jobs")
+        self.fleet_membership = _Coll("fleet_membership")
         # Additional Mongo-style access for the MTH-C code paths
         # that use ``db[COLLECTION_NAME]`` string subscripting.
         self._by_name = {
@@ -43,6 +47,9 @@ class MTHCFakeDB(_MTHAFakeDB):
             "users": self.users,
             "sms_messages": self.sms_messages,
             "sms_inbound": self.sms_inbound,
+            "tech_locations": self.tech_locations,
+            "jobs": self.jobs,
+            "fleet_membership": self.fleet_membership,
         }
 
     def __getitem__(self, name: str) -> _Coll:
