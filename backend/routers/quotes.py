@@ -1996,9 +1996,19 @@ async def quote_or_invoice_pdf(qid: str,
     # layout is quote/estimate-only). Admin PDFs stay itemized so
     # ops can review the raw line items unchanged.
     # See /app/memory/FEATURE_QUOTE_CUSTOMER_VIEW_GROUPED.md.
+    #
+    # Phase K79-TOGGLE · Feb-2026 — the customer-side lock-on is now
+    # gated by ``customer_group_display``. Backward-compat: legacy
+    # quotes with the field missing / None default to grouped so
+    # historicals never regress. Explicit ``False`` renders the
+    # itemized customer PDF (the pre-lock behaviour, matching what
+    # the deprecated ``/api/estimates/{qid}/pdf`` alias also does).
+    _cgd_raw = doc.get("customer_group_display")
+    _cgd_pref = True if _cgd_raw is None else bool(_cgd_raw)
     render_grouped = (
         (user.get("role") or "").lower() == "customer"
         and not is_invoice
+        and _cgd_pref
     )
     grouped_data: dict = {}
     if render_grouped:

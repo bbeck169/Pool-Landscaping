@@ -18,8 +18,10 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Eye, Save as SaveIcon } from "lucide-react";
+import { toast } from "sonner";
 import { colors } from "@/theme";
 import { api } from "@/api";
+import { Switch } from "@/components/ui/switch";
 import K79CustomerViewPreview from "./K79CustomerViewPreview";
 
 const MAX_GROUP_DESC = 250;
@@ -43,11 +45,20 @@ function _uniqueServiceCategories(lines, allCats) {
 
 
 export default function K79CustomerViewSection({ doc, onDocRefresh }) {
-  // Feb-2026 · Cleanup Dispatch A · Item 3 — the grouped-layout
-  // toggle was retired (grouped is always ON for customer surfaces
-  // post-grouped-lock ship). The ``customer_group_display`` field is
-  // preserved on the backend doc but the toggle UI + local state are
-  // removed. See /app/memory/CLEANUP_DISPATCH_A.md.
+  // Phase K79-TOGGLE · Feb-2026 — re-enable the grouped-layout
+  // toggle for customer surfaces. Default = ON when the field is
+  // missing (legacy quotes keep today's grouped rendering).
+  // Backend + portal + PDF all branch on ``customer_group_display``
+  // with the same "None → true" compat rule so a legacy quote
+  // renders grouped everywhere.
+  const initialGrouped = (
+    doc?.customer_group_display === undefined
+    || doc?.customer_group_display === null
+      ? true
+      : Boolean(doc.customer_group_display)
+  );
+  const [grouped, setGrouped] = useState(initialGrouped);
+  const [groupedSaving, setGroupedSaving] = useState(false);
   const [descriptions, setDescriptions] = useState(
     doc.customer_group_descriptions || {},
   );
@@ -60,6 +71,18 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
   useEffect(() => {
     setDescriptions(doc.customer_group_descriptions || {});
   }, [doc.customer_group_descriptions]);
+
+  // K79-TOGGLE · Feb-2026 — keep the local toggle in sync when the
+  // parent refreshes ``doc`` (e.g., after another user edited the
+  // quote). Uses the same None → true compat rule as initial mount.
+  useEffect(() => {
+    setGrouped(
+      doc?.customer_group_display === undefined
+      || doc?.customer_group_display === null
+        ? true
+        : Boolean(doc.customer_group_display),
+    );
+  }, [doc?.customer_group_display]);
 
   useEffect(() => {
     let alive = true;
@@ -74,6 +97,26 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
     () => _uniqueServiceCategories(doc.line_items, serviceCats),
     [doc.line_items, serviceCats],
   );
+
+  // K79-TOGGLE · Feb-2026 — optimistic flip + revert-on-error.
+  const persistGrouped = async (nextValue) => {
+    const priorValue = grouped;
+    setGrouped(nextValue);          // optimistic
+    setGroupedSaving(true);
+    try {
+      await api.put(`/quotes/${doc.id}`, {
+        customer_group_display: nextValue,
+      });
+      onDocRefresh?.();
+    } catch (e) {
+      // Revert UI + surface a toast — the sibling code lane
+      // convention (see settings/PaymentProvidersCard.jsx).
+      setGrouped(priorValue);
+      toast.error(e?.message || "Failed to save grouped-layout toggle");
+    } finally {
+      setGroupedSaving(false);
+    }
+  };
 
   const persistDescription = async (catId) => {
     setSavingKey(catId);
@@ -128,20 +171,38 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
       <label
         className="flex items-center gap-2 mb-3 text-sm"
         style={{ color: colors.onSurface }}
-        data-testid="k79-toggle-retired-banner"
+        data-testid="k79-grouped-toggle-row"
+        htmlFor="k79-grouped-toggle"
       >
+        {/* K79-TOGGLE · Feb-2026 — real Switch bound to
+            ``customer_group_display``. Optimistic flip with a
+            revert-on-error path (see ``persistGrouped``). Legacy
+            quotes with the field absent default to ON, matching
+            the prior lock-on behaviour so nothing regresses on
+            historicals. */}
+        <Switch
+          id="k79-grouped-toggle"
+          checked={grouped}
+          disabled={groupedSaving}
+          onCheckedChange={(next) => persistGrouped(Boolean(next))}
+          data-testid="k79-grouped-toggle"
+          aria-label="Grouped layout for customer-facing surfaces"
+        />
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold"
           style={{
             background: colors.surfaceSecondary,
             border: `1px solid ${colors.border}`,
-            color: colors.muted,
+            color: grouped ? colors.brand : colors.muted,
           }}
+          data-testid="k79-grouped-toggle-pill"
         >
-          GROUPED LAYOUT (ON)
+          {`GROUPED LAYOUT (${grouped ? "ON" : "OFF"})`}
         </span>
         <span style={{ color: colors.muted }}>
-          Grouped layout is always on for customer-facing surfaces.
+          {grouped
+            ? "Customer views show rolled-up service groups."
+            : "Customer views show a fully itemized list."}
         </span>
       </label>
 

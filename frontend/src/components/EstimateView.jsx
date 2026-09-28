@@ -361,16 +361,18 @@ export default function EstimateView({
   // ``customer_group_display`` is on. Admin/printable views keep the
   // fully-itemized surface unchanged.
   //
-  // Feb-2026 · Grouped-layout LOCK-ON ship — grouped layout is now
-  // the SOLE customer-facing render mode. The historical toggle
-  // ``customer_group_display`` and the magic-link "force-itemized
-  // to allow per-line decline" carve-out are BOTH retired. Customer
-  // still gets a doc-level Decline (top toolbar + a fresh
-  // bottom-of-view "Decline Quote" button) — per-line decline is
-  // no longer part of the customer surface. Admin itemized view is
-  // untouched (``as_customer`` is false there).
+  // Phase K79-TOGGLE · Feb-2026 — the grouped-layout LOCK-ON has been
+  // reverted: ``customer_group_display`` is once again the source of
+  // truth for the customer surface. Backward-compat rule: legacy
+  // quotes with the field missing or null default to grouped
+  // (matching the lock-on behaviour), so historicals do not
+  // suddenly flip to itemized.  When the field is explicitly
+  // ``false``, the customer surface renders the fully-itemized list
+  // (same code paths admins use at lines ~956 / ~1025 below).
   // See /app/memory/FEATURE_QUOTE_CUSTOMER_VIEW_GROUPED.md.
-  const showGrouped = Boolean(as_customer && customer_view);
+  const _cgd = data?.customer_group_display;
+  const _cgdPref = (_cgd === undefined || _cgd === null) ? true : Boolean(_cgd);
+  const showGrouped = Boolean(as_customer && customer_view && _cgdPref);
   const showAdminToolbar = isAdmin && !printable;
   const showCustomerToolbar = !isAdmin && !printable;
 

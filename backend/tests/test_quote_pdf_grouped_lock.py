@@ -1,22 +1,21 @@
-"""Feb-2026 · Quote customer-view grouped-lock — PDF contract test.
+"""Feb-2026 · Quote customer-view — PDF renders per toggle.
 
-Locks the invariant that the customer-facing PDF ALWAYS renders the
-grouped layout regardless of the ``customer_group_display`` field's
-value on the quote doc. Admin PDF stays itemized (regression guard).
+Phase K79-TOGGLE · Feb-2026 · this file was previously a lock-on
+contract (asserting grouped rendering for BOTH toggle values).
+The lock has been reverted — ``customer_group_display`` is once
+again the source of truth. Assertions now split by toggle value:
 
-Strategy: hit the live HTTP endpoint (matches the pattern used by
-``test_k79_customer_view_endpoint.py``), then use ``pypdf`` to
-extract text and check for the grouped-mode markers vs. the
-itemized-mode markers.
+  * ``customer_group_display=True``        → grouped PDF
+  * ``customer_group_display=False``       → itemized customer PDF
+  * (field absent — see other backend tests) → grouped by default
 
 Both PDF handlers exist:
     * ``routers/quotes.py::quote_or_invoice_pdf`` — resolves the
       ``/api/quotes/{qid}/pdf`` route first (registered before
-      ``estimate_viewer``). Post-ship this handler branches to
-      grouped for customer role.
+      ``estimate_viewer``). Post-K79-TOGGLE this handler branches
+      on ``customer_group_display`` for customer role.
     * ``routers/estimate_viewer.py::estimate_pdf`` — the deprecated
-      ``/api/estimates/{qid}/pdf`` alias. Also grouped-locked
-      post-ship but not the route this test targets.
+      ``/api/estimates/{qid}/pdf`` alias. Same branch, same rule.
 """
 from __future__ import annotations
 
@@ -172,12 +171,15 @@ def _pdf_text(pdf_bytes: bytes) -> str:
 # Grouped-lock invariants
 # ═════════════════════════════════════════════════════════════════════
 
-@pytest.mark.parametrize("toggle_value", [True, False])
-def test_customer_pdf_always_uses_grouped_layout(
-    admin_sess, customer_sess, customer_id, svc_cats, inc_cat, toggle_value,
+# ═════════════════════════════════════════════════════════════════════
+# K79-TOGGLE · PDF branches per customer_group_display
+# ═════════════════════════════════════════════════════════════════════
+
+def test_customer_pdf_uses_grouped_layout_when_toggle_on(
+    admin_sess, customer_sess, customer_id, svc_cats, inc_cat,
 ):
     doc = _make_quote(admin_sess, customer_id, svc_cats, inc_cat,
-                       customer_group_display=toggle_value)
+                       customer_group_display=True)
     r = customer_sess.get(
         f"{BASE_URL}/api/quotes/{doc['id']}/pdf", timeout=REQ_TIMEOUT,
     )
@@ -185,20 +187,38 @@ def test_customer_pdf_always_uses_grouped_layout(
     assert r.content[:4] == b"%PDF"
 
     text = _pdf_text(r.content)
-    # Grouped-mode marker: the "Service" header + "Subtotal" column
-    # + at least one of the service-category labels from svc_cats.
+    # Grouped-mode marker: the "Service" header + "Subtotal" column.
     assert "Service" in text, (
-        f"customer PDF missing grouped 'Service' header (toggle={toggle_value})"
+        "customer PDF missing grouped 'Service' header"
     )
     assert "Subtotal" in text
-    # Should NOT still show the raw line-item description of "Pool cleaning"
-    # in itemized rows (grouped shows the category name + description
-    # instead). The category NAME may or may not literally equal
-    # "Pool cleaning"; the important guardrail is the header switched.
+    # No itemized-mode "Qty" column header.
     assert "Qty" not in text or text.count("Qty") == 0, (
-        f"customer PDF fell to itemized branch (toggle={toggle_value}) "
-        f"— found 'Qty' header"
+        "customer PDF fell to itemized branch when toggle=True"
     )
+
+
+def test_customer_pdf_uses_itemized_layout_when_toggle_off(
+    admin_sess, customer_sess, customer_id, svc_cats, inc_cat,
+):
+    """K79-TOGGLE · Feb-2026 — explicit ``customer_group_display=False``
+    must produce the itemized customer PDF (pre-lock behaviour)."""
+    doc = _make_quote(admin_sess, customer_id, svc_cats, inc_cat,
+                       customer_group_display=False)
+    r = customer_sess.get(
+        f"{BASE_URL}/api/quotes/{doc['id']}/pdf", timeout=REQ_TIMEOUT,
+    )
+    assert r.status_code == 200, r.text[:500]
+    assert r.content[:4] == b"%PDF"
+
+    text = _pdf_text(r.content)
+    # Itemized-mode marker: the customer itemized PDF renders raw
+    # line-item descriptions (not the service-category rollup).
+    assert "Pool cleaning" in text or "Grout resealing" in text, (
+        "customer PDF missing raw line-item description when toggle=False"
+    )
+    # "Description" header is present in the itemized customer table.
+    assert "Description" in text
 
 
 def test_admin_pdf_stays_itemized(
