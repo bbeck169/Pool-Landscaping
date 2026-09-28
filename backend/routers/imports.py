@@ -965,6 +965,11 @@ async def commit_pdf_invoice_batch(
                 "unlinked": commit_result.payments_unlinked,
                 "ids": commit_result.payment_ids,
                 "errors": commit_result.payment_errors,
+                # FIN-PARITY-A · Feb-2026 — reconciliation
+                # summaries for every payment that carried an
+                # ``invoice_id``. Empty array when all payments
+                # were unlinked.
+                "reconciled_invoices": commit_result.reconciled_invoices,
             },
         },
         "warnings": commit_result.warnings,

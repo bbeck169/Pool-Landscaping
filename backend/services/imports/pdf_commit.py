@@ -160,6 +160,11 @@ class CommitResult:
     payments_unlinked: int = 0
     payment_ids: List[str] = field(default_factory=list)
     payment_errors: List[Dict[str, Any]] = field(default_factory=list)
+    # FIN-PARITY-A · Feb-2026 — invoice reconciliation summaries.
+    # One entry per payment that carried an ``invoice_id`` and
+    # successfully reconciled. Shape matches
+    # ``ReconcileResult.to_dict()`` for wire stability.
+    reconciled_invoices: List[Dict[str, Any]] = field(default_factory=list)
     # Per-doc-type warnings (missing doc_date on invoice / missing
     # amount_paid on payment / unknown doc_kind / etc). Non-blocking
     # — surfaced to the operator via the commit response for
@@ -552,6 +557,10 @@ async def commit_batch(
         payments_unlinked=payment_stats["unlinked"],
         payment_ids=payment_stats["ids"],
         payment_errors=payment_stats["errors"],
+        # FIN-PARITY-A · Feb-2026 — surface reconciliation
+        # summaries on the top-level commit response so the FE
+        # can render "Invoice INV-42 updated: unpaid → paid".
+        reconciled_invoices=payment_stats.get("reconciled_invoices", []),
         warnings=warnings,
     )
 
@@ -742,6 +751,13 @@ async def _commit_payment_previews(
     stats: Dict[str, Any] = {
         "created": 0, "updated": 0, "unlinked": 0,
         "ids": [], "errors": [],
+        # FIN-PARITY-A · Feb-2026 — one ReconcileResult per
+        # payment that carried a resolved ``invoice_id`` and
+        # successfully reconciled. Unlinked payments (no
+        # invoice_id) and reconcile failures (invoice missing
+        # / cross-tenant) are excluded from this array — see
+        # ``stats["errors"]`` for the failure trace.
+        "reconciled_invoices": [],
     }
 
     for preview in previews:
@@ -879,6 +895,83 @@ async def _commit_payment_previews(
                 "error_code": type(exc).__name__,
                 "message": str(exc)[:400],
             })
+            # A failed insert can never leave a payment behind
+            # that needs reconciliation — skip the reconcile step.
+            continue
+
+        # ═════════════════════════════════════════════════════════
+        # FIN-PARITY-A · Feb-2026 — invoice reconciliation.
+        #
+        # After the payment row lands (create OR idempotent
+        # update), recompute the linked invoice's amount_paid /
+        # payment_status / status from the full sum of linked
+        # payments in db.payments. Non-fatal: a reconcile failure
+        # on one payment must not abort the batch commit — the
+        # payment stays committed, the error is recorded, and the
+        # next payment continues.
+        #
+        # Unlinked payments (invoice_id is None) skip
+        # reconciliation entirely — they've already been logged
+        # as ``invoice_link_missing`` in the warnings above.
+        # ═════════════════════════════════════════════════════════
+        linked_invoice_id = payment_doc.get("invoice_id")
+        if linked_invoice_id:
+            try:
+                from services.imports.payment_reconciler import (
+                    reconcile_invoice_after_payment,
+                    InvoiceNotFoundError,
+                )
+                result = await reconcile_invoice_after_payment(
+                    db=db,
+                    tenant_id=tenant_id,
+                    invoice_id=linked_invoice_id,
+                    audit_source="pdf_import",
+                    audit_actor=(operator or {}).get("id"),
+                )
+                stats["reconciled_invoices"].append(result.to_dict())
+                if result.transitions:
+                    logger.info(
+                        "[pdf-commit] reconciled invoice=%s "
+                        "tenant=%s transitions=%s",
+                        linked_invoice_id, tenant_id,
+                        result.transitions,
+                    )
+            except InvoiceNotFoundError as exc:
+                # Race: the invoice_link we resolved earlier no
+                # longer exists (soft-deleted between link + commit,
+                # tenant boundary drift, etc.). Non-fatal.
+                logger.error(
+                    "[pdf-commit] reconcile skipped for missing "
+                    "invoice=%s tenant=%s: %s",
+                    linked_invoice_id, tenant_id, exc,
+                )
+                stats["errors"].append({
+                    "source_doc_index": source_doc_index,
+                    "error_code": "reconcile_invoice_not_found",
+                    "message": (
+                        f"payment committed but invoice "
+                        f"{linked_invoice_id!r} not found in "
+                        f"tenant — invoice totals NOT refreshed."
+                    ),
+                })
+            except Exception as exc:  # noqa: BLE001
+                # Any other reconcile failure — DO NOT roll back
+                # the payment insert. Log ERROR + record the trace
+                # so ops can hand-fix.
+                logger.exception(
+                    "[pdf-commit] reconcile failed for invoice=%s "
+                    "tenant=%s: %s",
+                    linked_invoice_id, tenant_id, exc,
+                )
+                stats["errors"].append({
+                    "source_doc_index": source_doc_index,
+                    "error_code": "reconcile_failed",
+                    "message": (
+                        f"payment committed but reconcile raised "
+                        f"{type(exc).__name__}: {str(exc)[:280]} "
+                        f"(invoice_id={linked_invoice_id!r})"
+                    ),
+                })
 
     return stats
 
