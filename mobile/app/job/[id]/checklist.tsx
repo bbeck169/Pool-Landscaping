@@ -69,6 +69,8 @@ import { useOnline } from "@/src/offline";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import MarcoVoiceButton from "@/src/components/marco/MarcoVoiceButton";
+// FLEET-B · Manual check-in buttons for fleet tracking on checklist screen.
+import CheckInButtons from "@/src/components/fleet/CheckInButtons";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -961,6 +963,13 @@ export default function JobChecklistScreen() {
             </Pressable>
           ) : null}
         </View>
+
+        {/* FLEET-B · Fleet check-in buttons — On My Way / Arrived */}
+        {!locked && job?.id && (
+          <View style={{ marginBottom: spacing.md }}>
+            <CheckInButtons jobId={job.id} testID="checklist-fleet-checkin" />
+          </View>
+        )}
 
         {/* Phase 27 — Unified service-report media (photos + videos via /api/service-reports/{id}/media) */}
         {report?.id && (

@@ -49,6 +49,8 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { CustomerLink, AddressLink } from "@/src/components/customer";
 import { absolutizeUrl } from "@/src/lib/absolutizeUrl";
+// FLEET-B · Manual check-in buttons for fleet tracking.
+import CheckInButtons from "@/src/components/fleet/CheckInButtons";
 
 // P0 fix — hard timeout so the detail screen never hangs on slow networks.
 const LOAD_TIMEOUT_MS = 20_000;
@@ -597,6 +599,11 @@ export default function JobDetail() {
               onDone={load}
               testID="could-not-service-detail-btn"
             />
+          ) : null}
+
+          {/* FLEET-B · Fleet check-in buttons — On My Way / Arrived */}
+          {canManage && job.id && (job.status === "pending" || job.status === "active") ? (
+            <CheckInButtons jobId={job.id} testID="fleet-checkin-section" />
           ) : null}
 
           {/* Tech Check-In — public customer feed entry */}

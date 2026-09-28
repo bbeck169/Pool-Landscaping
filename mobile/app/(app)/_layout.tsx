@@ -10,6 +10,8 @@ import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
 import AIDockDrawer from "@/src/components/ai/AIDockDrawer";
 import { registerForPushNotifications } from "@/src/services/pushNotifications";
 import { useUnreadCount } from "@/src/hooks/useUnreadCount";
+// FLEET-B · Fleet status chip in the tab bar area.
+import FleetStatusChip from "@/src/components/fleet/FleetStatusChip";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
@@ -39,6 +41,12 @@ export default function AppLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <SyncBanner />
+      {/* FLEET-B · Fleet status chip — shows fleet tracking state for techs */}
+      {(isTech || isAdmin) && (
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 12, paddingTop: 4 }}>
+          <FleetStatusChip />
+        </View>
+      )}
       <View style={{ flex: 1 }}>
     <Tabs
       screenOptions={{

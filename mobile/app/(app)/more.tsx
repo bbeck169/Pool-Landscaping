@@ -13,6 +13,8 @@ import { registerForPushNotifications, deregisterPushToken } from "@/src/service
 import { ManualSyncButton } from "@/src/components/sync/ManualSyncButton";
 // K36 · Diagnostic ring-buffer surface.
 import { getDiagnostics, formatDiagnostics, clearDiagnostics } from "@/src/utils/diagnostics";
+// FLEET-B · Fleet pause toggle for technicians.
+import FleetPauseToggle from "@/src/components/fleet/FleetPauseToggle";
 // Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
@@ -224,6 +226,14 @@ export default function More() {
             />
           </View>
         </View>
+
+        {/* FLEET-B · Fleet tracking pause toggle — visible to techs */}
+        {isTech && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Fleet Tracking</Text>
+            <FleetPauseToggle />
+          </View>
+        )}
 
         {/* Security section */}
         <View style={styles.section}>
