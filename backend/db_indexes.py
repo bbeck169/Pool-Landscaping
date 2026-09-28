@@ -139,6 +139,20 @@ _INDEX_PLANS: List[Tuple[str, Sequence[Tuple[str, int]], Dict[str, Any]]] = [
      [("device_id", ASCENDING), ("tenant_id", ASCENDING)],
      {"unique": True, "name": "uniq_mobile_device",
       "background": True}),
+    # Phase CAD-1 · Feb-2026 — geocode cache for the CAD map-tile
+    # backdrop. Unique on the sha256 address hash so a repeated
+    # lookup is a fast index hit, and TTL 30 days on ``created_at``
+    # (BSON Date, written by ``routers/cad.py``) so stale rows
+    # expire without a cron.
+    ("geocode_cache",
+     [("address_hash", ASCENDING)],
+     {"unique": True, "name": "uniq_geocode_cache_hash",
+      "background": True}),
+    ("geocode_cache",
+     [("created_at", ASCENDING)],
+     {"name": "ttl_geocode_cache_created_at",
+      "expireAfterSeconds": 30 * 24 * 3600,
+      "background": True}),
 ]
 
 

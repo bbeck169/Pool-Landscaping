@@ -113,6 +113,7 @@ _REBOUND_MODULES = (
     "migrations.p38_backfill_scheduled_date",
     "migrations.p38_1_reverse_backfill_scheduled_start",
     "routers.telematics_webhooks",
+    "routers.cad",
     "services.telematics",
     "services.telematics.registry",
     "services.telematics._helpers",
