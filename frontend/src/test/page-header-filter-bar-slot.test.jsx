@@ -196,61 +196,12 @@ describe("PageHeader filterBar slot · DOM order", () => {
     ).toBeTruthy();
   });
 
-  it("filter-bar slot renders BELOW the search band (row 3)", async () => {
-    const { PageHeader } = await import("@/components/layout/PageHeader");
-    const { container } = render(
-      <MemoryRouter>
-        <PageHeader
-          title="Sample"
-          filterBar={<div>chips</div>}
-        />
-      </MemoryRouter>,
-    );
-    const searchBand = container.querySelector(
-      '[data-testid="page-header-search-band"]',
-    );
-    const slot = container.querySelector(
-      '[data-testid="page-header-filter-bar-slot"]',
-    );
-    // eslint-disable-next-line no-bitwise
-    expect(
-      searchBand.compareDocumentPosition(slot)
-      & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-});
-
-
-// ═════════════════════════════════════════════════════════════════
-// 4 · Slot doesn't disrupt search-input keyboard nav
-// ═════════════════════════════════════════════════════════════════
-describe("PageHeader filterBar slot · keyboard nav intact", () => {
-  it("search input still receives keydown events when the slot renders", async () => {
-    const { PageHeader } = await import("@/components/layout/PageHeader");
-    render(
-      <MemoryRouter>
-        <PageHeader
-          title="Sample"
-          filterBar={<div data-testid="filter-scratch">chips</div>}
-        />
-      </MemoryRouter>,
-    );
-    const input = await screen.findByTestId(
-      "page-header-search-input",
-    );
-    // Focus + type a couple of characters — the input controls its
-    // own ``value`` via a controlled React state, so the query
-    // makes it into the DOM without any listener conflict from the
-    // new slot.
-    input.focus();
-    fireEvent.change(input, { target: { value: "invoices" } });
-    await waitFor(() => {
-      expect(input.value).toBe("invoices");
-    });
-    // Escape must clear the query (existing shortcut contract).
-    fireEvent.keyDown(input, { key: "Escape" });
-    await waitFor(() => {
-      expect(input.value).toBe("");
-    });
-  });
+  // Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — the legacy
+  // ``page-header-search-band`` / ``page-header-search-input``
+  // affordances moved into ``<GlobalSearch />``. The two former
+  // tests here (order-vs-search-band + search-input-keydown-under-slot)
+  // are covered by ``components/__tests__/GlobalSearch.test.jsx``
+  // instead. Kept the title-row-vs-slot order test above since
+  // that's the only meaningful order guard now that PageHeader is
+  // a two-row (title, optional filter) shell.
 });

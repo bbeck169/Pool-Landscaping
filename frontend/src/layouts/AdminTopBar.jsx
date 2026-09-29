@@ -58,6 +58,11 @@ import { colors, gradients } from "@/theme";
 // AdminTopBar no longer needs).  UniversalMenu itself is unchanged
 // and remains in use by the customer-portal ``AppLayout`` header.
 import NotificationBell from "@/components/NotificationBell";
+// Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — unified ⌘K palette.
+// Mounted once at the top bar so the shortcut works from every
+// admin route without every ``<PageHeader>`` shipping its own
+// listener. Self-gates its rendering (returns null when closed).
+import GlobalSearch from "@/components/GlobalSearch";
 // Feb-2026 · Mobile Nav Duplicate Fix — mount RolePreviewSwitcher in
 // the narrow-branch right-cluster so super_admin keep one-tap "Test
 // as" access on mobile after Row 1 (the legacy AppLayout mobile
@@ -462,6 +467,11 @@ export default function AdminTopBar() {
       data-testid="admin-topbar"
       data-narrow={isNarrow ? "1" : "0"}
     >
+      {/* Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — unified ⌘K palette.
+          Mounts once so the shortcut listener is a singleton at
+          the top bar. Renders NOTHING until the operator opens it
+          via ``⌘K`` / ``Ctrl+K``. */}
+      <GlobalSearch />
       {!hasAnyNav ? (
         // No nav for this role (customer / customer_portal /
         // unknown). Right-cluster only — the customer portal mounts

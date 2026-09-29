@@ -36,7 +36,12 @@ import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile"
 import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import EbitTile from "@/components/dashboard/EbitTile";
-import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
+// Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — the previous
+// ``<GlobalSearchBar />`` local Dashboard-search input has been
+// retired in favour of the top-bar-mounted ``<GlobalSearch />``
+// ⌘K palette. The palette is reachable from every admin route so
+// the Dashboard no longer duplicates the surface.
+import { Search as _SearchIcon } from "lucide-react";
 // Phase L1.5 · Feb-2026 — 7-card action row (Today's Routes · Approve
 // Check-ins · Unpaid · Overdue · New Leads · Alerts · Missed Services).
 // Batched via `GET /api/dashboard/action-cards`; auto-hides cards
@@ -511,10 +516,49 @@ export default function AdminDashboard() {
           (admin / super_admin only). */}
       <MassMessagingCard />
 
-      {/* Feb 2026 · Dashboard quick-find — grouped search across
-          customers / jobs / invoices / leads. Reuses the shared
-          /api/search endpoint (admin | super_admin | manager). */}
-      <GlobalSearchBar />
+      {/* Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — the legacy
+          ``<GlobalSearchBar />`` local Dashboard search input was
+          removed. Operators invoke the unified palette via
+          ⌘K / Ctrl+K from anywhere. This lightweight hint button
+          keeps the surface discoverable in the same slot without
+          duplicating the search UI. */}
+      <div className="mb-4">
+        <button
+          type="button"
+          onClick={() => {
+            // Programmatic open: dispatch a synthetic ⌘K so the
+            // singleton listener in ``<GlobalSearch />`` opens the
+            // palette. Keeps the Dashboard file free of the
+            // palette's internal state.
+            const evt = new KeyboardEvent("keydown", {
+              key: "k", code: "KeyK",
+              ctrlKey: true, metaKey: true, bubbles: true,
+            });
+            window.dispatchEvent(evt);
+          }}
+          className="w-full inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-medium shadow-sm hover:brightness-95 transition"
+          style={{
+            backgroundColor: colors.surface,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          aria-label="Open global search"
+          data-testid="dashboard-global-search-hint"
+        >
+          <_SearchIcon size={16} />
+          <span>Search customers, jobs, invoices, and pages…</span>
+          <span
+            className="ml-auto text-xs"
+            style={{
+              backgroundColor: colors.surfaceSecondary,
+              padding: "2px 6px",
+              borderRadius: 4,
+            }}
+          >
+            ⌘K
+          </span>
+        </button>
+      </div>
 
       {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
           date-range filter.  Both tiles refetch when the range changes.
