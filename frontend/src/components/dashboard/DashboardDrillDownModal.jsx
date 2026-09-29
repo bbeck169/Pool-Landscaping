@@ -335,6 +335,11 @@ function IncomeRow({
   variant,
   incomeCategories = [],
   currentBucket = null,
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — tenant-scoped service_categories
+   * drive the new Service Unit Select in BOTH income variants.  Empty
+   * list falls back to a read-only display so a fetch failure never
+   * crashes the row. */
+  serviceCategories = [],
 }) {
   const [draft, setDraft] = useState({
     description: row.description || "",
@@ -384,6 +389,69 @@ function IncomeRow({
   const [buCategoryId, setBuCategoryId] = useState(resolveInitialBuId);
   const [movedTo, setMovedTo] = useState(null);
   const buOriginalRef = useRef(buCategoryId);
+
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — Service Unit dropdown state.
+   * Mirrors the BU resolver pattern: prefer the canonical FK if the
+   * backend projects it, otherwise fall back to a case-insensitive
+   * match against the ``serviceCategories`` list using the
+   * denormalized ``service_category`` display name.  Empty list
+   * (fetch failure) → svc id stays "" and the Select renders a
+   * placeholder without crashing. */
+  const resolveInitialSvcId = () => {
+    const direct = (row?.service_category_id || "").trim();
+    if (direct) return direct;
+    const nm = (row?.service_category || "").trim().toLowerCase();
+    if (!nm) return "";
+    const hit = serviceCategories.find(
+      (c) => (c?.name || "").trim().toLowerCase() === nm,
+    );
+    return hit ? hit.id : "";
+  };
+  const [svcCategoryId, setSvcCategoryId] = useState(resolveInitialSvcId);
+  const svcOriginalRef = useRef(svcCategoryId);
+
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — re-resolve Service Unit id
+   * once the async ``serviceCategories`` fetch lands (parallel to
+   * the BU resolver above).  Skips the upgrade when the user has
+   * already committed a change on this row. */
+  useEffect(() => {
+    if (svcCategoryId) return;
+    if (!Array.isArray(serviceCategories) || serviceCategories.length === 0) return;
+    const resolved = resolveInitialSvcId();
+    if (resolved && resolved !== svcCategoryId) {
+      setSvcCategoryId(resolved);
+      svcOriginalRef.current = resolved;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceCategories]);
+
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — line-level Category (income
+   * category) dropdown state for the ``income-by-service`` variant.
+   * The revenue-by-category variant uses the invoice-level BU
+   * Select above and doesn't render this one. */
+  const resolveInitialLineCatId = () => {
+    const direct = (row?.income_category_id || "").trim();
+    if (direct) return direct;
+    const nm = (row?.category || "").trim().toLowerCase();
+    if (!nm) return "";
+    const hit = incomeCategories.find(
+      (c) => (c?.name || "").trim().toLowerCase() === nm,
+    );
+    return hit ? hit.id : "";
+  };
+  const [lineCatId, setLineCatId] = useState(resolveInitialLineCatId);
+  const lineCatOriginalRef = useRef(lineCatId);
+
+  useEffect(() => {
+    if (lineCatId) return;
+    if (!Array.isArray(incomeCategories) || incomeCategories.length === 0) return;
+    const resolved = resolveInitialLineCatId();
+    if (resolved && resolved !== lineCatId) {
+      setLineCatId(resolved);
+      lineCatOriginalRef.current = resolved;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomeCategories]);
 
   // K48 Round-4 · Feb-2026 — re-resolve the initial BU id once the
   // async ``incomeCategories`` fetch lands.  ``useState`` snapshots
@@ -531,7 +599,16 @@ function IncomeRow({
       // row.line_items or any other invoice fields into this
       // payload; the shape validators upstream of the paid-lock
       // guard reject stringified numerics and would 409 the edit.
-      const patchBody = { business_unit: nextCat.name };
+      //
+      // INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID contract.
+      // Send BOTH the canonical ``business_unit_id`` FK and the
+      // denormalized ``business_unit`` display name so the backend
+      // never has to name-lookup on read. Backend accepts both
+      // via ``$set`` on ``InvoiceEditBody``.
+      const patchBody = {
+        business_unit: nextCat.name,
+        business_unit_id: nextCat.id,
+      };
       if (k48Status.needsSentConfirm) {
         patchBody.confirm_edit_sent = true;
       }
@@ -571,6 +648,149 @@ function IncomeRow({
       setTimeout(() => setFaded(false), 300);
     } catch (e) {
       setBuCategoryId(beforeId);
+      const detail = e?.data?.detail;
+      const msg = typeof detail === "string" ? detail
+        : detail?.error || detail?.message || e?.message || "Save failed";
+      setSaveErr(msg);
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — line-level Service Unit
+   * commit.  Sends the paired-ID contract on the same PATCH the
+   * K41 commitField already uses: rebuild ``line_items`` with the
+   * affected row swapped to include BOTH the canonical FK
+   * ``service_category_id`` and the denormalized ``service_category``
+   * name.  Optimistic UI (setSvcCategoryId → nextId immediately),
+   * rollback on PATCH reject.  Money-neutral (qty × unit_price
+   * unchanged), and the K41 audit companion still fires with
+   * ``field="service_category_id"``. */
+  const commitServiceUnit = async (nextId) => {
+    if (!nextId) return;
+    if (nextId === svcOriginalRef.current) return;
+    const nextCat = serviceCategories.find((c) => c.id === nextId);
+    if (!nextCat) {
+      setSaveErr("Unknown service unit.");
+      return;
+    }
+    if (row.line_item_id == null && row.line_index == null) {
+      setSaveErr("Legacy row — use Open full edit.");
+      return;
+    }
+    const before = svcOriginalRef.current;
+    setSaving(true);
+    setSaveErr("");
+    setSvcCategoryId(nextId);
+    try {
+      const fetched = await api.get(`/quotes/${row.invoice_id}`);
+      const items = Array.isArray(fetched?.line_items)
+        ? fetched.line_items.map((li) => ({ ...li }))
+        : [];
+      const idx = row.line_index != null
+        ? row.line_index
+        : items.findIndex((li) => li.id === row.line_item_id);
+      if (idx < 0 || idx >= items.length) {
+        throw new Error("Line item not found in current invoice");
+      }
+      // Paired-ID write: canonical FK + denormalized display name.
+      items[idx] = {
+        ...items[idx],
+        service_category_id: nextCat.id,
+        service_category: nextCat.name,
+      };
+      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      try {
+        await api.post("/dashboard/drilldown/line-item-audit", {
+          tile,
+          invoice_id: row.invoice_id,
+          line_index: idx,
+          field: "service_category_id",
+          before,
+          after: nextCat.id,
+        });
+      } catch (auditErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[income-drilldown] audit companion failed", auditErr);
+      }
+      svcOriginalRef.current = nextId;
+      onEdited?.(row, "service_category_id", before, nextId);
+      setFaded(true);
+      setTimeout(() => setFaded(false), 300);
+    } catch (e) {
+      setSvcCategoryId(before);
+      const detail = e?.data?.detail;
+      const msg = typeof detail === "string" ? detail
+        : detail?.error || detail?.message || e?.message || "Save failed";
+      setSaveErr(msg);
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* INCOME-DRILLDOWN-EDIT · Feb-2026 — line-level Category commit
+   * for the ``income-by-service`` variant.  Sends the paired-ID
+   * contract on the same PATCH pipeline as commitServiceUnit:
+   * BOTH ``income_category_id`` (canonical FK) AND ``category``
+   * (denormalized display) land on the target line item.  Backend
+   * ``validate_line_item_categories`` verifies the FK against
+   * ``income_categories`` at write time. */
+  const commitLineCategoryPaired = async (nextId) => {
+    if (!nextId) return;
+    if (nextId === lineCatOriginalRef.current) return;
+    const nextCat = incomeCategories.find((c) => c.id === nextId);
+    if (!nextCat) {
+      setSaveErr("Unknown category.");
+      return;
+    }
+    if (row.line_item_id == null && row.line_index == null) {
+      setSaveErr("Legacy row — use Open full edit.");
+      return;
+    }
+    const before = lineCatOriginalRef.current;
+    setSaving(true);
+    setSaveErr("");
+    setLineCatId(nextId);
+    try {
+      const fetched = await api.get(`/quotes/${row.invoice_id}`);
+      const items = Array.isArray(fetched?.line_items)
+        ? fetched.line_items.map((li) => ({ ...li }))
+        : [];
+      const idx = row.line_index != null
+        ? row.line_index
+        : items.findIndex((li) => li.id === row.line_item_id);
+      if (idx < 0 || idx >= items.length) {
+        throw new Error("Line item not found in current invoice");
+      }
+      items[idx] = {
+        ...items[idx],
+        income_category_id: nextCat.id,
+        category: nextCat.name,
+      };
+      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      try {
+        await api.post("/dashboard/drilldown/line-item-audit", {
+          tile,
+          invoice_id: row.invoice_id,
+          line_index: idx,
+          field: "income_category_id",
+          before,
+          after: nextCat.id,
+        });
+      } catch (auditErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[income-drilldown] audit companion failed", auditErr);
+      }
+      lineCatOriginalRef.current = nextId;
+      setDraft((d) => ({ ...d, category: nextCat.name }));
+      originalRef.current = { ...originalRef.current, category: nextCat.name };
+      onEdited?.(row, "income_category_id", before, nextId);
+      setFaded(true);
+      setTimeout(() => setFaded(false), 300);
+    } catch (e) {
+      setLineCatId(before);
       const detail = e?.data?.detail;
       const msg = typeof detail === "string" ? detail
         : detail?.error || detail?.message || e?.message || "Save failed";
@@ -653,11 +873,96 @@ function IncomeRow({
             </div>
           )
         ) : (
-          <Input {...bindText("category")} style={{ maxWidth: 140 }} />
+          /* INCOME-DRILLDOWN-EDIT · Feb-2026 — line-level Category
+           * Select replaces the pre-K48 free-text ``category`` input
+           * on the ``income-by-service`` variant.  Same paired-ID
+           * contract as the invoice-level BU Select above: PATCH
+           * writes BOTH ``income_category_id`` (canonical FK) and
+           * ``category`` (denormalized name) on the target line
+           * item.  Terminal-status rows fall back to a locked chip
+           * (mirrors K48). */
+          k48Status.isTerminal ? (
+            <LockedCell
+              testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-cat-locked`}
+            >
+              {(() => {
+                const hit = incomeCategories.find((c) => c.id === lineCatId);
+                return hit?.name || row.category || "—";
+              })()}
+            </LockedCell>
+          ) : (
+            <Select
+              value={lineCatId || undefined}
+              onValueChange={commitLineCategoryPaired}
+              disabled={saving}
+            >
+              <SelectTrigger
+                className="h-8 text-sm"
+                style={{ maxWidth: 160 }}
+                data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-cat-trigger`}
+              >
+                <SelectValue placeholder="Select…" />
+              </SelectTrigger>
+              <SelectContent>
+                {incomeCategories.map((c) => (
+                  <SelectItem
+                    key={c.id}
+                    value={c.id}
+                    data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-cat-option-${c.id}`}
+                  >
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )
         )}
       </td>
-      <td style={{ padding: "6px 10px", fontSize: 12 }}>
-        {row.service_category || "—"}
+      <td
+        style={{ padding: "6px 10px", fontSize: 12 }}
+        data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-svc-cell`}
+      >
+        {/* INCOME-DRILLDOWN-EDIT · Feb-2026 — Service Unit Select
+          * replaces the pre-K48 read-only ``row.service_category``
+          * text.  Available in BOTH income variants.  Paired-ID
+          * PATCH writes ``service_category_id`` (canonical FK) plus
+          * ``service_category`` (denormalized display name) onto
+          * the target line item.  Terminal rows lock to a chip. */}
+        {k48Status.isTerminal ? (
+          <LockedCell
+            testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-svc-locked`}
+          >
+            {(() => {
+              const hit = serviceCategories.find((c) => c.id === svcCategoryId);
+              return hit?.name || row.service_category || "—";
+            })()}
+          </LockedCell>
+        ) : (
+          <Select
+            value={svcCategoryId || undefined}
+            onValueChange={commitServiceUnit}
+            disabled={saving}
+          >
+            <SelectTrigger
+              className="h-8 text-sm"
+              style={{ maxWidth: 160 }}
+              data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-svc-trigger`}
+            >
+              <SelectValue placeholder="Select…" />
+            </SelectTrigger>
+            <SelectContent>
+              {serviceCategories.map((c) => (
+                <SelectItem
+                  key={c.id}
+                  value={c.id}
+                  data-testid={`income-row-${row.invoice_id}-${row.line_index ?? "x"}-svc-option-${c.id}`}
+                >
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </td>
       <td style={{ padding: "6px 10px" }}>
         <Input {...bindText("quantity")} type="number" step="1" style={{ maxWidth: 80 }} />
@@ -1274,10 +1579,21 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
   /* K48 · Feb-2026 — tenant-scoped income_categories drive the
    * Business Unit dropdown in the revenue-by-category drill-down.
    * Fetch once when the modal opens on that variant; empty list on
-   * failure so the fallback locked-chip rendering still works. */
+   * failure so the fallback locked-chip rendering still works.
+   *
+   * INCOME-DRILLDOWN-EDIT · Feb-2026 — both income variants now
+   * need the income_categories list (Category dropdown lives on
+   * the ``income-by-service`` variant too), and BOTH variants
+   * need the service_categories list to power the new Service
+   * Unit Select.  Two effects, each guarded by
+   * ``variant.startsWith("income-")`` so the data-integrity
+   * variant never fires them. */
   const [incomeCategories, setIncomeCategories] = useState([]);
+  const [serviceCategories, setServiceCategories] = useState([]);
   useEffect(() => {
-    if (variant !== "income-by-category") return undefined;
+    if (variant !== "income-by-category" && variant !== "income-by-service") {
+      return undefined;
+    }
     let cancelled = false;
     api.get("/income-categories?include_archived=false")
       .then((r) => {
@@ -1288,6 +1604,22 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
         })));
       })
       .catch(() => { if (!cancelled) setIncomeCategories([]); });
+    return () => { cancelled = true; };
+  }, [variant]);
+  useEffect(() => {
+    if (variant !== "income-by-category" && variant !== "income-by-service") {
+      return undefined;
+    }
+    let cancelled = false;
+    api.get("/service-categories?include_archived=false")
+      .then((r) => {
+        if (cancelled) return;
+        const list = Array.isArray(r?.items) ? r.items : [];
+        setServiceCategories(list.map((c) => ({
+          id: c.id, name: c.name, color: c.color,
+        })));
+      })
+      .catch(() => { if (!cancelled) setServiceCategories([]); });
     return () => { cancelled = true; };
   }, [variant]);
 
@@ -1542,6 +1874,7 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
                 tile={variant}
                 variant={variant}
                 incomeCategories={incomeCategories}
+                serviceCategories={serviceCategories}
                 currentBucket={variant === "income-by-category" ? params?.category : null}
                 onOpenFull={onOpenFullEdit}
               />

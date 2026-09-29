@@ -312,7 +312,11 @@ async def _paid_invoice_cursor(
          # the read path can hydrate the row on modal reopen.
          # Bucket grouping is unchanged (still via line_items
          # income_category_id) — this is a projection-only add.
-         "business_unit": 1},
+         # INCOME-DRILLDOWN-EDIT · Feb-2026 — also project the
+         # canonical ``business_unit_id`` FK so the drill-down row
+         # can carry it to the frontend for direct Select hydration.
+         "business_unit": 1,
+         "business_unit_id": 1},
     )
 
 
@@ -353,6 +357,16 @@ def _row_for_line_item(
         # resolution so the Select renders the saved value on
         # modal reopen.
         "business_unit": inv.get("business_unit"),
+        # INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID hydration
+        # sources. The frontend Selects prefer canonical FK ids over
+        # name-based fallbacks; project them onto every drill-down
+        # row so the dropdowns render the correct value on reopen
+        # without a second round-trip. All nullable — legacy rows
+        # (pre-paired-ID writes) grandfather to None and fall back
+        # to the case-insensitive name match on the frontend.
+        "business_unit_id": inv.get("business_unit_id"),
+        "income_category_id": li.get("income_category_id"),
+        "service_category_id": li.get("service_category_id"),
     }
 
 
@@ -439,6 +453,13 @@ async def income_by_category_rows(
                 # synthetic fallback too so a re-classified totals-
                 # only echo still hydrates the Select on reopen.
                 "business_unit": inv.get("business_unit"),
+                # INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID
+                # hydration parity for the synthetic fallback row.
+                # No line item exists here, so both line-scoped ids
+                # are None; the invoice-level id still projects.
+                "business_unit_id": inv.get("business_unit_id"),
+                "income_category_id": None,
+                "service_category_id": None,
                 "synthetic_fallback": True,
             })
 
@@ -568,6 +589,13 @@ async def income_by_service_rows(
                 # synthetic fallback too so a re-classified totals-
                 # only echo still hydrates the Select on reopen.
                 "business_unit": inv.get("business_unit"),
+                # INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID
+                # hydration parity for the synthetic fallback row.
+                # No line item exists here, so both line-scoped ids
+                # are None; the invoice-level id still projects.
+                "business_unit_id": inv.get("business_unit_id"),
+                "income_category_id": None,
+                "service_category_id": None,
                 "synthetic_fallback": True,
             })
 

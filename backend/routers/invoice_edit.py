@@ -43,6 +43,11 @@ _EDITABLE_FIELDS = [
     # carry a BU-only payload without a ``line_items`` array.  Written
     # via ``$set`` alongside the paid/sent confirmation-flag flow.
     "business_unit",
+    # INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID contract. The
+    # dashboard drill-down modal writes the canonical ``business_unit_id``
+    # FK alongside the denormalized ``business_unit`` name on every
+    # Business Unit auto-save. Money-neutral; persisted via ``$set``.
+    "business_unit_id",
 ]
 
 
@@ -65,6 +70,11 @@ class InvoiceEditBody(BaseModel):
     # the router applies via ``$set`` and does NOT require a
     # ``line_items`` array to be resent.
     business_unit: Optional[str] = None
+    # INCOME-DRILLDOWN-EDIT · Feb-2026 — paired-ID contract. Canonical
+    # ``income_categories.id`` FK persisted alongside the denormalized
+    # ``business_unit`` display name so the backend never has to
+    # name-lookup on read. Money-neutral; ``$set`` write.
+    business_unit_id: Optional[str] = None
     reason: Optional[str] = None
     confirm_edit_sent: Optional[bool] = None
     confirm_edit_paid_invoice_number: Optional[str] = None

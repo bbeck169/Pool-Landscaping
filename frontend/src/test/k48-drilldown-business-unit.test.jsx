@@ -42,10 +42,12 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     expect(MODAL).toMatch(/SelectValue/);
   });
 
-  it("fetches tenant-scoped income_categories on the income-by-category variant only", () => {
-    // ModalBody effect gated on variant === "income-by-category".
+  it("fetches tenant-scoped income_categories on BOTH income variants (INCOME-DRILLDOWN-EDIT widening)", () => {
+    // ModalBody effect now gates on both income variants because the
+    // ``income-by-service`` drill-down grew its own paired-ID
+    // Category dropdown (INCOME-DRILLDOWN-EDIT · Feb-2026).
     expect(MODAL).toMatch(
-      /if \(variant !== "income-by-category"\) return undefined;/,
+      /if \(variant !== "income-by-category" && variant !== "income-by-service"\) \{\s*\n?\s*return undefined;/,
     );
     expect(MODAL).toMatch(
       /api\.get\("\/income-categories\?include_archived=false"\)/,
@@ -79,12 +81,18 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     expect(MODAL).toMatch(/onValueChange={commitBusinessUnit}/);
   });
 
-  it("keeps the free-text CATEGORY editor on the income-by-service variant", () => {
-    // ``isRevenueVariant ? <Select…/> : <Input …category… />`` — the
-    // else branch of the Business Unit cell must still bind the
-    // ``category`` field via the same text input used pre-K48.
+  it("swaps the income-by-service Category input for a paired-ID Select (INCOME-DRILLDOWN-EDIT)", () => {
+    // Pre-INCOME-DRILLDOWN-EDIT the else-branch rendered a free-text
+    // ``<Input {...bindText("category")} />``.  After the phase the
+    // else-branch now renders a Select bound to commitLineCategoryPaired
+    // so category changes carry BOTH ``income_category_id`` and
+    // ``category`` on the PATCH payload.
     expect(MODAL).toMatch(/isRevenueVariant \?/);
-    expect(MODAL).toMatch(
+    expect(MODAL).toMatch(/-cat-trigger`/);
+    expect(MODAL).toMatch(/onValueChange={commitLineCategoryPaired}/);
+    // Legacy free-text editor is intentionally retired from the
+    // ``income-by-service`` variant.
+    expect(MODAL).not.toMatch(
       /<Input \{\.\.\.bindText\("category"\)\} style=\{\{ maxWidth: 140 \}\} \/>/,
     );
   });
@@ -109,20 +117,21 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
     expect(MODAL).toMatch(/confirm_edit_paid_invoice_number/);
   });
 
-  it("saves via the existing K41 PATCH pipeline (BU-only payload, no line_items)", () => {
-    // K48 verify-hotfix · Feb-2026 — commitBusinessUnit now sends a
-    // MINIMAL BU-only payload.  Do NOT spread ``line_items`` into
-    // the body — the shape validator upstream of the paid-lock
-    // guard 409s on stringified numerics.  Backend accepts a top-
-    // level ``business_unit`` field via ``$set`` (money-neutral).
-    expect(MODAL).toMatch(
-      /const patchBody = \{ business_unit: nextCat\.name \};/,
-    );
+  it("saves via the existing K41 PATCH pipeline (BU + BU-id, no line_items)", () => {
+    // INCOME-DRILLDOWN-EDIT · Feb-2026 — commitBusinessUnit now
+    // sends the paired-ID contract: BOTH ``business_unit`` (name)
+    // AND ``business_unit_id`` (canonical FK) land in the PATCH
+    // body.  Backend ``InvoiceEditBody`` accepts both via ``$set``.
+    // Money-neutral (no ``line_items`` in the payload), so the
+    // paid-lock ``_validate_line_items`` numeric guard still
+    // never fires for BU edits.
+    expect(MODAL).toMatch(/business_unit: nextCat\.name,/);
+    expect(MODAL).toMatch(/business_unit_id: nextCat\.id,/);
     expect(MODAL).toMatch(/api\.patch\(`\/quotes\/\$\{row\.invoice_id\}`, patchBody\)/);
     // Regression guard — the BU-only patch path must NEVER re-fetch
     // the invoice and spread line_items into the payload.
     const commitBody = MODAL.split("const commitBusinessUnit = async")[1]
-      .split("const bindText")[0];
+      .split("\n  const commit")[0];
     expect(commitBody).not.toMatch(/target\.income_category_id/);
     expect(commitBody).not.toMatch(/target\.category = /);
     expect(commitBody).not.toMatch(/line_items: items/);
@@ -192,9 +201,12 @@ describe("K48 · DashboardDrillDownModal — Business Unit editor", () => {
 
 
 describe("K48 · Non-target variants left untouched (regression guard)", () => {
-  it("preserves the K41 free-text ``category`` editor on income-by-service", () => {
-    // Ensures we did NOT accidentally rip out the pre-K48 free-text
-    // editor when adding the Business Unit dropdown.
+  it("keeps the ``category`` slot in EDITABLE_INCOME_FIELDS (commitField compatibility)", () => {
+    // INCOME-DRILLDOWN-EDIT retired the free-text ``category``
+    // editor on the income-by-service variant, but the commitField
+    // closure still names ``category`` in EDITABLE_INCOME_FIELDS
+    // so the legacy pathway (e.g. programmatic edits, future
+    // dispatches) stays compilable without a rename.
     expect(MODAL).toMatch(/EDITABLE_INCOME_FIELDS = new Set\(\[[\s\S]*?"category"[\s\S]*?\]\)/);
   });
 
