@@ -1,5 +1,5 @@
 Phase 1 offline · schedule day-view verification
-Generated:  2026-09-22T01:53:58.754Z
+Generated:  2026-09-29T06:27:42.195Z
 Airplane mode:  NetInfo mocked with isConnected=false
 Server:  api.get throws ApiNetworkError on every call
 Data source:  SQLite read cache (readCachedWeekJobs)
