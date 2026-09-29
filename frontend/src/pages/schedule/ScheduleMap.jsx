@@ -50,9 +50,12 @@ import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import TeardropPin from "@/components/maps/TeardropPin";
 import { CustomerLink, AddressLink } from "@/components/customer";
+import { PIN_COLOR_BY_DAY } from "@/pages/dispatch/dispatchColors";
 
 // Deterministic fallback color for jobs whose technician has no
-// ``display_color_hex`` picked (or is unassigned).
+// ``display_color_hex`` picked (or is unassigned) AND for stops
+// with no resolvable service-day (missing / malformed
+// ``scheduled_date``).
 const _UNASSIGNED_COLOR = "#94A3B8"; // slate-400
 const _AZ_CENTER = { lat: 33.6975, lng: -112.3708 };
 // Spider-offset radius in degrees (~0.00012 lat ≈ 13m).
@@ -60,6 +63,59 @@ const _AZ_CENTER = { lat: 33.6975, lng: -112.3708 };
 // operator's mind, large enough that they're individually clickable
 // at typical urban zoom levels.
 const _SPIDER_RADIUS_DEG = 0.00012;
+
+// Feb-2026 · ScheduleMap Tech/Day color toggle — localStorage key
+// mirrors the Dispatch Board's ``dispatch.pin_color_mode`` naming
+// so both surfaces share the same prefs pattern (see
+// ``pages/dispatch/dispatchColors.js``).
+const _PIN_COLOR_MODE_KEY = "schedule_map.pin_color_mode";
+const _PIN_COLOR_MODES = /** @type {const} */ (["tech", "day"]);
+
+// Visual-emphasis presets per active mode.  Both modes always pass
+// the SAME channels to the pin (fill = tech color, stroke = day
+// color); the toggle changes how heavily each channel is drawn.
+//   • ``tech``: thin stroke, fully opaque fill  → tech color leads.
+//   • ``day`` : thick stroke, dimmed fill        → day color leads.
+const _MODE_EMPHASIS = {
+  tech: { strokeWidth: 1,   fillOpacity: 1 },
+  day:  { strokeWidth: 3,   fillOpacity: 0.55 },
+};
+
+function _loadPinColorMode() {
+  try {
+    const v = (typeof window !== "undefined")
+      ? window.localStorage.getItem(_PIN_COLOR_MODE_KEY) : null;
+    if (v && _PIN_COLOR_MODES.includes(v)) return v;
+  } catch { /* jsdom / private-mode */ }
+  return "tech";
+}
+
+function _savePinColorMode(mode) {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(_PIN_COLOR_MODE_KEY, mode);
+    }
+  } catch { /* jsdom / private-mode */ }
+}
+
+// Feb-2026 · ScheduleMap Tech/Day color toggle — resolve a
+// stop's day-color from its ``scheduled_date``. Accepts ISO
+// ``YYYY-MM-DD``, full ISO datetime, or any string ``Date`` can
+// parse; returns ``null`` when the date can't be resolved so the
+// caller can drop to the neutral fallback.
+function _dayColorForJob(job) {
+  const raw = job?.scheduled_date;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  // ``Date.getUTCDay`` avoids browser-locale drift when the date
+  // is a bare ``YYYY-MM-DD`` (parsed as UTC midnight); the pin
+  // color palette is keyed by three-letter lowercase day tokens
+  // shared with ``pages/dispatch/dispatchColors.js``.
+  const idx = d.getUTCDay(); // 0=Sun … 6=Sat
+  const tok = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][idx];
+  return PIN_COLOR_BY_DAY[tok] || null;
+}
 
 function _fmtTime(job) {
   const raw = job?.scheduled_time || "";
@@ -153,7 +209,7 @@ export function _buildDedupedPins(jobs) {
  * we can hand raw marker refs to the clusterer without React
  * fighting Google Maps for DOM ownership.
  */
-function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
+function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
   const map = useMap();
   const markersRef = useRef({});
   const clustererRef = useRef(null);
@@ -193,12 +249,26 @@ function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
     map.fitBounds(bounds, 48);  // 48px padding
   }, [map, pins]);
 
+  const emphasis = _MODE_EMPHASIS[colorMode] || _MODE_EMPHASIS.tech;
+
   return (
     <>
       {pins.map(({ job, lat, lng }) => {
-        const colorHex = (techColorMap && job.technician_id
+        // Fill = assigned tech's brand color → gray fallback when
+        // the stop is unassigned (or the tech has no picked color).
+        const fillHex = (techColorMap && job.technician_id
           ? techColorMap.get(job.technician_id)
           : null) || _UNASSIGNED_COLOR;
+        // Stroke = service-day color → gray fallback when the
+        // scheduled_date is missing / unparseable.
+        const strokeHex = _dayColorForJob(job) || _UNASSIGNED_COLOR;
+        // Route-index label — 1-based. Undefined / null route_index
+        // means the stop hasn't been slotted into a route yet; we
+        // omit the label rather than showing a misleading ``01``.
+        const routeIdx = job?.route_index;
+        const pinLabel = Number.isFinite(routeIdx)
+          ? routeIdx + 1
+          : undefined;
         return (
           <AdvancedMarker
             key={job.id}
@@ -227,6 +297,7 @@ function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
               onClick={(e) => { e.stopPropagation(); onSelect(job.id); }}
               aria-label={`Job pin for ${job.customer_name || "job"}`}
               data-testid={`schedule-map-pin-${job.id}`}
+              data-color-mode={colorMode}
               style={{
                 background: "transparent",
                 border: 0,
@@ -239,8 +310,18 @@ function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
               {/* Phase M1 · Feb-2026 · Sitewide custom teardrop pin.
                    Per-marker color semantics (assigned-tech color
                    via ``techColorMap`` → unassigned slate fallback)
-                   are preserved verbatim; only the SHAPE changes. */}
-              <TeardropPin color={colorHex}
+                   are preserved verbatim; only the SHAPE changes.
+
+                   Feb-2026 · Tech/Day color toggle — fill always
+                   comes from the tech color, stroke always from
+                   the service-day color. The active mode dials the
+                   stroke width + fill opacity to emphasize one
+                   channel visually. */}
+              <TeardropPin color={fillHex}
+                             stroke={strokeHex}
+                             strokeWidth={emphasis.strokeWidth}
+                             fillOpacity={emphasis.fillOpacity}
+                             label={pinLabel}
                              testid={`schedule-map-pin-${job.id}-svg`} />
             </button>
           </AdvancedMarker>
@@ -259,6 +340,10 @@ function _ClusteredMarkers({ pins, techColorMap, onSelect }) {
  */
 export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
   const [activeId, setActiveId] = useState(null);
+  // Feb-2026 · Tech/Day color toggle. Lazy-init from localStorage
+  // so the first paint already reflects the operator's saved
+  // preference — no post-mount flash from ``tech`` to ``day``.
+  const [colorMode, setColorMode] = useState(() => _loadPinColorMode());
 
   const { pins, missing } = useMemo(() => _buildDedupedPins(jobs), [jobs]);
 
@@ -292,6 +377,13 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
     setActiveId((cur) => (cur === id ? null : id));
   }, []);
 
+  // Feb-2026 · Tech/Day color toggle — click / keyboard handler.
+  const _onSelectColorMode = useCallback((mode) => {
+    if (!_PIN_COLOR_MODES.includes(mode)) return;
+    setColorMode(mode);
+    _savePinColorMode(mode);
+  }, []);
+
   // Empty-state contract — return null so the schedule page doesn't
   // render an empty gray box. Note: even if all coords are missing,
   // we still return null (the missing-count badge only surfaces
@@ -308,6 +400,62 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
       }}
       data-testid="schedule-map-container"
     >
+      {/* Feb-2026 · Tech/Day color toggle — header pill sitting on
+          the top-left of the map tile. Keyboard-accessible via the
+          native ``role=radiogroup`` / ``role=radio`` semantics. */}
+      <div
+        role="radiogroup"
+        aria-label="Color pins by"
+        data-testid="schedule-map-color-toggle"
+        style={{
+          position: "absolute", top: 8, left: 8, zIndex: 5,
+          display: "inline-flex",
+          background: "rgba(255,255,255,0.94)",
+          borderRadius: 999,
+          padding: 3,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+          fontSize: 11,
+          fontWeight: 600,
+          gap: 2,
+        }}
+      >
+        {_PIN_COLOR_MODES.map((mode) => {
+          const isActive = mode === colorMode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={isActive}
+              tabIndex={isActive ? 0 : -1}
+              data-testid={`schedule-map-color-mode-${mode}`}
+              data-active={isActive ? "true" : "false"}
+              onClick={() => _onSelectColorMode(mode)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  _onSelectColorMode(mode);
+                } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                  e.preventDefault();
+                  const next = mode === "tech" ? "day" : "tech";
+                  _onSelectColorMode(next);
+                }
+              }}
+              style={{
+                border: 0,
+                cursor: "pointer",
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: isActive ? colors.onSurface : "transparent",
+                color: isActive ? "#FFFFFF" : colors.onSurface,
+                textTransform: "capitalize",
+              }}
+            >
+              {mode}
+            </button>
+          );
+        })}
+      </div>
       <Map
         mapId="SCHEDULE_MAP"
         defaultCenter={initialCenter}
@@ -320,6 +468,7 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
         <_ClusteredMarkers
           pins={pins}
           techColorMap={techColorMap}
+          colorMode={colorMode}
           onSelect={onSelect}
         />
         {active ? (

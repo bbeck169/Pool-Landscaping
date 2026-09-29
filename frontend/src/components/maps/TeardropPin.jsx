@@ -246,6 +246,17 @@ export function mixWithWhite(hex, amt) {
  *   centered zero-padded text element. Auto-picks white / dark
  *   text based on background luma. When absent, byte-identical to
  *   the pre-Feb-2026 hollow pin.
+ * @param {number=} p.strokeWidth  — Feb-2026 · ScheduleMap
+ *   Tech/Day color toggle. Optional numeric override for the pin
+ *   body stroke width (in SVG user units — same coord space as the
+ *   24×32 viewBox, so ``1`` renders as ~1.5px at the canonical
+ *   36px width). When omitted, keeps the pre-toggle defaults
+ *   (``1`` / ``1.2`` for selected).
+ * @param {number=} p.fillOpacity  — Feb-2026 · ScheduleMap
+ *   Tech/Day color toggle. Optional numeric opacity for the pin
+ *   body fill (0..1). Used by Day-mode to dim the tech-brand fill
+ *   so the day-colored stroke reads as the emphasized channel.
+ *   ``undefined`` (default) leaves the fill fully opaque.
  * @param {number=} p.headingDegrees  — Feb-2026 · Optional heading
  *   angle in degrees (0 = north / up, 90 = east, 180 = south,
  *   270 = west) used by LiveTech pins to indicate the tech's
@@ -266,6 +277,11 @@ export default function TeardropPin({
   // the scale + heavier shadow + brighter ring. Default (false) is
   // byte-compatible with existing consumers.
   selected = false,
+  // Feb-2026 · ScheduleMap Tech/Day color toggle — optional
+  // overrides for the pin body's stroke width + fill opacity so
+  // callers can emphasize either channel per active mode.
+  strokeWidth,
+  fillOpacity,
   // Feb-2026 · Section D · Direction chevron. Numeric heading in
   // degrees clockwise-from-north. See JSDoc above.
   headingDegrees,
@@ -396,10 +412,24 @@ export default function TeardropPin({
         <path
           d={_TEARDROP_PATH_SOLID}
           fill={`url(#${gradId})`}
+          fillOpacity={Number.isFinite(fillOpacity) ? fillOpacity : undefined}
           stroke={outerStroke}
-          strokeWidth={selected ? "1.2" : "1"}
+          strokeWidth={
+            Number.isFinite(strokeWidth)
+              ? String(strokeWidth)
+              : (selected ? "1.2" : "1")
+          }
           strokeLinejoin="round"
           data-color={fill}
+          data-stroke={outerStroke}
+          data-stroke-width={
+            Number.isFinite(strokeWidth)
+              ? String(strokeWidth)
+              : (selected ? "1.2" : "1")
+          }
+          data-fill-opacity={
+            Number.isFinite(fillOpacity) ? String(fillOpacity) : undefined
+          }
           data-testid={`${testid}-body`}
         />
         {/* Glossy highlight — top-left → transparent. Reads as a
