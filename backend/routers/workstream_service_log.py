@@ -1270,7 +1270,11 @@ async def _build_door_hanger_email(
                 "tenant": tenant,
                 "customer": cust,
                 "job": job,
-                "job_photos": photos,
+                # Underscore-prefixed so the render_template flat-key
+                # cascade doesn't intercept ``{{JOB_PHOTOS}}`` as the
+                # stringified list — the catalog resolver
+                # (``_job_photos_gallery``) reads ``_dh_job_photos``.
+                "_dh_job_photos": photos,
                 # Section-injection HTMLs consumed by the
                 # ``DOOR_HANGER_*_HTML`` resolvers.
                 "dh_hero_html": hero_html,

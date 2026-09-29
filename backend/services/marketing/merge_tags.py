@@ -683,6 +683,16 @@ def _service_record_images(ctx: Dict[str, Any]) -> str:
 # zero photos so the tag mirrors ``_dh_render_photos``'s no-orphan-
 # section behaviour and is safe to embed in a template that fires
 # on both photo-heavy and photo-less visits.
+#
+# Ctx key contract:
+#   * ``ctx['_dh_job_photos']`` — send-path override list (canonical).
+#     Underscore-prefixed so ``render_template``'s flat-key cascade
+#     (which resolves ``{{JOB_PHOTOS}}`` → ``ctx['job_photos']`` when
+#     that flat key exists) can't intercept a raw ``list`` and
+#     stringify it before this resolver runs.
+#   * ``ctx['job']['photos']`` — fallback for callers that only
+#     pass a job doc (generic template previews, marketing UI test
+#     renders, etc.).
 
 _JOB_PHOTOS_HEADING_STYLE = (
     "margin:0 0 8px 0;font-size:16px;color:#0F172A;font-weight:600;"
@@ -732,17 +742,20 @@ def _job_photo_url(photo: Dict[str, Any]) -> str:
 def _job_photos_gallery(ctx: Dict[str, Any]) -> str:
     """DOOR-HANGER · Feb 2026 — Responsive CSS-grid photo gallery.
 
-    Reads from ``ctx['job_photos']`` (send-path override — the door
-    hanger's ``_build_door_hanger_email`` pre-populates this with the
-    ``resolve_photo_items(job)`` output) first, then falls back to
-    the raw ``ctx['job']['photos']`` list so generic templates that
-    only pass a ``job`` doc still render.
+    Reads from ``ctx['_dh_job_photos']`` (send-path override — the
+    door hanger's ``_build_door_hanger_email`` pre-populates this
+    with the ``resolve_photo_items(job)`` output; the underscore
+    prefix keeps the key out of ``render_template``'s flat-key
+    cascade so ``{{JOB_PHOTOS}}`` reaches THIS resolver instead of
+    being intercepted as a stringified list) first, then falls
+    back to the raw ``ctx['job']['photos']`` list so generic
+    templates that only pass a ``job`` doc still render.
 
     Zero photos → empty string. Empty-input mirroring keeps the
     existing "no photos = no photos section" contract in
     ``test_door_hanger_email_body.py``.
     """
-    src = ctx.get("job_photos")
+    src = ctx.get("_dh_job_photos")
     if not src:
         src = ((ctx or {}).get("job") or {}).get("photos") or []
     if not isinstance(src, list):
@@ -1570,6 +1583,19 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "DOOR_HANGER_WATER_TEST_HTML", "label": "Door Hanger — Water Test",
      "category": "Door Hanger",
      "description": "Pre-rendered water-test readings table.",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_water_test_html") or "")},
+    # Phase DOOR-HANGER · Feb 2026 — friendly alias for
+    # ``DOOR_HANGER_WATER_TEST_HTML``.  Same resolver, different
+    # token so tenants who reposition the pre-rendered water-test
+    # section in the Door Hanger template body can use the shorter
+    # semantic name ``{{WATER_TEST_RESULTS}}``.  Documented in the
+    # editable-templates palette under the same Door Hanger group.
+    {"token": "WATER_TEST_RESULTS", "label": "Water Test Results (alias)",
+     "category": "Door Hanger",
+     "description": ("Alias for ``DOOR_HANGER_WATER_TEST_HTML``. "
+                       "Renders the pre-rendered water-test readings "
+                       "section so tenants can reposition it in the "
+                       "editable Door Hanger template body."),
      "resolver": lambda ctx: _safe_str(ctx.get("dh_water_test_html") or "")},
     {"token": "DOOR_HANGER_ELEVATED_CTA_HTML", "label": "Door Hanger — Elevated CTA",
      "category": "Door Hanger",
