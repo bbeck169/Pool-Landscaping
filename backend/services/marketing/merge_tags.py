@@ -1717,6 +1717,129 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "the token names consistent when those "
                        "flows migrate to the double-brace catalog."),
      "resolver": _company_name},
+
+    # ═════════════════════════════════════════════════════════════════
+    # Phase EMAIL-MIGRATE · Batch 2 · Feb-2026 — Lead lifecycle.
+    # ─────────────────────────────────────────────────────────────────
+    # Merge tags consumed by the batch-2 transactional email seeds:
+    #   * portal_service_request_admin_email
+    #   * lead_thank_you_reply_email
+    #   * lead_conversion_welcome_email
+    #   * lead_internal_admin_alert_email
+    #
+    # Every resolver reads from a bare-flat ctx key populated by the
+    # caller and falls back to an empty string when absent so a body
+    # that references a missing tag renders an empty inline — never a
+    # literal ``{{TOKEN}}``.
+    # ═════════════════════════════════════════════════════════════════
+    {"token": "LEAD_NAME", "label": "Lead — Name",
+     "category": "Lead",
+     "description": ("Display name of the inbound lead. Populated "
+                       "via ``ctx['lead_name']`` first, then "
+                       "``ctx['lead']['name']`` as a fallback."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("lead_name")
+         or (((ctx or {}).get("lead") or {}).get("name") or ""))},
+    {"token": "LEAD_EMAIL", "label": "Lead — Email",
+     "category": "Lead",
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("lead_email")
+         or (((ctx or {}).get("lead") or {}).get("email") or ""))},
+    {"token": "LEAD_PHONE", "label": "Lead — Phone",
+     "category": "Lead",
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("lead_phone")
+         or (((ctx or {}).get("lead") or {}).get("phone") or ""))},
+    {"token": "LEAD_SOURCE", "label": "Lead — Source",
+     "category": "Lead",
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("lead_source")
+         or (((ctx or {}).get("lead") or {}).get("source") or ""))},
+    {"token": "LEAD_MESSAGE", "label": "Lead — Message",
+     "category": "Lead",
+     "description": ("Free-form message from the lead-capture form "
+                       "(``message`` or ``service_interest``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("lead_message") or "")},
+    {"token": "LEAD_TIME_LABEL", "label": "Lead — Timestamp Label",
+     "category": "Lead",
+     "description": "Human-readable timestamp for the lead-created event.",
+     "resolver": lambda ctx: _safe_str(ctx.get("lead_time_label") or "")},
+    {"token": "LEAD_LINK", "label": "Lead — Detail URL",
+     "category": "Lead",
+     "description": "Admin URL that opens the lead detail page.",
+     "resolver": lambda ctx: _safe_str(ctx.get("lead_link") or "")},
+    {"token": "LEAD_REJECT_HEADER", "label": "Lead — Reject Header",
+     "category": "Lead",
+     "description": ("Pre-rendered banner emitted when the lead's "
+                       "state is not in the tenant's serviced-states "
+                       "list. Empty string when the lead is not "
+                       "rejected — the section collapses cleanly."),
+     "resolver": lambda ctx: _safe_str(ctx.get("lead_reject_header") or "")},
+    {"token": "REJECT_STATE", "label": "Reject — State Code",
+     "category": "Lead",
+     "description": ("US state code that fell outside the tenant's "
+                       "serviced-states list (e.g. ``\"CA\"``).  "
+                       "Empty on the happy path."),
+     "resolver": lambda ctx: _safe_str(ctx.get("reject_state") or "")},
+    {"token": "SERVICE_TYPE", "label": "Service Type",
+     "category": "Service Request",
+     "description": ("Service type on the service-request payload "
+                       "(``\"Pool Cleaning\"``, ``\"Landscaping\"``, "
+                       "etc.)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("service_type") or "")},
+    {"token": "REQUEST_DETAILS", "label": "Request Details",
+     "category": "Service Request",
+     "description": ("Free-form body of the service-request payload. "
+                       "Rendered verbatim into the outbound admin "
+                       "notification."),
+     "resolver": lambda ctx: _safe_str(ctx.get("request_details") or "")},
+    {"token": "PROPERTY_ADDRESS", "label": "Property Address",
+     "category": "Service Request",
+     "description": ("Free-form service address (``property.address`` "
+                       "or ``lead.service_address``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("property_address") or "")},
+    {"token": "PREFERRED_DATE", "label": "Preferred Date",
+     "category": "Service Request",
+     "description": "Customer-preferred date on a service request.",
+     "resolver": lambda ctx: _safe_str(ctx.get("preferred_date") or "")},
+    {"token": "VIEW_REQUEST_LINK", "label": "View Request Link",
+     "category": "Service Request",
+     "description": ("Admin URL that opens the service-request "
+                       "communication thread."),
+     "resolver": lambda ctx: _safe_str(ctx.get("view_request_link") or "")},
+    {"token": "TENANT_SERVICE_REQUEST_PHONE",
+     "label": "Tenant — Service Request Phone",
+     "category": "Company",
+     "description": ("Number the tenant configured under "
+                       "``settings.notifications.service_request_sms`` "
+                       "for inbound service-request notifications. "
+                       "Empty when unset — the DB body should collapse "
+                       "the phone line entirely (PHONE-PURGE invariant)."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("tenant_service_request_phone") or "")},
+    {"token": "CUSTOMER_NAME", "label": "Customer — Name",
+     "category": "Customer",
+     "description": ("Display name of the customer (``customer.name`` "
+                       "or ``customer.first_name``)."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("customer_name")
+         or (((ctx or {}).get("customer") or {}).get("name") or ""))},
+    {"token": "CUSTOMER_EMAIL", "label": "Customer — Email",
+     "category": "Customer",
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("customer_email")
+         or (((ctx or {}).get("customer") or {}).get("email") or ""))},
+    {"token": "CUSTOMER_PHONE", "label": "Customer — Phone",
+     "category": "Customer",
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("customer_phone")
+         or (((ctx or {}).get("customer") or {}).get("phone") or ""))},
+    {"token": "PORTAL_LINK", "label": "Portal Login URL",
+     "category": "Customer",
+     "description": ("Absolute URL that lands the customer on their "
+                       "portal login page, pre-populated with their "
+                       "email when a magic link is available."),
+     "resolver": lambda ctx: _safe_str(ctx.get("portal_link") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

@@ -1006,55 +1006,113 @@ async def create_service_request(
     try:
         from services.email.resend_adapter import send as _send_email
 
-        subject = f"New Service Request from {customer_name}"
-        html_parts = [
-            "<div style=\"font-family:-apple-system,'Inter',sans-serif;"
-            "color:#0F172A;max-width:640px;margin:0 auto;padding:24px;\">",
-            f"<h2 style=\"margin:0 0 12px;\">New Service Request</h2>",
-            f"<p style=\"margin:0 0 4px;\"><b>Customer:</b> {customer_name}</p>",
-        ]
-        if customer_email:
-            html_parts.append(
-                f"<p style=\"margin:0 0 4px;\"><b>Email:</b> "
-                f"<a href=\"mailto:{customer_email}\">{customer_email}</a></p>"
-            )
-        if customer_phone:
-            html_parts.append(
-                f"<p style=\"margin:0 0 4px;\"><b>Phone:</b> "
-                f"<a href=\"tel:{customer_phone}\">{customer_phone}</a></p>"
-            )
-        if address:
-            html_parts.append(
-                f"<p style=\"margin:0 0 4px;\"><b>Address:</b> {address}</p>"
-            )
-        if preferred_date:
-            html_parts.append(
-                f"<p style=\"margin:0 0 4px;\"><b>Preferred date:</b> "
-                f"{preferred_date}</p>"
-            )
-        html_parts.append(
-            "<hr style=\"border:none;border-top:1px solid #E2E8F0;"
-            "margin:16px 0;\"/>"
-        )
-        html_parts.append(
-            f"<div style=\"white-space:pre-wrap;font-size:15px;"
-            f"line-height:1.5;\">{(request_details or 'No details provided').strip()}</div>"
-        )
+        # Phase EMAIL-MIGRATE · Batch 2 · Feb-2026 — DB-first render.
+        # Prefer the ``portal_service_request_admin_email`` row in
+        # ``marketing_templates`` (tenant-specific > global default);
+        # fall through to the hardcoded body below when the row is
+        # absent OR the render fails.  ``TENANT_SERVICE_REQUEST_PHONE``
+        # threads ``_resolve_service_request_sms(tenant)`` — empty
+        # string when unset per the PHONE-PURGE invariant.
+        subject_default = f"New Service Request from {customer_name}"
         app_url = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
-        if app_url:
-            full_link = f"{app_url}{deep_link}"
-            html_parts.append(
-                f"<p style=\"margin:20px 0 0;\">"
-                f"<a href=\"{full_link}\" style=\"display:inline-block;"
-                f"background:#0284C7;color:#fff;padding:10px 16px;"
-                f"border-radius:8px;text-decoration:none;font-weight:600;\">"
-                f"View request</a></p>"
+        full_link = f"{app_url}{deep_link}" if app_url else ""
+        subject = subject_default
+        html_body: str = ""
+        try:
+            from services.marketing_template_lookup import (
+                get_template_with_global_fallback,
             )
-        html_parts.append("</div>")
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_with_global_fallback(
+                "portal_service_request_admin_email",
+                (tenant or {}).get("id") or None,
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "service_request template lookup failed — using "
+                "hardcoded fallback: %s", exc,
+            )
+            tpl = None
+        if tpl and tpl.get("body"):
+            try:
+                ctx = {
+                    "tenant": tenant or {},
+                    "customer_name": customer_name,
+                    "customer_email": customer_email or "",
+                    "customer_phone": customer_phone or "",
+                    "property_address": address or "",
+                    "service_type": (body.service_type or ""),
+                    "preferred_date": preferred_date or "",
+                    "request_details": (
+                        (request_details or "No details provided").strip()
+                    ),
+                    "view_request_link": full_link,
+                    "tenant_service_request_phone": to_sms or "",
+                }
+                rendered_subject, _ = render_template(
+                    tpl.get("subject") or subject_default, ctx,
+                    missing="empty",
+                )
+                rendered_body, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rendered_body:
+                    subject = rendered_subject or subject_default
+                    html_body = rendered_body
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "service_request template render failed — using "
+                    "hardcoded fallback: %s", exc,
+                )
+                html_body = ""
+        if not html_body:
+            html_parts = [
+                "<div style=\"font-family:-apple-system,'Inter',sans-serif;"
+                "color:#0F172A;max-width:640px;margin:0 auto;padding:24px;\">",
+                f"<h2 style=\"margin:0 0 12px;\">New Service Request</h2>",
+                f"<p style=\"margin:0 0 4px;\"><b>Customer:</b> {customer_name}</p>",
+            ]
+            if customer_email:
+                html_parts.append(
+                    f"<p style=\"margin:0 0 4px;\"><b>Email:</b> "
+                    f"<a href=\"mailto:{customer_email}\">{customer_email}</a></p>"
+                )
+            if customer_phone:
+                html_parts.append(
+                    f"<p style=\"margin:0 0 4px;\"><b>Phone:</b> "
+                    f"<a href=\"tel:{customer_phone}\">{customer_phone}</a></p>"
+                )
+            if address:
+                html_parts.append(
+                    f"<p style=\"margin:0 0 4px;\"><b>Address:</b> {address}</p>"
+                )
+            if preferred_date:
+                html_parts.append(
+                    f"<p style=\"margin:0 0 4px;\"><b>Preferred date:</b> "
+                    f"{preferred_date}</p>"
+                )
+            html_parts.append(
+                "<hr style=\"border:none;border-top:1px solid #E2E8F0;"
+                "margin:16px 0;\"/>"
+            )
+            html_parts.append(
+                f"<div style=\"white-space:pre-wrap;font-size:15px;"
+                f"line-height:1.5;\">{(request_details or 'No details provided').strip()}</div>"
+            )
+            if full_link:
+                html_parts.append(
+                    f"<p style=\"margin:20px 0 0;\">"
+                    f"<a href=\"{full_link}\" style=\"display:inline-block;"
+                    f"background:#0284C7;color:#fff;padding:10px 16px;"
+                    f"border-radius:8px;text-decoration:none;font-weight:600;\">"
+                    f"View request</a></p>"
+                )
+            html_parts.append("</div>")
+            html_body = "".join(html_parts)
         email_result = await _send_email(
             to=to_email,
             subject=subject,
-            html="".join(html_parts),
+            html=html_body,
             category="transactional",
             tenant_id=tenant["id"],
             customer_id=cid,

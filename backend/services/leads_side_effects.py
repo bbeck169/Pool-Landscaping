@@ -182,11 +182,67 @@ async def _fire_internal_notification(lead: Dict[str, Any], cfg: Dict[str, Any],
     composed = _compose_internal(lead, cfg, reject_state)
     lid = lead.get("id") or ""
 
+    # Phase EMAIL-MIGRATE · Batch 2 · Feb-2026 — DB-first render for
+    # the internal admin-alert HTML body.  Prefer the
+    # ``lead_internal_admin_alert_email`` row in ``marketing_templates``
+    # (tenant-specific > global default); fall through to the
+    # newline→<br> conversion of ``composed['body']`` when the row
+    # is absent OR the render blows up.  Subject stays composed
+    # inline (the "[New lead] Name" / "[REJECTED] Name" convention
+    # is not tenant-editable).
+    email_html = composed["body"].replace("\n", "<br>")
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "lead_internal_admin_alert_email",
+            lead.get("tenant_id") or None,
+        )
+        if tpl and tpl.get("body"):
+            name = lead.get("name") or "".join(filter(None, [
+                (lead.get("first_name") or "").strip(),
+                (lead.get("last_name") or "").strip(),
+            ])).strip() or "(no name)"
+            addr = lead.get("service_address") or lead.get("address") or ""
+            msg = lead.get("message") or lead.get("service_interest") or ""
+            link = f"{cfg['app_host']}/leads/{lead.get('id')}"
+            ctx = {
+                "tenant": {"id": lead.get("tenant_id") or ""},
+                "customer": {},
+                "lead": lead,
+                "lead_name": name,
+                "lead_email": lead.get("email") or "",
+                "lead_phone": lead.get("phone") or "",
+                "lead_source": lead.get("source") or "unknown",
+                "lead_message": msg,
+                "lead_time_label": _fmt_phx(
+                    lead.get("created_at") or now_iso(),
+                ),
+                "lead_link": link,
+                "property_address": addr,
+                "lead_reject_header": (
+                    f"STATUS: REJECTED — out of state ({reject_state})"
+                    if reject_state else ""
+                ),
+            }
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                email_html = rendered_body
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[lead-internal] template render failed — using hardcoded "
+            "fallback lid=%s: %s", lid, exc,
+        )
+
     # Email
     try:
         res = await _send_email(
             to=cfg["email"], subject=composed["subject"],
-            html=composed["body"].replace("\n", "<br>"),
+            html=email_html,
             category="transactional",
             tenant_id=lead.get("tenant_id"),
             idempotency_key=f"lead-internal:{lid}:email",
@@ -258,23 +314,72 @@ async def _fire_internal_notification(lead: Dict[str, Any], cfg: Dict[str, Any],
 async def _fire_customer_reject_reply(lead: Dict[str, Any],
                                         reject_state: str) -> None:
     """Auto-reply to the submitter that their address is out of the
-    serviced area. Silent no-op when the lead has no email."""
+    serviced area. Silent no-op when the lead has no email.
+
+    Phase EMAIL-MIGRATE · Batch 2 · Feb-2026 — the body prefers the
+    ``lead_thank_you_reply_email`` row in ``marketing_templates``
+    (tenant-specific > global default) so tenants can rebrand the
+    auto-reply.  Falls through to the hardcoded body when the row
+    is absent OR the render fails.  The subject stays plain English
+    (no i18n dependency for this branch).
+    """
     from services.email.resend_adapter import send as _send_email
     to_addr = (lead.get("email") or "").strip()
     if not to_addr:
         return
     subject = "Thanks for reaching out"
-    body = (
-        f"Hi {(lead.get('first_name') or lead.get('name') or 'there').split()[0]},\n\n"
+    first_name = (
+        lead.get("first_name")
+        or lead.get("name")
+        or "there"
+    ).split()[0]
+    # Fallback body (used when no DB row exists or the render blows up).
+    fallback_body = (
+        f"Hi {first_name},\n\n"
         "Thanks for reaching out — unfortunately we don't currently service "
         f"your area ({reject_state}). We'll keep your info on file if that "
         "changes.\n\n— Pool & Landscaping of Vistancia Team"
     )
+    body_html = fallback_body.replace("\n", "<br>")
+    tenant_id = lead.get("tenant_id") or ""
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "lead_thank_you_reply_email", tenant_id or None,
+        )
+        if tpl and tpl.get("body"):
+            tenant_doc = await db.tenants.find_one(
+                {"id": tenant_id}, {"_id": 0},
+            ) if tenant_id else None
+            ctx = {
+                "tenant": tenant_doc or {},
+                "customer": {},
+                "recipient_name": first_name,
+                "reject_state": reject_state,
+            }
+            rendered_subject, _ = render_template(
+                tpl.get("subject") or subject, ctx, missing="empty",
+            )
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                subject = rendered_subject or subject
+                body_html = rendered_body
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[lead-reject-reply] template render failed — using "
+            "hardcoded fallback lid=%s: %s", lead.get("id"), exc,
+        )
     lid = lead.get("id") or ""
+    body = fallback_body
     try:
         res = await _send_email(
             to=to_addr, subject=subject,
-            html=body.replace("\n", "<br>"), category="transactional",
+            html=body_html, category="transactional",
             tenant_id=lead.get("tenant_id"),
             idempotency_key=f"lead-reject-reply:{lid}",
         )

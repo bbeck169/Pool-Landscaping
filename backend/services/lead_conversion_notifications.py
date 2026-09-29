@@ -68,28 +68,104 @@ async def _send_welcome_email(*, tenant_id: str, customer: Dict[str, Any],
     if not recipients:
         return None
     name = customer.get("name") or "there"
-    subject = "Welcome to Pool & Landscaping of Vistancia — your account is ready"
+    # Phase EMAIL-MIGRATE · Batch 2 · Feb-2026 — DB-first render.
+    # Prefer the ``lead_conversion_welcome_email`` row in
+    # ``marketing_templates`` (tenant-specific > global default);
+    # fall through to the hardcoded body below when the row is
+    # absent OR the render fails.
+    #
+    # BUGFIX (part of the migration): the pre-migration body/subject
+    # both hardcoded ``"Pool & Landscaping of Vistancia"`` and a
+    # ``+1 (602) 887-4400`` phone number in the footer.  The DB body
+    # renders these through ``{{COMPANY_NAME}}`` / ``{{COMPANY_PHONE}}``
+    # so non-plofv tenants sign off correctly.  The hardcoded
+    # fallback below is retained for defense-in-depth (a DB blip
+    # shouldn't fail conversion emails) but should never fire for a
+    # tenant that has run the seed migration.
+    tenant_doc: Dict[str, Any] = {}
+    try:
+        import config as _cfg
+        tenant_doc = await _cfg.db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0},
+        ) or {}
+    except Exception:
+        tenant_doc = {}
+    company_name = (
+        (tenant_doc.get("settings") or {}).get("business_card", {})
+            .get("company_name")
+        or tenant_doc.get("name")
+        or "Pool & Landscaping of Vistancia"
+    )
+    company_phone = (
+        (tenant_doc.get("settings") or {}).get("business_card", {})
+            .get("phone")
+        or ""
+    )
+    fallback_subject = f"Welcome to {company_name} — your account is ready"
+    subject = fallback_subject
+    rendered_body: Optional[str] = None
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "lead_conversion_welcome_email", tenant_id or None,
+        )
+        if tpl and tpl.get("body"):
+            for _email_probe in recipients:
+                portal_probe = (
+                    f"{_APP_BASE}/portal/login?email={_email_probe}"
+                    if _APP_BASE else ""
+                )
+                ctx = {
+                    "tenant": tenant_doc,
+                    "customer": customer,
+                    "customer_name": name,
+                    "portal_link": portal_probe,
+                }
+                rs, _ = render_template(
+                    tpl.get("subject") or fallback_subject, ctx,
+                    missing="empty",
+                )
+                rb, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rb:
+                    subject = rs or fallback_subject
+                    rendered_body = rb
+                break
+    except Exception as exc:  # noqa: BLE001 — defensive
+        # Silent — caller wraps in try/except.
+        logger.warning(
+            "[lead-conversion-welcome] template render failed — "
+            "using hardcoded fallback: %s", exc,
+        )
     last_row_id: Optional[str] = None
     for email in recipients:
         portal_link = f"{_APP_BASE}/portal/login?email={email}" if _APP_BASE else ""
-        body = (
-            f'<div style="font-family:sans-serif;max-width:560px;margin:auto">'
-            f"<h2>Welcome aboard, {name}!</h2>"
-            f"<p>Thanks for choosing <b>Pool &amp; Landscaping of Vistancia</b>. "
-            f"We've set up your account and one of our team will reach out shortly "
-            f"to schedule your first service.</p>"
-            f"<h3>What happens next</h3>"
-            f"<ul>"
-            f"<li>We'll call or text you within one business day to confirm a start date.</li>"
-            f"<li>You'll receive service reports, invoices, and appointment reminders here.</li>"
-            f"<li>Refer a neighbor and you both save $55 on your next service.</li>"
-            f"</ul>"
-            + (f'<p><a href="{portal_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open your customer portal</a></p>' if portal_link else "")
-            + f'<p style="color:#666;font-size:12px">You are receiving this because you '
-            f"requested service from us. Reply to this email or call "
-            f"<b>+1 (602) 887-4400</b> anytime.</p>"
-            f"</div>"
-        )
+        if rendered_body is not None:
+            body = rendered_body
+        else:
+            body = (
+                f'<div style="font-family:sans-serif;max-width:560px;margin:auto">'
+                f"<h2>Welcome aboard, {name}!</h2>"
+                f"<p>Thanks for choosing <b>{company_name}</b>. "
+                f"We've set up your account and one of our team will reach out shortly "
+                f"to schedule your first service.</p>"
+                f"<h3>What happens next</h3>"
+                f"<ul>"
+                f"<li>We'll call or text you within one business day to confirm a start date.</li>"
+                f"<li>You'll receive service reports, invoices, and appointment reminders here.</li>"
+                f"<li>Refer a neighbor and you both save $55 on your next service.</li>"
+                f"</ul>"
+                + (f'<p><a href="{portal_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open your customer portal</a></p>' if portal_link else "")
+                + f'<p style="color:#666;font-size:12px">You are receiving this because you '
+                f"requested service from us. Reply to this email"
+                + (f" or call <b>{company_phone}</b>" if company_phone else "")
+                + " anytime.</p>"
+                f"</div>"
+            )
         try:
             from services.marketing_email.resend_adapter import send as _send_email
         except Exception:
