@@ -44,7 +44,8 @@ def _thumbs_html(job: dict) -> str:
 
 
 def _completion_html(job: dict, customer_name: str,
-                       *, locale: str = "en") -> str:
+                       *, locale: str = "en",
+                       company_name: str = "your service provider") -> str:
     """Feb-2026 · Phase D6 — subject + body copy resolved via
     :func:`services.email_body_i18n.t_email_body`.
 
@@ -52,6 +53,15 @@ def _completion_html(job: dict, customer_name: str,
     styling) stays hardcoded — only the customer-facing sentences
     are catalogued. Callers pass an already-resolved locale (via
     :func:`services.i18n.email_locale.resolve_email_locale`).
+
+    Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — the runtime path
+    prefers the ``job_completed_legacy_email`` row in
+    ``marketing_templates`` when one exists (see
+    :func:`send_completion_email` below).  This function is now the
+    hardcoded fallback used only when the row is absent / the DB
+    lookup fails.  ``company_name`` comes from the tenant's
+    business-card settings so no hardcoded plofv literal leaks in
+    the fallback header.
     """
     from services.email_body_i18n import t_email_body
     report_url = f"{APP_PUBLIC_URL}/job/{job['id']}"
@@ -84,7 +94,7 @@ def _completion_html(job: dict, customer_name: str,
     return f"""
     <div style="max-width:560px;margin:0 auto;font-family:Arial,sans-serif;color:#1A2B3C;">
       <div style="background:#003C5F;padding:24px;border-radius:12px 12px 0 0;">
-        <h1 style="color:#fff;margin:0;font-size:20px;">Pool &amp; Landscaping of Vistancia</h1>
+        <h1 style="color:#fff;margin:0;font-size:20px;">{company_name}</h1>
       </div>
       <div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
         <h2 style="font-size:18px;margin:0 0 8px;">{heading} ✅</h2>
@@ -169,25 +179,82 @@ async def send_completion_email(job: dict) -> bool:
     # Phase D6 · Feb-2026 — resolve recipient locale for subject +
     # body i18n. Tenant default is optional (best-effort lookup).
     try:
+        # EMAIL-MIGRATE · Batch 4 · Feb-2026 — projection includes
+        # ``name`` + ``settings.business_card`` so ``company_display``
+        # resolves to the tenant's real name (never the ``plofv``
+        # literal). ``default_locale`` still drives the i18n path.
         _tenant = await db.tenants.find_one(
             {"id": job.get("tenant_id")},
-            {"_id": 0, "default_locale": 1},
+            {"_id": 0, "default_locale": 1, "name": 1,
+             "settings.business_card": 1},
         ) if job.get("tenant_id") else None
     except Exception:  # noqa: BLE001
         _tenant = None
     from services.i18n.email_locale import resolve_email_locale
     from services.email_body_i18n import t_email_body
     _locale = resolve_email_locale(recipient=cust, tenant=_tenant)
+    # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — DB-first render for
+    # English recipients.  Non-English keeps the D6 i18n path
+    # unchanged.  The DB row shares the merge-tag surface with the
+    # door-hanger; both trigger sources are preserved per decision (a).
+    company_display = "your service provider"
+    try:
+        if _tenant and (_tenant.get("settings") or {}).get("business_card"):
+            company_display = (
+                _tenant["settings"]["business_card"].get("company_name")
+                or _tenant.get("name")
+                or company_display
+            )
+        elif _tenant and _tenant.get("name"):
+            company_display = _tenant["name"]
+    except Exception:  # noqa: BLE001
+        pass
+    subject = t_email_body(
+        _locale, "email.job_completed.subject",
+        service_type=job.get("service_type", "service"),
+    )
+    html = _completion_html(
+        job, cust.get("name", "there"), locale=_locale,
+        company_name=company_display,
+    )
+    if str(_locale or "").lower() == "en":
+        try:
+            from services.marketing_template_lookup import (
+                get_template_with_global_fallback,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_with_global_fallback(
+                "job_completed_legacy_email",
+                (job.get("tenant_id") or None),
+            )
+            if tpl and tpl.get("body"):
+                report_url = f"{APP_PUBLIC_URL}/job/{job['id']}"
+                ctx = {
+                    "tenant": _tenant or {},
+                    "customer": cust,
+                    "customer_name": cust.get("name") or "there",
+                    "service_type": job.get("service_type") or "service",
+                    "property_address": (
+                        (job.get("service_address")
+                         or (cust.get("address") or ""))
+                    ),
+                    "view_request_link": report_url,
+                }
+                rendered_body, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rendered_body:
+                    html = rendered_body
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[job-completion] DB template render failed — "
+                "using i18n fallback: %s", exc,
+            )
     try:
         res = await _resend_send(
             to=to_email,
-            subject=t_email_body(
-                _locale, "email.job_completed.subject",
-                service_type=job.get("service_type", "service"),
-            ),
-            html=_completion_html(
-                job, cust.get("name", "there"), locale=_locale,
-            ),
+            subject=subject,
+            html=html,
             category="transactional",
             tenant_id=job.get("tenant_id"),
             audience="customer",
@@ -220,7 +287,9 @@ def _invoice_display_number(inv: dict) -> str:
 
 def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
                      portal_cta_url: str = "",
-                     locale: str = "en") -> str:
+                     locale: str = "en",
+                     *,
+                     company_name: str = "your service provider") -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
     # Feb-2026 · P0 Pay-link routing fix — always use the PUBLIC
@@ -293,7 +362,7 @@ def _reminder_html(inv: dict, name: str, attachment_count: int = 0,
     )
     thanks = t_email_body(
         locale, "email.invoice_reminder.thanks",
-        company="Pool &amp; Landscaping of Vistancia",
+        company=company_name,
     )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
@@ -523,8 +592,15 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
     # the subject line + body sentences use the same locale as the
     # CTA button.
     try:
+        # EMAIL-MIGRATE · Batch 4 · Feb-2026 — projection includes
+        # ``name`` + ``settings.business_card`` so the hardcoded
+        # fallback body's ``Thanks — the <company> team`` line can
+        # resolve to the tenant's real name (never the ``plofv``
+        # literal). ``default_locale`` still drives the i18n path.
         _tenant = await db.tenants.find_one(
-            {"id": inv.get("tenant_id")}, {"_id": 0, "default_locale": 1},
+            {"id": inv.get("tenant_id")},
+            {"_id": 0, "default_locale": 1, "name": 1,
+             "settings.business_card": 1},
         ) if inv.get("tenant_id") else None
     except Exception:                                                # noqa: BLE001
         _tenant = None
@@ -556,19 +632,80 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         except Exception as e:  # noqa: BLE001
             logger.warning(f"branding resolve failed, using defaults: {e}")
             branding = {}
-        themed_html = wrap_html_in_shell(
-            _reminder_html(inv, cust.get("name", "there"),
-                             attachment_count=attachment_count,
-                             portal_cta_url=portal_cta_url,
-                             locale=_locale),
-            branding,
+        # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — resolve the
+        # tenant's company_name off the branding dict so the
+        # hardcoded fallback body no longer leaks the plofv
+        # literal into the "Thanks — the <company> team" copy.
+        # ``get_effective_business_settings`` returns
+        # ``company_display_name`` (not ``company_name``); check
+        # both keys defensively, then fall through to the raw
+        # tenant doc's ``name``.
+        company_display = (
+            (branding or {}).get("company_display_name")
+            or (branding or {}).get("company_name")
+            or (_tenant or {}).get("name")
+            or "your service provider"
         )
+        subject = t_email_body(
+            _locale, "email.invoice_reminder.subject",
+            invoice_number=subject_num,
+        )
+        html_inner = _reminder_html(
+            inv, cust.get("name", "there"),
+            attachment_count=attachment_count,
+            portal_cta_url=portal_cta_url,
+            locale=_locale,
+            company_name=company_display,
+        )
+        # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — DB-first render
+        # for English recipients.  Non-English keeps the D6 i18n
+        # path unchanged.
+        if str(_locale or "").lower() == "en":
+            try:
+                from services.marketing_template_lookup import (
+                    get_template_with_global_fallback,
+                )
+                from services.marketing.merge_tags import render_template
+                from services.pay_link_builder import build_pay_now_url
+                tpl = await get_template_with_global_fallback(
+                    "invoice_reminder_email",
+                    inv.get("tenant_id") or None,
+                )
+                if tpl and tpl.get("body"):
+                    balance = round(
+                        float(inv.get("total") or 0)
+                        - float(inv.get("amount_paid") or 0),
+                        2,
+                    )
+                    pay_link = build_pay_now_url(
+                        inv["id"], inv.get("tenant_id") or "",
+                        src="email",
+                    )
+                    ctx = {
+                        "tenant": _tenant or {},
+                        "customer": cust,
+                        "customer_name": cust.get("name") or "there",
+                        "invoice_number": subject_num,
+                        "invoice_total": f"{balance:,.2f}",
+                        "invoice_due_date": (
+                            inv.get("due_date") or "now"
+                        ),
+                        "pay_link": pay_link,
+                    }
+                    rendered_body, _ = render_template(
+                        tpl["body"], ctx, missing="empty",
+                    )
+                    if rendered_body:
+                        html_inner = rendered_body
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "[invoice-reminder] DB template render failed "
+                    "— using i18n fallback: %s", exc,
+                )
+        themed_html = wrap_html_in_shell(html_inner, branding)
         res = await _resend_send(
             to=to_email,
-            subject=t_email_body(
-                _locale, "email.invoice_reminder.subject",
-                invoice_number=subject_num,
-            ),
+            subject=subject,
             html=themed_html,
             category="transactional",
             tenant_id=inv.get("tenant_id"),
@@ -691,17 +828,53 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
         except Exception as e:  # noqa: BLE001
             logger.warning(f"branding resolve failed, using defaults: {e}")
             branding = {}
-        themed_html = wrap_html_in_shell(
-            _estimate_reminder_html(
-                inv, cust.get("name", "there"),
-                tenant or {}, review_url,
-                attachment_count=attachment_count,
-                attachments=_attachments,
-                magic_token=magic_token,
-                locale=_locale,
-            ),
-            branding,
+        themed_html_inner = _estimate_reminder_html(
+            inv, cust.get("name", "there"),
+            tenant or {}, review_url,
+            attachment_count=attachment_count,
+            attachments=_attachments,
+            magic_token=magic_token,
+            locale=_locale,
         )
+        # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — DB-first render
+        # for English recipients.  Non-English keeps the D6 i18n
+        # path unchanged.
+        if str(_locale or "").lower() == "en":
+            try:
+                from services.marketing_template_lookup import (
+                    get_template_with_global_fallback,
+                )
+                from services.marketing.merge_tags import render_template
+                tpl = await get_template_with_global_fallback(
+                    "estimate_reminder_email",
+                    (tenant or {}).get("id")
+                    or inv.get("tenant_id") or None,
+                )
+                if tpl and tpl.get("body"):
+                    total = round(float(inv.get("total") or 0), 2)
+                    ctx = {
+                        "tenant": tenant or {},
+                        "customer": cust,
+                        "customer_name": cust.get("name") or "there",
+                        "company_name": company,
+                        "estimate_number": _invoice_display_number(inv),
+                        "estimate_total": f"{total:,.2f}",
+                        "estimate_expires": (
+                            inv.get("expires_at") or ""
+                        ),
+                        "accept_link": review_url or "",
+                    }
+                    rendered_body, _ = render_template(
+                        tpl["body"], ctx, missing="empty",
+                    )
+                    if rendered_body:
+                        themed_html_inner = rendered_body
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "[estimate-reminder] DB template render failed "
+                    "— using i18n fallback: %s", exc,
+                )
+        themed_html = wrap_html_in_shell(themed_html_inner, branding)
         res = await _resend_send(
             to=to_email,
             subject=t_email_body(

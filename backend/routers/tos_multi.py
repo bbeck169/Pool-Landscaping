@@ -308,8 +308,14 @@ def _tos_blast_html(*, doc, tenant, cust, cta_url) -> str:
     """Card-based, inline-styles-only email body reusing the visual
     system introduced by the door-hanger visual redesign (Slice 5).
     Copy is factual + non-alarming.
+
+    Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — the company-name
+    fallback used to hardcode the plofv-internal tenant literal.
+    It now falls back to a generic ``"your service provider"``
+    literal so tenants without a configured name don't leak that
+    branding to their customers.
     """
-    company = (tenant or {}).get("name") or "Pool & Landscaping of Vistancia"
+    company = (tenant or {}).get("name") or "your service provider"
     brand = (tenant or {}).get("brand_color") or "#1f2937"
     # Phase PHONE-PURGE · Feb-2026 — removed the hardcoded
     # plofv-internal terminal.  A tenant without a configured
@@ -438,11 +444,59 @@ async def _blast_one_customer(
         cta_url = ""
     subject = (
         f"Updated Terms of Service — "
-        f"{(tenant or {}).get('name') or 'Pool & Landscaping'}"
+        f"{(tenant or {}).get('name') or 'your service provider'}"
     )
     html = _tos_blast_html(
         doc=document, tenant=tenant, cust=cust, cta_url=cta_url,
     )
+    # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — DB-first render.
+    # Prefer the ``tos_blast_email`` row in ``marketing_templates``
+    # (tenant-specific > global default); fall through to
+    # ``_tos_blast_html`` when the row is absent OR the render
+    # blows up.
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "tos_blast_email", tenant_id or None,
+        )
+        if tpl and tpl.get("body"):
+            first = (
+                (cust or {}).get("first_name")
+                or (((cust or {}).get("name") or "").split(" ", 1)[0])
+                or "Neighbor"
+            )
+            service_label = (
+                "landscaping"
+                if document.get("service_type") == "landscaping"
+                else "pool"
+            )
+            ctx = {
+                "tenant": tenant or {},
+                "customer": cust or {},
+                "recipient_name": first,
+                "service_label": service_label,
+                "tos_version": document.get("version") or "",
+                "effective_date": document.get("effective_at") or "",
+                "tos_url": cta_url,
+                "cta_url": cta_url,
+            }
+            rendered_subject, _ = render_template(
+                tpl.get("subject") or subject, ctx, missing="empty",
+            )
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                subject = rendered_subject or subject
+                html = rendered_body
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[tos-blast] DB template render failed — using "
+            "hardcoded fallback: %s", exc,
+        )
     try:
         from services.email import resend_adapter
         result = await resend_adapter.send(

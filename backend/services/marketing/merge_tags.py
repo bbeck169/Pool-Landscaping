@@ -1916,6 +1916,103 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "(surfaced in the dunning / payment-failed "
                        "email)."),
      "resolver": lambda ctx: _safe_str(ctx.get("update_card_link") or "")},
+
+    # ═════════════════════════════════════════════════════════════════
+    # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — Job/finance
+    # transactionals.  Registers merge tags consumed by:
+    #   * job_completed_legacy_email
+    #   * invoice_reminder_email
+    #   * estimate_reminder_email
+    #   * team_invite_email
+    #   * tos_blast_email
+    # ═════════════════════════════════════════════════════════════════
+    {"token": "INVOICE_NUMBER", "label": "Invoice — Number",
+     "category": "Finance",
+     "description": ("Customer-facing invoice identifier "
+                       "(``invoice_number`` → ``doc_number`` → id "
+                       "short-form)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("invoice_number") or "")},
+    {"token": "INVOICE_TOTAL", "label": "Invoice — Balance",
+     "category": "Finance",
+     "description": ("Outstanding balance on the invoice, formatted "
+                       "as ``$1,234.56``."),
+     "resolver": lambda ctx: _safe_str(ctx.get("invoice_total") or "")},
+    {"token": "INVOICE_DUE_DATE", "label": "Invoice — Due Date",
+     "category": "Finance",
+     "description": "Localised due-date label for the reminder email.",
+     "resolver": lambda ctx: _safe_str(ctx.get("invoice_due_date") or "")},
+    {"token": "DAYS_OVERDUE", "label": "Invoice — Days Overdue",
+     "category": "Finance",
+     "description": ("Whole-number days past ``due_date`` (0 when "
+                       "the invoice is not yet overdue)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("days_overdue") or "")},
+    {"token": "PAY_LINK", "label": "Invoice — Pay Now URL",
+     "category": "Finance",
+     "description": ("Public pay-sheet URL built by "
+                       "``services.pay_link_builder.build_pay_now_url``. "
+                       "Never expires inside ``AppLayout`` — a stale "
+                       "token routes to a friendly retry page rather "
+                       "than the portal login screen."),
+     "resolver": lambda ctx: _safe_str(ctx.get("pay_link") or "")},
+    {"token": "ESTIMATE_NUMBER", "label": "Estimate — Number",
+     "category": "Quote",
+     "resolver": lambda ctx: _safe_str(ctx.get("estimate_number") or "")},
+    {"token": "ESTIMATE_TOTAL", "label": "Estimate — Total",
+     "category": "Quote",
+     "resolver": lambda ctx: _safe_str(ctx.get("estimate_total") or "")},
+    {"token": "ESTIMATE_EXPIRES", "label": "Estimate — Expiry Label",
+     "category": "Quote",
+     "description": ("Human-readable expiration date for the estimate "
+                       "(e.g. ``\"Mar 22, 2026\"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("estimate_expires") or "")},
+    {"token": "ACCEPT_LINK", "label": "Estimate — Accept URL",
+     "category": "Quote",
+     "description": ("Customer-facing magic-link URL that lands on "
+                       "the ``/e/estimate?token=…`` viewer."),
+     "resolver": lambda ctx: _safe_str(ctx.get("accept_link") or "")},
+    {"token": "INVITEE_NAME", "label": "Team — Invitee First Name",
+     "category": "Team",
+     "description": ("Display name of the team invitee. Populated via "
+                       "``ctx['invitee_name']`` first, then falls back "
+                       "to ``ctx['recipient_name']`` so callers that "
+                       "thread the standard tag still resolve."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("invitee_name") or ctx.get("recipient_name") or "")},
+    {"token": "INVITER_NAME", "label": "Team — Inviter Name",
+     "category": "Team",
+     "description": "Display name of the admin who issued the team invite.",
+     "resolver": lambda ctx: _safe_str(ctx.get("inviter_name") or "")},
+    {"token": "ACCEPT_INVITE_LINK", "label": "Team — Accept URL",
+     "category": "Team",
+     "description": ("Login URL that lands the invitee on the "
+                       "platform sign-in page.  Aliases ``ACCEPT_LINK`` "
+                       "when the invite-specific ctx key is absent."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("accept_invite_link")
+         or ctx.get("accept_link") or "")},
+    {"token": "TOS_VERSION", "label": "TOS — Document Version",
+     "category": "Legal",
+     "description": ("Version label on the ToS document (e.g. "
+                       "``\"v2.1\"`` or the ``$service_type-2026-02``"
+                       " slug)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("tos_version") or "")},
+    {"token": "TOS_URL", "label": "TOS — Review URL",
+     "category": "Legal",
+     "description": ("Deep link to the customer-facing ToS acceptance "
+                       "flow (portal login → ``/portal/tos/accept?"
+                       "doc=…``)."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("tos_url") or ctx.get("cta_url") or "")},
+    {"token": "EFFECTIVE_DATE", "label": "Legal — Effective Date",
+     "category": "Legal",
+     "description": ("Effective date on the published ToS document "
+                       "(ISO date string)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("effective_date") or "")},
+    {"token": "SERVICE_LABEL", "label": "TOS — Service Category Label",
+     "category": "Legal",
+     "description": ("Human-readable service-type label on the ToS "
+                       "document (``\"pool\"`` / ``\"landscaping\"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("service_label") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

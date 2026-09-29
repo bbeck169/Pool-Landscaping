@@ -288,21 +288,60 @@ async def _send_team_invite_email(
     from services.email.resend_adapter import send as _resend_send
     from urllib.parse import urljoin
 
-    company = tenant.get("name") or "Pool & Landscaping of Vistancia"
+    company = tenant.get("name") or "your team"
     settings = tenant.get("settings") or {}
     card = settings.get("business_card") or {}
     company_display = card.get("company_name") or company
     origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.plofv.com"
     accept_url = urljoin(origin.rstrip("/") + "/", "login")
 
+    # Phase EMAIL-MIGRATE · Batch 4 · Feb-2026 — DB-first render.
+    # Prefer the ``team_invite_email`` row in ``marketing_templates``
+    # (tenant-specific > global default); fall through to
+    # ``_team_invite_html`` when the row is absent OR the render
+    # blows up.
+    invitee_name = (
+        invitee.get("first_name") or invitee.get("name") or "there"
+    )
+    inviter_name = actor.get("name") or actor.get("email") or "The team"
+    subject = f"Welcome to {company_display} — you've been added to the team"
     html = _team_invite_html(
-        invitee_name=invitee.get("first_name") or invitee.get("name") or "there",
-        inviter_name=actor.get("name") or actor.get("email") or "The team",
-        company_name=company_display,
-        invite_accept_url=accept_url,
+        invitee_name=invitee_name, inviter_name=inviter_name,
+        company_name=company_display, invite_accept_url=accept_url,
         temporary_password=temp_password,
     )
-    subject = f"Welcome to {company_display} — you've been added to the team"
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "team_invite_email", tenant.get("id") or None,
+        )
+        if tpl and tpl.get("body"):
+            ctx = {
+                "tenant": tenant,
+                "customer": {},
+                "company_name": company_display,
+                "invitee_name": invitee_name,
+                "inviter_name": inviter_name,
+                "temp_password": temp_password,
+                "accept_invite_link": accept_url,
+            }
+            rendered_subject, _ = render_template(
+                tpl.get("subject") or subject, ctx, missing="empty",
+            )
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                html = rendered_body
+                subject = rendered_subject or subject
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[team-invite] DB template render failed — using "
+            "hardcoded fallback: %s", exc,
+        )
 
     result = await _resend_send(
         to=invitee["email"], subject=subject, html=html,
