@@ -20,6 +20,7 @@ export interface MarcoResult {
   action: string;
   ok: boolean;
   message: string;
+  speak?: string;
   meta: Record<string, any>;
   raw_llm?: string;
 }
