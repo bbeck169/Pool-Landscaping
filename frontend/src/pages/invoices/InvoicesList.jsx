@@ -10,6 +10,11 @@ import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import { formatRelativeFromIso } from "@/lib/relativeTime";
+// QUOTES-SUMMARY · Feb-2026 — shared summary card extracted from
+// this page's former inline helper into ``components/SummaryTile.jsx``
+// so QuotesList (and future admin surfaces) can render matching
+// tiles without duplicating the shell markup.
+import SummaryTile from "@/components/SummaryTile";
 import {
   PageHeader,
   Button,
@@ -1054,22 +1059,6 @@ function _BulkPaySummaryModal({ results, onClose }) {
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function SummaryTile({ icon: Icon, tone, label, value, sub }) {
-  return (
-    <div
-      className="rounded-2xl p-4"
-      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-    >
-      <div className="flex items-center gap-1.5" style={{ color: tone }}>
-        <Icon size={14} />
-        <span className="text-xs font-semibold">{label}</span>
-      </div>
-      <div className="text-xl font-bold mt-1" style={{ color: colors.onSurface }}>{value}</div>
-      {sub ? <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{sub}</div> : null}
     </div>
   );
 }
