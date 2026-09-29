@@ -8,6 +8,10 @@ import {
 import { api, TOKEN_KEY } from "@/api";
 import { colors } from "@/theme";
 import { useIsNarrow } from "@/hooks/useIsNarrow";
+// CAD-ADDR · Feb-2026 — reusable address search wired to the
+// server-side Google Places proxy so ``GOOGLE_MAPS_API_KEY`` stays
+// off the bundle.
+import AddressAutocomplete from "@/components/common/AddressAutocomplete";
 import {
   shoelaceSqft, polylineLengthFt, feetToImperial,
   snapPoint, collectSnapEdges, polygonCentroid,
@@ -116,6 +120,46 @@ async function fetchMapTile({ customerId, zoom, size }) {
   }
   const blob = await res.blob();
   return { blob, meta: _readMapHeaders(res) };
+}
+
+
+/** Phase CAD-ADDR · Feb-2026 — Fetch a satellite tile for
+ *  caller-provided coordinates.  Mirrors the ``fetchMapTile``
+ *  helper's contract (blob + parsed headers) so the caller can
+ *  reuse the CAD-1 ``URL.createObjectURL`` pipeline verbatim.
+ *
+ *  ``label`` is echoed back on the ``X-Map-Label`` response
+ *  header and surfaces on ``meta.label`` for the sidebar caption. */
+async function fetchMapTileByCoords({ lat, lng, zoom, size, label }) {
+  const BASE = process.env.REACT_APP_BACKEND_URL;
+  const token = (() => {
+    try { return localStorage.getItem(TOKEN_KEY) || ""; }
+    catch { return ""; }
+  })();
+  const qs = new URLSearchParams({
+    lat: String(lat), lng: String(lng),
+    zoom: String(zoom), size,
+  });
+  if (label) qs.set("label", label);
+  const url = `${BASE}/api/cad/map-tile-by-coords?${qs.toString()}`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: token ? { "Authorization": `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let detail = null;
+    try { detail = (await res.json())?.detail || null; }
+    catch { /* body wasn't JSON */ }
+    const err = new Error(`map-tile-by-coords HTTP ${res.status}`);
+    err.status = res.status;
+    err.errorCode = (detail && detail.error_code) || `http_${res.status}`;
+    throw err;
+  }
+  const blob = await res.blob();
+  const meta = _readMapHeaders(res);
+  const hdrLabel = res.headers.get("X-Map-Label");
+  if (hdrLabel) meta.label = hdrLabel;
+  return { blob, meta };
 }
 
 
@@ -235,6 +279,51 @@ export default function CadEditor() {
     loadMap(design.customer_id, effectiveZoom);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [design?.customer_id, effectiveZoom]);
+
+  // ── CAD-ADDR · Feb-2026 — Address-driven map tile.
+  //   AddressAutocomplete's onChange fires with
+  //   ``{street, city, state, zip, latitude, longitude, formatted}``.
+  //   We only act when both coords are present + finite; a bare
+  //   manual-input event (no ``latitude``) is ignored so the user
+  //   can type freely before picking a suggestion.
+  const handleAddressSelect = useCallback(async (payload) => {
+    const lat = Number(payload?.latitude);
+    const lng = Number(payload?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const label = (payload?.formatted || "").trim();
+    setMapLoading(true);
+    setMapError(null);
+    try {
+      const { blob, meta } = await fetchMapTileByCoords({
+        lat, lng,
+        zoom: effectiveZoom,
+        size: `${canvasSize.w}x${canvasSize.h}`,
+        label,
+      });
+      const url = URL.createObjectURL(blob);
+      setMapImgUrl((prev) => {
+        if (prev) { try { URL.revokeObjectURL(prev); } catch { /* noop */ } }
+        return url;
+      });
+      // Persist the label alongside the standard header set so the
+      // scale bar + coord readouts stay in sync with the new map.
+      setMapMeta({ ...meta, label: label || meta.label || null });
+      try {
+        await api.put(`/designs/${id}`, {
+          ..._designWriteBody(design || {}, meta, canvasSize),
+          map_center_lat: meta.lat,
+          map_center_lng: meta.lng,
+          map_zoom: meta.zoom,
+          feet_per_pixel: (design?.feet_per_pixel ?? meta.feetPerPixel),
+        });
+      } catch { /* non-fatal — map already rendered locally */ }
+    } catch (e) {
+      setMapError({ code: e.errorCode || `http_${e.status || "unknown"}` });
+    } finally {
+      setMapLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [design, effectiveZoom, canvasSize.w, canvasSize.h, id]);
 
   // ── Snap machinery ────────────────────────────────────────────
   const snapEdges = useMemo(
@@ -912,6 +1001,32 @@ export default function CadEditor() {
                     data-testid="cad-map-refresh-btn">
               {mapLoading ? "Loading…" : "Refresh map"}
             </button>
+          </section>
+
+          {/* CAD-ADDR · Feb-2026 — Site Address search.  Rendered
+              directly below the Map Backdrop card so the two map
+              controls sit together.  Drops a pin at any Google-
+              Places address without needing the customer record. */}
+          <section className="rounded-2xl p-3 space-y-2"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid="cad-address-section">
+            <div className="text-xs font-semibold uppercase tracking-wider"
+                 style={{ color: colors.onSurfaceSecondary }}>
+              Site Address
+            </div>
+            <AddressAutocomplete
+              onChange={handleAddressSelect}
+              placeholder="Search a job site address…"
+              testId="cad-address-search"
+            />
+            {mapMeta?.label ? (
+              <div className="text-xs truncate"
+                   style={{ color: colors.onSurfaceSecondary }}
+                   data-testid="cad-address-current-label"
+                   title={mapMeta.label}>
+                {mapMeta.label}
+              </div>
+            ) : null}
           </section>
 
           {/* CAD-2 Icon library */}

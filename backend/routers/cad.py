@@ -279,6 +279,101 @@ async def _fetch_static_map_bytes(
     return r.content
 
 
+@router.get("/cad/map-tile-by-coords")
+async def get_map_tile_by_coords(
+    lat: float = Query(...),
+    lng: float = Query(...),
+    zoom: int = Query(19),
+    size: str = Query("800x500"),
+    label: Optional[str] = Query(None),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase CAD-ADDR · Feb-2026 — address-based site mapping.
+
+    Fetches a Google Static Maps satellite tile for the caller-
+    supplied ``lat`` / ``lng`` pair, skipping the geocode step the
+    ``/cad/map-tile`` endpoint performs.  Used by the CAD editor's
+    ``AddressAutocomplete`` field so a designer can drop a pin on
+    any address (not just the associated customer's) without a
+    round-trip through the customer record.
+
+    Response
+    --------
+    Body: ``image/png`` bytes.
+
+    Headers mirror ``/cad/map-tile`` — ``X-Map-Lat`` / ``X-Map-Lng``
+    / ``X-Map-Zoom`` / ``X-Feet-Per-Pixel`` — plus:
+
+    * ``X-Geocode-Source: coords`` — flags the tile as
+      caller-provided (vs. ``cache`` / ``live`` on the primary
+      endpoint) so the FE can label the state pill accordingly.
+    * ``X-Map-Label`` — echoes the ``label`` query param verbatim
+      when provided, omitted otherwise. The FE displays this as a
+      caption under the map.
+
+    Error codes are byte-identical with ``/cad/map-tile``:
+
+    * ``400 invalid_coords``           — lat/lng out of range.
+    * ``400 invalid_zoom_param``       — non-integer zoom.
+    * ``400 invalid_size_param``       — malformed ``WxH``.
+    * ``424 google_maps_key_missing``  — server-side key unset.
+    * ``502 map_tile_upstream_error``  — Google returned non-200.
+    """
+    # ── Coord validation.  Match the geodetic range and reject
+    # NaN / inf which ``float(Query)`` will otherwise happily pass
+    # through.  ``_fetch_static_map_bytes`` would refuse a bogus
+    # tile too but a 400 here is a clearer contract for callers.
+    from math import isfinite
+    if not isfinite(lat) or not isfinite(lng):
+        raise HTTPException(400, {"error_code": "invalid_coords"})
+    if lat < -90.0 or lat > 90.0 or lng < -180.0 or lng > 180.0:
+        raise HTTPException(400, {"error_code": "invalid_coords"})
+    # ── Zoom clamp (shared bounds with /cad/map-tile).
+    try:
+        z = int(zoom)
+    except (TypeError, ValueError):
+        raise HTTPException(400, {"error_code": "invalid_zoom_param"})
+    z = max(_ZOOM_MIN, min(_ZOOM_MAX, z))
+    # ── Size parse + clamp (shared bounds with /cad/map-tile).
+    try:
+        w_str, h_str = (size or "").lower().split("x", 1)
+        w = max(_SIZE_MIN, min(_SIZE_MAX, int(w_str)))
+        h = max(_SIZE_MIN, min(_SIZE_MAX, int(h_str)))
+    except Exception:
+        raise HTTPException(400, {"error_code": "invalid_size_param"})
+    # ── Fetch (raises 424 google_maps_key_missing / 502
+    # map_tile_upstream_error via _fetch_static_map_bytes).
+    png = await _fetch_static_map_bytes(
+        lat=lat, lng=lng, zoom=z, width=w, height=h,
+    )
+    fpp = _feet_per_pixel(lat, z)
+    # ── Response headers.  ``X-Map-Label`` only rendered when
+    # provided so the CORS ``Expose-Headers`` list still lets the
+    # FE read it; empty labels don't leak into the DOM.
+    headers = {
+        "X-Map-Lat": f"{lat:.7f}",
+        "X-Map-Lng": f"{lng:.7f}",
+        "X-Map-Zoom": str(z),
+        "X-Feet-Per-Pixel": f"{fpp:.6f}",
+        "X-Geocode-Source": "coords",
+    }
+    exposed = ("X-Map-Lat, X-Map-Lng, X-Map-Zoom, "
+               "X-Feet-Per-Pixel, X-Geocode-Source")
+    if label:
+        # Header values must be latin-1 encodable — encode any
+        # non-ASCII glyphs so the response header survives the
+        # ASGI transport without a 500.
+        headers["X-Map-Label"] = label.encode(
+            "latin-1", "replace",
+        ).decode("latin-1")
+        exposed = exposed + ", X-Map-Label"
+    headers["Access-Control-Expose-Headers"] = exposed
+    return Response(
+        content=png, media_type="image/png", headers=headers,
+    )
+
+
 @router.get("/cad/map-tile")
 async def get_map_tile(
     customer_id: str = Query(..., min_length=1),
