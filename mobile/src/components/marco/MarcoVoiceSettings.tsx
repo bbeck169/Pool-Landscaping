@@ -15,7 +15,14 @@ import {
 } from "@/src/services/marco/voicePreferences";
 import { font, fontSize, spacing, radius, colors } from "@/src/theme";
 
-const PICOVOICE_KEY = process.env.EXPO_PUBLIC_PICOVOICE_KEY || "";
+/* Check if expo-speech-recognition is available (dev-client only) */
+let _speechRecognitionAvailable = false;
+try {
+  require("expo-speech-recognition");
+  _speechRecognitionAvailable = true;
+} catch {
+  _speechRecognitionAvailable = false;
+}
 
 export default function MarcoVoiceSettings() {
   const [ttsOn, setTtsOn] = useState(true);
@@ -49,7 +56,7 @@ export default function MarcoVoiceSettings() {
 
   if (loading) return null;
 
-  const wakeDisabled = !ttsOn || !PICOVOICE_KEY;
+  const wakeDisabled = !ttsOn || !_speechRecognitionAvailable;
 
   return (
     <View style={s.container} testID="marco-voice-settings">
@@ -86,8 +93,8 @@ export default function MarcoVoiceSettings() {
             {'"Hey MARCO" Wake Word'}
           </Text>
           <Text style={s.subtitle}>
-            {!PICOVOICE_KEY
-              ? "Disabled — Picovoice key not configured"
+            {!_speechRecognitionAvailable
+              ? "Unavailable — requires dev-client build"
               : !ttsOn
               ? "Enable voice responses first"
               : wakeOn
