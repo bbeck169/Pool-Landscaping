@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from 'react-router-dom';
 import SignatureCanvas from "react-signature-canvas";
+// DTP-2b · Feb-2026 — LIGHT-SCOPE CARVE-OUT.
+// PortalSign is a print-oriented signature capture page. Signatures
+// need a white background for legibility, print accuracy, and to
+// match the resulting PDF's white surface. The sign-capture root
+// carries the ``portal-sign-scope`` marker class so any parent
+// ``.portal-dark`` context explicitly opts this page BACK to
+// light. Do NOT swap this import to ``portalColors`` — future devs
+// should keep this page bound to the light ``colors`` palette.
 import { colors, gradients } from "@/theme";
 import { CheckCircle2, Download, RotateCcw } from "lucide-react";
 
@@ -54,7 +62,7 @@ export default function PortalSignPage() {
 
   if (error && !meta) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6" data-testid="sign-error">
+      <div className="portal-sign-scope min-h-screen flex items-center justify-center p-6" data-testid="sign-error">
         <Card className="p-8 max-w-md text-center">
           <div className="text-lg font-bold mb-2" style={{ color: colors.onSurface }}>Not available</div>
           <div className="text-sm" style={{ color: colors.muted }}>{error}</div>
@@ -62,12 +70,12 @@ export default function PortalSignPage() {
       </div>
     );
   }
-  if (!meta) return <div className="p-8 text-sm" style={{ color: colors.muted }}>Loading…</div>;
+  if (!meta) return <div className="portal-sign-scope p-8 text-sm" style={{ color: colors.muted }}>Loading…</div>;
 
   const alreadySigned = meta.signed || signedNow;
 
   return (
-    <div className="min-h-screen p-4 md:p-8" style={{ backgroundColor: colors.surfaceSecondary }}
+    <div className="portal-sign-scope min-h-screen p-4 md:p-8" style={{ backgroundColor: colors.surfaceSecondary }}
          data-testid="portal-sign-page">
       <div className="max-w-3xl mx-auto">
         <div className="mb-4 text-xs uppercase tracking-wide" style={{ color: colors.muted }}>Pool & Landscaping</div>

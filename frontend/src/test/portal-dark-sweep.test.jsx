@@ -24,8 +24,11 @@ const read = (rel) =>
   fs.readFileSync(path.resolve(process.cwd(), rel), "utf-8");
 
 // Every entry here maps to a route that mounts INSIDE
-// ``<PortalThemeShell>`` (via ``AppLayout``). New portal pages MUST
-// be added here so the sweep guard tracks them.
+// ``<PortalThemeShell>`` (via ``AppLayout``) OR is a portal surface
+// that renders on the dark navy palette even on a public magic-link
+// route (DTP-2b brought the review / preferences / renewal / walk-
+// through / referrals-page wrappers into the dark family). New
+// portal pages MUST be added here so the sweep guard tracks them.
 const PORTAL_PAGES_UNDER_SHELL = [
   "src/pages/portal/PortalHome.jsx",
   "src/pages/portal/PortalPhotos.jsx",
@@ -39,6 +42,13 @@ const PORTAL_PAGES_UNDER_SHELL = [
   "src/pages/portal/PortalPaymentReturn.jsx",
   "src/pages/portal/MyReferralsSection.jsx",
   "src/pages/portal/ReferralSection.jsx",
+  // DTP-2b · Feb-2026 — sweep finish.
+  "src/pages/portal/PortalReviews.jsx",
+  "src/pages/portal/PortalReviewSubmit.jsx",
+  "src/pages/portal/PortalPreferences.jsx",
+  "src/pages/portal/PortalReferralsPage.jsx",
+  "src/pages/portal/PortalWalkthrough.jsx",
+  "src/pages/portal/PortalAgreementRenew.jsx",
 ];
 
 // Portal-scoped module containing multiple sub-exports (PortalServices,
@@ -47,15 +57,13 @@ const PORTAL_PAGES_UNDER_SHELL = [
 // — module-level ``colors`` must bind to ``portalColors``.
 const PORTAL_PAGES_MODULE = "src/pages/portal/PortalPages.jsx";
 
-// Pages mounted OUTSIDE the portal shell (public magic-link landings
-// / setup callbacks). Retained with the light ``colors`` binding so
-// they read on a white body when the customer arrives from email.
+// Pages mounted OUTSIDE the portal shell AND intentionally kept on
+// the light palette. Post-DTP-2b there is only one true light-scope
+// portal surface — PortalSign — plus two non-portal public landings
+// that never carried a portal binding.
 const PORTAL_PAGES_PUBLIC = [
-  "src/pages/portal/PortalReviews.jsx",       // /r/review magic-link + /portal/reviews shell
-  "src/pages/portal/PortalPreferences.jsx",   // /r/preferences (public)
-  "src/pages/portal/PortalReviewSubmit.jsx",  // /portal/review/submit (token)
-  "src/pages/portal/PortalSign.jsx",          // /portal/sign/:token (public)
-  "src/pages/portal/SetupSuccess.jsx",        // /portal/setup-success (public)
+  "src/pages/portal/PortalSign.jsx",           // /portal/sign/:token (public — signature print surface, light-scope carve-out)
+  "src/pages/portal/SetupSuccess.jsx",         // /portal/setup-success (public)
   "src/pages/portal/PublicEstimateLanding.jsx", // /e/estimate (public)
 ];
 

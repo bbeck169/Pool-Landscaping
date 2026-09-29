@@ -86,3 +86,20 @@
 .portal-dark .border-gray-200   { border-color: #1E293B !important; }
 .portal-dark .divide-slate-200 > * + *  { border-color: #1E293B !important; }
 .portal-dark .divide-zinc-200  > * + *  { border-color: #1E293B !important; }
+
+/* ── DTP-2b · Feb-2026 — PortalSign light-scope carve-out ─────
+ * PortalSign is a print-oriented signature capture page. Signatures
+ * need a white background for legibility, print accuracy, and to
+ * match the resulting PDF's white surface. This scope explicitly
+ * opts out of dark theme so, even if a future revision mounts the
+ * signature page INSIDE the portal shell, the pad and its inputs
+ * keep a light surface. */
+.portal-dark .portal-sign-scope {
+  background: #FFFFFF;
+  color: #09090B;
+}
+.portal-dark .portal-sign-scope * {
+  /* let inner elements use their default colors, not the dark
+     overrides higher up */
+  color: inherit;
+}

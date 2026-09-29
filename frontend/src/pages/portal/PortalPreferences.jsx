@@ -10,7 +10,11 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Save, Lock, ShieldCheck, MailX } from "lucide-react";
 import { api } from "@/api";
-import { colors, gradients } from "@/theme";
+// DTP-2b · Feb-2026 — dark portal palette. PortalPreferences mounts
+// at both /portal/preferences (inside PortalThemeShell) and
+// /r/preferences (public magic-link). Binding to ``portalColors``
+// keeps both entry paths on the same dark navy surface.
+import { portalColors as colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 // Feb-2026 · P11b — App Store consumer-account guideline blockers 3 + 4.

@@ -20,7 +20,12 @@
 import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { api } from "@/api";
-import { colors, gradients } from "@/theme";
+// DTP-2b · Feb-2026 — dark portal palette. PortalReviewSubmit is
+// mounted on the public /portal/review/submit magic-link route
+// (outside PortalThemeShell), so the ``.portal-dark`` class does
+// not wrap it in the DOM — the dark hex values resolve directly
+// via ``portalColors`` inline styles.
+import { portalColors as colors, gradients } from "@/theme";
 import { Star, ExternalLink } from "lucide-react";
 
 async function _postRating(token, rating, comment) {

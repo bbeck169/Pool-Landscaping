@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Waves, Wrench, Receipt, FileText, MessageSquare, ChevronRight, AlertCircle, Plus, ClipboardCheck, DollarSign, CalendarClock, Wallet, X as XIcon, Send, Sparkles, UserRound, Star, Image as ImageIcon, Video as VideoIcon, Trees, Filter as FilterFunnelIcon } from "lucide-react";
 import { api } from "@/api";
-import { portalColors as colors, gradients, portalGradients } from '@/theme';
+import { portalColors as colors, portalGradients } from '@/theme';
 import { useAuth } from "@/auth";
 import BusinessCard from "@/components/business-card/BusinessCard";
 import { Skeleton, StatusPill } from '@/components/ui-kit';
@@ -180,7 +180,7 @@ export default function PortalHome() {
         <button
           onClick={() => setRequestOpen(true)}
           className="inline-flex items-center justify-center gap-2 flex-1 min-w-0 px-4 py-3 rounded-xl text-sm font-bold text-white shadow-sm hover:brightness-95"
-          style={{ background: gradients.navyToGreen.css, minHeight: 48 }}
+          style={{ background: portalGradients.navyToBlue.css, minHeight: 48 }}
           data-testid="portal-request-service-btn"
         >
           <Plus size={16} /> Request Service
@@ -970,7 +970,7 @@ function RequestServiceModal({ onClose, onSent }) {
             type="submit"
             disabled={busy}
             className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white"
-            style={{ background: gradients.navyToGreen.css, opacity: busy ? 0.7 : 1 }}
+            style={{ background: portalGradients.navyToBlue.css, opacity: busy ? 0.7 : 1 }}
             data-testid="portal-request-service-submit"
           >
             <Send size={14} /> {busy ? "Sending…" : "Send request"}
@@ -1224,7 +1224,7 @@ function CustomerAiChatPane({ employee, onClose }) {
             type="submit"
             disabled={busy || !text.trim()}
             className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
-            style={{ background: gradients.navyToGreen.css }}
+            style={{ background: portalGradients.navyToBlue.css }}
             data-testid="portal-ai-composer-send"
           >
             <Send size={14} /> Send

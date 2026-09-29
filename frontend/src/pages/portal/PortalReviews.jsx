@@ -2,7 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Star, Send, ExternalLink, CheckCircle2, Sparkles } from "lucide-react";
 import { api } from "@/api";
-import { colors, gradients } from "@/theme";
+// DTP-2b · Feb-2026 — dark portal palette. PortalReviews mounts at
+// both /portal/reviews (inside PortalThemeShell) and /r/review
+// (public magic-link). Binding to ``portalColors`` keeps the two
+// surfaces visually consistent — the magic-link landing renders
+// dark navy too, matching the shell surface a returning customer
+// sees.
+import { portalColors as colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 
 /**
