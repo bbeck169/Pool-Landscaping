@@ -46,6 +46,7 @@
     "expo-linear-gradient": "15.0.8",
     "expo-linking": "8.0.12",
     "expo-location": "~19.0.8",
+    "expo-manifests": "~57.0.2",
     "expo-notifications": "~0.32.17",
     "expo-print": "~15.0.8",
     "expo-router": "6.0.24",
