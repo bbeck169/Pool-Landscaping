@@ -2,9 +2,21 @@
  * Phase R1.b · Feb-2026 — ArAgingPanel renders the bucket chart,
  * customer drill-down table, and fires onCustomerFocus when a
  * row's "See invoices" action is clicked.
+ *
+ * Feb-2026 · Test Hygiene Phase 3 — the ``customer_id`` column
+ * renders a ``<CustomerLink>`` which imports ``<Link>`` from
+ * ``react-router-dom``.  Without a Router context in scope,
+ * ``LinkWithRef`` throws ``TypeError: Cannot destructure property
+ * 'basename' of 'React.useContext(...)' as it is null`` — an
+ * uncaught exception that surfaces during full-suite ``yarn vitest
+ * run``.  Every render call is wrapped in a ``<MemoryRouter>`` so
+ * the panel's internal ``<CustomerLink>`` resolves the router
+ * context cleanly.  Mirrors the same wrap already used by
+ * ``time-to-get-paid-report.test.jsx``.
  */
 import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/api", () => ({ api: { get: vi.fn() } }));
@@ -15,6 +27,17 @@ vi.mock("react-apexcharts", () => ({
 
 import { api } from "@/api";
 import ArAgingPanel from "@/components/reports/ArAgingPanel";
+
+/** Renders the panel inside a MemoryRouter so ``<CustomerLink>``'s
+ * ``<Link>`` child can resolve the router context.  Kept private
+ * to this test file — the wrap is a test-setup concern, not an
+ * application concern. */
+const renderPanel = (props) =>
+  render(
+    <MemoryRouter initialEntries={["/reports/ar-aging"]}>
+      <ArAgingPanel {...props} />
+    </MemoryRouter>,
+  );
 
 describe("ArAgingPanel (R1.b)", () => {
   beforeEach(() => { api.get.mockReset(); });
@@ -45,7 +68,7 @@ describe("ArAgingPanel (R1.b)", () => {
       });
     });
 
-    render(<ArAgingPanel filters={{ period: "mtd" }} onCustomerFocus={() => {}} />);
+    renderPanel({ filters: { period: "mtd" }, onCustomerFocus: () => {} });
     await waitFor(() => {
       expect(screen.getByTestId("ar-aging-panel-row-c1")).toBeInTheDocument();
       expect(screen.getByTestId("ar-aging-panel-row-c2")).toBeInTheDocument();
@@ -65,7 +88,7 @@ describe("ArAgingPanel (R1.b)", () => {
       return Promise.resolve({ rows: [], total: 0, net_terms_days: 30 });
     });
     const onFocus = vi.fn();
-    render(<ArAgingPanel filters={{ period: "mtd" }} onCustomerFocus={onFocus} />);
+    renderPanel({ filters: { period: "mtd" }, onCustomerFocus: onFocus });
     await waitFor(() => screen.getByTestId("ar-aging-panel-drill-abc"));
     fireEvent.click(screen.getByTestId("ar-aging-panel-drill-abc"));
     expect(onFocus).toHaveBeenCalledWith("abc");
@@ -76,7 +99,7 @@ describe("ArAgingPanel (R1.b)", () => {
       if (url.includes("ar_aging_by_customer")) return Promise.resolve({ rows: [] });
       return Promise.resolve({ rows: [], total: 0, net_terms_days: 30 });
     });
-    render(<ArAgingPanel filters={{ period: "mtd" }} onCustomerFocus={() => {}} />);
+    renderPanel({ filters: { period: "mtd" }, onCustomerFocus: () => {} });
     await waitFor(() =>
       expect(screen.getByTestId("ar-aging-panel-empty")).toBeInTheDocument()
     );

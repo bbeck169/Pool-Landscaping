@@ -45,9 +45,18 @@ describe("CustomersList · I2 Waitlist bulk portal-invite button", () => {
 
   it("click handler re-fetches waitlist ids at click time (no stale state)", () => {
     // Guards against relying on cached ``rows`` — must GET a fresh
-    // waitlisted=true page_size=500 list before dispatching invites.
+    // waitlisted=true list before dispatching invites.
+    //
+    // Feb-2026 · Test Hygiene Phase 3 — the URL no longer carries
+    // ``&page=1&page_size=500``.  SEARCH-SPEED · Feb-2026 dropped
+    // the server-side ``page_size`` cap from 500 → 100, and the
+    // bulk-invite click intentionally hits the legacy bare-array
+    // path (2000-cap, matching H1 batch semantics) by omitting the
+    // pagination params entirely.  The contract this test locks
+    // in is still "re-fetch at click time with waitlisted=true",
+    // not the specific page_size query string.
     expect(SRC).toMatch(
-      /api\.get\(\s*"\/customers\?waitlisted=true&page=1&page_size=500"/,
+      /api\.get\(\s*"\/customers\?waitlisted=true"/,
     );
   });
 
@@ -74,9 +83,15 @@ describe("CustomersList · I2 Waitlist bulk portal-invite button", () => {
     // Regression guard — an earlier draft called ``toast.success``
     // which is undefined in this module (sonner is imported as
     // sonnerToast). Locking to sonnerToast prevents the ReferenceError.
+    //
+    // Feb-2026 · Test Hygiene Phase 3 — the slice window bumped
+    // from 2400 → 2800 chars because the current handler's
+    // pre-``catch`` block (bare-array URL comment + Array.isArray
+    // envelope shim) grew past the old 2400 cap.  Kept private
+    // so bumping doesn't leak into the other tests' slice sizes.
     const idx = SRC.indexOf('waitlist-bulk-invite-btn');
     expect(idx).toBeGreaterThan(-1);
-    const block = SRC.slice(idx, idx + 2400);
+    const block = SRC.slice(idx, idx + 2800);
     expect(block).toMatch(/sonnerToast\.success/);
     expect(block).toMatch(/sonnerToast\.error/);
     // And should NOT reference an unaliased ``toast.success`` /
