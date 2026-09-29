@@ -118,7 +118,19 @@ def test_sms_body_uses_customer_row_name_and_phone(monkeypatch, wire_transports)
                             request_details="ph high")
 
     resp = _run(create_service_request(
-        body, user=user, tenant={"id": tenant_id},
+        body, user=user, tenant={
+            "id": tenant_id,
+            "settings": {
+                "notifications": {
+                    # PHONE-PURGE · Feb-2026 — tests must seed the
+                    # tenant-configured SMS recipient explicitly; the
+                    # source no longer falls back to a hardcoded
+                    # plofv-internal number.  ``+15555550100`` is an
+                    # RFC-5735 reserved fictional US number.
+                    "service_request_sms": "+15555550100",
+                },
+            },
+        },
     ))
     assert resp.get("ok") is True
 
@@ -201,7 +213,17 @@ def test_sms_body_omits_phone_when_customer_row_has_none(monkeypatch, wire_trans
     body = ServiceRequestIn(service_type="Pool Cleaning")
 
     resp = _run(create_service_request(
-        body, user=user, tenant={"id": tenant_id},
+        body, user=user, tenant={
+            "id": tenant_id,
+            "settings": {
+                "notifications": {
+                    # PHONE-PURGE · Feb-2026 — see the fixture in
+                    # test_sms_body_uses_customer_row_name_and_phone
+                    # above for the rationale.
+                    "service_request_sms": "+15555550100",
+                },
+            },
+        },
     ))
     assert resp.get("ok") is True
 
