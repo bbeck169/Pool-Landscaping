@@ -197,6 +197,12 @@ def build_render_context(
         "canvas_w_ft": canvas_w_ft,
         "canvas_h_ft": canvas_h_ft,
         "feet_per_pixel": fpp,
+        # CAD-2.5 · Feb-2026 — persist the map-tile dims into the
+        # render context so the scale bar can derive its length from
+        # real-world (feet_per_pixel × map_size_px.w) rather than
+        # the design's declared canvas_w_ft, which the user may have
+        # overridden after calibrating the map.
+        "map_size_px": design.get("map_size_px") or None,
         "boundary": list(design.get("boundary") or []),
         "elements": elements,
         "inventory": inventory,
@@ -453,6 +459,50 @@ def _draw_scale_bar(c: rl_canvas.Canvas, *, cx: float, cy: float,
     c.drawCentredString(cx, cy + 6, feet_label)
 
 
+def compute_scale_bar_pt(ctx: Dict[str, Any], sw: float,
+                         *, feet: float = 50.0) -> float:
+    """CAD-2.5 · Feb-2026 — Scale-bar length in PDF points.
+
+    Derives the bar length for a ``feet``-foot real-world reference
+    (default 50 ft) from ``feet_per_pixel`` applied to the actual
+    map-tile dimensions rather than the design's declared
+    ``canvas_w_ft``. This fixes the drift case where the customer
+    calibrated the map or overrode ``feet_per_pixel`` at a different
+    tile width than the canvas base.
+
+    Formulation:
+        map_real_ft = map_size_px.w × feet_per_pixel   (real width
+                                                         of the map)
+        pt_per_ft   = sw / map_real_ft                 (PDF pt per
+                                                         real-world ft)
+        bar_pt      = min(sw × 0.4, feet × pt_per_ft)  (cap at 40%
+                                                         of drawing
+                                                         region width)
+
+    Legacy fall-throughs:
+    * ``feet_per_pixel`` set but ``map_size_px`` missing (pre-CAD-1
+      designs): the ``sw / canvas_w_ft`` computation preserves the
+      CAD-3 behavior without crashing.
+    * ``feet_per_pixel`` unset or non-positive: return a nominal
+      ``sw × 0.2`` bar. The caller renders the label as
+      ``"scale unknown"``.
+    """
+    fpp = ctx.get("feet_per_pixel")
+    if not fpp or float(fpp) <= 0:
+        return sw * 0.2
+    map_size = ctx.get("map_size_px") or {}
+    map_w = None
+    if isinstance(map_size, dict):
+        map_w = map_size.get("w")
+    if map_w and float(map_w) > 0:
+        map_real_ft = float(map_w) * float(fpp)
+        pt_per_ft = sw / map_real_ft
+    else:
+        # Legacy pre-CAD-1 fallback — CAD-3 formula.
+        pt_per_ft = sw / float(ctx.get("canvas_w_ft") or 60.0)
+    return min(sw * 0.4, feet * pt_per_ft)
+
+
 def _draw_legend(c: rl_canvas.Canvas, *, x: float, y: float,
                  inventory: List[dict]) -> None:
     if not inventory:
@@ -544,17 +594,7 @@ def _draw_page2(c: rl_canvas.Canvas, ctx: dict,
 
     # Scale bar (bottom-center of the drawing region).
     fpp = ctx.get("feet_per_pixel")
-    if fpp and fpp > 0:
-        # 50-ft bar. ``fpp`` is feet-per-pixel of the map tile; the
-        # PDF drawing region has been scaled to match the canvas
-        # dims, so the same ratio applies.
-        # The pixel-space ratio: 1 canvas pixel = ``sw / canvas_w_pt`` PDF pt.
-        # canvas_w_pt is not tracked here; approximate via canvas_w_ft.
-        pt_per_ft = sw / ctx["canvas_w_ft"]
-        bar_pt = min(sw * 0.4, 50.0 * pt_per_ft)
-    else:
-        # No calibration — draw a nominal 20% of drawing width bar.
-        bar_pt = sw * 0.2
+    bar_pt = compute_scale_bar_pt(ctx, sw)
     _draw_scale_bar(
         c,
         cx=ox + sw / 2.0, cy=oy + 12,

@@ -174,6 +174,15 @@ export default function CadEditor() {
   const [marcoPrompt, setMarcoPrompt] = useState("");
   const [marcoLoading, setMarcoLoading] = useState(false);
   const [marcoPreview, setMarcoPreview] = useState(null);
+  // ── Phase CAD-2.5 · Feb-2026 — Pointer-mode selection + vertex-drag
+  //    and icon rotation handles. ``selectedId`` marks the element
+  //    whose handles are currently visible. ``draggingVertex`` /
+  //    ``rotatingIcon`` are the transient drag states — they only
+  //    live for the duration of a mouseDown → mouseUp gesture and
+  //    drive the live coord + rotation_deg updates.
+  const [selectedId, setSelectedId] = useState(null);
+  const [draggingVertex, setDraggingVertex] = useState(null);
+  const [rotatingIcon, setRotatingIcon] = useState(null);
   // ── Phase CAD-3 · Site Plan PDF ───────────────────────────────
   const [sitePlanLoading, setSitePlanLoading] = useState(false);
   // Sidebar-controlled zoom.
@@ -244,6 +253,15 @@ export default function CadEditor() {
   // (``e.evt.clientX``) AND a plain DOM MouseEvent shape so the
   // react-konva mock used in tests still delivers a working event
   // without pulling in the real Konva runtime).
+  const _normFromEvent = (e) => {
+    const native = (e && e.evt) ? e.evt : e;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const x = (native.clientX - rect.left) / rect.width;
+    const y = (native.clientY - rect.top) / rect.height;
+    return { x, y };
+  };
+
   const onStageMouseDown = (e) => {
     if (!design) return;
     if (tool === "pointer" && !placingIcon) return;
@@ -346,6 +364,100 @@ export default function CadEditor() {
     return api.put(`/designs/${id}`, _designWriteBody(d, mapMeta, canvasSize));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, mapMeta, canvasSize.w, canvasSize.h]);
+
+  // ── CAD-2.5 · Feb-2026 — Drag/rotate mouse-move + up handlers.
+  //    Handlers live on the Konva ``<Stage>`` so they capture both
+  //    real Konva mouse events AND the plain DOM events dispatched
+  //    by ``fireEvent`` against the react-konva test mock (the
+  //    mock renders every Konva component as a ``<div>``). During
+  //    a vertex drag we snap to the boundary/element edges (same
+  //    ``maybeSnap`` used by initial polygon creation) and live-
+  //    recompute area/length so the auto label re-renders every
+  //    frame. On mouseUp we PUT the latest design snapshot.
+  const onStageMouseMove = (e) => {
+    if (!design) return;
+    if (draggingVertex) {
+      const raw = _normFromEvent(e);
+      if (!raw) return;
+      const p = maybeSnap(raw);
+      const { elementId, vertexIndex } = draggingVertex;
+      setDesign((d) => {
+        if (!d) return d;
+        const cw2 = d.canvas_w_ft || 60;
+        const ch2 = d.canvas_h_ft || 40;
+        return {
+          ...d,
+          elements: (d.elements || []).map((el) => {
+            if (el.id !== elementId) return el;
+            const nc = [...(el.coords || [])];
+            nc[vertexIndex] = { x: p.x, y: p.y };
+            const nextEl = { ...el, coords: nc };
+            if (el.type === "paver" || el.type === "pool"
+                || el.type === "spa") {
+              nextEl.computed = {
+                ...(el.computed || {}),
+                area_sqft: shoelaceSqft(nc, cw2, ch2),
+              };
+            } else if (el.type === "wall") {
+              nextEl.computed = {
+                ...(el.computed || {}),
+                linear_ft: polylineLengthFt(nc, cw2, ch2),
+              };
+            }
+            return nextEl;
+          }),
+        };
+      });
+      return;
+    }
+    if (rotatingIcon) {
+      const raw = _normFromEvent(e);
+      if (!raw) return;
+      const native = (e && e.evt) ? e.evt : e;
+      const shiftHeld = !!(native && native.shiftKey);
+      const { elementId } = rotatingIcon;
+      setDesign((d) => {
+        if (!d) return d;
+        const target = (d.elements || []).find((x) => x.id === elementId);
+        if (!target || !Array.isArray(target.coords) || !target.coords[0]) {
+          return d;
+        }
+        const cx = target.coords[0].x;
+        const cy = target.coords[0].y;
+        // 0° = up, 90° = right, 180° = down. atan2 returns
+        // radians in [-π, π] with 0 pointing east; add 90° so 0°
+        // aligns with the visual "up" of the rotation handle.
+        let deg = (Math.atan2(raw.y - cy, raw.x - cx) * 180 / Math.PI) + 90;
+        deg = ((deg % 360) + 360) % 360;
+        if (shiftHeld) {
+          deg = Math.round(deg / 15) * 15;
+          if (deg >= 360) deg -= 360;
+        }
+        return {
+          ...d,
+          elements: (d.elements || []).map((x) =>
+            x.id === elementId
+              ? { ...x, props: { ...(x.props || {}), rotation_deg: deg } }
+              : x,
+          ),
+        };
+      });
+    }
+  };
+
+  const onStageMouseUp = () => {
+    if (!draggingVertex && !rotatingIcon) return;
+    setDraggingVertex(null);
+    setRotatingIcon(null);
+    // Persist the latest snapshot from within a functional setter
+    // so we don't PUT stale state from the closure.
+    setDesign((d) => {
+      if (d) {
+        _persistDesign(d).catch(() => setToast("Save failed"));
+      }
+      return d;
+    });
+  };
 
   const finishPaver = () => {
     if (paverInProgress.length < 3) {
@@ -622,6 +734,8 @@ export default function CadEditor() {
               width={canvasSize.w}
               height={canvasSize.h}
               onMouseDown={onStageMouseDown}
+              onMouseMove={onStageMouseMove}
+              onMouseUp={onStageMouseUp}
               data-testid="cad-konva-stage"
               className="absolute inset-0"
               style={{ zIndex: 1, width: "100%", height: "100%" }}
@@ -632,7 +746,22 @@ export default function CadEditor() {
                   <ShapeNode
                     key={el.id} el={el}
                     canvasSize={canvasSize} cw={cw} ch={ch}
-                    onDelete={tool === "pointer" ? () => removeElem(el.id) : null}
+                    onSelect={
+                      tool === "pointer" && !placingIcon
+                        ? () => setSelectedId(
+                            (prev) => (prev === el.id ? null : el.id),
+                          )
+                        : null
+                    }
+                    selected={selectedId === el.id}
+                    onVertexMouseDown={(vertexIndex, ev) => {
+                      if (ev && ev.stopPropagation) ev.stopPropagation();
+                      setDraggingVertex({ elementId: el.id, vertexIndex });
+                    }}
+                    onIconRotationMouseDown={(ev) => {
+                      if (ev && ev.stopPropagation) ev.stopPropagation();
+                      setRotatingIcon({ elementId: el.id });
+                    }}
                   />
                 ))}
                 {/* In-progress paver polygon */}
@@ -954,10 +1083,14 @@ export default function CadEditor() {
    ──────────────────────────────────────────────────────────────── */
 
 
-function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) {
+function ShapeNode({
+  el, canvasSize, cw, ch,
+  onSelect, selected, onVertexMouseDown, onIconRotationMouseDown,
+  ghost, testidOverride,
+}) {
   const type = el.type;
   const tid = testidOverride || `cad-shape-${el.id}`;
-  const stroke = ghost ? "#059669" : "#0F172A";
+  const stroke = ghost ? "#059669" : (selected ? "#2563EB" : "#0F172A");
   const fillOpacity = ghost ? 0.25 : 0.5;
 
   // CAD-2 pool / spa via coords polygon (MARCO output + accepted
@@ -986,10 +1119,10 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
       dimText = `${Math.round(w1)}' × ${Math.round(w2)}'`;
     }
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Line points={flat} closed
               fill={fill} opacity={fillOpacity}
-              stroke={stroke} strokeWidth={1} />
+              stroke={stroke} strokeWidth={selected ? 2 : 1} />
         {sqft > 0 && (
           <ShapeLabel
             x={centroid.x * canvasSize.w}
@@ -1006,6 +1139,12 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
             testid={`cad-shape-dims-${el.id}`}
           />
         )}
+        {selected && (
+          <VertexHandles
+            el={el} canvasSize={canvasSize}
+            onVertexMouseDown={onVertexMouseDown}
+          />
+        )}
       </Group>
     );
   }
@@ -1017,9 +1156,10 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const x = (el.x || 0) * canvasSize.w;
     const y = (el.y || 0) * canvasSize.h;
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Rect x={x} y={y} width={w} height={h}
-              fill="#0284C7" opacity={fillOpacity} stroke={stroke} strokeWidth={1} />
+              fill="#0284C7" opacity={fillOpacity} stroke={stroke}
+              strokeWidth={selected ? 2 : 1} />
         <ShapeLabel x={x + w / 2} y={y + h / 2}
                     text={`${((el.w || 0.1) * cw).toFixed(0)}' × ${((el.h || 0.06) * ch).toFixed(0)}'`}
                     testid={`cad-shape-label-${el.id}`} />
@@ -1032,9 +1172,10 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const cx = (el.x || 0) * canvasSize.w + r;
     const cy = (el.y || 0) * canvasSize.h + r;
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Circle x={cx} y={cy} radius={r}
-                fill="#7C3AED" opacity={fillOpacity} stroke={stroke} strokeWidth={1} />
+                fill="#7C3AED" opacity={fillOpacity} stroke={stroke}
+                strokeWidth={selected ? 2 : 1} />
       </Group>
     );
   }
@@ -1043,9 +1184,10 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const cx = (el.x || 0) * canvasSize.w + r;
     const cy = (el.y || 0) * canvasSize.h + r;
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Circle x={cx} y={cy} radius={r}
-                fill="transparent" stroke={stroke} strokeWidth={2} />
+                fill="transparent" stroke={stroke}
+                strokeWidth={selected ? 3 : 2} />
       </Group>
     );
   }
@@ -1055,16 +1197,17 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const x = (el.x || 0) * canvasSize.w;
     const y = (el.y || 0) * canvasSize.h;
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Rect x={x} y={y} width={w} height={h}
-              fill="#DC2626" opacity={fillOpacity} stroke={stroke} strokeWidth={1}
+              fill="#DC2626" opacity={fillOpacity} stroke={stroke}
+              strokeWidth={selected ? 2 : 1}
               cornerRadius={4} />
       </Group>
     );
   }
   if (type === "text") {
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <KText x={(el.x || 0) * canvasSize.w}
                y={(el.y || 0) * canvasSize.h}
                text={el.label || "Label"} fontSize={12}
@@ -1077,22 +1220,44 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const cx = (el.x || 0) * canvasSize.w;
     const cy = (el.y || 0) * canvasSize.h;
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Circle x={cx} y={cy} radius={8} fill="#059669" opacity={fillOpacity} />
         <KText x={cx - 6} y={cy - 6}
                text={type === "tree" ? "T" : "C"} fontSize={10} fill="#fff" />
       </Group>
     );
   }
-  // CAD-2 icon element — coords[0], props.icon.
+  // CAD-2 icon element — coords[0], props.icon. CAD-2.5 · Feb-2026
+  // adds rotation transform (Group's ``rotation`` prop rotates
+  // children around its origin) and, when selected, a rotation
+  // handle 20px "above" the icon (in the pre-rotation frame, so
+  // the handle rotates with the icon and always points along the
+  // current heading).
   if (type === "icon" && Array.isArray(el.coords) && el.coords.length > 0) {
     const cx = el.coords[0].x * canvasSize.w;
     const cy = el.coords[0].y * canvasSize.h;
+    const rotDeg = Number(el.props?.rotation_deg) || 0;
     return (
       <Group data-testid={tid}
              data-icon={el.props?.icon}
-             onClick={onDelete}>
-        <Circle x={cx} y={cy} radius={9} fill="#059669" opacity={fillOpacity} />
+             data-rotation-deg={rotDeg}
+             x={cx} y={cy} rotation={rotDeg}
+             onClick={onSelect}>
+        <Circle x={0} y={0} radius={9} fill="#059669" opacity={fillOpacity}
+                stroke={selected ? "#2563EB" : null}
+                strokeWidth={selected ? 2 : 0} />
+        {selected && (
+          <Circle
+            x={0} y={-20} radius={5}
+            fill="#FFFFFF" stroke="#0F172A" strokeWidth={1}
+            data-testid={`cad-icon-rotation-handle-${el.id}`}
+            onMouseDown={(ev) => onIconRotationMouseDown && onIconRotationMouseDown(ev)}
+          />
+        )}
+        {selected && (
+          <Line points={[0, 0, 0, -20]} stroke="#0F172A" strokeWidth={1}
+                dash={[3, 2]} />
+        )}
       </Group>
     );
   }
@@ -1105,15 +1270,21 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
     const sqft = el.computed?.area_sqft
       ?? shoelaceSqft(el.coords, cw, ch);
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Line points={flat} closed
               fill="#D97706" opacity={fillOpacity}
-              stroke={stroke} strokeWidth={1} />
+              stroke={stroke} strokeWidth={selected ? 2 : 1} />
         {sqft > 0 && (
           <ShapeLabel
             x={centroid.x * canvasSize.w} y={centroid.y * canvasSize.h}
             text={`${Math.round(sqft)} sq ft`}
             testid={`cad-shape-label-${el.id}`}
+          />
+        )}
+        {selected && (
+          <VertexHandles
+            el={el} canvasSize={canvasSize}
+            onVertexMouseDown={onVertexMouseDown}
           />
         )}
       </Group>
@@ -1132,13 +1303,20 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
       y: (el.coords[0].y + el.coords[el.coords.length - 1].y) / 2,
     } : { x: 0.5, y: 0.5 };
     return (
-      <Group data-testid={tid} onClick={onDelete}>
-        <Line points={flat} stroke={stroke} strokeWidth={3} />
+      <Group data-testid={tid} onClick={onSelect}>
+        <Line points={flat} stroke={stroke}
+              strokeWidth={selected ? 4 : 3} />
         {ft > 0 && (
           <ShapeLabel
             x={mid.x * canvasSize.w} y={mid.y * canvasSize.h}
             text={`${Math.round(ft)} ft`}
             testid={`cad-shape-label-${el.id}`}
+          />
+        )}
+        {selected && (
+          <VertexHandles
+            el={el} canvasSize={canvasSize}
+            onVertexMouseDown={onVertexMouseDown}
           />
         )}
       </Group>
@@ -1156,13 +1334,42 @@ function ShapeNode({ el, canvasSize, cw, ch, onDelete, ghost, testidOverride }) 
       (p) => [p.x * canvasSize.w, p.y * canvasSize.h],
     );
     return (
-      <Group data-testid={tid} onClick={onDelete}>
+      <Group data-testid={tid} onClick={onSelect}>
         <Line points={flat} closed stroke="#7C3AED"
               strokeWidth={2} dash={[6, 4]} />
       </Group>
     );
   }
   return null;
+}
+
+
+/** CAD-2.5 · Feb-2026 — Konva ``<Circle>`` vertex handles for
+ *  polygon/polyline element editing. Each handle carries a
+ *  ``cad-vertex-handle-<elId>-<i>`` testid so tests can drive
+ *  drag flows deterministically. The handle's ``onMouseDown``
+ *  fires the drag-init callback; the actual move / up handling
+ *  lives on the parent Konva Stage.
+ */
+function VertexHandles({ el, canvasSize, onVertexMouseDown }) {
+  const coords = el.coords || [];
+  return (
+    <Group data-testid={`cad-vertex-handles-${el.id}`}>
+      {coords.map((p, i) => (
+        <Circle
+          key={i}
+          x={p.x * canvasSize.w}
+          y={p.y * canvasSize.h}
+          radius={6}
+          fill="#FFFFFF"
+          stroke="#0F172A"
+          strokeWidth={1}
+          data-testid={`cad-vertex-handle-${el.id}-${i}`}
+          onMouseDown={(ev) => onVertexMouseDown && onVertexMouseDown(i, ev)}
+        />
+      ))}
+    </Group>
+  );
 }
 
 
