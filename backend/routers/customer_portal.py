@@ -558,7 +558,11 @@ class ServiceRequestIn(BaseModel):
 # operators can point them at their own dispatchers.
 # TODO — Phase 35 · promote these to per-tenant settings + admin UI.
 _SERVICE_REQUEST_EMAIL_FALLBACK = "brian@plofv.com"
-_SERVICE_REQUEST_SMS_FALLBACK = "+16028874400"
+# Phase PHONE-PURGE · Feb-2026 — removed hardcoded plofv-internal
+# SMS fallback. Service-request SMS now sources ONLY from
+# ``tenant.settings.notifications.service_request_sms``. When
+# unset, the SMS branch short-circuits with an info log (see the
+# service-request handler below) so we never dial a stale number.
 
 
 def _resolve_service_request_email(tenant: Dict[str, Any]) -> str:
@@ -568,9 +572,14 @@ def _resolve_service_request_email(tenant: Dict[str, Any]) -> str:
 
 
 def _resolve_service_request_sms(tenant: Dict[str, Any]) -> str:
+    """Return the tenant's configured service-request SMS number,
+    or an empty string when unset. Callers MUST guard on the empty
+    return value before invoking the SMS adapter — Phase PHONE-PURGE
+    removed the hardcoded plofv-internal fallback so a
+    misconfigured tenant now silently skips SMS rather than dialing
+    a stale internal line."""
     notif = ((tenant or {}).get("settings") or {}).get("notifications") or {}
-    return (notif.get("service_request_sms")
-            or _SERVICE_REQUEST_SMS_FALLBACK)
+    return notif.get("service_request_sms") or ""
 
 
 def _fmt_service_request_body(
@@ -1063,26 +1072,39 @@ async def create_service_request(
     try:
         from services.sms.rc_adapter import send as _send_sms
 
-        sms_short = request_short + ("…" if request_details and len(request_details) > 140 else "")
-        sms_body = (
-            f"New service request from {customer_name}"
-            + (f" ({customer_phone})" if customer_phone else "")
-            + f": {sms_short}"
-            + (f" View: {deep_link}" if deep_link else "")
-        )
-        sms_result = await _send_sms(
-            to=to_sms,
-            body=sms_body,
-            category="transactional",
-            tenant_id=tenant["id"],
-            customer_id=cid,
-        )
-        logger.info(
-            "service_request sms_sent to=%s status=%s attempts=%s",
-            to_sms,
-            sms_result.get("provider_status"),
-            sms_result.get("attempts"),
-        )
+        # Phase PHONE-PURGE · Feb-2026 — skip SMS entirely when the
+        # tenant has not configured a service-request SMS recipient.
+        # No hardcoded fallback: a misconfigured tenant sees an info
+        # log and the email path (fired above) is still their notice.
+        if not to_sms:
+            logger.info(
+                "service_request sms_skipped — no tenant.settings."
+                "notifications.service_request_sms configured for "
+                "tenant=%s", tenant.get("id"),
+            )
+            sms_result = {"provider_status": "skipped",
+                          "reason": "no_tenant_sms_configured"}
+        else:
+            sms_short = request_short + ("…" if request_details and len(request_details) > 140 else "")
+            sms_body = (
+                f"New service request from {customer_name}"
+                + (f" ({customer_phone})" if customer_phone else "")
+                + f": {sms_short}"
+                + (f" View: {deep_link}" if deep_link else "")
+            )
+            sms_result = await _send_sms(
+                to=to_sms,
+                body=sms_body,
+                category="transactional",
+                tenant_id=tenant["id"],
+                customer_id=cid,
+            )
+            logger.info(
+                "service_request sms_sent to=%s status=%s attempts=%s",
+                to_sms,
+                sms_result.get("provider_status"),
+                sms_result.get("attempts"),
+            )
     except Exception as exc:  # pragma: no cover — never blocks the ack
         logger.warning("service_request sms send failed: %s", exc)
         sms_result = {"provider_status": "failed", "error": str(exc)[:200]}

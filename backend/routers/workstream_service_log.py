@@ -1168,11 +1168,15 @@ async def _build_door_hanger_email(
         service_address = (job.get("service_address") or "").strip()
 
     # Tenant phone for footer.  Cascade: ``tenant.phone`` →
-    # ``tenant.rc_sms_from_number`` → tenant-specific hardcode.
+    # ``tenant.rc_sms_from_number`` → blank string.  Phase PHONE-
+    # PURGE · Feb-2026 removed the hardcoded plofv-internal
+    # terminal — a tenant without a configured phone number now
+    # renders an empty phone line instead of leaking the plofv
+    # internal number to unrelated tenants' customers.
     tenant_phone = (
         (tenant or {}).get("phone")
         or (tenant or {}).get("rc_sms_from_number")
-        or "602-887-4400"   # TODO make per-tenant once ``tenant.phone`` is reliably seeded
+        or ""
     )
 
     logo_url = f"{_resolve_public_base_url()}/logo-full.png"
@@ -1228,6 +1232,81 @@ async def _build_door_hanger_email(
     notes_html     = _dh_render_notes(notes_text)
     photos_html    = _dh_render_photos(photos)
     footer_html    = _dh_render_footer(company, tenant_phone)
+
+    # ── DOOR-HANGER · Feb 2026 — Editable template path.
+    # If a tenant-specific (or global default) row exists in
+    # ``marketing_templates`` keyed by ``code=door_hanger_job_completed``,
+    # render the subject + body through the merge-tag engine so
+    # tenants who edited the row via the marketing UI see their
+    # copy on outbound sends.  The template body is expected to
+    # slot the pre-rendered section HTMLs via the
+    # ``DOOR_HANGER_*_HTML`` ctx-injection tags plus the
+    # ``{{JOB_PHOTOS}}`` gallery tag.  Absent row (or any lookup
+    # error) → fall back to the byte-identical hardcoded assembly
+    # below with a WARN log so ops can spot the missing seed.
+    try:
+        tpl = await db.marketing_templates.find_one(
+            {
+                "code": "door_hanger_job_completed",
+                "$or": [
+                    {"tenant_id": tenant["id"]},
+                    {"tenant_id": None},
+                    {"tenant_id": {"$exists": False}},
+                ],
+            },
+            sort=[("tenant_id", -1)],  # tenant-specific row wins
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            f"[door-hanger] template lookup failed — falling back "
+            f"to hardcoded body: {exc}"
+        )
+        tpl = None
+
+    if tpl and tpl.get("body"):
+        try:
+            from services.marketing.merge_tags import render_template
+            ctx = {
+                "tenant": tenant,
+                "customer": cust,
+                "job": job,
+                "job_photos": photos,
+                # Section-injection HTMLs consumed by the
+                # ``DOOR_HANGER_*_HTML`` resolvers.
+                "dh_hero_html": hero_html,
+                "dh_water_test_html": water_html,
+                "dh_elevated_cta_html": elevated_cta_html,
+                "dh_chemicals_html": chems_html,
+                "dh_checklist_html": checklist_html,
+                "dh_notes_html": notes_html,
+                "dh_portal_cta_html": portal_cta_html,
+                "dh_footer_html": footer_html,
+            }
+            subject_tpl = tpl.get("subject") or subject
+            body_tpl = tpl["body"]
+            rendered_subject, _ = render_template(
+                subject_tpl, ctx, missing="empty",
+            )
+            rendered_body, _ = render_template(
+                body_tpl, ctx, missing="empty",
+            )
+            return {"subject": rendered_subject or subject,
+                     "html": rendered_body}
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                f"[door-hanger] template render failed — falling "
+                f"back to hardcoded body: {exc}"
+            )
+    else:
+        # No template row → migration hasn't been run yet (or a
+        # tenant explicitly deleted the row).  Fall back path.
+        if tpl is None:
+            logger.info(
+                "[door-hanger] no marketing_templates row for "
+                "code=door_hanger_job_completed — using hardcoded "
+                "body.  Run migrations/seed_door_hanger_template.py "
+                "to enable tenant-editable copy."
+            )
 
     # Email-safe outer wrapper: table with fixed max-width and neutral
     # background. No ``<style>`` block, no ``class=`` — inline styles

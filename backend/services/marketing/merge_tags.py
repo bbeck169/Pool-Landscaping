@@ -674,6 +674,118 @@ def _service_record_images(ctx: Dict[str, Any]) -> str:
     return "".join(parts)
 
 
+# ─── Phase DOOR-HANGER · Feb 2026 — Job Photos gallery resolver ─────
+# Renders a responsive CSS-grid gallery of clickable job photos. The
+# resolver accepts BOTH the door-hanger shape (``resolve_photo_items``
+# output — carries ``url_absolute``) AND the raw job-doc shape
+# (``job.photos[]`` — each item carries ``id`` + optional ``url`` /
+# ``data_url`` / base64 ``data``).  Empty string when the job has
+# zero photos so the tag mirrors ``_dh_render_photos``'s no-orphan-
+# section behaviour and is safe to embed in a template that fires
+# on both photo-heavy and photo-less visits.
+
+_JOB_PHOTOS_HEADING_STYLE = (
+    "margin:0 0 8px 0;font-size:16px;color:#0F172A;font-weight:600;"
+)
+_JOB_PHOTOS_CARD_STYLE = (
+    "border-collapse:collapse;background:#FFFFFF;"
+    "border:1px solid #E2E8F0;border-radius:8px;margin:12px 0;"
+)
+_JOB_PHOTOS_GRID_STYLE = (
+    "display:grid;"
+    "grid-template-columns:repeat(auto-fill,minmax(140px,1fr));"
+    "gap:8px;margin:12px 0;"
+)
+_JOB_PHOTOS_THUMB_STYLE = (
+    "width:100%;height:auto;max-height:140px;object-fit:cover;"
+    "border-radius:6px;border:1px solid #ddd;"
+)
+
+
+def _job_photo_url(photo: Dict[str, Any]) -> str:
+    """Extract the best available URL for a photo dict.
+
+    Cascade order (matches the door hanger's historical shape first,
+    then the PortalServiceDetail shape flagged in the DOOR-HANGER
+    brief):
+      1. ``url_absolute`` — door-hanger canonical (server-prefixed).
+      2. ``url``          — PortalServiceDetail canonical.
+      3. ``data_url``     — legacy data-URI capture.
+      4. ``data``         — raw base64 payload (upgraded to data URI).
+      5. ``uri``          — generic S3-ish location.
+    """
+    for key in ("url_absolute", "url", "data_url", "uri"):
+        v = _safe_str((photo or {}).get(key)).strip()
+        if v:
+            return v
+    raw = _safe_str((photo or {}).get("data")).strip()
+    if raw:
+        if raw.startswith("data:"):
+            return raw
+        # Assume PNG when the payload doesn't self-declare — mirrors
+        # the door-hanger fixture shape used in
+        # test_door_hanger_email_body.py.
+        return f"data:image/png;base64,{raw}"
+    return ""
+
+
+def _job_photos_gallery(ctx: Dict[str, Any]) -> str:
+    """DOOR-HANGER · Feb 2026 — Responsive CSS-grid photo gallery.
+
+    Reads from ``ctx['job_photos']`` (send-path override — the door
+    hanger's ``_build_door_hanger_email`` pre-populates this with the
+    ``resolve_photo_items(job)`` output) first, then falls back to
+    the raw ``ctx['job']['photos']`` list so generic templates that
+    only pass a ``job`` doc still render.
+
+    Zero photos → empty string. Empty-input mirroring keeps the
+    existing "no photos = no photos section" contract in
+    ``test_door_hanger_email_body.py``.
+    """
+    src = ctx.get("job_photos")
+    if not src:
+        src = ((ctx or {}).get("job") or {}).get("photos") or []
+    if not isinstance(src, list):
+        return ""
+    thumbs: List[str] = []
+    for i, p in enumerate(src):
+        if not isinstance(p, dict):
+            continue
+        url = _job_photo_url(p)
+        if not url:
+            continue
+        alt = _safe_str(p.get("label") or f"Job photo {i + 1}")
+        # Basic HTML escaping for the alt (double-quote breaks the
+        # attribute; other chars stay literal for parity with
+        # ``_dh_render_photos``).
+        alt = alt.replace('"', "&quot;")
+        thumbs.append(
+            f'<a href="{url}" target="_blank" rel="noopener" '
+            f'style="display:block;">'
+            f'<img src="{url}" alt="{alt}" '
+            f'style="{_JOB_PHOTOS_THUMB_STYLE}"/></a>'
+        )
+    if not thumbs:
+        return ""
+    grid = (
+        f'<div style="{_JOB_PHOTOS_GRID_STYLE}">'
+        + "".join(thumbs)
+        + '</div>'
+    )
+    # Section-shell wrapper — mirrors the ``_dh_section_heading +
+    # _dh_card`` shape from ``routers.workstream_service_log`` so
+    # existing test contracts asserting the "Service Photos" heading
+    # + card boundaries keep matching.
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'border="0" width="100%" style="{_JOB_PHOTOS_CARD_STYLE}">'
+        f'<tr><td style="padding:16px 24px;">'
+        f'<h2 style="{_JOB_PHOTOS_HEADING_STYLE}">Service Photos</h2>'
+        f'{grid}'
+        f'</td></tr></table>'
+    )
+
+
 def _tech_name(ctx: Dict[str, Any]) -> str:
     """Phase 21 · Feb 2026 · Addition — TECH_NAME resolves the assigned
     tech's display name. Cascades: ``ctx['tech']['name'] →
@@ -1423,6 +1535,66 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "complete on the visit. Empty when the "
                        "checklist has nothing checked."),
      "resolver": _service_report_checklist},
+
+    # ─── Phase DOOR-HANGER · Feb 2026 — Job Photos gallery.
+    # Renders a responsive CSS grid of clickable job photos.  Reads
+    # from ``ctx['job_photos']`` (send-path pre-populated list of
+    # ``resolve_photo_items(job)`` output — carries ``url_absolute``)
+    # first, then falls back to ``ctx['job']['photos']`` (raw job
+    # doc shape — carries ``url`` / ``data_url`` / ``data``).
+    #
+    # Zero photos → empty string (mirrors the pre-refactor
+    # ``_dh_render_photos`` behaviour so tenants that keep the tag
+    # in a template still get the "no photos = no orphan section"
+    # semantics).
+    {"token": "JOB_PHOTOS", "label": "Job Photos",
+     "category": "Job",
+     "description": ("Responsive CSS-grid gallery of the job's "
+                       "photos.  Each thumbnail links to the "
+                       "original high-res URL in a new tab.  Empty "
+                       "string when the job has no photos."),
+     "resolver": lambda ctx: _job_photos_gallery(ctx)},
+
+    # ─── Phase DOOR-HANGER · Feb 2026 — Door Hanger section-injection
+    # tags. Each resolver reads a pre-rendered HTML string that the
+    # caller (``routers.workstream_service_log._build_door_hanger_email``)
+    # stashes on ctx BEFORE calling ``render_template``. This keeps
+    # the door hanger's business-logic-heavy sub-builders intact
+    # (elevated-readings CTA, portal magic-link CTA, section-cards)
+    # while making the template body itself editable in a
+    # ``marketing_templates`` row.
+    {"token": "DOOR_HANGER_HERO_HTML", "label": "Door Hanger — Hero",
+     "category": "Door Hanger",
+     "description": "Pre-rendered hero card (logo, greeting, service address, completed date).",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_hero_html") or "")},
+    {"token": "DOOR_HANGER_WATER_TEST_HTML", "label": "Door Hanger — Water Test",
+     "category": "Door Hanger",
+     "description": "Pre-rendered water-test readings table.",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_water_test_html") or "")},
+    {"token": "DOOR_HANGER_ELEVATED_CTA_HTML", "label": "Door Hanger — Elevated CTA",
+     "category": "Door Hanger",
+     "description": "Pre-rendered elevated-readings follow-up CTA (empty for non-pool jobs / suppressed customers).",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_elevated_cta_html") or "")},
+    {"token": "DOOR_HANGER_CHEMICALS_HTML", "label": "Door Hanger — Chemicals Used",
+     "category": "Door Hanger",
+     "description": "Pre-rendered chemicals-used table.",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_chemicals_html") or "")},
+    {"token": "DOOR_HANGER_CHECKLIST_HTML", "label": "Door Hanger — Checklist",
+     "category": "Door Hanger",
+     "description": "Pre-rendered service-checklist card.",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_checklist_html") or "")},
+    {"token": "DOOR_HANGER_NOTES_HTML", "label": "Door Hanger — Notes",
+     "category": "Door Hanger",
+     "description": "Pre-rendered tech notes card.",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_notes_html") or "")},
+    {"token": "DOOR_HANGER_PORTAL_CTA_HTML", "label": "Door Hanger — Portal CTA",
+     "category": "Door Hanger",
+     "description": "Pre-rendered 'View Service Report in Portal' CTA (empty when portal link mint fails).",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_portal_cta_html") or "")},
+    {"token": "DOOR_HANGER_FOOTER_HTML", "label": "Door Hanger — Footer",
+     "category": "Door Hanger",
+     "description": "Pre-rendered footer (thank-you copy, company name, phone).",
+     "resolver": lambda ctx: _safe_str(ctx.get("dh_footer_html") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

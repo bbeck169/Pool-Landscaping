@@ -6,10 +6,15 @@ here in a specific order so downstream reasoning is deterministic:
 
 1. **Brian's internal notification (Addition F)** — fires FIRST so
    Brian sees every inbound, including rejects. Email to
-   ``brian@plofv.com`` + SMS to ``+16028874400`` by default, sourced
-   from ``tenant.internal_lead_notifications`` if the admin has
-   overridden. Best-effort — a Resend/RC failure is captured as a
-   ``failed`` row on ``marketing_deliveries`` but does not raise.
+   ``brian@plofv.com`` by default (sourced from
+   ``tenant.internal_lead_notifications.email`` when the admin has
+   overridden) + SMS to
+   ``tenant.internal_lead_notifications.sms`` when set — the SMS
+   branch short-circuits with an info log when the tenant has no
+   configured number (Phase PHONE-PURGE · Feb-2026 removed the
+   hardcoded fallback). Best-effort — a Resend/RC failure is
+   captured as a ``failed`` row on ``marketing_deliveries`` but
+   does not raise.
 
 2. **Out-of-state auto-reject (Addition E)** — if the lead's service
    address state isn't in ``tenant.serviced_states`` (default
@@ -34,7 +39,11 @@ from config import db, logger
 from utils import new_id, now_iso
 
 _DEFAULT_INTERNAL_EMAIL = "brian@plofv.com"
-_DEFAULT_INTERNAL_SMS = "+16028874400"
+# Phase PHONE-PURGE · Feb-2026 — removed hardcoded plofv-internal
+# SMS fallback. Internal SMS recipient now sources ONLY from
+# ``tenant.internal_lead_notifications.sms``. Tenants without a
+# configured number get email-only notifications (SMS branch
+# short-circuits with an info log — see ``_fire_internal_notification``).
 _DEFAULT_SERVICED_STATES = ["AZ"]
 _PHX = ZoneInfo("America/Phoenix")
 
@@ -92,7 +101,10 @@ async def _tenant_config(tenant_id: str) -> Dict[str, Any]:
     notif = (t.get("internal_lead_notifications") or {})
     return {
         "email": notif.get("email") or _DEFAULT_INTERNAL_EMAIL,
-        "sms": notif.get("sms") or _DEFAULT_INTERNAL_SMS,
+        # Phase PHONE-PURGE · Feb-2026 — no hardcoded fallback. Empty
+        # string here signals the SMS branch downstream to short-circuit
+        # with an info log rather than dial a stale number.
+        "sms": notif.get("sms") or "",
         "enabled": notif.get("enabled", True),
         "serviced_states": [s.upper() for s in
                               (t.get("serviced_states") or _DEFAULT_SERVICED_STATES)],
@@ -202,6 +214,17 @@ async def _fire_internal_notification(lead: Dict[str, Any], cfg: Dict[str, Any],
         )
 
     # SMS
+    # Phase PHONE-PURGE · Feb-2026 — no hardcoded fallback. Skip
+    # the SMS branch entirely when the tenant has no configured
+    # internal-notification number; the email branch above still
+    # fires so Brian / dispatcher still sees every inbound lead.
+    if not cfg.get("sms"):
+        logger.info(
+            "[lead-internal] no tenant.internal_lead_notifications.sms "
+            "configured — skipping internal SMS for lid=%s tenant=%s",
+            lid, lead.get("tenant_id"),
+        )
+        return
     try:
         res = await _send_sms(
             to=cfg["sms"], body=composed["body"],

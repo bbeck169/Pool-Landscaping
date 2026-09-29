@@ -311,10 +311,14 @@ def _tos_blast_html(*, doc, tenant, cust, cta_url) -> str:
     """
     company = (tenant or {}).get("name") or "Pool & Landscaping of Vistancia"
     brand = (tenant or {}).get("brand_color") or "#1f2937"
+    # Phase PHONE-PURGE · Feb-2026 — removed the hardcoded
+    # plofv-internal terminal.  A tenant without a configured
+    # phone renders an empty phone line rather than leaking the
+    # plofv internal number to unrelated tenants' customers.
     tenant_phone = (
         (tenant or {}).get("phone")
         or (tenant or {}).get("rc_sms_from_number")
-        or "602-887-4400"
+        or ""
     )
     first = (
         (cust or {}).get("first_name")
