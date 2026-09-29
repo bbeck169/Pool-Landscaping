@@ -22,8 +22,8 @@ describe("QuotesList · search input style contract", () => {
     expect(SRC).toContain("backgroundColor: colors.surface");
   });
 
-  it("uses colors.border for border", () => {
-    expect(SRC).toContain("border: colors.border");
+  it("uses colors.border for the border color with an explicit 1px solid shorthand", () => {
+    expect(SRC).toContain("border: '1px solid ' + colors.border");
   });
 
   it("uses colors.onSurface for color", () => {

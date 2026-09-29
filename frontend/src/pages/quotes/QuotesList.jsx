@@ -93,7 +93,7 @@ export default function QuotesList() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search title, customer…"
             className="w-full pl-9 pr-3 py-2.5 rounded-lg outline-none text-sm focus:ring-2 placeholder:text-zinc-400"
-            style={{ backgroundColor: colors.surface, border: colors.border, color: colors.onSurface }}
+            style={{ backgroundColor: colors.surface, border: '1px solid ' + colors.border, color: colors.onSurface }}
             data-testid="quotes-search"
           />
         </div>
