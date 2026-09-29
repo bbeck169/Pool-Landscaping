@@ -131,6 +131,56 @@ class _FakeCollection:
                 return type("_R", (), {"matched_count": 1, "modified_count": 1})
         return type("_R", (), {"matched_count": 0, "modified_count": 0})
 
+    # ── Feb-2026 · Test Hygiene Phase 1 ────────────────────────────
+    #
+    # Real Motor / PyMongo ``collection.distinct(key, filter=None)``
+    # returns the unique values of ``key`` across every doc matching
+    # ``filter``.  The dashboard bulk-batch tile
+    # (``routers/dashboard.py:250``) calls this to enumerate the
+    # active drill-down bulk edits inside the 24-h window before
+    # counting the expired-undo cohort.  Prior to this method
+    # existing, ANY test that mounted ``routers/dashboard.py`` and
+    # hit that path 500'd with ``AttributeError: '_FakeCollection'
+    # object has no attribute 'distinct'`` — which surfaced as the
+    # ``TestDashboardRevenueHidesDeleted`` regressions in this file.
+    #
+    # Semantics we mirror:
+    #   • Signature ``async def distinct(key, filter=None, session=None)``.
+    #   • Docs missing ``key`` are excluded.
+    #   • ``None`` values excluded from the return (matches the
+    #     dashboard call site which filters ``{"$ne": None}`` upstream
+    #     and never wants ``None`` back).
+    #   • Nested keys via dot-path (e.g. ``"a.b.c"``) resolve step by
+    #     step; a missing intermediate node treats the value as
+    #     absent.
+    #   • Result sorted for deterministic assertions (real driver
+    #     is unordered; tests here have historically preferred a
+    #     stable slice).
+    async def distinct(self, key, filter=None, session=None):
+        f = filter or {}
+        seen = []
+        for doc in self.docs:
+            if not self._matches(doc, f):
+                continue
+            val = doc
+            missing = False
+            for part in key.split("."):
+                if not isinstance(val, dict) or part not in val:
+                    missing = True
+                    break
+                val = val[part]
+            if missing:
+                continue
+            if val is None:
+                continue
+            if val not in seen:
+                seen.append(val)
+        try:
+            return sorted(seen)
+        except TypeError:
+            # Mixed / unorderable types → preserve encounter order.
+            return seen
+
 
 _SENTINEL = object()
 
