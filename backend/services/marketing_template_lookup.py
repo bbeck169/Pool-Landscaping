@@ -36,7 +36,7 @@ Design notes
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import config
 
@@ -61,6 +61,53 @@ async def get_template_by_code(
     # Honor both field-name variants (legacy divergence noted in the
     # TE-portal-job recon). If either explicitly disables the row,
     # treat as inactive.
+    if row.get("is_active") is False or row.get("active") is False:
+        return None
+    return row
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase EMAIL-MIGRATE · Feb-2026 — Global-default fallback lookup.
+# ═══════════════════════════════════════════════════════════════════
+async def get_template_with_global_fallback(
+    code: str, tenant_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the ``marketing_templates`` row for ``code``, preferring
+    a tenant-specific row (``tenant_id`` matches) over the global
+    default (``tenant_id: None``).
+
+    Mirrors the door-hanger cascade shipped in
+    ``routers.workstream_service_log._build_door_hanger_email``:
+
+    * Tenant-specific row wins over the global default.
+    * A row with an explicit ``is_active=False`` / ``active=False`` is
+      treated as absent so a tenant can disable a template without
+      deleting the row.
+    * ``tenant_id=None`` (or ``""``) is legal — callers use it to
+      probe the global default in flows that don't have a tenant
+      (e.g. very early signup states before the tenant is fully
+      provisioned).
+
+    Returns ``None`` when no active row exists for that ``code``.
+    """
+    if not code:
+        return None
+    tenant_filter: List[Dict[str, Any]] = [
+        {"tenant_id": None},
+        {"tenant_id": {"$exists": False}},
+    ]
+    if tenant_id:
+        tenant_filter.insert(0, {"tenant_id": tenant_id})
+    row = await config.db.marketing_templates.find_one(
+        {"code": code, "$or": tenant_filter},
+        {"_id": 0},
+        # ``sort=[("tenant_id", -1)]`` places non-null tenant_id
+        # strings ahead of ``None`` so the tenant-specific row wins
+        # when both a tenant row + the global default exist.
+        sort=[("tenant_id", -1)],
+    )
+    if not row:
+        return None
     if row.get("is_active") is False or row.get("active") is False:
         return None
     return row

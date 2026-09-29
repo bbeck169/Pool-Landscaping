@@ -1621,6 +1621,102 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "category": "Door Hanger",
      "description": "Pre-rendered footer (thank-you copy, company name, phone).",
      "resolver": lambda ctx: _safe_str(ctx.get("dh_footer_html") or "")},
+
+    # ═════════════════════════════════════════════════════════════════
+    # Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — Auth / Invites.
+    # ─────────────────────────────────────────────────────────────────
+    # Merge tags consumed by the batch-1 transactional email seeds:
+    #   * auth_password_reset_email
+    #   * admin_user_password_reset_email
+    #   * signup_verify_code_email
+    #   * onboarding_wizard_invite_email
+    # Every resolver reads from a bare-flat ctx key populated by the
+    # caller and falls back to an empty string when absent.  Bodies
+    # that reference a missing tag render an empty inline — never a
+    # literal ``{{TOKEN}}`` — matching the ``missing="empty"`` default
+    # in ``render_template``.
+    # ═════════════════════════════════════════════════════════════════
+    {"token": "RESET_LINK", "label": "Password Reset Link",
+     "category": "Auth",
+     "description": ("Time-limited URL that lands the recipient on "
+                       "the password-reset form.  Populated by the "
+                       "caller with the freshly-minted token URL."),
+     "resolver": lambda ctx: _safe_str(ctx.get("reset_link") or "")},
+    {"token": "TEMP_PASSWORD", "label": "Temporary Password",
+     "category": "Auth",
+     "description": ("One-time temporary password issued by an admin "
+                       "via the admin-driven password-reset flow.  "
+                       "Never populated on the self-serve reset "
+                       "flow (that flow uses ``RESET_LINK``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("temp_password") or "")},
+    {"token": "VERIFY_CODE", "label": "Signup Verify URL / Code",
+     "category": "Auth",
+     "description": ("Signup verification target — either a URL "
+                       "(current signup flow) or a code (future flow). "
+                       "Populated via ``ctx['verify_code']`` first, "
+                       "then ``ctx['verify_url']`` as a fallback so "
+                       "senders that thread only the URL still "
+                       "resolve the tag."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("verify_code") or ctx.get("verify_url") or "")},
+    {"token": "ONBOARDING_LINK", "label": "Onboarding Invite Link",
+     "category": "Auth",
+     "description": ("Public link the invitee follows to accept an "
+                       "onboarding invite / provisioning email.  "
+                       "Populated via ``ctx['onboarding_link']`` "
+                       "first, then ``ctx['accept_url']`` as a "
+                       "fallback."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("onboarding_link") or ctx.get("accept_url") or "")},
+    {"token": "RECIPIENT_NAME", "label": "Recipient Name",
+     "category": "Auth",
+     "description": ("Display name of the email recipient — first "
+                       "name preferred for greeting copy.  Populated "
+                       "via ``ctx['recipient_name']`` first, then "
+                       "``ctx['first_name']`` as a fallback so "
+                       "callers can thread either shape."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("recipient_name") or ctx.get("first_name") or "")},
+    {"token": "RECIPIENT_EMAIL", "label": "Recipient Email",
+     "category": "Auth",
+     "description": ("Email address of the recipient.  Populated via "
+                       "``ctx['recipient_email']`` first, then "
+                       "``ctx['invited_email']`` (team-invite flow) "
+                       "as a fallback."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("recipient_email") or ctx.get("invited_email") or "")},
+    {"token": "EXPIRY_LABEL", "label": "Link Expiry Label",
+     "category": "Auth",
+     "description": ("Human-readable expiry duration for a reset / "
+                       "invite link (e.g. ``\"30 days\"`` or "
+                       "``\"48 hours\"``).  Rendered verbatim in the "
+                       "body copy."),
+     "resolver": lambda ctx: _safe_str(ctx.get("expiry_label") or "")},
+    {"token": "ACTOR_NAME", "label": "Actor Name",
+     "category": "Auth",
+     "description": ("Display name of the admin who triggered a "
+                       "target-user action (e.g. the admin who reset "
+                       "another user's password)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("actor_name") or "")},
+    {"token": "LOGIN_URL", "label": "Login URL",
+     "category": "Auth",
+     "description": ("Absolute URL to the sign-in page.  Populated "
+                       "by the send path — no on-demand mint here."),
+     "resolver": lambda ctx: _safe_str(ctx.get("login_url") or "")},
+    {"token": "ROLE", "label": "Assigned Role",
+     "category": "Auth",
+     "description": ("Team-member role assigned to an invitee "
+                       "(e.g. ``\"technician\"``, ``\"office\"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("role") or "")},
+    {"token": "BUSINESS_NAME", "label": "Business Name (alias)",
+     "category": "Company",
+     "description": ("Alias for ``COMPANY_NAME``.  Legacy "
+                       "notification-template flows (signup verify, "
+                       "team invite) referenced ``{business_name}`` "
+                       "in the single-brace form — the alias keeps "
+                       "the token names consistent when those "
+                       "flows migrate to the double-brace catalog."),
+     "resolver": _company_name},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

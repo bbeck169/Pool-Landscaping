@@ -213,7 +213,15 @@ async def _send_team_invite_signup_email(
 ) -> None:
     """Render + dispatch the ``team_invite_signup`` email via the D5
     template resolver. Raises on any failure — the caller wraps in
-    try/except so the wizard doesn't 500 on a mail provider blip."""
+    try/except so the wizard doesn't 500 on a mail provider blip.
+
+    Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — English recipients
+    prefer the ``onboarding_wizard_invite_email`` row in
+    ``marketing_templates`` over the on-disk notification-template
+    triplet.  Non-English recipients keep the current i18n path
+    unchanged (decision (c) in the brief: subjects stay i18n,
+    HTML bodies migrate to DB in English only).
+    """
     import os
     from services.i18n_notifications import (
         resolve_notification_body, resolve_recipient_locale,
@@ -237,11 +245,48 @@ async def _send_team_invite_signup_email(
             "role":          role,
         },
     )
+    subject = body["subject"]
+    html_out = body["body_html"]
+    text_out = body["body_text"]
+    if str(locale or "").lower() == "en":
+        try:
+            from services.marketing_template_lookup import (
+                get_template_with_global_fallback,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_with_global_fallback(
+                "onboarding_wizard_invite_email",
+                (tenant or {}).get("id") or None,
+            )
+            if tpl and tpl.get("body"):
+                ctx = {
+                    "tenant": tenant or {},
+                    "customer": {},
+                    "actor_name": admin_user.get("name") or "there",
+                    "recipient_email": invited_email,
+                    "invited_email": invited_email,
+                    "accept_url": accept_url,
+                    "onboarding_link": accept_url,
+                    "role": role,
+                }
+                rendered_body, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rendered_body:
+                    html_out = rendered_body
+        except Exception as exc:  # noqa: BLE001 — defensive
+            # Silent — caller already wraps in try/except.
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[onboarding-wizard-invite] DB template render "
+                "failed — using i18n fallback: %s", exc,
+            )
+
     await _send_email(
         to=invited_email,
-        subject=body["subject"],
-        html=body["body_html"],
-        text=body["body_text"],
+        subject=subject,
+        html=html_out,
+        text=text_out,
         tenant_id=tenant.get("id"),
     )
 

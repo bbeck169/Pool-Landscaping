@@ -188,7 +188,15 @@ async def _send_signup_verify_email(
 ) -> None:
     """Render + dispatch the signup_email_verify email. Swallows
     exceptions so a mail-provider blip can't fail signup — the
-    resend endpoint remains available."""
+    resend endpoint remains available.
+
+    Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — English recipients
+    prefer the ``signup_verify_code_email`` row in
+    ``marketing_templates`` over the on-disk notification-template
+    triplet.  Non-English recipients keep the current i18n path
+    unchanged (decision (c) in the brief: subjects stay i18n,
+    HTML bodies migrate to DB in English only).
+    """
     try:
         verify_url = f"{_base_url_from_env()}/signup/verify?token={token}"
         locale = resolve_recipient_locale(
@@ -206,13 +214,46 @@ async def _send_signup_verify_email(
         logger.warning("[signup-verify-email] render failed: %s", exc)
         return
 
+    subject = body["subject"]
+    html_out = body["body_html"]
+    text_out = body["body_text"]
+    if str(locale or "").lower() == "en":
+        try:
+            from services.marketing_template_lookup import (
+                get_template_with_global_fallback,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_with_global_fallback(
+                "signup_verify_code_email",
+                (tenant or {}).get("id") or None,
+            )
+            if tpl and tpl.get("body"):
+                ctx = {
+                    "tenant": tenant or {},
+                    "customer": {},
+                    "recipient_name": admin_user.get("name") or "there",
+                    "verify_url": verify_url,
+                    "verify_code": verify_url,
+                    "expiry_label": "48 hours",
+                }
+                rendered_body, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rendered_body:
+                    html_out = rendered_body
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[signup-verify-email] DB template render failed — "
+                "using i18n fallback: %s", exc,
+            )
+
     try:
         from services.email.resend_adapter import send as _send_email
         await _send_email(
             to=admin_user.get("email"),
-            subject=body["subject"],
-            html=body["body_html"],
-            text=body["body_text"],
+            subject=subject,
+            html=html_out,
+            text=text_out,
             tenant_id=tenant.get("id"),
         )
     except Exception as exc:  # noqa: BLE001

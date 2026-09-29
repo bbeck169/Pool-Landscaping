@@ -197,14 +197,55 @@ async def _send_password_reset_email(
         _locale, "email.password_reset.subject",
         company_name=company_display,
     )
-    inner_html = _password_reset_html(
-        target_name=target.get("first_name") or target.get("name") or "there",
-        actor_name=actor.get("name") or actor.get("email") or "An admin",
-        company_name=company_display,
-        temp_password=temp_password,
-        login_url=login_url,
-        locale=_locale,
-    )
+    # ── Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — DB-first path.
+    # When the recipient's locale is English AND the tenant has an
+    # ``admin_user_password_reset_email`` row in ``marketing_templates``,
+    # render the body through the merge-tag engine.  Non-English
+    # recipients continue to use the ``t_email_body``-composed body
+    # via the fallback branch below (decision (c) in the brief:
+    # subjects stay i18n, HTML bodies migrate to DB in English only).
+    target_first_name = target.get("first_name") or target.get("name") or "there"
+    actor_name = actor.get("name") or actor.get("email") or "An admin"
+    inner_html = None
+    if str(_locale).lower() == "en":
+        try:
+            from services.marketing_template_lookup import (
+                get_template_with_global_fallback,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_with_global_fallback(
+                "admin_user_password_reset_email",
+                (tenant or {}).get("id") or None,
+            )
+            if tpl and tpl.get("body"):
+                ctx = {
+                    "tenant": tenant or {},
+                    "customer": {},
+                    "recipient_name": target_first_name,
+                    "actor_name": actor_name,
+                    "temp_password": temp_password,
+                    "login_url": login_url,
+                }
+                rendered, _ = render_template(
+                    tpl["body"], ctx, missing="empty",
+                )
+                if rendered:
+                    inner_html = rendered
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                f"[admin-reset] DB template render failed — "
+                f"using hardcoded fallback: {exc}"
+            )
+            inner_html = None
+    if inner_html is None:
+        inner_html = _password_reset_html(
+            target_name=target_first_name,
+            actor_name=actor_name,
+            company_name=company_display,
+            temp_password=temp_password,
+            login_url=login_url,
+            locale=_locale,
+        )
     # Feb-2026 · Email Base Template Theming + Housekeeping Batch A —
     # ``_password_reset_html`` now returns a body fragment; the shell
     # is the sole source of ``<!doctype html>`` / ``<html>`` /

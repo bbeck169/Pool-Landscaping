@@ -1113,17 +1113,24 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest):
                 or (user.get("name") or "").split(" ")[0]
                 or "there"
             )
-            html = wrap_html_in_shell(
-                _password_reset_email_html(
+            # Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — DB-first render.
+            # ``_resolve_password_reset_email_html`` prefers the
+            # ``auth_password_reset_email`` row in ``marketing_templates``
+            # over the hardcoded fallback, so tenants that clone + edit
+            # the row via the marketing UI see their copy on sends.
+            tenant_for_tpl = {"id": user.get("tenant_id") or ""}
+            reset_subject, reset_body = (
+                await _resolve_password_reset_email_html(
+                    tenant=tenant_for_tpl,
                     first_name=first_name,
                     reset_link=reset_link,
                     expiry_minutes=_RESET_TTL_MINUTES,
-                ),
-                branding,
+                )
             )
+            html = wrap_html_in_shell(reset_body, branding)
             res = await _send_email(
                 to=email,
-                subject="Reset your password",
+                subject=reset_subject,
                 html=html,
                 category="transactional",
                 tenant_id=user.get("tenant_id"),
@@ -1376,7 +1383,14 @@ def _password_reset_email_html(*, first_name: str, reset_link: str,
 
     Feb-2026 · hotfix — the copy now renders the TTL through
     :func:`_format_expiry_label` so a 43200-minute (30-day) window
-    reads as "30 days" instead of "43200 minutes"."""
+    reads as "30 days" instead of "43200 minutes".
+
+    Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — the runtime path
+    prefers the ``auth_password_reset_email`` row in
+    ``marketing_templates`` when one exists (see
+    :func:`_resolve_password_reset_email_html`).  This function is
+    now the hardcoded fallback used only when the row is absent /
+    the DB lookup fails."""
     expiry_label = _format_expiry_label(expiry_minutes)
     return (
         f"<div style=\"font-family:-apple-system,'Inter',sans-serif;"
@@ -1402,6 +1416,70 @@ def _password_reset_email_html(*, first_name: str, reset_link: str,
         f"<a href=\"{reset_link}\" style=\"color:#475569;\">{reset_link}</a>"
         f"</p></div>"
     )
+
+
+async def _resolve_password_reset_email_html(
+    *,
+    tenant: dict,
+    first_name: str,
+    reset_link: str,
+    expiry_minutes: int,
+) -> tuple:
+    """Phase EMAIL-MIGRATE · Batch 1 · Feb-2026 — DB-first render.
+
+    Tries the ``auth_password_reset_email`` row in
+    ``marketing_templates`` first (tenant-specific > global default);
+    falls back to :func:`_password_reset_email_html` when the row is
+    absent OR the render blows up.  Returns
+    ``(subject, html)`` — the caller wraps ``html`` in the branded
+    shell before the send.
+    """
+    tenant_id = (tenant or {}).get("id") or ""
+    expiry_label = _format_expiry_label(expiry_minutes)
+    fallback_html = _password_reset_email_html(
+        first_name=first_name,
+        reset_link=reset_link,
+        expiry_minutes=expiry_minutes,
+    )
+    fallback_subject = "Reset your password"
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        tpl = await get_template_with_global_fallback(
+            "auth_password_reset_email", tenant_id or None,
+        )
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            f"[auth-reset] template lookup failed — using hardcoded "
+            f"fallback: {exc}"
+        )
+        return fallback_subject, fallback_html
+    if not tpl or not tpl.get("body"):
+        return fallback_subject, fallback_html
+    try:
+        from services.marketing.merge_tags import render_template
+        ctx = {
+            "tenant": tenant or {},
+            "customer": {},
+            "recipient_name": first_name,
+            "reset_link": reset_link,
+            "expiry_label": expiry_label,
+        }
+        rendered_subject, _ = render_template(
+            tpl.get("subject") or fallback_subject, ctx, missing="empty",
+        )
+        rendered_body, _ = render_template(
+            tpl["body"], ctx, missing="empty",
+        )
+        return (rendered_subject or fallback_subject,
+                 rendered_body or fallback_html)
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            f"[auth-reset] template render failed — using hardcoded "
+            f"fallback: {exc}"
+        )
+        return fallback_subject, fallback_html
 
 
 # ══════════════════════════════════════════════════════════════════════
