@@ -233,10 +233,104 @@ export default function CadEditor() {
   const [zoomOverride, setZoomOverride] = useState(null);
   const isNarrow = useIsNarrow(768);
 
+  // ── Phase CAD-3.5a · Feb-2026 — Undo / Redo history stack.
+  //   Both stacks hold deep-cloned ``design`` snapshots (structuredClone
+  //   fallback → JSON round-trip). ``UNDO_STACK_CAP`` is a bounded LIFO
+  //   depth so long editing sessions can't OOM the tab. Each committed
+  //   mutation calls ``pushSnapshot(currentDesign)`` BEFORE applying the
+  //   change; that same call also clears the redo stack (industry-
+  //   standard: a fresh mutation invalidates any pending redo path).
+  //   Transient states (in-progress vertex-drag frames, name-input
+  //   keystrokes, feet-per-pixel debounces) intentionally skip
+  //   ``pushSnapshot`` — the boundary is on ``mouseDown`` for drags and
+  //   ``blur``/``commit`` for inputs — so the stack matches user intent
+  //   rather than every keystroke.
+  const UNDO_STACK_CAP = 50;
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const _clone = (obj) => {
+    if (obj == null) return obj;
+    try {
+      if (typeof structuredClone === "function") return structuredClone(obj);
+    } catch { /* jsdom lacks structuredClone on older configs */ }
+    return JSON.parse(JSON.stringify(obj));
+  };
+  const pushSnapshot = useCallback((snapshot) => {
+    if (!snapshot) return;
+    setUndoStack((s) => {
+      const next = [...s, _clone(snapshot)];
+      // Drop the oldest entry when we exceed the cap so the stack
+      // stays bounded even during long editing sessions.
+      if (next.length > UNDO_STACK_CAP) next.shift();
+      return next;
+    });
+    setRedoStack([]);
+  }, []);
+  const undo = useCallback(() => {
+    setUndoStack((prevUndo) => {
+      if (prevUndo.length === 0) return prevUndo;
+      const nextUndo = prevUndo.slice(0, -1);
+      const restored = prevUndo[prevUndo.length - 1];
+      setRedoStack((prevRedo) => {
+        const merged = [...prevRedo, _clone(design)];
+        if (merged.length > UNDO_STACK_CAP) merged.shift();
+        return merged;
+      });
+      setDesign(restored);
+      _persistDesignRef.current && _persistDesignRef.current(restored);
+      return nextUndo;
+    });
+  }, [design]);
+  const redo = useCallback(() => {
+    setRedoStack((prevRedo) => {
+      if (prevRedo.length === 0) return prevRedo;
+      const nextRedo = prevRedo.slice(0, -1);
+      const restored = prevRedo[prevRedo.length - 1];
+      setUndoStack((prevUndo) => {
+        const merged = [...prevUndo, _clone(design)];
+        if (merged.length > UNDO_STACK_CAP) merged.shift();
+        return merged;
+      });
+      setDesign(restored);
+      _persistDesignRef.current && _persistDesignRef.current(restored);
+      return nextRedo;
+    });
+  }, [design]);
+  // Ref → persist helper so ``undo`` / ``redo`` don't create a
+  // circular dep with ``_persistDesign`` (defined below).
+  const _persistDesignRef = useRef(null);
+
   useEffect(() => {
     if (!id) return;
     api.get(`/designs/${id}`).then(setDesign).catch(() => setToast("Failed to load"));
   }, [id]);
+
+  // Phase CAD-3.5a · Feb-2026 — Undo/Redo keyboard shortcuts.
+  //   • Cmd/Ctrl+Z             → undo
+  //   • Cmd/Ctrl+Shift+Z (mac) → redo
+  //   • Cmd/Ctrl+Y      (win)  → redo
+  // Skips when the event target is a text input / textarea so users
+  // typing labels don't trigger canvas-level undo.
+  useEffect(() => {
+    const onKey = (e) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const tgt = e.target;
+      const tag = (tgt && tgt.tagName) ? tgt.tagName.toUpperCase() : "";
+      if (tag === "INPUT" || tag === "TEXTAREA"
+          || (tgt && tgt.isContentEditable)) return;
+      const key = (e.key || "").toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
 
   const canvasSize = { w: 800, h: 500 };
   const effectiveZoom = zoomOverride ?? (design?.map_zoom ?? 19);
@@ -366,6 +460,7 @@ export default function CadEditor() {
 
     // Icon library placement wins over any active tool.
     if (placingIcon) {
+      pushSnapshot(design);
       const el = {
         id: _uuid(), type: "icon",
         coords: [{ x, y }],
@@ -391,6 +486,7 @@ export default function CadEditor() {
         setScalePoints([]); setTool("pointer"); return;
       }
       const fpp = feet / pixels;
+      pushSnapshot(design);
       const nextDesign = { ...design, feet_per_pixel: fpp };
       setMapMeta((m) => (m ? { ...m, feetPerPixel: fpp } : m));
       setDesign(nextDesign);
@@ -413,6 +509,7 @@ export default function CadEditor() {
       if (next.length < 2) { setTapePoints(next); return; }
       const persist = persistNextMeasurement;
       if (persist) {
+        pushSnapshot(design);
         const el = {
           id: _uuid(), type: "dimension",
           coords: [...next],
@@ -434,6 +531,7 @@ export default function CadEditor() {
     // preserved from CAD-1. They persist as ``{x, y, w, h}`` +
     // ``type``.
     if (["rect", "circle", "spa", "firepit", "text"].includes(tool)) {
+      pushSnapshot(design);
       const elem = {
         id: _uuid(), type: tool,
         x, y,
@@ -453,6 +551,11 @@ export default function CadEditor() {
     return api.put(`/designs/${id}`, _designWriteBody(d, mapMeta, canvasSize));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, mapMeta, canvasSize.w, canvasSize.h]);
+  // Phase CAD-3.5a — keep the ref in sync so undo/redo (declared
+  // above) can persist the restored snapshot without depending on
+  // this callback directly.
+  useEffect(() => { _persistDesignRef.current = _persistDesign; },
+              [_persistDesign]);
 
   // ── CAD-2.5 · Feb-2026 — Drag/rotate mouse-move + up handlers.
   //    Handlers live on the Konva ``<Stage>`` so they capture both
@@ -552,6 +655,7 @@ export default function CadEditor() {
     if (paverInProgress.length < 3) {
       setPaverInProgress([]); setTool("pointer"); return;
     }
+    pushSnapshot(design);
     const el = {
       id: _uuid(), type: "paver",
       coords: [...paverInProgress],
@@ -574,6 +678,7 @@ export default function CadEditor() {
     if (wallInProgress.length < 2) {
       setWallInProgress([]); setTool("pointer"); return;
     }
+    pushSnapshot(design);
     const el = {
       id: _uuid(), type: "wall",
       coords: [...wallInProgress],
@@ -593,6 +698,7 @@ export default function CadEditor() {
   };
 
   const removeElem = (eid) => {
+    pushSnapshot(design);
     const next = {
       ...design,
       elements: (design.elements || []).filter((e) => e.id !== eid),
@@ -627,6 +733,7 @@ export default function CadEditor() {
   };
   const marcoAccept = () => {
     if (!marcoPreview) return;
+    pushSnapshot(design);
     // Convert each MARCO shape into a persisted element.
     const additions = (marcoPreview.shapes || []).map((s) => {
       const el = {
@@ -666,6 +773,41 @@ export default function CadEditor() {
     _persistDesign(next);
   };
   const marcoDiscard = () => setMarcoPreview(null);
+
+  // ── Phase CAD-3.5a · Feb-2026 — Manual dimension label override.
+  //   When a dimension line is selected, the properties panel below
+  //   surfaces an editable ``label_manual`` field. Empty string clears
+  //   back to the auto-computed length. Every setter call snapshots
+  //   the CURRENT design first so Undo reverts the override in a
+  //   single hop.
+  const setDimensionLabelManual = useCallback((elementId, nextLabel) => {
+    if (!design) return;
+    pushSnapshot(design);
+    const cleaned = (nextLabel === null || nextLabel === undefined)
+      ? null
+      : String(nextLabel);
+    const next = {
+      ...design,
+      elements: (design.elements || []).map((el) => {
+        if (el.id !== elementId) return el;
+        // Empty string clears the override (per spec) — store as
+        // ``null`` so downstream renderers can use a single
+        // ``labelManual && labelManual.trim()`` guard.
+        const normalized = (cleaned && cleaned.trim()) ? cleaned : null;
+        const { label_manual: _drop, ...rest } = el;
+        return normalized === null ? rest : { ...rest, label_manual: normalized };
+      }),
+    };
+    setDesign(next);
+    _persistDesign(next).catch(() => setToast("Save failed"));
+  }, [design, pushSnapshot, _persistDesign]);
+
+  const selectedElement = useMemo(
+    () => (design && selectedId
+      ? (design.elements || []).find((el) => el.id === selectedId) || null
+      : null),
+    [design, selectedId],
+  );
 
   // ── Site Plan PDF actions (Phase CAD-3) ───────────────────────
   const generateSitePlanPdf = async () => {
@@ -788,6 +930,48 @@ export default function CadEditor() {
             Persist measurement
           </label>
         )}
+        {/* Phase CAD-3.5a · Feb-2026 — Undo / Redo buttons. Disabled
+             when the corresponding stack is empty so operators get
+             immediate visual feedback that there's nothing to
+             restore. */}
+        <span className="inline-flex gap-1 ml-auto">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={undoStack.length === 0}
+            aria-label="Undo"
+            title="Undo (Cmd/Ctrl+Z)"
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              backgroundColor: colors.surfaceSecondary,
+              color: colors.onSurfaceSecondary,
+              opacity: undoStack.length === 0 ? 0.4 : 1,
+              cursor: undoStack.length === 0 ? "not-allowed" : "pointer",
+            }}
+            data-testid="cad-undo-btn"
+            data-stack-depth={undoStack.length}
+          >
+            ↶ Undo
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={redoStack.length === 0}
+            aria-label="Redo"
+            title="Redo (Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)"
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              backgroundColor: colors.surfaceSecondary,
+              color: colors.onSurfaceSecondary,
+              opacity: redoStack.length === 0 ? 0.4 : 1,
+              cursor: redoStack.length === 0 ? "not-allowed" : "pointer",
+            }}
+            data-testid="cad-redo-btn"
+            data-stack-depth={redoStack.length}
+          >
+            ↷ Redo
+          </button>
+        </span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -845,10 +1029,15 @@ export default function CadEditor() {
                     selected={selectedId === el.id}
                     onVertexMouseDown={(vertexIndex, ev) => {
                       if (ev && ev.stopPropagation) ev.stopPropagation();
+                      // Phase CAD-3.5a — snapshot ONCE at drag start
+                      // (not per mouseMove frame) so Undo reverts the
+                      // whole gesture rather than one micro-move.
+                      pushSnapshot(design);
                       setDraggingVertex({ elementId: el.id, vertexIndex });
                     }}
                     onIconRotationMouseDown={(ev) => {
                       if (ev && ev.stopPropagation) ev.stopPropagation();
+                      pushSnapshot(design);
                       setRotatingIcon({ elementId: el.id });
                     }}
                   />
@@ -1134,6 +1323,36 @@ export default function CadEditor() {
               </>
             )}
           </section>
+
+          {/* Phase CAD-3.5a · Feb-2026 — Dimension label override.
+              Rendered ONLY when a persisted dimension line is
+              selected. Empty string clears back to the auto-
+              computed measurement. */}
+          {selectedElement && selectedElement.type === "dimension" ? (
+            <section className="rounded-2xl p-3 space-y-2"
+                     style={{ border: `1px solid ${colors.border}` }}
+                     data-testid="cad-dimension-props-section">
+              <div className="text-xs font-semibold uppercase tracking-wider"
+                   style={{ color: colors.onSurfaceSecondary }}>
+                Dimension label
+              </div>
+              <input
+                type="text"
+                value={selectedElement.label_manual || ""}
+                onChange={(e) => setDimensionLabelManual(
+                  selectedElement.id, e.target.value,
+                )}
+                placeholder={`Auto-computed (e.g. 12' 6")`}
+                className="w-full text-xs px-2 py-1 rounded"
+                style={{ border: `1px solid ${colors.border}` }}
+                data-testid="cad-dimension-label-manual-input"
+              />
+              <div className="text-xs"
+                   style={{ color: colors.onSurfaceSecondary }}>
+                Leave blank to use the auto-computed length.
+              </div>
+            </section>
+          ) : null}
 
           {/* CAD-3 Site Plan PDF export */}
           <section className="rounded-2xl p-3 space-y-2"
@@ -1440,7 +1659,10 @@ function ShapeNode({
   // Persisted dimension (tape measure).
   if (type === "dimension" && Array.isArray(el.coords) && el.coords.length === 2) {
     return <TapeGlyph coords={el.coords} size={canvasSize}
-                      cw={cw} ch={ch} testid={tid} />;
+                      cw={cw} ch={ch} testid={tid}
+                      labelOverride={el.label_manual || null}
+                      onSelect={onSelect}
+                      selected={selected} />;
   }
   // Boundary polygon element (defensive — boundary usually lives
   // on ``design.boundary``, not in ``elements``).
@@ -1543,20 +1765,29 @@ function TapeOverlay({ coords, size, cw, ch }) {
 }
 
 
-function TapeGlyph({ coords, size, cw, ch, testid }) {
+function TapeGlyph({ coords, size, cw, ch, testid, labelOverride,
+                       onSelect, selected }) {
   const [a, b] = coords;
   const ax = a.x * size.w;
   const ay = a.y * size.h;
   const bx = b.x * size.w;
   const by = b.y * size.h;
   const totalFt = polylineLengthFt(coords, cw, ch);
-  const label = feetToImperial(totalFt);
+  const autoLabel = feetToImperial(totalFt);
+  // Phase CAD-3.5a — prefer the manual override when set + non-blank.
+  // Empty string / null falls back to the auto-computed length.
+  const label = (labelOverride && String(labelOverride).trim())
+    ? String(labelOverride)
+    : autoLabel;
   const midX = (ax + bx) / 2;
   const midY = (ay + by) / 2;
   return (
-    <Group data-testid={testid} data-label-text={label}>
+    <Group data-testid={testid} data-label-text={label}
+           data-label-source={labelOverride ? "manual" : "auto"}
+           data-selected={selected ? "true" : "false"}
+           onClick={onSelect}>
       <Line points={[ax, ay, bx, by]}
-            stroke="#DC2626" strokeWidth={2} />
+            stroke="#DC2626" strokeWidth={selected ? 3 : 2} />
       {/* End ticks */}
       <Circle x={ax} y={ay} radius={4}
               fill="#fff" stroke="#DC2626" strokeWidth={2} />
