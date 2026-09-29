@@ -178,9 +178,21 @@ def _admin_href(*, doc_type: str, doc_id: str,
     return f"{base}{path}" if base else path
 
 
-def render_email(*, event: str, doc_type: str, doc: Dict[str, Any],
-                    frontend_origin: str) -> Tuple[str, str, str]:
-    """Return ``(subject, html, text)`` for the given event."""
+async def render_email(*, event: str, doc_type: str, doc: Dict[str, Any],
+                          frontend_origin: str,
+                          tenant_id: Optional[str] = None,
+                          ) -> Tuple[str, str, str]:
+    """Return ``(subject, html, text)`` for the given event.
+
+    Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — prefers the
+    ``quote_accepted_owner_email`` / ``quote_declined_owner_email``
+    row in ``marketing_templates`` (tenant-specific > global default)
+    over the hardcoded body below.  Subjects stay composed inline
+    per decision (c) — the ``[Label #short] Accepted by <name>``
+    convention is not tenant-editable.  Non-DB text/plain body is
+    always emitted from the inline builder so plaintext clients see
+    a coherent copy regardless of DB edits.
+    """
     doc_id = doc.get("id") or ""
     customer_name = doc.get("customer_name") or "a customer"
     total = doc.get("total") or 0
@@ -196,14 +208,16 @@ def render_email(*, event: str, doc_type: str, doc: Dict[str, Any],
     if event == "quote_accepted":
         subject = f"[{label} #{short}] Accepted by {customer_name}"
         headline = f"{customer_name} accepted {label.lower()} #{short}."
+        template_code = "quote_accepted_owner_email"
     else:  # quote_declined
         subject = f"[{label} #{short}] Declined by {customer_name}"
         headline = f"{customer_name} declined {label.lower()} #{short}."
         reason = (doc.get("decline_reason") or "").strip()
         if reason:
             headline += f" Reason: {reason}"
+        template_code = "quote_declined_owner_email"
 
-    html = (
+    fallback_html = (
         f"<div style=\"font-family:system-ui,sans-serif;font-size:14px\">"
         f"<p>{headline}</p>"
         f"<p><strong>Total:</strong> {total_str}<br/>"
@@ -219,6 +233,38 @@ def render_email(*, event: str, doc_type: str, doc: Dict[str, Any],
         f"Customer: {customer_name}\n"
         f"Open in admin: {href}\n"
     )
+
+    html = fallback_html
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            template_code, tenant_id or None,
+        )
+        if tpl and tpl.get("body"):
+            ctx = {
+                "tenant": {"id": tenant_id or ""},
+                "customer": {"name": customer_name},
+                "customer_name": customer_name,
+                "quote_headline": headline,
+                "quote_total": total_str,
+                "quote_label": label,
+                "quote_short_id": short,
+                "quote_admin_link": href,
+            }
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                html = rendered_body
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[quote-notify] DB template render failed — using "
+            "hardcoded fallback: %s", exc,
+        )
+
     return subject, html, text
 
 
@@ -290,9 +336,10 @@ async def notify_quote_decision(
         )
         return {"skipped": "no_recipients", "source": source}
 
-    subject, html, text = render_email(
+    subject, html, text = await render_email(
         event=event, doc_type=doc_type, doc=doc,
         frontend_origin=frontend_origin,
+        tenant_id=tenant_id,
     )
     # Feb-2026 · Email Base Template Theming — P3 flip.
     # Admin-facing notification also carries brand identity now.

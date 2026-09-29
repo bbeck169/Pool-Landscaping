@@ -331,6 +331,31 @@ async def _dispatch_customer_reminders(
     iso_week = _iso_week(datetime.now(timezone.utc))
     email_count = sms_count = failed = skipped = 0
 
+    # Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — DB-first email body.
+    # Prefer the ``equipment_tracker_weekly_reminder_email`` row in
+    # ``marketing_templates`` (tenant-specific > global default);
+    # fall through to the module-level ``_REMINDER_EMAIL_TEMPLATE``
+    # constant when the row is absent OR the render blows up.  The
+    # DB lookup fires ONCE for the whole cron pass — the per-tracker
+    # loop just re-renders against the cached body.
+    tpl_body: Optional[str] = None
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        tpl = await get_template_with_global_fallback(
+            "equipment_tracker_weekly_reminder_email",
+            (tenant or {}).get("id") or None,
+        )
+        if tpl and tpl.get("body"):
+            tpl_body = tpl["body"]
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[phase11-cron] equipment reminder template lookup "
+            "failed — using constant fallback: %s", exc,
+        )
+        tpl_body = None
+
     for r in (past_due + coming_due):
         cust = cust_map.get(r.get("customer_id"))
         if not cust:
@@ -340,7 +365,9 @@ async def _dispatch_customer_reminders(
         subject_rendered, _s_missing = render_template(
             f"Your {{{{EQUIPMENT_TYPE}}}} cleaning is due", ctx,
         )
-        html_rendered, _h_missing = render_template(_REMINDER_EMAIL_TEMPLATE, ctx)
+        html_rendered, _h_missing = render_template(
+            tpl_body or _REMINDER_EMAIL_TEMPLATE, ctx,
+        )
         sms_rendered, _sm_missing = render_template(_REMINDER_SMS_TEMPLATE, ctx)
 
         # Email path

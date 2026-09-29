@@ -745,6 +745,40 @@ async def dispatch_admin_lead_email(
                                   branding=branding, tenant=tenant)
     text = _compose_email_text(lead=lead, app_url=app_url,
                                   branding=branding, tenant=tenant)
+    # Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — DB-first passthrough.
+    # The composed ``html`` above is stashed on the ctx as the
+    # ``{{LEAD_ADMIN_INNER_HTML}}`` merge tag.  The DB row's body
+    # then wraps / repositions it — by default the row body is
+    # exactly ``{{LEAD_ADMIN_INNER_HTML}}`` so no visual change.
+    # A tenant that has edited the row to add e.g. a compliance
+    # footer sees their chrome + the composed inner HTML.
+    try:
+        from services.marketing_template_lookup import (
+            get_template_with_global_fallback,
+        )
+        from services.marketing.merge_tags import render_template
+        tpl = await get_template_with_global_fallback(
+            "lead_admin_notification_email", tid or None,
+        )
+        if tpl and tpl.get("body"):
+            ctx = {
+                "tenant": tenant,
+                "customer": {},
+                "lead": lead,
+                "lead_name": lead.get("name") or "",
+                "lead_admin_inner_html": html,
+            }
+            rendered_body, _ = render_template(
+                tpl["body"], ctx, missing="empty",
+            )
+            if rendered_body:
+                html = rendered_body
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(
+            "[lead-admin-fanout] DB template render failed — using "
+            "hardcoded composed HTML tenant=%s lead=%s: %s",
+            tid, lid, exc,
+        )
     queued: List[str] = []
     for addr in recipients:
         target = f"{addr.lower()}:admin-fanout"

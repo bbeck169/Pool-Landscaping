@@ -158,13 +158,51 @@ async def run_trial_ending_reminders(
                     "cancel_url":      cancel_url,
                 },
             )
+            # Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — DB-first HTML
+            # body for English recipients.  Non-English recipients
+            # keep the D5 i18n path unchanged (decision (c)).
+            subject_out = body["subject"]
+            html_out = body["body_html"]
+            text_out = body["body_text"]
+            if str(locale or "").lower() == "en":
+                try:
+                    from services.marketing_template_lookup import (
+                        get_template_with_global_fallback,
+                    )
+                    from services.marketing.merge_tags import render_template
+                    tpl = await get_template_with_global_fallback(
+                        "tenant_billing_trial_reminder_email",
+                        tenant.get("id") or None,
+                    )
+                    if tpl and tpl.get("body"):
+                        ctx = {
+                            "tenant": tenant,
+                            "customer": {},
+                            "admin_name": admin_name,
+                            "business_name": business_name,
+                            "recipient_name": admin_name,
+                            "trial_end_local": trial_end_local,
+                            "plan_amount": plan_amount,
+                            "cancel_link": cancel_url,
+                        }
+                        rendered_body, _ = render_template(
+                            tpl["body"], ctx, missing="empty",
+                        )
+                        if rendered_body:
+                            html_out = rendered_body
+                except Exception as exc:  # noqa: BLE001 — defensive
+                    logger.warning(
+                        "[trial-reminder] DB template render failed "
+                        "— using D5 i18n fallback tenant=%s: %s",
+                        tenant.get("id"), exc,
+                    )
             try:
                 from services.email.resend_adapter import send as _send
                 await _send(
                     to=admin.get("email"),
-                    subject=body["subject"],
-                    html=body["body_html"],
-                    text=body["body_text"],
+                    subject=subject_out,
+                    html=html_out,
+                    text=text_out,
                     tenant_id=tenant["id"],
                 )
             except Exception as send_exc:  # noqa: BLE001

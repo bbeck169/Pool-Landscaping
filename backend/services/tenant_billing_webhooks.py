@@ -121,12 +121,50 @@ async def handle_tenant_billing_event(
                         "update_card_url": f"{base}/settings/billing",
                     },
                 )
+                # Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — DB-first
+                # HTML body for English recipients.  Non-English keeps
+                # the D5 i18n path (decision (c)).
+                subject_out = body["subject"]
+                html_out = body["body_html"]
+                text_out = body["body_text"]
+                if str(locale or "").lower() == "en":
+                    try:
+                        from services.marketing_template_lookup import (
+                            get_template_with_global_fallback,
+                        )
+                        from services.marketing.merge_tags import render_template
+                        tpl = await get_template_with_global_fallback(
+                            "tenant_billing_dunning_email",
+                            tenant.get("id") or None,
+                        )
+                        if tpl and tpl.get("body"):
+                            admin_name = admin.get("name") or "there"
+                            business_name = tenant.get("name") or "your business"
+                            ctx = {
+                                "tenant": tenant,
+                                "customer": {},
+                                "admin_name": admin_name,
+                                "business_name": business_name,
+                                "recipient_name": admin_name,
+                                "update_card_link": f"{base}/settings/billing",
+                            }
+                            rendered_body, _ = render_template(
+                                tpl["body"], ctx, missing="empty",
+                            )
+                            if rendered_body:
+                                html_out = rendered_body
+                    except Exception as exc:  # noqa: BLE001 — defensive
+                        logger.warning(
+                            "[tenant-billing-webhook] dunning DB "
+                            "template render failed — using D5 i18n "
+                            "fallback tenant=%s: %s", tid, exc,
+                        )
                 from services.email.resend_adapter import send as _send
                 await _send(
                     to=admin.get("email"),
-                    subject=body["subject"],
-                    html=body["body_html"],
-                    text=body["body_text"],
+                    subject=subject_out,
+                    html=html_out,
+                    text=text_out,
                     tenant_id=tid,
                 )
         except Exception as exc:  # noqa: BLE001

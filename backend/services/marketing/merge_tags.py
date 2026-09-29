@@ -1840,6 +1840,82 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "portal login page, pre-populated with their "
                        "email when a magic link is available."),
      "resolver": lambda ctx: _safe_str(ctx.get("portal_link") or "")},
+
+    # ═════════════════════════════════════════════════════════════════
+    # Phase EMAIL-MIGRATE · Batch 3 · Feb-2026 — Internal ops + digests.
+    # ─────────────────────────────────────────────────────────────────
+    # Merge tags consumed by the batch-3 transactional email seeds:
+    #   * quote_accepted_owner_email / quote_declined_owner_email
+    #   * lead_admin_notification_email
+    #   * equipment_tracker_weekly_reminder_email
+    #   * tenant_billing_trial_reminder_email /
+    #     tenant_billing_dunning_email
+    # ═════════════════════════════════════════════════════════════════
+    {"token": "QUOTE_LABEL", "label": "Quote — Doc Type Label",
+     "category": "Quote",
+     "description": ("Human-readable label for the estimate document "
+                       "(\"Quote\", \"Estimate\", \"Proposal\")."),
+     "resolver": lambda ctx: _safe_str(ctx.get("quote_label") or "")},
+    {"token": "QUOTE_SHORT_ID", "label": "Quote — Short ID",
+     "category": "Quote",
+     "description": "First 8 chars of the quote UUID for compact display.",
+     "resolver": lambda ctx: _safe_str(ctx.get("quote_short_id") or "")},
+    {"token": "QUOTE_TOTAL", "label": "Quote — Total",
+     "category": "Quote",
+     "description": "Formatted dollar total for the quote.",
+     "resolver": lambda ctx: _safe_str(ctx.get("quote_total") or "")},
+    {"token": "QUOTE_HEADLINE", "label": "Quote — Headline",
+     "category": "Quote",
+     "description": ("Composed one-line summary "
+                       "(``\"<customer> accepted <label> #<short>. \"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("quote_headline") or "")},
+    {"token": "QUOTE_ADMIN_LINK", "label": "Quote — Admin URL",
+     "category": "Quote",
+     "description": "Admin URL that opens the quote/estimate detail page.",
+     "resolver": lambda ctx: _safe_str(ctx.get("quote_admin_link") or "")},
+    {"token": "LEAD_ADMIN_INNER_HTML", "label": "Lead Admin — Inner HTML",
+     "category": "Lead",
+     "description": ("Pre-rendered inner HTML for the canonical lead-"
+                       "admin notification.  The Python builder still "
+                       "composes the palette / header / dynamic sections; "
+                       "the DB template body can wrap this block in any "
+                       "additional chrome (e.g. tenant-specific "
+                       "regulatory footer).  Default DB body is exactly "
+                       "``{{LEAD_ADMIN_INNER_HTML}}`` so no chrome is "
+                       "added unless the tenant edits the row."),
+     "resolver": lambda ctx: _safe_str(ctx.get("lead_admin_inner_html") or "")},
+    {"token": "ADMIN_NAME", "label": "Admin — Recipient Name (alias)",
+     "category": "Auth",
+     "description": ("Alias for ``RECIPIENT_NAME`` — the trial-reminder "
+                       "and payment-failed on-disk templates use "
+                       "``{admin_name}`` in the single-brace form. The "
+                       "alias keeps token names consistent when those "
+                       "bodies migrate to the double-brace catalog."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("admin_name")
+         or ctx.get("recipient_name")
+         or ctx.get("first_name") or "")},
+    {"token": "TRIAL_END_LOCAL", "label": "Trial End — Local Date",
+     "category": "Billing",
+     "description": ("Localised timestamp for when the tenant's "
+                       "free trial ends (e.g. ``\"Feb 24, 2026 at "
+                       "9:00 AM PST\"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("trial_end_local") or "")},
+    {"token": "PLAN_AMOUNT", "label": "Plan — Amount",
+     "category": "Billing",
+     "description": ("Human-readable plan price (e.g. "
+                       "``\"$249/month\"``)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("plan_amount") or "")},
+    {"token": "CANCEL_LINK", "label": "Billing — Cancel URL",
+     "category": "Billing",
+     "description": "Admin URL to cancel the tenant's subscription.",
+     "resolver": lambda ctx: _safe_str(ctx.get("cancel_link") or "")},
+    {"token": "UPDATE_CARD_LINK", "label": "Billing — Update-card URL",
+     "category": "Billing",
+     "description": ("Admin URL to update the payment method on file "
+                       "(surfaced in the dunning / payment-failed "
+                       "email)."),
+     "resolver": lambda ctx: _safe_str(ctx.get("update_card_link") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]
