@@ -54,9 +54,40 @@ _TYPE_FILLS = {
     "icon":     "#059669",
     "boundary": "#7C3AED",
     "dimension": "#DC2626",
+    "line":     "#0F172A",
+    "curve":    "#0F172A",
     "tree":     "#059669",
     "cactus":   "#059669",
 }
+
+
+# Phase CAD-3.5b · Feb-2026 — Paver material palette.
+#   Kept in sync with the FE catalog in ``pages/cad/Editor.jsx``.
+#   ReportLab lacks first-class pattern fills for arbitrary
+#   polygons, so the PDF path uses per-material representative
+#   colors + surfaces the material name in the element-inventory
+#   legend row (``paver_materials`` breakdown). ``label`` mirrors
+#   the FE dropdown text so operators recognise the row.
+PAVER_MATERIAL_PALETTE: Dict[str, Dict[str, str]] = {
+    "travertine":         {"color": "#D9C7A9",
+                            "label": "Travertine"},
+    "flagstone":          {"color": "#7C7A75",
+                            "label": "Flagstone"},
+    "brick_running_bond": {"color": "#8B4A3B",
+                            "label": "Brick (running bond)"},
+    "slate":              {"color": "#3F434B",
+                            "label": "Slate"},
+}
+_DEFAULT_PAVER_MATERIAL_ID = "travertine"
+
+
+def _paver_material(el: Dict[str, Any]) -> Dict[str, str]:
+    mid = ((el.get("props") or {}).get("material_id")
+           or _DEFAULT_PAVER_MATERIAL_ID)
+    return PAVER_MATERIAL_PALETTE.get(mid,
+                                       PAVER_MATERIAL_PALETTE[
+                                           _DEFAULT_PAVER_MATERIAL_ID
+                                       ])
 
 
 def _fmt_or_placeholder(v, fmt: Optional[str] = None) -> str:
@@ -85,6 +116,11 @@ def _summarise_elements(
     by_type: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
         "count": 0, "total_sqft": 0.0, "total_linear_ft": 0.0,
         "icon_subtypes": Counter(),
+        # Phase CAD-3.5b — paver-by-material breakdown surfaces
+        # the material catalog choice in the summary table so the
+        # PDF legend can render "Pavers · Travertine · 3" style
+        # rows without a second aggregation pass.
+        "paver_materials": Counter(),
     })
     for el in elements or []:
         t = el.get("type") or "unknown"
@@ -99,7 +135,16 @@ def _summarise_elements(
                         canvas_h_ft=canvas_h_ft,
                     ))
             by_type[t]["total_sqft"] += sqft
-        elif t in ("wall", "dimension") and len(coords) >= 2:
+            if t == "paver":
+                # Bucket paver rows by material_id so the summary
+                # table can render one line per material.
+                mid = ((el.get("props") or {}).get("material_id")
+                       or _DEFAULT_PAVER_MATERIAL_ID)
+                by_type[t]["paver_materials"][mid] += 1
+        # Phase CAD-3.5b — line + curve carry linear-foot totals
+        # so the legend can surface running-total lengths just
+        # like walls / dimensions.
+        elif t in ("wall", "dimension", "line", "curve") and len(coords) >= 2:
             computed = (el.get("computed") or {}).get("linear_ft")
             lft = (float(computed) if computed
                    else polyline_length_normalized_to_ft(
@@ -121,6 +166,7 @@ def _summarise_elements(
             "total_sqft": round(d["total_sqft"], 1),
             "total_linear_ft": round(d["total_linear_ft"], 1),
             "icon_subtypes": dict(d["icon_subtypes"]),
+            "paver_materials": dict(d["paver_materials"]),
         })
     return rows
 
@@ -376,6 +422,12 @@ def _draw_element(c: rl_canvas.Canvas, el: dict, *,
         return
 
     if t in ("pool", "spa", "paver") and len(coords) >= 3:
+        # Phase CAD-3.5b — paver uses the material-specific fill
+        # color (per-material palette) instead of the flat orange.
+        # Pool/spa retain the legacy fills.
+        if t == "paver":
+            mat = _paver_material(el)
+            fill = HexColor(mat["color"])
         c.setStrokeColor(stroke)
         c.setFillColor(fill)
         c.setLineWidth(0.7)
@@ -386,6 +438,47 @@ def _draw_element(c: rl_canvas.Canvas, el: dict, *,
             path.lineTo(*_pt(p))
         path.close()
         c.drawPath(path, stroke=1, fill=1)
+        return
+
+    # Phase CAD-3.5b — straight line element.
+    if t == "line" and len(coords) == 2:
+        c.setStrokeColor(stroke)
+        c.setLineWidth(1.2)
+        a = _pt(coords[0]); b = _pt(coords[1])
+        c.line(a[0], a[1], b[0], b[1])
+        return
+
+    # Phase CAD-3.5b — smooth-curve element. ReportLab renders a
+    # sampled poly-Bezier approximation using
+    # :func:`canvas.bezier` between successive vertex triplets.
+    # For a 2-point curve we fall through to a straight line.
+    # Higher-order paths approximate the Konva ``tension=0.5``
+    # look by using Catmull–Rom → cubic-Bezier control-point
+    # derivation (standard formula: control = anchor ±
+    # (next – prev)/6, matching Konva's default line-tension of
+    # 0.5).
+    if t == "curve" and len(coords) >= 2:
+        c.setStrokeColor(stroke)
+        c.setLineWidth(1.2)
+        pts = [_pt(p) for p in coords]
+        if len(pts) == 2:
+            c.line(pts[0][0], pts[0][1], pts[1][0], pts[1][1])
+            return
+        path = c.beginPath()
+        path.moveTo(*pts[0])
+        for i in range(len(pts) - 1):
+            p0 = pts[i - 1] if i > 0 else pts[i]
+            p1 = pts[i]
+            p2 = pts[i + 1]
+            p3 = pts[i + 2] if i + 2 < len(pts) else pts[i + 1]
+            # Catmull-Rom → cubic Bezier (α = 1/6 keeps parity
+            # with the FE ``tension = 0.5`` visual).
+            c1 = (p1[0] + (p2[0] - p0[0]) / 6.0,
+                  p1[1] + (p2[1] - p0[1]) / 6.0)
+            c2 = (p2[0] - (p3[0] - p1[0]) / 6.0,
+                  p2[1] - (p3[1] - p1[1]) / 6.0)
+            path.curveTo(c1[0], c1[1], c2[0], c2[1], p2[0], p2[1])
+        c.drawPath(path, stroke=1, fill=0)
         return
 
     if t == "wall" and len(coords) >= 2:

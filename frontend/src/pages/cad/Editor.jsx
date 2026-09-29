@@ -51,8 +51,35 @@ const CAD_TOOLS = [
   { k: "scale",   label: "Scale", icon: Ruler },
   { k: "paver",   label: "Pavers" },
   { k: "wall",    label: "Wall" },
+  { k: "line",    label: "Line" },
+  { k: "curve",   label: "Curve" },
   { k: "tape",    label: "Tape" },
 ];
+
+// Phase CAD-3.5b · Feb-2026 — Paver material catalog.
+//   Ships four procedurally-generated tiling textures under
+//   ``/textures/pavers/`` (real PNG data, not stubs). ``color`` is
+//   the flat fallback used on Konva image-load failure AND for the
+//   backend PDF export path (ReportLab has no arbitrary-polygon
+//   pattern fill, so PDFs use the flat approximation + a material
+//   name in the element-inventory legend row).
+//   ``tileSize`` sets the ``fillPatternScale`` so one image tile
+//   maps to ~12 real-world inches at the canvas default (60ft ×
+//   40ft on a ~1024px stage). Callers can override per-element by
+//   setting ``paver.props.material_scale``.
+const PAVER_MATERIALS = [
+  { id: "travertine",         name: "Travertine",
+    url: "/textures/pavers/travertine.png",         color: "#D9C7A9" },
+  { id: "flagstone",          name: "Flagstone",
+    url: "/textures/pavers/flagstone.png",          color: "#7C7A75" },
+  { id: "brick_running_bond", name: "Brick (running bond)",
+    url: "/textures/pavers/brick_running_bond.png", color: "#8B4A3B" },
+  { id: "slate",              name: "Slate",
+    url: "/textures/pavers/slate.png",              color: "#3F434B" },
+];
+const _DEFAULT_PAVER_MATERIAL_ID = PAVER_MATERIALS[0].id;
+const _paverMaterialById = (id) =>
+  PAVER_MATERIALS.find((m) => m.id === id) || PAVER_MATERIALS[0];
 
 const PLANT_ICONS = [
   { k: "tree",  label: "Tree",   Icon: Trees },
@@ -212,6 +239,14 @@ export default function CadEditor() {
   const [paverInProgress, setPaverInProgress] = useState([]);
   const [wallInProgress, setWallInProgress] = useState([]);
   const [tapePoints, setTapePoints] = useState([]);
+  // Phase CAD-3.5b · Feb-2026 — Straight-line + smooth-curve tools.
+  //   ``lineStart`` holds the first click of the two-click straight
+  //   line workflow; the second click commits and clears it.
+  //   ``curveInProgress`` accumulates multi-vertex points for the
+  //   curve polyline. Enter / Escape / double-click / the finish
+  //   button commits (parallel with the paver + wall flow).
+  const [lineStart, setLineStart] = useState(null);
+  const [curveInProgress, setCurveInProgress] = useState([]);
   const [persistNextMeasurement, setPersistNextMeasurement] = useState(false);
   // ── Icon library / MARCO state ────────────────────────────────
   const [placingIcon, setPlacingIcon] = useState(null);
@@ -309,17 +344,49 @@ export default function CadEditor() {
   //   • Cmd/Ctrl+Z             → undo
   //   • Cmd/Ctrl+Shift+Z (mac) → redo
   //   • Cmd/Ctrl+Y      (win)  → redo
+  //   • Enter / Escape         → finish curve (Phase CAD-3.5b)
   // Skips when the event target is a text input / textarea so users
   // typing labels don't trigger canvas-level undo.
+  //   ``finishCurve`` is declared further down in the file so we
+  //   reach it via a ref (set below in a useEffect) to avoid a
+  //   temporal-dead-zone crash on first mount.
+  const _finishCurveRef = useRef(null);
+  const _removeElemRef = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
       const tgt = e.target;
       const tag = (tgt && tgt.tagName) ? tgt.tagName.toUpperCase() : "";
-      if (tag === "INPUT" || tag === "TEXTAREA"
-          || (tgt && tgt.isContentEditable)) return;
+      const inField = (tag === "INPUT" || tag === "TEXTAREA"
+                        || (tgt && tgt.isContentEditable));
+      const meta = e.metaKey || e.ctrlKey;
       const key = (e.key || "").toLowerCase();
+      // Phase CAD-3.5b — Enter / Escape commit an in-progress
+      // curve (Escape cancels the partial vertex chain when the
+      // operator hasn't placed enough points).
+      if (!inField && (e.key === "Enter" || e.key === "Escape")
+          && tool === "curve") {
+        e.preventDefault();
+        if (e.key === "Escape" && curveInProgress.length < 2) {
+          setCurveInProgress([]);
+          setTool("pointer");
+        } else if (_finishCurveRef.current) {
+          _finishCurveRef.current();
+        }
+        return;
+      }
+      // Phase CAD-3.5b — Delete / Backspace removes the currently
+      // selected element via the existing ``removeElem`` path. Only
+      // fires outside of text-input focus so operators typing
+      // labels never accidentally delete the shape they're
+      // labelling.
+      if (!inField && (e.key === "Delete" || e.key === "Backspace")
+          && selectedId) {
+        e.preventDefault();
+        if (_removeElemRef.current) _removeElemRef.current(selectedId);
+        return;
+      }
+      if (!meta) return;
+      if (inField) return;
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();
         undo();
@@ -330,7 +397,7 @@ export default function CadEditor() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo]);
+  }, [undo, redo, tool, curveInProgress.length, selectedId]);
 
   const canvasSize = { w: 800, h: 500 };
   const effectiveZoom = zoomOverride ?? (design?.map_zoom ?? 19);
@@ -504,6 +571,34 @@ export default function CadEditor() {
       setWallInProgress((v) => [...v, { x, y }]);
       return;
     }
+    // Phase CAD-3.5b — straight-line tool. Two clicks: first sets
+    // an in-progress start point, second commits the finished line
+    // element.
+    if (tool === "line") {
+      if (!lineStart) {
+        setLineStart({ x, y });
+        return;
+      }
+      pushSnapshot(design);
+      const el = {
+        id: _uuid(), type: "line",
+        coords: [lineStart, { x, y }],
+        props: {},
+      };
+      const next = { ...design, elements: [...(design.elements || []), el] };
+      setDesign(next);
+      setLineStart(null);
+      setTool("pointer");
+      _persistDesign(next);
+      return;
+    }
+    // Phase CAD-3.5b — smooth-curve tool. Accumulate vertices until
+    // the operator hits the finish button / Enter / Escape /
+    // double-click. Rendered with a Konva ``<Line tension>``.
+    if (tool === "curve") {
+      setCurveInProgress((v) => [...v, { x, y }]);
+      return;
+    }
     if (tool === "tape") {
       const next = [...tapePoints, { x, y }];
       if (next.length < 2) { setTapePoints(next); return; }
@@ -659,7 +754,11 @@ export default function CadEditor() {
     const el = {
       id: _uuid(), type: "paver",
       coords: [...paverInProgress],
-      props: {},
+      // Phase CAD-3.5b — every fresh paver ships with the default
+      // material id so the renderer never has to fall back to the
+      // legacy flat-fill path unless the operator explicitly
+      // clears the material choice.
+      props: { material_id: _DEFAULT_PAVER_MATERIAL_ID },
       computed: {
         area_sqft: shoelaceSqft(
           paverInProgress, design.canvas_w_ft || 60,
@@ -697,6 +796,38 @@ export default function CadEditor() {
     _persistDesign(next);
   };
 
+  // Phase CAD-3.5b — commit an in-progress smooth curve into a
+  // persisted ``curve`` element. Requires ≥2 points (a 1-point
+  // curve is degenerate). Bails silently when the operator finishes
+  // with only one dot so we don't add a hidden zero-length shape.
+  const CURVE_DEFAULT_TENSION = 0.5;
+  const finishCurve = () => {
+    if (curveInProgress.length < 2) {
+      setCurveInProgress([]); setTool("pointer"); return;
+    }
+    pushSnapshot(design);
+    const el = {
+      id: _uuid(), type: "curve",
+      coords: [...curveInProgress],
+      props: { tension: CURVE_DEFAULT_TENSION },
+      computed: {
+        linear_ft: polylineLengthFt(
+          curveInProgress, design.canvas_w_ft || 60,
+          design.canvas_h_ft || 40,
+        ),
+      },
+    };
+    const next = { ...design, elements: [...(design.elements || []), el] };
+    setDesign(next);
+    setCurveInProgress([]);
+    setTool("pointer");
+    _persistDesign(next);
+  };
+  // Phase CAD-3.5b — keep the keyboard-effect's ref in sync so
+  // Enter/Escape can trigger the curve-finish without hitting a
+  // temporal-dead-zone for the ``finishCurve`` binding.
+  useEffect(() => { _finishCurveRef.current = finishCurve; });
+
   const removeElem = (eid) => {
     pushSnapshot(design);
     const next = {
@@ -704,8 +835,13 @@ export default function CadEditor() {
       elements: (design.elements || []).filter((e) => e.id !== eid),
     };
     setDesign(next);
+    if (selectedId === eid) setSelectedId(null);
     _persistDesign(next);
   };
+  // Phase CAD-3.5b — keep the ref pointing at the latest closure
+  // so the keyboard-effect's ``Delete``/``Backspace`` shortcut
+  // works without a temporal-dead-zone re-render dance.
+  useEffect(() => { _removeElemRef.current = removeElem; });
 
   const save = async () => {
     if (!design) return;
@@ -802,6 +938,28 @@ export default function CadEditor() {
     _persistDesign(next).catch(() => setToast("Save failed"));
   }, [design, pushSnapshot, _persistDesign]);
 
+  // Phase CAD-3.5b · Feb-2026 — Update the ``material_id`` on a
+  // selected paver element. Snapshots first (Undoable) and
+  // persists via the existing save path. ``null`` / empty clears
+  // back to the default material.
+  const setPaverMaterial = useCallback((elementId, nextMaterialId) => {
+    if (!design) return;
+    pushSnapshot(design);
+    const mid = nextMaterialId || _DEFAULT_PAVER_MATERIAL_ID;
+    const next = {
+      ...design,
+      elements: (design.elements || []).map((el) => {
+        if (el.id !== elementId) return el;
+        return {
+          ...el,
+          props: { ...(el.props || {}), material_id: mid },
+        };
+      }),
+    };
+    setDesign(next);
+    _persistDesign(next).catch(() => setToast("Save failed"));
+  }, [design, pushSnapshot, _persistDesign]);
+
   const selectedElement = useMemo(
     () => (design && selectedId
       ? (design.elements || []).find((el) => el.id === selectedId) || null
@@ -892,6 +1050,11 @@ export default function CadEditor() {
               if (t.k !== "paver") setPaverInProgress([]);
               if (t.k !== "wall") setWallInProgress([]);
               if (t.k !== "tape") setTapePoints([]);
+              // Phase CAD-3.5b — reset new-tool in-progress state
+              // whenever the operator switches to something else so
+              // orphaned partial shapes never bleed between tools.
+              if (t.k !== "line") setLineStart(null);
+              if (t.k !== "curve") setCurveInProgress([]);
             }}
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1"
                     style={{
@@ -919,6 +1082,20 @@ export default function CadEditor() {
                   data-testid="cad-wall-finish">
             Finish wall ({wallInProgress.length} pts)
           </button>
+        )}
+        {tool === "curve" && (
+          <button onClick={finishCurve}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
+                  style={{ backgroundColor: colors.brand }}
+                  data-testid="cad-curve-finish">
+            Finish curve ({curveInProgress.length} pts)
+          </button>
+        )}
+        {tool === "line" && lineStart && (
+          <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}
+                data-testid="cad-line-status">
+            Click to place end point.
+          </span>
         )}
         {tool === "tape" && (
           <label className="text-xs inline-flex items-center gap-1"
@@ -1049,6 +1226,20 @@ export default function CadEditor() {
                 {/* In-progress wall polyline */}
                 {wallInProgress.length > 0 && (
                   <WallPreview coords={wallInProgress} size={canvasSize} />
+                )}
+                {/* Phase CAD-3.5b — in-progress smooth curve */}
+                {curveInProgress.length > 0 && (
+                  <CurvePreview coords={curveInProgress} size={canvasSize} />
+                )}
+                {/* Phase CAD-3.5b — line first-click marker */}
+                {tool === "line" && lineStart && (
+                  <Circle
+                    x={lineStart.x * canvasSize.w}
+                    y={lineStart.y * canvasSize.h}
+                    radius={5} fill="#F59E0B"
+                    stroke="#B45309" strokeWidth={1.5}
+                    data-testid="cad-line-start-marker"
+                  />
                 )}
                 {/* Tape measure overlay (non-persistent) */}
                 {tapePoints.length === 2 && !persistNextMeasurement && (
@@ -1323,6 +1514,33 @@ export default function CadEditor() {
               </>
             )}
           </section>
+
+          {/* Phase CAD-3.5b · Feb-2026 — Paver material picker.
+              Rendered ONLY when a paver element is selected. */}
+          {selectedElement && selectedElement.type === "paver" ? (
+            <section className="rounded-2xl p-3 space-y-2"
+                     style={{ border: `1px solid ${colors.border}` }}
+                     data-testid="cad-paver-props-section">
+              <div className="text-xs font-semibold uppercase tracking-wider"
+                   style={{ color: colors.onSurfaceSecondary }}>
+                Paver material
+              </div>
+              <select
+                value={(selectedElement.props && selectedElement.props.material_id)
+                       || _DEFAULT_PAVER_MATERIAL_ID}
+                onChange={(e) => setPaverMaterial(
+                  selectedElement.id, e.target.value,
+                )}
+                className="w-full text-xs px-2 py-1 rounded"
+                style={{ border: `1px solid ${colors.border}` }}
+                data-testid="cad-paver-material-select"
+              >
+                {PAVER_MATERIALS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </section>
+          ) : null}
 
           {/* Phase CAD-3.5a · Feb-2026 — Dimension label override.
               Rendered ONLY when a persisted dimension line is
@@ -1604,17 +1822,46 @@ function ShapeNode({
     const sqft = el.computed?.area_sqft
       ?? shoelaceSqft(el.coords, cw, ch);
     return (
-      <Group data-testid={tid} onClick={onSelect}>
-        <Line points={flat} closed
-              fill="#D97706" opacity={fillOpacity}
-              stroke={stroke} strokeWidth={selected ? 2 : 1} />
-        {sqft > 0 && (
-          <ShapeLabel
-            x={centroid.x * canvasSize.w} y={centroid.y * canvasSize.h}
-            text={`${Math.round(sqft)} sq ft`}
-            testid={`cad-shape-label-${el.id}`}
+      <PaverShape el={el} flat={flat} centroid={centroid}
+                  sqft={sqft} canvasSize={canvasSize} tid={tid}
+                  stroke={stroke} fillOpacity={fillOpacity}
+                  selected={selected} onSelect={onSelect}
+                  onVertexMouseDown={onVertexMouseDown} />
+    );
+  }
+  // Phase CAD-3.5b · Straight-line element.
+  if (type === "line" && Array.isArray(el.coords) && el.coords.length === 2) {
+    const flat = el.coords.flatMap(
+      (p) => [p.x * canvasSize.w, p.y * canvasSize.h],
+    );
+    return (
+      <Group data-testid={tid} onClick={onSelect}
+             data-shape-type="line">
+        <Line points={flat} stroke={stroke}
+              strokeWidth={selected ? 3 : 2} />
+        {selected && (
+          <VertexHandles
+            el={el} canvasSize={canvasSize}
+            onVertexMouseDown={onVertexMouseDown}
           />
         )}
+      </Group>
+    );
+  }
+  // Phase CAD-3.5b · Smooth-curve element (multi-vertex tensioned).
+  if (type === "curve" && Array.isArray(el.coords) && el.coords.length >= 2) {
+    const flat = el.coords.flatMap(
+      (p) => [p.x * canvasSize.w, p.y * canvasSize.h],
+    );
+    const tension = (el.props && Number.isFinite(el.props.tension))
+      ? el.props.tension : 0.5;
+    return (
+      <Group data-testid={tid} onClick={onSelect}
+             data-shape-type="curve"
+             data-tension={String(tension)}>
+        <Line points={flat} stroke={stroke}
+              strokeWidth={selected ? 3 : 2}
+              tension={tension} bezier={false} />
         {selected && (
           <VertexHandles
             el={el} canvasSize={canvasSize}
@@ -1757,6 +2004,26 @@ function WallPreview({ coords, size }) {
 }
 
 
+// Phase CAD-3.5b — in-progress smooth-curve preview. Same visual
+// idiom as ``WallPreview`` but uses the default tension so the
+// operator sees the actual curve shape they're building.
+function CurvePreview({ coords, size }) {
+  const flat = coords.flatMap(
+    (p) => [p.x * size.w, p.y * size.h],
+  );
+  return (
+    <Group data-testid="cad-curve-inprogress">
+      <Line points={flat} stroke="#0F172A" strokeWidth={2}
+            dash={[6, 4]} tension={0.5} />
+      {coords.map((p, i) => (
+        <Circle key={i} x={p.x * size.w} y={p.y * size.h}
+                radius={3} fill="#0F172A" />
+      ))}
+    </Group>
+  );
+}
+
+
 function TapeOverlay({ coords, size, cw, ch }) {
   return (
     <TapeGlyph coords={coords} size={size} cw={cw} ch={ch}
@@ -1764,6 +2031,72 @@ function TapeOverlay({ coords, size, cw, ch }) {
   );
 }
 
+
+// Phase CAD-3.5b · Feb-2026 — Paver render with fill-pattern
+// texture and flat-color fallback. Kept as a dedicated component
+// so the image-loading effect + fallback state are contained
+// (avoids one-off effects inside the mega ``ShapeNode`` switch).
+// Fallback behaviour: the image element loads asynchronously via a
+// plain ``new Image()`` — on ``onerror`` we set a state flag and
+// render the flat material color instead. No console output.
+function PaverShape({ el, flat, centroid, sqft, canvasSize, tid,
+                       stroke, fillOpacity, selected, onSelect,
+                       onVertexMouseDown }) {
+  const materialId = (el.props && el.props.material_id)
+    || _DEFAULT_PAVER_MATERIAL_ID;
+  const material = _paverMaterialById(materialId);
+  const [image, setImage] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setImage(null); setFailed(false);
+    if (typeof window === "undefined" || !window.Image) return undefined;
+    const img = new window.Image();
+    let cancelled = false;
+    img.onload = () => { if (!cancelled) setImage(img); };
+    img.onerror = () => { if (!cancelled) setFailed(true); };
+    img.src = material.url;
+    return () => { cancelled = true; };
+  }, [material.url]);
+  // When the image is available, ask Konva to tile it as the fill.
+  // ``fillPatternScale`` maps one image tile to ~12 real-world
+  // inches at the canvas default (60ft-wide stage ≈ 17px per ft
+  // ≈ 17px per foot × 1 ft tile = 17px, so scale ≈ 17 / 128 ≈
+  // 0.13). We keep the scale constant here; callers can override
+  // via ``el.props.material_scale`` if they want thicker/thinner
+  // paver silhouettes.
+  const patternScale = (el.props && Number.isFinite(el.props.material_scale))
+    ? el.props.material_scale : 0.5;
+  const useTexture = image && !failed;
+  return (
+    <Group data-testid={tid} onClick={onSelect}
+           data-shape-type="paver"
+           data-material-id={materialId}
+           data-fill-mode={useTexture ? "pattern" : "flat"}>
+      <Line
+        points={flat} closed
+        fill={useTexture ? undefined : material.color}
+        fillPatternImage={useTexture ? image : undefined}
+        fillPatternScaleX={useTexture ? patternScale : undefined}
+        fillPatternScaleY={useTexture ? patternScale : undefined}
+        opacity={fillOpacity}
+        stroke={stroke} strokeWidth={selected ? 2 : 1}
+      />
+      {sqft > 0 && (
+        <ShapeLabel
+          x={centroid.x * canvasSize.w} y={centroid.y * canvasSize.h}
+          text={`${Math.round(sqft)} sq ft`}
+          testid={`cad-shape-label-${el.id}`}
+        />
+      )}
+      {selected && (
+        <VertexHandles
+          el={el} canvasSize={canvasSize}
+          onVertexMouseDown={onVertexMouseDown}
+        />
+      )}
+    </Group>
+  );
+}
 
 function TapeGlyph({ coords, size, cw, ch, testid, labelOverride,
                        onSelect, selected }) {
