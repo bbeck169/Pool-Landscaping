@@ -1,10 +1,17 @@
 /**
  * Phase 20B.1c · Customer photo history — grid gallery with zoom + filters.
+ *
+ * DTP-2 · Feb-2026 — migrated onto the shared ``<Lightbox>`` component
+ * (``@/components/portal/Lightbox``) so the zoom viewer inherits the
+ * portal-dark palette, ESC + arrow keys, focus-trap, and title/counter
+ * chrome. The pre-DTP-2 inline zoom overlay has been retired.
  */
-import React, { useEffect, useState } from "react";
-import { Camera, ImageOff, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { Camera, ImageOff } from 'lucide-react';
 import { api } from "@/api";
-import { colors } from "@/theme";
+// DTP-2 · Feb-2026 — dark portal palette.
+import { portalColors as colors } from "@/theme";
+import Lightbox from "@/components/portal/Lightbox";
 
 const FILTERS = [
   { key: "", label: "All service types" },
@@ -16,7 +23,7 @@ export default function PortalPhotos() {
   const [data, setData] = useState({ photos: [], total: 0 });
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
-  const [zoom, setZoom] = useState(null);
+  const [zoomIdx, setZoomIdx] = useState(null);
 
   useEffect(() => {
     const q = filter ? `?service_type=${encodeURIComponent(filter)}` : "";
@@ -25,6 +32,20 @@ export default function PortalPhotos() {
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData({ photos: [], total: 0 }); setLoading(false); });
   }, [filter]);
+
+  // Flat ordered list (matches the day-grouped render order below).
+  const orderedPhotos = useMemo(() => {
+    const byDate = new Map();
+    for (const p of data.photos) {
+      const day = (p.submitted_at || p.uploaded_at || p.created_at || "").slice(0, 10) || "Unknown date";
+      if (!byDate.has(day)) byDate.set(day, []);
+      byDate.get(day).push(p);
+    }
+    const dayKeys = Array.from(byDate.keys()).sort((a, b) => b.localeCompare(a));
+    const flat = [];
+    for (const d of dayKeys) for (const p of byDate.get(d)) flat.push({ day: d, photo: p });
+    return flat;
+  }, [data]);
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6" data-testid="portal-photos-page">
@@ -90,6 +111,16 @@ export default function PortalPhotos() {
                 { weekday: "long", month: "short", day: "numeric", year: "numeric" });
             } catch { return d; }
           };
+          // Global-index lookup so a click resolves to the correct
+          // slot in the flat ``orderedPhotos`` list feeding <Lightbox>.
+          const indexFor = (day, i) => {
+            let acc = 0;
+            for (const d of dayKeys) {
+              if (d === day) return acc + i;
+              acc += byDate.get(d).length;
+            }
+            return acc;
+          };
           return (
             <div data-testid="portal-photos-grouped">
               {dayKeys.map((day, gi) => (
@@ -104,7 +135,7 @@ export default function PortalPhotos() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
                        data-testid="portal-photos-grid">
                     {byDate.get(day).map((p, i) => (
-                      <button key={`${day}:${i}`} onClick={() => setZoom(p)}
+                      <button key={`${day}:${i}`} onClick={() => setZoomIdx(indexFor(day, i))}
                               className="group relative overflow-hidden rounded-xl aspect-square hover:scale-[1.02] transition"
                               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
                               data-testid={`portal-photo-${day}-${i}`}>
@@ -126,19 +157,20 @@ export default function PortalPhotos() {
         })()
       )}
 
-      {zoom && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-             style={{ background: "rgba(0,0,0,0.85)" }}
-             onClick={() => setZoom(null)}
-             data-testid="portal-photo-zoom">
-          <button onClick={() => setZoom(null)}
-                  className="absolute top-4 right-4 p-2 rounded-full"
-                  style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "#fff" }}>
-            <X size={20}/>
-          </button>
-          <img src={zoom.url} alt={zoom.caption} className="max-w-full max-h-full rounded-lg" />
-        </div>
-      )}
+      {/* DTP-2 · Feb-2026 — shared portal Lightbox replaces the
+          previous inline zoom overlay. ESC + arrow keys + focus-trap
+          are now inherited from the shared component. */}
+      <Lightbox
+        items={orderedPhotos.map(({ photo }) => ({
+          url: photo.url || photo.thumb,
+          kind: "image",
+          title: photo.caption || photo.job_title || "",
+        }))}
+        initialIndex={zoomIdx == null ? 0 : zoomIdx}
+        open={zoomIdx !== null}
+        onClose={() => setZoomIdx(null)}
+        testidPrefix="portal-photo-zoom"
+      />
     </div>
   );
 }

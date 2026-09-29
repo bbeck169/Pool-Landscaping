@@ -49,20 +49,29 @@ vi.mock("sonner", () => ({
   }),
 }));
 
-vi.mock("@/theme", () => ({
-  colors: {
+vi.mock("@/theme", () => {
+  // DTP-2 · Feb-2026 — the portal page under test imports
+  // ``portalColors`` (aliased as ``colors``) + ``portalGradients``
+  // from ``@/theme``. Mirror both under aliases so the module
+  // mock stays hermetic without dragging the real theme file
+  // into the test bundle.
+  const base = {
     brand: "#0B4A6F", brandTertiary: "#0F172A",
     onBrand: "#FFFFFF",
     onSurface: "#111827", muted: "#6B7280",
     border: "#E5E7EB", divider: "#E5E7EB",
     surface: "#FFFFFF", surfaceSecondary: "#F8FAFC",
     success: "#059669", error: "#DC2626",
-  },
-  gradients: {
-    navyToGreen: { css: "linear-gradient(#000,#111)" },
-  },
-  money: (n) => `$${Number(n || 0).toFixed(2)}`,
-}));
+  };
+  const heroGrad = { css: "linear-gradient(#000,#111)" };
+  return {
+    colors: base,
+    portalColors: base,
+    gradients: { navyToGreen: heroGrad },
+    portalGradients: { navyToBlue: heroGrad },
+    money: (n) => `$${Number(n || 0).toFixed(2)}`,
+  };
+});
 
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { role: "customer", name: "PS-D User" } }),

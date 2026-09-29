@@ -12,7 +12,15 @@ import {
   Plus,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, gradients, portalColors } from "@/theme";
+// DTP-2 · Feb-2026 — module-level ``colors`` binds to the portal
+// dark palette so every export in this file (PortalServices,
+// PortalInvoices, PortalPayments, PortalDocuments, PortalMessages,
+// PortalProfile, PortalRequestService, PortalPaymentComplete, …)
+// renders inside the ``.dark portal-dark`` scope without a per-
+// export shadow line. The pilot-era ``const colors = portalColors``
+// shadows in the four already-migrated exports have been dropped
+// below now that the module-level import IS the dark palette.
+import { portalColors as colors, money, gradients } from "@/theme";
 // DTP-1 · Feb-2026 — Shared portal lightbox for PortalServiceDetail
 // (pilot). Other exports in this file keep their light ``colors``
 // binding untouched.
@@ -108,11 +116,6 @@ export function PortalServices() {
 }
 
 export function PortalServiceDetail() {
-  // DTP-1 · Feb-2026 — pilot dark theme. Local shadow so this one
-  // export reads portal-dark values while the other exports in this
-  // file (PortalServices, PortalInvoices, …) keep their light
-  // ``colors`` binding.
-  const colors = portalColors;
   const { id } = useParams();
   const navigate = useNavigate();
   const [j, setJ] = useState(null);

@@ -4,12 +4,18 @@
  * Videos from submitted service reports (poster on grid tile, streaming
  * inline in a modal). Backend: GET /api/portal/videos — currently the
  * only video source is db.service_reports[].videos.
+ *
+ * DTP-2 · Feb-2026 — migrated to the shared ``<Lightbox>`` component so
+ * the modal player inherits the portal-dark palette, ESC + arrow-key
+ * nav, focus-trap, and title/counter chrome. The legacy inline modal
+ * has been retired.
  */
 import React, { useEffect, useState } from "react";
-import { X, Video as VideoIcon, Play } from "lucide-react";
-import { colors } from "@/theme";
+import { Video as VideoIcon, Play } from "lucide-react";
+import { portalColors as colors } from "@/theme";
 import { api } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
+import Lightbox from "@/components/portal/Lightbox";
 
 const PAGE = 24;
 
@@ -32,7 +38,7 @@ export default function PortalVideosPage() {
   const [items, setItems] = useState(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState(null);
+  const [selectedIdx, setSelectedIdx] = useState(null);
   const [err, setErr] = useState("");
 
   const load = async (nextOffset) => {
@@ -53,6 +59,17 @@ export default function PortalVideosPage() {
     setOffset(next);
     load(next);
   };
+
+  // Mapped once here so the <Lightbox> definition below stays terse.
+  const lightboxItems = (items || []).map((v) => ({
+    url:   resolveUrl(v.url),
+    kind:  "video",
+    title: v.job_title || v.filename || "Video",
+    subtitle: v.uploaded_at
+      ? new Date(v.uploaded_at).toLocaleString()
+        + (v.duration_seconds ? ` · ${fmtDuration(v.duration_seconds)}` : "")
+      : "",
+  }));
 
   return (
     <div className="max-w-6xl mx-auto p-4" data-testid="portal-videos-page">
@@ -104,12 +121,12 @@ export default function PortalVideosPage() {
             className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
             data-testid="portal-videos-grid"
           >
-            {items.map((v) => {
+            {items.map((v, i) => {
               const poster = v.poster_url ? resolveUrl(v.poster_url) : "";
               return (
                 <button
                   key={v.file_id}
-                  onClick={() => setSelected(v)}
+                  onClick={() => setSelectedIdx(i)}
                   className="rounded-xl overflow-hidden transition hover:brightness-95"
                   style={{ background: colors.surfaceSecondary,
                             border: `1px solid ${colors.border}` }}
@@ -165,47 +182,16 @@ export default function PortalVideosPage() {
         </>
       )}
 
-      {selected ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(0,0,0,0.9)" }}
-          onClick={() => setSelected(null)}
-          data-testid="portal-video-modal"
-        >
-          <button
-            onClick={() => setSelected(null)}
-            className="absolute top-4 right-4 text-white"
-            data-testid="portal-video-modal-close"
-          ><X size={28} /></button>
-          <div
-            className="max-w-4xl w-full text-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <video
-              src={resolveUrl(selected.url)}
-              controls
-              autoPlay
-              poster={selected.poster_url ? resolveUrl(selected.poster_url) : undefined}
-              className="max-h-[75vh] mx-auto rounded-xl shadow-2xl"
-              data-testid="portal-video-modal-player"
-            >
-              Your browser doesn't support inline video playback.
-            </video>
-            <div className="mt-3 text-white">
-              <div className="font-semibold">
-                {selected.job_title || selected.filename || "Video"}
-              </div>
-              <div className="text-xs opacity-80">
-                {selected.uploaded_at
-                  ? new Date(selected.uploaded_at).toLocaleString()
-                  : ""}
-                {selected.duration_seconds
-                  ? ` · ${fmtDuration(selected.duration_seconds)}` : ""}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* DTP-2 · Feb-2026 — shared portal Lightbox. ``testidPrefix``
+          preserves the legacy ``portal-video-modal`` selector so
+          existing tests keep resolving the modal + close button. */}
+      <Lightbox
+        items={lightboxItems}
+        initialIndex={selectedIdx == null ? 0 : selectedIdx}
+        open={selectedIdx !== null}
+        onClose={() => setSelectedIdx(null)}
+        testidPrefix="portal-video-modal"
+      />
     </div>
   );
 }

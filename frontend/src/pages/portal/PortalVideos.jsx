@@ -6,11 +6,17 @@
  * groups the results by parent entity, and streams playback through
  * ``/api/media/videos/{path}?auth={token}`` — same proxy the admin
  * MediaUploader uses.
+ *
+ * DTP-2 · Feb-2026 — the pre-DTP-2 inline lightbox modal has been
+ * retired in favour of the shared ``<Lightbox>`` component so the
+ * portal-dark palette, ESC / arrow-key nav, focus-trap, and
+ * title/counter chrome are inherited from a single source.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { Film, Play, X, Video } from "lucide-react";
+import { Film, Play, Video } from "lucide-react";
 import { api, api_base, TOKEN_KEY } from "@/api";
-import { colors } from "@/theme";
+import { portalColors as colors } from "@/theme";
+import Lightbox from "@/components/portal/Lightbox";
 
 function bytesLabel(n) {
   if (!n) return "";
@@ -34,7 +40,7 @@ function tokenizedSrc(path) {
 export default function PortalVideos() {
   const [data, setData] = useState({ videos: [], total: 0 });
   const [loading, setLoading] = useState(true);
-  const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [lightboxIdx, setLightboxIdx] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -68,6 +74,38 @@ export default function PortalVideos() {
     });
     return arr;
   }, [data]);
+
+  // Flat ordered list of playable clips — the shared <Lightbox> steps
+  // through this sequence when the user hits ArrowLeft / ArrowRight.
+  const orderedVideos = useMemo(() => {
+    const flat = [];
+    for (const g of groups) {
+      for (const v of g.videos) {
+        flat.push({
+          url:      tokenizedSrc(v.storage_path),
+          kind:     "video",
+          title:    v.caption || g.entity_title || "",
+          subtitle: [
+            g.kind === "estimate" ? "Estimate" : "Job",
+            g.job_scheduled_date ? g.job_scheduled_date.slice(0, 10) : "",
+          ].filter(Boolean).join(" · "),
+        });
+      }
+    }
+    return flat;
+  }, [groups]);
+
+  // Given a group + inner video index, resolve the corresponding slot
+  // inside the flat ``orderedVideos`` list.
+  const indexFor = (groupKey, innerIdx) => {
+    let acc = 0;
+    for (const g of groups) {
+      const key = `${g.kind}:${g.entity_id}`;
+      if (key === groupKey) return acc + innerIdx;
+      acc += g.videos.length;
+    }
+    return acc;
+  };
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6" data-testid="portal-videos-page">
@@ -140,33 +178,36 @@ export default function PortalVideos() {
                     {fmtHeader(day)}
                   </h2>
                   <div className="space-y-6" data-testid="portal-videos-groups">
-                    {byDay.get(day).map((g) => (
-                      <section key={`${g.kind}:${g.entity_id}`}
-                               className="rounded-2xl p-5"
-                               style={{ backgroundColor: colors.surface,
-                                        border: `1px solid ${colors.border}` }}
-                               data-testid={`portal-video-group-${g.entity_id}`}>
-                        <div className="flex items-baseline gap-2 mb-3">
-                          <h3 className="text-base font-bold" style={{ color: colors.onSurface }}>
-                            {g.entity_title}
-                          </h3>
-                          <span className="text-[11px] uppercase tracking-wider font-semibold"
-                                style={{ color: colors.muted }}>
-                            {g.kind === "estimate" ? "Estimate" : "Job"}
-                            {g.job_scheduled_date ? ` · ${g.job_scheduled_date.slice(0, 10)}` : ""}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {g.videos.map((v) => (
-                            <PortalVideoTile
-                              key={v.video_id}
-                              video={v}
-                              onPlay={() => setLightboxSrc(tokenizedSrc(v.storage_path))}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ))}
+                    {byDay.get(day).map((g) => {
+                      const groupKey = `${g.kind}:${g.entity_id}`;
+                      return (
+                        <section key={groupKey}
+                                 className="rounded-2xl p-5"
+                                 style={{ backgroundColor: colors.surface,
+                                          border: `1px solid ${colors.border}` }}
+                                 data-testid={`portal-video-group-${g.entity_id}`}>
+                          <div className="flex items-baseline gap-2 mb-3">
+                            <h3 className="text-base font-bold" style={{ color: colors.onSurface }}>
+                              {g.entity_title}
+                            </h3>
+                            <span className="text-[11px] uppercase tracking-wider font-semibold"
+                                  style={{ color: colors.muted }}>
+                              {g.kind === "estimate" ? "Estimate" : "Job"}
+                              {g.job_scheduled_date ? ` · ${g.job_scheduled_date.slice(0, 10)}` : ""}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {g.videos.map((v, i) => (
+                              <PortalVideoTile
+                                key={v.video_id}
+                                video={v}
+                                onPlay={() => setLightboxIdx(indexFor(groupKey, i))}
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -175,23 +216,17 @@ export default function PortalVideos() {
         })()
       )}
 
-      {lightboxSrc ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
-             style={{ backgroundColor: "rgba(0,0,0,0.9)" }}
-             onClick={() => setLightboxSrc(null)}
-             data-testid="portal-video-lightbox">
-          <button className="absolute top-4 right-4 text-white"
-                  onClick={() => setLightboxSrc(null)}
-                  aria-label="Close">
-            <X size={28} />
-          </button>
-          <video controls autoPlay
-                 src={lightboxSrc}
-                 className="max-h-[85vh] max-w-full rounded-lg"
-                 onClick={(e) => e.stopPropagation()}
-                 data-testid="portal-video-lightbox-player" />
-        </div>
-      ) : null}
+      {/* DTP-2 · Feb-2026 — shared portal Lightbox in place of the
+          pre-DTP-2 inline modal.  ``testidPrefix`` retains the
+          legacy ``portal-video-lightbox`` selectors so downstream
+          tests keep resolving. */}
+      <Lightbox
+        items={orderedVideos}
+        initialIndex={lightboxIdx == null ? 0 : lightboxIdx}
+        open={lightboxIdx !== null}
+        onClose={() => setLightboxIdx(null)}
+        testidPrefix="portal-video-lightbox"
+      />
     </div>
   );
 }

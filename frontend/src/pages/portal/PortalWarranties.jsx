@@ -8,14 +8,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { api } from "@/api";
-
-const c = {
-  border: "#E2E8F0",
-  muted: "#64748B",
-  surface: "#F8FAFC",
-  onSurface: "#0F172A",
-  brand: "#0EA5E9",
-};
+// DTP-2 · Feb-2026 — swap the local warm-slate ``c`` const to the
+// portal-dark palette via the shared theme export.  Names preserved
+// so every downstream ``c.X`` read still resolves.
+import { portalColors as c } from "@/theme";
 
 export default function PortalWarranties() {
   const [state, setState] = useState({ items: [], loading: true, error: "" });

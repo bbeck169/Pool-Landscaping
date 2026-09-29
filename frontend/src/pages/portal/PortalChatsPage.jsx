@@ -10,7 +10,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from "react-router-dom";
 import { MessageSquare, Plus, Send, X, Paperclip, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
-import { colors, gradients } from "@/theme";
+import { portalColors as colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import { ChatAttachmentTile } from "@/components/chat/ChatAttachmentTile";
 

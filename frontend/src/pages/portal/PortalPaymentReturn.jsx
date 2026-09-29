@@ -9,7 +9,7 @@ import React, { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "@/api";
-import { colors } from "@/theme";
+import { portalColors as colors } from "@/theme";
 
 export default function PortalPaymentReturn() {
   const [state, setState] = useState({ status: "loading" });

@@ -530,7 +530,10 @@ function AppLayout() {
 
       {/* Main content */}
       <main
-        className="flex-1 min-w-0 min-h-0 pb-20 md:pb-0"
+        className={
+          "flex-1 min-w-0 min-h-0 pb-20 md:pb-0"
+          + (location.pathname.startsWith("/portal") ? " dark portal-dark" : "")
+        }
         data-testid="app-main"
       >
         {/* Feb-2026 · Mobile Nav Duplicate Fix — Row 1 (this legacy
@@ -716,88 +719,83 @@ function AppLayout() {
             ``<UniversalMenu variant="inline" showSignOut />``.
             The floating variant is now dead code — kept as a
             fallback for defensive reasons; no caller passes the
-            default variant anywhere. */}
+            default variant anywhere.
+            DTP-2 · Feb-2026 — the portal sticky header + breadcrumbs
+            + banner + outlet now render INSIDE a single
+            ``<PortalThemeShell>`` scope so the whole portal chrome
+            (not just the outlet) inherits the ``.dark portal-dark``
+            palette overrides. */}
         {!["admin", "super_admin", "manager", "technician"].includes(
           effectiveRole || user.role
-        ) && (
-          <header
-            className="sticky top-0 z-30 w-full flex items-center justify-end gap-2 h-14 bg-white border-b px-4"
-            data-testid="portal-sticky-header"
-          >
-            <UniversalMenu variant="inline" showSignOut />
-          </header>
-        )}
-
-        {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
-            non-landscaping users. Mount-site gate: admin / super_admin
-            never see it (Feb-2026 follow-up — the bar is pure noise on
-            the admin dashboard). Widget also self-guards, so both
-            layers agree. */}
-        {(effectiveRole || user.role) !== "admin"
-          && (effectiveRole || user.role) !== "super_admin" && (
-          <div className="px-4 md:px-8 pt-4">
-            <LandscapingClockWidget />
-          </div>
-        )}
-
-        {/* Slice P · Breadcrumb navigation — auto-derives from route
-            metadata. Component hides itself on landing/auth pages.
-            Phase K2 · Feb-2026 — replaced the raw Slice-P shell with
-            the shadcn-primitive-backed ``<AppBreadcrumbs>`` and
-            wrapped both the breadcrumbs AND the outlet in
-            ``<DynamicCrumbProvider>`` so pages can register live
-            entity names via ``useSetDynamicCrumb`` and the crumbs
-            re-render with the resolved name. */}
-        <DynamicCrumbProvider>
-          <AppBreadcrumbs
-            variant={location.pathname.startsWith("/portal") ? "portal" : "admin"}
-          />
-
-          {/* Feb-2026 · Slice 2C — customer per-service ToS gate. Wraps
-              the outlet so pending pool + landscaping ToS acceptances
-              block route interaction. Self-gates on role === "customer";
-              no-op for admin / super_admin / technician / manager.
-              Phase P43 · Feb-2026 — the portal wrapper now caps at
-              ``max-w-5xl`` and centers via ``mx-auto`` with ``px-4``
-              gutters + ``w-full``. Top-padding compensation (the
-              P34 ``pt-16`` hack) is GONE — the new sticky
-              ``portal-sticky-header`` above reserves its own h-14
-              (56px) of vertical space naturally. Admin/staff
-              outlet is intentionally untouched — its own layout
-              owns width + spacing. */}
-          <OnboardingGate>
-            <div
-              className={
-                location.pathname.startsWith("/portal")
-                  ? "w-full max-w-5xl mx-auto px-4"
-                  : ""
-              }
-              data-testid={
-                location.pathname.startsWith("/portal")
-                  ? "portal-outlet-wrapper"
-                  : "admin-outlet-wrapper"
-              }
+        ) ? (
+          <PortalThemeShell>
+            <header
+              className="sticky top-0 z-30 w-full flex items-center justify-end gap-2 h-14 bg-white border-b px-4"
+              data-testid="portal-sticky-header"
             >
-              {/* Phase P43 · Feb-2026 — ``PaymentMethodPromptBanner``
-                  sits ABOVE ``<Outlet />``, inside the ``max-w-5xl
-                  mx-auto`` portal container.  Portal-only. */}
-              {location.pathname.startsWith("/portal") ? (
-                <PaymentMethodPromptBanner />
-              ) : null}
-              {/* DTP-1 · Feb-2026 — portal-scoped dark theme scope
-                  wraps only the ``<Outlet />`` sub-tree so pilot
-                  pages inherit the palette.  Sticky header +
-                  breadcrumbs + banner still render outside the shell
-                  (their light-mode chrome is intentional for the
-                  DTP-1 pilot; DTP-2 will extend the scope). */}
-              {location.pathname.startsWith("/portal") ? (
-                <PortalThemeShell><Outlet /></PortalThemeShell>
-              ) : (
-                <Outlet />
-              )}
-            </div>
-          </OnboardingGate>
-        </DynamicCrumbProvider>
+              <UniversalMenu variant="inline" showSignOut />
+            </header>
+            {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
+                non-landscaping users. Mount-site gate: admin / super_admin
+                never see it (Feb-2026 follow-up — the bar is pure noise on
+                the admin dashboard). Widget also self-guards, so both
+                layers agree. */}
+            {(effectiveRole || user.role) !== "admin"
+              && (effectiveRole || user.role) !== "super_admin" && (
+              <div className="px-4 md:px-8 pt-4">
+                <LandscapingClockWidget />
+              </div>
+            )}
+            <DynamicCrumbProvider>
+              <AppBreadcrumbs
+                variant={location.pathname.startsWith("/portal") ? "portal" : "admin"}
+              />
+              <OnboardingGate>
+                <div
+                  className={
+                    location.pathname.startsWith("/portal")
+                      ? "w-full max-w-5xl mx-auto px-4"
+                      : ""
+                  }
+                  data-testid={
+                    location.pathname.startsWith("/portal")
+                      ? "portal-outlet-wrapper"
+                      : "admin-outlet-wrapper"
+                  }
+                >
+                  {location.pathname.startsWith("/portal") ? (
+                    <PaymentMethodPromptBanner />
+                  ) : null}
+                  <Outlet />
+                </div>
+              </OnboardingGate>
+            </DynamicCrumbProvider>
+          </PortalThemeShell>
+        ) : (
+          <>
+            {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
+                non-landscaping users. Mount-site gate: admin / super_admin
+                never see it (Feb-2026 follow-up — the bar is pure noise on
+                the admin dashboard). Widget also self-guards, so both
+                layers agree. */}
+            {(effectiveRole || user.role) !== "admin"
+              && (effectiveRole || user.role) !== "super_admin" && (
+              <div className="px-4 md:px-8 pt-4">
+                <LandscapingClockWidget />
+              </div>
+            )}
+            {/* Slice P · Breadcrumb navigation — auto-derives from route
+                metadata. Component hides itself on landing/auth pages. */}
+            <DynamicCrumbProvider>
+              <AppBreadcrumbs variant="admin" />
+              <OnboardingGate>
+                <div data-testid="admin-outlet-wrapper">
+                  <Outlet />
+                </div>
+              </OnboardingGate>
+            </DynamicCrumbProvider>
+          </>
+        )}
 
         {/* Feb-2026 · Item 10 — Portal tour engine. Self-gates on
             role="customer" + has_seen_customer_tour so it renders

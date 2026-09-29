@@ -8,7 +8,11 @@
 import React, { useState } from "react";
 import { UserPlus, Send, Sparkles, Loader2 } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+// DTP-2 · Feb-2026 — dark portal palette. Inline form-control
+// styles below stay on ``colors.surface`` (dark card surface) so
+// the referral form remains legible inside the portal-scoped
+// gradient hero card.
+import { portalColors as colors } from "@/theme";
 
 const initialForm = {
   friend_name: "",

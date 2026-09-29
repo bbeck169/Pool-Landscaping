@@ -27,7 +27,10 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+import { portalColors as colors } from "@/theme";
+// DTP-2 · Feb-2026 — shared portal Lightbox wired to both photo
+// grids (jobPhotos + visitor photos) below.
+import Lightbox from "@/components/portal/Lightbox";
 // Phase P49 · Feb-2026 — tenant branding lookup for the portal
 // service-report detail header.  ``useTenantBrand`` returns
 // ``{ logo_url, name, ... }`` — ``logo_url`` may be null for tenants
@@ -448,6 +451,9 @@ export function PortalServiceReportDetail() {
   const navigate = useNavigate();
   const [sr, setSr] = useState(null);
   const [err, setErr] = useState("");
+  // DTP-2 · Feb-2026 — shared Lightbox index over the combined
+  // [jobPhotos..., visitorPhotos...] sequence. ``null`` = closed.
+  const [lightboxIdx, setLightboxIdx] = useState(null);
 
   useEffect(() => {
     setSr(null);
@@ -1185,14 +1191,21 @@ export function PortalServiceReportDetail() {
               const src = p.thumb || p.preview || "";
               if (!src) return null;
               return (
-                <img
+                <button
+                  type="button"
                   key={p.id || i}
-                  src={src}
-                  alt={p.caption || `Job photo ${i + 1}`}
-                  className="w-full aspect-square object-cover rounded-lg"
+                  onClick={() => setLightboxIdx(i)}
+                  className="rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-500"
                   style={{ border: `1px solid ${colors.border}` }}
                   data-testid={`service-report-job-photo-${i}`}
-                />
+                  aria-label={p.caption || `Open job photo ${i + 1}`}
+                >
+                  <img
+                    src={src}
+                    alt={p.caption || `Job photo ${i + 1}`}
+                    className="w-full aspect-square object-cover"
+                  />
+                </button>
               );
             })}
           </div>
@@ -1214,19 +1227,56 @@ export function PortalServiceReportDetail() {
                   : p.url || p.data_url || p.data || p.thumb_url || "";
               if (!src) return null;
               return (
-                <img
+                <button
+                  type="button"
                   key={p.id || i}
-                  src={src}
-                  alt={p.label || `Visit photo ${i + 1}`}
-                  className="w-full aspect-square object-cover rounded-lg"
+                  onClick={() => setLightboxIdx(jobPhotos.length + i)}
+                  className="rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-blue-500"
                   style={{ border: `1px solid ${colors.border}` }}
                   data-testid={`portal-service-report-photo-${i}`}
-                />
+                  aria-label={(typeof p !== "string" && p.label) || `Open visit photo ${i + 1}`}
+                >
+                  <img
+                    src={src}
+                    alt={(typeof p !== "string" && p.label) || `Visit photo ${i + 1}`}
+                    className="w-full aspect-square object-cover"
+                  />
+                </button>
               );
             })}
           </div>
         </Section>
       ) : null}
+
+      {/* DTP-2 · Feb-2026 — shared Lightbox for both photo grids.
+          Combined items array in the order [jobPhotos..., visitorPhotos...] so
+          a single ``lightboxIdx`` addresses either. */}
+      <Lightbox
+        items={[
+          ...jobPhotos
+            .map((p, i) => {
+              const src = p.thumb || p.preview || "";
+              if (!src) return null;
+              return { url: src, kind: "image", title: p.caption || `Job photo ${i + 1}` };
+            })
+            .filter(Boolean),
+          ...photos
+            .map((p, i) => {
+              const src = typeof p === "string" ? p
+                : p.url || p.data_url || p.data || p.thumb_url || "";
+              if (!src) return null;
+              return {
+                url: src, kind: "image",
+                title: (typeof p !== "string" && p.label) || `Visit photo ${i + 1}`,
+              };
+            })
+            .filter(Boolean),
+        ]}
+        initialIndex={lightboxIdx == null ? 0 : lightboxIdx}
+        open={lightboxIdx !== null}
+        onClose={() => setLightboxIdx(null)}
+        testidPrefix="portal-service-reports-lightbox"
+      />
 
       {/*
         Feb-2026 · Portal visit videos. Rendered whenever the redacted

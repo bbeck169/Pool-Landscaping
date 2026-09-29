@@ -28,15 +28,22 @@ vi.mock("react-router-dom", () => ({
   useParams: () => ({ id: "sr-1" }),
 }));
 
-vi.mock("@/theme", () => ({
-  colors: {
+vi.mock("@/theme", () => {
+  // DTP-2 · Feb-2026 — expose portalColors + portalGradients so
+  // pages migrated in the sweep resolve their imports.
+  const base = {
     brand: "#0B4A6F", onBrand: "#FFFFFF", onSurface: "#111827",
     onSurfaceSecondary: "#6B7280", muted: "#6B7280", border: "#E5E7EB",
     divider: "#E5E7EB", surface: "#FFFFFF", surfaceSecondary: "#F8FAFC",
     success: "#059669",
-  },
-  money: (n) => `$${Number(n || 0).toFixed(2)}`,
-}));
+  };
+  return {
+    colors: base,
+    portalColors: base,
+    portalGradients: { navyToBlue: { css: "linear-gradient(#000,#111)" } },
+    money: (n) => `$${Number(n || 0).toFixed(2)}`,
+  };
+});
 
 import {
   PortalServiceReports,

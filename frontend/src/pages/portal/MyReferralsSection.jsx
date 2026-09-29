@@ -8,7 +8,8 @@
 import React, { useEffect, useState } from "react";
 import { Sparkles, Users, DollarSign } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+// DTP-2 · Feb-2026 — dark portal palette.
+import { portalColors as colors } from "@/theme";
 
 const STATUS_TONE = {
   new: { bg: "#DBEAFE", fg: "#1E3A8A", label: "Sent" },

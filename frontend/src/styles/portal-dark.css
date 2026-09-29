@@ -45,15 +45,44 @@
   --ring: 217 91% 60%;
 }
 
-/* ── Tailwind atomic overrides — pilot surfaces only ──────────
- * Keep the list tight; add more in DTP-2 as portal pages migrate. */
+/* ── Tailwind atomic overrides — pilot + DTP-2 surfaces ───────
+ * Keep the list scoped to atomics that appear on migrated portal
+ * pages; add more as DTP-N sweeps expand.
+ * DTP-2 · Feb-2026 — extended list covers PortalReferralsPage +
+ * PortalWalkthrough tooltip + PortalVideos/Videos-page chrome. */
 .portal-dark .bg-white          { background-color: #0a0940 !important; }
 .portal-dark .bg-slate-50       { background-color: #0a0940 !important; }
 .portal-dark .bg-slate-100      { background-color: #141355 !important; }
+.portal-dark .bg-gray-50        { background-color: #0a0940 !important; }
+.portal-dark .bg-gray-100       { background-color: #141355 !important; }
+.portal-dark .bg-zinc-50        { background-color: #0a0940 !important; }
+.portal-dark .bg-zinc-100       { background-color: #141355 !important; }
+.portal-dark .bg-zinc-200       { background-color: #1E293B !important; }
+.portal-dark .hover\:bg-zinc-50:hover  { background-color: #141355 !important; }
+.portal-dark .hover\:bg-zinc-100:hover { background-color: #1E293B !important; }
+.portal-dark .text-slate-400    { color: #64748B !important; }
 .portal-dark .text-slate-500    { color: #94A3B8 !important; }
 .portal-dark .text-slate-600    { color: #94A3B8 !important; }
 .portal-dark .text-slate-700    { color: #CBD5E1 !important; }
 .portal-dark .text-slate-800    { color: #E2E8F0 !important; }
 .portal-dark .text-slate-900    { color: #F1F5F9 !important; }
+.portal-dark .text-gray-400     { color: #64748B !important; }
+.portal-dark .text-gray-500     { color: #94A3B8 !important; }
+.portal-dark .text-gray-600     { color: #94A3B8 !important; }
+.portal-dark .text-gray-700     { color: #CBD5E1 !important; }
+.portal-dark .text-gray-800     { color: #E2E8F0 !important; }
+.portal-dark .text-gray-900     { color: #F1F5F9 !important; }
+.portal-dark .text-zinc-400     { color: #64748B !important; }
+.portal-dark .text-zinc-500     { color: #94A3B8 !important; }
+.portal-dark .text-zinc-600     { color: #94A3B8 !important; }
+.portal-dark .text-zinc-700     { color: #CBD5E1 !important; }
+.portal-dark .text-zinc-800     { color: #E2E8F0 !important; }
+.portal-dark .text-zinc-900     { color: #F1F5F9 !important; }
 .portal-dark .border-slate-200  { border-color: #1E293B !important; }
+.portal-dark .border-slate-300  { border-color: #334155 !important; }
+.portal-dark .border-zinc-100   { border-color: #1E293B !important; }
+.portal-dark .border-zinc-200   { border-color: #1E293B !important; }
+.portal-dark .border-zinc-300   { border-color: #334155 !important; }
+.portal-dark .border-gray-200   { border-color: #1E293B !important; }
 .portal-dark .divide-slate-200 > * + *  { border-color: #1E293B !important; }
+.portal-dark .divide-zinc-200  > * + *  { border-color: #1E293B !important; }

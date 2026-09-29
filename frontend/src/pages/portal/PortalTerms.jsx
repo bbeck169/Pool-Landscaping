@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { useSearchParams } from "react-router-dom";
 import { Check, CheckCircle2, Printer, FileText } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
+import { portalColors as colors } from "@/theme";
 
 // Feb 2026 · Two service lines → two ToS docs. ``pool`` is the
 // backward-compat default (URL param absent → pool). ``service``
