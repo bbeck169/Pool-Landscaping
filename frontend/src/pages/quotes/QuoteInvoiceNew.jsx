@@ -16,7 +16,18 @@ import CategoryPicker, {
 // ``/quotes/new`` and ``/invoices/new`` had its own inline editor
 // still using ``<input list="items-datalist">``; this import closes
 // that gap on both estimate and invoice create paths.
-import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
+// Phase PRICEBOOK-UNIFY · Feb-2026 — MasterServiceCombobox import
+// removed (was the master-services catalog picker). The line-
+// item search now runs through the shared ``PricebookItemPicker``
+// component so every admin surface (Estimator, K71, this page)
+// hits the same ``/api/items`` endpoint. Retaining
+// ``_loadServiceCats`` from CategoryPicker below since we still
+// need it for service_category_id resolution on pick.
+// Phase PRICEBOOK-UNIFY · Feb-2026 — shared standalone pricebook
+// picker. Replaces the ``MasterServiceCombobox`` on quote /
+// invoice line items so all admin surfaces search the same
+// pricebook catalog.
+import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 
 /** Combined New form for both quotes and invoices — same data model, different `doc_type`. */
 export default function QuoteInvoiceNew({ docType = "quote" }) {
@@ -316,50 +327,58 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                           saves the raw string — backward-compatible
                           with legacy pricebook items that never
                           lived in ``services``. */}
-                      <MasterServiceCombobox
+                      {/* Phase PRICEBOOK-UNIFY · Feb-2026 —
+                          swapped the master-services catalog
+                          picker (`MasterServiceCombobox`) for the
+                          shared ``PricebookItemPicker`` so quotes
+                          / invoices search the SAME pricebook
+                          catalog as Estimator + K71. On pick we
+                          auto-fill ``description`` +
+                          ``unit_price``; category / service-
+                          category-id resolution downstream still
+                          runs identically (rehydrated below). */}
+                      <PricebookItemPicker
                         value={li.description}
-                        defaultPriceHint={
-                          Number(li.unit_price) > 0 ? Number(li.unit_price) : null
-                        }
-                        onChange={({ name, default_price, category }) => {
-                          // Functional setState — target ONLY this
-                          // row by index so no stale-prop bleed
-                          // spills onto siblings when React batches
-                          // multiple picks in the same tick.
+                        onChange={(text) => setLine(i, "description", text)}
+                        onSelect={(item) => {
                           setForm((f) => ({
                             ...f,
                             line_items: f.line_items.map((x, idx) => {
                               if (idx !== i) return x;
-                              const next = { ...x, description: name };
-                              if (Number.isFinite(default_price)
-                                  && default_price != null) {
-                                next.unit_price = default_price;
-                                next._pricebook_unit_price
-                                  = Number(default_price);
+                              const next = { ...x };
+                              next.description = item.name
+                                                    || item.description
+                                                    || x.description;
+                              const raw = Number(item.unit_price);
+                              if (Number.isFinite(raw)) {
+                                next.unit_price = raw;
+                                next._pricebook_unit_price = raw;
                               }
-                              if (category) {
-                                // The create payload ships
-                                // ``category`` (name) to the
-                                // backend; K71 stores
-                                // ``service_category_id``.  Stamp
-                                // BOTH so subsequent phases that
-                                // switch this page to the K71
-                                // wire shape don't regress.
-                                next.category = category;
+                              // Preserve K71-parity: propagate the
+                              // pricebook item's ``category`` label
+                              // + its id for downstream refs.
+                              if (item.category) next.category = item.category;
+                              if (item.id) {
+                                next.item_id = item.id;
+                                next.pricebook_item_id = item.id;
+                              }
+                              if (item.service_category_id) {
+                                next.service_category_id = item.service_category_id;
                               }
                               return next;
                             }),
                           }));
-                          // Async — resolve the picked category
-                          // NAME to a service_category_id via the
-                          // shared ``service_categories`` cache
-                          // used by CategoryPicker.  Same pattern
-                          // as K71.
-                          if (category) {
+                          // Resolve service-category NAME → id via
+                          // the same cache the legacy picker used
+                          // — keeps every downstream K71-parity
+                          // read path working.
+                          const cat = item.category
+                                       || item.service_category_name;
+                          if (cat && !item.service_category_id) {
                             _loadServiceCats("service").then((cats) => {
                               const match = (cats || []).find(
                                 (c) => String(c.name || "").toLowerCase()
-                                  === String(category).toLowerCase(),
+                                  === String(cat).toLowerCase(),
                               );
                               if (!match?.id) return;
                               setForm((f) => ({
@@ -373,8 +392,9 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                             });
                           }
                         }}
-                        placeholder="Search or add a service…"
-                        testid={`qf-line-${i}-desc`}
+                        placeholder="Search pricebook or type a one-off name…"
+                        testidPrefix={`qf-line-${i}-picker`}
+                        inputTestid={`qf-line-${i}-desc-input`}
                       />
                     </div>
                     <div className="col-span-4 md:col-span-2">

@@ -17,6 +17,10 @@ import MediaUploader from "@/components/media/MediaUploader";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
+// Phase PRICEBOOK-UNIFY · Feb-2026 — shared standalone pricebook
+// picker. Replaces the manual ``description`` input on every
+// line-item row and auto-fills ``unit_price`` on pick.
+import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 import { useAuth } from "@/auth";
 
 // ────── Estimates list ──────
@@ -368,10 +372,27 @@ export function EstimatorEditor() {
     }).catch(() => {});
     if (!isNew) {
       api.get(`/estimates/${id}`).then((d) => {
+        // Phase PRICEBOOK-UNIFY · Feb-2026 — the backend
+        // ``EstimateLineIn`` schema stores dollars under
+        // ``unit_cost`` (see backend/models.py). Historically the
+        // UI has read/written ``unit_price``. Normalize on load so
+        // any legacy row that persisted a valid ``unit_cost``
+        // hydrates the UI's ``unit_price`` field; rows that also
+        // happen to carry a stray ``unit_price`` (older FE
+        // payloads before the bug was diagnosed) still win when
+        // truthy.
+        const hydratedItems = (d.line_items || []).map((li) => {
+          const upFromUI = Number(li.unit_price);
+          const upFromDB = Number(li.unit_cost);
+          const chosen = (Number.isFinite(upFromUI) && upFromUI > 0)
+            ? upFromUI
+            : (Number.isFinite(upFromDB) ? upFromDB : 0);
+          return { ...li, unit_price: chosen };
+        });
         setForm({
           customer_id: d.customer_id || "",
           title: d.title || "Estimate",
-          line_items: d.line_items || [],
+          line_items: hydratedItems,
           tax_rate: d.tax_rate || 0,
           notes: d.notes || "",
           terms: d.terms || "",
@@ -394,7 +415,32 @@ export function EstimatorEditor() {
   const save = async () => {
     setBusy(true);
     try {
-      const payload = { ...form, tax_rate: Number(form.tax_rate) || 0 };
+      // Phase PRICEBOOK-UNIFY · Feb-2026 — root-cause fix for the
+      // $0 save bug. The FE historically wrote ``unit_price`` to
+      // each line item; the backend's ``EstimateLineIn`` schema
+      // (backend/models.py) defines ``unit_cost`` and Pydantic 2
+      // silently drops unknown keys, so the ``unit_price`` field
+      // vanished on the server side and every stored line was
+      // priced at 0. We keep ``unit_price`` on the UI-facing
+      // shape for backwards-compat with existing consumers, then
+      // shim to ``unit_cost`` at the network boundary.
+      const shimmedLineItems = (form.line_items || []).map((li) => {
+        const dollars = Number(li.unit_price);
+        return {
+          ...li,
+          unit_cost: Number.isFinite(dollars) ? dollars : 0,
+          // Keep ``unit_price`` on the wire too — the write shape
+          // is forgiving (Pydantic ignores unknown keys) and any
+          // downstream reader that still reads ``unit_price``
+          // continues to work until we complete the rename.
+          unit_price: Number.isFinite(dollars) ? dollars : 0,
+        };
+      });
+      const payload = {
+        ...form,
+        line_items: shimmedLineItems,
+        tax_rate: Number(form.tax_rate) || 0,
+      };
       const saved = isNew ? await api.post("/estimates", payload) : await api.put(`/estimates/${id}`, payload);
       setToast({ tone: "success", message: "Saved" });
       if (isNew) setTimeout(() => navigate(`/estimator/${saved.id}`), 400);
@@ -433,14 +479,48 @@ export function EstimatorEditor() {
 
         <div className="text-xs font-semibold tracking-wide mt-2" style={{ color: colors.onSurfaceSecondary }}>LINE ITEMS</div>
         {form.line_items.map((li, i) => (
-          <div key={i} className="grid grid-cols-12 gap-2">
-            <input value={li.description} onChange={(e) => setLine(i, "description", e.target.value)} placeholder="Description"
-              className="col-span-6 px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }} />
+          <div key={i} className="grid grid-cols-12 gap-2" data-testid={`est-line-${i}`}>
+            {/* Phase PRICEBOOK-UNIFY · Feb-2026 — picker replaces
+                 the raw ``description`` input. Pick auto-fills
+                 ``unit_price`` from the item's ``unit_price``
+                 field. Free-typing still saves the raw string
+                 (one-off items). */}
+            <div className="col-span-6">
+              <PricebookItemPicker
+                value={li.description}
+                onChange={(text) => setLine(i, "description", text)}
+                onSelect={(item) => {
+                  setForm((f) => ({
+                    ...f,
+                    line_items: f.line_items.map((row, idx) => {
+                      if (idx !== i) return row;
+                      const nextDesc = item.name
+                                        || item.description
+                                        || row.description;
+                      const raw = Number(item.unit_price);
+                      const nextPrice = Number.isFinite(raw) ? raw : row.unit_price;
+                      return {
+                        ...row,
+                        description: nextDesc,
+                        unit_price: nextPrice,
+                        item_id: item.id || row.item_id,
+                      };
+                    }),
+                  }));
+                }}
+                placeholder="Search pricebook or type a one-off name…"
+                testidPrefix={`est-line-${i}-picker`}
+                inputTestid={`est-line-${i}-description`}
+              />
+            </div>
             <input type="number" step="0.01" value={li.quantity} onChange={(e) => setLine(i, "quantity", e.target.value)} placeholder="Qty"
-              className="col-span-2 px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }} />
+              className="col-span-2 px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+              data-testid={`est-line-${i}-quantity`} />
             <input type="number" step="0.01" value={li.unit_price} onChange={(e) => setLine(i, "unit_price", e.target.value)} placeholder="Unit $"
-              className="col-span-3 px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }} />
-            <button onClick={() => remove(i)} className="col-span-1 pt-2 opacity-70 hover:opacity-100" style={{ color: colors.error }}>×</button>
+              className="col-span-3 px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+              data-testid={`est-line-${i}-unit-price`} />
+            <button onClick={() => remove(i)} className="col-span-1 pt-2 opacity-70 hover:opacity-100" style={{ color: colors.error }}
+              data-testid={`est-line-${i}-remove`}>×</button>
           </div>
         ))}
         <Button variant="ghost" onClick={addLine}><Plus size={14} /> Add line</Button>
