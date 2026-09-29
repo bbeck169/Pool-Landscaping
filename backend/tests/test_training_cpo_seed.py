@@ -14,11 +14,12 @@ the guardrails that:
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests._asyncio_loop_isolation import make_isolated_loop
 
 
 # Make `backend.seed.training_cpo` importable without requiring a full
@@ -32,12 +33,19 @@ if str(BACKEND_ROOT) not in sys.path:
 from training_seed import training_cpo as tcpo  # noqa: E402
 
 
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop so
+# cross-module ``asyncio.get_event_loop()`` poisoning from unrelated
+# tests cannot break this dry-run seed under ``pytest -k``.  The
+# seed itself doesn't touch Motor (dry_run=True), so we don't need
+# the ``bind_config_db`` fixture.
+_LOOP, _run = make_isolated_loop()
+
+
 @pytest.fixture(scope="module")
 def summary():
     """Run the seed in dry_run mode. Uses asyncio because the function is
     async in order to share signature with the commit path."""
-    return asyncio.get_event_loop().run_until_complete(tcpo.seed_cpo_module(dry_run=True)) \
-        if sys.version_info < (3, 10) else asyncio.run(tcpo.seed_cpo_module(dry_run=True))
+    return _run(tcpo.seed_cpo_module(dry_run=True))
 
 
 @pytest.fixture(scope="module")

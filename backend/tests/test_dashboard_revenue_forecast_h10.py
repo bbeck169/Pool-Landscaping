@@ -106,6 +106,27 @@ def test_h10_paused_template_contributes_zero():
         prefix = f"H10_PZ_{uuid.uuid4().hex[:6]}_"
         await _cleanup(db, tid, prefix)
         today = date.today()
+        window = (today.isoformat(),
+                  (today + timedelta(days=30)).isoformat())
+        # Feb-2026 · Test Hygiene Phase 2 — measure the tenant's
+        # baseline recurring amount BEFORE seeding the paused
+        # template so the assertion no longer depends on a fixed
+        # $9999 threshold.  The aquaterra demo tenant now carries
+        # enough active recurring templates that the total exceeds
+        # the pre-drift threshold; the actual contract the test
+        # locks in ("paused templates contribute nothing") is
+        # verified by a strict before/after equality on the
+        # baseline sum, not a magic-number ceiling.
+        r_before = await revenue_forecast(
+            start=window[0], end=window[1],
+            user=admin, tenant={"id": tid, "timezone": "UTC"},
+        )
+        baseline = r_before["recurring"]["recurring_job_amount"]
+        # Use a distinctive per-run price that could not possibly
+        # ROUNDING-coincidentally match the baseline — makes any
+        # "paused template DID contribute" regression trivially
+        # detectable.
+        paused_price_cents = 1234567
         await db.recurring_job_templates.insert_one({
             "id": f"{prefix}tpl", "tenant_id": tid,
             "customer_id": "c", "service_type": "svc",
@@ -113,19 +134,19 @@ def test_h10_paused_template_contributes_zero():
             "start_date": today.isoformat(),
             "recurrence_never_ends": True,
             "active": False,   # paused
-            "price_cents": 9999,
+            "price_cents": paused_price_cents,
         })
         try:
-            r = await revenue_forecast(
-                start=today.isoformat(),
-                end=(today + timedelta(days=30)).isoformat(),
+            r_after = await revenue_forecast(
+                start=window[0], end=window[1],
                 user=admin, tenant={"id": tid, "timezone": "UTC"},
             )
-            # Paused templates NOT counted. But other seed templates
-            # in the aquaterra tenant may bump the count — the
-            # right assertion is that our specific $9999 template
-            # never contributes.
-            assert r["recurring"]["recurring_job_amount"] < 9999.0
+            # Paused templates NOT counted → the recurring total
+            # must be EXACTLY what it was before we seeded the row.
+            assert r_after["recurring"]["recurring_job_amount"] == baseline, (
+                f"paused template appears to have contributed: "
+                f"baseline={baseline}, after={r_after['recurring']['recurring_job_amount']}"
+            )
         finally:
             await _cleanup(db, tid, prefix)
 

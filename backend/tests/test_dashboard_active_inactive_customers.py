@@ -33,9 +33,11 @@ import os
 import uuid
 from pathlib import Path
 
+import pytest
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from tests._asyncio_loop_isolation import make_isolated_loop, bind_config_db
 from tests._shared_mongo import (
     shared_client as _shared_client,
     shared_db as _shared_db,
@@ -47,7 +49,33 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 API = "http://localhost:8001/api"
 _sync = _shared_client()
 _db = _shared_db()
+
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop + Motor
+# rebind for the migration-idempotency test.  Prior to this fix,
+# running under ``pytest -k dashboard`` after another module had
+# already touched the process default loop caused
+# ``test_migration_idempotent`` to fail with a "loop is closed"
+# error inside the migration's ``db.migrations.find_one`` call
+# because ``services.migrations.customers_dashboard_active_inactive_idx``
+# captures ``db`` at module import time.  Rebinding the module's
+# ``db`` attribute — plus running the migration on a fresh loop —
+# unpins it.
+_LOOP, _run_isolated = make_isolated_loop()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_isolated_db():
+    yield from bind_config_db(_LOOP, extra_modules=[
+        "services.migrations.customers_dashboard_active_inactive_idx",
+    ])
+
+
 def _loop_run(coro):
+    """Legacy helper for tests that don't care about loop hygiene —
+    kept because most of this file's tests are HTTP-driven and don't
+    touch Motor at all.  ``test_migration_idempotent`` uses
+    ``_run_isolated`` instead so the migration runs on the loop that
+    ``config.db`` is currently bound to."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
@@ -137,9 +165,9 @@ def test_migration_idempotent():
     from services.migrations.customers_dashboard_active_inactive_idx import (
         run_customers_dashboard_active_inactive_idx_migration,
     )
-    r1 = _loop_run(run_customers_dashboard_active_inactive_idx_migration(force=True))
+    r1 = _run_isolated(run_customers_dashboard_active_inactive_idx_migration(force=True))
     assert r1["status"] == "ok"
-    r2 = _loop_run(run_customers_dashboard_active_inactive_idx_migration(force=True))
+    r2 = _run_isolated(run_customers_dashboard_active_inactive_idx_migration(force=True))
     assert r2["status"] == "ok"
     hits = [
         i for i in _db.customers.list_indexes()

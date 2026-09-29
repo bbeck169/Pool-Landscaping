@@ -15,15 +15,19 @@ Locks the idempotency + preservation contract for
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-# ``_run`` mirrors the loop routing used by every other backend
-# test in this repo — one shared event loop per file, no
-# ``asyncio.run(...)`` per-test.
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+from tests._asyncio_loop_isolation import make_isolated_loop, bind_config_db
+
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop + Motor
+# rebind so cross-module ``asyncio.get_event_loop()`` poisoning
+# from unrelated tests cannot break this seed under ``pytest -k``.
+_LOOP, _run = make_isolated_loop()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_isolated_db():
+    yield from bind_config_db(_LOOP)
 
 
 @pytest.fixture(autouse=True)

@@ -11,20 +11,29 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from config import db
+from tests._asyncio_loop_isolation import make_isolated_loop, bind_config_db
 from routers import legal as legal_router
 
 
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop + Motor
+# rebind so cross-module ``asyncio.get_event_loop()`` poisoning
+# from unrelated tests cannot break this seed under ``pytest -k``.
+# All ``db`` references are pulled inside each test via
+# ``from config import db`` so they resolve against the freshly
+# rebound Motor handle bound to ``_LOOP``.
+_LOOP, _run = make_isolated_loop()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_isolated_db():
+    yield from bind_config_db(_LOOP)
 
 
 @pytest.fixture(autouse=True)
 def _clean_legal_docs():
+    from config import db
     async def _clear():
         await db.legal_documents.delete_many({
             "slug": {"$in": [
@@ -39,6 +48,7 @@ def _clean_legal_docs():
 
 class TestEnsureSeededBothDocs:
     def test_both_documents_are_seeded_on_a_clean_db(self):
+        from config import db
         async def go():
             await legal_router.ensure_seeded()
             pool = await db.legal_documents.find_one(
@@ -54,6 +64,7 @@ class TestEnsureSeededBothDocs:
         _run(go())
 
     def test_pool_title_relabel_no_longer_uses_maintenance_word(self):
+        from config import db
         async def go():
             await legal_router.ensure_seeded()
             pool = await db.legal_documents.find_one(
@@ -66,6 +77,7 @@ class TestEnsureSeededBothDocs:
         _run(go())
 
     def test_pool_markdown_contains_pool_drain_paragraph(self):
+        from config import db
         async def go():
             await legal_router.ensure_seeded()
             pool = await db.legal_documents.find_one(
@@ -85,6 +97,7 @@ class TestEnsureSeededBothDocs:
         _run(go())
 
     def test_landscaping_markdown_carries_verbatim_customer_copy(self):
+        from config import db
         async def go():
             await legal_router.ensure_seeded()
             land = await db.legal_documents.find_one(
@@ -104,6 +117,7 @@ class TestEnsureSeededBothDocs:
 
 class TestEnsureSeededIdempotency:
     def test_second_run_is_a_no_op(self):
+        from config import db
         async def go():
             await legal_router.ensure_seeded()
             first_pool = await db.legal_documents.find_one(
@@ -126,6 +140,7 @@ class TestEnsureSeededIdempotency:
         _run(go())
 
     def test_version_bump_upgrades_existing_row_in_place(self):
+        from config import db
         async def go():
             # Simulate legacy v1 pool doc without the Pool Drain
             # paragraph (matches the pre-Feb-2026 state).

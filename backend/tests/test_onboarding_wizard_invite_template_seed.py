@@ -2,13 +2,19 @@
 ``onboarding_wizard_invite_email``."""
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
+from tests._asyncio_loop_isolation import make_isolated_loop, bind_config_db
 
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop + Motor
+# rebind so cross-module ``asyncio.get_event_loop()`` poisoning
+# from unrelated tests cannot break this seed under ``pytest -k``.
+_LOOP, _run = make_isolated_loop()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _bind_isolated_db():
+    yield from bind_config_db(_LOOP)
 
 
 @pytest.fixture(autouse=True)

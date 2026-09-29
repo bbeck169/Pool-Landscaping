@@ -32,10 +32,19 @@ loop concerns; runs cleanly in any pytest ordering.
 """
 from __future__ import annotations
 
-import asyncio
 import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+from tests._asyncio_loop_isolation import make_isolated_loop
+
+# Feb-2026 · Test Hygiene Phase 2 — isolated event loop so
+# cross-module ``asyncio.get_event_loop()`` poisoning from unrelated
+# tests cannot break this seed under ``pytest -k``.  This module
+# only uses MagicMock DBs, so we don't need the ``bind_config_db``
+# fixture — the ``_run`` helper here just drives coroutines against
+# the isolated loop.
+_LOOP, _run = make_isolated_loop()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -181,7 +190,7 @@ def test_marco_migration_short_circuits_when_sentinel_exists():
         tenants=tenants,
     )
 
-    res = asyncio.get_event_loop().run_until_complete(run(db))
+    res = _run(run(db))
     assert res == {
         "ok": True, "skipped": True, "reason": "already_ran",
     }
@@ -251,7 +260,7 @@ def test_marco_migration_backfills_orchestrator_on_legacy_rows(
         _fake_seed,
     )
 
-    res = asyncio.get_event_loop().run_until_complete(mig.run(db))
+    res = _run(mig.run(db))
 
     assert res["ok"] is True
     assert res["skipped"] is False
@@ -310,7 +319,7 @@ def test_marco_migration_repairs_legacy_marco_orchestrator_false(
         _fake_seed,
     )
 
-    res = asyncio.get_event_loop().run_until_complete(mig.run(db))
+    res = _run(mig.run(db))
 
     assert res["marco_orchestrator_repaired"] == 2
 
@@ -368,10 +377,10 @@ def test_seed_ai_employees_for_tenant_idempotent_for_marco():
     original_db = mod.db
     mod.db = fake_db
     try:
-        n1 = asyncio.get_event_loop().run_until_complete(
+        n1 = _run(
             mod.seed_ai_employees_for_tenant("t-idem-1"),
         )
-        n2 = asyncio.get_event_loop().run_until_complete(
+        n2 = _run(
             mod.seed_ai_employees_for_tenant("t-idem-1"),
         )
     finally:
