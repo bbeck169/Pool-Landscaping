@@ -34,13 +34,22 @@ import {
   MarcoError,
   type MarcoScreen,
 } from "@/src/services/marco/executeMarco";
+import { getVoiceResponseEnabled } from "@/src/services/marco/voicePreferences";
 import { colors, radius, font, fontSize } from "@/src/theme";
+
+/* ── TTS (expo-speech) — dynamic import for Expo Go safety ─────── */
+let _Speech: typeof import("expo-speech") | null = null;
+try {
+  _Speech = require("expo-speech");
+} catch {
+  _Speech = null;
+}
 
 /* ── constants ─────────────────────────────────────────────────── */
 const MAX_DURATION_S = 60;
 const COUNTDOWN_START_S = 45;
 
-type Phase = "idle" | "recording" | "processing";
+type Phase = "idle" | "recording" | "processing" | "speaking";
 
 /* ── component ─────────────────────────────────────────────────── */
 export default function MarcoVoiceButton({
@@ -120,8 +129,16 @@ export default function MarcoVoiceButton({
     }
   }, []);
 
+  /* ── cancel any in-progress TTS ───────────────────────────────── */
+  const cancelTTS = useCallback(() => {
+    try { _Speech?.stop?.(); } catch { /* swallow */ }
+    if (phase === "speaking") setPhase("idle");
+  }, [phase]);
+
   /* ── start recording ─────────────────────────────────────────── */
   const handleStartRecording = useCallback(async () => {
+    // Cancel TTS if it's speaking
+    cancelTTS();
     const ok = await ensureMicPermission();
     if (!ok) return;
     try {
@@ -130,7 +147,7 @@ export default function MarcoVoiceButton({
     } catch {
       showToast("Could not start recording.", "error");
     }
-  }, [ensureMicPermission, recorder, showToast]);
+  }, [ensureMicPermission, recorder, showToast, cancelTTS]);
 
   /* ── stop + submit pipeline ──────────────────────────────────── */
   const handleStopAndSubmit = useCallback(async () => {
@@ -162,6 +179,24 @@ export default function MarcoVoiceButton({
       } else {
         showToast(`MARCO couldn't do that. ${result.message}`, "error", 5000);
       }
+
+      // Step 3: TTS — speak the response if enabled
+      const speakText = result.speak || result.message;
+      if (speakText && _Speech) {
+        const ttsEnabled = await getVoiceResponseEnabled();
+        if (ttsEnabled) {
+          setPhase("speaking");
+          _Speech.speak(speakText, {
+            rate: 0.95,
+            pitch: 1.0,
+            language: "en-US",
+            onDone: () => setPhase("idle"),
+            onError: () => setPhase("idle"),
+            onStopped: () => setPhase("idle"),
+          });
+          return; // Don't set idle here — TTS callbacks handle it
+        }
+      }
     } catch (e: any) {
       if (e instanceof MarcoError) {
         showToast(e.message, "error", 5000);
@@ -169,14 +204,16 @@ export default function MarcoVoiceButton({
         showToast("MARCO connection issue. Try again.", "error", 5000);
       }
     } finally {
-      setPhase("idle");
+      // Only go idle if we're not in speaking phase
+      setPhase((prev) => (prev === "speaking" ? prev : "idle"));
     }
   }, [phase, recorder, screen, entityId, showToast]);
 
   /* ── tap handler ─────────────────────────────────────────────── */
   const handlePress = useCallback(() => {
     if (!entityId) return;
-    if (phase === "idle") {
+    if (phase === "idle" || phase === "speaking") {
+      // Cancel TTS if speaking, then start recording
       handleStartRecording();
     } else if (phase === "recording") {
       handleStopAndSubmit();
@@ -199,11 +236,18 @@ export default function MarcoVoiceButton({
           <Text style={styles.countdownText}>{remaining}s</Text>
         </View>
       )}
+      {phase === "speaking" && (
+        <View style={styles.speakingBadge} testID="marco-speaking-badge">
+          <Ionicons name="volume-high" size={10} color="#fff" />
+          <Text style={styles.speakingText}>Speaking…</Text>
+        </View>
+      )}
       <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
         <Pressable
           style={[
             styles.fab,
             phase === "recording" && styles.fabRecording,
+            phase === "speaking" && styles.fabSpeaking,
             disabled && styles.fabDisabled,
           ]}
           onPress={handlePress}
@@ -215,12 +259,16 @@ export default function MarcoVoiceButton({
               ? "MARCO voice command"
               : phase === "recording"
                 ? "Stop recording"
-                : "Processing voice command"
+                : phase === "speaking"
+                  ? "MARCO is speaking — tap to interrupt"
+                  : "Processing voice command"
           }
           accessibilityRole="button"
         >
           {phase === "processing" ? (
             <ActivityIndicator size="small" color="#fff" testID="marco-spinner" />
+          ) : phase === "speaking" ? (
+            <Ionicons name="volume-high" size={26} color="#fff" testID="marco-speaking-icon" />
           ) : (
             <Ionicons
               name={phase === "recording" ? "stop" : "mic"}
@@ -276,6 +324,35 @@ const styles = StyleSheet.create({
   },
   fabDisabled: {
     opacity: 0.45,
+  },
+  fabSpeaking: {
+    backgroundColor: "#0D9488",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#0D9488",
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
+      },
+      android: { elevation: 7 },
+      default: {},
+    }),
+  },
+  speakingBadge: {
+    position: "absolute",
+    top: -24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(13,148,136,0.85)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    marginBottom: 4,
+  },
+  speakingText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#fff",
   },
   countdownBadge: {
     position: "absolute",

@@ -15,6 +15,8 @@ import { ManualSyncButton } from "@/src/components/sync/ManualSyncButton";
 import { getDiagnostics, formatDiagnostics, clearDiagnostics } from "@/src/utils/diagnostics";
 // FLEET-B · Fleet pause toggle for technicians.
 import FleetPauseToggle from "@/src/components/fleet/FleetPauseToggle";
+// TB-1 · MARCO voice preferences (TTS + wake-word toggles).
+import MarcoVoiceSettings from "@/src/components/marco/MarcoVoiceSettings";
 // Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
@@ -232,6 +234,14 @@ export default function More() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Fleet Tracking</Text>
             <FleetPauseToggle />
+          </View>
+        )}
+
+        {/* TB-1 · MARCO voice settings — TTS + wake-word toggles */}
+        {isTech && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>MARCO Voice</Text>
+            <MarcoVoiceSettings />
           </View>
         )}
 
