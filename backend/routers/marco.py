@@ -8,7 +8,12 @@ Body:  ``MarcoExecuteBody``
      "entity_id": Optional[str]}
 Response (200):
     {"action": str, "ok": bool, "code": Optional[str],
-     "message": str, "meta": dict, "raw_llm": str}
+     "message": str, "speak": str, "meta": dict, "raw_llm": str}
+
+The ``speak`` field contains a short TTS-friendly summary of the
+action taken (or the error). Mobile clients use it with on-device
+text-to-speech. It defaults to ``message`` when not explicitly set
+by an action handler.
 
 Design
 ──────
@@ -55,34 +60,37 @@ async def execute(
     )
     # ── parser error surface ─────────────────────────────────────
     if parsed.get("error"):
+        msg = "Couldn't parse that command."
         return {
             "action": None,
             "ok": False,
             "code": parsed["error"],
-            "message": "Couldn't parse that command.",
+            "message": msg,
+            "speak": msg,
             "meta": {"detail": parsed.get("detail", "")},
             "raw_llm": parsed.get("raw_llm", ""),
         }
     action = parsed["action"]
     if action == "unknown":
+        msg = "I didn't understand that command."
         return {
             "action": "unknown",
             "ok": False,
             "code": "unknown_action",
-            "message": "I didn't understand that command.",
+            "message": msg,
+            "speak": msg,
             "meta": {},
             "raw_llm": parsed.get("raw_llm", ""),
         }
     handler = ACTION_REGISTRY.get(action)
     if handler is None:
-        # KNOWN_ACTIONS ⊆ ACTION_REGISTRY keys — this branch is a
-        # defence-in-depth guard against future drift between the
-        # parser's whitelist and this registry.
+        msg = f"Action {action!r} is not supported."
         return {
             "action": action,
             "ok": False,
             "code": "action_not_supported",
-            "message": f"Action {action!r} is not supported.",
+            "message": msg,
+            "speak": msg,
             "meta": {},
             "raw_llm": parsed.get("raw_llm", ""),
         }
@@ -94,4 +102,6 @@ async def execute(
     )
     result.setdefault("action", action)
     result.setdefault("raw_llm", parsed.get("raw_llm", ""))
+    # TB-1 · Populate ``speak`` for TTS — default to ``message``.
+    result.setdefault("speak", result.get("message", ""))
     return result
