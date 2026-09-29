@@ -233,3 +233,133 @@ def test_sms_body_omits_phone_when_customer_row_has_none(monkeypatch, wire_trans
     assert "+15559999999" not in sms_body, (
         f"session phone leaked in when row had none — {sms_body!r}"
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase PHONE-PURGE · Feb-2026 — Case 2 coverage.
+# The two tests above lock the "tenant seeded WITH
+# ``service_request_sms``" happy path.  These tests lock the second
+# case the PHONE-PURGE contract requires: when the tenant has NO
+# ``settings.notifications.service_request_sms`` configured, the
+# SMS branch short-circuits silently and NO hardcoded plofv-internal
+# number can leak into either the SMS transport OR the email body.
+# ═════════════════════════════════════════════════════════════════════
+_FORBIDDEN_PHONE_LITERALS = (
+    "602-887-4400",
+    "602.887.4400",
+    "6028874400",           # substring of ``+16028874400``
+    "(602) 887-4400",
+)
+
+
+@pytest.mark.parametrize("tenant_settings", [
+    pytest.param({}, id="no-settings-tree"),
+    pytest.param({"settings": {}}, id="settings-empty"),
+    pytest.param({"settings": {"notifications": {}}}, id="notifications-empty"),
+    pytest.param(
+        {"settings": {"notifications": {"service_request_sms": ""}}},
+        id="service-request-sms-empty-string",
+    ),
+    pytest.param(
+        {"settings": {"notifications": {"service_request_sms": None}}},
+        id="service-request-sms-null",
+    ),
+])
+def test_sms_skipped_when_service_request_sms_unset(
+    monkeypatch, wire_transports, tenant_settings,
+):
+    """Every "no configured SMS recipient" shape must:
+
+    1. Return ``ok=True`` — the customer still gets an ack.
+    2. Fire ZERO calls into the SMS adapter (no hardcoded fallback).
+    3. Still fire the email path (email is a separate channel).
+    4. Never leak any canonical rendering of the plofv-internal
+       number into the email body or subject.
+    """
+    tenant_id = "t1"
+    cid = "cust-1"
+    fake_db = _DB(customers=[{
+        "id": cid, "tenant_id": tenant_id,
+        "name": "Alice Row", "phone": "+15550001111",
+        "email": "alice@row",
+    }])
+    monkeypatch.setattr("routers.customer_portal.db", fake_db)
+
+    user = {"id": "u1", "role": "customer", "customer_id": cid,
+            "name": "SessionName", "phone": "+15559999999"}
+    body = ServiceRequestIn(service_type="Pool Cleaning",
+                             request_details="ph high")
+
+    tenant = {"id": tenant_id, **tenant_settings}
+    resp = _run(create_service_request(body, user=user, tenant=tenant))
+    assert resp.get("ok") is True
+
+    # 2. SMS adapter must NOT have been invoked — the PHONE-PURGE
+    # contract requires the branch to short-circuit rather than
+    # dial a stale hardcoded number.
+    assert wire_transports["sms"].calls == [], (
+        f"SMS fired despite tenant having no configured "
+        f"service_request_sms — calls: {wire_transports['sms'].calls!r}"
+    )
+
+    # 3. Email path still runs — it doesn't depend on SMS config.
+    email_calls = wire_transports["email"].calls
+    assert len(email_calls) == 1
+
+    # 4. No canonical rendering of the plofv-internal number in the
+    # email subject or html body.
+    email_kwargs = email_calls[0]["kwargs"]
+    subject = email_kwargs.get("subject") or ""
+    html = email_kwargs.get("html") or ""
+    for literal in _FORBIDDEN_PHONE_LITERALS:
+        assert literal not in subject, (
+            f"forbidden phone literal {literal!r} leaked into email "
+            f"subject: {subject!r}"
+        )
+        assert literal not in html, (
+            f"forbidden phone literal {literal!r} leaked into email "
+            f"html body: {html!r}"
+        )
+
+
+def test_sms_fires_and_body_carries_configured_number_when_set(
+    monkeypatch, wire_transports,
+):
+    """Companion to the parametrized skip test above — the happy-path
+    "SMS configured" branch fires exactly once and dials the
+    tenant-configured number, never a hardcoded one."""
+    tenant_id = "t1"
+    cid = "cust-1"
+    fake_db = _DB(customers=[{
+        "id": cid, "tenant_id": tenant_id,
+        "name": "Alice Row", "phone": "+15550001111",
+        "email": "alice@row",
+    }])
+    monkeypatch.setattr("routers.customer_portal.db", fake_db)
+
+    user = {"id": "u1", "role": "customer", "customer_id": cid,
+            "name": "SessionName"}
+    body = ServiceRequestIn(service_type="Pool Cleaning")
+
+    resp = _run(create_service_request(
+        body, user=user, tenant={
+            "id": tenant_id,
+            "settings": {"notifications": {
+                # RFC-5735 reserved fictional US number — never
+                # collides with the plofv-internal literal.
+                "service_request_sms": "+15555550100",
+            }},
+        },
+    ))
+    assert resp.get("ok") is True
+
+    sms_calls = wire_transports["sms"].calls
+    assert len(sms_calls) == 1
+    # The adapter was dialled with the CONFIGURED number, not any
+    # hardcoded fallback.
+    to_arg = sms_calls[0]["kwargs"].get("to")
+    assert to_arg == "+15555550100", (
+        f"SMS ``to`` field mismatched configured number: got {to_arg!r}"
+    )
+    for literal in _FORBIDDEN_PHONE_LITERALS:
+        assert literal not in (to_arg or "")
