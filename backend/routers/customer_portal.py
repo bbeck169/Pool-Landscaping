@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from config import db, logger
 from utils import get_current_user, new_id, now_iso
@@ -613,9 +613,28 @@ def _fmt_service_request_body(
 # Phase 34 · Task N · Feb-2026 — Editable customer profile
 # ══════════════════════════════════════════════════════════════════════
 class PatchMyProfileIn(BaseModel):
+    """Portal-facing security allowlist for self-serve profile edits.
+
+    Feb-2026 · portal-profile extension — Pydantic's default
+    ``extra="ignore"`` is made explicit here so a future refactor to
+    ``strict`` mode doesn't silently start rejecting unknown keys,
+    and so it's obvious at a glance which fields the portal PATCH
+    endpoint accepts. Admin-only fields (``vip_status`` / ``tags`` /
+    ``billing_settings`` / ``credit_limit`` / ``payment_terms`` /
+    ``tenant_id`` / ``id`` / ``created_at`` / ``updated_at`` / any
+    other flag) fall into the ``extra`` bucket and are dropped
+    before the endpoint body ever sees them.
+    """
+    model_config = ConfigDict(extra="ignore")
+
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
+    # Feb-2026 · portal-profile extension — secondary email persisted
+    # into ``customer.emails[]`` alongside the primary. Empty string
+    # / whitespace clears the slot. Same RFC-lite validator as the
+    # primary; must NOT collide with the primary address.
+    secondary_email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
 
@@ -708,6 +727,77 @@ async def patch_my_profile(
             raise HTTPException(400, "Address is required.")
         patch_cust["address"] = addr
 
+    # Feb-2026 · portal-profile extension — secondary email handling
+    # is a two-phase write: (a) validate the incoming value against
+    # the same RFC-lite check the primary email uses + reject when it
+    # collides with the primary; (b) mutate ``customer.emails[]``
+    # through ``normalize_emails`` so the multi-contact invariants
+    # (max 4, single-primary, address-deduped, lowercased) are
+    # enforced centrally.  ``secondary_email = ""`` (whitespace-only)
+    # clears every non-primary slot.  ``secondary_email = None``
+    # (field omitted) leaves the array untouched.
+    secondary_email_change = False
+    normalized_emails: Optional[List[dict]] = None
+    if body.secondary_email is not None:
+        sec_raw = (body.secondary_email or "").strip().lower()
+        # Resolve the primary email we're about to persist — either
+        # the incoming ``email`` change or the row's existing value.
+        pending_primary = (
+            patch_cust.get("email")
+            or (await db.customers.find_one(
+                {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "email": 1}
+            ) or {}).get("email")
+            or ""
+        ).strip().lower()
+        if sec_raw:
+            if not _valid_email(sec_raw):
+                raise HTTPException(
+                    400, "Please enter a valid secondary email address.",
+                )
+            if pending_primary and sec_raw == pending_primary:
+                raise HTTPException(
+                    400,
+                    "Secondary email must differ from primary.",
+                )
+        # Pull the existing multi-contact array so we can merge.
+        # ``$project`` is scoped to the two fields we need — the
+        # broader BEFORE snapshot fetched later includes the whole
+        # doc, but by that point we've already staged the patch.
+        row = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "emails": 1, "email": 1},
+        ) or {}
+        existing_arr = list(row.get("emails") or [])
+        from services.customer_multi_contact import normalize_emails
+        if not sec_raw:
+            # Empty payload → drop every non-primary entry.
+            filtered = [e for e in existing_arr if e.get("is_primary")]
+            normalized_emails = normalize_emails(filtered,
+                                                 legacy_email=pending_primary)
+        else:
+            # Merge / dedup by lowercased ``address`` field.  Preserve
+            # the existing entry's flags if a match already exists;
+            # otherwise append a fresh Secondary entry (never primary).
+            addrs = {(e.get("address") or "").lower(): e for e in existing_arr}
+            if sec_raw not in addrs:
+                addrs[sec_raw] = {
+                    "address": sec_raw,
+                    "label": "Secondary",
+                    "is_primary": False,
+                }
+            # Ensure the primary is present in the merged list too.
+            if pending_primary and pending_primary not in addrs:
+                addrs[pending_primary] = {
+                    "address": pending_primary,
+                    "label": "Primary",
+                    "is_primary": True,
+                }
+            merged = list(addrs.values())
+            normalized_emails = normalize_emails(merged,
+                                                 legacy_email=pending_primary)
+        patch_cust["emails"] = normalized_emails
+        secondary_email_change = True
+
     if not patch_user and not patch_cust:
         raise HTTPException(400, "No changes provided.")
 
@@ -729,6 +819,31 @@ async def patch_my_profile(
         await db.customers.update_one(
             {"id": cid, "tenant_id": tenant["id"]}, {"$set": patch_cust}
         )
+
+    # Feb-2026 · portal-profile extension — mirror the flat
+    # ``address`` string onto the customer's primary property record.
+    # Reuses the SAME helper the admin PUT handler calls
+    # (``routers.customers._mirror_address_to_primary_property``) so
+    # portal + admin write paths converge on identical property-side
+    # semantics: idempotent, zero-property customers skip cleanly,
+    # multi-tenant scoped via the ``tenant_id`` argument.  Best-
+    # effort (wrapped in try/except) so a properties-collection
+    # failure never blocks the portal edit.
+    if body.address is not None:
+        try:
+            from routers.customers import _mirror_address_to_primary_property
+            merged_for_mirror = {
+                **(before_cust or {}),
+                **patch_cust,
+            }
+            await _mirror_address_to_primary_property(
+                cid, tenant["id"], merged_for_mirror,
+            )
+        except Exception as _pm_exc:  # pragma: no cover
+            logger.warning(
+                "[portal-profile] primary property address mirror "
+                "failed cid=%s: %s", cid, _pm_exc,
+            )
 
     # Contacts mirror — the admin CRM Contact page keeps a shadow copy
     # of the customer's contact info. Best-effort update; missing
@@ -784,7 +899,12 @@ async def patch_my_profile(
     merged = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]},
         {"_id": 0, "name": 1, "first_name": 1, "last_name": 1,
-         "email": 1, "phone": 1, "address": 1},
+         "email": 1, "phone": 1, "address": 1,
+         # Feb-2026 · portal-profile extension — include the
+         # multi-contact ``emails`` array so the client can hydrate
+         # the Secondary Email input on the next mount without a
+         # second fetch.
+         "emails": 1},
     ) or {}
     return {"ok": True, "profile": merged}
 

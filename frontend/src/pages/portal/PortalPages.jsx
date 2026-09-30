@@ -35,7 +35,8 @@ import PaymentForm from "@/components/PaymentForm";
 // Phase I5 · Wave B · Feb-2026 — shared payment-method tiles.
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 // Phase I7 · Wave B · Feb-2026 — shared per-customer comms timeline.
-import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
+// Feb-2026 · replaced by ``CustomerFullTimeline`` below; legacy
+// ``CommunicationTimeline`` import removed to keep the module lint-clean.
 import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
@@ -562,7 +563,10 @@ export function PortalMessages() {
   // has sent them alongside the live 2-way conversation. Server
   // strips admin-only fields (``actor_user_id`` +
   // ``delivery_error``) for the portal caller.
-  const { user } = useAuth();
+  // Feb-2026 · PortalMessages does not read the current user off
+  // ``useAuth`` — server scopes ``/me/messages`` by JWT — so the
+  // hook is dropped to keep the module lint-clean. Chat bubbles
+  // side by role on ``m.from_role === "customer"`` alone.
   const [threads, setThreads] = useState(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -645,7 +649,13 @@ export function PortalMessages() {
 // ──────────────── /portal/profile ────────────────
 export function PortalProfile() {
   const { user, refreshMe } = useAuth();
-  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", address: "" });
+  const [form, setForm] = useState({
+    first_name: "", last_name: "", email: "", phone: "", address: "",
+    // Feb-2026 · portal-profile extension — secondary email is a
+    // separate optional slot in the customer's ``emails[]`` multi-
+    // contact array. Empty string → clear.
+    secondary_email: "",
+  });
   const [initial, setInitial] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -658,14 +668,24 @@ export function PortalProfile() {
   useEffect(() => {
     // Phase 34 · Task N — load the customer's current profile from
     // /me so we start with the freshest linked values.
+    //
+    // Feb-2026 · portal-profile extension — also hydrate the
+    // secondary email slot by picking the first non-primary entry
+    // from ``customer.emails[]``. Missing / single-entry arrays
+    // resolve to an empty string (clear slot).
     api.get(`/me`)
       .then((c) => {
+        const emails = Array.isArray(c?.emails) ? c.emails : [];
+        const sec = emails.find(
+          (e) => e && e.address && !e.is_primary,
+        );
         const nx = {
           first_name: c?.first_name || (user?.name || "").split(" ")[0] || "",
           last_name: c?.last_name || (user?.name || "").split(" ").slice(1).join(" ") || "",
           email: c?.email || user?.email || "",
           phone: c?.phone || "",
           address: c?.address || "",
+          secondary_email: sec ? sec.address : "",
         };
         setForm(nx);
         setInitial(JSON.stringify(nx));
@@ -674,11 +694,32 @@ export function PortalProfile() {
   }, [user]);
 
   const dirty = initial && JSON.stringify(form) !== initial;
+  // Feb-2026 · portal-profile extension — reuse the same RFC-lite
+  // pattern the primary email uses for the secondary slot. Empty
+  // string is valid (clears the slot); non-empty must match the
+  // pattern AND differ from the primary.
+  const _emailRe = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  const secTrimmed = form.secondary_email.trim().toLowerCase();
+  const primaryTrimmed = form.email.trim().toLowerCase();
+  const secondaryEmailValid = (
+    secTrimmed === ""
+      ? true
+      : (_emailRe.test(secTrimmed) && secTrimmed !== primaryTrimmed)
+  );
+  const secondaryEmailError = (
+    secTrimmed === "" ? "" :
+    !_emailRe.test(secTrimmed)
+      ? "Please enter a valid secondary email address."
+      : secTrimmed === primaryTrimmed
+        ? "Secondary email must differ from primary."
+        : ""
+  );
   const valid = (
     form.first_name.trim() &&
-    form.email.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email) &&
+    form.email.trim() && _emailRe.test(form.email) &&
     ("" + form.phone).replace(/\D/g, "").length >= 10 &&
-    form.address.trim().length >= 5
+    form.address.trim().length >= 5 &&
+    secondaryEmailValid
   );
   const canSave = dirty && valid && !saving;
 
@@ -688,7 +729,16 @@ export function PortalProfile() {
     if (!canSave) return;
     setSaving(true); setError("");
     try {
-      await api.patch("/customer-portal/profile", form);
+      // Feb-2026 · portal-profile extension — send the secondary
+      // email as an explicit key so the backend can distinguish
+      // "no change" (field omitted) from "clear the slot"
+      // (empty string).  Trim + lowercase before wire so a stray
+      // typing space can't reject the payload server-side.
+      const payload = {
+        ...form,
+        secondary_email: form.secondary_email.trim().toLowerCase(),
+      };
+      await api.patch("/customer-portal/profile", payload);
       setToast({ tone: "success", message: "Profile updated" });
       // Snapshot the saved values so the form becomes clean again.
       setInitial(JSON.stringify(form));
@@ -735,6 +785,28 @@ export function PortalProfile() {
           <TextInput label="LAST NAME"  value={form.last_name}  onChange={set("last_name")}  testid="portal-profile-last-name" />
         </div>
         <TextInput label="EMAIL"   type="email" value={form.email}   onChange={set("email")}   testid="portal-profile-email" />
+        {/* Feb-2026 · portal-profile extension — Secondary email
+            slot sits directly under the primary so the two email
+            fields read as a coherent block.  Empty payload clears
+            the slot server-side.  Inline validation mirrors the
+            server contract: RFC-lite regex + must-differ-from-
+            primary. */}
+        <TextInput
+          label="SECONDARY EMAIL (OPTIONAL)"
+          type="email"
+          value={form.secondary_email}
+          onChange={set("secondary_email")}
+          testid="portal-profile-secondary-email"
+        />
+        {secondaryEmailError ? (
+          <div
+            className="text-xs mt-1 mb-2"
+            style={{ color: "#B91C1C" }}
+            data-testid="portal-profile-secondary-email-error"
+          >
+            {secondaryEmailError}
+          </div>
+        ) : null}
         <TextInput label="PHONE"   type="tel"   value={form.phone}   onChange={set("phone")}   testid="portal-profile-phone" />
         <TextInput label="ADDRESS"              value={form.address} onChange={set("address")} testid="portal-profile-address" />
         <div className="mt-4 flex items-center gap-3">
