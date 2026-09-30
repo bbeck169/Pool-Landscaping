@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Repeat } from 'lucide-react';
+import { ArrowLeft, Repeat, Plus, Trash2 } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -20,6 +20,14 @@ import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 // Feb 2026 · Color-coded Service / Repair segmented toggle. Same
 // control lives on ScheduleJobEditModal via the shared component.
 import WorkClassToggle from "@/components/jobs/WorkClassToggle";
+// Feb-2026 · Jobs Overhaul Phase 1 — inline pricebook combobox for
+// the new Line Items section on /jobs/new. Shared with K71 quotes/
+// invoices editor and JobDetail's LineItemsSection picker modal.
+// TODO(jobs-overhaul-phase-3): extract the whole Line Items block
+// (JSX + helpers) into a shared LineItemsEditor once JobDetail's
+// overhaul lands so /jobs/new and the Edit Job modal parity work
+// from a single implementation.
+import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -74,6 +82,18 @@ export default function JobNew({
   const [techs, setTechs] = useState([]);
   const [crews, setCrews] = useState([]);
   const [items, setItems] = useState([]);
+  // Feb-2026 · Jobs Overhaul Phase 1 — Service Category dropdown.
+  // Sourced from ``GET /api/service-categories`` (payload shape:
+  // ``{items: [{id, name, ...}], total}``). Paired-ID pattern:
+  // ``form.service_category_id`` drives the <select>;
+  // ``form.service_category_name`` is denormalized alongside so
+  // the create payload carries both in the same wire contract
+  // Income Drilldown uses.
+  const [serviceCategories, setServiceCategories] = useState([]);
+  // Inline pricebook combobox for the Line Items section — value
+  // is emptied on each pick so the search field resets to add
+  // another line without stale text.
+  const [pbSearch, setPbSearch] = useState("");
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -114,6 +134,15 @@ export default function JobNew({
     // when the field is missing, but we send it explicitly for
     // clarity. See ``backend/services/work_class.py``.
     work_class: "service",
+    // Feb-2026 · Jobs Overhaul Phase 1 — Service Category paired
+    // ID/name plus editable Line Items array. Line Items subtotal
+    // auto-writes ``form.price`` unless the user hand-edits the
+    // Price field (``price_manually_overridden`` flag). See the
+    // sync ``useEffect`` + ``onPriceChange`` handler below.
+    service_category_id: "",
+    service_category_name: "",
+    line_items: [],
+    price_manually_overridden: false,
     // Feb-2026 · Monthly Nth-weekday recurrence controls. Only sent
     // to the ``/api/recurring-jobs`` endpoint when ``cadence ===
     // "monthly"`` AND ``monthly_pattern === "nth_weekday"``. Kept in
@@ -139,6 +168,16 @@ export default function JobNew({
     api.get("/crews").then((rows) => setCrews(Array.isArray(rows) ? rows : []))
        .catch(() => setCrews([]));
     api.get("/items").then(setItems).catch(() => {});
+    // Feb-2026 · Jobs Overhaul Phase 1 — Service Categories for
+    // the new dropdown. GET /api/service-categories returns
+    // ``{items: [{id, name, ...}], total}`` — silent failure keeps
+    // the form usable when the caller's role is 403 (only
+    // admin/super_admin can list categories today).
+    api.get("/service-categories")
+      .then((res) => setServiceCategories(
+        Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []),
+      ))
+      .catch(() => setServiceCategories([]));
   }, []);
 
   // Refresh property list whenever the picked customer changes.
@@ -221,6 +260,94 @@ export default function JobNew({
   }, [form.crew_id, crews, techDirty]);   // eslint-disable-line react-hooks/exhaustive-deps -- form.technician_id read is intentionally not a dep to avoid rebounce loops
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  // Feb-2026 · Jobs Overhaul Phase 1 — Line Items helpers.
+  //
+  // Design rationale (matches user directive Q1 = "manual override
+  // flag"):
+  //   • ``lineItemsSubtotal`` = Σ (row.quantity × row.unit_price).
+  //   • When line items are non-empty AND the user has NOT typed
+  //     into the Price field, ``form.price`` mirrors the subtotal
+  //     via the sync effect below.
+  //   • When the user types into the Price field, we flip
+  //     ``price_manually_overridden`` — the sync effect steps back
+  //     and lets their value stick. A subtle hint + "Recalculate"
+  //     affordance clears the flag and returns to subtotal-driven.
+  //
+  // TODO(jobs-overhaul-phase-3): extract this cluster + the JSX
+  // below into ``@/components/jobs/LineItemsEditor`` so the Edit
+  // Job modal parity (Phase 2) and the JobDetail overhaul (Phase 3)
+  // share one implementation.
+  const lineItemsSubtotal = useMemo(
+    () =>
+      (form.line_items || []).reduce(
+        (sum, li) =>
+          sum
+          + (Number(li.quantity) || 0) * (Number(li.unit_price) || 0),
+        0,
+      ),
+    [form.line_items],
+  );
+
+  useEffect(() => {
+    if ((form.line_items || []).length === 0) return;
+    if (form.price_manually_overridden) return;
+    const next = Number(lineItemsSubtotal.toFixed(2));
+    setForm((f) => (Number(f.price) === next ? f : { ...f, price: next }));
+  }, [lineItemsSubtotal, form.line_items, form.price_manually_overridden]);
+
+  const addBlankLine = () =>
+    setForm((f) => ({
+      ...f,
+      line_items: [
+        ...(f.line_items || []),
+        { description: "", quantity: 1, unit_price: 0 },
+      ],
+    }));
+
+  const addPricebookLine = (row) =>
+    setForm((f) => ({
+      ...f,
+      line_items: [
+        ...(f.line_items || []),
+        {
+          description: row?.name || row?.description || "",
+          quantity: 1,
+          unit_price: Number(row?.unit_price || 0),
+          // Optional back-reference so a future backend contract
+          // extension (Phase 2/3) can persist the pricebook link.
+          pricebook_item_id: row?.id || null,
+        },
+      ],
+    }));
+
+  const updateLine = (idx, patch) =>
+    setForm((f) => ({
+      ...f,
+      line_items: (f.line_items || []).map((li, i) =>
+        i === idx ? { ...li, ...patch } : li,
+      ),
+    }));
+
+  const removeLine = (idx) =>
+    setForm((f) => ({
+      ...f,
+      line_items: (f.line_items || []).filter((_, i) => i !== idx),
+    }));
+
+  const onPriceChange = (e) =>
+    setForm((f) => ({
+      ...f,
+      price: e.target.value,
+      price_manually_overridden: true,
+    }));
+
+  const recalcPriceFromLineItems = () =>
+    setForm((f) => ({
+      ...f,
+      price: Number(lineItemsSubtotal.toFixed(2)),
+      price_manually_overridden: false,
+    }));
 
   useEffect(() => {
     if (!form.scheduled_date || form.cadence === "one_time") {
@@ -314,6 +441,29 @@ export default function JobNew({
       };
       if (form.property_id) payload.property_id = form.property_id;
       if (form.crew_id) payload.crew_id = form.crew_id;
+      // Feb-2026 · Jobs Overhaul Phase 1 — Service Category paired
+      // ID + name. Only sent when a category is picked so back-
+      // compat with existing POST /jobs consumers is preserved
+      // (Pydantic v2 default ``extra="ignore"`` silently drops
+      // these until a follow-up phase widens the backend
+      // contract). Mirrors the Income Drilldown FE→BE payload.
+      if (form.service_category_id) {
+        payload.service_category_id = form.service_category_id;
+        payload.service_category_name = form.service_category_name || "";
+      }
+      // Feb-2026 · Jobs Overhaul Phase 1 — Line Items list. Only
+      // sent when the operator actually filled the section so
+      // legacy price-only flows stay byte-identical on the wire.
+      if ((form.line_items || []).length > 0) {
+        payload.line_items = form.line_items.map((li) => ({
+          description: li.description || "",
+          quantity: Number(li.quantity) || 0,
+          unit_price: Number(li.unit_price) || 0,
+          ...(li.pricebook_item_id
+            ? { pricebook_item_id: li.pricebook_item_id }
+            : {}),
+        }));
+      }
       const first = await api.post("/jobs", payload);
       // If recurring, create the follow-up visits from the preview.
       const cadenceIsRecurring = preview && Array.isArray(preview.dates)
@@ -543,7 +693,19 @@ export default function JobNew({
                 onChange={({ name, default_price }) => {
                   setForm((f) => {
                     const next = { ...f, service_type: name };
-                    if (Number.isFinite(default_price) && default_price != null) {
+                    // Feb-2026 · Jobs Overhaul Phase 1 — when the
+                    // user has already built a Line Items list on
+                    // this form, defer to the subtotal-driven
+                    // Price. Picking a Master Service still
+                    // updates ``service_type`` but leaves Price
+                    // alone so the K2 subtotal contract wins.
+                    const hasLineItems =
+                      (f.line_items || []).length > 0;
+                    if (
+                      Number.isFinite(default_price)
+                      && default_price != null
+                      && !hasLineItems
+                    ) {
                       next.price = Number(default_price);
                     }
                     return next;
@@ -581,6 +743,53 @@ export default function JobNew({
                 ))}
               </select>
             </div>
+          </div>
+          {/* Feb-2026 · Jobs Overhaul Phase 1 — Service Category
+              dropdown. Sourced from ``GET /api/service-categories``;
+              stores the paired ``{id, name}`` on the form so the
+              submit payload carries both fields (mirrors the
+              Income Drilldown FE→BE contract).  Placed directly
+              beneath the Service Type / Technician row so the two
+              related taxonomy axes sit together on the form. */}
+          <div>
+            <label
+              className="text-xs font-semibold tracking-wide mb-1 block"
+              style={{ color: colors.onSurfaceSecondary }}
+            >
+              SERVICE CATEGORY
+            </label>
+            <select
+              value={form.service_category_id || ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                const cat = serviceCategories.find(
+                  (c) => c.id === id,
+                );
+                setForm((f) => ({
+                  ...f,
+                  service_category_id: id,
+                  service_category_name: cat?.name || "",
+                }));
+              }}
+              className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="jf-service-category"
+            >
+              <option value="">Choose a category…</option>
+              {serviceCategories.map((c) => (
+                <option
+                  key={c.id}
+                  value={c.id}
+                  data-testid={`jf-service-category-opt-${c.id}`}
+                >
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
           {/*
             Feb-2026 · Crew Phase A · New Job crew overlay.
@@ -640,14 +849,43 @@ export default function JobNew({
               testid="jf-window"
             />
           </div>
-          <TextInput
-            label="PRICE"
-            type="number"
-            step="0.01"
-            value={form.price}
-            onChange={set("price")}
-            testid="jf-price"
-          />
+          <div>
+            <TextInput
+              label="PRICE"
+              type="number"
+              step="0.01"
+              value={form.price}
+              onChange={onPriceChange}
+              testid="jf-price"
+            />
+            {/* Feb-2026 · Jobs Overhaul Phase 1 — subtle hint when
+                the user's manual Price edit is overriding a
+                populated Line Items subtotal.  "Recalculate" clears
+                the override flag so the sync effect re-drives
+                Price from the subtotal. */}
+            {(form.line_items || []).length > 0
+              && form.price_manually_overridden ? (
+              <div
+                className="text-xs mt-1 flex items-center gap-2"
+                style={{ color: colors.muted }}
+                data-testid="jf-price-manual-hint"
+              >
+                <span>
+                  Manually overridden — Line Items subtotal was $
+                  {lineItemsSubtotal.toFixed(2)}.
+                </span>
+                <button
+                  type="button"
+                  onClick={recalcPriceFromLineItems}
+                  className="underline font-semibold"
+                  style={{ color: colors.brand }}
+                  data-testid="jf-price-recalc"
+                >
+                  Recalculate
+                </button>
+              </div>
+            ) : null}
+          </div>
           <div>
             <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
               NOTES
@@ -665,6 +903,223 @@ export default function JobNew({
               data-testid="jf-notes"
             />
           </div>
+        </div>
+
+        {/*
+          Feb-2026 · Jobs Overhaul Phase 1 — Line Items card.
+          Mirrors the Edit Job modal's ``LineItemsSection`` shape
+          in spirit but operates on ``form.line_items`` (in-memory
+          state) since JobNew is a create form — no ``jobId`` yet.
+          The array is included in the ``POST /jobs`` payload only
+          when non-empty (see submit handler).
+          TODO(jobs-overhaul-phase-3): extract this whole block +
+          the helpers into a shared LineItemsEditor once JobDetail
+          overhaul lands.
+        */}
+        <div
+          className="rounded-2xl p-5 mb-4"
+          style={{
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="jf-line-items-section"
+        >
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <div>
+              <h3
+                className="text-lg font-bold"
+                style={{ color: colors.onSurface }}
+              >
+                Line Items
+              </h3>
+              <p className="text-xs" style={{ color: colors.muted }}>
+                Add items from the pricebook or type your own. The
+                subtotal auto-fills the Price field above.
+              </p>
+            </div>
+            <div className="flex items-center">
+              <Button
+                type="button"
+                testid="jf-li-add-blank"
+                onClick={addBlankLine}
+              >
+                <Plus size={14} /> Add line
+              </Button>
+            </div>
+          </div>
+          {/* "Add from pricebook" affordance — the inline picker
+              acts as a search-and-add. Typing surfaces the
+              pricebook dropdown; picking a row appends a line and
+              clears the input.  See
+              ``@/components/pricebook/PricebookItemPicker`` for
+              the debounce + keyboard-navigation contract. */}
+          <div className="mb-3">
+            <PricebookItemPicker
+              value={pbSearch}
+              onChange={setPbSearch}
+              onSelect={(row) => {
+                addPricebookLine(row);
+                setPbSearch("");
+              }}
+              placeholder="Add from pricebook — search by item name…"
+              testidPrefix="jf-li-pricebook"
+              wrapperTestid="jf-li-add-pricebook"
+              inputTestid="jf-li-pricebook-input"
+            />
+          </div>
+          {(form.line_items || []).length === 0 ? (
+            <div
+              className="p-4 text-sm text-center rounded-lg"
+              style={{
+                background: colors.surfaceSecondary,
+                color: colors.muted,
+              }}
+              data-testid="jf-li-empty"
+            >
+              No line items yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table
+                className="w-full text-sm"
+                data-testid="jf-li-table"
+              >
+                <thead>
+                  <tr>
+                    {["Description", "Qty", "Unit", "Total", ""].map(
+                      (h) => (
+                        <th
+                          key={h || "actions"}
+                          className={
+                            h === "Total"
+                              ? "text-right text-[10px] uppercase font-bold px-2 py-1"
+                              : "text-left text-[10px] uppercase font-bold px-2 py-1"
+                          }
+                          style={{
+                            color: colors.muted,
+                            borderBottom: `1px solid ${colors.border}`,
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ),
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {form.line_items.map((li, i) => {
+                    const rowTotal =
+                      (Number(li.quantity) || 0)
+                      * (Number(li.unit_price) || 0);
+                    return (
+                      <tr
+                        key={i}
+                        data-testid={`jf-li-row-${i}`}
+                        style={{
+                          borderBottom: `1px solid ${colors.border}`,
+                        }}
+                      >
+                        <td className="px-2 py-2 align-top">
+                          <input
+                            type="text"
+                            value={li.description || ""}
+                            onChange={(e) =>
+                              updateLine(i, {
+                                description: e.target.value,
+                              })
+                            }
+                            className="w-full px-2 py-1 rounded-md text-sm"
+                            style={{
+                              border: `1px solid ${colors.border}`,
+                              background: colors.surface,
+                              color: colors.onSurface,
+                            }}
+                            data-testid={`jf-li-desc-${i}`}
+                          />
+                        </td>
+                        <td className="px-2 py-2 align-top">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={li.quantity ?? 1}
+                            onChange={(e) =>
+                              updateLine(i, {
+                                quantity: e.target.value,
+                              })
+                            }
+                            className="w-20 px-2 py-1 rounded-md text-sm"
+                            style={{
+                              border: `1px solid ${colors.border}`,
+                              background: colors.surface,
+                              color: colors.onSurface,
+                            }}
+                            data-testid={`jf-li-qty-${i}`}
+                          />
+                        </td>
+                        <td className="px-2 py-2 align-top">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={li.unit_price ?? 0}
+                            onChange={(e) =>
+                              updateLine(i, {
+                                unit_price: e.target.value,
+                              })
+                            }
+                            className="w-24 px-2 py-1 rounded-md text-sm"
+                            style={{
+                              border: `1px solid ${colors.border}`,
+                              background: colors.surface,
+                              color: colors.onSurface,
+                            }}
+                            data-testid={`jf-li-unit-${i}`}
+                          />
+                        </td>
+                        <td
+                          className="px-2 py-2 align-top text-right font-semibold"
+                          style={{ color: colors.onSurface }}
+                          data-testid={`jf-li-total-${i}`}
+                        >
+                          {`$${rowTotal.toFixed(2)}`}
+                        </td>
+                        <td className="px-2 py-2 align-top text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeLine(i)}
+                            style={{
+                              background: "transparent",
+                              border: 0,
+                              cursor: "pointer",
+                              color: colors.danger || colors.error,
+                            }}
+                            aria-label="Remove line"
+                            data-testid={`jf-li-del-${i}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3} className="px-2 py-1"></td>
+                    <td
+                      className="px-2 py-1 text-right text-sm font-bold"
+                      style={{ color: colors.onSurface }}
+                      data-testid="jf-li-subtotal"
+                    >
+                      {`Subtotal $${lineItemsSubtotal.toFixed(2)}`}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Recurrence card */}
