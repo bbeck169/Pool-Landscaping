@@ -119,6 +119,69 @@ const c = {
   warnFg: "#92400E",
 };
 
+// ─── Autosave payload builder ─────────────────────────────────────
+// Feb-2026 · Water-bodies autosave-wipe fix — extracted as a pure
+// helper so unit tests can exercise the sync shape without mounting
+// the modal.  Semantics:
+//
+//   * Always sends the legacy top-level ``chemical_readings`` /
+//     ``chemicals_added`` (the source of truth in the checklist UI).
+//   * When ``cur.water_bodies`` has at least one body, clones the
+//     array and syncs body[0]'s ``chemicals_used`` + ``readings``
+//     from the fresh legacy top-level.  This guarantees the two
+//     channels agree on every autosave — otherwise a stale mirror
+//     in body[0] would race the backend's flatten step and clobber
+//     the freshest keystroke.
+//   * When ``cur.chemicals_added`` / ``cur.chemical_readings`` is
+//     an explicit ``[]``, that clear IS propagated into body[0].
+//     The backend's ``apply_water_bodies_payload`` guard is
+//     defensive against stale/absent top-level values only —
+//     deliberate clears carry the ``[]`` on both channels.
+//   * When ``cur.water_bodies`` is empty / absent, the water-body
+//     key is OMITTED (legacy single-body flow) so the backend keeps
+//     its existing water_bodies row.
+//   * Additional (non-first) bodies are passed through untouched;
+//     multi-body edits currently ride ``water_bodies`` directly and
+//     aren't dual-written into the legacy top-level channel.
+//
+// Exported for testing.  See:
+//   src/components/checklist/__tests__/ChecklistModal.flushSave.test.jsx
+export function buildFlushSavePayload(cur) {
+  const patchPayload = {
+    chemical_readings: cur.chemical_readings,
+    chemicals_added: cur.chemicals_added,
+    checklist_items: cur.checklist_items,
+    notes: cur.notes,
+    // Phase 56.6 — persist wizard cursor + internal notes + photos
+    // through the autosave loop; otherwise the response replaces the
+    // in-memory report and wipes these fields on every save.
+    internal_notes: cur.internal_notes || "",
+    // Phase 56.16 — customer_notes is a distinct customer-facing
+    // textarea on the landscape form; pool wizard step 5 will
+    // pick it up later.
+    customer_notes: cur.customer_notes || "",
+    photos: cur.photos || [],
+    wizard_step: cur.wizard_step ?? 1,
+  };
+  if (Array.isArray(cur.water_bodies) && cur.water_bodies.length > 0) {
+    const bodies = cur.water_bodies.map((b) => ({ ...(b || {}) }));
+    // Sync body[0] from the fresh legacy top-level.  ``Array.isArray``
+    // gates preserve the pre-existing body[0] values when the top-
+    // level channel is missing entirely (defensive against callers
+    // that construct ``cur`` without the legacy keys).
+    if (Array.isArray(cur.chemicals_added)) {
+      bodies[0].chemicals_used = cur.chemicals_added;
+    }
+    if (Array.isArray(cur.chemical_readings)) {
+      bodies[0].readings = cur.chemical_readings;
+    }
+    patchPayload.water_bodies = bodies;
+  }
+  return patchPayload;
+}
+
+
+
 export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const { user } = useAuth();
   const role = user?.role || "";
@@ -238,32 +301,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
     try {
-      // Feb-2026 · Multi-body Phase 2 — include ``water_bodies`` in the
-      // PATCH when the report has any (Phase 1 backend seeds body[0] on
-      // bootstrap, so this is effectively always set). Legacy single-
-      // body flows still send the top-level fields as the source of
-      // truth; the backend keeps them mirrored automatically. When both
-      // are present, the backend validates + rebuilds the mirrors from
-      // ``water_bodies`` (per Phase 1 spec).
-      const patchPayload = {
-        chemical_readings: cur.chemical_readings,
-        chemicals_added: cur.chemicals_added,
-        checklist_items: cur.checklist_items,
-        notes: cur.notes,
-        // Phase 56.6 — persist wizard cursor + internal notes + photos
-        // through the autosave loop; otherwise the response replaces the
-        // in-memory report and wipes these fields on every save.
-        internal_notes: cur.internal_notes || "",
-        // Phase 56.16 — customer_notes is a distinct customer-facing
-        // textarea on the landscape form; pool wizard step 5 will
-        // pick it up later.
-        customer_notes: cur.customer_notes || "",
-        photos: cur.photos || [],
-        wizard_step: cur.wizard_step ?? 1,
-      };
-      if (Array.isArray(cur.water_bodies) && cur.water_bodies.length > 0) {
-        patchPayload.water_bodies = cur.water_bodies;
-      }
+      const patchPayload = buildFlushSavePayload(cur);
       const patched = await api.patch(
         `/jobs/${jobId}/service-report`,
         patchPayload,

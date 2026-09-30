@@ -529,14 +529,34 @@ def apply_water_bodies_payload(upd: Dict[str, Any],
         # values win when BOTH are present because they carry the
         # freshest write.  See:
         #   backend/tests/test_service_report_autosave_dual_write.py
+        #
+        # Feb-2026 · Water-bodies autosave-wipe fix — an EMPTY top-
+        # level ``chemicals_added`` / ``chemical_readings`` must NOT
+        # overwrite the water-body's non-empty list.  Explicit clears
+        # must ride on ``water_bodies[0].chemicals_used = []`` /
+        # ``.readings = []`` directly (the frontend's ``flushSave``
+        # sync guarantees the two channels agree).  This guard is
+        # defensive: if either channel drops to ``[]`` /  ``None``
+        # by mistake, the persisted water-body list survives.  See:
+        #   backend/tests/test_water_bodies_chemicals_merge.py
         if bodies and (
             "chemical_readings" in upd or "chemicals_added" in upd
         ):
             body0 = dict(bodies[0])
-            if "chemical_readings" in upd:
-                body0["readings"] = list(upd["chemical_readings"] or [])
-            if "chemicals_added" in upd:
-                body0["chemicals_used"] = list(upd["chemicals_added"] or [])
+            top_readings = upd.get("chemical_readings")
+            if (
+                "chemical_readings" in upd
+                and isinstance(top_readings, list)
+                and len(top_readings) > 0
+            ):
+                body0["readings"] = list(top_readings)
+            top_chems = upd.get("chemicals_added")
+            if (
+                "chemicals_added" in upd
+                and isinstance(top_chems, list)
+                and len(top_chems) > 0
+            ):
+                body0["chemicals_used"] = list(top_chems)
             bodies[0] = body0
             upd["water_bodies"] = bodies
         # Rebuild the flat mirror unconditionally when
@@ -555,10 +575,30 @@ def apply_water_bodies_payload(upd: Dict[str, Any],
         if not existing_bodies:
             existing_bodies = [build_default_body_from_report(rep)]
         body0 = dict(existing_bodies[0])
-        if "chemical_readings" in upd:
-            body0["readings"] = list(upd["chemical_readings"] or [])
-        if "chemicals_added" in upd:
-            body0["chemicals_used"] = list(upd["chemicals_added"] or [])
+        # Feb-2026 · Water-bodies autosave-wipe fix — mirror the
+        # Path-A guard: an empty top-level ``chemical_readings`` /
+        # ``chemicals_added`` MUST NOT overwrite the persisted
+        # water-body list.  Path B is the legacy-only channel
+        # (``water_bodies`` absent from ``upd``); a caller sending
+        # ``chemicals_added: []`` here is almost always a stale-
+        # autosave shape, not a deliberate clear (deliberate clears
+        # ride Path A with ``water_bodies=[]``).  ``notes`` keeps
+        # the pre-existing overwrite semantics — a blank notes
+        # string is a legit user intent.
+        top_readings = upd.get("chemical_readings")
+        if (
+            "chemical_readings" in upd
+            and isinstance(top_readings, list)
+            and len(top_readings) > 0
+        ):
+            body0["readings"] = list(top_readings)
+        top_chems = upd.get("chemicals_added")
+        if (
+            "chemicals_added" in upd
+            and isinstance(top_chems, list)
+            and len(top_chems) > 0
+        ):
+            body0["chemicals_used"] = list(top_chems)
         if "notes" in upd:
             body0["notes"] = str(upd["notes"] or "")
         existing_bodies[0] = body0

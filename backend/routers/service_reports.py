@@ -478,6 +478,27 @@ async def get_service_report(jid: str,
     # numeric readings so admin/tech UI can show "3.2 ppm · Average"
     # without repeating the threshold logic in the frontend.
     existing = _annotate_report_for_admin(existing)
+    # Feb-2026 · Water-bodies autosave-wipe recovery — legacy top-level
+    # ``chemicals_added`` / ``chemical_readings`` can be an empty list
+    # on docs that were corrupted by the pre-fix autosave race (empty
+    # top-level clobbered the persisted list; see the guard in
+    # ``services.water_bodies.apply_water_bodies_payload``).  Hydrate
+    # the empty mirror from ``water_bodies[0]`` at read time so a
+    # freshly-loaded checklist shows the chemicals/readings the tech
+    # actually recorded.  This is READ-ONLY hydration; persistence
+    # stays untouched.  New writes go through the fixed pipeline and
+    # keep both channels in sync without needing this fallback.
+    _bodies = existing.get("water_bodies") or []
+    if _bodies:
+        _body0 = _bodies[0] or {}
+        _top_chems = existing.get("chemicals_added") or []
+        _body_chems = _body0.get("chemicals_used") or []
+        if not _top_chems and _body_chems:
+            existing["chemicals_added"] = list(_body_chems)
+        _top_readings = existing.get("chemical_readings") or []
+        _body_readings = _body0.get("readings") or []
+        if not _top_readings and _body_readings:
+            existing["chemical_readings"] = list(_body_readings)
     return existing
 
 
