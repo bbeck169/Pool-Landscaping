@@ -90,13 +90,36 @@ router = APIRouter()
 # ═════════════════════════════════════════════════════════════════════
 # Auth — admin + super only (K41 brief).  Explicit function so the
 # error string matches the 4-role negative-test expectation exactly.
+#
+# Feb-2026 · Drilldown role expansion — the three ``/rows`` endpoints
+# (data-integrity + income-by-category + income-by-service) also
+# admit ``manager`` and ``owner`` callers, matching the finance-read
+# expectation across the platform (services/quotes/date_override,
+# services/lead_admin_notifications, services/outreach_followups
+# already recognise these two roles).  Destructive writes and
+# picker fetches stay on the narrower admin/super gate.
 # ═════════════════════════════════════════════════════════════════════
 _ADMIN_ROLES = {"admin", "super_admin"}
+_DRILLDOWN_READ_ROLES = {"admin", "super_admin", "manager", "owner"}
 
 
 def _require_admin_or_super(user: Dict[str, Any]) -> None:
     role = (user or {}).get("role") or ""
     if role.lower() not in _ADMIN_ROLES:
+        raise HTTPException(status_code=403, detail="admin_only")
+
+
+def _require_drilldown_read_role(user: Dict[str, Any]) -> None:
+    """Feb-2026 · gate for the drill-down ``/rows`` read endpoints.
+
+    Admits ``admin`` / ``super_admin`` / ``manager`` / ``owner``.
+    Every other role (technician, dispatcher, customer, empty)
+    receives the same 403 + ``admin_only`` detail as the tighter
+    :func:`_require_admin_or_super` gate so the frontend's copy
+    stays uniform across all drill-down endpoints.
+    """
+    role = (user or {}).get("role") or ""
+    if role.lower() not in _DRILLDOWN_READ_ROLES:
         raise HTTPException(status_code=403, detail="admin_only")
 
 
@@ -176,7 +199,7 @@ async def data_integrity_rows(
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    _require_admin_or_super(user)
+    _require_drilldown_read_role(user)
     if issue_class not in _VALID_INTEGRITY_CLASSES:
         raise HTTPException(400, "invalid_class")
 
@@ -383,7 +406,7 @@ async def income_by_category_rows(
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    _require_admin_or_super(user)
+    _require_drilldown_read_role(user)
     s_iso, e_iso = _parse_range(from_, to)
     tenant_id = tenant["id"]
 
@@ -492,7 +515,7 @@ async def income_by_service_rows(
     user: Dict[str, Any] = Depends(get_current_user),
     tenant: Dict[str, Any] = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    _require_admin_or_super(user)
+    _require_drilldown_read_role(user)
     s_iso, e_iso = _parse_range(from_, to)
     tenant_id = tenant["id"]
 

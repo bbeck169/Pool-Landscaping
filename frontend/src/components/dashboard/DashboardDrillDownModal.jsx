@@ -1643,7 +1643,20 @@ function ModalBody({ variant, params, onOpenFullEdit }) {
         setTotal(r.total || 0);
         setNextCursor(r.next_cursor || null);
       })
-      .catch((e) => setErr(e?.message || "Load failed"))
+      .catch((e) => {
+        // Feb-2026 · Drill-down role expansion — the backend gate
+        // on the 3 ``/rows`` endpoints returns 403 for any caller
+        // that isn't admin / super_admin / manager / owner.  Show
+        // the exact QA-contract copy so a non-privileged user
+        // clicking a dashboard tile learns why the drawer is empty.
+        // All other errors (500, network, timeout) fall through to
+        // the pre-existing generic banner unchanged.
+        if (e?.status === 403) {
+          setErr("You do not have permission to view this data");
+        } else {
+          setErr(e?.message || "Load failed");
+        }
+      })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, reloadKey]);

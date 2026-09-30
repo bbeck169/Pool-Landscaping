@@ -132,10 +132,15 @@ def test_k41_income_by_service_rows_happy_path():
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 2) Auth negatives — all four non-permitted roles → 403
+# 2) Auth negatives — non-permitted roles → 403
+#
+# Feb-2026 · Drill-down role expansion — ``manager`` was removed
+# from these deny-lists after ``_require_drilldown_read_role`` was
+# introduced (see ``routers/dashboard_drilldown.py`` header).
+# The positive coverage for manager + owner lives in
+# ``tests/test_dashboard_drilldown_role_gate.py``.
 # ═════════════════════════════════════════════════════════════════════
 @pytest.mark.parametrize("email", [
-    "manager@aquaterra.com",         # manager != admin per K41
     "carlos@aquaterra.com",          # tech
     "customer@aquaterra.com",        # customer
 ])
@@ -149,7 +154,6 @@ def test_k41_data_integrity_rows_denies_non_admin(email):
 
 
 @pytest.mark.parametrize("email", [
-    "manager@aquaterra.com",
     "carlos@aquaterra.com",
     "customer@aquaterra.com",
 ])
@@ -165,7 +169,6 @@ def test_k41_income_by_category_rows_denies_non_admin(email):
 
 
 @pytest.mark.parametrize("email", [
-    "manager@aquaterra.com",
     "carlos@aquaterra.com",
     "customer@aquaterra.com",
 ])
