@@ -77,10 +77,26 @@ export default function ScheduleJobEditModal({
     // the lead (overlay-only decision). Validated in
     // ``routers/jobs.py::update_job`` against the caller's tenant.
     crew_id:        job?.crew_id || "",
+    // Feb-2026 · Jobs Overhaul Phase 2 — Price parity with the
+    // /jobs/new form (Phase 1). Line Items on this modal live on
+    // the server (LineItemsSection is jobId-backed and does NOT
+    // sync into ``form.price``), so no manual-override flag is
+    // needed here — Price is a plain editable field.
+    price:          (job?.price != null) ? String(job.price) : "",
+    // Feb-2026 · Jobs Overhaul Phase 2 — Service Category parity.
+    // Paired ``{id, name}`` mirrors the JobNew payload shape so
+    // the two surfaces read/write the same wire fields.
+    service_category_id:   job?.service_category_id || "",
+    service_category_name: job?.service_category_name || "",
   }));
   const [techs, setTechs] = useState([]);
   const [crews, setCrews] = useState([]);
   const [properties, setProperties] = useState([]);
+  // Feb-2026 · Jobs Overhaul Phase 2 — hydrated from
+  // ``GET /api/service-categories`` on modal open (response shape
+  // is ``{items: [{id, name, ...}], total}``).  Silent failure so
+  // non-admin roles never see the modal red.
+  const [serviceCategories, setServiceCategories] = useState([]);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [err, setErr] = useState("");
@@ -99,6 +115,12 @@ export default function ScheduleJobEditModal({
       work_class:     (job.work_class === "repair") ? "repair" : "service",
       property_id:    job.property_id || "",
       crew_id:        job.crew_id || "",
+      // Feb-2026 · Jobs Overhaul Phase 2 — hydrate Price + Service
+      // Category from the job record on every re-open (see initial
+      // state above for rationale).
+      price:          (job.price != null) ? String(job.price) : "",
+      service_category_id:   job.service_category_id || "",
+      service_category_name: job.service_category_name || "",
     });
     setErr("");
     setConfirmDelete(false);
@@ -121,6 +143,16 @@ export default function ScheduleJobEditModal({
     } else {
       setProperties([]);
     }
+    // Feb-2026 · Jobs Overhaul Phase 2 — hydrate Service Category
+    // options.  ``GET /api/service-categories`` returns
+    // ``{items: [{id, name, ...}], total}``. Silent failure keeps
+    // the modal usable when the caller's role can't list
+    // categories (403).
+    api.get("/service-categories")
+      .then((res) => setServiceCategories(
+        Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []),
+      ))
+      .catch(() => setServiceCategories([]));
   }, [open, job?.id, job?.customer_id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open || !job) return null;
@@ -149,6 +181,34 @@ export default function ScheduleJobEditModal({
           : (job[k] || "");
         const after = form[k] || "";
         if (after !== before) patch[k] = form[k];
+      }
+      // Feb-2026 · Jobs Overhaul Phase 2 — Price patch. Numeric
+      // comparison so a modal open + no-op close does NOT stamp
+      // ``price`` onto every legacy job.  ``form.price`` is stored
+      // as a string (input value); ``job.price`` may be number or
+      // null.  Normalize both sides to Number for compare and send
+      // the numeric value in the patch.  Backend ``JobUpdate`` does
+      // NOT yet declare ``price`` — Pydantic v2 ``extra="ignore"``
+      // silently drops it. Included opportunistically so a
+      // follow-up phase can widen the model without a FE change.
+      const beforePrice = Number.isFinite(Number(job.price))
+        ? Number(job.price) : null;
+      const afterPriceRaw = form.price;
+      const afterPrice = (afterPriceRaw === "" || afterPriceRaw == null)
+        ? null : Number(afterPriceRaw);
+      if (afterPrice !== beforePrice
+          && !(Number.isNaN(afterPrice) && beforePrice == null)) {
+        patch.price = afterPrice;
+      }
+      // Feb-2026 · Jobs Overhaul Phase 2 — Service Category paired
+      // ID/name.  Send BOTH keys when the id changed so downstream
+      // consumers (drilldown, income tiles) always see the pair.
+      // Same opportunistic-include posture as Price above.
+      const beforeCatId = job.service_category_id || "";
+      const afterCatId = form.service_category_id || "";
+      if (afterCatId !== beforeCatId) {
+        patch.service_category_id = afterCatId;
+        patch.service_category_name = form.service_category_name || "";
       }
       if (Object.keys(patch).length === 0) {
         onClose();
@@ -253,12 +313,62 @@ export default function ScheduleJobEditModal({
             {SERVICE_TYPES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+        {/* Feb-2026 · Jobs Overhaul Phase 2 — Service Category
+            dropdown. Paired ``{id, name}`` mirrors the JobNew
+            surface so the two pages read/write the same wire
+            fields. See save-handler above for the paired-key patch. */}
+        <div>
+          <label className="text-xs font-semibold uppercase tracking-wide"
+                 style={{ color: colors.muted }}>Service Category</label>
+          <select
+            value={form.service_category_id || ""}
+            onChange={(e) => {
+              const id = e.target.value;
+              const cat = serviceCategories.find((c) => c.id === id);
+              setForm((prev) => ({
+                ...prev,
+                service_category_id: id,
+                service_category_name: cat?.name || "",
+              }));
+            }}
+            className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm mt-1"
+            style={{
+              backgroundColor: colors.surface, color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="schedule-job-edit-service-category"
+          >
+            <option value="">Choose a category…</option>
+            {serviceCategories.map((c) => (
+              <option
+                key={c.id}
+                value={c.id}
+                data-testid={`schedule-job-edit-service-category-opt-${c.id}`}
+              >
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
         <TextInput
           type="date"
           label="Scheduled date"
           value={form.scheduled_date}
           onChange={set("scheduled_date")}
           testid="schedule-job-edit-date"
+        />
+        {/* Feb-2026 · Jobs Overhaul Phase 2 — Price parity with the
+            JobNew form. Simple editable number input; the modal's
+            embedded LineItemsSection operates server-side on job
+            line items and does NOT sync back to ``form.price``, so
+            no manual-override plumbing is needed here. */}
+        <TextInput
+          type="number"
+          step="0.01"
+          label="Price"
+          value={form.price}
+          onChange={set("price")}
+          testid="schedule-job-edit-price"
         />
         {/* Feb 2026 · Property (address) picker. Only rendered when
             the customer has ≥2 active properties — single-property
