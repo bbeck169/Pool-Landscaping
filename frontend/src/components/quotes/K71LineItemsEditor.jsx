@@ -32,7 +32,7 @@
  *   - PDF/portal never render this component (staff-only surface).
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, X, Check, Plus, Trash2, Undo2, AlertCircle, Search } from "lucide-react";
+import { Pencil, X, Check, Plus, Trash2, Undo2, AlertCircle } from "lucide-react";
 import { colors, money } from "@/theme";
 import CategoryPicker, {
   loadCategories as _loadCatsByKind,
@@ -46,12 +46,16 @@ import CategoryPicker, {
 // income_category_id iff the item's item_type !== "service" (per
 // backend rule: services cannot carry income_category / supplier
 // pricing — see routers/items.py :183-202).
-import { api } from "@/api";
+//
+// Feb-2026 · Phase PRICEBOOK-UNIFY follow-up — the inline
+// ``K71PricebookPicker`` implementation was extracted to the shared
+// ``<PricebookItemPicker />`` in commit ``cd53fb749`` (Estimator +
+// QuoteInvoiceNew already consume it). K71 now imports the shared
+// component and preserves its legacy testid namespace via the
+// ``testidPrefix`` / ``inputTestid`` / ``wrapperTestid`` props so the
+// existing K71 test suite keeps passing unchanged.
+import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 const MAX_LONG_DESC = 500;
-// Pricebook picker debounce — 250 ms after last keystroke, then
-// fire the search. Empty string → NO request, dropdown closed.
-const PICKER_DEBOUNCE_MS = 250;
-const PICKER_MAX_RESULTS = 50;
 const UNDO_WINDOW_MS = 5000;
 
 // Feb-2026 · Stable-id keys + duplicate-row guard.
@@ -124,263 +128,6 @@ function isLegacyLine(li) {
   const hasSvc = typeof li.service_category_id === "string";
   const hasInc = typeof li.income_category_id === "string";
   return !hasSvc && !hasInc;
-}
-
-// ────────────────────────────────────────────────────────────────
-// Task G · Feb-2026 — Pricebook picker (K71-only).
-//
-// Debounced (250 ms) live search against ``GET /api/items``. The
-// endpoint is tenant-scoped and soft-delete-excluding after the
-// P59 HIGH #1 fix, and accepts ``search`` / ``active`` / ``limit``
-// query params (see routers/items.py :93-170).
-//
-// Stale-response discipline: a monotonic ``_reqSeq`` counter is
-// bumped on every keystroke and captured before the ``api.get``
-// call. When the response resolves, we discard it if a newer
-// keystroke has since bumped the counter. Simpler than an
-// AbortController plumbing since ``api.get`` doesn't expose an
-// ``AbortSignal`` hook.
-//
-// Contract:
-//   • ``value`` (string) — the current NAME / description string.
-//     Free-typing bubbles ``onTextChange(name)`` on every keystroke.
-//     No overwrite of parent price / category state on free-type.
-//   • ``onPick(item)`` fires ONCE when the user clicks a dropdown
-//     row. Full item doc is passed through — caller decides what
-//     to auto-fill.
-//   • Enter key is NOT hijacked — bubbles up to the surrounding
-//     EditableRow ``handleKey`` (Enter → Save). Escape closes the
-//     dropdown without preventing default (Escape → row Cancel).
-//   • Empty query → no request fired, no dropdown open.
-//
-// Testids:
-//   • Wrapper div: ``k71-input-item-{index}`` (LEGACY preserved).
-//   • Input:       ``k71-input-item-{index}-input`` (LEGACY preserved
-//                   — see /app/frontend/src/test/k71-line-items-
-//                   editor.test.jsx :232 which queries it directly).
-//   • New picker sub-elements carry the fresh ``k71-pricebook-
-//     search-*`` namespace. Only one EditableRow renders at a time
-//     (single ``editIndex`` in K71 state), so no per-index suffix
-//     is needed on the picker-specific testids.
-// ────────────────────────────────────────────────────────────────
-function K71PricebookPicker({ index, value, onTextChange, onPick, placeholder }) {
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const wrapRef = useRef(null);
-  // Monotonic request id — every keystroke bumps this. Response
-  // handlers compare against the LATEST value and discard stale
-  // ones. Same pattern React Router / TanStack Query use for
-  // request-cancellation-lite when native AbortSignal isn't wired.
-  const reqSeqRef = useRef(0);
-
-  // Outside-click closes the dropdown.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDocClick = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
-
-  // Debounced search. Cleared / empty ``value`` short-circuits — no
-  // request fired, results wiped, dropdown left in its current
-  // open/closed state (usually closed since focus-empty won't fire).
-  useEffect(() => {
-    const trimmed = (value || "").trim();
-    if (!trimmed) {
-      setResults([]);
-      setLoading(false);
-      return undefined;
-    }
-    setLoading(true);
-    const mySeq = ++reqSeqRef.current;
-    const t = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          search: trimmed,
-          active: "true",
-          limit: String(PICKER_MAX_RESULTS),
-        }).toString();
-        const rows = await api.get(`/items?${params}`);
-        // Stale response — a newer keystroke bumped the counter
-        // after we captured ``mySeq``. Drop this batch.
-        if (mySeq !== reqSeqRef.current) return;
-        setResults(Array.isArray(rows) ? rows : []);
-      } catch {
-        if (mySeq !== reqSeqRef.current) return;
-        setResults([]);
-      } finally {
-        if (mySeq === reqSeqRef.current) setLoading(false);
-      }
-    }, PICKER_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [value]);
-
-  const handleTextChange = (next) => {
-    onTextChange(next);
-    // Open the dropdown on any keystroke so the user sees the
-    // search state (loading indicator or results). ``useEffect``
-    // above handles the empty-value short-circuit for the
-    // NO-request contract.
-    if ((next || "").trim()) setOpen(true);
-  };
-
-  const handlePick = (row) => {
-    onPick(row);
-    setOpen(false);
-  };
-
-  const trimmed = (value || "").trim();
-  // Dropdown visibility: open AND user has typed something. The
-  // empty-value branch short-circuits above so open==true with no
-  // ``trimmed`` never fires a request; we ALSO keep the dropdown
-  // panel out of the DOM in that state so tests can assert
-  // "no dropdown before keystrokes".
-  const showDropdown = open && trimmed.length > 0;
-
-  return (
-    <div
-      ref={wrapRef}
-      className="relative"
-      data-testid={`k71-input-item-${index}`}
-    >
-      <div className="relative">
-        <Search
-          size={14}
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-          style={{ color: colors.searchIcon || colors.muted }}
-        />
-        <input
-          type="text"
-          value={value || ""}
-          onChange={(e) => handleTextChange(e.target.value)}
-          onFocus={() => { if (trimmed) setOpen(true); }}
-          onClick={() => { if (trimmed) setOpen(true); }}
-          placeholder={placeholder}
-          className="w-full text-sm rounded-lg py-2 pl-8 pr-3"
-          style={{
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
-            color: colors.onSurface,
-          }}
-          data-testid={`k71-input-item-${index}-input`}
-          autoComplete="off"
-        />
-      </div>
-
-      {showDropdown ? (
-        <div
-          className="absolute z-[60] left-0 right-0 mt-1 rounded-lg overflow-hidden shadow-lg"
-          style={{
-            background: colors.surface,
-            border: `1px solid ${colors.border}`,
-            maxHeight: 300,
-            overflowY: "auto",
-          }}
-          data-testid="k71-pricebook-search-dropdown"
-        >
-          {loading ? (
-            <div
-              className="px-3 py-2 text-xs"
-              style={{ color: colors.muted }}
-              data-testid="k71-pricebook-search-loading"
-            >
-              Searching pricebook…
-            </div>
-          ) : null}
-          {!loading && results.length === 0 ? (
-            <div
-              className="px-3 py-2 text-xs"
-              style={{ color: colors.muted }}
-              data-testid="k71-pricebook-search-empty"
-            >
-              No pricebook items match &ldquo;{trimmed}&rdquo;.
-              You can type a one-off name — it&rsquo;ll save on this line only.
-            </div>
-          ) : null}
-          {!loading && results.map((row, i) => {
-            const svcName = row.service_category_name || "";
-            const incName = row.income_category_name || "";
-            const legacyCat = row.category || "";
-            return (
-              <button
-                key={row.id ?? i}
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handlePick(row)}
-                className="w-full text-left px-3 py-2 text-sm flex flex-col gap-1 hover:bg-slate-50"
-                style={{
-                  color: colors.onSurface,
-                  borderBottom: `1px solid ${colors.border}`,
-                }}
-                data-testid={`k71-pricebook-search-item-${i}`}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-semibold truncate">{row.name}</span>
-                  <span
-                    className="text-xs tabular-nums shrink-0"
-                    style={{ color: colors.muted }}
-                  >
-                    {money(Number(row.unit_price || 0))}
-                  </span>
-                </div>
-                {row.description ? (
-                  <div
-                    className="text-xs truncate"
-                    style={{ color: colors.muted }}
-                    title={row.description}
-                  >
-                    {row.description}
-                  </div>
-                ) : null}
-                {(svcName || incName || legacyCat) ? (
-                  <div className="flex items-center flex-wrap gap-1 mt-0.5">
-                    {svcName ? (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-                        style={{
-                          background: "#DCFCE7",
-                          color: "#166534",
-                        }}
-                      >
-                        {svcName}
-                      </span>
-                    ) : null}
-                    {incName ? (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-                        style={{
-                          background: "#DBEAFE",
-                          color: "#1E40AF",
-                        }}
-                      >
-                        {incName}
-                      </span>
-                    ) : null}
-                    {(!svcName && !incName && legacyCat) ? (
-                      <span
-                        className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
-                        style={{
-                          background: "#F1F5F9",
-                          color: "#475569",
-                        }}
-                      >
-                        {legacyCat}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function EditableRow({ line, index, onSave, onCancel }) {
@@ -500,11 +247,10 @@ function EditableRow({ line, index, onSave, onCancel }) {
                  Free-typing (no pick) still saves the raw string on
                  commit — backwards-compatible with legacy line items
                  that never lived in the pricebook. */}
-            <K71PricebookPicker
-              index={index}
+            <PricebookItemPicker
               value={description}
-              onTextChange={(next) => setDescription(next)}
-              onPick={(item) => {
+              onChange={(next) => setDescription(next)}
+              onSelect={(item) => {
                 setDescription(item.name || "");
                 // Only overwrite description when the item has one —
                 // preserves a user-typed note if they picked a row
@@ -527,6 +273,9 @@ function EditableRow({ line, index, onSave, onCancel }) {
                 }
               }}
               placeholder="Search pricebook or type a one-off name…"
+              testidPrefix="k71-pricebook-search"
+              wrapperTestid={`k71-input-item-${index}`}
+              inputTestid={`k71-input-item-${index}-input`}
             />
           </div>
           <div className="col-span-4 sm:col-span-2">

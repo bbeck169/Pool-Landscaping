@@ -21,6 +21,13 @@
  *                                     // input's data-testid; K71
  *                                     // sets this to
  *                                     // ``k71-input-item-<i>-input``
+ *     wrapperTestid="..."             // optional — override the
+ *                                     // outer wrapper's data-testid.
+ *                                     // K71 sets this per-row to
+ *                                     // ``k71-input-item-<i>`` so
+ *                                     // legacy tests keep resolving.
+ *                                     // Defaults to
+ *                                     // ``${testidPrefix}-wrapper``.
  *   />
  *
  * Behaviour
@@ -63,6 +70,7 @@ export default function PricebookItemPicker({
   disabled = false,
   testidPrefix = "pricebook-picker",
   inputTestid,
+  wrapperTestid,
 }) {
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState([]);
@@ -165,7 +173,7 @@ export default function PricebookItemPicker({
       aria-expanded={showDropdown}
       aria-haspopup="listbox"
       aria-owns={`${testidPrefix}-dropdown`}
-      data-testid={`${testidPrefix}-wrapper`}
+      data-testid={wrapperTestid || `${testidPrefix}-wrapper`}
     >
       <div className="relative">
         <Search

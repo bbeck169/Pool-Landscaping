@@ -213,4 +213,46 @@ describe("<PricebookItemPicker /> — testid namespacing", () => {
         screen.queryByTestId("k71-pricebook-search-wrapper"),
       ).toBeTruthy();
     });
+
+  it("wrapperTestid override wins over the ``${testidPrefix}-wrapper`` default",
+    () => {
+      // Feb-2026 · Phase PRICEBOOK-UNIFY follow-up — K71 renders one
+      // picker per editable row and needs a per-row wrapper testid
+      // (``k71-input-item-{index}``) so its legacy tests keep
+      // resolving the row's outer combobox by index.
+      render(
+        <_Wrapper
+          testidPrefix="k71-pricebook-search"
+          wrapperTestid="k71-input-item-2"
+          inputTestid="k71-input-item-2-input"
+        />,
+      );
+      // Custom wrapper testid wins.
+      const wrapper = screen.queryByTestId("k71-input-item-2");
+      expect(wrapper).toBeTruthy();
+      expect(wrapper.getAttribute("role")).toBe("combobox");
+      // Legacy default is NOT rendered when the override is set —
+      // otherwise a caller mixing default + override would end up
+      // with two identical wrappers and duplicate assertions.
+      expect(
+        screen.queryByTestId("k71-pricebook-search-wrapper"),
+      ).toBeNull();
+      // The input's own testid follows the ``inputTestid`` override
+      // and stays orthogonal to the wrapper override.
+      expect(
+        screen.queryByTestId("k71-input-item-2-input"),
+      ).toBeTruthy();
+    });
+
+  it("wrapper defaults to ``${testidPrefix}-wrapper`` when wrapperTestid is omitted",
+    () => {
+      render(<_Wrapper testidPrefix="k71-pricebook-search" />);
+      // Regression guard: unlike ``inputTestid`` which falls through
+      // to ``${testidPrefix}-input``, the wrapper fallback keeps the
+      // pre-Feb-2026 selector so existing consumers (Estimator,
+      // QuoteInvoiceNew) don't need to plumb the new prop.
+      expect(
+        screen.queryByTestId("k71-pricebook-search-wrapper"),
+      ).toBeTruthy();
+    });
 });
