@@ -259,8 +259,21 @@ const jobHours = (j) => {
   const h = j.actual_hours ?? j.billable_hours ?? j.estimated_hours ?? 0;
   return `${(Number(h) || 0).toFixed(2)} BH`;
 };
-const isRecurring = (j) =>
-  Boolean(j.is_recurring || j.recurring || (j.recurrence && j.recurrence !== "none"));
+// Feb-2026 · Recurring-star detection — extended to include
+// ``recurring_template_id`` so occurrences spawned from a recurring
+// template (which typically don't carry the legacy ``is_recurring``
+// flag) still render the 🔁 marker on the schedule card.  Exported
+// for unit tests — see ``test/schedule-is-recurring-detection.test.jsx``.
+// A UUID string is truthy; empty-string / null / undefined are
+// falsy, so the loose truthy check handles the defensive cases
+// without extra guards.
+export const isRecurring = (j) =>
+  Boolean(
+    j.is_recurring
+      || j.recurring
+      || (j.recurrence && j.recurrence !== "none")
+      || j.recurring_template_id,
+  );
 
 const MODE_KEY = "aq-schedule-mode-v1";
 // Feb-2026 · Batched Wave #2 — persistent show/hide of the
