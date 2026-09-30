@@ -17,9 +17,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 
-const { navigateSpy, searchGlobalSpy } = vi.hoisted(() => ({
+const { navigateSpy, searchGlobalSpy, apiGetSpy } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
   searchGlobalSpy: vi.fn(),
+  apiGetSpy: vi.fn(),
 }));
 
 
@@ -27,9 +28,20 @@ vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateSpy,
 }));
 
+// Legacy searchGlobal client — retained as a no-op stub so any
+// transitive import still resolves.  ``<GlobalSearch>`` no longer
+// consumes it (migrated to ``useGlobalSearchResults`` on
+// ``/api/search`` in Feb-2026), but the mock keeps the file
+// importable across other test suites.
 vi.mock("@/lib/globalSearchClient", () => ({
   searchGlobal: (...a) => searchGlobalSpy(...a),
 }));
+
+// Feb-2026 · Restore visible universal search — the palette now
+// consumes ``useGlobalSearchResults`` which hits ``GET /api/search``
+// via the shared ``@/api`` wrapper.  Mock the wrapper so the
+// dropdown backend rows arrive without a real network call.
+vi.mock("@/api", () => ({ api: { get: (...a) => apiGetSpy(...a) } }));
 
 // The nav-index search is synchronous — mock it with a static
 // catalog that includes an "Invoices" entry so page-kind results
@@ -56,6 +68,10 @@ beforeEach(() => {
   navigateSpy.mockReset();
   searchGlobalSpy.mockReset();
   searchGlobalSpy.mockResolvedValue({ customers: [], documents: [] });
+  apiGetSpy.mockReset();
+  apiGetSpy.mockResolvedValue({
+    customers: [], jobs: [], invoices: [], quotes: [], leads: [],
+  });
 });
 
 afterEach(() => {
@@ -200,12 +216,21 @@ describe("<GlobalSearch /> — result surfacing + commit", () => {
   });
 
   it("clicking a document result navigates to /invoices/<id>", async () => {
-    searchGlobalSpy.mockResolvedValue({
+    // Feb-2026 · Restore visible universal search — the palette
+    // now consumes ``useGlobalSearchResults`` which hits
+    // ``GET /api/search`` and merges ``jobs + invoices + quotes``
+    // into the palette's ``documents`` bucket with a per-row
+    // ``kind`` tag.  The response shape is the unified
+    // ``{id, primary, secondary}`` triplet, not the legacy
+    // ``{type, display_id, title}`` shape.
+    apiGetSpy.mockResolvedValue({
       customers: [],
-      documents: [
-        { type: "invoice", id: "inv-42",
-          display_id: "INV-42", title: "March pool service" },
+      jobs: [],
+      invoices: [
+        { id: "inv-42", primary: "Invoice INV-42",
+          secondary: "Someone · $100.00" },
       ],
+      quotes: [], leads: [],
     });
     _mount();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
@@ -213,8 +238,8 @@ describe("<GlobalSearch /> — result surfacing + commit", () => {
       screen.getByTestId("global-search-input"),
     );
     fireEvent.change(input, { target: { value: "pool" } });
-    // Real 300ms debounce inside ``useGlobalSearch``; give it
-    // enough real time to fire, resolve, and re-render.
+    // Real 300ms debounce inside ``useGlobalSearchResults``; give
+    // it enough real time to fire, resolve, and re-render.
     const row = await waitFor(() => {
       const candidate = screen.queryAllByRole("option").find(
         (el) => el.getAttribute("data-kind") === "document",

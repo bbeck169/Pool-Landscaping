@@ -7,8 +7,11 @@
  *     scoped to ``window`` and cleaned up on unmount.
  *   • ``Escape`` closes the palette and restores focus to whatever
  *     was active before the shortcut fired.
- *   • ``useGlobalSearch(query)`` orchestrates the debounced grouped
- *     search (pages · customers · documents).
+ *   • ``useGlobalSearchResults(query)`` orchestrates the debounced
+ *     grouped search (pages · customers · documents) — the SAME
+ *     hook the always-visible ``<GlobalSearchBar>`` (top bar)
+ *     consumes so the two entry points can never drift on
+ *     backend shape.
  *   • Enter commits the highlighted row and navigates via
  *     ``react-router-dom``'s ``useNavigate``.
  *
@@ -32,7 +35,7 @@ import React, {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, X } from "lucide-react";
-import { useGlobalSearch } from "@/hooks/useGlobalSearch";
+import { useGlobalSearchResults } from "@/hooks/useGlobalSearchResults";
 
 
 // Palette colour tokens — SPEC-locked. Do not swap for design-system
@@ -46,6 +49,7 @@ const PALETTE_MUTED   = "#525252";
 const PALETTE_HIGHLIGHT = "#EEEEEE";
 const PALETTE_BORDER  = "#D4D4D4";
 const PALETTE_BADGE_BG_INVOICE = "#0EA5E9";
+const PALETTE_BADGE_BG_QUOTE   = "#059669";
 const PALETTE_BADGE_BG_JOB     = "#1B1F5C";
 
 
@@ -56,16 +60,17 @@ function _detectMac() {
 }
 
 
-function _customerAddressLine(c) {
-  const line1 = (c.address_line1 || "").trim();
-  const city = (c.city || "").trim();
-  const postal = (c.postal_code || "").trim();
-  if (line1 || city || postal) {
-    const parts = [line1, [city, postal].filter(Boolean).join(" ")];
-    return parts.filter(Boolean).join(", ");
-  }
-  return (c.address || "").trim();
-}
+// Feb-2026 · migration to consolidated ``/api/search`` — badge label
+// + background lookup keyed on the ``kind`` tag the hook attaches
+// to every merged document row.
+const _DOC_BADGE_LABEL = {
+  job: "Job", invoice: "Invoice", quote: "Quote",
+};
+const _DOC_BADGE_BG = {
+  job: PALETTE_BADGE_BG_JOB,
+  invoice: PALETTE_BADGE_BG_INVOICE,
+  quote: PALETTE_BADGE_BG_QUOTE,
+};
 
 
 export default function GlobalSearch({ initialQuery = "" } = {}) {
@@ -78,7 +83,7 @@ export default function GlobalSearch({ initialQuery = "" } = {}) {
   const [query, setQuery] = useState(initialQuery);
   const [highlight, setHighlight] = useState(0);
   const { pages, customers, documents, loading, error }
-    = useGlobalSearch(query);
+    = useGlobalSearchResults(query);
   const isMac = useMemo(() => _detectMac(), []);
   const kbdHint = isMac ? "\u2318K" : "Ctrl+K";
 
@@ -159,11 +164,14 @@ export default function GlobalSearch({ initialQuery = "" } = {}) {
     } else if (row.kind === "customer") {
       if (row.rec.id) target = `/customers/${row.rec.id}`;
     } else if (row.kind === "document") {
-      if (row.rec.type === "invoice" && row.rec.id) {
-        target = `/invoices/${row.rec.id}`;
-      } else if (row.rec.type === "job" && row.rec.id) {
-        target = `/jobs/${row.rec.id}`;
-      }
+      // Feb-2026 · migration to consolidated ``/api/search`` — the
+      // merged ``documents`` list carries a ``rec.kind`` tag (job /
+      // invoice / quote) so we route each row to its canonical
+      // detail page without a doc_type lookup.
+      const k = row.rec.kind;
+      if (row.rec.id && k === "invoice") target = `/invoices/${row.rec.id}`;
+      else if (row.rec.id && k === "quote") target = `/quotes/${row.rec.id}`;
+      else if (row.rec.id && k === "job") target = `/jobs/${row.rec.id}`;
     }
     if (!target) return;
     closeAndRestoreFocus();
@@ -450,9 +458,16 @@ function Section({ label, kind, rows, startFlatIdx,
               ) : null}
               {kind === "customer" ? (
                 <>
-                  <span style={{ fontWeight: 600 }}>{rec.name}</span>
+                  {/* Feb-2026 · migration to consolidated
+                      ``/api/search`` — row shape is now
+                      ``{id, primary, secondary}`` (was
+                      ``{id, name, address_line1, ...}``).  The
+                      ``primary`` field carries the customer name;
+                      ``secondary`` carries whichever of email /
+                      phone / address the backend chose to show. */}
+                  <span style={{ fontWeight: 600 }}>{rec.primary}</span>
                   <span style={{ fontSize: 12, color: PALETTE_MUTED }}>
-                    {_customerAddressLine(rec) || "\u2014"}
+                    {rec.secondary || "\u2014"}
                   </span>
                 </>
               ) : null}
@@ -460,6 +475,14 @@ function Section({ label, kind, rows, startFlatIdx,
                 <div style={{
                   display: "flex", alignItems: "center", gap: 8,
                 }}>
+                  {/* Feb-2026 · migration to consolidated
+                      ``/api/search`` — the merged ``documents``
+                      list tags every row with ``rec.kind`` (job /
+                      invoice / quote) so we badge each one
+                      individually.  ``primary`` already carries
+                      the display id (e.g. "Invoice INV-123"),
+                      ``secondary`` carries the customer name +
+                      formatted total. */}
                   <span
                     style={{
                       fontSize: 10,
@@ -469,25 +492,24 @@ function Section({ label, kind, rows, startFlatIdx,
                       padding: "2px 6px",
                       borderRadius: 4,
                       color: "#FFFFFF",
-                      backgroundColor: rec.type === "invoice"
-                        ? PALETTE_BADGE_BG_INVOICE
-                        : PALETTE_BADGE_BG_JOB,
+                      backgroundColor:
+                        _DOC_BADGE_BG[rec.kind] || PALETTE_BADGE_BG_JOB,
                     }}
                   >
-                    {rec.type === "invoice" ? "Invoice" : "Job"}
+                    {_DOC_BADGE_LABEL[rec.kind] || "Doc"}
                   </span>
                   <span style={{
                     fontFamily: "SFMono-Regular, Menlo, monospace",
                     fontSize: 13,
                   }}>
-                    {rec.display_id}
+                    {rec.primary}
                   </span>
                   <span style={{
                     color: PALETTE_MUTED, fontSize: 13,
                     overflow: "hidden", textOverflow: "ellipsis",
                     whiteSpace: "nowrap", flex: "1 1 auto", minWidth: 0,
                   }}>
-                    {rec.title}
+                    {rec.secondary || ""}
                   </span>
                 </div>
               ) : null}
