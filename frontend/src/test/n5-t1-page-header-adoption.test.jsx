@@ -97,9 +97,9 @@ vi.mock("@/theme", () => {
 });
 
 // Nav sidebar mock — <PageHeader> imports the nav index from
-// ``@/nav/adminNav`` transitively via <useGlobalSearch>. Shim it so
-// the search bar renders empty groups without touching the real
-// mount graph.
+// ``@/nav/adminNav`` transitively via the global-search hook. Shim
+// it so the search bar renders empty groups without touching the
+// real mount graph.
 vi.mock("@/nav/adminNav", () => ({
   ADMIN_NAV_V2: [
     { key: "finance", label: "Finance", entries: [

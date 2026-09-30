@@ -32,18 +32,19 @@
  *   * ``loading`` reflects the in-flight backend fetch only — the
  *     synchronous ``pages`` list is never "loading".
  *
- * NOTE — deprecates ``useGlobalSearch`` (which hit the legacy
- * ``/api/search/global`` endpoint).  That hook + its test are
- * retained temporarily so their historical contract stays covered
- * until a follow-up hygiene commit prunes the dead client-side
- * legacy code path.
+ * NOTE — supersedes the legacy client-side global-search hook that
+ * used to hit the retired ``/api/search/global`` endpoint. Both the
+ * hook and its regression suite have been pruned in the search-
+ * cleanup chore (Feb-2026) now that every UI consumer has been
+ * migrated onto this results-oriented hook + the consolidated
+ * ``GET /api/search`` backend.
  */
 import { useEffect, useMemo, useState } from "react";
 // Feb-2026 · Phase 40b hotfix — the ``@/lib/*`` alias only exposes
 // the three allowlisted utilities (utils / stripeConfig /
 // checklistType).  ``navIndex`` is a lib module but not in the
-// allowlist, so we import it via relative path (same pattern
-// ``useGlobalSearch.js`` used pre-Phase-40b).
+// allowlist, so we import it via relative path (same pattern the
+// retired legacy hook used pre-Phase-40b).
 import { searchNavIndex } from "../lib/navIndex";
 import { api } from "@/api";
 

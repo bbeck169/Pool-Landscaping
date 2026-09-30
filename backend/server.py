@@ -36,7 +36,6 @@ from routers import (
     # pipeline writes here via the create_admin_todo tool; the
     # Sub-phase E proactive cron reads from here.
     admin_todos,
-    search as search_router,
     realtime, csat, signatures,
     analytics, onboarding,
     lead_requests, mobile_push,
@@ -1338,7 +1337,6 @@ for module in [notifications_router,
                marco,
                audio_transcribe,
                admin_todos,
-               search_router,
                realtime, csat, signatures,
                analytics, onboarding,
                lead_requests, mobile_push,
