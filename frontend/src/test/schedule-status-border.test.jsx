@@ -66,6 +66,14 @@ vi.mock("@/hooks/usePermissions", () => ({
 vi.mock("@/hooks/useClockInGate", () => ({
   useClockInGate: () => ({ openJob: (_id, cb) => cb?.() }),
   ClockInGateDialog: () => null,
+  // Feb-2026 · Landscaper clock-in gate follow-up — ``<OnMyWayButton>``
+  // now consumes ``useClockInStatus`` too.  Stub returns the "not
+  // gated / clocked in" shape so the button renders enabled for
+  // every existing test in this file (they all mount as admin).
+  useClockInStatus: () => ({
+    isGated: false, isClockedIn: true, isChecking: false, refresh: () => {},
+  }),
+  __resetClockInStatusCacheForTests: () => {},
 }));
 
 vi.mock("@/components/Weather/WeatherWidget", () => ({

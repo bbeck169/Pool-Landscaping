@@ -192,22 +192,35 @@ async def mine_status(user: dict = Depends(get_current_user)):
 
     Restricted to landscape-authorized users (admins get through
     `_require_landscaping`); everyone else 403s so the UI can skip the
-    gate entirely for roles it doesn't apply to."""
+    gate entirely for roles it doesn't apply to.
+
+    Feb-2026 · Day-boundary rollover — an unclosed shift that started
+    yesterday and hasn't been clocked out still means the tech is
+    ``clocked_in`` today (spec: device-local midnight is a soft
+    boundary; the OPEN entry is the source of truth).  We therefore
+    scan the last 2 days and use the LATEST punch's type to decide.
+    ``in`` → clocked in, ``out`` → clocked out, no punches → false."""
     _require_landscaping(user)
     today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    # Look back to yesterday's midnight so a rollover shift that
+    # started at 22:00 and hasn't been closed still surfaces as an
+    # open ``in``.  Latest punch wins.
     rows = await db.timeclock_punches.find({
         "tenant_id": user["tenant_id"], "user_id": user["id"],
-        "timestamp": {"$gte": f"{today}T00:00:00+00:00",
+        "timestamp": {"$gte": f"{yesterday}T00:00:00+00:00",
                        "$lte": f"{today}T23:59:59+00:00"},
         "punch_type": {"$in": ["in", "out"]},
     }, {"_id": 0, "punch_type": 1, "timestamp": 1}).sort("timestamp", 1).to_list(50)
-    open_in = False
-    for p in rows:
-        if p["punch_type"] == "in":
-            open_in = True
-        elif p["punch_type"] == "out":
-            open_in = False
-    return {"clocked_in": open_in, "punch_count": len(rows)}
+    latest_type = rows[-1]["punch_type"] if rows else None
+    open_in = (latest_type == "in")
+    # ``punch_count`` reports TODAY's activity only so the existing
+    # UI copy ("N punches today") stays semantically accurate.
+    todays_only = [
+        p for p in rows
+        if str(p.get("timestamp", "")).startswith(today)
+    ]
+    return {"clocked_in": open_in, "punch_count": len(todays_only)}
 
 
 # ── Phase 50.H · Assigned jobs picker for the top-of-page widget ──────

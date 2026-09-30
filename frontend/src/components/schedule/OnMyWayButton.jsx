@@ -25,6 +25,7 @@ import { toast } from "sonner";
 
 import { api } from "@/api";
 import { useAuth } from "@/auth";
+import { useClockInStatus } from "@/hooks/useClockInGate";
 
 
 const _ALLOWED_ROLES = new Set([
@@ -94,6 +95,12 @@ export default function OnMyWayButton({
 }) {
   const { user } = useAuth();
   const role = (user?.role || "").toLowerCase();
+  // Feb-2026 · Clock-in gate — landscape techs who aren't clocked
+  // in see a disabled button with an educational tooltip.  Non-
+  // landscape roles (admin, manager, pool tech, super_admin, etc.)
+  // get ``isGated: false`` unconditionally from the shared hook,
+  // so this is a no-op for them.
+  const { isGated: _clockGated } = useClockInStatus();
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const cooldownTimer = useRef(null);
@@ -130,6 +137,13 @@ export default function OnMyWayButton({
 
   if (!_ALLOWED_ROLES.has(role)) return null;
 
+  // Feb-2026 · Clock-in gate — final ``disabled`` combines the
+  // caller's ``disabledProp``, in-flight busy/cooldown, and the
+  // landscape-tech clock-in gate.  Tooltip is spec-verbatim so QA
+  // can grep it.
+  const _isDisabled = busy || cooldown || disabledProp || _clockGated;
+  const _gatedTitle = _clockGated ? "Clock in to start working." : null;
+
   const label = busy ? "Sending…" : (cooldown ? "Sent · wait 10s" : "On my way");
   const _tid = testId || `on-my-way-btn-${jobId}`;
 
@@ -138,11 +152,12 @@ export default function OnMyWayButton({
       <button
         type="button"
         onClick={send}
-        disabled={busy || cooldown || disabledProp}
+        disabled={_isDisabled}
         className={`inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl font-semibold text-white shadow-sm transition disabled:opacity-60 disabled:cursor-not-allowed ${className}`}
         style={{ background: "linear-gradient(135deg,#059669 0%,#047857 100%)" }}
         data-testid={_tid}
         aria-label="Notify next customer that you're on the way"
+        title={_gatedTitle || undefined}
       >
         <Send size={16} />
         <span>{busy ? "Sending…" : (cooldown ? "Sent — wait 10s" : "On my way — next job")}</span>
@@ -154,7 +169,7 @@ export default function OnMyWayButton({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); send(); }}
-      disabled={busy || cooldown || disabledProp}
+      disabled={_isDisabled}
       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition disabled:opacity-60 disabled:cursor-not-allowed ${className}`}
       // Feb-2026 HOTFIX (live user report) — was light-mint (#ECFDF5)
       // which looked wishy-washy on the schedule card. Now navy-family
@@ -168,7 +183,7 @@ export default function OnMyWayButton({
       data-testid={_tid}
       data-action-role="onmyway"
       aria-label={`Send 'on my way' SMS for job ${jobId}`}
-      title="Send 'on my way' SMS"
+      title={_gatedTitle || "Send 'on my way' SMS"}
     >
       <Send size={12} />
       <span>{label}</span>
