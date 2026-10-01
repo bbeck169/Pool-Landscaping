@@ -281,6 +281,33 @@ class JobUpdate(BaseModel):
     # either field (enforced in ``routers/jobs.py::update_job``).
     follow_up_at: Optional[str] = None
     needs_follow_up: Optional[bool] = None
+    # Feb-2026 · Jobs Overhaul Phase 3 — editable Job Costing.
+    # Admin can override the computed baseline/actual per bucket
+    # from the JobDetail Costing panel. Shape:
+    #   {"labor":     {"budgeted_cents": int, "actual_cents": int},
+    #    "materials": {"budgeted_cents": int, "actual_cents": int},
+    #    "equipment": {"budgeted_cents": int, "actual_cents": int}}
+    # Each inner key is INDEPENDENTLY optional — missing keys fall
+    # back to the computed value in ``GET /jobs/{jid}/costing``.
+    # ``routers/budgets.py::job_costing`` merges these over the
+    # computed baseline/actual before recomputing progress + net
+    # profit + margin. Admin-only enforcement lives in
+    # ``routers/jobs.py::update_job`` where this is stripped for
+    # non-admin callers (see Phase 3 patch).
+    costing_overrides: Optional[Dict[str, Dict[str, Any]]] = None
+    # Feb-2026 · Jobs Overhaul Phase 3 — editable Customer field on
+    # JobDetail. Admin re-points the job to a different customer;
+    # the denorm ``customer_name`` is re-resolved server-side (same
+    # pattern as ``POST /jobs``) and the address re-snapshot runs
+    # when a property_id is set or auto-resolves.
+    customer_id: Optional[str] = None
+    # Feb-2026 · Jobs Overhaul Phase 3 — Price / Service Category
+    # parity with JobNew (Phase 1) + ScheduleJobEditModal (Phase 2).
+    # All three surfaces (JobNew, Edit modal, JobDetail inline tile)
+    # now round-trip through the same wire fields.
+    price: Optional[float] = None
+    service_category_id: Optional[str] = None
+    service_category_name: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):
