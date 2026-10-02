@@ -6,6 +6,13 @@ import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
+// Phase BANNER-RELOCATE · Feb-2026 — visible universal search
+// bar. Rendered in a navy hero banner just below the AdminTopBar,
+// in the same role-gated branch so customer / portal shells never
+// mount it. Previously lived inside AdminTopBar (two mounts, one
+// per breakpoint); the command-K palette still mounts headless
+// there as a singleton.
+import GlobalSearchBar from "@/components/GlobalSearchBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
 // K75 · Step B · Feb-2026 — user-editable Quick Access rail.
 // Replaces the inline ``<QuickNavRail>`` (retained below as
@@ -701,7 +708,22 @@ function AppLayout() {
         {["admin", "super_admin", "manager", "technician"].includes(
           (effectiveRole || user.role)
         ) && (
-          <AdminTopBar />
+          <>
+            <AdminTopBar />
+            {/* Phase BANNER-RELOCATE · Feb-2026 — navy hero banner
+                hosts the relocated visible universal-search bar.
+                Role-gated via the enclosing conditional so portal /
+                customer / unauth branches never render it. */}
+            <div
+              data-testid="admin-hero-banner"
+              className="w-full py-6 px-4 sm:px-6 lg:px-8"
+              style={{ backgroundColor: "#1B1F5C" }}
+            >
+              <div className="max-w-2xl mx-auto">
+                <GlobalSearchBar />
+              </div>
+            </div>
+          </>
         )}
 
         {/* Phase 44 · universal top-right menu — Feb-2026 cleanup:

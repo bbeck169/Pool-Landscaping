@@ -68,7 +68,6 @@ import GlobalSearch from "@/components/GlobalSearch";
 // remains as the modal shortcut alongside it; both consume the
 // same ``useGlobalSearchResults`` hook so the shape drift between
 // entry points can never diverge.
-import GlobalSearchBar from "@/components/GlobalSearchBar";
 // Feb-2026 · Mobile Nav Duplicate Fix — mount RolePreviewSwitcher in
 // the narrow-branch right-cluster so super_admin keep one-tap "Test
 // as" access on mobile after Row 1 (the legacy AppLayout mobile
@@ -519,13 +518,11 @@ export default function AdminTopBar() {
             <div className="flex-shrink-0">
               <MobileMenu visible={visible} fixedItems={fixedItems} />
             </div>
-            {/* Feb-2026 · Visible universal search — mobile mount.
-                Rendered as a compact icon-collapse on narrow
-                viewports (see ``GlobalSearchBar`` for the sm:
-                breakpoint behaviour). */}
-            <div className="flex-shrink-0 mx-2">
-              <GlobalSearchBar />
-            </div>
+            {/* Phase BANNER-RELOCATE · Feb-2026 — the visible
+                universal search bar was relocated out of the
+                admin top bar and into a navy hero banner slot in
+                AppLayout (admin-hero-banner). The command-K palette
+                still mounts above as a headless singleton. */}
             <div className="flex items-center gap-2 flex-shrink-0">
               {/* Phase U1 · Feb-2026 — "+ Add Job" quick-action.
                   Sits DIRECTLY to the LEFT of "+ Add Customer" per
@@ -574,15 +571,9 @@ export default function AdminTopBar() {
             {hasAdminNav
               ? visible.map((g) => <CategoryDropdown key={g.key} group={g} />)
               : fixedItems.map((it) => <TopNavChip key={it.key} item={it} />)}
-            {/* Feb-2026 · Visible universal search — wide-viewport
-                mount.  Sits between the nav category dropdowns and
-                the right cluster so the blue hero is the visual
-                centrepiece of the header.  ``flex-1 max-w-xl`` on
-                the bar itself constrains it to a comfortable
-                reading width without hogging the strip. */}
-            <div className="flex-1 mx-3 min-w-0">
-              <GlobalSearchBar />
-            </div>
+            {/* Phase BANNER-RELOCATE · Feb-2026 — see narrow branch
+                above; the visible search bar was relocated to the
+                admin-hero-banner slot in AppLayout. */}
             <div className="shrink-0 flex items-center gap-2">
               {/* Phase U1 · Feb-2026 — mirror mount on the wide
                   branch. Order + styling match the narrow branch. */}
