@@ -630,6 +630,15 @@ class PatchMyProfileIn(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[str] = None
+    # Feb-2026 · Phase 3c-portal — current-email confirmation gate.
+    # Required ONLY when ``email`` is being changed (body.email
+    # differs from the stored primary). Compared against
+    # ``db.customers.email`` (fallback ``db.users.email``). Skipped
+    # for impersonated sessions (the token carries
+    # ``impersonator_id`` — the admin cannot know the customer's
+    # current email from memory, and impersonation already implies
+    # admin authority). Mismatch → 400.
+    confirm_current_email: Optional[str] = None
     # Feb-2026 · portal-profile extension — secondary email persisted
     # into ``customer.emails[]`` alongside the primary. Empty string
     # / whitespace clears the slot. Same RFC-lite validator as the
@@ -679,6 +688,16 @@ async def patch_my_profile(
     """
     cid = _require_customer(user)
 
+    # Feb-2026 · Phase 3c-portal · pre-fetch the stored customer row
+    # so the confirmation gate (on primary-email change) + the D8
+    # auto-swap step below can compare against the authoritative
+    # email on record. Re-used downstream as the audit-log BEFORE
+    # snapshot (replaces the dedicated BEFORE fetch at the bottom
+    # of the handler).
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    ) or {}
+
     patch_user: Dict[str, Any] = {}
     patch_cust: Dict[str, Any] = {}
 
@@ -704,6 +723,23 @@ async def patch_my_profile(
 
     if body.email is not None:
         em = (body.email or "").strip().lower()
+        # Feb-2026 · Phase 3c-portal — current-email confirmation gate.
+        # Fires BEFORE format validation so a bogus new email + wrong
+        # confirmation still returns the confirmation-mismatch message
+        # (the user hasn't proven they own the account yet; the format
+        # check is a secondary concern). Compare against
+        # ``db.customers.email`` (what the form displays), fallback to
+        # ``db.users.email`` if the customer row's email is blank.
+        # Skipped for impersonated sessions.
+        _stored_primary = (
+            (cust.get("email") or user.get("email") or "").strip().lower()
+        )
+        if em != _stored_primary and not user.get("impersonator_id"):
+            _supplied = (body.confirm_current_email or "").strip().lower()
+            if not _supplied or _supplied != _stored_primary:
+                raise HTTPException(
+                    400, "Current email confirmation does not match.",
+                )
         if not _valid_email(em):
             raise HTTPException(400, "Please enter a valid email address.")
         collision = await db.users.find_one(
@@ -801,12 +837,54 @@ async def patch_my_profile(
     if not patch_user and not patch_cust:
         raise HTTPException(400, "No changes provided.")
 
+    # Feb-2026 · Phase 3c-portal (D8) — primary-email auto-swap vs.
+    # secondary slot. When the primary email changes AND the
+    # ``secondary_email`` branch above DIDN'T already rebuild
+    # ``patch_cust["emails"]``, we must still rebuild the array so
+    # the primary slot's address matches + any secondary slot that
+    # duplicates the new address is dropped. We re-order so the
+    # existing primary slot (or the first entry whose address is
+    # the old primary) gets its address rewritten to the new one;
+    # ``normalize_emails`` then dedups via lowercased address so
+    # any duplicate secondary falls out of the FIRST position
+    # (which is the primary — kept by _dedup_by_key).
+    if patch_cust.get("email") and not secondary_email_change:
+        _existing_emails = list(cust.get("emails") or [])
+        _old_primary = (
+            (cust.get("email") or user.get("email") or "").strip().lower()
+        )
+        _new_primary = patch_cust["email"]
+        _rebuilt: List[dict] = []
+        _primary_landed = False
+        for _entry in _existing_emails:
+            _addr = (_entry.get("address") or "").strip().lower()
+            if _entry.get("is_primary") or _addr == _old_primary:
+                _rebuilt.append({
+                    **_entry,
+                    "address": _new_primary,
+                    "is_primary": True,
+                    "label": _entry.get("label") or "Primary",
+                })
+                _primary_landed = True
+            else:
+                _rebuilt.append({**_entry, "is_primary": False})
+        if not _primary_landed:
+            _rebuilt.insert(0, {
+                "address": _new_primary,
+                "label": "Primary",
+                "is_primary": True,
+            })
+        from services.customer_multi_contact import normalize_emails
+        patch_cust["emails"] = normalize_emails(
+            _rebuilt, legacy_email=_new_primary,
+        )
+
     now = now_iso()
 
-    # BEFORE snapshot for audit + diff.
-    before_cust = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
-    ) or {}
+    # BEFORE snapshot for audit + diff. Reuses the ``cust`` row
+    # pre-fetched at the top of the handler so we avoid a second
+    # round-trip for the same document.
+    before_cust = cust
     before_user = await db.users.find_one(
         {"id": user["id"]}, {"_id": 0, "password_hash": 0}
     ) or {}

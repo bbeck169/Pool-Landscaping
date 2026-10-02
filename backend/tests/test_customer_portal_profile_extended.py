@@ -333,3 +333,132 @@ def test_response_body_includes_emails_array(portal_customer):
     assert "emails" in profile, f"response missing emails array: {profile!r}"
     addrs = [(e or {}).get("address") for e in profile.get("emails") or []]
     assert "echo@example.com" in addrs
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 3c-portal · Feb-2026 — current-email confirmation gate on
+# primary-email change. Compares against ``db.customers.email``
+# (fallback ``db.users.email``); skipped for impersonated sessions;
+# mismatch → 400 "Current email confirmation does not match."
+# ══════════════════════════════════════════════════════════════════════
+_CONFIRM_MISMATCH = "current email confirmation does not match"
+
+
+def test_email_change_without_confirmation_rejected(portal_customer):
+    """PATCH with a new email but NO ``confirm_current_email`` → 400."""
+    ctx = portal_customer
+    new_email = f"changed_{uuid.uuid4().hex[:8]}@t.co"
+    r = _patch_profile(ctx["tok"], {"email": new_email})
+    assert r.status_code == 400, r.text
+    detail = (r.json().get("detail") or "").lower()
+    assert _CONFIRM_MISMATCH in detail, detail
+    # Side-channel: stored email must not have mutated.
+    doc = _db.customers.find_one({"id": ctx["customer_id"]}) or {}
+    assert (doc.get("email") or "").lower() == ctx["email"].lower()
+
+
+def test_email_change_with_wrong_confirmation_rejected(portal_customer):
+    """Wrong ``confirm_current_email`` → 400 (same message)."""
+    ctx = portal_customer
+    new_email = f"changed_{uuid.uuid4().hex[:8]}@t.co"
+    r = _patch_profile(ctx["tok"], {
+        "email": new_email,
+        "confirm_current_email": "obviously_wrong@elsewhere.co",
+    })
+    assert r.status_code == 400, r.text
+    detail = (r.json().get("detail") or "").lower()
+    assert _CONFIRM_MISMATCH in detail, detail
+    doc = _db.customers.find_one({"id": ctx["customer_id"]}) or {}
+    assert (doc.get("email") or "").lower() == ctx["email"].lower()
+
+
+def test_email_change_with_correct_confirmation_succeeds(portal_customer):
+    """Correct ``confirm_current_email`` → 200; new email persisted to
+    BOTH ``db.customers`` and ``db.users``."""
+    ctx = portal_customer
+    new_email = f"changed_{uuid.uuid4().hex[:8]}@t.co"
+    r = _patch_profile(ctx["tok"], {
+        "email": new_email,
+        "confirm_current_email": ctx["email"],
+    })
+    assert r.status_code == 200, r.text
+    cust = _db.customers.find_one({"id": ctx["customer_id"]}) or {}
+    usr = _db.users.find_one({"id": ctx["user_id"]}) or {}
+    assert (cust.get("email") or "").lower() == new_email.lower()
+    assert (usr.get("email") or "").lower() == new_email.lower()
+
+
+def test_email_unchanged_does_not_require_confirmation(portal_customer):
+    """Same email on the wire + no confirmation → 200."""
+    ctx = portal_customer
+    r = _patch_profile(ctx["tok"], {"email": ctx["email"]})
+    assert r.status_code == 200, r.text
+    # Also: email field entirely omitted → 200.
+    r2 = _patch_profile(ctx["tok"], {"first_name": "Pp"})
+    assert r2.status_code == 200, r2.text
+
+
+def test_other_fields_change_does_not_require_confirmation(portal_customer):
+    """PATCH with only a new phone (no ``email`` in body) → 200."""
+    ctx = portal_customer
+    r = _patch_profile(ctx["tok"], {"phone": "5555550199"})
+    assert r.status_code == 200, r.text
+
+
+def test_auto_swap_primary_matches_secondary(portal_customer):
+    """D8: new primary matches an existing secondary slot → the
+    secondary is dropped; emails[] holds a single entry for the new
+    address, flagged primary."""
+    ctx = portal_customer
+    # Seed a secondary first.
+    _patch_profile(ctx["tok"], {"secondary_email": "swap_target@t.co"})
+    arr_before = (_db.customers.find_one(
+        {"id": ctx["customer_id"]}) or {}).get("emails") or []
+    assert any((e or {}).get("address") == "swap_target@t.co"
+               and not (e or {}).get("is_primary") for e in arr_before)
+    # Now promote the secondary to primary via the primary-email
+    # change path — the auto-swap must dedup.
+    r = _patch_profile(ctx["tok"], {
+        "email": "swap_target@t.co",
+        "confirm_current_email": ctx["email"],
+    })
+    assert r.status_code == 200, r.text
+    arr_after = (_db.customers.find_one(
+        {"id": ctx["customer_id"]}) or {}).get("emails") or []
+    swap_slots = [
+        e for e in arr_after
+        if (e or {}).get("address") == "swap_target@t.co"
+    ]
+    assert len(swap_slots) == 1, (
+        f"auto-swap left duplicate rows: {arr_after!r}"
+    )
+    assert swap_slots[0].get("is_primary") is True, swap_slots[0]
+    # Scalar mirror follows the new primary.
+    cust = _db.customers.find_one({"id": ctx["customer_id"]}) or {}
+    assert (cust.get("email") or "").lower() == "swap_target@t.co"
+
+
+def test_impersonation_skips_confirmation_gate(portal_customer):
+    """When the token carries ``impersonator_id``, the confirmation
+    gate is skipped (admin cannot know the customer's email from
+    memory; impersonation already implies admin authority)."""
+    ctx = portal_customer
+    admin = _admin_login()
+    # Mint an impersonation token for this customer.
+    r_imp = requests.post(
+        f"{API}/admin/impersonate/{ctx['customer_id']}",
+        headers={"Authorization": f"Bearer {admin['tok']}"},
+        timeout=15,
+    )
+    if r_imp.status_code != 200:
+        pytest.skip(
+            f"impersonation endpoint unavailable: "
+            f"{r_imp.status_code} {r_imp.text}",
+        )
+    imp_tok = r_imp.json().get("access_token")
+    assert imp_tok, r_imp.text
+    new_email = f"imp_{uuid.uuid4().hex[:8]}@t.co"
+    r = _patch_profile(imp_tok, {"email": new_email})
+    assert r.status_code == 200, r.text
+    cust = _db.customers.find_one({"id": ctx["customer_id"]}) or {}
+    assert (cust.get("email") or "").lower() == new_email.lower()

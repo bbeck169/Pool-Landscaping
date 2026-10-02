@@ -657,6 +657,13 @@ export function PortalProfile() {
     secondary_email: "",
   });
   const [initial, setInitial] = useState(null);
+  // Feb-2026 · Phase 3c-portal — current-email confirmation gate.
+  // ``initialEmail`` is the server-stored primary email captured on
+  // hydration; the confirmation input renders only when the form's
+  // email drifts from this value.
+  const [initialEmail, setInitialEmail] = useState("");
+  const [confirmCurrentEmail, setConfirmCurrentEmail] = useState("");
+  const [confirmEmailError, setConfirmEmailError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -689,6 +696,10 @@ export function PortalProfile() {
         };
         setForm(nx);
         setInitial(JSON.stringify(nx));
+        // Phase 3c-portal — capture the server-authoritative
+        // primary email so the confirmation gate knows whether the
+        // user is actually changing it.
+        setInitialEmail(nx.email || "");
       })
       .catch(() => {});
   }, [user]);
@@ -714,12 +725,26 @@ export function PortalProfile() {
         ? "Secondary email must differ from primary."
         : ""
   );
+  // Feb-2026 · Phase 3c-portal — the email is "changed" iff the
+  // trimmed/lowercased form value differs from the hydrated
+  // ``initialEmail``. Confirmation input renders + is required
+  // only when this flag is true.
+  const emailChanged = (
+    initialEmail.trim().toLowerCase() !== ""
+    && primaryTrimmed !== initialEmail.trim().toLowerCase()
+  );
+  const confirmEmailValid = (
+    !emailChanged
+      ? true
+      : confirmCurrentEmail.trim().length > 0
+  );
   const valid = (
     form.first_name.trim() &&
     form.email.trim() && _emailRe.test(form.email) &&
     ("" + form.phone).replace(/\D/g, "").length >= 10 &&
     form.address.trim().length >= 5 &&
-    secondaryEmailValid
+    secondaryEmailValid &&
+    confirmEmailValid
   );
   const canSave = dirty && valid && !saving;
 
@@ -727,26 +752,49 @@ export function PortalProfile() {
   const save = async (e) => {
     e.preventDefault();
     if (!canSave) return;
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setConfirmEmailError("");
     try {
       // Feb-2026 · portal-profile extension — send the secondary
       // email as an explicit key so the backend can distinguish
       // "no change" (field omitted) from "clear the slot"
       // (empty string).  Trim + lowercase before wire so a stray
       // typing space can't reject the payload server-side.
+      // Phase 3c-portal — include ``confirm_current_email`` ONLY
+      // when the primary email is being changed (otherwise the
+      // backend gate skips, and sending the field would just
+      // waste bytes).
       const payload = {
         ...form,
         secondary_email: form.secondary_email.trim().toLowerCase(),
+        ...(emailChanged
+          ? { confirm_current_email: confirmCurrentEmail.trim() }
+          : {}),
       };
       await api.patch("/customer-portal/profile", payload);
       setToast({ tone: "success", message: "Profile updated" });
       // Snapshot the saved values so the form becomes clean again.
       setInitial(JSON.stringify(form));
+      // Phase 3c-portal — advance the server-stored baseline so a
+      // subsequent email change starts a fresh confirmation gate
+      // from the just-saved value.
+      setInitialEmail(form.email || "");
+      setConfirmCurrentEmail("");
       // Refresh cached user context so the header / other surfaces
       // pick up the new name/email.
       try { await refreshMe?.(); } catch (_) { /* best-effort */ }
     } catch (err) {
-      setError(err?.message || "Could not save. Please try again.");
+      const msg = err?.message || "Could not save. Please try again.";
+      // Phase 3c-portal — route the confirmation-mismatch 400 into
+      // the inline input's error slot (not the page-level banner)
+      // so the user can retype directly on the field that failed.
+      // Prefix match pins to the server's exact string ("Current
+      // email confirmation does not match.") and tolerates any
+      // future server-side suffix.
+      if (msg.toLowerCase().startsWith("current email confirmation")) {
+        setConfirmEmailError(msg);
+      } else {
+        setError(msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -756,6 +804,8 @@ export function PortalProfile() {
     if (!initial) return;
     setForm(JSON.parse(initial));
     setError("");
+    setConfirmCurrentEmail("");
+    setConfirmEmailError("");
   };
 
   const changePw = async () => {
@@ -785,6 +835,43 @@ export function PortalProfile() {
           <TextInput label="LAST NAME"  value={form.last_name}  onChange={set("last_name")}  testid="portal-profile-last-name" />
         </div>
         <TextInput label="EMAIL"   type="email" value={form.email}   onChange={set("email")}   testid="portal-profile-email" />
+        {/* Feb-2026 · Phase 3c-portal — current-email confirmation
+            gate. Rendered ONLY when the user has edited the primary
+            email away from the hydrated value. Edit back to the
+            original → this block disappears. Testids pinned by the
+            Phase-3c-portal brief. */}
+        {emailChanged ? (
+          <div className="mt-2 mb-2" data-testid="portal-profile-email-change-notice">
+            <p className="text-xs mb-1" style={{ color: "#92400E" }}>
+              You're changing your email. Confirm your current email to continue.
+            </p>
+            <input
+              type="email"
+              value={confirmCurrentEmail}
+              onChange={(e) => {
+                setConfirmCurrentEmail(e.target.value);
+                setConfirmEmailError("");
+              }}
+              placeholder="Confirm current email"
+              data-testid="portal-profile-confirm-current-email"
+              className="w-full text-sm px-3 py-2 rounded-md"
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: colors.surface,
+                color: colors.onSurface,
+              }}
+            />
+            {confirmEmailError ? (
+              <p
+                data-testid="portal-profile-confirm-current-email-error"
+                className="text-xs mt-1"
+                style={{ color: "#B91C1C" }}
+              >
+                {confirmEmailError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {/* Feb-2026 · portal-profile extension — Secondary email
             slot sits directly under the primary so the two email
             fields read as a coherent block.  Empty payload clears

@@ -4,6 +4,7 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- feat(portal): Edit Profile — current-email confirmation gate on primary-email change
 - chore(phase-3c-followup): rename auto-commit label; drop kail dedup helper; repoint JobNew.test.jsx JSX assertions to LineItemsEditor post-extraction (follow-up to 9b4aa719e)
 - refactor(jobs-page): extract LineItemsEditor presentation component from JobNew; LineItemsSection intentionally kept distinct (Phase 3c — Jobs Overhaul complete) [auto-committed under label '# Ops Tasks Report' in 9b4aa719e]
 - ops(kail-dedup): Aug-22 Pat Kail duplicate (014ce6bb) already soft-deleted 2026-09-01 — task intent satisfied; no further DB writes required.
