@@ -3,12 +3,12 @@
 Ships with ``backend/migrations/normalize_user_department_tokens.py``.
 
 Coverage:
-1.  Legacy ``"pool"`` + ``"landscaping"`` rows are remapped to the
+1.  Legacy ``"pool"`` + ``"landscape_tech"`` rows are remapped to the
     modern enum tokens.
-2.  Rows already in the modern enum (``"pool_tech"``, ``"both"``)
-    are NOT touched.
+2.  Rows already in the modern enum (``"pool_tech"``, ``"landscaping"``,
+    ``"both"``) are NOT touched.
 3.  Rows with ``department: null`` / missing field are NOT touched.
-4.  Uppercase / mixed-case drift (``"POOL"``, ``"Landscaping"``)
+4.  Uppercase / mixed-case drift (``"POOL"``, ``"Landscape_Tech"``)
     also gets normalized.
 5.  Idempotency — running the migration twice on the same DB
     reports ``updated == 0`` on the second run.
@@ -95,8 +95,8 @@ def _clean():
 def test_migrates_pool_and_landscaping_users():
     _run(_seed_users({
         "mike":   "pool",
-        "carlos": "landscaping",
-        "luis":   "landscape",           # defensive alias
+        "carlos": "landscape_tech",      # flipped 2026-10-02 — now the LEGACY key
+        "luis":   "landscape",           # defensive alias (unchanged scope)
     }))
     from migrations.normalize_user_department_tokens import run
     result = _run(run(_DB))
@@ -104,7 +104,7 @@ def test_migrates_pool_and_landscaping_users():
     assert result["users"]["matched"] == 3
     assert result["users"]["updated"] == 3
     assert _run(_dept_of("mike"))   == "pool_tech"
-    assert _run(_dept_of("carlos")) == "landscape_tech"
+    assert _run(_dept_of("carlos")) == "landscaping"
     assert _run(_dept_of("luis"))   == "landscape_tech"
 
 
@@ -114,7 +114,7 @@ def test_migrates_pool_and_landscaping_users():
 def test_leaves_modern_enum_alone():
     _run(_seed_users({
         "mod-pool":  "pool_tech",
-        "mod-land":  "landscape_tech",
+        "mod-land":  "landscaping",      # flipped 2026-10-02 — new canonical value
         "mod-both":  "both",
     }))
     from migrations.normalize_user_department_tokens import run
@@ -123,7 +123,7 @@ def test_leaves_modern_enum_alone():
     assert result["users"]["matched"] == 0
     assert result["users"]["updated"] == 0
     assert _run(_dept_of("mod-pool"))  == "pool_tech"
-    assert _run(_dept_of("mod-land"))  == "landscape_tech"
+    assert _run(_dept_of("mod-land"))  == "landscaping"
     assert _run(_dept_of("mod-both"))  == "both"
 
 
@@ -151,7 +151,7 @@ def test_leaves_null_and_missing_alone():
 def test_normalizes_case_drift():
     _run(_seed_users({
         "shout":   "POOL",
-        "title":   "Landscaping",
+        "title":   "Landscape_Tech",     # flipped 2026-10-02 — now the LEGACY key
         "spaces":  "  pool  ",
     }))
     from migrations.normalize_user_department_tokens import run
@@ -159,7 +159,7 @@ def test_normalizes_case_drift():
     assert result["users"]["matched"] == 3
     assert result["users"]["updated"] == 3
     assert _run(_dept_of("shout"))  == "pool_tech"
-    assert _run(_dept_of("title"))  == "landscape_tech"
+    assert _run(_dept_of("title"))  == "landscaping"
     assert _run(_dept_of("spaces")) == "pool_tech"
 
 
@@ -167,7 +167,7 @@ def test_normalizes_case_drift():
 # 5 · idempotency — second run reports 0 updates
 # ═══════════════════════════════════════════════════════════════════
 def test_idempotent():
-    _run(_seed_users({"mike": "pool", "carlos": "landscaping"}))
+    _run(_seed_users({"mike": "pool", "carlos": "landscape_tech"}))
     from migrations.normalize_user_department_tokens import run
     first = _run(run(_DB))
     assert first["users"]["updated"] == 2
@@ -176,19 +176,19 @@ def test_idempotent():
     assert second["users"]["updated"] == 0
     # Values still correct after two passes.
     assert _run(_dept_of("mike"))   == "pool_tech"
-    assert _run(_dept_of("carlos")) == "landscape_tech"
+    assert _run(_dept_of("carlos")) == "landscaping"
 
 
 # ═══════════════════════════════════════════════════════════════════
 # 6 · technicians collection is mirrored
 # ═══════════════════════════════════════════════════════════════════
 def test_mirrors_technicians_collection():
-    _run(_seed_technicians({"mike": "pool", "luis": "landscaping"}))
+    _run(_seed_technicians({"mike": "pool", "luis": "landscape_tech"}))
     from migrations.normalize_user_department_tokens import run
     result = _run(run(_DB))
     assert result["technicians"]["matched"] == 2
     assert result["technicians"]["updated"] == 2
-    for local, expected in [("mike", "pool_tech"), ("luis", "landscape_tech")]:
+    for local, expected in [("mike", "pool_tech"), ("luis", "landscaping")]:
         row = _run(_DB.technicians.find_one(
             {"id": f"{PREFIX}-tech-{local}"}, {"_id": 0, "department": 1},
         ))

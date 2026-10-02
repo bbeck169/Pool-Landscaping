@@ -19,9 +19,9 @@ mis-route cross-trained techs.
 Idempotent one-shot migration that remaps stored legacy tokens in
 ``users`` (case-insensitive) to the modern enum:
 
-    "pool"       → "pool_tech"
-    "landscape"  → "landscape_tech"   ← rare defensive alias
-    "landscaping" → "landscape_tech"
+    "pool"            → "pool_tech"
+    "landscape"       → "landscape_tech"   ← rare defensive alias
+    "landscape_tech"  → "landscaping"
 
 Also mirrors the same fix onto the linked ``technicians`` docs, so
 downstream checklist-kind derivation (``routers/jobs.py``) stays
@@ -43,10 +43,14 @@ from typing import Any, Dict, Optional
 from config import db as _default_db, logger
 
 # Legacy → modern enum mapping.  Keys are match-normalized (lower).
+# Flipped 2026-10-02 — the new canonical landscape dept value is "landscaping";
+# the backend gate _require_landscaping accepts {"landscaping", "both"} only.
+# Prior direction (landscaping → landscape_tech) was the inverse and fought the
+# seed upsert at boot t=6-7s. See seed.py:106 / :163.
 LEGACY_MAP: Dict[str, str] = {
-    "pool":        "pool_tech",
-    "landscape":   "landscape_tech",   # defensive alias — not seen live
-    "landscaping": "landscape_tech",
+    "pool":           "pool_tech",
+    "landscape":      "landscape_tech",   # defensive alias — not seen live
+    "landscape_tech": "landscaping",
 }
 
 
