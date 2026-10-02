@@ -6,31 +6,13 @@
  *
  * Locks the Phase-1 wire so Phase 2 (Edit Job modal parity) and
  * Phase 3 (JobDetail overhaul + shared LineItemsEditor extraction)
- * can't silently regress:
- *   1. Price input is fully editable (no ``readOnly`` / ``disabled``,
- *      type=number, step=0.01, ``onPriceChange`` bound) and accepts
- *      decimals.
- *   2. Service Category dropdown is rendered, fetched from
- *      ``GET /api/service-categories``, and stores the paired
- *      ``{id, name}`` on the form.
- *   3. On save, the payload emits both ``service_category_id`` +
- *      ``service_category_name`` when a category is picked.
- *   4. "Add from pricebook" affordance mounts ``PricebookItemPicker``
- *      and, on select, appends a line with ``description`` +
- *      ``unit_price`` + ``quantity: 1``.
- *   5. "Add line" (``jf-li-add-blank``) appends a blank row for
- *      manual entry.
- *   6. Per-row Total = ``quantity × unit_price`` formatted as
- *      dollars (fixed-2).
- *   7. Subtotal is Σ (qty × unit_price) via ``.reduce(…, 0)`` over
- *      ``form.line_items`` and rendered with ``jf-li-subtotal``.
- *   8. Subtotal auto-writes ``form.price`` via a ``useEffect`` on
- *      ``lineItemsSubtotal`` — unless ``price_manually_overridden``.
- *   9. Remove button (``jf-li-del-{i}``) calls ``removeLine(i)``.
- *  10. Save payload conditionally includes ``line_items`` array
- *      when non-empty.
- *  11. Manual-override affordance: hint (``jf-price-manual-hint``)
- *      + Recalculate button (``jf-price-recalc``) reset the flag.
+ * can't silently regress. Post Phase-3c the Line Items JSX chunks
+ * were extracted to ``@/components/jobs/LineItemsEditor`` — the
+ * JSX-matcher assertions in this file now split: those pattern-
+ * matches read from ``lineItemsEditorSrc``; state-helper matches
+ * (addBlankLine / addPricebookLine / removeLine / lineItemsSubtotal
+ * useMemo / price-sync useEffect / submit-payload shape) stay on
+ * ``jobNewSrc`` because that state ownership did NOT move.
  */
 import { describe, it, expect } from "vitest";
 import fs from "fs";
@@ -38,6 +20,15 @@ import path from "path";
 
 const jobNewSrc = fs.readFileSync(
   path.resolve(__dirname, "../JobNew.jsx"),
+  "utf8",
+);
+
+// Phase 3c · post-extraction second source file. Any JSX-matcher
+// assertion that targets the Line Items table / picker / footer
+// now reads from here; the inner JSX was moved out of JobNew.jsx
+// but the state ownership + composition root stayed.
+const lineItemsEditorSrc = fs.readFileSync(
+  path.resolve(__dirname, "../../../components/jobs/LineItemsEditor.jsx"),
   "utf8",
 );
 
@@ -105,65 +96,54 @@ describe("JobNew · Phase 1 · Service Category dropdown", () => {
   });
 });
 
-describe("JobNew · Phase 1 · Line Items section", () => {
-  it("mounts the Line Items card with headline + subtotal footer testids", () => {
+describe("JobNew · Phase 3c · Line Items composition root (stayed in JobNew)", () => {
+  it("JobNew mounts <LineItemsEditor> with testidPrefix='jf-li' and wires the controlled callbacks", () => {
+    // Phase 3c extraction — the inner JSX moved to the shared
+    // ``@/components/jobs/LineItemsEditor`` component. JobNew now
+    // owns the OUTER card wrapper + the composition call + the
+    // state (lines array, pricebook search string, handlers), and
+    // delegates the inner table/picker/footer to the extracted
+    // component via the controlled prop surface.
     expect(jobNewSrc).toMatch(/data-testid="jf-line-items-section"/);
-    expect(jobNewSrc).toMatch(/data-testid="jf-li-table"/);
-    expect(jobNewSrc).toMatch(/data-testid="jf-li-empty"/);
-    expect(jobNewSrc).toMatch(/data-testid="jf-li-subtotal"/);
-  });
-
-  it("mounts the shared PricebookItemPicker for the 'Add from pricebook' affordance", () => {
     expect(jobNewSrc).toMatch(
-      /import\s+PricebookItemPicker\s+from\s+["']@\/components\/pricebook\/PricebookItemPicker["']/,
+      /import\s+LineItemsEditor\s+from\s+["']@\/components\/jobs\/LineItemsEditor["']/,
     );
-    expect(jobNewSrc).toMatch(/<PricebookItemPicker\b[\s\S]{0,600}wrapperTestid="jf-li-add-pricebook"/);
-    // On select → append line + clear the search input.
     expect(jobNewSrc).toMatch(
-      /onSelect=\{\(row\)\s*=>\s*\{\s*addPricebookLine\(row\);\s*setPbSearch\(""\);/,
+      /<LineItemsEditor\b[\s\S]{0,800}testidPrefix="jf-li"/,
     );
+    expect(jobNewSrc).toMatch(/lines=\{form\.line_items\s*\|\|\s*\[\]\}/);
+    expect(jobNewSrc).toMatch(/onAddBlank=\{addBlankLine\}/);
+    expect(jobNewSrc).toMatch(/onAddFromPricebook=\{addPricebookLine\}/);
+    expect(jobNewSrc).toMatch(/onUpdateLine=\{updateLine\}/);
+    expect(jobNewSrc).toMatch(/onRemoveLine=\{removeLine\}/);
+    expect(jobNewSrc).toMatch(/pricebookSearch=\{pbSearch\}/);
+    expect(jobNewSrc).toMatch(/onPricebookSearchChange=\{setPbSearch\}/);
   });
+});
 
+describe("JobNew · Phase 1 · Line Items state helpers (stayed in JobNew)", () => {
   it("addPricebookLine appends {description, unit_price, quantity: 1} from a picked item", () => {
     expect(jobNewSrc).toMatch(
       /const\s+addPricebookLine\s*=\s*\(row\)\s*=>[\s\S]{0,400}description:\s*row\?\.name[\s\S]{0,60}quantity:\s*1,[\s\S]{0,60}unit_price:\s*Number\(row\?\.unit_price\s*\|\|\s*0\)/,
     );
   });
 
-  it("'Add line' button (jf-li-add-blank) appends a blank row via addBlankLine", () => {
-    expect(jobNewSrc).toMatch(
-      /testid="jf-li-add-blank"\s+onClick=\{addBlankLine\}/,
-    );
+  it("addBlankLine appends a blank {description:'', quantity:1, unit_price:0} row", () => {
     expect(jobNewSrc).toMatch(
       /const\s+addBlankLine\s*=\s*\(\)\s*=>[\s\S]{0,300}\{\s*description:\s*"",\s*quantity:\s*1,\s*unit_price:\s*0\s*\}/,
     );
   });
 
-  it("per-row Total is quantity × unit_price formatted as dollars", () => {
-    // Row totalization inside the .map block.
-    expect(jobNewSrc).toMatch(
-      /const\s+rowTotal\s*=\s*\(Number\(li\.quantity\)\s*\|\|\s*0\)\s*\*\s*\(Number\(li\.unit_price\)\s*\|\|\s*0\)/,
-    );
-    // Rendered with a dollar prefix + fixed-2 in the total cell.
-    expect(jobNewSrc).toMatch(
-      /data-testid=\{`jf-li-total-\$\{i\}`\}[\s\S]{0,120}\$\$\{rowTotal\.toFixed\(2\)\}/,
-    );
-  });
-
-  it("subtotal is Σ (qty × unit_price) via reduce over form.line_items", () => {
+  it("lineItemsSubtotal useMemo computes Σ (qty × unit_price) over form.line_items", () => {
     expect(jobNewSrc).toMatch(
       /const\s+lineItemsSubtotal\s*=\s*useMemo\([\s\S]{0,400}\(form\.line_items\s*\|\|\s*\[\]\)\.reduce\(/,
     );
     expect(jobNewSrc).toMatch(
       /sum\s*\+\s*\(Number\(li\.quantity\)\s*\|\|\s*0\)\s*\*\s*\(Number\(li\.unit_price\)\s*\|\|\s*0\)/,
     );
-    // Rendered under jf-li-subtotal with the ``$X.XX`` shape.
-    expect(jobNewSrc).toMatch(
-      /data-testid="jf-li-subtotal"[\s\S]{0,120}\$\$\{lineItemsSubtotal\.toFixed\(2\)\}/,
-    );
   });
 
-  it("subtotal auto-writes form.price via a useEffect on lineItemsSubtotal", () => {
+  it("subtotal auto-writes form.price via a useEffect on lineItemsSubtotal (price-sync side effect)", () => {
     expect(jobNewSrc).toMatch(
       /useEffect\(\(\)\s*=>\s*\{[\s\S]{0,300}if\s*\(form\.price_manually_overridden\)\s*return;[\s\S]{0,200}setForm[\s\S]{0,120}price:\s*next[\s\S]{0,300}\},\s*\[lineItemsSubtotal,\s*form\.line_items,\s*form\.price_manually_overridden\]/,
     );
@@ -173,8 +153,60 @@ describe("JobNew · Phase 1 · Line Items section", () => {
     expect(jobNewSrc).toMatch(
       /const\s+removeLine\s*=\s*\(idx\)\s*=>[\s\S]{0,240}\.filter\(\(_,\s*i\)\s*=>\s*i\s*!==\s*idx\)/,
     );
-    expect(jobNewSrc).toMatch(
-      /data-testid=\{`jf-li-del-\$\{i\}`\}/,
+  });
+});
+
+describe("LineItemsEditor · Phase 3c · extracted JSX chunks (post-extraction source contract)", () => {
+  it("imports PricebookItemPicker and wires the pricebook wrapperTestid via testidPrefix", () => {
+    expect(lineItemsEditorSrc).toMatch(
+      /import\s+PricebookItemPicker\s+from\s+["']@\/components\/pricebook\/PricebookItemPicker["']/,
+    );
+    expect(lineItemsEditorSrc).toMatch(
+      /<PricebookItemPicker\b[\s\S]{0,800}wrapperTestid=\{`\$\{testidPrefix\}-add-pricebook`\}/,
+    );
+    // onSelect delegates to the controlled callbacks + clears the
+    // search string.
+    expect(lineItemsEditorSrc).toMatch(
+      /onSelect=\{\(row\)\s*=>\s*\{\s*onAddFromPricebook\(row\);\s*onPricebookSearchChange\(""\);/,
+    );
+  });
+
+  it("renders the Add-line Button with testid=`${testidPrefix}-add-blank` + onClick={onAddBlank}", () => {
+    expect(lineItemsEditorSrc).toMatch(
+      /testid=\{`\$\{testidPrefix\}-add-blank`\}[\s\S]{0,80}onClick=\{onAddBlank\}/,
+    );
+  });
+
+  it("renders the empty-state + table + subtotal footer testids via testidPrefix", () => {
+    expect(lineItemsEditorSrc).toMatch(/data-testid=\{`\$\{testidPrefix\}-table`\}/);
+    expect(lineItemsEditorSrc).toMatch(/data-testid=\{`\$\{testidPrefix\}-empty`\}/);
+    expect(lineItemsEditorSrc).toMatch(/data-testid=\{`\$\{testidPrefix\}-subtotal`\}/);
+  });
+
+  it("per-row Total = quantity × unit_price formatted as $ fixed-2", () => {
+    expect(lineItemsEditorSrc).toMatch(
+      /const\s+rowTotal\s*=\s*\(Number\(li\.quantity\)\s*\|\|\s*0\)\s*\*\s*\(Number\(li\.unit_price\)\s*\|\|\s*0\)/,
+    );
+    expect(lineItemsEditorSrc).toMatch(
+      /data-testid=\{`\$\{testidPrefix\}-total-\$\{i\}`\}[\s\S]{0,200}\$\$\{rowTotal\.toFixed\(2\)\}/,
+    );
+  });
+
+  it("subtotal footer renders Σ via useMemo+reduce + Subtotal $N.NN label", () => {
+    expect(lineItemsEditorSrc).toMatch(
+      /const\s+subtotal\s*=\s*useMemo\([\s\S]{0,400}\(lines\s*\|\|\s*\[\]\)\.reduce\(/,
+    );
+    expect(lineItemsEditorSrc).toMatch(
+      /sum\s*\+\s*\(Number\(li\.quantity\)\s*\|\|\s*0\)\s*\*\s*\(Number\(li\.unit_price\)\s*\|\|\s*0\)/,
+    );
+    expect(lineItemsEditorSrc).toMatch(
+      /data-testid=\{`\$\{testidPrefix\}-subtotal`\}[\s\S]{0,200}Subtotal\s*\$\$\{subtotal\.toFixed\(2\)\}/,
+    );
+  });
+
+  it("per-row trash button carries the ${testidPrefix}-del-{i} testid", () => {
+    expect(lineItemsEditorSrc).toMatch(
+      /data-testid=\{`\$\{testidPrefix\}-del-\$\{i\}`\}/,
     );
   });
 });
