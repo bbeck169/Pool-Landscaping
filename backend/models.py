@@ -18,8 +18,28 @@ def validate_password_strength(v: str) -> str:
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    # 2026-10-02 followup · see memory/PORTAL_EDIT_PROFILE_FOLLOWUPS.md §1.
+    # ``email: EmailStr`` previously rejected RFC 2606 reserved TLDs
+    # (.local / .test / .example) via email-validator's
+    # ``check_deliverability`` policy, but
+    # ``PATCH /customer-portal/profile`` accepts them via the lenient
+    # regex at ``routers/customer_portal.py::_valid_email``. The
+    # asymmetry locked customers out when their stored primary email
+    # landed on a reserved TLD (home-lab / dev-loopback workflows).
+    # Widened to ``str`` + an inline regex mirroring ``_valid_email`` so
+    # both paths agree. Still rejects obviously malformed inputs
+    # (missing @, missing TLD, whitespace).
+    email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def _email_lenient_format(cls, v: str) -> str:
+        v = (v or "").strip()
+        # Mirrors routers/customer_portal.py::_valid_email (2026-10-02).
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("value is not a valid email address")
+        return v
 
 
 class CustomerIn(BaseModel):

@@ -7,9 +7,9 @@ follow-up fix commit). File them individually when picked up.
 
 ---
 
-## 1. Validator asymmetry — `/api/auth/login` vs. `/api/customer-portal/profile` on reserved TLDs
+## 1. Validator asymmetry — `/api/auth/login` vs. `/api/customer-portal/profile` on reserved TLDs (RESOLVED 2026-10-02)
 
-**Status:** not blocking current ship · reproducible · one-line discovery during live-curl verification.
+**Status:** RESOLVED 2026-10-02 (see Resolution block at end of this section).
 
 **Symptom.** During live curl of the Edit Profile confirmation gate,
 Case 3 (correct confirmation → 200) persisted a new primary email of
@@ -56,6 +56,26 @@ reserved TLD (home-lab, dev loopbacks) will self-lock-out on save.
 Option **A** is the recommended minimal fix. Scope: single file
 (`backend/routers/customer_portal.py`), single `_valid_email` tweak
 or a new `_login_valid_email` helper, plus 1-2 regression tests.
+
+**Resolution (2026-10-02 followup atomic).** Owner directed **Option B**
+(widen the login validator) instead of Option A: `PATCH
+/customer-portal/profile` already accepts `.local`, and `.local` is an
+RFC 2606 reserved TLD legitimately used by home-lab / dev-loopback
+workflows — narrowing the PATCH would introduce a worse UX regression
+for legitimate dev-mode customers. `backend/models.py::LoginRequest.email`
+switched from `EmailStr` to `str` + an inline `@field_validator("email")`
+regex that mirrors `backend/routers/customer_portal.py::_valid_email`
+(same `^[^@\s]+@[^@\s]+\.[^@\s]+$` acceptance set). Still rejects
+obviously malformed inputs (missing `@`, missing TLD, whitespace). No
+security-review justification needed: the lenient regex is strictly a
+superset over the pre-fix `EmailStr` behaviour for *inputs* and
+introduces no new auth-path code — the password-check branch is
+unchanged. Regression pytest pinned at
+`backend/tests/test_auth_login_accepts_dot_local_emails.py` (7 tests:
+`.local` login accept, 3 malformed-input rejects, ordinary `.com`
+regression guard, 2 `_valid_email` helper symmetry asserts). Commit
+message: `fix(auth): align login email validator with customer_portal
+to accept .local TLD (closes PortalProfile followup)`.
 
 ---
 
