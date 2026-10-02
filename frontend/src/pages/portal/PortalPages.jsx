@@ -702,7 +702,8 @@ export function PortalProfile() {
         setInitialEmail(nx.email || "");
       })
       .catch(() => {});
-  }, [user]);
+    // Depend on user?.id to prevent reset-on-every-render; see PortalProfile.emailChange.test.jsx failure trace
+  }, [user?.id]);
 
   const dirty = initial && JSON.stringify(form) !== initial;
   // Feb-2026 · portal-profile extension — reuse the same RFC-lite
