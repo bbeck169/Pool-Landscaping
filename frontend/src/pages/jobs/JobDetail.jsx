@@ -15,6 +15,11 @@ import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
 import { CustomerLink, AddressLink } from "@/components/customer";
+// 2026-10-02 · Jobs Overhaul Phase 3a — inline Customer edit tile.
+// Reused as-is from JobNew (same hydration + testid naming
+// convention). TODO(jobs-overhaul-phase-3c): extract shared
+// InlineEditTile if a second surface needs it.
+import { CustomerCombobox } from "@/components/customers/CustomerCombobox";
 import JobNew from "@/pages/jobs/JobNew";
 // Feb-2026 · Slice 6 — 24h post-completion edit window UI.
 import JobEditPanel from "@/pages/jobs/JobEditPanel";
@@ -26,6 +31,147 @@ import FollowUpEditor from "@/pages/jobs/FollowUpEditor";
 import PageHeader from "@/components/layout/PageHeader";
 // CHEM-LOCK · Feb-2026 — admin "Unlock for Edit" button + modal.
 import JobUnlockButton from "@/pages/jobs/JobUnlockButton";
+
+// 2026-10-02 · Jobs Overhaul Phase 3a — click-to-edit meta tile.
+//
+// Component-local by design — only JobDetail renders inline-edit
+// tiles today, and a cross-cutting hook would be premature.  See
+// the ``TODO(jobs-overhaul-phase-3c)`` on the import block for the
+// extraction trigger.
+//
+// Behaviour contract (locked by
+// ``frontend/src/pages/jobs/__tests__/JobDetail.inlineEdit.test.jsx``):
+//   * Read mode — renders ``display`` (string) + optional ``subline``.
+//     Clicking the display enters edit mode when ``editable`` is true.
+//   * Edit mode:
+//       - ``editType="date"``   → <input type="date">
+//       - ``editType="number"`` → <input type="number" step={step}>
+//       - ``editType="select"`` → <select> fed from ``options``
+//     Enter commits; Escape reverts to the pre-edit ``rawValue``;
+//     blur also commits (via onCommit).  ``onCommit`` is awaited; if
+//     it returns ``false`` the editor stays open so the user can
+//     retry without re-opening.
+//   * Testids: ``{testid}`` on the display, ``{testid}-input`` on
+//     the editor, ``{testid}-select`` for the select variant.
+function InlineEditTile({
+  icon: Icon, label, display, subline = null,
+  editable, editType, rawValue, options = null, step,
+  onCommit, testid,
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(rawValue);
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => { setDraft(rawValue); }, [rawValue, editing]);
+
+  const open = () => {
+    if (!editable || saving) return;
+    setDraft(rawValue);
+    setEditing(true);
+  };
+  const commit = async () => {
+    if (saving) return;
+    setSaving(true);
+    const ok = await onCommit(draft);
+    setSaving(false);
+    if (ok !== false) setEditing(false);
+  };
+  const cancel = () => {
+    setDraft(rawValue);
+    setEditing(false);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+  };
+
+  const inputTestid = editType === "select"
+    ? `${testid}-select` : `${testid}-input`;
+  return (
+    <div
+      className="rounded-xl p-3 flex items-start gap-2"
+      style={{ backgroundColor: colors.surfaceSecondary }}
+      data-testid={`${testid}-tile`}
+    >
+      <Icon size={14} className="mt-0.5" style={{ color: colors.muted }} />
+      <div className="min-w-0 flex-1">
+        <div
+          className="text-xs uppercase font-semibold"
+          style={{ color: colors.muted }}
+        >
+          {label}
+        </div>
+        {editing ? (
+          editType === "select" ? (
+            <select
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={onKeyDown}
+              disabled={saving}
+              className="text-sm font-semibold px-1 py-0.5 rounded w-full"
+              style={{
+                background: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid={inputTestid}
+            >
+              {(options || []).map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              autoFocus
+              type={editType === "number" ? "number" : "date"}
+              step={editType === "number" ? (step || "0.01") : undefined}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={onKeyDown}
+              disabled={saving}
+              className="text-sm font-semibold px-1 py-0.5 rounded w-full"
+              style={{
+                background: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid={inputTestid}
+            />
+          )
+        ) : (
+          <button
+            type="button"
+            onClick={open}
+            disabled={!editable}
+            className={
+              "text-sm font-semibold text-left w-full "
+              + (editable ? "cursor-pointer hover:underline" : "cursor-default")
+            }
+            style={{
+              color: colors.onSurface,
+              background: "transparent", border: 0, padding: 0,
+            }}
+            data-testid={testid}
+            aria-label={editable ? `Edit ${label}` : label}
+          >
+            {display}
+          </button>
+        )}
+        {subline ? (
+          <div
+            className="text-xs mt-0.5"
+            style={{ color: colors.muted }}
+            data-testid={`${testid}-subline`}
+          >
+            {subline}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -62,6 +208,21 @@ export default function JobDetail() {
   // immediate visual acknowledgement while the reopen POST is
   // pending.  Reset on success/error.
   const [reopening, setReopening] = useState(false);
+  // 2026-10-02 · Jobs Overhaul Phase 3a — inline-edit state.
+  //
+  // Scheduled / Technician / Price tiles plus the Customer field in
+  // the header are now click-to-edit via the component-local
+  // ``InlineEditTile`` + ``<CustomerCombobox>`` swap.  State lives
+  // here (not inside the tile) so a save-rollback can revert the
+  // local ``job`` denorm (``technician_name`` / ``customer_name``)
+  // alongside the raw id.
+  //
+  // TODO(jobs-overhaul-phase-3c): extract shared InlineEditTile if
+  // a second surface needs it. Right now JobDetail is the only
+  // consumer so inline-component is the right scope.
+  const [techOptions, setTechOptions] = useState([]);
+  const [customerOptions, setCustomerOptions] = useState([]);
+  const [customerEditing, setCustomerEditing] = useState(false);
 
   const isTech = user?.role === "technician";
   // Feb-2026 · admin-gate parity with mobile — ``super_admin`` has
@@ -134,6 +295,61 @@ export default function JobDetail() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // 2026-10-02 · Jobs Overhaul Phase 3a — hydrate the inline-edit
+  // picker option lists.  Technicians fetched when the tile would
+  // be editable (i.e. the caller is NOT a technician).  Customers
+  // fetched only when the Customer combobox is actually opened so
+  // we don't pay the GET on every JobDetail load.  Both silent-
+  // failing to keep the page useful for roles that lack the list
+  // endpoints (e.g. the 403 on ``/customers`` for the customer
+  // role itself).
+  useEffect(() => {
+    if (isTech || isCustomer) return;
+    api.get("/technicians").then(setTechOptions).catch(() => setTechOptions([]));
+  }, [isTech, isCustomer]);
+  useEffect(() => {
+    if (!customerEditing) return;
+    if (customerOptions.length > 0) return;
+    api.get("/customers?is_active=true")
+      .then(setCustomerOptions)
+      .catch(() => setCustomerOptions([]));
+  }, [customerEditing, customerOptions.length]);
+
+  // 2026-10-02 · Jobs Overhaul Phase 3a — optimistic PUT with
+  // rollback on 4xx/5xx.  ``patch`` is a thin wrapper around
+  // ``api.put("/jobs/{id}", { field: value })`` that:
+  //   1. snapshots the pre-edit ``job`` object,
+  //   2. applies the optimistic mutation on the local ``job`` via
+  //      ``setJob``,
+  //   3. awaits the server response and swaps in the authoritative
+  //      row on success (so denorm cascades like ``customer_name``
+  //      from the backend reassignment path land in state),
+  //   4. restores the snapshot on failure + raises a toast.
+  // Returns ``true`` on success / ``false`` on failure so the
+  // caller can tailor the UI (e.g. keep the editor open after a
+  // failed save vs collapse on success).
+  const saveInline = async (patch, optimistic) => {
+    const snapshot = job;
+    try {
+      if (optimistic) setJob({ ...job, ...optimistic });
+      const updated = await api.put(`/jobs/${id}`, patch);
+      if (updated && typeof updated === "object" && updated.id) {
+        setJob(updated);
+      } else {
+        // Server returned a non-row envelope (older shape).  Refetch.
+        await load();
+      }
+      return true;
+    } catch (e) {
+      setJob(snapshot);
+      setToast({
+        tone: "error",
+        message: e?.message || "Save failed — reverted",
+      });
+      return false;
+    }
+  };
 
   useEffect(() => {
     // Belt-and-suspenders redirect for techs without a clock-in
@@ -344,12 +560,77 @@ export default function JobDetail() {
               </span>
             </div>
             <p className="text-sm mt-1" style={{ color: colors.onSurfaceSecondary }}>
-              <CustomerLink
-                customerId={customer?.id || job?.customer_id}
-                name={formatCustomerName(job)}
-                className="font-semibold"
-                data-testid="job-detail-customer-name"
-              />
+              {customerEditing ? (
+                /* 2026-10-02 · Jobs Overhaul Phase 3a — inline-edit
+                    Customer field.  Combobox hydrates from the list
+                    fetched by the ``customerEditing`` effect above
+                    (same ``/customers?is_active=true`` endpoint
+                    JobNew uses).  Save fires on ``onChange`` (same
+                    as JobNew) — on 4xx/5xx the ``saveInline``
+                    wrapper rolls back ``job`` state before the
+                    denorm leaks into the header. Cancel = ✕ button
+                    beside the combobox. */
+                <span className="inline-flex items-center gap-2">
+                  <span style={{ minWidth: 240, display: "inline-block" }}>
+                    <CustomerCombobox
+                      customers={customerOptions}
+                      value={customer?.id || job?.customer_id || ""}
+                      onChange={async (newCid) => {
+                        if (!newCid || newCid === (customer?.id || job?.customer_id)) {
+                          setCustomerEditing(false);
+                          return;
+                        }
+                        const picked = customerOptions.find((c) => c.id === newCid);
+                        const ok = await saveInline(
+                          { customer_id: newCid },
+                          {
+                            customer_id: newCid,
+                            customer_name: picked ? picked.name : "",
+                            property_id: undefined,
+                            address: "",
+                          },
+                        );
+                        if (ok) {
+                          setCustomerEditing(false);
+                          if (picked) setCustomer(picked);
+                        }
+                      }}
+                      testid="jd-customer-combobox"
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerEditing(false)}
+                    aria-label="Cancel customer edit"
+                    className="text-xs underline"
+                    style={{ color: colors.muted }}
+                    data-testid="jd-customer-edit-cancel"
+                  >
+                    cancel
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <CustomerLink
+                    customerId={customer?.id || job?.customer_id}
+                    name={formatCustomerName(job)}
+                    className="font-semibold"
+                    data-testid="job-detail-customer-name"
+                  />
+                  {!isCustomer && !isTech ? (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerEditing(true)}
+                      aria-label="Edit customer"
+                      className="ml-1.5 text-xs underline"
+                      style={{ color: colors.muted }}
+                      data-testid="jd-customer-edit-btn"
+                    >
+                      edit
+                    </button>
+                  ) : null}
+                </>
+              )}
               <span className="mx-1.5">·</span>
               <MapPin size={12} className="inline" /> {job.address ? <AddressLink address={job.address} /> : "—"}
             </p>
@@ -472,48 +753,101 @@ export default function JobDetail() {
           </div>
         ) : null}
 
-        {/* Meta strip — Price hidden for technicians (Phase 16C add-on). */}
+        {/* Meta strip — Price hidden for technicians (Phase 16C add-on).
+            2026-10-02 · Jobs Overhaul Phase 3a — tiles are now
+            inline-editable (Scheduled / Technician / Price). Click a
+            tile to edit; Enter saves, Escape reverts, blur also
+            saves.  Optimistic UI with rollback on 4xx/5xx via
+            ``saveInline`` above.  Price gate preserves the existing
+            ``isTech`` invariant — do NOT widen. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
-          {[
-            { icon: Clock, label: "Scheduled", value: job.scheduled_date || "Not scheduled" },
-            /*
-              Feb-2026 · Crew-fallback in the Technician meta cell.
-              Reads:
-                1. ``technician_name`` (backend read-time cascade
-                    fills this via ``resolve_technician_names`` when
-                    ``technician_id`` is set but the denorm is stale).
-                2. ``crew_name`` (denormalized on the job at
-                    create/update — Crew Phase A) — surfaced as
-                    "Crew: <name>" so an unassigned-tech-but-
-                    assigned-crew job doesn't render as "Unassigned".
-                3. Fallback "Unassigned" literal.
-            */
-            {
-              icon: User,
-              label: "Technician",
-              value:
-                job.technician_name ||
-                (job.crew_name ? `Crew: ${job.crew_name}` : "Unassigned"),
-            },
-            ...(isTech ? [] : [{ icon: MapPin, label: "Price", value: money(job.price || 0) }]),
-          ].map((c) => (
-            <div
-              key={c.label}
-              className="rounded-xl p-3 flex items-start gap-2"
-              style={{ backgroundColor: colors.surfaceSecondary }}
-            >
-              <c.icon size={14} className="mt-0.5" style={{ color: colors.muted }} />
-              <div>
-                <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
-                  {c.label}
-                </div>
-                <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
-                  {c.value}
-                </div>
-              </div>
-            </div>
-          ))}
+          <InlineEditTile
+            icon={Clock}
+            label="Scheduled"
+            display={job.scheduled_date || "Not scheduled"}
+            subline={
+              job.scheduled_start
+                ? `Start: ${String(job.scheduled_start).slice(11, 16) || job.scheduled_start}`
+                : null
+            }
+            editable={!isCustomer}
+            editType="date"
+            rawValue={job.scheduled_date || ""}
+            onCommit={(v) =>
+              saveInline(
+                { scheduled_date: v || null },
+                { scheduled_date: v },
+              )
+            }
+            testid="jd-tile-scheduled"
+          />
+          {/*
+            Feb-2026 · Crew-fallback in the Technician meta cell.
+            Reads:
+              1. ``technician_name`` (backend read-time cascade
+                  fills this via ``resolve_technician_names`` when
+                  ``technician_id`` is set but the denorm is stale).
+              2. ``crew_name`` (denormalized on the job at
+                  create/update — Crew Phase A) — surfaced as
+                  "Crew: <name>" so an unassigned-tech-but-
+                  assigned-crew job doesn't render as "Unassigned".
+              3. Fallback "Unassigned" literal.
+          */}
+          <InlineEditTile
+            icon={User}
+            label="Technician"
+            display={
+              job.technician_name
+                || (job.crew_name ? `Crew: ${job.crew_name}` : "Unassigned")
+            }
+            editable={!isTech && !isCustomer}
+            editType="select"
+            rawValue={job.technician_id || ""}
+            options={[
+              { value: "", label: "— Unassigned —" },
+              ...techOptions.map((t) => ({
+                value: t.id,
+                label: t.name || t.email || t.id,
+              })),
+            ]}
+            onCommit={(v) => {
+              const picked = techOptions.find((t) => t.id === v);
+              return saveInline(
+                { technician_id: v || null },
+                {
+                  technician_id: v || null,
+                  technician_name: picked
+                    ? (picked.name || picked.email || "")
+                    : (v ? job.technician_name : ""),
+                },
+              );
+            }}
+            testid="jd-tile-technician"
+          />
+          {isTech ? null : (
+            <InlineEditTile
+              icon={MapPin}
+              label="Price"
+              display={money(job.price || 0)}
+              editable={!isCustomer}
+              editType="number"
+              step="0.01"
+              rawValue={job.price != null ? String(job.price) : ""}
+              onCommit={(v) => {
+                const n = Number(v);
+                if (Number.isNaN(n)) {
+                  setToast({ tone: "error", message: "Price must be a number" });
+                  return Promise.resolve(false);
+                }
+                return saveInline({ price: n }, { price: n });
+              }}
+              testid="jd-tile-price"
+            />
+          )}
         </div>
+        {/* TODO(jobs-overhaul-phase-3b): wire scheduled_start inline-edit
+            once JobUpdate schema accepts it; today the Scheduled tile
+            renders start-time read-only in the subline above. */}
       </div>
 
       {/* K1 media counter chip — shows remaining photo/video slots so

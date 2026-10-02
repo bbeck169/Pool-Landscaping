@@ -2445,6 +2445,35 @@ async def update_job(jid: str, body: JobUpdate,
         )
         update["technician_name"] = denorms["name"]
         update["technician_avatar"] = denorms["avatar"]
+    # 2026-10-02 · Jobs Overhaul Phase 3a — Customer reassignment.
+    # When the inline Customer tile fires an ``onChange`` with a
+    # different ``customer_id``, we must mirror the POST /jobs:1535-
+    # 1540 shape so the denorm ``customer_name`` stays coherent and
+    # the stale ``property_id`` + ``address`` snapshot (which both
+    # belong to the OLD customer) don't follow the job onto its new
+    # owner.  ``property_id`` + ``address`` are explicitly $unset on
+    # the SAME ``update_one`` further below (see ``_unset_on_change``).
+    _unset_on_change: dict = {}
+    if ("customer_id" in update
+            and update["customer_id"] != job.get("customer_id")):
+        new_cid = update["customer_id"]
+        new_customer = await db.customers.find_one(
+            {"id": new_cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+        if not new_customer:
+            raise HTTPException(400, "customer_id does not resolve to a customer in this tenant")
+        update["customer_name"] = new_customer.get("name", "")
+        # TODO(ux): consider validating current property_id against
+        # the new customer and keeping it if it still belongs — for
+        # Phase 3a we unconditionally clear both so the next edit
+        # explicitly re-picks the property on the new customer.
+        _unset_on_change["property_id"] = ""
+        _unset_on_change["address"] = ""
+        # Guard against someone also PATCHing a stale property_id on
+        # the SAME request — the unset below would race the $set.
+        update.pop("property_id", None)
+        update.pop("address", None)
     # Feb-2026 · Crew Phase A · crew assignment enrichment + RBAC gate.
     # Only admin-equivalent roles may CHANGE a crew — a technician can
     # still update their own job's status / notes / etc., but not the
@@ -2500,7 +2529,12 @@ async def update_job(jid: str, body: JobUpdate,
         db, tenant_id=tenant["id"], job=job, update=update,
     )
     if update:
-        await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
+        _write_op: dict = {"$set": update}
+        if _unset_on_change:
+            _write_op["$unset"] = _unset_on_change
+        await db.jobs.update_one(
+            {"id": jid, "tenant_id": tenant["id"]}, _write_op,
+        )
 
     # Feb-2026 · Service Notifications Pipeline — reschedule event.
     # Fires customer-facing dual-channel notification when the

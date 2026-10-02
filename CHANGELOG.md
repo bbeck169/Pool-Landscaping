@@ -4347,3 +4347,5 @@ Three small extensions bundled together — Response Draft Library (D), Auto-Slo
 ## 2026-10-02 · backend · fix(mobile-sync): offline-bundle jobs now match on scheduled_date (fallback scheduled_at), mirroring portal_next_visits
 
 ## 2026-10-02 · backend · fix(job-timers): offline-arrival parity + null (not 0) on parse-failure; dashboard aggregates unaffected
+
+## 2026-10-02 · frontend+backend · feat(jobs-page): inline-edit Scheduled/Technician/Price/Customer tiles on JobDetail (Phase 3a — Jobs Overhaul)
