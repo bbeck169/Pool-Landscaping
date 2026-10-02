@@ -143,7 +143,13 @@ async def get_portal_summary(
     # only allows one ``$or`` at a level).
     now_iso = datetime.now(timezone.utc).isoformat()
     today_ymd = today  # already computed above as ``YYYY-MM-DD``
-    next_job = await db.jobs.find_one(
+    # Phase 3d-portal · Feb-2026 — Next-service SPLIT. Fan out the
+    # single next-job resolution into two: next pool service +
+    # next landscape service. Pool vs landscape is resolved via
+    # ``services.chemistry_gate.is_pool_job``. Legacy
+    # ``next_service`` is kept populated with WHICHEVER of the two
+    # is sooner for one release cycle.
+    upcoming = await db.jobs.find(
         {
             "tenant_id": tenant["id"],
             "customer_id": cid,
@@ -171,36 +177,71 @@ async def get_portal_summary(
         },
         {"_id": 0},
         sort=[("scheduled_start", 1), ("scheduled_date", 1)],
-    )
-    next_service = None
-    if next_job:
+    ).to_list(length=200)
+
+    from services.chemistry_gate import is_pool_job as _is_pool_job
+
+    def _as_service(job):
+        if not job:
+            return None
         scheduled = (
-            next_job.get("scheduled_start")
-            or next_job.get("scheduled_date")
-            or next_job.get("scheduled_at")
+            job.get("scheduled_start")
+            or job.get("scheduled_date")
+            or job.get("scheduled_at")
         )
         # Defensive belt — the query guard should have already
         # excluded past rows, but leave the check so a schema drift
         # can't sneak one through.
-        if scheduled and str(scheduled)[:10] >= today:
-            next_service = {
-                "job_id": next_job.get("id"),
-                "date": str(scheduled)[:10],
-                "scheduled_start": scheduled,
-                "service_type": (
-                    next_job.get("service_type")
-                    or next_job.get("job_type")
-                    or next_job.get("title")
-                    or "Service visit"
-                ),
-                "title": next_job.get("title"),
-            }
+        if not scheduled or str(scheduled)[:10] < today:
+            return None
+        return {
+            "job_id": job.get("id"),
+            "date": str(scheduled)[:10],
+            "scheduled_start": scheduled,
+            "service_type": (
+                job.get("service_type")
+                or job.get("job_type")
+                or job.get("title")
+                or "Service visit"
+            ),
+            "title": job.get("title"),
+        }
+
+    _next_pool_job = next(
+        (j for j in upcoming if _is_pool_job(j)), None,
+    )
+    _next_landscape_job = next(
+        (j for j in upcoming if not _is_pool_job(j)), None,
+    )
+    next_pool_service = _as_service(_next_pool_job)
+    next_landscape_service = _as_service(_next_landscape_job)
+
+    # Deprecated: callers should prefer ``next_pool_service`` /
+    # ``next_landscape_service``. Legacy mirror kept for one
+    # release cycle. Picks the sooner of the two.
+    if next_pool_service and next_landscape_service:
+        next_service = (
+            next_pool_service
+            if (
+                next_pool_service["scheduled_start"]
+                <= next_landscape_service["scheduled_start"]
+            )
+            else next_landscape_service
+        )
+    elif next_pool_service:
+        next_service = next_pool_service
+    elif next_landscape_service:
+        next_service = next_landscape_service
+    else:
+        next_service = None
 
     return {
         "balance_due": round(balance_due, 2),
         "past_due": round(past_due, 2),
         "credit": round(credit, 2),
         "next_service": next_service,
+        "next_pool_service": next_pool_service,
+        "next_landscape_service": next_landscape_service,
         "breakdown": {
             "open_invoice_count": open_ct,
             "past_due_invoice_count": past_ct,

@@ -124,9 +124,9 @@ export default function ReferralSection() {
             onChange={set("friend_name")}
             className="mt-1 w-full px-3 py-2 rounded-md text-sm"
             style={{
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.onSurface,
+              border: "1px solid #CBD5E1",
+              background: "#FFFFFF",
+              color: "#0F172A",
             }}
             data-testid="portal-referral-friend-name"
           />
@@ -143,9 +143,9 @@ export default function ReferralSection() {
               onChange={set("friend_phone")}
               className="mt-1 w-full px-3 py-2 rounded-md text-sm"
               style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.surface,
-                color: colors.onSurface,
+                border: "1px solid #CBD5E1",
+                background: "#FFFFFF",
+                color: "#0F172A",
               }}
               data-testid="portal-referral-friend-phone"
             />
@@ -161,9 +161,9 @@ export default function ReferralSection() {
               onChange={set("friend_email")}
               className="mt-1 w-full px-3 py-2 rounded-md text-sm"
               style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.surface,
-                color: colors.onSurface,
+                border: "1px solid #CBD5E1",
+                background: "#FFFFFF",
+                color: "#0F172A",
               }}
               data-testid="portal-referral-friend-email"
             />
@@ -180,9 +180,9 @@ export default function ReferralSection() {
               onChange={set("friend_address")}
               className="mt-1 w-full px-3 py-2 rounded-md text-sm"
               style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.surface,
-                color: colors.onSurface,
+                border: "1px solid #CBD5E1",
+                background: "#FFFFFF",
+                color: "#0F172A",
               }}
               data-testid="portal-referral-friend-address"
             />
@@ -196,9 +196,9 @@ export default function ReferralSection() {
               onChange={set("service_of_interest")}
               className="mt-1 w-full px-3 py-2 rounded-md text-sm"
               style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.surface,
-                color: colors.onSurface,
+                border: "1px solid #CBD5E1",
+                background: "#FFFFFF",
+                color: "#0F172A",
               }}
               data-testid="portal-referral-service-select"
             >
@@ -222,9 +222,9 @@ export default function ReferralSection() {
             onChange={set("notes")}
             className="mt-1 w-full px-3 py-2 rounded-md text-sm"
             style={{
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
-              color: colors.onSurface,
+              border: "1px solid #CBD5E1",
+              background: "#FFFFFF",
+              color: "#0F172A",
               resize: "vertical",
             }}
             data-testid="portal-referral-notes"

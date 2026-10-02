@@ -4,6 +4,7 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- feat(portal-home): outer white card wrapping dashboard; Next Service split into Pool + Landscape tiles; Refer-a-Friend inputs flipped to white bg + dark slate text
 - fix(portal): stabilize PortalProfile useEffect dep (user → user?.id) to prevent form reset on every render
 - chore(phase-portal-edit-profile-followup): verified green; renames auto-commit label (follow-up to d065bb99e). Original intended subject: feat(portal): current-email confirmation gate on primary-email change. Known deferred: login-validator asymmetry on .local emails — see memory/PORTAL_EDIT_PROFILE_FOLLOWUPS.md.
 - feat(portal): Edit Profile — current-email confirmation gate on primary-email change

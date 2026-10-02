@@ -187,6 +187,15 @@ export default function PortalHome() {
         </button>
       </div>
 
+      {/* Phase 3d-portal · Feb-2026 — Outer white dashboard card.
+          Wraps the four inner sections (hero · status circles ·
+          quick actions · last visit) in a single white chrome
+          surface so the dashboard reads as one object. */}
+      <div
+        className="rounded-3xl p-5 md:p-6 mb-5 shadow-lg"
+        style={{ backgroundColor: "#FFFFFF", border: "1px solid #E5E7EB" }}
+        data-testid="portal-dashboard-card"
+      >
       {/* Phase 34 · Feb 2026 — hero card relocated to the TOP of the
           Portal Home content area per user directive. It used to sit
           below the stat/alert cards + ToS banner + Call/Request
@@ -284,7 +293,7 @@ export default function PortalHome() {
           for the Item 10 tour highlight. */}
       <div data-tour-id="status-circles" data-testid="portal-status-circles">
         <div
-          className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2"
+          className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-2"
           data-testid="portal-account-tiles"
         >
           <Tile
@@ -335,29 +344,54 @@ export default function PortalHome() {
             onClick={() => navigate("/portal/payments")}
             testidLive="portal-stat-credit-balance"
           />
-          <Tile
-            testid="tile-next-service"
-            label="Next Service"
-            icon={CalendarClock}
-            value={
-              summary?.next_service
-                ? fmtServiceDate(summary.next_service.date)
-                : "None scheduled"
-            }
-            sub={summary?.next_service?.service_type || ""}
-            tooltip={
-              summary?.next_service
-                ? `${fmtServiceDate(summary.next_service.date)} · ${summary.next_service.service_type}`
-                : "No upcoming service on the calendar."
-            }
-            onClick={() =>
-              summary?.next_service?.job_id
-                ? navigate(`/portal/services/${summary.next_service.job_id}`)
-                : navigate("/portal/request-service")
-            }
-          />
         </div>
-        {data ? (
+        {/* Phase 3d-portal · Feb-2026 — Next-service split row.
+            Renders up to two tiles (Pool + Landscape) based on the
+            dedicated keys on the summary payload. Legacy
+            ``tile-next-service`` was dropped — callers prefer the
+            two split keys. Row hides entirely when both are null. */}
+        {(summary?.next_pool_service || summary?.next_landscape_service) ? (
+          <div
+            className={`grid gap-2 mb-2 ${
+              summary.next_pool_service && summary.next_landscape_service
+                ? "grid-cols-1 sm:grid-cols-2"
+                : "grid-cols-1"
+            }`}
+            data-testid="portal-next-service-split-row"
+          >
+            {summary.next_pool_service ? (
+              <Tile
+                testid="tile-next-service-pool"
+                label="Next Pool Service"
+                icon={CalendarClock}
+                value={fmtServiceDate(summary.next_pool_service.date)}
+                sub={summary.next_pool_service.service_type || ""}
+                tooltip={`${fmtServiceDate(summary.next_pool_service.date)} · ${summary.next_pool_service.service_type || ""}`}
+                onClick={() =>
+                  summary.next_pool_service.job_id
+                    ? navigate(`/portal/services/${summary.next_pool_service.job_id}`)
+                    : navigate("/portal/request-service")
+                }
+              />
+            ) : null}
+            {summary.next_landscape_service ? (
+              <Tile
+                testid="tile-next-service-landscape"
+                label="Next Landscape Service"
+                icon={CalendarClock}
+                value={fmtServiceDate(summary.next_landscape_service.date)}
+                sub={summary.next_landscape_service.service_type || ""}
+                tooltip={`${fmtServiceDate(summary.next_landscape_service.date)} · ${summary.next_landscape_service.service_type || ""}`}
+                onClick={() =>
+                  summary.next_landscape_service.job_id
+                    ? navigate(`/portal/services/${summary.next_landscape_service.job_id}`)
+                    : navigate("/portal/request-service")
+                }
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {(data && data.counts) ? (
           <div className="grid grid-cols-3 gap-2 mb-3">
             <AlertTile
               testid="alert-overdue"
@@ -462,6 +496,7 @@ export default function PortalHome() {
           </div>
         </div>
       ) : null}
+      </div>{/* /portal-dashboard-card */}
 
       {/* Phase 34 · Feb 2026 · Ask-Concierge highlight — teal→blue
           gradient, distinct from the Refer-a-Friend purple→pink card
