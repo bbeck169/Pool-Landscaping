@@ -15,14 +15,14 @@ Fields:
 """
 
 CHEMICALS_CATALOG = [
-    {"slug": "chlorine_tabs",     "name": "Chlorine Tabs",     "unit": "tabs",     "unit_kind": "integer", "step_hint": 1},
+    {"slug": "chlorine_tabs",     "name": "Chlorine Tabs",     "unit": "tabs",     "unit_kind": "decimal", "step_hint": 1},
     {"slug": "liquid_chlorine",   "name": "Liquid Chlorine",   "unit": "gal",      "unit_kind": "decimal", "step_hint": 0.5},
     {"slug": "muriatic_acid",     "name": "Muriatic Acid",     "unit": "gal",      "unit_kind": "decimal", "step_hint": 0.25},
     {"slug": "soda_ash",          "name": "Soda Ash",          "unit": "lbs",      "unit_kind": "decimal", "step_hint": 1},
     {"slug": "shock",             "name": "Shock",             "unit": "lbs",      "unit_kind": "decimal", "step_hint": 1},
     {"slug": "clarifier",         "name": "Clarifier",         "unit": "oz",       "unit_kind": "decimal", "step_hint": 1},
     {"slug": "phosphate_remover", "name": "Phosphate Remover", "unit": "oz",       "unit_kind": "decimal", "step_hint": 1},
-    {"slug": "salt",              "name": "Salt",              "unit": "40lb bag", "unit_kind": "integer", "step_hint": 1},
+    {"slug": "salt",              "name": "Salt",              "unit": "40lb bag", "unit_kind": "decimal", "step_hint": 1},
     {"slug": "enzymes",           "name": "Enzymes",           "unit": "oz",       "unit_kind": "decimal", "step_hint": 1},
 ]
 
