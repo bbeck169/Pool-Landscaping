@@ -4,6 +4,7 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- fix(seed): heal ``landscaper@aquaterra.com`` live-DB row — ``department`` set to ``landscaping`` so ``_require_landscaping`` passes; unblocks 2 pre-existing ``test_phase50::TestLandscapeTimeclock`` failures. ``backend/seed.py:130`` already carried a dept value + an idempotent upsert for this user (``seed_landscaping_user`` lines 100-116) but it's gated behind ``SEED_DEMO_USERS=1``, which is OFF in this environment; and ``timeclock_landscaping._require_landscaping`` accepts only ``landscaping``/``both``, so the seed's canonical ``landscape_tech`` wasn't satisfying the gate. One-shot DB heal; no source change required.
 - feat(clock-in): landscape techs land on a full-screen Clock In gate that short-circuits Outlet until punched-in (admins + pool techs pass through); /landscape/time-clock gains per-tech admin aggregation (name, status, hours, last punch, view-history expand) with configurable date range. Mobile parity deferred.
 - feat(admin-chrome): relocate visible universal-search bar from AdminTopBar to full-width navy (#1B1F5C) hero banner in AppLayout. Command-K palette (GlobalSearch) remains headless in AdminTopBar. No functional change -- placement + presentation only.
 - feat(chemicals-catalog): flip all unit_kind='integer' entries (chlorine_tabs, salt) to 'decimal' so FE accepts fractional dosing values. Backend readings form + chemicals-added UI already supported decimals via step attributes; this unblocks the catalog-level gate.
