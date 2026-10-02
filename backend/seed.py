@@ -100,11 +100,15 @@ async def seed_landscaping_user():
     if existing:
         upd = {}
         # Feb-2026 · Multi-category tech assignment — accept
-        # ``landscape_tech`` OR the legacy ``"landscaping"`` on read,
-        # but always WRITE the modern enum so the row survives the
-        # ``PUT /admin/users/{uid}/department`` regex.
-        if (existing.get("department") or "").lower() not in ("landscape_tech", "landscaping"):
-            upd["department"] = "landscape_tech"
+        # only the ``"landscaping"`` canonical value on read; this
+        # is the sole value accepted by ``_require_landscaping``
+        # and ``_resolve_from_user``.  Normalize-migration drift
+        # (``migrations/normalize_user_department_tokens.py`` maps
+        # ``"landscaping"`` → ``"landscape_tech"`` on every boot)
+        # is healed back by this upsert on the following boot pass
+        # — flip-per-boot, idempotent at end-of-boot.
+        if (existing.get("department") or "").lower() not in ("landscaping",):
+            upd["department"] = "landscaping"
         if existing.get("role") not in ("technician", "landscaping_technician"):
             upd["role"] = "technician"
         if tenant_id and existing.get("tenant_id") != tenant_id:
@@ -127,7 +131,7 @@ async def seed_landscaping_user():
         "email": email,
         "password_hash": hash_password("password123"),
         "role": "technician",
-        "department": "landscape_tech",
+        "department": "landscaping",
         "avatar": "",
         "technician_id": tech_id,
         "active": True,
@@ -159,9 +163,10 @@ async def seed_landscape_tech_carlos():
     if existing:
         upd = {}
         # Feb-2026 · Multi-category tech assignment — see landscaper
-        # helper above; accept legacy on read, always WRITE modern.
-        if (existing.get("department") or "").lower() not in ("landscape_tech", "landscaping"):
-            upd["department"] = "landscape_tech"
+        # helper above; accept only the ``"landscaping"`` canonical
+        # value, heal anything else back on upsert.
+        if (existing.get("department") or "").lower() not in ("landscaping",):
+            upd["department"] = "landscaping"
         if existing.get("role") != "technician":
             upd["role"] = "technician"
         if tenant_id and existing.get("tenant_id") != tenant_id:
@@ -184,7 +189,7 @@ async def seed_landscape_tech_carlos():
         "email": email,
         "password_hash": hash_password("password123"),
         "role": "technician",
-        "department": "landscape_tech",
+        "department": "landscaping",
         "avatar": "",
         "technician_id": tech_id,
         "active": True,
@@ -305,7 +310,7 @@ async def align_demo_tech_departments():
     from config import logger as _lg
     fixes = 0
     _MIKE_DEPT = "pool_tech"
-    _CARLOS_DEPT = "landscape_tech"
+    _CARLOS_DEPT = "landscaping"
 
     async def _fix(email: str, want: str):
         nonlocal fixes
