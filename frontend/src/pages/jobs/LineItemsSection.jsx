@@ -1,6 +1,20 @@
 /**
  * Slice K2 · Job Line Items panel.
  *
+ * Feb-2026 · Jobs Overhaul Phase 3c · DELTA REFERENCE —
+ * This is the SERVER-BACKED line-items editor for the Job Detail
+ * page (and the schedule-side Edit Job modal, which embeds it via
+ * ``jobId``).  The IN-MEMORY sibling for the New Job form lives
+ * in ``@/components/jobs/LineItemsEditor.jsx`` and is deliberately
+ * a different component — the two surfaces diverge on data flow
+ * (per-row HTTP CRUD vs. in-memory array), row shape (10 fields
+ * vs. 4), role gating (admin/tech column split vs. admin-only
+ * form), totals computation (server-authoritative vs. client-
+ * computed footer), and validation (structured 4xx row-error
+ * highlighting vs. HTML-min only).  See the Phase 3c discovery
+ * report for the full delta — merging into a single component
+ * was explicitly rejected as premature abstraction.
+ *
  * Renders a pricebook-backed line-item table on the Job Detail page.
  * Server projection is the security boundary — technicians never
  * receive unit_price / subtotal / tax_rate / cost from the API, so

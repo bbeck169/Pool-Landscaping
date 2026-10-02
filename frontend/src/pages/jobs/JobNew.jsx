@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Repeat, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Repeat } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -20,14 +20,13 @@ import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 // Feb 2026 · Color-coded Service / Repair segmented toggle. Same
 // control lives on ScheduleJobEditModal via the shared component.
 import WorkClassToggle from "@/components/jobs/WorkClassToggle";
-// Feb-2026 · Jobs Overhaul Phase 1 — inline pricebook combobox for
-// the new Line Items section on /jobs/new. Shared with K71 quotes/
-// invoices editor and JobDetail's LineItemsSection picker modal.
-// TODO(jobs-overhaul-phase-3): extract the whole Line Items block
-// (JSX + helpers) into a shared LineItemsEditor once JobDetail's
-// overhaul lands so /jobs/new and the Edit Job modal parity work
-// from a single implementation.
-import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
+// Feb-2026 · Jobs Overhaul Phase 3c — presentation extracted to
+// ``@/components/jobs/LineItemsEditor``. State ownership (array +
+// price-sync side effect) stays here because the subtotal → sibling
+// ``form.price`` coupling is JobNew-specific. The server-backed
+// sibling (``pages/jobs/LineItemsSection.jsx``) is intentionally
+// NOT merged — see Phase 3c discovery for the full delta.
+import LineItemsEditor from "@/components/jobs/LineItemsEditor";
 
 const CADENCES = [
   { k: "one_time", label: "One-time" },
@@ -906,15 +905,16 @@ export default function JobNew({
         </div>
 
         {/*
-          Feb-2026 · Jobs Overhaul Phase 1 — Line Items card.
-          Mirrors the Edit Job modal's ``LineItemsSection`` shape
-          in spirit but operates on ``form.line_items`` (in-memory
-          state) since JobNew is a create form — no ``jobId`` yet.
-          The array is included in the ``POST /jobs`` payload only
-          when non-empty (see submit handler).
-          TODO(jobs-overhaul-phase-3): extract this whole block +
-          the helpers into a shared LineItemsEditor once JobDetail
-          overhaul lands.
+          Feb-2026 · Jobs Overhaul Phase 3c — Line Items card.
+          Presentation extracted to
+          ``@/components/jobs/LineItemsEditor`` (controlled). The
+          outer card chrome + ``jf-line-items-section`` testid stay
+          HERE on the parent wrapper so the composition-root
+          invariant from Phase 1 holds. State ownership (array +
+          add/update/remove helpers + the price-sync useEffect)
+          stays in JobNew — the server-backed sibling
+          ``pages/jobs/LineItemsSection.jsx`` is intentionally NOT
+          merged (see Phase 3c discovery).
         */}
         <div
           className="rounded-2xl p-5 mb-4"
@@ -924,202 +924,16 @@ export default function JobNew({
           }}
           data-testid="jf-line-items-section"
         >
-          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <div>
-              <h3
-                className="text-lg font-bold"
-                style={{ color: colors.onSurface }}
-              >
-                Line Items
-              </h3>
-              <p className="text-xs" style={{ color: colors.muted }}>
-                Add items from the pricebook or type your own. The
-                subtotal auto-fills the Price field above.
-              </p>
-            </div>
-            <div className="flex items-center">
-              <Button
-                type="button"
-                testid="jf-li-add-blank"
-                onClick={addBlankLine}
-              >
-                <Plus size={14} /> Add line
-              </Button>
-            </div>
-          </div>
-          {/* "Add from pricebook" affordance — the inline picker
-              acts as a search-and-add. Typing surfaces the
-              pricebook dropdown; picking a row appends a line and
-              clears the input.  See
-              ``@/components/pricebook/PricebookItemPicker`` for
-              the debounce + keyboard-navigation contract. */}
-          <div className="mb-3">
-            <PricebookItemPicker
-              value={pbSearch}
-              onChange={setPbSearch}
-              onSelect={(row) => {
-                addPricebookLine(row);
-                setPbSearch("");
-              }}
-              placeholder="Add from pricebook — search by item name…"
-              testidPrefix="jf-li-pricebook"
-              wrapperTestid="jf-li-add-pricebook"
-              inputTestid="jf-li-pricebook-input"
-            />
-          </div>
-          {(form.line_items || []).length === 0 ? (
-            <div
-              className="p-4 text-sm text-center rounded-lg"
-              style={{
-                background: colors.surfaceSecondary,
-                color: colors.muted,
-              }}
-              data-testid="jf-li-empty"
-            >
-              No line items yet.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table
-                className="w-full text-sm"
-                data-testid="jf-li-table"
-              >
-                <thead>
-                  <tr>
-                    {["Description", "Qty", "Unit", "Total", ""].map(
-                      (h) => (
-                        <th
-                          key={h || "actions"}
-                          className={
-                            h === "Total"
-                              ? "text-right text-[10px] uppercase font-bold px-2 py-1"
-                              : "text-left text-[10px] uppercase font-bold px-2 py-1"
-                          }
-                          style={{
-                            color: colors.muted,
-                            borderBottom: `1px solid ${colors.border}`,
-                          }}
-                        >
-                          {h}
-                        </th>
-                      ),
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.line_items.map((li, i) => {
-                    const rowTotal =
-                      (Number(li.quantity) || 0)
-                      * (Number(li.unit_price) || 0);
-                    return (
-                      <tr
-                        key={i}
-                        data-testid={`jf-li-row-${i}`}
-                        style={{
-                          borderBottom: `1px solid ${colors.border}`,
-                        }}
-                      >
-                        <td className="px-2 py-2 align-top">
-                          <input
-                            type="text"
-                            value={li.description || ""}
-                            onChange={(e) =>
-                              updateLine(i, {
-                                description: e.target.value,
-                              })
-                            }
-                            className="w-full px-2 py-1 rounded-md text-sm"
-                            style={{
-                              border: `1px solid ${colors.border}`,
-                              background: colors.surface,
-                              color: colors.onSurface,
-                            }}
-                            data-testid={`jf-li-desc-${i}`}
-                          />
-                        </td>
-                        <td className="px-2 py-2 align-top">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            value={li.quantity ?? 1}
-                            onChange={(e) =>
-                              updateLine(i, {
-                                quantity: e.target.value,
-                              })
-                            }
-                            className="w-20 px-2 py-1 rounded-md text-sm"
-                            style={{
-                              border: `1px solid ${colors.border}`,
-                              background: colors.surface,
-                              color: colors.onSurface,
-                            }}
-                            data-testid={`jf-li-qty-${i}`}
-                          />
-                        </td>
-                        <td className="px-2 py-2 align-top">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={li.unit_price ?? 0}
-                            onChange={(e) =>
-                              updateLine(i, {
-                                unit_price: e.target.value,
-                              })
-                            }
-                            className="w-24 px-2 py-1 rounded-md text-sm"
-                            style={{
-                              border: `1px solid ${colors.border}`,
-                              background: colors.surface,
-                              color: colors.onSurface,
-                            }}
-                            data-testid={`jf-li-unit-${i}`}
-                          />
-                        </td>
-                        <td
-                          className="px-2 py-2 align-top text-right font-semibold"
-                          style={{ color: colors.onSurface }}
-                          data-testid={`jf-li-total-${i}`}
-                        >
-                          {`$${rowTotal.toFixed(2)}`}
-                        </td>
-                        <td className="px-2 py-2 align-top text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeLine(i)}
-                            style={{
-                              background: "transparent",
-                              border: 0,
-                              cursor: "pointer",
-                              color: colors.danger || colors.error,
-                            }}
-                            aria-label="Remove line"
-                            data-testid={`jf-li-del-${i}`}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={3} className="px-2 py-1"></td>
-                    <td
-                      className="px-2 py-1 text-right text-sm font-bold"
-                      style={{ color: colors.onSurface }}
-                      data-testid="jf-li-subtotal"
-                    >
-                      {`Subtotal $${lineItemsSubtotal.toFixed(2)}`}
-                    </td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          )}
+          <LineItemsEditor
+            lines={form.line_items || []}
+            onAddBlank={addBlankLine}
+            onAddFromPricebook={addPricebookLine}
+            onUpdateLine={updateLine}
+            onRemoveLine={removeLine}
+            pricebookSearch={pbSearch}
+            onPricebookSearchChange={setPbSearch}
+            testidPrefix="jf-li"
+          />
         </div>
 
         {/* Recurrence card */}
