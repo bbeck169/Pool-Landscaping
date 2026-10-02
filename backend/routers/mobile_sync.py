@@ -650,20 +650,35 @@ async def mobile_offline_bundle(tech_id: str = "me",
     horizon = now + timedelta(days=OFFLINE_BUNDLE_WINDOW_DAYS)
 
     # Jobs assigned to this tech within the 7-day window.
+    #
+    # Phase 32 originally filtered + sorted on ``scheduled_at`` only,
+    # which returned zero rows in this codebase because job docs
+    # store their schedule on ``scheduled_date`` (date-only YYYY-MM-DD)
+    # — ``scheduled_at`` was never populated on the live collection.
+    # Mirror the dual-field pattern already shipped in
+    # ``routers/portal_next_visits.py`` (date-only + full ISO
+    # fallback) so legacy and future shapes both qualify. See
+    # ``test_mobile_sync_offline_bundle_jobs.py`` for the matrix.
     from utils import not_deleted_filter as _nd
+    horizon_iso = horizon.isoformat()
+    horizon_date = horizon.date().isoformat()
     jobs_cur = db.jobs.find(
         {"tenant_id": tenant_id,
          "$and": [
              {"$or": [{"technician_id": target_tech},
                        {"assigned_tech_id": target_tech}]},
              _nd(),
-         ],
-         "scheduled_at": {"$lte": horizon.isoformat()}},
+             {"$or": [
+                 {"scheduled_date": {"$lte": horizon_date}},
+                 {"scheduled_at":   {"$lte": horizon_iso}},
+             ]},
+         ]},
         {"_id": 0, "id": 1, "customer_id": 1, "title": 1,
-          "service_type": 1, "scheduled_at": 1, "scheduled_end": 1,
+          "service_type": 1, "scheduled_at": 1, "scheduled_date": 1,
+          "scheduled_end": 1,
           "notes": 1, "status": 1, "checklist_template": 1,
           "address": 1, "customer_name": 1, "updated_at": 1},
-    ).sort("scheduled_at", 1).limit(BUNDLE_MAX_JOBS)
+    ).sort([("scheduled_date", 1), ("scheduled_at", 1)]).limit(BUNDLE_MAX_JOBS)
     jobs = [j async for j in jobs_cur]
 
     # Contact info — name + phone + service address only, no other PII.

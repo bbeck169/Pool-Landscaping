@@ -4343,3 +4343,5 @@ Three small extensions bundled together — Response Draft Library (D), Auto-Slo
 ### Security
 - Raw IPs never persisted — `ip_hash` (SHA-256 with tenant salt) stored instead.
 - Session-deduped impression firing inside Shadow DOM widget prevents inflation.
+
+## 2026-10-02 · backend · fix(mobile-sync): offline-bundle jobs now match on scheduled_date (fallback scheduled_at), mirroring portal_next_visits
