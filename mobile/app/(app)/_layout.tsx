@@ -12,6 +12,8 @@ import { registerForPushNotifications } from "@/src/services/pushNotifications";
 import { useUnreadCount } from "@/src/hooks/useUnreadCount";
 // FLEET-B · Fleet status chip in the tab bar area.
 import FleetStatusChip from "@/src/components/fleet/FleetStatusChip";
+// Landscape-tech clock-in gate — parity with web f5dd1eb0a.
+import LandscapeTechClockInGate from "@/src/components/LandscapeTechClockInGate";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
@@ -39,6 +41,7 @@ export default function AppLayout() {
   if (isCustomer) return <Redirect href="/portal/home" />;
 
   return (
+    <LandscapeTechClockInGate>
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <SyncBanner />
       {/* FLEET-B · Fleet status chip — shows fleet tracking state for techs */}
@@ -262,6 +265,7 @@ export default function AppLayout() {
       )}
       {isAdmin && <AIDockDrawer visible={dockOpen} onClose={() => setDockOpen(false)} />}
     </View>
+    </LandscapeTechClockInGate>
   );
 }
 
