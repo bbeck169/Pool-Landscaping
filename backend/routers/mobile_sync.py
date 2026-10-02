@@ -171,6 +171,31 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
                     "client_op_id": op.client_op_id,
                     "updated_at": now_iso()}},
     )
+    # 2026-10-02 · duration_seconds=0 fix — mirror the online
+    # service-report submit path (``routers/service_reports.py``
+    # L1131-1149) + PUT /jobs status→completed branch
+    # (``routers/jobs.py`` L2786) by closing every open
+    # ``job_timers`` row for this job.  Previously the offline
+    # close replay stamped the job doc but left ``job_timers`` rows
+    # dangling in an open state forever.  Non-fatal — a timer-close
+    # failure MUST NOT block the sync replay.
+    try:
+        from routers.job_timers import close_open_timers_for_job
+        _closed = await close_open_timers_for_job(
+            job_id=op.entity_id, tenant_id=tenant_id,
+            actor_user_id=user_id,
+            reason="mobile_offline_close",
+        )
+        if _closed:
+            logger.info(
+                "[job_timers.auto_close] mobile_sync job=%s closed=%d",
+                op.entity_id, _closed,
+            )
+    except Exception as _tc_exc:                                # noqa: BLE001
+        logger.warning(
+            "[job_timers.auto_close] mobile_sync job=%s failed: %s",
+            op.entity_id, _tc_exc,
+        )
     # Feb-2026 · Door-hanger auto-send on completion transition.
     # Fires only on the pending→completed transition; mobile sync
     # replays of an already-completed job (idempotent close) are
@@ -373,7 +398,32 @@ async def _handle_job_arrive(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
     and flips ``pending``/``scheduled`` → ``in_progress`` if needed,
     mirroring the web endpoint's status transition.  Idempotent: a
     replay with the same ``client_op_id`` on a row that already has
-    a ``timer_started_at`` is a no-op."""
+    a ``timer_started_at`` is a no-op.
+
+    2026-10-02 · duration_seconds=0 fix — two parity gaps closed:
+
+    (a) When the mobile payload omits ``arrived_at`` we previously
+        stamped ``timer_started_at = now_iso()`` and tagged
+        ``timer_start_method = "mobile_offline_arrival"`` — this
+        made the sync-processing instant indistinguishable from
+        a real on-site arrival, so a service-report submit landing
+        in the same batch produced ``timer_duration_seconds == 0``.
+        Now the fallback-to-now path tags
+        ``timer_start_method = "mobile_offline_arrival_fallback_now"``
+        and emits a WARN log so dashboards + audits can tell real
+        offline arrivals from degraded-payload ones.
+
+    (b) The online ``/arrive`` endpoint upserts a ``job_timers``
+        collection row via ``auto_start_timer_on_arrival`` so the
+        /job-timers reports see every arrival. The offline replay
+        path forgot that call — the dashboards under-counted
+        offline-arriving jobs.  Now mirrored, with the same
+        warn-and-swallow guard the online path uses (bookkeeping
+        error MUST NOT fail the sync).  Idempotency lives inside
+        ``auto_start_timer_on_arrival`` (open-row probe keyed on
+        ``(tenant_id, job_id, tech_id)``) — no caller-side
+        precheck needed.
+    """
     job = await db.jobs.find_one(
         {"id": op.entity_id, "tenant_id": tenant_id}, {"_id": 0})
     if not job:
@@ -387,9 +437,23 @@ async def _handle_job_arrive(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
         return {"server_id": op.entity_id, "server_ts": now_iso(),
                   "reason": "job_completed"}
     payload = op.payload or {}
+    _arrived_at = payload.get("arrived_at")
+    if _arrived_at:
+        _timer_started_at = _arrived_at
+        _timer_start_method = "mobile_offline_arrival"
+    else:
+        # Soft fallback — stamp the moment of processing but tag it
+        # so dashboards + audits can distinguish degraded payloads.
+        _timer_started_at = now_iso()
+        _timer_start_method = "mobile_offline_arrival_fallback_now"
+        logger.warning(
+            "[job-timers] offline arrival payload missing arrived_at"
+            " — stamping now(); op=%s job=%s",
+            op.client_op_id, op.entity_id,
+        )
     upd = {
-        "timer_started_at": payload.get("arrived_at") or now_iso(),
-        "timer_start_method": "mobile_offline_arrival",
+        "timer_started_at": _timer_started_at,
+        "timer_start_method": _timer_start_method,
         "last_synced_at": now_iso(),
         "client_op_id": op.client_op_id,
         "updated_at": now_iso(),
@@ -402,6 +466,23 @@ async def _handle_job_arrive(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
         upd["status"] = "in_progress"
     await db.jobs.update_one(
         {"id": op.entity_id, "tenant_id": tenant_id}, {"$set": upd})
+    # 2026-10-02 · duration_seconds=0 fix (b) — mirror the online
+    # /arrive endpoint by upserting a ``job_timers`` collection row.
+    # Non-fatal: a bookkeeping error MUST NOT break the sync replay
+    # (same posture as ``routers/jobs.py::job_arrive``).
+    try:
+        from routers.job_timers import auto_start_timer_on_arrival
+        await auto_start_timer_on_arrival(
+            job_id=op.entity_id, tenant_id=tenant_id,
+            tech_id=job.get("technician_id"),
+            customer_id=job.get("customer_id"),
+            started_at=_timer_started_at,
+        )
+    except Exception as _jt_exc:                                # noqa: BLE001
+        logger.warning(
+            "[job-timers] mobile_sync arrival auto-start failed job=%s: %s",
+            op.entity_id, _jt_exc,
+        )
     return {"server_id": op.entity_id, "server_ts": now_iso(),
               "timer_started_at": upd["timer_started_at"]}
 

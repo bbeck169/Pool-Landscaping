@@ -981,7 +981,13 @@ async def submit_service_report(
             _en = _dt.fromisoformat(now.replace("Z", "+00:00"))
             _dur = int(max(0, (_en - _st).total_seconds()))
         except Exception:
-            _dur = 0
+            # 2026-10-02 · duration_seconds=0 fix — parse failure
+            # yields ``None`` (not ``0``) so a malformed
+            # ``timer_started_at`` is diagnostically distinct from
+            # a legitimate 0-second duration. Mongo stores ``null``;
+            # the ``{"duration_seconds": {"$gt": 0}}`` dashboard
+            # filter naturally excludes it.
+            _dur = None
         _stop_updates["timer_stopped_at"] = now
         _stop_updates["timer_duration_seconds"] = _dur
         _stop_updates["timer_stop_method"] = "service_report_submitted"

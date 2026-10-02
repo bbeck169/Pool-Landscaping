@@ -55,11 +55,25 @@ def _parse_iso(value: Any) -> Optional[datetime]:
 
 
 def _compute_duration_seconds(started: Any, ended: Any) -> Optional[int]:
+    """Return ``int(max(0, (ended - started).total_seconds()))`` or
+    ``None`` when either bound is missing / malformed.
+
+    2026-10-02 · duration_seconds=0 fix — the ``None`` return on
+    parse failure is diagnostically distinct from a legitimate
+    0-second duration (clock skew etc.).  The ``close_open_timers_
+    for_job`` caller passes the ``None`` straight through to the
+    ``$set`` payload so Mongo stores ``null``; the dashboard
+    aggregation filter ``{"duration_seconds": {"$gt": 0}}`` at the
+    bottom of this module naturally excludes ``null`` rows.
+    """
     s = _parse_iso(started)
     e = _parse_iso(ended)
     if not (s and e):
         return None
-    return int(max(0, (e - s).total_seconds()))
+    try:
+        return int(max(0, (e - s).total_seconds()))
+    except Exception:                                             # noqa: BLE001
+        return None
 
 
 def _require_role(user: Dict[str, Any], allowed: set) -> None:

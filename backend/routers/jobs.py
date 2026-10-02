@@ -140,13 +140,28 @@ class JobListItem(BaseModel):
         return _coerce_address_to_str(v)
 
 
-def _timer_seconds(start_iso: str, stop_iso: str) -> int:
+def _timer_seconds(start_iso: str, stop_iso: str) -> Optional[int]:
+    """Return the elapsed seconds between the two ISO timestamps or
+    ``None`` on parse failure.
+
+    2026-10-02 · duration_seconds=0 fix — previously returned ``0``
+    on exception, which was indistinguishable from a legitimate
+    0-second duration (clock skew, same-timestamp close).  Callers
+    that pass the return value directly into a Mongo ``$set``
+    (``routers/jobs.py::update_job`` status→completed branch) now
+    land ``null`` instead of ``0``; the dashboard filter
+    ``{"duration_seconds": {"$gt": 0}}`` naturally excludes
+    ``null``.  The read-side report path at
+    ``routers/jobs.py:5039`` display-coerces via ``dur or 0`` so a
+    ``None`` falls back to ``0`` in the UI without any arithmetic
+    error on the sum reducer at L5047.
+    """
     try:
         a = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
         b = datetime.fromisoformat(stop_iso.replace("Z", "+00:00"))
         return max(0, int((b - a).total_seconds()))
     except Exception:
-        return 0
+        return None
 
 
 

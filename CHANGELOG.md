@@ -4345,3 +4345,5 @@ Three small extensions bundled together — Response Draft Library (D), Auto-Slo
 - Session-deduped impression firing inside Shadow DOM widget prevents inflation.
 
 ## 2026-10-02 · backend · fix(mobile-sync): offline-bundle jobs now match on scheduled_date (fallback scheduled_at), mirroring portal_next_visits
+
+## 2026-10-02 · backend · fix(job-timers): offline-arrival parity + null (not 0) on parse-failure; dashboard aggregates unaffected
