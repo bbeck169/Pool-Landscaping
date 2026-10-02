@@ -34,7 +34,7 @@ _ENV = dotenv_values(_BACKEND_DIR / ".env")
 _sync = _shared_db()
 # Make the script importable without shipping an __init__.py.
 sys.path.insert(0, str(_BACKEND_DIR / "scripts"))
-import fix_landscape_tech_seed_drift as fix_drift  # noqa: E402
+import _deprecated_fix_landscape_tech_seed_drift as fix_drift  # noqa: E402  # renamed 2026-10-02 (post-8910b943b)
 
 
 # Phase 41.1c · Feb 2026 — batch-bleed isolation.
