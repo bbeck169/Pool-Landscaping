@@ -13,6 +13,9 @@ import AdminTopBar from "@/layouts/AdminTopBar";
 // per breakpoint); the command-K palette still mounts headless
 // there as a singleton.
 import GlobalSearchBar from "@/components/GlobalSearchBar";
+// Phase 4-landscape · Feb-2026 — full-screen clock-in gate for
+// landscape technicians.
+import LandscapeTechClockInGate from "@/components/schedule/LandscapeTechClockInGate";
 import UniversalMenu from "@/layouts/UniversalMenu";
 // K75 · Step B · Feb-2026 — user-editable Quick Access rail.
 // Replaces the inline ``<QuickNavRail>`` (retained below as
@@ -812,7 +815,13 @@ function AppLayout() {
               <AppBreadcrumbs variant="admin" />
               <OnboardingGate>
                 <div data-testid="admin-outlet-wrapper">
-                  <Outlet />
+                  {/* Phase 4-landscape · Feb-2026 — landscape-tech
+                      clock-in gate.  Short-circuits for admins /
+                      pool techs via its own useClockInStatus
+                      guard. */}
+                  <LandscapeTechClockInGate>
+                    <Outlet />
+                  </LandscapeTechClockInGate>
                 </div>
               </OnboardingGate>
             </DynamicCrumbProvider>

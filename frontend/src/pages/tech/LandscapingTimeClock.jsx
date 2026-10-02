@@ -6,11 +6,13 @@
  * Backend enforces department === "landscaping" (403 otherwise); the
  * screen also shows a friendly message when the API rejects the user.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock, MapPin, MapPinOff, LogIn, LogOut, RefreshCw } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
+
+const _ADMIN_ROLES = new Set(["admin", "super_admin", "owner", "manager"]);
 
 function weekBounds(offset = 0) {
   const d = new Date();
@@ -64,12 +66,21 @@ async function readGeo() {
 }
 
 export default function LandscapingTimeClock() {
-  const { _user } = useAuth();
+  const { user: _viewer } = useAuth();
   const [today, setToday] = useState(null);
   const [week, setWeek] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [tick, setTick] = useState(0);
+
+  const _isAdminViewer = _ADMIN_ROLES.has(
+    String(_viewer?.role || "").toLowerCase(),
+  );
+  const [adminRange, setAdminRange] = useState(() => weekBounds(0));
+  const [adminSummary, setAdminSummary] = useState(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminError, setAdminError] = useState(null);
+  const [expandedTech, setExpandedTech] = useState(null);
 
   const load = async () => {
     setError(null);
@@ -92,6 +103,27 @@ export default function LandscapingTimeClock() {
   useEffect(() => {
     load();
   }, []);
+
+  const loadAdminSummary = useCallback(async () => {
+    if (!_isAdminViewer) return;
+    setAdminBusy(true);
+    setAdminError(null);
+    try {
+      const qs = `?start=${adminRange.start}&end=${adminRange.end}`;
+      const data = await api.get(`/timeclock/admin-summary${qs}`);
+      setAdminSummary(data);
+    } catch (e) {
+      setAdminError(e?.message || "Failed to load team aggregation");
+      setAdminSummary(null);
+    } finally {
+      setAdminBusy(false);
+    }
+  }, [_isAdminViewer, adminRange.start, adminRange.end]);
+
+  useEffect(() => {
+    if (_isAdminViewer) loadAdminSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_isAdminViewer, adminRange.start, adminRange.end]);
 
   // Tick every second while clocked in so the timer moves.
   useEffect(() => {
@@ -315,6 +347,192 @@ export default function LandscapingTimeClock() {
           </div>
         </>
       )}
+
+      {_isAdminViewer ? (
+        <div
+          className="rounded-2xl p-5 md:p-6 mt-4"
+          style={{ background: colors.surface,
+                   border: `1px solid ${colors.border}` }}
+          data-testid="landscape-time-clock-admin-aggregation"
+        >
+          <h2
+            className="text-base md:text-lg font-bold mb-3"
+            style={{ color: colors.onSurface }}
+          >
+            Team aggregation
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <input
+              type="date"
+              value={adminRange.start}
+              onChange={(e) =>
+                setAdminRange((r) => ({ ...r, start: e.target.value }))
+              }
+              className="text-sm px-2 py-1.5 rounded-md"
+              style={{ border: `1px solid ${colors.border}`,
+                       background: "#FFFFFF", color: "#0F172A" }}
+              data-testid="landscape-time-clock-admin-range-start"
+            />
+            <span className="text-xs"
+                  style={{ color: colors.muted }}>→</span>
+            <input
+              type="date"
+              value={adminRange.end}
+              onChange={(e) =>
+                setAdminRange((r) => ({ ...r, end: e.target.value }))
+              }
+              className="text-sm px-2 py-1.5 rounded-md"
+              style={{ border: `1px solid ${colors.border}`,
+                       background: "#FFFFFF", color: "#0F172A" }}
+              data-testid="landscape-time-clock-admin-range-end"
+            />
+            <button
+              type="button"
+              onClick={loadAdminSummary}
+              disabled={adminBusy}
+              className="text-sm px-3 py-1.5 rounded-md font-semibold"
+              style={{ background: adminBusy ? colors.surfaceSecondary
+                                              : colors.brand,
+                       color: adminBusy ? colors.muted : "#FFFFFF",
+                       border: 0 }}
+              data-testid="landscape-time-clock-admin-refresh"
+            >
+              {adminBusy ? "Loading..." : "Refresh"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminRange(weekBounds(0))}
+              className="text-xs px-2 py-1.5 rounded-md"
+              style={{ background: colors.surfaceSecondary,
+                       border: `1px solid ${colors.border}`,
+                       color: colors.onSurface }}
+              data-testid="landscape-time-clock-admin-reset"
+            >
+              Reset to this week
+            </button>
+          </div>
+          {adminError ? (
+            <div
+              className="text-xs mb-3 px-2 py-1.5 rounded-md"
+              style={{ background: "#FEF2F2",
+                       border: "1px solid #FECACA",
+                       color: "#B91C1C" }}
+              data-testid="landscape-time-clock-admin-error"
+            >
+              {adminError}
+            </div>
+          ) : null}
+          <ul className="space-y-2">
+            {(adminSummary?.techs || []).map((t) => (
+              <li
+                key={t.user_id}
+                className="rounded-md px-3 py-2"
+                style={{ background: colors.surfaceSecondary,
+                         border: `1px solid ${colors.border}` }}
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="text-sm font-bold"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`landscape-time-clock-admin-tech-name-${t.user_id}`}
+                    >
+                      {t.name}
+                    </span>
+                    <span
+                      className="text-xs font-bold px-2 py-0.5 rounded-full"
+                      style={{
+                        background: t.status === "in"
+                          ? "#DCFCE7" : colors.surfaceSecondary,
+                        color: t.status === "in"
+                          ? "#166534" : colors.muted,
+                        border: `1px solid ${colors.border}`,
+                      }}
+                      data-testid={`landscape-time-clock-admin-tech-status-${t.user_id}`}
+                    >
+                      {t.status === "in" ? "Clocked In" : "Clocked Out"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap text-xs"
+                       style={{ color: colors.muted }}>
+                    <span
+                      data-testid={`landscape-time-clock-admin-tech-total-${t.user_id}`}
+                    >
+                      {Math.floor((t.total_seconds || 0) / 3600)}
+                      :
+                      {String(
+                        Math.floor(((t.total_seconds || 0) % 3600) / 60),
+                      ).padStart(2, "0")}
+                    </span>
+                    <span
+                      data-testid={`landscape-time-clock-admin-tech-last-${t.user_id}`}
+                    >
+                      {t.last_punch
+                        ? `${fmtTime(t.last_punch.ts)} · ${
+                            typeof t.last_punch.lat === "number"
+                              ? t.last_punch.lat.toFixed(2) : "?"
+                          },${
+                            typeof t.last_punch.lng === "number"
+                              ? t.last_punch.lng.toFixed(2) : "?"
+                          }`
+                        : "No punches"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedTech(
+                          expandedTech === t.user_id ? null : t.user_id,
+                        )
+                      }
+                      className="text-xs px-2 py-0.5 rounded-md"
+                      style={{ background: "transparent",
+                               border: `1px solid ${colors.border}`,
+                               color: colors.onSurface }}
+                      data-testid={`landscape-time-clock-admin-tech-expand-${t.user_id}`}
+                    >
+                      {expandedTech === t.user_id
+                        ? "Hide History"
+                        : "View History"}
+                    </button>
+                  </div>
+                </div>
+                {expandedTech === t.user_id ? (
+                  <ul
+                    className="mt-2 space-y-1"
+                    data-testid={`landscape-time-clock-admin-tech-punches-${t.user_id}`}
+                  >
+                    {(t.punches || []).map((p) => (
+                      <li
+                        key={p.id}
+                        className="text-xs"
+                        style={{ color: colors.onSurface }}
+                      >
+                        {fmtTime(p.ts)} ·{" "}
+                        {p.punch_type === "in" ? "In" : "Out"} ·{" "}
+                        {typeof p.lat === "number"
+                          ? p.lat.toFixed(2) : "?"}
+                        ,
+                        {typeof p.lng === "number"
+                          ? p.lng.toFixed(2) : "?"}
+                        {p.job_id ? ` · job=${p.job_id}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+            {!adminSummary?.techs?.length && !adminBusy ? (
+              <li
+                className="text-xs"
+                style={{ color: colors.muted }}
+                data-testid="landscape-time-clock-admin-empty"
+              >
+                No landscape techs in this tenant.
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

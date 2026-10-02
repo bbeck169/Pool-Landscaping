@@ -246,3 +246,81 @@ async def my_jobs_today(user: dict = Depends(get_current_user)):
     ).sort("scheduled_start", 1)
     items = await cur.to_list(50)
     return {"items": items, "count": len(items)}
+
+
+# ── Phase 4-landscape · Feb-2026 · Admin aggregation ─────────────
+_LANDSCAPE_DEPTS = ("landscaping", "landscape_tech", "landscaper", "both")
+
+
+@router.get("/admin-summary")
+async def admin_summary(start: Optional[str] = Query(None),
+                        end: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "owner", "manager"):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "forbidden",
+                    "msg": "admin-only endpoint"},
+        )
+    today_d = date.today()
+    monday = today_d - timedelta(days=today_d.weekday())
+    sunday = monday + timedelta(days=6)
+    start_s = start or monday.isoformat()
+    end_s = end or sunday.isoformat()
+
+    tenant_id = user["tenant_id"]
+    techs_cur = db.users.find(
+        {"tenant_id": tenant_id,
+         "role": "technician",
+         "department": {"$in": list(_LANDSCAPE_DEPTS)}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1},
+    ).sort("name", 1)
+    techs = await techs_cur.to_list(1000)
+
+    out = []
+    for tech in techs:
+        rows = await db.timeclock_punches.find(
+            {"tenant_id": tenant_id,
+             "user_id": tech["id"],
+             "timestamp": {
+                 "$gte": f"{start_s}T00:00:00+00:00",
+                 "$lte": f"{end_s}T23:59:59+00:00",
+             }},
+            {"_id": 0},
+        ).sort("timestamp", 1).to_list(5000)
+
+        total_seconds = _sum_shifts(rows)
+        last = rows[-1] if rows else None
+        status = ("in" if last and last.get("punch_type") == "in"
+                   else "out")
+        out.append({
+            "user_id": tech["id"],
+            "name": tech.get("name") or tech.get("email") or tech["id"],
+            "status": status,
+            "total_seconds": total_seconds,
+            "last_punch": (
+                {
+                    "ts": last.get("timestamp"),
+                    "lat": last.get("lat"),
+                    "lng": last.get("lng"),
+                    "punch_type": last.get("punch_type"),
+                } if last else None
+            ),
+            "punches": [
+                {
+                    "id": p.get("id"),
+                    "ts": p.get("timestamp"),
+                    "lat": p.get("lat"),
+                    "lng": p.get("lng"),
+                    "punch_type": p.get("punch_type"),
+                    "job_id": p.get("job_id"),
+                }
+                for p in rows
+            ],
+        })
+
+    return {
+        "range": {"start": start_s, "end": end_s},
+        "techs": out,
+    }

@@ -4,6 +4,7 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- feat(clock-in): landscape techs land on a full-screen Clock In gate that short-circuits Outlet until punched-in (admins + pool techs pass through); /landscape/time-clock gains per-tech admin aggregation (name, status, hours, last punch, view-history expand) with configurable date range. Mobile parity deferred.
 - feat(admin-chrome): relocate visible universal-search bar from AdminTopBar to full-width navy (#1B1F5C) hero banner in AppLayout. Command-K palette (GlobalSearch) remains headless in AdminTopBar. No functional change -- placement + presentation only.
 - feat(chemicals-catalog): flip all unit_kind='integer' entries (chlorine_tabs, salt) to 'decimal' so FE accepts fractional dosing values. Backend readings form + chemicals-added UI already supported decimals via step attributes; this unblocks the catalog-level gate.
 - feat(portal-home): outer white card wrapping dashboard; Next Service split into Pool + Landscape tiles; Refer-a-Friend inputs flipped to white bg + dark slate text
