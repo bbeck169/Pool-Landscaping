@@ -291,9 +291,22 @@ class JobUpdate(BaseModel):
     # back to the computed value in ``GET /jobs/{jid}/costing``.
     # ``routers/budgets.py::job_costing`` merges these over the
     # computed baseline/actual before recomputing progress + net
-    # profit + margin. Admin-only enforcement lives in
-    # ``routers/jobs.py::update_job`` where this is stripped for
-    # non-admin callers (see Phase 3 patch).
+    # profit + margin.
+    #
+    # Phase 3b write contract (locked):
+    #   * Callers MUST send the FULL merged dict every PUT — the
+    #     backend ``$set``s this field atomically and does NOT
+    #     merge partial writes. A caller that sends only
+    #     ``{"labor": {"budgeted_cents": X}}`` CLOBBERS any
+    #     pre-existing ``materials`` / ``equipment`` / inner
+    #     fields. The FE panel hydrates from
+    #     ``GET /jobs/{jid}/costing`` (which echoes the raw
+    #     ``costing_overrides`` dict as a top-level key) before
+    #     mutating one cell, then re-sends the full dict.
+    #   * Shape validation + admin-equivalent role gate live in
+    #     ``routers/jobs.py::update_job`` (403 for non-admin
+    #     when this key appears in the payload; 400 on malformed
+    #     bucket keys, inner keys, or non-non-negative-int values).
     costing_overrides: Optional[Dict[str, Dict[str, Any]]] = None
     # Feb-2026 · Jobs Overhaul Phase 3 — editable Customer field on
     # JobDetail. Admin re-points the job to a different customer;
@@ -308,6 +321,15 @@ class JobUpdate(BaseModel):
     price: Optional[float] = None
     service_category_id: Optional[str] = None
     service_category_name: Optional[str] = None
+    # Feb-2026 · Jobs Overhaul Phase 3b — inline Start Time editor
+    # on the Scheduled tile of ``/jobs/[id]``. Shape = ISO 8601
+    # datetime string (same as ``scheduled_date`` which is plain
+    # ``str`` without datetime parsing). The FE synthesizes the
+    # ISO via ``new Date(`${scheduled_date}T${hhmm}:00`).toISOString()``
+    # on commit — see ``frontend/src/pages/jobs/JobDetail.jsx``
+    # Start Time ``InlineEditTile``. Downstream read paths
+    # (analytics, dispatch, portal) already consume this field.
+    scheduled_start: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

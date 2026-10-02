@@ -4,6 +4,8 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- feat(jobs-page): editable Job Costing overrides + inline Start Time (Phase 3b — Jobs Overhaul)
+
 ### Phase 52.1 — Live-streaming walkie MVP (a → d) · Feb 2026
 
 **Added**

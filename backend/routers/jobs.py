@@ -2367,6 +2367,51 @@ async def update_job(jid: str, body: JobUpdate,
             403,
             "Only admin-equivalent roles can set follow-up fields",
         )
+    # Feb-2026 · Jobs Overhaul Phase 3b — ``costing_overrides``
+    # admin-equivalent role gate + shape validation. The field is
+    # ``$set``-written atomically (handler does not merge partials
+    # — see ``models.py::JobUpdate.costing_overrides`` for the
+    # locked FE/BE write contract). Non-admin callers trying to
+    # set this field get a scoped 403; techs still PUT other
+    # fields on their own jobs freely. Shape invariants:
+    #   * top-level keys ⊆ {"labor","materials","equipment"}
+    #   * inner keys ⊆ {"budgeted_cents","actual_cents"}
+    #   * values are non-negative ints (``bool`` rejected since
+    #     ``isinstance(True, int) is True`` in Python — we don't
+    #     want ``{"budgeted_cents": True}`` sneaking through as 1).
+    if "costing_overrides" in update:
+        if role not in ADMIN_ROLES:
+            raise HTTPException(
+                403,
+                "costing_overrides may only be set by admin-equivalent roles",
+            )
+        _co = update["costing_overrides"]
+        if not isinstance(_co, dict):
+            raise HTTPException(400, "costing_overrides must be an object")
+        _CO_BUCKETS = {"labor", "materials", "equipment"}
+        _CO_INNER = {"budgeted_cents", "actual_cents"}
+        for _k, _v in _co.items():
+            if _k not in _CO_BUCKETS:
+                raise HTTPException(
+                    400,
+                    f"costing_overrides: unknown bucket {_k!r} — expected one of {sorted(_CO_BUCKETS)}",
+                )
+            if not isinstance(_v, dict):
+                raise HTTPException(
+                    400,
+                    f"costing_overrides.{_k} must be an object",
+                )
+            for _ik, _iv in _v.items():
+                if _ik not in _CO_INNER:
+                    raise HTTPException(
+                        400,
+                        f"costing_overrides.{_k}: unknown field {_ik!r} — expected one of {sorted(_CO_INNER)}",
+                    )
+                if isinstance(_iv, bool) or not isinstance(_iv, int) or _iv < 0:
+                    raise HTTPException(
+                        400,
+                        f"costing_overrides.{_k}.{_ik} must be a non-negative integer",
+                    )
     # Mobile Phase 2 · Feb-2026 — tech-wins conflict audit. The
     # ``client_updated_at`` marker (if present) is stripped from
     # the persisted payload and used only to decide whether the

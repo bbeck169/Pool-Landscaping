@@ -587,6 +587,22 @@ async def job_costing(jid: str,
         "materials_cents": actual_materials_cents,
         "equipment_cents": actual_equipment_cents,
     }
+    # Feb-2026 · Jobs Overhaul Phase 3b — merge admin overrides on
+    # top of the computed baseline/actual BEFORE deriving progress
+    # + net-profit + margin. Each inner key is independently
+    # optional; missing keys fall back to the computed value. The
+    # raw ``costing_overrides`` dict is echoed in the response
+    # (top-level) so the FE panel can hydrate state and send the
+    # full merged dict on each PUT (handler ``$set``s this field
+    # atomically — see ``models.py::JobUpdate.costing_overrides``
+    # write-contract comment for the FE/BE invariant).
+    overrides = job.get("costing_overrides") or {}
+    for _bucket in ("labor", "materials", "equipment"):
+        _o = overrides.get(_bucket) or {}
+        if "budgeted_cents" in _o and _o["budgeted_cents"] is not None:
+            baseline[f"{_bucket}_cents"] = int(_o["budgeted_cents"])
+        if "actual_cents" in _o and _o["actual_cents"] is not None:
+            actual[f"{_bucket}_cents"] = int(_o["actual_cents"])
     def pct(a: int, b: int) -> float:
         return round((a / b) * 100, 1) if b > 0 else 0.0
     progress = {
@@ -611,6 +627,9 @@ async def job_costing(jid: str,
         "actual_margin_pct": actual_margin_pct,
         "time_entries_count": len(entries),
         "total_labor_minutes": total_minutes,
+        # Phase 3b echo — raw stored overrides so the FE panel can
+        # build the full merged dict on each inline-edit commit.
+        "costing_overrides": overrides,
     }
 
 

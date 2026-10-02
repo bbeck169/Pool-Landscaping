@@ -87,7 +87,13 @@ function InlineEditTile({
         ) : (
           <input
             autoFocus
-            type={editType === "number" ? "number" : "date"}
+            type={
+              editType === "number"
+                ? "number"
+                : editType === "time"
+                  ? "time"
+                  : "date"
+            }
             step={editType === "number" ? (step || "0.01") : undefined}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -307,8 +313,80 @@ describe("JobDetail · Phase 3a · source contract", () => {
     expect(SRC).toMatch(
       /TODO\(jobs-overhaul-phase-3c\):\s*extract shared InlineEditTile/,
     );
-    expect(SRC).toMatch(
+    // Phase 3b wired scheduled_start — the earlier
+    // "wire scheduled_start inline-edit" TODO must be GONE.
+    expect(SRC).not.toMatch(
       /TODO\(jobs-overhaul-phase-3b\):\s*wire scheduled_start inline-edit/,
+    );
+  });
+});
+
+
+// ────────── Phase 3b · Start Time tile — new testids ────────────
+describe("JobDetail · Phase 3b · InlineEditTile — Start Time tile", () => {
+  it("editType=time renders <input type='time'> and commits HH:MM draft", async () => {
+    const onCommit = vi.fn(async () => true);
+    render(
+      <InlineEditTile label="Start Time" display="09:00"
+        editable editType="time" rawValue="09:00"
+        onCommit={onCommit} testid="jd-tile-start-time" />,
+    );
+    fireEvent.click(screen.getByTestId("jd-tile-start-time"));
+    const input = screen.getByTestId("jd-tile-start-time-input");
+    expect(input).toHaveAttribute("type", "time");
+    fireEvent.change(input, { target: { value: "14:30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onCommit).toHaveBeenCalledWith("14:30"));
+  });
+
+  it("Escape in a time input reverts without committing", () => {
+    const onCommit = vi.fn(async () => true);
+    render(
+      <InlineEditTile label="Start Time" display="09:00"
+        editable editType="time" rawValue="09:00"
+        onCommit={onCommit} testid="jd-tile-start-time" />,
+    );
+    fireEvent.click(screen.getByTestId("jd-tile-start-time"));
+    const input = screen.getByTestId("jd-tile-start-time-input");
+    fireEvent.change(input, { target: { value: "14:30" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("jd-tile-start-time-input")).toBeNull();
+  });
+
+  it("editable=false (no scheduled_date yet) disables the trigger", () => {
+    render(
+      <InlineEditTile label="Start Time" display="— Pick a date first —"
+        editable={false} editType="time" rawValue=""
+        onCommit={() => true} testid="jd-tile-start-time" />,
+    );
+    expect(screen.getByTestId("jd-tile-start-time")).toBeDisabled();
+  });
+});
+
+
+describe("JobDetail · Phase 3b · source contract — Start Time tile", () => {
+  it("renders a second InlineEditTile with editType='time' + testid='jd-tile-start-time'", () => {
+    expect(SRC).toMatch(/testid="jd-tile-start-time"/);
+    expect(SRC).toMatch(
+      /<InlineEditTile[\s\S]{0,800}label="Start Time"[\s\S]{0,400}editType="time"/,
+    );
+  });
+
+  it("InlineEditTile input renderer supports editType='time'", () => {
+    expect(SRC).toMatch(/editType\s*===\s*["']time["']/);
+  });
+
+  it("onCommit synthesizes ISO via new Date().toISOString() + scheduled_date", () => {
+    expect(SRC).toMatch(
+      /new\s+Date\(`\$\{job\.scheduled_date\}T\$\{v\}:00`\)\.toISOString\(\)/,
+    );
+    expect(SRC).toMatch(/scheduled_start/);
+  });
+
+  it("disables the tile when scheduled_date is empty", () => {
+    expect(SRC).toMatch(
+      /editable=\{\s*!isCustomer\s*&&\s*!!job\.scheduled_date\s*\}/,
     );
   });
 });

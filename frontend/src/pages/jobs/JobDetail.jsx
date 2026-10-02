@@ -124,7 +124,13 @@ function InlineEditTile({
           ) : (
             <input
               autoFocus
-              type={editType === "number" ? "number" : "date"}
+              type={
+                editType === "number"
+                  ? "number"
+                  : editType === "time"
+                    ? "time"
+                    : "date"
+              }
               step={editType === "number" ? (step || "0.01") : undefined}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -845,9 +851,64 @@ export default function JobDetail() {
             />
           )}
         </div>
-        {/* TODO(jobs-overhaul-phase-3b): wire scheduled_start inline-edit
-            once JobUpdate schema accepts it; today the Scheduled tile
-            renders start-time read-only in the subline above. */}
+        {/* Feb-2026 · Jobs Overhaul Phase 3b — inline Start Time
+            editor. Wraps into row 2 of the ``grid-cols-1 sm:grid-cols-3``
+            above (admin sees 4 tiles total; tech sees 3). Disabled
+            when ``scheduled_date`` is empty — the ISO synth
+            requires a date half. On commit, builds the ISO via
+            ``new Date(`${scheduled_date}T${hhmm}:00`).toISOString()``
+            (UTC `Z` suffix — matches the existing fixture shape
+            on ``scheduled_start`` writes elsewhere in the codebase).
+            TODO(tenant-tz): synthesize scheduled_start in tenant
+            local time once tenant tz is wired at the FE layer. */}
+        <div
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3"
+          data-testid="jd-tile-start-time-row"
+        >
+          <InlineEditTile
+            icon={Clock}
+            label="Start Time"
+            display={
+              job.scheduled_start
+                ? String(job.scheduled_start).slice(11, 16)
+                  || String(job.scheduled_start)
+                : (job.scheduled_date
+                    ? "— Set start time —"
+                    : "— Pick a date first —")
+            }
+            editable={!isCustomer && !!job.scheduled_date}
+            editType="time"
+            rawValue={
+              job.scheduled_start
+                ? String(job.scheduled_start).slice(11, 16)
+                : ""
+            }
+            onCommit={(v) => {
+              if (!v) {
+                return saveInline(
+                  { scheduled_start: null },
+                  { scheduled_start: null },
+                );
+              }
+              if (!job.scheduled_date) return Promise.resolve(false);
+              let iso;
+              try {
+                iso = new Date(`${job.scheduled_date}T${v}:00`).toISOString();
+              } catch (_e) {
+                setToast({
+                  tone: "error",
+                  message: "Invalid start time",
+                });
+                return Promise.resolve(false);
+              }
+              return saveInline(
+                { scheduled_start: iso },
+                { scheduled_start: iso },
+              );
+            }}
+            testid="jd-tile-start-time"
+          />
+        </div>
       </div>
 
       {/* K1 media counter chip — shows remaining photo/video slots so
