@@ -161,4 +161,39 @@ describe("EstimateView · K79-TOGGLE grouped/itemized switch", () => {
     expect(screen.getByTestId("estimate-line-items-table")).toBeTruthy();
     expect(screen.queryByTestId("estimate-grouped-lines-table")).toBeNull();
   });
+
+  // BUG REGRESSION · Feb-2026 — The real backend ``_build_payload``
+  // shape has ``customer_group_display`` at BOTH the top level AND
+  // nested under ``customer_view``. Pre-fix, it was ONLY nested,
+  // so the frontend read ``data?.customer_group_display`` as
+  // ``undefined`` and defaulted to grouped on every magic-link
+  // customer page. This case locks that both toggle positions
+  // produce the correct table against the real payload shape.
+  it.each([
+    { label: "false (admin toggled OFF)", cgd: false,
+      want: "estimate-line-items-table",
+      forbidden: "estimate-grouped-lines-table" },
+    { label: "true  (admin toggled ON)",  cgd: true,
+      want: "estimate-grouped-lines-table",
+      forbidden: "estimate-line-items-table" },
+  ])(
+    "real _build_payload shape (top-level + nested present) · $label "
+    + "renders the correct table",
+    async ({ cgd, want, forbidden }) => {
+      // Assert the fixture produces the real shape: top-level + nested
+      // both populated with the same value (what _build_payload emits
+      // post-fix).
+      const p = _payload({ customerGroupDisplay: cgd });
+      expect(p).toHaveProperty("customer_group_display", cgd);
+      expect(p.customer_view).toHaveProperty("customer_group_display", cgd);
+      // Mount and verify the expected table renders.
+      getSpy.mockResolvedValue(p);
+      render(<EstimateView token="tok-realshape" isAdmin={false} />);
+      await waitFor(() =>
+        expect(screen.queryByTestId("estimate-view")).toBeTruthy(),
+      );
+      expect(screen.getByTestId(want)).toBeTruthy();
+      expect(screen.queryByTestId(forbidden)).toBeNull();
+    },
+  );
 });

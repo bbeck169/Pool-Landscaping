@@ -295,6 +295,18 @@ async def _build_payload(est: dict, tenant: dict, *,
         # K79 grouped preview — always included so the admin toolbar's
         # "Preview customer view" can render without a second call.
         "customer_view": customer_view,
+        # BUG FIX · Feb-2026 — top-level ``customer_group_display`` must
+        # match what ``EstimateView.jsx:373`` reads. Pre-fix, this field
+        # was ONLY nested under ``customer_view.customer_group_display``,
+        # so the frontend read ``data.customer_group_display`` as
+        # ``undefined`` and fell through its "undefined → grouped"
+        # legacy fallback, which meant the customer page always
+        # rendered grouped on ``/e/e/{token}`` regardless of the admin's
+        # toggle. Emits the raw stored value verbatim: ``bool`` when
+        # the admin flipped the toggle, ``None`` for legacy pre-K79
+        # quotes (frontend treats null/undefined → grouped so legacy
+        # behaviour is preserved).
+        "customer_group_display": est.get("customer_group_display"),
         # Phase C · Feb-2026 — signature gate surface fields.
         "signature_status": signature_status,
         "require_signature_before_approve": require_signature_before_approve,
