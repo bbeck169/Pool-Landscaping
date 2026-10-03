@@ -144,12 +144,51 @@ export function canUserConvertToInvoice(role) {
 // set directly or indirectly), and hidden when the signed-in user
 // is below ``require_admin_or_manager``.
 export function shouldShowConvertToInvoiceButton({
-  isInvoice, convertedInvoiceId, canConvert,
+  isInvoice, convertedInvoiceId, canConvert, docStatus,
 }) {
   if (isInvoice) return false;
   if (!canConvert) return false;
   if (convertedInvoiceId) return false;
+  // Phase 3 B2 · Feb-2026 — hide on declined (mirrors new backend
+  // ``quote_declined`` 400 guard on POST /quotes/{id}/convert-to-invoice;
+  // this is the UI-layer regression guard so the button vanishes the
+  // instant a quote is declined, without waiting on an error toast).
+  if (String(docStatus || "").toLowerCase() === "declined") return false;
   return true;
+}
+
+// ─── Phase 3 B2 · Feb-2026 · Decline / Reopen helpers ─────────────
+// Decline + Reopen share the ``require_admin_or_manager`` server
+// dep → same client-side role set as Convert-to-Invoice. Kept as a
+// distinct exported helper so the Phase 3 test matrix can cover
+// the gate independently without coupling to Convert's predicate.
+export function canUserDeclineOrReopenQuote(role) {
+  return ["admin", "super_admin", "owner", "manager"]
+    .includes(String(role || "").toLowerCase());
+}
+
+// Decline button visibility: quote-only, open-set statuses only
+// (``{draft, sent, accepted}`` — matches the backend ``view=open``
+// predicate), not already converted, role-gated.
+export function shouldShowDeclineButton({
+  isInvoice, docStatus, convertedInvoiceId, canDecline,
+}) {
+  if (isInvoice) return false;
+  if (!canDecline) return false;
+  if (convertedInvoiceId) return false;
+  const s = String(docStatus || "").toLowerCase();
+  if (s === "declined") return false;
+  return ["draft", "sent", "accepted"].includes(s);
+}
+
+// Reopen button visibility: quote-only, declined-status-only,
+// role-gated.
+export function shouldShowReopenButton({
+  isInvoice, docStatus, canReopen,
+}) {
+  if (isInvoice) return false;
+  if (!canReopen) return false;
+  return String(docStatus || "").toLowerCase() === "declined";
 }
 
 // Resolves the admin-side route for a given invoice id. Invoices
@@ -241,6 +280,8 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // Phase 1 · Feb-2026 · Convert-to-Invoice — track the in-flight
   // POST so the button disables while converting.
   const [convertingToInvoice, setConvertingToInvoice] = useState(false);
+  // Phase 3 B2 · Feb-2026 — shared busy latch for decline + reopen.
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
   // Feb-2026 · Editable Sent Docs · Phase 1 — one-time confirm gate
   // for editing quotes whose status has passed ``draft``. Once the
   // user acknowledges the shared dialog on this detail page mount,
@@ -426,6 +467,66 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       }
     } finally {
       setConvertingToInvoice(false);
+    }
+  };
+
+  // ─── Phase 3 B2 · Feb-2026 · Decline / Reopen handlers ────────────
+  // POST ``/quotes/{id}/decline``:
+  //   * 200 → success toast + reload (status flips to "declined").
+  //   * 400 ``already_declined`` → info toast + reload (no-op server-side).
+  //   * 400 ``already_converted`` → info toast with invoice id + reload.
+  //   * other errors → error toast.
+  // POST ``/quotes/{id}/reopen``:
+  //   * 200 → success toast + reload (status restored).
+  //   * 400 ``not_declined`` → info toast + reload.
+  //   * other errors → error toast.
+  // Both guard double-clicks via a shared ``lifecycleBusy`` latch
+  // and require a native confirm() before firing.
+  const handleDeclineQuote = async () => {
+    if (lifecycleBusy) return;
+    if (!window.confirm("Decline this quote? You can reopen it later.")) return;
+    setLifecycleBusy(true);
+    try {
+      await api.post(`/quotes/${id}/decline`, {});
+      setToast({ tone: "success", message: "Quote declined" });
+      await load();
+    } catch (e) {
+      const detail = e?.data?.detail;
+      const code = detail?.code;
+      if (code === "already_declined") {
+        setToast({ tone: "info", message: "Already declined." });
+        await load();
+      } else if (code === "already_converted") {
+        setToast({
+          tone: "info",
+          message: `Already converted to invoice${detail?.invoice_id ? ` ${detail.invoice_id}` : ""}.`,
+        });
+        await load();
+      } else {
+        setToast({ tone: "error", message: e?.message || "Decline failed" });
+      }
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+  const handleReopenQuote = async () => {
+    if (lifecycleBusy) return;
+    if (!window.confirm("Reopen this quote?")) return;
+    setLifecycleBusy(true);
+    try {
+      await api.post(`/quotes/${id}/reopen`, {});
+      setToast({ tone: "success", message: "Quote reopened" });
+      await load();
+    } catch (e) {
+      const code = e?.data?.detail?.code;
+      if (code === "not_declined") {
+        setToast({ tone: "info", message: "Not currently declined." });
+        await load();
+      } else {
+        setToast({ tone: "error", message: e?.message || "Reopen failed" });
+      }
+    } finally {
+      setLifecycleBusy(false);
     }
   };
 
@@ -872,6 +973,7 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                 isInvoice,
                 convertedInvoiceId: doc.converted_invoice_id,
                 canConvert: canUserConvertToInvoice(user?.role),
+                docStatus: doc.status,
               }) ? (
                 <Button
                   onClick={handleConvertToInvoice}
@@ -880,6 +982,41 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                 >
                   <FilePlus size={14} />{" "}
                   {convertingToInvoice ? "Converting…" : "Convert to Invoice"}
+                </Button>
+              ) : null}
+              {/* Phase 3 B2 · Feb-2026 — Decline / Reopen controls.
+                  Admin lifecycle controls on quotes (not invoices).
+                  Decline fires when status ∈ {draft, sent, accepted}
+                  AND the quote hasn't been converted; the "Mark
+                  declined" ghost button above is a legacy
+                  customer-decision marker and remains in place. */}
+              {shouldShowDeclineButton({
+                isInvoice,
+                docStatus: doc.status,
+                convertedInvoiceId: doc.converted_invoice_id,
+                canDecline: canUserDeclineOrReopenQuote(user?.role),
+              }) ? (
+                <Button
+                  variant="danger"
+                  onClick={handleDeclineQuote}
+                  disabled={lifecycleBusy}
+                  testid="qd-decline-quote"
+                >
+                  <X size={14} /> Decline
+                </Button>
+              ) : null}
+              {shouldShowReopenButton({
+                isInvoice,
+                docStatus: doc.status,
+                canReopen: canUserDeclineOrReopenQuote(user?.role),
+              }) ? (
+                <Button
+                  variant="ghost"
+                  onClick={handleReopenQuote}
+                  disabled={lifecycleBusy}
+                  testid="qd-reopen-quote"
+                >
+                  <Repeat2 size={14} /> Reopen
                 </Button>
               ) : null}
               {!signInfo?.signed ? (

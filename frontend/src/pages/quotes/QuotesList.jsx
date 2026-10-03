@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Eye, DollarSign, Hash, Layers } from "lucide-react";
+import { Plus, Search, FileText, Eye, DollarSign, Hash, Layers, X, RotateCcw } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
 import { CustomerLink } from "@/components/customer";
-import { PageHeader, Button, Skeleton, StatusPill, EmptyState } from "@/components/ui-kit";
+import { PageHeader, Button, Skeleton, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import { formatRelativeFromIso } from "@/lib/relativeTime";
 // QUOTES-SUMMARY · Feb-2026 — shared summary card (extracted from
@@ -15,11 +16,35 @@ import SummaryTile from "@/components/SummaryTile";
 
 const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 
+// Phase 3 B2 · Feb-2026 — Quote lifecycle view filter.
+// Mirrors the backend ``GET /api/quotes?view=…`` enum shipped in
+// Atomic B1 (``cfe1a5d41``). "Open" scopes to
+// ``status in {draft, sent, accepted}`` + not-converted. "All" is
+// quote-only (``doc_type="quote"``) — NOT a drop-in for the
+// no-view back-compat path, which still returns BOTH doc_types for
+// other callers.
+const LIFECYCLE_VIEWS = ["open", "converted", "declined", "all"];
+const LIFECYCLE_LABELS = {
+  open: "Open",
+  converted: "Converted",
+  declined: "Declined",
+  all: "All",
+};
+
+// Mirrors ``backend/utils.require_admin_or_manager`` — same role
+// set gates both Decline and Reopen on the server.
+function canUserLifecycle(role) {
+  return ["admin", "super_admin", "owner", "manager"]
+    .includes(String(role || "").toLowerCase());
+}
+
 export default function QuotesList() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState(params.get("q") || "");
+  const [toast, setToast] = useState(null);
   const status = params.get("status") || "";
   // Feb-2026 · Item 2 — customer-scoped filter (URL-persisted).
   const customerFilter = params.get("customer_id") || null;
@@ -46,14 +71,40 @@ export default function QuotesList() {
     setParams(s, { replace: true });
   };
 
+  // Phase 3 B2 · Feb-2026 — Lifecycle view (open|converted|declined|all).
+  // Defaults to "open" on first mount (reflected in the URL so the
+  // view is deep-linkable + refresh-safe).
+  const viewRaw = (params.get("view") || "").toLowerCase();
+  const view = LIFECYCLE_VIEWS.includes(viewRaw) ? viewRaw : "open";
+  const setView = (v) => {
+    const s = new URLSearchParams(params);
+    s.set("view", v);
+    setParams(s, { replace: true });
+  };
   useEffect(() => {
-    const qs = new URLSearchParams({ doc_type: "quote" });
+    if (!params.get("view")) {
+      const s = new URLSearchParams(params);
+      s.set("view", "open");
+      setParams(s, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Phase 3 B2 · Feb-2026 — Fetch wired to lifecycle view + customer
+  // scope. Factored into a callback so Decline/Reopen handlers can
+  // trigger a refresh without duplicating the querystring assembly.
+  const fetchRows = useCallback(() => {
+    const qs = new URLSearchParams({ doc_type: "quote", view });
     if (customerFilter) qs.set("customer_id", customerFilter);
-    api
+    return api
       .get(`/quotes?${qs.toString()}`)
       .then((r) => setRows(r || []))
       .catch(() => setRows([]));
-  }, [customerFilter]);
+  }, [customerFilter, view]);
+
+  useEffect(() => {
+    fetchRows();
+  }, [fetchRows]);
 
   const filtered = (rows || [])
     .filter((r) => (status ? r.status === status || r.decision === status : true))
@@ -98,6 +149,59 @@ export default function QuotesList() {
     { key: "declined", fg: "#B91C1C", bg: "#FEE2E2" },
   ];
 
+  // Phase 3 B2 · Feb-2026 — Row-level Decline / Reopen gates.
+  const roleAllowed = canUserLifecycle(user?.role);
+  const canDeclineRow = (r) => {
+    if (!roleAllowed) return false;
+    if (r?.converted_invoice_id) return false;
+    const s = String(r?.status || "").toLowerCase();
+    if (s === "declined") return false;
+    return ["draft", "sent", "accepted"].includes(s);
+  };
+  const canReopenRow = (r) => {
+    if (!roleAllowed) return false;
+    return String(r?.status || "").toLowerCase() === "declined";
+  };
+
+  const handleRowDecline = async (e, r) => {
+    e.stopPropagation();
+    if (!window.confirm("Decline this quote? You can reopen it later.")) return;
+    try {
+      await api.post(`/quotes/${r.id}/decline`, {});
+      setToast({ tone: "success", message: "Quote declined" });
+    } catch (err) {
+      const detail = err?.data?.detail;
+      const code = detail?.code;
+      if (code === "already_converted") {
+        setToast({
+          tone: "info",
+          message: `Already converted to invoice${detail?.invoice_id ? ` ${detail.invoice_id}` : ""}.`,
+        });
+      } else if (code === "already_declined") {
+        setToast({ tone: "info", message: "Already declined." });
+      } else {
+        setToast({ tone: "error", message: err?.message || "Decline failed." });
+      }
+    }
+    fetchRows();
+  };
+  const handleRowReopen = async (e, r) => {
+    e.stopPropagation();
+    if (!window.confirm("Reopen this quote?")) return;
+    try {
+      await api.post(`/quotes/${r.id}/reopen`, {});
+      setToast({ tone: "success", message: "Quote reopened" });
+    } catch (err) {
+      const code = err?.data?.detail?.code;
+      if (code === "not_declined") {
+        setToast({ tone: "info", message: "Not currently declined." });
+      } else {
+        setToast({ tone: "error", message: err?.message || "Reopen failed." });
+      }
+    }
+    fetchRows();
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="quotes-page">
       <PageHeader
@@ -110,10 +214,7 @@ export default function QuotesList() {
         }
       />
 
-      {/* QUOTES-SUMMARY · Feb-2026 — Summary tiles.  Rendered
-          BETWEEN the PageHeader and the customer-scoped filter bar
-          so the dashboard numbers are always visible before the
-          filter/table region. */}
+      {/* QUOTES-SUMMARY · Feb-2026 — Summary tiles. */}
       {rows !== null ? (
         <div
           className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4"
@@ -175,6 +276,37 @@ export default function QuotesList() {
         data-testid="quotes-filters"
         data-k52-navy-strip="true"
       >
+        {/* Phase 3 B2 · Feb-2026 — Lifecycle view segmented control.
+            4 options; default-selected is "Open" on first mount.
+            Each option gets a stable ``quotes-list-filter-{view}``
+            testid for test harness pinning. */}
+        <div
+          className="inline-flex items-center gap-1 p-1 rounded-lg"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.nav.border}` }}
+          data-testid="quotes-list-filter"
+          role="tablist"
+          aria-label="Quote lifecycle view"
+        >
+          {LIFECYCLE_VIEWS.map((v) => {
+            const active = view === v;
+            return (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className="text-xs font-semibold px-3 py-1.5 rounded-md transition"
+                style={{
+                  backgroundColor: active ? colors.nav.bg : "transparent",
+                  color: active ? colors.nav.fg : colors.onSurfaceSecondary,
+                }}
+                data-testid={`quotes-list-filter-${v}`}
+                aria-pressed={active}
+                role="tab"
+              >
+                {LIFECYCLE_LABELS[v]}
+              </button>
+            );
+          })}
+        </div>
         <div className="relative flex-1 min-w-[220px]">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: colors.searchIcon }} />
           <input
@@ -246,6 +378,9 @@ export default function QuotesList() {
                     screens to match the InvoicesList sibling. */}
                 <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Viewed</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
+                {/* Phase 3 B2 · Feb-2026 — Actions column for
+                    Decline / Reopen row-level controls. */}
+                <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -285,12 +420,39 @@ export default function QuotesList() {
                     )}
                   </td>
                   <td className="px-3 py-3 text-right"><StatusPill status={r.decision || r.status} /></td>
+                  {/* Phase 3 B2 · Feb-2026 — Row Actions cell. */}
+                  <td className="px-3 py-3 text-right whitespace-nowrap">
+                    {canDeclineRow(r) ? (
+                      <button
+                        onClick={(e) => handleRowDecline(e, r)}
+                        className="text-xs font-semibold px-2.5 py-1 rounded-md inline-flex items-center gap-1"
+                        style={{ backgroundColor: "#FEE2E2", color: colors.error, border: `1px solid #FCA5A5` }}
+                        data-testid={`quote-row-decline-${r.id}`}
+                      >
+                        <X size={12} /> Decline
+                      </button>
+                    ) : null}
+                    {canReopenRow(r) ? (
+                      <button
+                        onClick={(e) => handleRowReopen(e, r)}
+                        className="text-xs font-semibold px-2.5 py-1 rounded-md inline-flex items-center gap-1"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+                        data-testid={`quote-row-reopen-${r.id}`}
+                      >
+                        <RotateCcw size={12} /> Reopen
+                      </button>
+                    ) : null}
+                    {!canDeclineRow(r) && !canReopenRow(r) ? (
+                      <span className="text-xs" style={{ color: colors.muted }}>—</span>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

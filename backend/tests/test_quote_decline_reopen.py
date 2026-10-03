@@ -259,6 +259,34 @@ def test_decline_rbac_denied_roles(user):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Reopen — RBAC matrix  (Phase 3 B2 remediation · Feb-2026)
+#
+# Audit flag: B1 shipped a dedicated RBAC parametrize for Decline
+# (allow × 4, deny × 3) but no equivalent for Reopen. Reopen SHARES
+# the ``require_admin_or_manager`` dep with Decline
+# (``backend/routers/quotes.py`` ~L3104 for decline / ~L3178 for
+# reopen) so the gate behavior is symmetric at the FastAPI
+# dependency layer — this is defensible, but the B1 test corpus
+# didn't lock it in. The combined parametrize below closes that
+# gap with 1 allow + 2 deny cases.
+# ═════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("user,allow", [
+    (_MANAGER, True),     # 1 allow — same gate as decline
+    (_TECH, False),       # 2 deny — same forbidden set as decline
+    (_CUSTOMER, False),
+])
+def test_reopen_rbac_matrix(user, allow):
+    """Reopen's role gate is the shared ``require_admin_or_manager``."""
+    from utils import require_admin_or_manager
+    if allow:
+        assert require_admin_or_manager(user=user) == user
+    else:
+        with pytest.raises(HTTPException) as e:
+            require_admin_or_manager(user=user)
+        assert e.value.status_code == 403
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Reopen — happy paths + fallback
 # ═════════════════════════════════════════════════════════════════════
 def test_reopen_declined_from_sent_restores_sent():
