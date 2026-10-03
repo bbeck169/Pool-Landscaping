@@ -90,10 +90,73 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _require_staff(user: dict) -> None:
+# ─── Feb-2026 · narrow role bypass for category-only diffs ──────
+_CATEGORY_ONLY_TOP_FIELDS = {
+    "business_unit", "business_unit_id",
+    "category",  # forward-compat; not in InvoiceEditBody today
+}
+_CATEGORY_ONLY_LINE_FIELDS = {
+    "category", "income_category_id",
+    "service_category", "service_category_id",
+}
+_AUTH_META_FIELDS = {
+    "reason", "confirm_edit_sent",
+    "confirm_edit_paid_invoice_number", "acknowledged_lock_bypass",
+}
+
+
+def _is_category_only_diff(
+    provided: Dict[str, Any], existing_invoice: Dict[str, Any],
+) -> bool:
+    """True iff the only effectively changed fields are category-related."""
+    diff_keys = set(provided.keys()) - _AUTH_META_FIELDS
+    if "line_items" in diff_keys:
+        diff_keys.discard("line_items")
+        existing_items = existing_invoice.get("line_items") or []
+        new_items = provided.get("line_items") or []
+        if not isinstance(new_items, list):
+            return False
+        if len(new_items) != len(existing_items):
+            return False
+        for i, new_item in enumerate(new_items):
+            if not isinstance(new_item, dict):
+                return False
+            match = None
+            new_id = new_item.get("id")
+            if new_id:
+                match = next(
+                    (li for li in existing_items if li.get("id") == new_id),
+                    None,
+                )
+            if match is None:
+                match = existing_items[i]
+            changed: set = set()
+            for k, v in new_item.items():
+                if k == "id":
+                    continue
+                if match.get(k) != v:
+                    changed.add(k)
+            for k in match.keys():
+                if k == "id":
+                    continue
+                if k not in new_item:
+                    changed.add(k)
+            if not changed.issubset(_CATEGORY_ONLY_LINE_FIELDS):
+                return False
+    if not diff_keys.issubset(_CATEGORY_ONLY_TOP_FIELDS):
+        return False
+    return True
+
+
+def _require_staff(user: dict, *, allow_category_only: bool = False) -> None:
+    """admin + super_admin always allowed. When ``allow_category_only=True``,
+    manager + owner are also allowed (Feb-2026 narrow bypass)."""
     role = (user or {}).get("role")
-    if role not in ("admin", "super_admin"):
-        raise HTTPException(403, "admin_only")
+    if role in ("admin", "super_admin"):
+        return
+    if allow_category_only and role in ("manager", "owner"):
+        return
+    raise HTTPException(403, "admin_only")
 
 
 def _validate_line_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -206,11 +269,24 @@ async def patch_invoice(
     body: InvoiceEditBody = Body(...),
     user: dict = Depends(get_current_user),
 ):
-    _require_staff(user)
+    # Feb-2026 · narrow role bypass — pre-reject roles outside the
+    # expanded set BEFORE the invoice fetch (preserves 403-before-404
+    # ordering for tech / customer / dispatcher).
+    _pre_role = (user or {}).get("role") or ""
+    if _pre_role not in ("admin", "super_admin", "manager", "owner"):
+        raise HTTPException(403, "admin_only")
 
     inv, collection = await find_invoice_dual(db, invoice_id)
     if not inv:
         raise HTTPException(404, "invoice_not_found")
+
+    # Feb-2026 · narrow role bypass — full check: compute category-only
+    # signal, then gate role on it. admin/super_admin always pass.
+    provided = body.dict(exclude_unset=True)
+    _require_staff(
+        user,
+        allow_category_only=_is_category_only_diff(provided, inv),
+    )
 
     status = (inv.get("status") or "").lower()
 
@@ -266,7 +342,8 @@ async def patch_invoice(
                 )
 
     # ── Extract & validate line_items early (before diff) ────────
-    provided = body.dict(exclude_unset=True)
+    # ``provided`` was computed above for the Feb-2026 narrow-role-
+    # bypass check; reuse it here (validation mutates in place).
     if "line_items" in provided:
         provided["line_items"] = _validate_line_items(provided["line_items"])
         # Feb-2026 · Income category enforcement — every touched line
