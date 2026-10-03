@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Plus, FileText, Settings, Copy, Trash2, X as XIcon } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Settings, Copy, Trash2, X as XIcon, FilePlus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -363,6 +363,13 @@ export function EstimatorEditor() {
   const [toast, setToast] = useState(null);
   // HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" modal state.
   const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
+  // Phase 1 · Feb-2026 · Convert-to-Invoice (estimate side) — track
+  // the in-flight POST + the resulting invoice id so the toolbar
+  // can collapse to a "View invoice →" link once converted.
+  const [convertingToInvoice, setConvertingToInvoice] = useState(false);
+  const [convertedInvoiceId, setConvertedInvoiceId] = useState(null);
+  const canConvertToInvoice = ["admin", "super_admin", "owner", "manager"]
+    .includes((user?.role || "").toLowerCase());
 
   useEffect(() => {
     api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
@@ -398,6 +405,11 @@ export function EstimatorEditor() {
           terms: d.terms || "",
         });
         setVideos(d.videos || []);
+        // Phase 1 · Feb-2026 · Convert-to-Invoice — capture the
+        // bookkeeping stamp if the estimate has already been
+        // converted so the toolbar can collapse to a
+        // "View invoice →" link.
+        setConvertedInvoiceId(d.converted_invoice_id || null);
       }).catch(() => {});
     }
   }, [id, isNew]);
@@ -456,12 +468,71 @@ export function EstimatorEditor() {
     } catch (e) { setToast({ tone: "error", message: e.message }); }
   };
 
+  // Phase 1 · Feb-2026 · Convert-to-Invoice (estimate side) —
+  // POSTs ``/estimates/{eid}/convert-to-invoice``. Mirrors the
+  // ``convertToQuote`` shape; on 409 ``already_converted`` the
+  // existing invoice id travels in ``err.data.detail.invoice_id``
+  // (same shape as the quote-side endpoint).
+  const convertToInvoice = async () => {
+    if (convertingToInvoice) return;
+    setConvertingToInvoice(true);
+    try {
+      const r = await api.post(`/estimates/${id}/convert-to-invoice`, {});
+      setToast({ tone: "success", message: "Converted to invoice" });
+      setConvertedInvoiceId(r?.invoice_id || null);
+      if (r?.invoice_id) {
+        setTimeout(() => navigate(`/quotes/${r.invoice_id}`), 400);
+      }
+    } catch (e) {
+      if (e?.status === 409) {
+        const existingId = e?.data?.detail?.invoice_id;
+        setToast({
+          tone: "warning",
+          message: "Already converted — opening existing invoice.",
+        });
+        setConvertedInvoiceId(existingId || null);
+        if (existingId) setTimeout(() => navigate(`/quotes/${existingId}`), 300);
+      } else {
+        setToast({
+          tone: "error",
+          message: e?.message || "Convert to invoice failed",
+        });
+      }
+    } finally {
+      setConvertingToInvoice(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="est-editor">
       <button onClick={() => navigate("/estimator")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
         <ArrowLeft size={14} /> Estimator
       </button>
-      <PageHeader title={isNew ? "New estimate" : form.title} right={!isNew ? <Button onClick={convertToQuote}>Convert to quote</Button> : null} />
+      <PageHeader title={isNew ? "New estimate" : form.title} right={!isNew ? (
+        <div className="flex gap-2" data-testid="est-header-actions">
+          {convertedInvoiceId ? (
+            <Button
+              variant="ghost"
+              onClick={() => navigate(`/quotes/${convertedInvoiceId}`)}
+              testid="est-view-converted-invoice"
+            >
+              <FilePlus size={14} /> View invoice →
+            </Button>
+          ) : (
+            canConvertToInvoice ? (
+              <Button
+                onClick={convertToInvoice}
+                disabled={convertingToInvoice}
+                testid="est-convert-to-invoice"
+              >
+                <FilePlus size={14} />{" "}
+                {convertingToInvoice ? "Converting…" : "Convert to invoice"}
+              </Button>
+            ) : null
+          )}
+          <Button onClick={convertToQuote} testid="est-convert-to-quote">Convert to quote</Button>
+        </div>
+      ) : null} />
       <div className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>

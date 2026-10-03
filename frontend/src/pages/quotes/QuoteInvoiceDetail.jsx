@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  FilePlus,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -128,6 +129,37 @@ export function shouldShowPaymentLinkButton({
   return true;
 }
 
+// ─── Phase 1 · Feb-2026 · Convert-to-Invoice (quote side) helpers ─
+// Mirrors ``backend/utils.require_admin_or_manager`` — admin,
+// super_admin, owner, manager pass; technicians + customers → false.
+export function canUserConvertToInvoice(role) {
+  return ["admin", "super_admin", "owner", "manager"]
+    .includes(String(role || "").toLowerCase());
+}
+
+// Button visibility — hidden on invoices (quote-only), hidden when
+// the quote has already been converted (``converted_invoice_id``
+// set directly or indirectly), and hidden when the signed-in user
+// is below ``require_admin_or_manager``.
+export function shouldShowConvertToInvoiceButton({
+  isInvoice, convertedInvoiceId, canConvert,
+}) {
+  if (isInvoice) return false;
+  if (!canConvert) return false;
+  if (convertedInvoiceId) return false;
+  return true;
+}
+
+// Resolves the admin-side route for a given invoice id. Invoices
+// live in the ``db.quotes`` collection (Phase 11 invariant) and
+// are served at ``/quotes/:id`` — the detail component branches
+// on ``doc_type`` at render time, so NO ``/invoices/:id`` route
+// exists.
+export function convertToInvoiceRoute(invoiceId) {
+  if (!invoiceId) return null;
+  return `/quotes/${invoiceId}`;
+}
+
 export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -204,6 +236,9 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // spinner. Shared between the P0 button and the P0.5a auto-flip
   // path on the Email button.
   const [sending, setSending] = useState(false);
+  // Phase 1 · Feb-2026 · Convert-to-Invoice — track the in-flight
+  // POST so the button disables while converting.
+  const [convertingToInvoice, setConvertingToInvoice] = useState(false);
   // Feb-2026 · Editable Sent Docs · Phase 1 — one-time confirm gate
   // for editing quotes whose status has passed ``draft``. Once the
   // user acknowledges the shared dialog on this detail page mount,
@@ -335,6 +370,46 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
       setToast({ tone: "error", message: e.message });
     } finally {
       setSending(false);
+    }
+  };
+
+  // ─── Phase 1 · Feb-2026 · Convert-to-Invoice (quote side) ──────────
+  // POSTs ``/quotes/{qid}/convert-to-invoice``:
+  //   * 201 → navigate to ``/quotes/{invoice_id}`` (invoices share
+  //           the same route; the detail page re-renders in the
+  //           invoice branch).
+  //   * 409 ``already_converted`` → navigate to the existing
+  //           invoice id carried on ``err.data.detail.invoice_id``.
+  //   * other errors → surface via toast.
+  const handleConvertToInvoice = async () => {
+    if (convertingToInvoice) return;
+    setConvertingToInvoice(true);
+    try {
+      const r = await api.post(`/quotes/${id}/convert-to-invoice`, {});
+      setToast({ tone: "success", message: "Converted to invoice" });
+      const route = convertToInvoiceRoute(r?.invoice_id);
+      if (route) {
+        setTimeout(() => navigate(route), 300);
+      } else {
+        await load();
+      }
+    } catch (e) {
+      if (e?.status === 409) {
+        const existingId = e?.data?.detail?.invoice_id;
+        const route = convertToInvoiceRoute(existingId);
+        setToast({
+          tone: "warning",
+          message: "Already converted — opening existing invoice.",
+        });
+        if (route) setTimeout(() => navigate(route), 300);
+      } else {
+        setToast({
+          tone: "error",
+          message: e?.message || "Convert to invoice failed",
+        });
+      }
+    } finally {
+      setConvertingToInvoice(false);
     }
   };
 
@@ -738,6 +813,35 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               {canConvertToJob ? (
                 <Button onClick={() => setConvertOpen(true)} testid="qd-convert-job">
                   <Repeat2 size={14} /> Convert to job
+                </Button>
+              ) : null}
+              {/* Phase 1 · Feb-2026 · Convert-to-Invoice (quote side).
+                  Hidden on invoices (quote-only). Collapses to a
+                  "View invoice →" link once the quote has already
+                  been converted (direct manual convert OR indirect
+                  auto-invoice — both paths stamp
+                  ``converted_invoice_id`` on the source row). */}
+              {doc.converted_invoice_id ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => navigate(convertToInvoiceRoute(doc.converted_invoice_id))}
+                  testid="qd-view-converted-invoice"
+                >
+                  <FilePlus size={14} /> View invoice →
+                </Button>
+              ) : null}
+              {shouldShowConvertToInvoiceButton({
+                isInvoice,
+                convertedInvoiceId: doc.converted_invoice_id,
+                canConvert: canUserConvertToInvoice(user?.role),
+              }) ? (
+                <Button
+                  onClick={handleConvertToInvoice}
+                  disabled={convertingToInvoice}
+                  testid="qd-convert-to-invoice"
+                >
+                  <FilePlus size={14} />{" "}
+                  {convertingToInvoice ? "Converting…" : "Convert to Invoice"}
                 </Button>
               ) : null}
               {!signInfo?.signed ? (
