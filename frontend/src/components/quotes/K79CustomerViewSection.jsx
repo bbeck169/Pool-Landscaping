@@ -44,7 +44,13 @@ function _uniqueServiceCategories(lines, allCats) {
 }
 
 
-export default function K79CustomerViewSection({ doc, onDocRefresh }) {
+export default function K79CustomerViewSection({
+  doc,
+  onDocRefresh,
+  // Phase A2 (Feb-2026) — syncs the parent's admin K71 view-mode
+  // state alongside the server-persisted customer_group_display.
+  onToggleChange,
+}) {
   // Phase K79-TOGGLE · Feb-2026 — re-enable the grouped-layout
   // toggle for customer surfaces. Default = ON when the field is
   // missing (legacy quotes keep today's grouped rendering).
@@ -102,6 +108,9 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
   const persistGrouped = async (nextValue) => {
     const priorValue = grouped;
     setGrouped(nextValue);          // optimistic
+    // Phase A2 (Feb-2026) — notify parent for admin K71 view-mode
+    // sync (nextValue=true → "grouped", false → "individual").
+    onToggleChange?.(nextValue);
     setGroupedSaving(true);
     try {
       await api.put(`/quotes/${doc.id}`, {
@@ -180,14 +189,19 @@ export default function K79CustomerViewSection({ doc, onDocRefresh }) {
             quotes with the field absent default to ON, matching
             the prior lock-on behaviour so nothing regresses on
             historicals. */}
-        <Switch
-          id="k79-grouped-toggle"
-          checked={grouped}
-          disabled={groupedSaving}
-          onCheckedChange={(next) => persistGrouped(Boolean(next))}
-          data-testid="k79-grouped-toggle"
-          aria-label="Grouped layout for customer-facing surfaces"
-        />
+        {/* Phase A2 (Feb-2026) — new testid on <span> wrapper;
+            legacy k79-grouped-toggle stays on the Switch (8 pre-
+            existing K79 test assertions depend on it). */}
+        <span data-testid="quote-line-items-view-toggle">
+          <Switch
+            id="k79-grouped-toggle"
+            checked={grouped}
+            disabled={groupedSaving}
+            onCheckedChange={(next) => persistGrouped(Boolean(next))}
+            data-testid="k79-grouped-toggle"
+            aria-label="Grouped layout for customer-facing surfaces"
+          />
+        </span>
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold"
           style={{

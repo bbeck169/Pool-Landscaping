@@ -36,6 +36,8 @@ import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import EditLockConfirmDialog from "@/components/documents/EditLockConfirmDialog";
 import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
+// Phase A2 (Feb-2026) — reuse K79 grouping (named-exported).
+import { _groupLines as _k79GroupLines } from "@/components/quotes/K79CustomerViewPreview";
 // Feb-2026 · Hard-delete quotes — admin+super only surface.
 import HardDeleteQuoteModal from "@/components/quotes/HardDeleteQuoteModal";
 import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
@@ -244,6 +246,20 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   // user acknowledges the shared dialog on this detail page mount,
   // subsequent inline saves inherit the ack + include the
   // ``acknowledged_lock_bypass`` flag on the PUT payload.
+  // Phase A2 (Feb-2026) — admin K71 view-mode. Client-side only;
+  // defaults to "individual" on every mount so no admin lands on
+  // the non-editable grouped rollup on first load. Flipping K79
+  // toggle (onToggleChange) syncs this alongside the server write.
+  const [adminViewMode, setAdminViewMode] = useState("individual");
+  const [adminServiceCategories, setAdminServiceCategories] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    api.get("/service-categories").then((res) => {
+      if (!alive) return;
+      setAdminServiceCategories(res?.items || []);
+    }).catch(() => { if (alive) setAdminServiceCategories([]); });
+    return () => { alive = false; };
+  }, []);
   const [lockBypassAcked, setLockBypassAcked] = useState(false);
   const [pendingLines, setPendingLines] = useState(null);
   const [lockDialogOpen, setLockDialogOpen] = useState(false);
@@ -1063,7 +1079,13 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           view — grouped rollup on invoices is future scope). Admin-
           only surface. */}
       {isStaff && !isInvoice ? (
-        <K79CustomerViewSection doc={doc} onDocRefresh={load} />
+        <K79CustomerViewSection
+          doc={doc}
+          onDocRefresh={load}
+          // Phase A2 — K79 toggle flip syncs admin K71 view-mode.
+          onToggleChange={(next) =>
+            setAdminViewMode(next ? "grouped" : "individual")}
+        />
       ) : null}
 
       {/* Feb-2026 · Interactive Flipbook Estimate Viewer — per-estimate
@@ -1081,6 +1103,79 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
         <h2 className="text-lg font-bold mb-3" style={{ color: colors.onSurface }}>Line items</h2>
+        {/* Phase A2 (Feb-2026) — view-mode wrapper. data-view-mode
+            reflects adminViewMode. On invoices (K79 not rendered)
+            wrapper still renders data-view-mode="individual" as a
+            no-op signal so e2e selectors stay stable. */}
+        <div
+          data-testid="quote-line-items-view-mode"
+          data-view-mode={!isInvoice ? adminViewMode : "individual"}
+        >
+          {/* Grouped rollup — ONLY mounted on quotes when admin
+              view-mode is "grouped". Reuses K79's _groupLines. */}
+          {!isInvoice && adminViewMode === "grouped" ? (
+            <div
+              data-testid="quote-line-items-grouped-table"
+              className="mb-3 rounded-xl"
+              style={{
+                border: `1px solid ${colors.border}`,
+                background: colors.surfaceSecondary,
+              }}
+            >
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{
+                    borderBottom: `1px solid ${colors.divider}`,
+                  }}>
+                    <th className="text-left px-3 py-2 font-semibold"
+                        style={{ color: colors.onSurfaceSecondary }}>
+                      Service
+                    </th>
+                    <th className="text-right px-3 py-2 font-semibold w-32"
+                        style={{ color: colors.onSurfaceSecondary }}>
+                      Subtotal
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {_k79GroupLines(
+                    doc.line_items || [],
+                    adminServiceCategories,
+                    {},
+                  ).map((g, i) => (
+                    <tr
+                      key={g.id || `other-${i}`}
+                      data-testid={
+                        `quote-line-items-group-${g.id || "other"}`
+                      }
+                      style={{
+                        borderBottom: `1px solid ${colors.divider}`,
+                      }}
+                    >
+                      <td className="px-3 py-2 font-semibold"
+                          style={{ color: colors.onSurface }}>
+                        {g.label}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold"
+                          style={{ color: colors.onSurface }}>
+                        {money(g.subtotal)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {/* K71 editor — ALWAYS mounted. display:none when the
+              admin view-mode is "grouped" so unsaved edits survive
+              the flip (edit-dirty preservation). */}
+          <div
+            style={{
+              display: !isInvoice && adminViewMode === "grouped"
+                ? "none" : "block",
+            }}
+            data-testid="quote-line-items-individual-wrapper"
+          >
         <K71LineItemsEditor
           doc={doc}
           canEdit={
@@ -1141,6 +1236,8 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                                                     : (msg?.message
                                                         || "Save failed") })}
         />
+          </div>
+        </div>
         <div className="mt-4 flex justify-end">
           <div className="w-64 space-y-1 text-sm"
                 data-testid="quote-invoice-totals-block">

@@ -20,7 +20,9 @@ import { X } from "lucide-react";
 import { colors, money } from "@/theme";
 
 
-function _groupLines(lines, cats, descriptions) {
+// Phase A2 (Feb-2026) — named-exported so QuoteInvoiceDetail
+// can reuse the same grouping rule for its admin rollup.
+export function _groupLines(lines, cats, descriptions) {
   const buckets = new Map();
   for (const li of lines || []) {
     const raw = li?.service_category_id;
