@@ -59,3 +59,35 @@
   - frontend/src/pages/quotes/QuoteInvoiceDetail.jsx
 - **Dependencies installed**: None
 - **Known issues**: None — all 16 new tests pass, app compiles, lint clean
+
+## Iteration 98 — Phase 3 Quote Lifecycle Parity (Decline/Reopen + View Filter)
+- **Commit**: 00f21b6c00c74eb58db5f98491d976f4e70116d5
+- **Date**: 2026-10-03
+- **Changes**:
+  - Created `quoteLifecycle.ts` — utility helpers: `canUserDeclineOrReopenQuote`, `shouldShowDeclineButton`, `shouldShowReopenButton`, `shouldHideConvertWhenDeclined`
+  - Modified `quotes.tsx` (list screen):
+    - Admin sees 4-option lifecycle view filter (Open/Converted/Declined/All) with testID `quotes-list-filter`
+    - Default fetch uses `?view=open`
+    - Row-level Decline button (`quote-row-decline-{id}`) on open rows with role gate
+    - Row-level Reopen button (`quote-row-reopen-{id}`) on declined rows with role gate
+    - Alert.alert confirm dialog before POST
+    - 400-code-aware toasts (already_declined, already_converted, not_declined)
+    - Non-admin still sees legacy doc_type filter (all/quote/invoice)
+  - Modified `quote/[id].tsx` (detail screen):
+    - Added Decline button (`qd-decline-quote`) in actions area — role-gated, visible on open quotes
+    - Added Reopen button (`qd-reopen-quote`) — role-gated, visible on declined quotes
+    - ConvertToInvoice now HIDDEN when `status==="declined"` (Phase 3 regression guard)
+    - Alert.alert confirm dialog + 400-aware toasts for both actions
+    - All existing testIDs preserved (qd-convert-to-invoice, qd-view-converted-invoice, quote-recipient-type-badge, invoice-lead-recipient-notice)
+  - Created `QuoteDeclineReopen.test.tsx` — 28 tests covering utilities, list filter/rows, detail visibility, regression guards
+- **Files modified**:
+  - mobile/src/utils/quoteLifecycle.ts (NEW)
+  - mobile/app/(app)/quotes.tsx (MODIFIED)
+  - mobile/app/quote/[id].tsx (MODIFIED)
+  - mobile/__tests__/QuoteDeclineReopen.test.tsx (NEW)
+- **Web files referenced**:
+  - frontend/src/pages/quotes/QuotesList.jsx
+  - frontend/src/pages/quotes/QuoteInvoiceDetail.jsx
+- **Dependencies installed**: None
+- **Known issues**: None — 28 new tests + 25 Phase 1/2 regression tests all green, lint clean
+- **Toggle fix**: N/A for mobile — detail screen has no editable line-items toggle (view-only)
