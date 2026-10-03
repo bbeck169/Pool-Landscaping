@@ -5,7 +5,12 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors, money } from "@/theme";
 import { PageHeader, Button, TextInput, Toast } from "@/components/ui-kit";
-import CustomerCombobox from "@/components/customers/CustomerCombobox";
+// Phase 2 B2 · Feb-2026 — swap CustomerCombobox for the unified
+// QuoteRecipientPicker so quotes/invoices can be addressed to a
+// Lead OR Customer. Keep CustomerCombobox mounted on OTHER pages
+// (New Job, Recurring Jobs, warranty scopes, etc.) — this swap is
+// scoped to the quote/invoice create flow only.
+import QuoteRecipientPicker from "@/components/quotes/QuoteRecipientPicker";
 import CategoryPicker, {
   loadCategories as _loadServiceCats,
 } from "@/components/income/CategoryPicker";
@@ -33,7 +38,11 @@ import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 export default function QuoteInvoiceNew({ docType = "quote" }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const preselect = params.get("customer_id") || "";
+  // Phase 2 B2 · Feb-2026 — accept both legacy ``?customer_id=``
+  // AND the new ``?recipient_type=&recipient_id=`` pair.
+  const preselectCustomerId = params.get("customer_id") || "";
+  const preselectRecipientType = params.get("recipient_type") || "";
+  const preselectRecipientId = params.get("recipient_id") || "";
   // Phase A2 · Feb-2026 · Proactive Intelligence — chemistry-upsell
   // deep-link prefill. When ``source=intelligence_alert`` the alerts
   // page has passed the recommended action slug via ``service_type``
@@ -85,8 +94,26 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   );
   const [backfillDate, setBackfillDate] = useState("");
 
+  // Phase 2 B2 · Feb-2026 — hybrid recipient state. Honor the new
+  // {recipient_type,recipient_id} URL pair; fall back to the legacy
+  // ``?customer_id=`` for Customer-only preselects.
+  const _initialRecipient = (() => {
+    if (preselectRecipientType && preselectRecipientId) {
+      return {
+        type: preselectRecipientType.toLowerCase() === "lead"
+          ? "lead" : "customer",
+        id: preselectRecipientId,
+        name: "",
+      };
+    }
+    if (preselectCustomerId) {
+      return { type: "customer", id: preselectCustomerId, name: "" };
+    }
+    return null;
+  })();
+  const [recipient, setRecipient] = useState(_initialRecipient);
   const [form, setForm] = useState({
-    customer_id: preselect,
+    customer_id: preselectCustomerId,
     title: _presetTitle(),
     doc_type: docType,
     tax_rate: 0,
@@ -102,7 +129,17 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
   const [termsDefault, setTermsDefault] = useState("");
 
   useEffect(() => {
-    api.get("/customers?is_active=true").then(setCustomers).catch(() => {});
+    api.get("/customers?is_active=true").then((rows) => {
+      setCustomers(rows);
+      // Phase 2 B2 · Feb-2026 — once customers load, hydrate the
+      // picker's display name if a legacy ``?customer_id=`` URL
+      // preselect was in play and we only have the id so far.
+      setRecipient((prev) => {
+        if (!prev || prev.name || prev.type !== "customer") return prev;
+        const hit = (rows || []).find((c) => c.id === prev.id);
+        return hit ? { ...prev, name: hit.name || "" } : prev;
+      });
+    }).catch(() => {});
     // Phase P16.1.1 · Feb-2026 — the legacy ``/items`` datalist
     // fetch was retired when the description field flipped to
     // ``MasterServiceCombobox``, which pulls active rows from
@@ -152,16 +189,33 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.customer_id) {
-      setToast({ tone: "error", message: "Pick a customer" });
+    // Phase 2 B2 · Feb-2026 — recipient MAY be a Customer OR a Lead.
+    // Prefer the picker's ``recipient`` state; fall back to the
+    // legacy ``form.customer_id`` for compatibility with any flows
+    // that write only the customer_id field.
+    const _effectiveRecipient = recipient
+      || (form.customer_id
+            ? { type: "customer", id: form.customer_id, name: "" }
+            : null);
+    if (!_effectiveRecipient || !_effectiveRecipient.id) {
+      setToast({ tone: "error", message: "Pick a customer or lead" });
       return;
     }
     // Clear stale row errors — the retry might have fixed the offender.
     setRowErrors({});
     setBusy(true);
     try {
+      // Phase 2 B2 · Feb-2026 — hybrid payload.
+      //   • Customer recipient → send BOTH customer_id (legacy) AND
+      //     {recipient_type:"customer", recipient_id}.
+      //   • Lead recipient     → omit customer_id entirely and send
+      //     {recipient_type:"lead", recipient_id}. Backend B1 will
+      //     NOT auto-promote the lead to a customer.
+      const _isLeadRecipient = _effectiveRecipient.type === "lead";
       const payload = {
-        customer_id: form.customer_id,
+        ...(_isLeadRecipient ? {} : { customer_id: _effectiveRecipient.id }),
+        recipient_type: _effectiveRecipient.type,
+        recipient_id: _effectiveRecipient.id,
         title: form.title || (docType === "invoice" ? "Invoice" : "Estimate"),
         doc_type: form.doc_type,
         tax_rate: Number(form.tax_rate) || 0,
@@ -253,12 +307,22 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
-                CUSTOMER *
+                RECIPIENT *
               </label>
-              <CustomerCombobox
-                value={form.customer_id}
-                onChange={(cid) => setForm((f) => ({ ...f, customer_id: cid }))}
-                customers={customers}
+              {/* Phase 2 B2 · Feb-2026 — unified Customer/Lead
+                  picker. Keeps ``form.customer_id`` wired for
+                  Customer picks so legacy inline reads continue
+                  to resolve; blanks it on Lead picks so the
+                  backend contract maps cleanly. */}
+              <QuoteRecipientPicker
+                value={recipient}
+                onChange={(next) => {
+                  setRecipient(next);
+                  setForm((f) => ({
+                    ...f,
+                    customer_id: next?.type === "customer" ? next.id : "",
+                  }));
+                }}
                 testid="qf-customer"
               />
             </div>

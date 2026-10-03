@@ -59,6 +59,21 @@ describe("shouldShowConvertToInvoiceButton · Phase 1", () => {
       isInvoice: false, convertedInvoiceId: "inv-xyz", canConvert: false,
     })).toBe(false);
   });
+
+  // Phase 2 B2 · Feb-2026 — Convert-to-Invoice must work on
+  // lead-addressed quotes. The predicate takes no recipient_type
+  // argument by design — this test locks in that NO additional
+  // gate was added that would silently disable the button for
+  // Lead-recipient quotes.
+  it("Phase 2 · returns true for a lead-recipient quote (admin role, no converted invoice)", () => {
+    expect(shouldShowConvertToInvoiceButton({
+      // simulates a quote with recipient_type:"lead",
+      // converted_invoice_id:null, admin signed in.
+      isInvoice: false,
+      convertedInvoiceId: null,
+      canConvert: canUserConvertToInvoice("admin"),
+    })).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

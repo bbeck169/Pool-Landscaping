@@ -739,6 +739,28 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                   testid="signed-chip"
                 />
               ) : null}
+              {/* Phase 2 B2 · Feb-2026 — recipient-type pill.
+                  Renders on every quote/invoice; "Lead" when the
+                  recipient is a Lead row, "Customer" otherwise
+                  (including legacy docs with no recipient_type). */}
+              <span
+                data-testid="quote-recipient-type-badge"
+                data-recipient-type={doc.recipient_type === "lead" ? "lead" : "customer"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "2px 8px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.4,
+                  borderRadius: 999,
+                  background: doc.recipient_type === "lead" ? "#FEF3C7" : "#DBEAFE",
+                  color: doc.recipient_type === "lead" ? "#92400E" : "#1E40AF",
+                  textTransform: "uppercase",
+                }}
+              >
+                {doc.recipient_type === "lead" ? "Lead" : "Customer"}
+              </span>
             </div>
             <h1 className="sr-only" data-testid="quote-invoice-detail-inline-h1">
               {doc.title}
@@ -1015,6 +1037,26 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           ) : null}
         </div>
       </div>
+
+      {/* Phase 2 B2 · Feb-2026 — Lead-recipient invoice notice.
+          Rendered only when the document is an invoice AND the
+          recipient is a Lead. Signals that card-on-file autopay
+          cannot run against a Lead record; direct the admin to
+          the hosted-checkout path instead. */}
+      {isInvoice && doc.recipient_type === "lead" ? (
+        <div
+          className="rounded-xl px-4 py-3 mb-4 text-sm"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="invoice-lead-recipient-notice"
+        >
+          Lead-recipient invoice — card-on-file autopay unavailable.
+          Use &lsquo;Send hosted checkout&rsquo; to collect payment.
+        </div>
+      ) : null}
 
       {/* Phase K79 · Feb-2026 — Customer-facing grouped view controls.
           Quotes/estimates only (invoices keep the itemized customer
