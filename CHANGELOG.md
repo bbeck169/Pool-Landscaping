@@ -4,6 +4,7 @@ All notable changes to Pool & Landscaping CRM are documented here.
 
 ## [Unreleased]
 
+- chore(repo): remove backend.template.bak/ leftover restore folder. Unknown-provenance backup from a prior session (3 tracked files · 1 gitignored .env · 20K total); zero references found in-tree. Backend health unaffected.
 - fix(auth): align /auth/login email format validator with customer_portal.py::_valid_email so .local TLD is accepted on both sides. Closes the Portal Edit Profile followup where PATCH accepted new@test.local but login rejected it (locking the test customer). `backend/models.py::LoginRequest.email` switched from `EmailStr` to `str` + inline lenient regex field_validator; `memory/PORTAL_EDIT_PROFILE_FOLLOWUPS.md` §1 marked RESOLVED.
 - chore(scripts): close dept-normalization story — renamed backend/scripts/fix_landscape_tech_seed_drift.py to _deprecated_fix_landscape_tech_seed_drift.py. The script's internal direction (landscaping → landscape_tech) is now the inverse of migrations/normalize_user_department_tokens (8910b943b) and would undo the dept-normalization fix if run. Phase 21 regression test import (backend/tests/test_phase21_landscape_seed_drift.py:37) repointed to the new path; script internals unchanged.
 - fix(migrations): reverse normalize_user_department_tokens so landscape_tech → landscaping (was landscaping → landscape_tech). Closes the boot-time flip-per-boot race between the migration and the seed upsert. Mirrors seed.py:106/:163 canonical value and _require_landscaping accept-set.
