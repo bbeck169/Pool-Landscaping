@@ -24,6 +24,12 @@ import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButton";
 import { RecipientTypeBadge } from "@/src/components/quotes/QuoteRecipientPicker";
+import {
+  canUserDeclineOrReopenQuote,
+  shouldShowDeclineButton,
+  shouldShowReopenButton,
+  shouldHideConvertWhenDeclined,
+} from "@/src/utils/quoteLifecycle";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function QuoteDetail() {
@@ -45,6 +51,10 @@ export default function QuoteDetail() {
   const [loadError, setLoadError] = useState("");
   const [rawLoadError, setRawLoadError] = useState<unknown>(null);
   const pollRef = useRef<any>(null);
+
+  // ── Phase 3: Decline/Reopen lifecycle state ─────────────────
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const canLifecycle = canUserDeclineOrReopenQuote(user?.role);
 
   // ── Duplicate Quote state ──────────────────────────────────
   const [dupOpen, setDupOpen] = useState(false);
@@ -299,6 +309,80 @@ export default function QuoteDetail() {
     setDupError("");
   };
 
+  // ── Phase 3: Decline handler ────────────────────────────────
+  const handleDeclineQuote = () => {
+    if (lifecycleBusy) return;
+    Alert.alert(
+      "Decline Quote",
+      "Decline this quote? You can reopen it later.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Decline",
+          style: "destructive",
+          onPress: async () => {
+            setLifecycleBusy(true);
+            try {
+              await api.post(`/quotes/${id}/decline`, {});
+              showToast("Quote declined", "success");
+              await load();
+            } catch (e: any) {
+              const code = e?.detail?.code;
+              if (code === "already_declined") {
+                showToast("Already declined", "info");
+                await load();
+              } else if (code === "already_converted") {
+                const invId = e?.detail?.invoice_id;
+                showToast(
+                  `Already converted to invoice${invId ? ` ${invId}` : ""}`,
+                  "info",
+                );
+                await load();
+              } else {
+                showToast(e?.message || "Decline failed", "error");
+              }
+            } finally {
+              setLifecycleBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // ── Phase 3: Reopen handler ─────────────────────────────────
+  const handleReopenQuote = () => {
+    if (lifecycleBusy) return;
+    Alert.alert(
+      "Reopen Quote",
+      "Reopen this quote?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reopen",
+          onPress: async () => {
+            setLifecycleBusy(true);
+            try {
+              await api.post(`/quotes/${id}/reopen`, {});
+              showToast("Quote reopened", "success");
+              await load();
+            } catch (e: any) {
+              const code = e?.detail?.code;
+              if (code === "not_declined") {
+                showToast("Not currently declined", "info");
+                await load();
+              } else {
+                showToast(e?.message || "Reopen failed", "error");
+              }
+            } finally {
+              setLifecycleBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   if (loading) return <Loading testID="quote-detail-loading" />;
   if (!q && loadError) {
     const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
@@ -425,8 +509,9 @@ export default function QuoteDetail() {
           </Text>
         </View>
 
-        {/* Convert to Invoice — admin/owner/manager only, quote docs only */}
-        {!isInvoice && q.id ? (
+        {/* Convert to Invoice — admin/owner/manager only, quote docs only.
+            Phase 3: HIDDEN when status === "declined" (mirrors backend guard). */}
+        {!isInvoice && q.id && !shouldHideConvertWhenDeclined(q.status) ? (
           <View style={{ marginBottom: spacing.md }}>
             <ConvertToInvoiceButton
               docType="quote"
@@ -436,6 +521,41 @@ export default function QuoteDetail() {
               onConverted={() => load()}
             />
           </View>
+        ) : null}
+
+        {/* Phase 3: Decline button — visible on open quotes, role-gated */}
+        {shouldShowDeclineButton({
+          isInvoice,
+          docStatus: q.status,
+          convertedInvoiceId: q.converted_invoice_id,
+          canDecline: canLifecycle,
+        }) ? (
+          <Pressable
+            testID="qd-decline-quote"
+            style={styles.declineBtn}
+            onPress={handleDeclineQuote}
+            disabled={lifecycleBusy}
+          >
+            <Ionicons name="close-circle-outline" size={18} color="#B91C1C" />
+            <Text style={styles.declineBtnText}>Decline</Text>
+          </Pressable>
+        ) : null}
+
+        {/* Phase 3: Reopen button — visible on declined quotes, role-gated */}
+        {shouldShowReopenButton({
+          isInvoice,
+          docStatus: q.status,
+          canReopen: canLifecycle,
+        }) ? (
+          <Pressable
+            testID="qd-reopen-quote"
+            style={styles.reopenBtn}
+            onPress={handleReopenQuote}
+            disabled={lifecycleBusy}
+          >
+            <Ionicons name="refresh-outline" size={18} color={colors.brand} />
+            <Text style={styles.reopenBtnText}>Reopen</Text>
+          </Pressable>
         ) : null}
 
         {/* PB1 · Internal Margin — admin/manager/super_admin ONLY.
@@ -930,5 +1050,42 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: fontSize.sm,
     color: colors.onSurfaceSecondary,
+  },
+  // Phase 3: Decline / Reopen buttons on detail
+  declineBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 8,
+    backgroundColor: "#FEE2E2",
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minHeight: 48,
+    marginBottom: spacing.md,
+  },
+  declineBtnText: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: "#B91C1C",
+  },
+  reopenBtn: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    minHeight: 48,
+    marginBottom: spacing.md,
+  },
+  reopenBtnText: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: colors.brand,
   },
 });
