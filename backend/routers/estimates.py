@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 
 from config import db
-from utils import now_iso, new_id, get_current_user, require_admin, notify_customer
+from utils import now_iso, new_id, get_current_user, require_admin, require_admin_or_manager, notify_customer
 from routers.tenants import get_current_tenant
 from models import EstimateIn, EstimateSettingsIn, EstimateTemplateIn
 
@@ -448,3 +448,112 @@ async def bulk_delete_estimates(body: _EstimateBulkDeleteIn,
             failed.append({"id": eid, "reason": str(e), "status_code": 500})
     return {"ok": True, "deleted_count": len(deleted),
               "deleted": deleted, "failed": failed}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 1 · Feb-2026 — Convert-to-Invoice (estimates side)
+# ═════════════════════════════════════════════════════════════════════════
+# ``POST /api/estimates/{eid}/convert-to-invoice`` mirrors the quote
+# side (``routers/quotes.py::convert_quote_to_invoice``) but adapts
+# the estimate's rich (unit_cost + overhead_pct + margin_pct)
+# line_items by single-line-collapsing to the estimate's ``sell_price``
+# — exactly the same shape the deprecated estimate → quote endpoint
+# at line 322-333 above uses.
+#
+# Marked ``deprecated=True`` to match the rest of this router — ages
+# out with the ``db.estimates`` collection, not against it. When the
+# collection is retired (post schema migration — see routers/
+# estimates.py docstring top-of-file), this endpoint goes with it.
+#
+# Permissions: ``require_admin_or_manager`` (owner decision locked
+# in Phase 1 brief). 409 guard shape identical to the quote side.
+# ═════════════════════════════════════════════════════════════════════════
+@router.post(
+    "/estimates/{eid}/convert-to-invoice",
+    status_code=201,
+    deprecated=True,
+    responses={
+        409: {
+            "description": (
+                "Source estimate is already converted. Same 409 shape "
+                "as the quote-side endpoint so the frontend handler "
+                "doesn't need to branch."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "code": "already_converted",
+                            "invoice_id": "inv-123-abc",
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
+async def convert_estimate_to_invoice(
+    eid: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Create an invoice from a source estimate (deprecated router)."""
+    est = await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not est:
+        raise HTTPException(404, "Source estimate not found")
+    if est.get("converted_invoice_id"):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "already_converted",
+                "invoice_id": est["converted_invoice_id"],
+            },
+        )
+    sell = float(est.get("sell_price") or 0)
+    if sell <= 0:
+        raise HTTPException(400, "Add line items before converting")
+
+    # Single-line collapse — mirror routers/estimates.py:328 exactly
+    # so the behaviour is consistent with the deprecated estimate →
+    # quote endpoint.  Downstream, the shared invoice_builder helper
+    # stamps per-line retail snapshots + totals.
+    collapsed_lines = [{
+        "description": est.get("title", "Project"),
+        "quantity": 1,
+        "unit_price": sell,
+        "category": "Other",
+    }]
+
+    from services.invoice_builder import (
+        build_invoice_doc_from_source, mark_source_converted,
+    )
+    invoice_doc = await build_invoice_doc_from_source(
+        src_doc=est,
+        src_kind="estimate",
+        line_items=collapsed_lines,
+        tenant=tenant,
+        user=user,
+        tax_rate=0.0,                       # estimate flow has no tax dimension
+        notes_override=est.get("notes") or "",
+    )
+
+    from services.invoice_numbering import assign_invoice_number_if_missing
+    await assign_invoice_number_if_missing(invoice_doc, tenant)
+
+    await db.quotes.insert_one(invoice_doc)
+    invoice_doc.pop("_id", None)
+
+    await mark_source_converted(
+        collection="estimates",
+        src_id=eid,
+        tenant_id=tenant["id"],
+        invoice_id=invoice_doc["id"],
+        user=user,
+    )
+
+    return {
+        "invoice_id": invoice_doc["id"],
+        "invoice_number": invoice_doc.get("invoice_number"),
+    }

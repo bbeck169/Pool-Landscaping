@@ -7,7 +7,8 @@ import re
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, require_admin_or_manager,
+                   send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
 from emailer import send_invoice_reminder_email, send_estimate_reminder_email
 # Feb-2026 · P5 — wildcard ``from models import *`` replaced with the
@@ -2802,3 +2803,136 @@ async def delete_quote(
     # marketing_deliveries mutations. Ledger rows retain their
     # ``quote_id`` field verbatim — user-locked trade-off #5.
     return {"ok": True, "hard_deleted": True, "quote_id": qid}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 1 · Feb-2026 — Convert-to-Invoice (quotes side)
+# ═════════════════════════════════════════════════════════════════════════
+# ``POST /api/quotes/{qid}/convert-to-invoice`` creates an Invoice doc
+# (via the Phase 11 invariant — ``db.quotes`` row with
+# ``doc_type="invoice"``) pre-populated from the source quote's
+# line_items / tax_rate / notes / customer / property. Marks the
+# source quote with ``converted_at`` + ``converted_invoice_id`` +
+# ``converted_by`` so the detail-page "View Invoice →" fallback
+# can navigate without a round trip.
+#
+# Double-conversion guard (owner-locked spec): if the source quote
+# has either
+#   * a direct ``converted_invoice_id`` already set
+#     (previous manual convert via THIS endpoint), OR
+#   * an indirect invoice linked via the
+#     quote → scheduled_job → job → auto_invoice pipeline
+#     (detected via ``_quote_converted_invoice_id``),
+# we return HTTP 409 with the SAME shape for both paths so the
+# frontend doesn't branch:
+#       { detail: { code: "already_converted", invoice_id: <existing_id> } }
+#
+# Permissions: ``require_admin_or_manager`` — admin / super_admin /
+# owner / manager (per owner decision locked in Phase 1 brief).
+# Customers + technicians receive 403.
+#
+# Response (201 CREATED):
+#       { invoice_id: str, invoice_number: str | None }
+# ═════════════════════════════════════════════════════════════════════════
+@router.post(
+    "/quotes/{qid}/convert-to-invoice",
+    status_code=201,
+    responses={
+        409: {
+            "description": (
+                "Source quote is already converted (either directly "
+                "via a prior POST /convert-to-invoice OR indirectly "
+                "via the quote → job → auto_invoice pipeline). The "
+                "existing invoice id is returned so the client can "
+                "navigate to it."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "code": "already_converted",
+                            "invoice_id": "inv-123-abc",
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
+async def convert_quote_to_invoice(
+    qid: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Create an invoice from a source quote.
+
+    See the Phase 1 Convert-to-Invoice brief at
+    ``memory/FEATURE_CONVERT_TO_INVOICE_PHASE1.md`` (if present)
+    for the full field manifest + double-conversion guard rules.
+    """
+    src = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not src:
+        raise HTTPException(404, "Source quote not found")
+    if (src.get("doc_type") or "").lower() != "quote":
+        raise HTTPException(
+            400,
+            "Only quotes can be converted to invoices via this endpoint "
+            "(this doc is already an invoice).",
+        )
+
+    # Guard 1 — direct conversion via a prior call to THIS endpoint.
+    if src.get("converted_invoice_id"):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "already_converted",
+                "invoice_id": src["converted_invoice_id"],
+            },
+        )
+    # Guard 2 — indirect conversion via the auto-invoice pipeline
+    # (quote → scheduled_job → job → auto_invoice).  Same 409 shape.
+    indirect = await _quote_converted_invoice_id(src, tenant["id"])
+    if indirect:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "already_converted",
+                "invoice_id": indirect,
+            },
+        )
+
+    # Build the invoice doc via the shared helper.
+    from services.invoice_builder import (
+        build_invoice_doc_from_source, mark_source_converted,
+    )
+    invoice_doc = await build_invoice_doc_from_source(
+        src_doc=src,
+        src_kind="quote",
+        line_items=src.get("line_items") or [],
+        tenant=tenant,
+        user=user,
+        tax_rate=src.get("tax_rate") or 0,
+    )
+
+    # Stamp the human-readable invoice number BEFORE insert.
+    from services.invoice_numbering import assign_invoice_number_if_missing
+    await assign_invoice_number_if_missing(invoice_doc, tenant)
+
+    await db.quotes.insert_one(invoice_doc)
+    invoice_doc.pop("_id", None)
+
+    # Mark the source quote with convert bookkeeping.
+    await mark_source_converted(
+        collection="quotes",
+        src_id=qid,
+        tenant_id=tenant["id"],
+        invoice_id=invoice_doc["id"],
+        user=user,
+    )
+
+    return {
+        "invoice_id": invoice_doc["id"],
+        "invoice_number": invoice_doc.get("invoice_number"),
+    }
