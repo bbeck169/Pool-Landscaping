@@ -460,7 +460,10 @@ class LineItem(BaseModel):
 
 
 class QuoteIn(BaseModel):
-    customer_id: str
+    # Phase 2 · Feb-2026 · Quote-to-Lead Recipient.
+    customer_id: Optional[str] = None
+    recipient_type: Optional[str] = None  # 'customer' | 'lead'
+    recipient_id: Optional[str] = None
     title: str
     doc_type: str = "quote"  # quote | invoice
     line_items: List[LineItem] = []

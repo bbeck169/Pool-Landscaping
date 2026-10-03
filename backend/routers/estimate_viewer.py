@@ -593,16 +593,31 @@ async def request_changes(qid: str, body: RequestChangesIn,
 # ══════════════════════════════════════════════════════════════════
 # Magic-link tokens (public path)
 # ══════════════════════════════════════════════════════════════════
-def _sign_estimate_token(qid: str, cid: str, tenant_id: str) -> str:
+def _sign_estimate_token(
+    qid: str, cid: str, tenant_id: str,
+    *,
+    recipient_kind: Optional[str] = None,
+    recipient_id: Optional[str] = None,
+) -> str:
+    """Phase 2 · Feb-2026 — hybrid payload (customer / lead / legacy)."""
     now = datetime.now(timezone.utc)
-    payload = {
+    payload: Dict[str, Any] = {
         "sub": TOKEN_SUB,
         "eid": qid,
-        "cid": cid,
         "tid": tenant_id,
         "iat": int(now.timestamp()),
         "exp": now + timedelta(days=MAGIC_LINK_TTL_DAYS),
     }
+    rk = (recipient_kind or "").strip().lower()
+    if rk == "lead":
+        payload["rid"] = recipient_id or ""
+        payload["rtype"] = "lead"
+    elif rk == "customer":
+        payload["cid"] = recipient_id or cid or ""
+        payload["rid"] = recipient_id or cid or ""
+        payload["rtype"] = "customer"
+    else:
+        payload["cid"] = cid or ""
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 
@@ -635,16 +650,31 @@ async def issue_magic_link(qid: str,
 
 
 async def _load_est_from_token(tok: str) -> Dict[str, Any]:
+    """Phase 2 · Feb-2026 — hybrid verification."""
     payload = _verify_estimate_token(tok)
     est = await db.quotes.find_one(
         {"id": payload["eid"], "tenant_id": payload["tid"]}, {"_id": 0},
     )
-    if not est or est.get("customer_id") != payload["cid"]:
+    if not est:
         raise HTTPException(401, "Invalid estimate link")
+    tok_rtype = payload.get("rtype")
+    tok_rid = payload.get("rid")
+    tok_cid = payload.get("cid")
+    if tok_rtype or tok_rid:
+        est_rtype = (est.get("recipient_type") or "").strip().lower()
+        est_rid = est.get("recipient_id") or ""
+        if not est_rtype and est.get("customer_id"):
+            est_rtype = "customer"
+            est_rid = est.get("customer_id") or ""
+        if tok_rtype != est_rtype or tok_rid != est_rid:
+            raise HTTPException(401, "Invalid estimate link")
+    else:
+        if est.get("customer_id") != tok_cid:
+            raise HTTPException(401, "Invalid estimate link")
     tenant = await db.tenants.find_one({"id": payload["tid"]}, {"_id": 0})
     if not tenant:
         raise HTTPException(401, "Invalid estimate link")
-    return {"est": est, "tenant": tenant, "cid": payload["cid"]}
+    return {"est": est, "tenant": tenant, "cid": tok_cid or tok_rid or ""}
 
 
 @router.get("/portal/quotes/via-token")

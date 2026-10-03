@@ -378,11 +378,49 @@ async def list_quotes(user: dict = Depends(get_current_user),
 async def create_quote(body: QuoteIn,
                        user: dict = Depends(require_admin),
                        tenant: dict = Depends(get_current_tenant)):
-    customer = await db.customers.find_one(
-        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
-    )
-    if not customer:
-        raise HTTPException(400, "Customer not found")
+    # ─── Phase 2 · Feb-2026 · Quote-to-Lead Recipient ──────────
+    _rtype = (body.recipient_type or "").strip().lower() or None
+    _rid = body.recipient_id or None
+    if not _rtype and body.customer_id:
+        _rtype, _rid = "customer", body.customer_id
+    if not _rtype or not _rid:
+        raise HTTPException(
+            400,
+            "Supply either 'customer_id' (legacy) OR both "
+            "'recipient_type' and 'recipient_id' (new).",
+        )
+    if _rtype not in ("customer", "lead"):
+        raise HTTPException(
+            400, "recipient_type must be 'customer' or 'lead'",
+        )
+    if body.customer_id and _rtype == "customer" and body.customer_id != _rid:
+        raise HTTPException(
+            400,
+            "customer_id and recipient_id disagree on this request",
+        )
+    if _rtype == "customer":
+        _recipient_row = await db.customers.find_one(
+            {"id": _rid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not _recipient_row:
+            raise HTTPException(400, "Customer not found")
+        _resolved_customer_id = _rid
+        _recipient_name = _recipient_row.get("name") or ""
+        _recipient_address = _recipient_row.get("address") or ""
+        customer = _recipient_row
+    else:
+        _recipient_row = await db.leads.find_one(
+            {"id": _rid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not _recipient_row:
+            raise HTTPException(400, "Lead not found")
+        _resolved_customer_id = None
+        _recipient_name = _recipient_row.get("name") or ""
+        _recipient_address = (
+            _recipient_row.get("service_address")
+            or _recipient_row.get("address") or ""
+        )
+        customer = {"id": None, "name": _recipient_name}
     # Feb-2026 MP1.5 — property_id validation. Same rules as
     # POST /jobs: if the customer has exactly 1 active property, auto-
     # assign; if the caller sent an explicit id, verify it belongs to
@@ -391,10 +429,16 @@ async def create_quote(body: QuoteIn,
     # the "consolidated across properties" case (master_billing_mode
     # ``consolidated``).
     property_id = body.property_id
-    if property_id:
+    if _rtype == "lead":
+        if property_id:
+            raise HTTPException(
+                400,
+                "property_id is only valid for customer-recipient quotes",
+            )
+    elif property_id:
         prop = await db.properties.find_one(
             {"id": property_id, "tenant_id": tenant["id"],
-              "customer_id": body.customer_id},
+              "customer_id": _resolved_customer_id},
             {"_id": 0, "id": 1, "active": 1},
         )
         if not prop:
@@ -403,7 +447,7 @@ async def create_quote(body: QuoteIn,
             raise HTTPException(400, "property_id refers to an inactive property")
     else:
         active_props = await db.properties.find(
-            {"tenant_id": tenant["id"], "customer_id": body.customer_id,
+            {"tenant_id": tenant["id"], "customer_id": _resolved_customer_id,
               "active": {"$ne": False}},
             {"_id": 0, "id": 1},
         ).to_list(10)
@@ -442,8 +486,11 @@ async def create_quote(body: QuoteIn,
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],
-        "customer_id": body.customer_id,
-        "customer_name": customer["name"],
+        "customer_id": _resolved_customer_id,
+        "customer_name": _recipient_name,
+        "customer_address": _recipient_address,
+        "recipient_type": _rtype,
+        "recipient_id": _rid,
         "property_id": property_id,
         "title": body.title,
         "doc_type": body.doc_type,
@@ -1277,22 +1324,29 @@ async def send_quote_to_customer(
             400,
             f"This quote is already {status_before} — cannot re-send.",
         )
-    if not doc.get("customer_id"):
-        raise HTTPException(400, "This quote has no linked customer.")
+    from services.recipient import (
+        effective_recipient_fields, resolve_quote_recipient,
+    )
+    _pk = effective_recipient_fields(doc)
+    if _pk["kind"] is None:
+        raise HTTPException(400, "This quote has no linked recipient.")
 
-    # ── Recipient resolution ──────────────────────────────────
     override = (body.recipient_email or "").strip()
     if override and "@" not in override:
         raise HTTPException(400, "Recipient override is not a valid email.")
     if override:
         recipient = override
     else:
-        cust = await db.customers.find_one(
-            {"id": doc["customer_id"], "tenant_id": tenant["id"]},
-            {"_id": 0, "email": 1},
-        ) or {}
-        recipient = (cust.get("email") or "").strip()
+        _info = await resolve_quote_recipient(doc, tenant["id"])
+        recipient = (_info.get("email") or "").strip()
     if not recipient:
+        if _pk["kind"] == "lead":
+            raise HTTPException(
+                400,
+                "Lead has no email on file. Add an email on the lead "
+                "record, or supply the 'recipient_email' override in "
+                "the request.",
+            )
         raise HTTPException(
             400,
             "No recipient email available — supply ``recipient_email`` "
@@ -1317,7 +1371,10 @@ async def send_quote_to_customer(
     # ── Mint review magic-link (mirrors send-reminder path) ────
     from routers.estimate_viewer import _sign_estimate_token
     import os as _os
-    tok = _sign_estimate_token(qid, doc["customer_id"], tenant["id"])
+    tok = _sign_estimate_token(
+        qid, doc.get("customer_id") or "", tenant["id"],
+        recipient_kind=_pk["kind"], recipient_id=_pk["id"],
+    )
     base = (_os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
     review_url = f"{base}/e/estimate?token={tok}" if base else ""
 
@@ -1404,12 +1461,10 @@ async def get_quote(qid: str,
     # the same recipient the backend handler resolves. Only fills
     # ``customer_email`` when missing from the quote doc; historical
     # writes that already carry an override are preserved.
-    if not doc.get("customer_email") and doc.get("customer_id"):
-        _cust = await db.customers.find_one(
-            {"id": doc["customer_id"], "tenant_id": tenant["id"]},
-            {"_id": 0, "email": 1},
-        ) or {}
-        _email = (_cust.get("email") or "").strip()
+    if not doc.get("customer_email"):
+        from services.recipient import resolve_quote_recipient
+        _info = await resolve_quote_recipient(doc, tenant["id"])
+        _email = (_info.get("email") or "").strip()
         if _email:
             doc["customer_email"] = _email
     # QV-service · Feb-2026 — record portal-authenticated customer
@@ -1600,8 +1655,9 @@ async def send_reminder(qid: str,
     doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Document not found")
-    if not doc.get("customer_id"):
-        raise HTTPException(400, "This document has no linked customer.")
+    from services.recipient import effective_recipient_fields as _efr
+    if _efr(doc)["kind"] is None:
+        raise HTTPException(400, "This document has no linked recipient.")
     doc_type = str(doc.get("doc_type") or "invoice").lower()
     ts = now_iso()
 
@@ -1622,7 +1678,12 @@ async def send_reminder(qid: str,
         # link`` returns to the admin toolbar so tokens are
         # signature-compatible and share the 30-day TTL.
         from routers.estimate_viewer import _sign_estimate_token
-        tok = _sign_estimate_token(qid, doc["customer_id"], tenant["id"])
+        from services.recipient import effective_recipient_fields as _efr
+        _pk_r = _efr(doc)
+        tok = _sign_estimate_token(
+            qid, doc.get("customer_id") or "", tenant["id"],
+            recipient_kind=_pk_r["kind"], recipient_id=_pk_r["id"],
+        )
         import os
         base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
         review_url = f"{base}/e/estimate?token={tok}" if base else ""

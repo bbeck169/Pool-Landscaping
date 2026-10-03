@@ -155,6 +155,7 @@ from routers import (
 # Router mounted alongside the customer_tags / customer_categories
 # family below so the ``/api/customers/*`` prefix stays cohesive.
 from routers import customer_merge as _customer_merge_router
+from routers import quote_recipients as _p2_quote_recipients  # noqa: E402
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
 from routers import quickbooks_cleanup
@@ -522,6 +523,7 @@ from routers import gps_auto_start as _p37_gps_auto_start  # noqa: E402
 from routers import job_timers as _feb2026_job_timers  # noqa: E402
 from routers import gps_audit_report as _p37d_gps_audit_report  # noqa: E402
 api_router.include_router(_tos_router.router)
+api_router.include_router(_p2_quote_recipients.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)

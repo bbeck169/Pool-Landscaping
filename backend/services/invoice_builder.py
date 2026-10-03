@@ -124,11 +124,21 @@ async def build_invoice_doc_from_source(
         )
         customer_name = (cust or {}).get("name") or ""
 
+    recipient_type = (src_doc.get("recipient_type") or "").strip().lower()
+    recipient_id = src_doc.get("recipient_id") or None
+    if not recipient_type and customer_id:
+        recipient_type = "customer"
+        recipient_id = recipient_id or customer_id
+    customer_address = src_doc.get("customer_address") or ""
+
     doc: Dict[str, Any] = {
         "id": new_id(),
         "tenant_id": tenant_id,
         "customer_id": customer_id,
         "customer_name": customer_name,
+        "customer_address": customer_address,
+        "recipient_type": recipient_type or None,
+        "recipient_id": recipient_id,
         "property_id": src_doc.get("property_id"),
         # Title carries verbatim — admin can rename post-conversion.
         "title": src_doc.get("title") or "Invoice",
