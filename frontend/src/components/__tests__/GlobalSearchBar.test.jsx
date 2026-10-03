@@ -76,25 +76,35 @@ beforeEach(() => {
 
 
 // ══════════════════════════════════════════════════════════════════
-// 1) Blue-hero styling — brand blue background + white text
+// 1) White-pill styling — WHITE pill on the #1B1F5C navy hero strip
+//    (Feb-2026 universal-search restyle — was brand-blue pre-fix).
 // ══════════════════════════════════════════════════════════════════
-describe("GlobalSearchBar · blue-hero styling", () => {
-  it("renders the visible hero surface with brand-blue background + white input", () => {
+describe("GlobalSearchBar · white-pill styling", () => {
+  it("renders the visible pill with white background + dark input + ⌘K/Ctrl+K hint", () => {
     vi.useRealTimers();
     _mockResults({ customers: [], jobs: [], invoices: [], quotes: [], leads: [] });
     _renderBar();
     const hero = screen.getByTestId("global-search-bar-hero");
     expect(hero).toBeInTheDocument();
-    // Inline style rgb(2, 132, 199) === #0284C7 (colors.brand).
-    expect(hero.style.backgroundColor).toMatch(/rgb\(2,\s*132,\s*199\)/);
-    expect(hero.style.color.toLowerCase()).toMatch(/rgb\(255,\s*255,\s*255\)|#fff/);
+    // Inline style rgb(255, 255, 255) === #FFFFFF (new white pill).
+    expect(hero.style.backgroundColor).toMatch(/rgb\(255,\s*255,\s*255\)|#fff|#FFFFFF/i);
+    // Dark gray text (gray-900 = #111827 = rgb(17, 24, 39)).
+    expect(hero.style.color.toLowerCase()).toMatch(/rgb\(17,\s*24,\s*39\)|#111827/);
     const input = screen.getByTestId("global-search-bar-input");
     expect(input).toHaveAttribute(
       "placeholder",
       "Search customers, jobs, invoices, quotes, leads…",
     );
-    // ``rounded-xl`` on the wrapper.
-    expect(hero.className).toMatch(/rounded-xl/);
+    // Fully rounded pill (``rounded-full``) on the wrapper — not
+    // ``rounded-xl`` (that was the pre-restyle shape).
+    expect(hero.className).toMatch(/rounded-full/);
+    expect(hero.className).not.toMatch(/rounded-xl/);
+    // Keyboard hint renders inside the pill with the standard
+    // ``global-search-bar-kbd-hint`` testid. OS-dependent text —
+    // either ⌘K (Mac) or Ctrl+K.
+    const kbd = screen.getByTestId("global-search-bar-kbd-hint");
+    expect(kbd).toBeInTheDocument();
+    expect(kbd.textContent).toMatch(/\u2318K|Ctrl\+K/);
   });
 });
 

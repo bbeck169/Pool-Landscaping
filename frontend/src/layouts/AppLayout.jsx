@@ -716,14 +716,30 @@ function AppLayout() {
             {/* Phase BANNER-RELOCATE · Feb-2026 — navy hero banner
                 hosts the relocated visible universal-search bar.
                 Role-gated via the enclosing conditional so portal /
-                customer / unauth branches never render it. */}
+                customer / unauth branches never render it.
+                Feb-2026 (universal-search restyle) — the visible
+                search bar inside is now a white pill (see
+                ``GlobalSearchBar.jsx``). The two nested wrappers
+                carry the ``universal-search-hero`` + ``universal-
+                search-pill`` testids so e2e / vitest can anchor the
+                hex-locked strip + the pill container without
+                depending on class names. */}
             <div
               data-testid="admin-hero-banner"
               className="w-full py-6 px-4 sm:px-6 lg:px-8"
               style={{ backgroundColor: "#1B1F5C" }}
             >
-              <div className="max-w-2xl mx-auto">
-                <GlobalSearchBar />
+              <div
+                data-testid="universal-search-hero"
+                data-bg-color="#1B1F5C"
+                className="w-full"
+              >
+                <div
+                  data-testid="universal-search-pill"
+                  className="max-w-2xl mx-auto"
+                >
+                  <GlobalSearchBar />
+                </div>
               </div>
             </div>
           </>

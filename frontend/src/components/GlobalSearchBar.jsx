@@ -1,5 +1,5 @@
 /**
- * Feb-2026 · Visible universal search bar (blue hero).
+ * Feb-2026 · Visible universal search bar (white pill in navy hero).
  *
  * Primary quick-find entry point mounted app-wide from
  * ``AdminTopBar``.  Always visible — the ⌘K palette
@@ -18,12 +18,17 @@
  *   * Mobile: below the ``sm`` (640 px) breakpoint the bar collapses
  *     to a compact icon-only button that expands on tap.
  *
- * Styling — blue hero
- * ───────────────────
- *   * Bold brand blue (``#0284C7``) surface, white text, rounded-xl,
- *     visible focus ring, hover shadow. Placeholder mirrors the
- *     ⌘K palette so keyboard users see identical semantics on
- *     both entry points.
+ * Styling — white pill on the ``#1B1F5C`` hero strip
+ * ──────────────────────────────────────────────────
+ *   * ``AppLayout`` renders this bar inside a full-width navy strip
+ *     (``data-testid="admin-hero-banner"``, bg ``#1B1F5C``).
+ *   * The pill itself is solid white, fully rounded
+ *     (``border-radius: 9999px``), with a thin slate border for
+ *     definition on the navy backdrop.
+ *   * Left: search icon (gray-700). Right: ``⌘K`` / ``Ctrl+K``
+ *     keyboard hint, hidden on ``<sm`` to save real estate.
+ *   * Dark text + muted placeholder so WCAG AA contrast reads clean
+ *     on white.
  */
 import React, {
   useCallback, useEffect, useMemo, useRef, useState,
@@ -34,14 +39,30 @@ import { colors } from "@/theme";
 import { useGlobalSearchResults } from "@/hooks/useGlobalSearchResults";
 
 
-// Blue-hero surface tokens — locked to the app brand blue so the
-// bar reads as the same identity as every other blue affordance
-// (``colors.searchIcon``, primary CTAs).
-const HERO_BG = colors.brand;             // "#0284C7"
-const HERO_BG_HOVER = "#0369A1";          // sky-700 for hover-shift
-const HERO_FG = "#FFFFFF";
-const HERO_PLACEHOLDER = "rgba(255,255,255,0.75)";
-const HERO_FOCUS_RING = "rgba(255,255,255,0.85)";
+// White-pill surface tokens — pill reads as a clean affordance
+// floating inside the navy ``#1B1F5C`` hero strip rendered by
+// ``AppLayout``. Dark text + muted placeholder for WCAG AA
+// contrast on white.
+const HERO_BG          = "#FFFFFF";
+const HERO_BG_HOVER    = "#F8FAFC";   // slate-50 — subtle hover shift
+const HERO_FG          = "#111827";   // gray-900 — primary text
+const HERO_PLACEHOLDER = "#6B7280";   // gray-500 — placeholder
+const HERO_FOCUS_RING  = "#94A3B8";   // slate-400 — focus ring on white
+const HERO_BORDER      = "#CBD5E1";   // slate-300 — pill border on navy
+const HERO_ICON        = "#374151";   // gray-700 — left search icon
+const KBD_FG           = "#64748B";   // slate-500 — kbd hint text
+const KBD_BG           = "#F1F5F9";   // slate-100 — kbd hint tile bg
+const KBD_BORDER       = "#CBD5E1";   // slate-300 — kbd hint tile border
+
+
+// OS-aware keyboard hint — mirrors the ``_detectMac`` convention
+// used by ``<GlobalSearch>`` (the ⌘K palette) so the hint reads
+// identical semantics on both entry points.
+function _detectMac() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || navigator.platform || "";
+  return /Mac|iPhone|iPad|iPod/i.test(ua);
+}
 
 
 // Route mapping for the five backend entities + pages.  Kept as a
@@ -67,6 +88,11 @@ export default function GlobalSearchBar() {
   // Mobile expand state — the compact icon-only button toggles this
   // to reveal the full-width input on narrow viewports.
   const [mobileExpanded, setMobileExpanded] = useState(false);
+
+  // OS-aware keyboard hint — resolves once on mount; rendered inside
+  // the pill on ``sm+`` viewports.
+  const isMac = useMemo(() => _detectMac(), []);
+  const kbdHint = isMac ? "\u2318K" : "Ctrl+K";
 
   const {
     pages, customers, jobs, invoices, quotes, leads, loading,
@@ -161,7 +187,9 @@ export default function GlobalSearchBar() {
     >
       {/* Mobile compact button — visible below ``sm``.  Tap toggles
           the expanded input state so narrow viewports get an
-          icon-first surface without stealing the whole nav row. */}
+          icon-first surface without stealing the whole nav row.
+          White pill variant: matches the sm+ hero so the two
+          responsive branches read as the same affordance. */}
       <button
         type="button"
         onClick={() => {
@@ -169,8 +197,12 @@ export default function GlobalSearchBar() {
           // Yield a tick so the input can mount before focus fires.
           setTimeout(() => inputRef.current?.focus(), 0);
         }}
-        className="sm:hidden inline-flex items-center justify-center h-8 w-8 rounded-xl text-white shadow-sm hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        style={{ backgroundColor: HERO_BG }}
+        className="sm:hidden inline-flex items-center justify-center h-9 w-9 rounded-full shadow-sm hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        style={{
+          backgroundColor: HERO_BG,
+          color: HERO_ICON,
+          border: `1px solid ${HERO_BORDER}`,
+        }}
         aria-label="Open search"
         aria-expanded={mobileExpanded}
         data-testid="global-search-bar-mobile-toggle"
@@ -179,21 +211,24 @@ export default function GlobalSearchBar() {
       </button>
 
       {/* Input strip — always visible on ``sm`` and up; on narrow
-          viewports it renders only when ``mobileExpanded`` is on. */}
+          viewports it renders only when ``mobileExpanded`` is on.
+          White pill, fully rounded (``rounded-full``), thin slate
+          border for definition on the ``#1B1F5C`` navy strip. */}
       <div
         className={[
-          "items-center gap-2 rounded-xl shadow-sm transition",
+          "items-center gap-2 rounded-full shadow-sm transition",
           "focus-within:shadow-md focus-within:ring-2",
           mobileExpanded ? "flex" : "hidden sm:flex",
         ].join(" ")}
         style={{
           backgroundColor: HERO_BG,
           color: HERO_FG,
-          // Inline vars so ``focus-within:ring-2`` picks up a white
+          border: `1px solid ${HERO_BORDER}`,
+          // Inline var so ``focus-within:ring-2`` picks up a slate
           // ring instead of shadcn's default.
           "--tw-ring-color": HERO_FOCUS_RING,
-          padding: "6px 10px",
-          height: 40,
+          padding: "6px 14px",
+          height: 44,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor = HERO_BG_HOVER;
@@ -203,7 +238,7 @@ export default function GlobalSearchBar() {
         }}
         data-testid="global-search-bar-hero"
       >
-        <Search size={18} color={HERO_FG} aria-hidden="true" />
+        <Search size={18} color={HERO_ICON} aria-hidden="true" />
         <input
           ref={inputRef}
           type="text"
@@ -213,8 +248,8 @@ export default function GlobalSearchBar() {
           onKeyDown={onKeyDown}
           placeholder="Search customers, jobs, invoices, quotes, leads…"
           aria-label="Universal search"
-          className="flex-1 min-w-0 bg-transparent outline-none placeholder:opacity-80 text-sm font-medium"
-          style={{ color: HERO_FG, "::placeholder": HERO_PLACEHOLDER }}
+          className="flex-1 min-w-0 bg-transparent outline-none text-sm font-medium"
+          style={{ color: HERO_FG, caretColor: HERO_FG }}
           data-testid="global-search-bar-input"
         />
         {query ? (
@@ -222,12 +257,28 @@ export default function GlobalSearchBar() {
             type="button"
             onClick={() => { setQuery(""); setOpen(false); }}
             aria-label="Clear search"
-            className="inline-flex items-center justify-center h-6 w-6 rounded-lg hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="inline-flex items-center justify-center h-6 w-6 rounded-full hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
             data-testid="global-search-bar-clear"
           >
-            <X size={14} color={HERO_FG} />
+            <X size={14} color={HERO_ICON} />
           </button>
         ) : null}
+        {/* OS-aware keyboard hint — hidden on ``<sm`` to save the
+            room taken by the compact mobile input. Mirrors the
+            ``<GlobalSearch>`` palette's ``kbdHint`` so both entry
+            points teach the same shortcut. */}
+        <span
+          className="hidden sm:inline-flex items-center h-6 px-2 rounded-md text-[11px] font-semibold tracking-wide select-none"
+          style={{
+            color: KBD_FG,
+            backgroundColor: KBD_BG,
+            border: `1px solid ${KBD_BORDER}`,
+          }}
+          aria-hidden="true"
+          data-testid="global-search-bar-kbd-hint"
+        >
+          {kbdHint}
+        </span>
       </div>
 
       {/* Inline results dropdown.  Absolutely positioned below the
