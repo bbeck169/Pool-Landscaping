@@ -269,7 +269,15 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # Any other value returns HTTP 400 with a stable
                       # ``error_code`` so the FE can render a
                       # deterministic error toast.
-                      payment_status: Optional[str] = Query(None)):
+                      payment_status: Optional[str] = Query(None),
+                      # Phase 3 B1 · Feb-2026 — lifecycle view filter.
+                      # Accepted values: "open" / "converted" /
+                      # "declined" / "all". When present, scopes the
+                      # list to ``doc_type="quote"`` and applies the
+                      # relevant status + converted-invoice-id
+                      # predicate. When absent, behaves exactly as
+                      # before (back-compat for existing callers).
+                      view: Optional[str] = Query(None)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     # FIN-PARITY-B · payment_status validation — accept the four
@@ -296,6 +304,46 @@ async def list_quotes(user: dict = Depends(get_current_user),
         q["customer_id"] = user.get("customer_id")
     if doc_type:
         q["doc_type"] = doc_type
+    # Phase 3 B1 · Feb-2026 — lifecycle view filter. Scopes the
+    # list to ``doc_type="quote"`` + a status/converted-invoice-id
+    # predicate. Composes with every other filter via $and so the
+    # existing deleted_at $or (set below) doesn't collide.
+    _view = (view or "").strip().lower()
+    if _view:
+        if _view not in ("open", "converted", "declined", "all"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "invalid_view",
+                    "message": (
+                        "view must be one of "
+                        "['open','converted','declined','all'], "
+                        f"got {view!r}"
+                    ),
+                    "accepted_values": ["open", "converted",
+                                        "declined", "all"],
+                },
+            )
+        q["doc_type"] = "quote"
+        _view_and = q.get("$and", [])
+        if _view == "open":
+            _view_and.append(
+                {"status": {"$in": ["draft", "sent", "accepted"]}}
+            )
+            _view_and.append({"$or": [
+                {"converted_invoice_id": None},
+                {"converted_invoice_id": {"$exists": False}},
+            ]})
+        elif _view == "converted":
+            _view_and.append(
+                {"converted_invoice_id": {"$nin": [None, ""]}}
+            )
+        elif _view == "declined":
+            _view_and.append({"status": "declined"})
+        # ``view=all`` adds no status/converted predicate — just
+        # the ``doc_type="quote"`` scope that was set above.
+        if _view_and:
+            q["$and"] = _view_and
     # FIN-PARITY-B · Feb-2026 — Mongo filter emission. ``all`` +
     # None are no-ops (falls through to the existing behavior);
     # the three concrete enum values narrow on ``payment_status``
@@ -2942,6 +2990,15 @@ async def convert_quote_to_invoice(
             "Only quotes can be converted to invoices via this endpoint "
             "(this doc is already an invoice).",
         )
+    # Phase 3 B1 · Feb-2026 — declined quotes cannot be converted.
+    # The decline endpoint flips status to "declined"; the Reopen
+    # endpoint restores it. Convert-to-Invoice must refuse while
+    # declined so the admin can't silently promote a dead quote.
+    if (src.get("status") or "").lower() == "declined":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "quote_declined"},
+        )
 
     # Guard 1 — direct conversion via a prior call to THIS endpoint.
     if src.get("converted_invoice_id"):
@@ -2996,4 +3053,177 @@ async def convert_quote_to_invoice(
     return {
         "invoice_id": invoice_doc["id"],
         "invoice_number": invoice_doc.get("invoice_number"),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 3 B1 · Feb-2026 · Quote lifecycle — Decline + Reopen.
+# Permission: admin / super_admin / owner / manager via
+# ``require_admin_or_manager`` (same composite as Phase 1
+# Convert-to-Invoice). Customer + technician + dispatcher receive 403.
+#
+# Decline flow:
+#   * Guards (400 w/ ``{detail:{code}}`` shape):
+#       - not_a_quote (doc_type != "quote")
+#       - already_declined (status already "declined")
+#       - already_converted (converted_invoice_id set — mirrors
+#         Phase 1's shape; also returns the invoice_id for navigation)
+#   * Store ``previous_status`` so Reopen can revert cleanly.
+#   * Set status="declined", declined_at=<utcnow iso>, declined_by.
+#   * Append audit_logs row ``event="quote.declined"``.
+#
+# Reopen flow:
+#   * Guards (400 w/ ``{detail:{code}}``):
+#       - not_a_quote
+#       - not_declined (status != "declined")
+#   * Restore status from ``previous_status`` if present, else fall
+#     back to "draft" (legacy decline rows that predate this feature).
+#   * Clear previous_status / declined_at / declined_by.
+#   * Append audit_logs row ``event="quote.reopened"``.
+#
+# Phase 2 interaction: both endpoints work on lead-recipient quotes
+# (``recipient_type="lead"``) identically to customer-recipient ones.
+# Phase 1 interaction: convert-to-invoice adds a new guard
+# ``{code:"quote_declined"}`` so a declined quote can't be promoted
+# without a Reopen first.
+# ═════════════════════════════════════════════════════════════════════════
+@router.post(
+    "/quotes/{qid}/decline",
+    responses={
+        400: {
+            "description": (
+                "Guard failures: {detail:{code:'not_a_quote'}} / "
+                "{code:'already_declined'} / "
+                "{code:'already_converted', invoice_id:<id>}"
+            ),
+        },
+    },
+)
+async def decline_quote(
+    qid: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Decline a quote. Stores previous_status for Reopen."""
+    src = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not src:
+        raise HTTPException(404, "Quote not found")
+    if (src.get("doc_type") or "").lower() != "quote":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "not_a_quote"},
+        )
+    if (src.get("status") or "").lower() == "declined":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "already_declined"},
+        )
+    if src.get("converted_invoice_id"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "already_converted",
+                "invoice_id": src["converted_invoice_id"],
+            },
+        )
+
+    previous_status = (src.get("status") or "draft").lower()
+    declined_at = datetime.now(timezone.utc).isoformat()
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {
+            "status": "declined",
+            "previous_status": previous_status,
+            "declined_at": declined_at,
+            "declined_by": user.get("id"),
+        }},
+    )
+
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "quote.declined",
+            "entity_kind": "quote",
+            "entity_id": qid,
+            "user_id": user.get("id"),
+            "previous_status": previous_status,
+            "created_at": declined_at,
+        })
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"quote.decline audit_logs insert failed: {e}")
+
+    return {
+        "status": "declined",
+        "declined_at": declined_at,
+        "previous_status": previous_status,
+    }
+
+
+@router.post(
+    "/quotes/{qid}/reopen",
+    responses={
+        400: {
+            "description": (
+                "Guard failures: {detail:{code:'not_a_quote'}} / "
+                "{code:'not_declined'}"
+            ),
+        },
+    },
+)
+async def reopen_quote(
+    qid: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Reopen a declined quote. Restores previous_status (fallback 'draft')."""
+    src = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not src:
+        raise HTTPException(404, "Quote not found")
+    if (src.get("doc_type") or "").lower() != "quote":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "not_a_quote"},
+        )
+    if (src.get("status") or "").lower() != "declined":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "not_declined"},
+        )
+
+    previous_status_used = (src.get("previous_status") or "draft").lower()
+    reopened_at = datetime.now(timezone.utc).isoformat()
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {
+            "$set": {"status": previous_status_used},
+            "$unset": {
+                "previous_status": "",
+                "declined_at": "",
+                "declined_by": "",
+            },
+        },
+    )
+
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "quote.reopened",
+            "entity_kind": "quote",
+            "entity_id": qid,
+            "user_id": user.get("id"),
+            "previous_status_used": previous_status_used,
+            "created_at": reopened_at,
+        })
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"quote.reopen audit_logs insert failed: {e}")
+
+    return {
+        "status": previous_status_used,
+        "previous_status_used": previous_status_used,
     }
