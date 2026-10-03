@@ -23,6 +23,7 @@ import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButton";
+import { RecipientTypeBadge } from "@/src/components/quotes/QuoteRecipientPicker";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function QuoteDetail() {
@@ -365,10 +366,26 @@ export default function QuoteDetail() {
         <View style={styles.headerCard}>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>{q.title}</Text>
-            <Text style={styles.customer}>{formatCustomerName(q)}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: 2 }}>
+              <Text style={styles.customer}>{formatCustomerName(q)}</Text>
+              {/* Phase 2 B2 — recipient-type badge (Customer/Lead) */}
+              <RecipientTypeBadge
+                type={q.recipient_type === "lead" ? "lead" : "customer"}
+                testID="quote-recipient-type-badge"
+              />
+            </View>
           </View>
           <StatusChip status={paid ? "paid" : q.status} testID="quote-status-chip" />
         </View>
+
+        {/* Phase 2 B2 — Lead-recipient invoice notice */}
+        {isInvoice && q.recipient_type === "lead" ? (
+          <View style={styles.leadInvoiceNotice} testID="invoice-lead-recipient-notice">
+            <Text style={styles.leadInvoiceNoticeText}>
+              Lead-recipient invoice — card-on-file autopay unavailable. Use 'Send hosted checkout' to collect payment.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Line Items</Text>
@@ -899,4 +916,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand,
   },
   dupSubmitText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  // Phase 2 B2 — Lead-recipient invoice notice
+  leadInvoiceNotice: {
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.md,
+  },
+  leadInvoiceNoticeText: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.onSurfaceSecondary,
+  },
 });

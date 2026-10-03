@@ -2,33 +2,61 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
-import { PrimaryButton, Sheet } from "@/src/components/ui";
+import { PrimaryButton } from "@/src/components/ui";
 import { Field } from "@/app/customer/new";
-import { Selector } from "@/app/job/new";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import QuoteRecipientPicker, {
+  type RecipientValue,
+} from "@/src/components/quotes/QuoteRecipientPicker";
 
 type LI = { description: string; quantity: string; unit_price: string; category: string };
 
 export default function QuoteForm() {
   const router = useRouter();
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [customer, setCustomer] = useState<any>(null);
+  // Phase 2 B2 — accept URL params for pre-fill
+  const params = useLocalSearchParams<{
+    customer_id?: string;
+    recipient_type?: string;
+    recipient_id?: string;
+  }>();
+
+  // Phase 2 B2 — hybrid recipient state (Customer OR Lead)
+  const _initialRecipient = (() => {
+    if (params.recipient_type && params.recipient_id) {
+      return {
+        type: (params.recipient_type.toLowerCase() === "lead" ? "lead" : "customer") as "customer" | "lead",
+        id: params.recipient_id,
+        name: "",
+      };
+    }
+    if (params.customer_id) {
+      return { type: "customer" as const, id: params.customer_id, name: "" };
+    }
+    return null;
+  })();
+  const [recipient, setRecipient] = useState<RecipientValue>(_initialRecipient);
+
   const [docType, setDocType] = useState<"quote" | "invoice">("quote");
   const [title, setTitle] = useState("");
   const [taxRate, setTaxRate] = useState("8");
   const [categories, setCategories] = useState<string[]>(["Pool", "Landscaping", "Labor"]);
   const [items, setItems] = useState<LI[]>([{ description: "", quantity: "1", unit_price: "", category: "Pool" }]);
-  const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.get("/customers").then(setCustomers);
+    // Hydrate recipient display name if legacy customer_id URL param
+    if (_initialRecipient?.type === "customer" && _initialRecipient.id && !_initialRecipient.name) {
+      api.get("/customers").then((custs: any[]) => {
+        const hit = (custs || []).find((c: any) => c.id === _initialRecipient.id);
+        if (hit) setRecipient((prev) => prev ? { ...prev, name: hit.name || "" } : prev);
+      }).catch(() => {});
+    }
     api.get("/income-categories").then((r) => {
       const cats = r.categories || [];
       if (cats.length) {
@@ -36,6 +64,7 @@ export default function QuoteForm() {
         setItems((arr) => arr.map((li) => (li.category ? li : { ...li, category: cats[0] })));
       }
     }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totals = useMemo(() => {
@@ -50,8 +79,8 @@ export default function QuoteForm() {
   const removeItem = (i: number) => setItems((a) => a.filter((_, idx) => idx !== i));
 
   const save = async () => {
-    if (!title.trim() || !customer) {
-      setError("Title and customer are required");
+    if (!title.trim() || !recipient?.id) {
+      setError("Title and recipient are required");
       return;
     }
     const filled = items.filter((li) => li.description.trim());
@@ -67,7 +96,19 @@ export default function QuoteForm() {
     setBusy(true);
     setError("");
     try {
-      await api.post("/quotes", { customer_id: customer.id, title, doc_type: docType, tax_rate: parseFloat(taxRate) || 0, line_items });
+      // Phase 2 B2 — hybrid payload: Customer → include customer_id;
+      // Lead → omit customer_id entirely.
+      const isLeadRecipient = recipient.type === "lead";
+      const payload: any = {
+        ...(isLeadRecipient ? {} : { customer_id: recipient.id }),
+        recipient_type: recipient.type,
+        recipient_id: recipient.id,
+        title,
+        doc_type: docType,
+        tax_rate: parseFloat(taxRate) || 0,
+        line_items,
+      };
+      await api.post("/quotes", payload);
       router.back();
     } catch (e: any) {
       setError(e.message || "Failed to create");
@@ -89,7 +130,7 @@ export default function QuoteForm() {
         </View>
 
         <Field label="Title *" value={title} onChangeText={setTitle} placeholder="e.g. Filter System Upgrade" testID="quote-title-input" />
-        <Selector label="Customer *" value={customer?.name} placeholder="Select customer" onPress={() => setSheet(true)} testID="quote-select-customer" />
+        <QuoteRecipientPicker value={recipient} onChange={setRecipient} />
 
         <Text style={styles.sectionLabel}>Line Items</Text>
         {items.map((li, i) => (
@@ -162,14 +203,6 @@ export default function QuoteForm() {
         <PrimaryButton title={`Create ${docType === "quote" ? "Quote" : "Invoice"}`} onPress={save} loading={busy} testID="save-quote-button" />
       </KeyboardAwareScrollView>
 
-      <Sheet visible={sheet} onClose={() => setSheet(false)} title="Select Customer" testID="quote-customer-sheet">
-        {customers.map((c) => (
-          <Pressable key={c.id} style={styles.opt} onPress={() => { setCustomer(c); setSheet(false); }} testID={`quote-pick-customer-${c.id}`}>
-            <Text style={styles.optText}>{c.name}</Text>
-            {customer?.id === c.id ? <Ionicons name="checkmark" size={20} color={colors.brand} /> : null}
-          </Pressable>
-        ))}
-      </Sheet>
     </View>
   );
 }
@@ -207,7 +240,5 @@ const styles = StyleSheet.create({
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   totalLabel: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
   totalValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
-  opt: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
-  optText: { fontFamily: font.medium, fontSize: fontSize.lg, color: colors.onSurface },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.sm },
 });
