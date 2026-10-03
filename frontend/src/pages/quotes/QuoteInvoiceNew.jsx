@@ -323,7 +323,6 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                     customer_id: next?.type === "customer" ? next.id : "",
                   }));
                 }}
-                testid="qf-customer"
               />
             </div>
             <TextInput label="TITLE" value={form.title} onChange={setField("title")} testid="qf-title" />
