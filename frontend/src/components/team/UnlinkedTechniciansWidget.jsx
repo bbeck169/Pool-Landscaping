@@ -27,7 +27,7 @@
  *   duplicate.
  */
 import React from "react";
-import { AlertCircle, Copy as CopyIcon, RefreshCw, UserPlus, X as XIcon } from "lucide-react";
+import { AlertCircle, Copy as CopyIcon, RefreshCw, Trash2, UserPlus, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 
 
@@ -184,6 +184,101 @@ function TempPasswordModal({ payload, onClose }) {
 
 
 // ══════════════════════════════════════════════════════════════════
+// Confirm Remove modal — Feb-2026
+// Inline plain-React modal (no Radix, no portal) so the widget can
+// be mounted in isolation under vitest without a `ConfirmProvider`
+// wrapper. Mirrors the sibling `TempPasswordModal` pattern already
+// in this file for visual + testid consistency.
+// ══════════════════════════════════════════════════════════════════
+function ConfirmRemoveModal({ payload, busy, onCancel, onConfirm }) {
+  if (!payload) return null;
+  const { name, tech_id, email } = payload;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(15, 23, 42, 0.62)" }}
+      data-testid="team-unlinked-tech-remove-confirm-modal"
+      onClick={busy ? undefined : onCancel}
+    >
+      <div
+        className="rounded-2xl p-6 max-w-md w-full mx-4"
+        style={{
+          background: "#ffffff",
+          boxShadow: "0 24px 60px rgba(15,23,42,0.30)",
+          border: "1px solid #DC2626",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 mb-3">
+          <div
+            className="rounded-full p-2 flex-shrink-0"
+            style={{ background: "#FEE2E2" }}
+            aria-hidden="true"
+          >
+            <Trash2 size={16} style={{ color: "#DC2626" }} />
+          </div>
+          <div className="flex-1">
+            <h3
+              className="text-lg font-bold"
+              style={{ color: "#0F172A" }}
+              data-testid="team-unlinked-tech-remove-confirm-title"
+            >
+              Remove unlinked technician?
+            </h3>
+            <p className="text-sm mt-1" style={{ color: "#475569" }}>
+              This soft-deletes{" "}
+              <strong>{name || tech_id}</strong>
+              {email ? (
+                <>
+                  {" "}(<code style={{ fontSize: "12px" }}>{email}</code>)
+                </>
+              ) : null}
+              {" "}from the Unlinked Technicians list. The record stays in
+              the database and can be recovered by a super-admin, but it
+              will no longer appear here.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="text-sm font-semibold px-4 py-2 rounded-xl"
+            style={{
+              background: "#F1F5F9",
+              color: "#0F172A",
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.6 : 1,
+            }}
+            data-testid="team-unlinked-tech-remove-confirm-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="text-sm font-bold px-4 py-2 rounded-xl inline-flex items-center gap-1"
+            style={{
+              background: busy ? "#991B1B" : "#DC2626",
+              color: "#ffffff",
+              cursor: busy ? "not-allowed" : "pointer",
+              opacity: busy ? 0.75 : 1,
+            }}
+            data-testid="team-unlinked-tech-remove-confirm-ok"
+          >
+            <Trash2 size={12} />
+            {busy ? "Removing…" : "Remove"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════
 // Main widget
 // ══════════════════════════════════════════════════════════════════
 export default function UnlinkedTechniciansWidget({ isAdmin, onCreated }) {
@@ -191,6 +286,8 @@ export default function UnlinkedTechniciansWidget({ isAdmin, onCreated }) {
   const [busyTechId, setBusyTechId] = React.useState(null);
   const [rowErrors, setRowErrors] = React.useState({}); // {tech_id: {code, message}}
   const [modalPayload, setModalPayload] = React.useState(null);
+  // Feb-2026 — open ConfirmRemoveModal with the pending row.
+  const [removeTarget, setRemoveTarget] = React.useState(null);
 
   const load = React.useCallback(async () => {
     if (!isAdmin) return;
@@ -238,6 +335,58 @@ export default function UnlinkedTechniciansWidget({ isAdmin, onCreated }) {
     } catch (err) {
       const payload = _readErrorPayload(err);
       setRowErrors((prev) => ({ ...prev, [row.tech_id]: payload }));
+    } finally {
+      setBusyTechId(null);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────
+  // Feb-2026 — Remove (soft-delete) handler.
+  // Mutation path: POST /admin/technicians/{tech_id}/remove
+  //
+  // On 200: filter the row out of the local `rows` state, clear
+  //   any pending inline error on that row, close the modal. NO
+  //   refetch — preserves the Refresh-test's call-count invariant.
+  //
+  // On 400 `already_removed` OR 404: treat as idempotent success
+  //   (the backend state is already where the admin wants it;
+  //   converge the UI silently, no inline error).
+  //
+  // On any other error (400 `not_unlinked_technician`, 403, 5xx):
+  //   close the modal and surface the error inline on the row via
+  //   the existing `rowErrors` map + error-row renderer.
+  // ──────────────────────────────────────────────────────────────
+  const removeTech = async (row) => {
+    setBusyTechId(row.tech_id);
+    try {
+      await api.post(
+        `/admin/technicians/${encodeURIComponent(row.tech_id)}/remove`,
+        {},
+      );
+      setRows((prev) => (prev || []).filter((x) => x.tech_id !== row.tech_id));
+      setRowErrors((prev) => {
+        const next = { ...prev };
+        delete next[row.tech_id];
+        return next;
+      });
+      setRemoveTarget(null);
+    } catch (err) {
+      const payload = _readErrorPayload(err);
+      const status = err?.status;
+      if (payload.code === "already_removed" || status === 404) {
+        // Idempotent — converge silently.
+        setRows((prev) => (prev || []).filter((x) => x.tech_id !== row.tech_id));
+        setRowErrors((prev) => {
+          const next = { ...prev };
+          delete next[row.tech_id];
+          return next;
+        });
+        setRemoveTarget(null);
+      } else {
+        // Real failure — close modal, surface inline on the row.
+        setRowErrors((prev) => ({ ...prev, [row.tech_id]: payload }));
+        setRemoveTarget(null);
+      }
     } finally {
       setBusyTechId(null);
     }
@@ -332,26 +481,44 @@ export default function UnlinkedTechniciansWidget({ isAdmin, onCreated }) {
                         {_formatCreatedAt(r.created_at)}
                       </td>
                       <td className="py-2 pl-3 text-right">
-                        <button
-                          onClick={() => createUser(r)}
-                          disabled={busy || !r.email}
-                          className="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg"
-                          style={{
-                            background: busy || !r.email
-                              ? "#94A3B8" : "#0F172A",
-                            color: "#ffffff",
-                            cursor: busy || !r.email
-                              ? "not-allowed" : "pointer",
-                            opacity: busy ? 0.7 : 1,
-                          }}
-                          data-testid={`unlinked-tech-create-btn-${r.tech_id}`}
-                          title={!r.email
-                            ? "This tech doc has no email — set one first."
-                            : undefined}
-                        >
-                          <UserPlus size={11} />
-                          {busy ? "Creating…" : "Create user account"}
-                        </button>
+                        <div className="inline-flex items-center gap-2 justify-end">
+                          <button
+                            onClick={() => createUser(r)}
+                            disabled={busy || !r.email}
+                            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg"
+                            style={{
+                              background: busy || !r.email
+                                ? "#94A3B8" : "#0F172A",
+                              color: "#ffffff",
+                              cursor: busy || !r.email
+                                ? "not-allowed" : "pointer",
+                              opacity: busy ? 0.7 : 1,
+                            }}
+                            data-testid={`unlinked-tech-create-btn-${r.tech_id}`}
+                            title={!r.email
+                              ? "This tech doc has no email — set one first."
+                              : undefined}
+                          >
+                            <UserPlus size={11} />
+                            {busy ? "Creating…" : "Create user account"}
+                          </button>
+                          <button
+                            onClick={() => setRemoveTarget(r)}
+                            disabled={busy}
+                            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg"
+                            style={{
+                              background: busy ? "#94A3B8" : "#DC2626",
+                              color: "#ffffff",
+                              cursor: busy ? "not-allowed" : "pointer",
+                              opacity: busy ? 0.7 : 1,
+                            }}
+                            data-testid={`team-unlinked-tech-remove-${r.tech_id}`}
+                            title="Soft-delete this unlinked technician record"
+                          >
+                            <Trash2 size={11} />
+                            Remove
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     {err ? (
@@ -400,6 +567,12 @@ export default function UnlinkedTechniciansWidget({ isAdmin, onCreated }) {
       <TempPasswordModal
         payload={modalPayload}
         onClose={() => setModalPayload(null)}
+      />
+      <ConfirmRemoveModal
+        payload={removeTarget}
+        busy={!!removeTarget && busyTechId === removeTarget.tech_id}
+        onCancel={() => setRemoveTarget(null)}
+        onConfirm={() => removeTarget && removeTech(removeTarget)}
       />
     </>
   );
