@@ -28,7 +28,10 @@ def _patch_db_everywhere():
     _qr.db = _DB
 
 
-_patch_db_everywhere()
+# NOTE: Phase 2 isolation fix (Feb-2026) — module-scope
+# ``_patch_db_everywhere()`` call removed. The autouse ``_clean``
+# fixture below already re-pins before every test.
+
 
 PREFIX = f"ph2sch-{uuid4().hex[:8]}"
 TENANT_A = f"{PREFIX}-tenant-a"

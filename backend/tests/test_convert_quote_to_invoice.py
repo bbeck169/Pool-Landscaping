@@ -58,7 +58,14 @@ def _patch_db_everywhere():
     _fin_mod.db = _DB
 
 
-_patch_db_everywhere()
+# NOTE: Phase 2 isolation fix (Feb-2026) — the module-scope
+# ``_patch_db_everywhere()`` call used to live right here. It was
+# hoisted into the ``_clean`` autouse fixture below (same pattern as
+# the three Phase 2 B1 test files) so that running this file in the
+# SAME pytest invocation as ``test_quote_lead_recipient.py`` et al.
+# no longer clobbers either side's module-level ``db`` aliases at
+# collection time. See the "RuntimeError: got Future … attached to
+# a different loop" post-mortem.
 
 
 PREFIX = f"testconvinv-{uuid4().hex[:8]}"
@@ -159,6 +166,11 @@ async def _cleanup() -> None:
 
 @pytest.fixture(autouse=True)
 def _clean():
+    # Re-pin loop-bound ``db`` aliases on every test — otherwise a
+    # cross-file pytest collection can leave ``config.db`` + its
+    # module-level aliases pointing at a client bound to another
+    # file's event loop (see note above).
+    _patch_db_everywhere()
     _run(_cleanup())
     yield
     _run(_cleanup())

@@ -44,7 +44,11 @@ def _patch_db_everywhere():
         _sys.modules[mod].db = _DB
 
 
-_patch_db_everywhere()
+# NOTE: Phase 2 isolation fix (Feb-2026) — module-scope
+# ``_patch_db_everywhere()`` call removed. The autouse ``_clean``
+# fixture below already re-pins before every test; the module-scope
+# call was redundant AND clobbered Phase 1's patches at collection
+# time when both suites ran in the same pytest invocation.
 
 
 PREFIX = f"ph2lead-{uuid4().hex[:8]}"
