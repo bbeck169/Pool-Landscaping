@@ -14,14 +14,14 @@
  * - onConverted(invoiceId): callback after successful conversion
  */
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { canUserConvertToInvoice } from "@/src/utils/convertToInvoice";
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { colors, radius, font, fontSize } from "@/src/theme";
 
 interface Props {
   docType: "quote" | "estimate";
