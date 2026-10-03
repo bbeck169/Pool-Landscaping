@@ -34,3 +34,28 @@
   - backend/routers/fleet.py (API contract reference)
 - **Dependencies installed**: expo-battery
 - **Known issues**: None — all lint checks pass, app compiles and renders correctly
+
+## Iteration 97 — Phase 2 Quote-to-Lead Recipient Mobile Parity
+- **Commit**: 9078b9cd61d161afe3a6cbc3bc5a07696f5aabb0
+- **Date**: 2026-10-03
+- **Changes**:
+  - Created `QuoteRecipientPicker.tsx` — unified Customer/Lead picker hitting `GET /api/quote-recipients/search`
+  - Exported `RecipientTypeBadge` component for reuse on detail screen
+  - Replaced legacy customer-only picker in `quote/new.tsx` with `QuoteRecipientPicker`
+  - Updated POST `/quotes` payload to send `{recipient_type, recipient_id, customer_id?}` based on recipient type
+  - Added `quote-recipient-type-badge` (Customer/Lead pill) on quote detail screen
+  - Added `invoice-lead-recipient-notice` for lead-recipient invoices with exact copy
+  - Supports URL param pre-fill (`?recipient_type=&recipient_id=` and legacy `?customer_id=`)
+  - ConvertToInvoiceButton regression check — still renders for lead-recipient quotes
+- **Files modified**:
+  - mobile/src/components/quotes/QuoteRecipientPicker.tsx (NEW)
+  - mobile/app/quote/new.tsx (MODIFIED)
+  - mobile/app/quote/[id].tsx (MODIFIED)
+  - mobile/__tests__/QuoteRecipientPicker.test.tsx (NEW)
+  - mobile/__tests__/QuoteInvoiceLeadBadge.test.tsx (NEW)
+- **Web files referenced**:
+  - frontend/src/components/quotes/QuoteRecipientPicker.jsx
+  - frontend/src/pages/quotes/QuoteInvoiceNew.jsx
+  - frontend/src/pages/quotes/QuoteInvoiceDetail.jsx
+- **Dependencies installed**: None
+- **Known issues**: None — all 16 new tests pass, app compiles, lint clean
