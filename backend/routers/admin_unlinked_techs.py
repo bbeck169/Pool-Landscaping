@@ -45,6 +45,7 @@ from constants.tech_colors import TECH_COLOR_PALETTE
 from services.color import validate_color_hex_for_pin
 from utils import (
     get_current_user, hash_password, new_id, now_iso,
+    require_admin_or_manager, not_deleted_filter,
 )
 
 router = APIRouter(tags=["Admin · Unlinked Technicians"])
@@ -133,10 +134,16 @@ async def list_unlinked_technicians(
         raise HTTPException(400, "caller has no tenant_id")
 
     # A ``user_id`` field may be absent OR explicitly null on legacy
-    # docs — treat both as "unlinked".
+    # docs — treat both as "unlinked". Phase 3 (Feb-2026) · hide
+    # soft-deleted techs so admins don't see them with a lingering
+    # Remove button after a successful soft-delete; the removed row
+    # stays recoverable in Mongo via a direct super-admin query.
     query = {
         "tenant_id": tenant_id,
-        "$or": [{"user_id": None}, {"user_id": {"$exists": False}}],
+        "$and": [
+            {"$or": [{"user_id": None}, {"user_id": {"$exists": False}}]},
+            not_deleted_filter(),
+        ],
     }
     rows: List[Dict[str, Any]] = []
     async for tech in db.technicians.find(query, {"_id": 0}):
@@ -316,4 +323,131 @@ async def create_user_for_unlinked_tech(
         "temporary_password":   temp_password,
         "invite_email_status":  invite_result.get("status"),
         "invite_email_error":   invite_result.get("error"),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# POST /api/admin/technicians/{tech_id}/remove   (Feb-2026)
+# ───────────────────────────────────────────────────────────────────
+# Soft-delete an UNLINKED technician row so admins can clean up
+# imported-but-never-onboarded records from the Team page's Unlinked
+# Technicians widget.
+#
+# Permission: ``require_admin_or_manager`` (admin / super_admin /
+# owner / manager — same gate as Convert-to-Invoice / Decline-Reopen).
+# Note that the sibling GET list + POST create-user endpoints above
+# still use the stricter admin-only guard; this endpoint's wider gate
+# is intentional per product-owner spec and is future-safe if the
+# list endpoint ever widens.
+#
+# Guards (all return 400 with ``{detail:{code:"..."}}`` shape
+# consistent with Phase 1/3 guards):
+#   * 404 — tech not found OR cross-tenant (404 for both — never leak
+#     tenant membership through status codes).
+#   * 400 ``not_unlinked_technician`` — the tech is already linked
+#     (``user_id`` is set). Removing a linked tech is a different
+#     operation and must go through
+#     ``technicians.soft_delete_technician``.
+#   * 400 ``already_removed`` — ``deleted_at`` is already stamped.
+#     Response payload includes the existing ``deleted_at`` so the
+#     caller can surface a clear toast.
+#
+# Mutation: stamps ``deleted_at`` + ``deleted_by_user_id`` +
+# ``updated_at``. No other field is touched. No cascade (jobs /
+# timeclock punches / assignments that reference the removed
+# technician stay as-is per the spec).
+#
+# Audit: writes to ``db.audit_log`` with
+# ``action="unlinked_technician_removed"`` + ``target_tech_id`` —
+# matches the sibling ``technician_user_created_and_linked`` action
+# shape in this file (NOT the Phase 3 ``db.audit_logs`` plural
+# convention — this keeps the audit stream for the unlinked-tech
+# entity area coherent in one collection).
+# ═══════════════════════════════════════════════════════════════════
+@router.post(
+    "/admin/technicians/{tech_id}/remove",
+    operation_id="adminUnlinkedTechs.remove",
+)
+async def remove_unlinked_technician(
+    tech_id: str,
+    user: Dict[str, Any] = Depends(require_admin_or_manager),
+) -> Dict[str, Any]:
+    tenant_id = user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(400, "caller has no tenant_id")
+
+    tech = await db.technicians.find_one(
+        {"id": tech_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if tech is None:
+        # Not found OR cross-tenant — collapse to 404 so the response
+        # never reveals that the id exists in a different tenant.
+        raise HTTPException(404, "Technician not found")
+
+    # Already linked → different operation; route them to the linked-
+    # tech soft-delete endpoint instead.
+    if tech.get("user_id"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "not_unlinked_technician",
+                "message": (
+                    "This technician is linked to a user account and "
+                    "cannot be removed from the Unlinked Technicians "
+                    "widget. Use the linked-technician flow instead."
+                ),
+            },
+        )
+
+    # Already soft-deleted → surface the existing timestamp so the
+    # client can toast a clear "already removed" + refetch.
+    if tech.get("deleted_at"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "already_removed",
+                "deleted_at": tech.get("deleted_at"),
+            },
+        )
+
+    removed_at = now_iso()
+    actor_id = user.get("id")
+    await db.technicians.update_one(
+        {"id": tech_id, "tenant_id": tenant_id},
+        {"$set": {
+            "deleted_at":          removed_at,
+            "deleted_by_user_id":  actor_id,
+            "updated_at":          removed_at,
+        }},
+    )
+
+    # Audit row — matches the file-local shape used by the sibling
+    # ``technician_user_created_and_linked`` writer above.
+    try:
+        await db.audit_log.insert_one({
+            "id":              new_id(),
+            "tenant_id":       tenant_id,
+            "actor_user_id":   actor_id,
+            "actor_email":     user.get("email"),
+            "action":          "unlinked_technician_removed",
+            "target_tech_id":  tech_id,
+            "changes": {
+                "deleted_at":          {"old": None, "new": removed_at},
+                "deleted_by_user_id":  {"old": None, "new": actor_id},
+            },
+            "at":              removed_at,
+        })
+    except Exception as e:
+        # Audit write failures must not block the user-visible
+        # mutation (same convention as Phase 3 decline/reopen).
+        logger.warning(
+            f"unlinked-tech remove: audit insert failed for "
+            f"tech_id={tech_id}: {e}"
+        )
+
+    return {
+        "ok":                   True,
+        "tech_id":              tech_id,
+        "deleted_at":           removed_at,
+        "deleted_by_user_id":   actor_id,
     }
