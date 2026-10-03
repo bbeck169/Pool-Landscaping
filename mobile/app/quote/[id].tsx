@@ -22,6 +22,7 @@ import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import SendToCustomerSheet from "@/src/components/quotes/SendToCustomerSheet";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButton";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function QuoteDetail() {
@@ -406,6 +407,19 @@ export default function QuoteDetail() {
             {paid ? "Payment received" : "Payment pending"}
           </Text>
         </View>
+
+        {/* Convert to Invoice — admin/owner/manager only, quote docs only */}
+        {!isInvoice && q.id ? (
+          <View style={{ marginBottom: spacing.md }}>
+            <ConvertToInvoiceButton
+              docType="quote"
+              docId={q.id}
+              convertedInvoiceId={q.converted_invoice_id}
+              userRole={user?.role}
+              onConverted={() => load()}
+            />
+          </View>
+        ) : null}
 
         {/* PB1 · Internal Margin — admin/manager/super_admin ONLY.
             NEVER rendered for customer or technician roles. */}

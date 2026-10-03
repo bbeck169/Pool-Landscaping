@@ -36,6 +36,7 @@ import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { ClickablePhone, ClickableAddress } from "@/src/components/interactive";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButton";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
 
@@ -531,6 +532,19 @@ export default function EstimateViewScreen() {
             </>
           )}
         </View>
+
+        {/* Convert to Invoice — admin/owner/manager only */}
+        {data?.id ? (
+          <View style={{ marginBottom: spacing.md }}>
+            <ConvertToInvoiceButton
+              docType="estimate"
+              docId={data.id}
+              convertedInvoiceId={(data as any).converted_invoice_id}
+              userRole={user?.role}
+              onConverted={() => load()}
+            />
+          </View>
+        ) : null}
 
         {/* Notes */}
         {notes ? (
