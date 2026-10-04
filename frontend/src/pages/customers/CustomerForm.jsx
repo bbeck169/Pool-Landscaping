@@ -75,8 +75,7 @@ export default function CustomerForm() {
     billing_zip: "",
     gate_code: "",
     notes: "",
-    alert_email: "",
-    alert_phone: "",
+    // APR-III · Feb-2026 — after-hours alert channel fields removed.
     waitlisted: false,
     tags: [],
     secondary_addresses: [],
@@ -123,8 +122,7 @@ export default function CustomerForm() {
         billing_zip: bil.zip,
         gate_code: c.gate_code || "",
         notes: c.notes || "",
-        alert_email: c.alert_email || "",
-        alert_phone: c.alert_phone || "",
+        // APR-III · Feb-2026 — after-hours alert load lines removed.
         waitlisted: !!c.waitlisted,
         tags: c.tags || [],
         secondary_addresses: c.secondary_addresses || [],
@@ -280,8 +278,7 @@ export default function CustomerForm() {
             <TextInput label="PRIMARY MOBILE PHONE" id="phone" value={form.phone} onChange={set("phone")} testid="cf-phone" />
             <TextInput label="HOME PHONE" id="home_phone" value={form.home_phone} onChange={set("home_phone")} testid="cf-home-phone" />
             <TextInput label="GATE CODE" id="gate_code" value={form.gate_code} onChange={set("gate_code")} testid="customer-gate-code-input" />
-            <TextInput label="ALERT EMAIL (after-hours)" id="alert_email" type="email" value={form.alert_email} onChange={set("alert_email")} testid="cf-alert-email" />
-            <TextInput label="ALERT PHONE / SMS (after-hours)" id="alert_phone" value={form.alert_phone} onChange={set("alert_phone")} testid="cf-alert-phone" />
+            {/* APR-III · Feb-2026 — the two after-hours escalation inputs were removed. */}
           </div>
           {/* Phase 48 · Feb-2026 — Service Address (4-input UX). Composes
               into the single-string ``address`` field on save.

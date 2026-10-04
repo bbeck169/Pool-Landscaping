@@ -475,7 +475,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
           setRecapCustomer({
             id: cust?.id, name: cust?.name,
             email: cust?.email, phone: cust?.phone,
-            alert_phone: cust?.alert_phone,
+            // APR-III · Feb-2026 — after-hours alert passthrough removed.
           });
         } else {
           setRecapCustomer({ name: job?.customer_name });

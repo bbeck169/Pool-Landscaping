@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
@@ -994,12 +994,10 @@ export default function CustomerDetail() {
                   : "— (not set)",
               testid: "customer-pool-gallons-display",
             },
-            { icon: BellRing, label: "Alert phone",
-              value: customer.alert_phone
-                      ? <PhoneLink phone={customer.alert_phone} />
-                      : null,
-              warn: true },
-            { icon: BellRing, label: "Alert email", value: customer.alert_email, warn: true },
+            /* APR-III · Feb-2026 — ``Alert phone`` + ``Alert email``
+               stat tiles removed (fields dropped from CustomerIn in
+               APR-II).  Primary phone + email tiles above remain
+               the single contact channels. */
             /* CP-1-B · Feb-2026 (updated by GCR · Feb-2026) —
              * Gate code lives in the top stat-tile row and NOWHERE
              * else on the Overview tab.  The CP-1-B shim that kept

@@ -19,7 +19,10 @@ export default function VisitRecapModal({
 }) {
   // Default channel: whichever contacts we have, biased to "both" when
   // both phone and email exist.
-  const hasPhone = !!(customer?.phone || customer?.alert_phone);
+  // APR-III · Feb-2026 — the legacy after-hours fallback was dropped
+  // (field removed from CustomerIn in APR-II); SMS routes to primary
+  // phone only.
+  const hasPhone = !!customer?.phone;
   const hasEmail = !!customer?.email;
   const defaultChannel = hasPhone && hasEmail ? "both" : hasEmail ? "email" : hasPhone ? "sms" : "";
 
