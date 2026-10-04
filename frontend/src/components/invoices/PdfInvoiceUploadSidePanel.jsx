@@ -62,6 +62,10 @@ export default function PdfInvoiceUploadSidePanel({
   const [activeDocIdx, setActiveDocIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [customers, setCustomers] = useState([]);
+  // PDFI-VB · Feb-2026 — recovery chip book-keeping, keyed by
+  // ``activeDocIdx`` so each doc in a multi-doc batch can carry
+  // its own post-create link-failure state.
+  const [createRecoveryByDoc, setCreateRecoveryByDoc] = useState({});
   const pollTimerRef = useRef(null);
   const pollStartRef = useRef(0);
 
@@ -72,6 +76,7 @@ export default function PdfInvoiceUploadSidePanel({
     setBatchPreviews([]);
     setActiveDocIdx(0);
     setErrorMsg("");
+    setCreateRecoveryByDoc({});
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -230,6 +235,80 @@ export default function PdfInvoiceUploadSidePanel({
       customer_name: customer.name || "",
       customer_address: customer.address || "",
     });
+  };
+
+  // PDFI-VB · Feb-2026 — new-customer create-and-link.  The tile's
+  // modal has already fired ``createCustomer`` and the row exists on
+  // the server before this handler runs; our job is to fire the
+  // follow-up ``patchPreview`` link to attach the fresh id/name/
+  // address to the preview.  On link failure we DO NOT re-throw —
+  // the modal closes anyway (user already paid the create cost)
+  // and the amber "Customer created, retry link" chip takes over so
+  // the operator can re-fire the link without creating a duplicate.
+  const _onCreateCustomer = async (created) => {
+    if (!batchId) return;
+    const linkPatch = {
+      matched_customer_id: created.id,
+      customer_name: created.name || "",
+      customer_address: created.billing_address || created.address || "",
+    };
+    const prevSnapshot = batchPreviews;
+    const currPreview = batchPreviews[activeDocIdx] || {};
+    const nextPreview = { ...currPreview };
+    const nextQuoteIn = { ...(currPreview.quote_in || {}) };
+    nextPreview.matched_customer_id = linkPatch.matched_customer_id;
+    nextQuoteIn.customer_name = linkPatch.customer_name;
+    nextQuoteIn.customer_address = linkPatch.customer_address;
+    nextPreview.quote_in = nextQuoteIn;
+    const nextPreviews = [...batchPreviews];
+    nextPreviews[activeDocIdx] = nextPreview;
+    setBatchPreviews(nextPreviews);
+    try {
+      await patchPreview(batchId, { doc_idx: activeDocIdx, patch: linkPatch });
+      toast.success(`Customer "${linkPatch.customer_name}" created and linked`);
+      setCreateRecoveryByDoc((prev) => {
+        if (!(activeDocIdx in prev)) return prev;
+        const next = { ...prev };
+        delete next[activeDocIdx];
+        return next;
+      });
+    } catch (err) {
+      setBatchPreviews(prevSnapshot);
+      toast.error(`Failed to link new customer: ${err?.message || "retry"}`);
+      setCreateRecoveryByDoc((prev) => ({ ...prev, [activeDocIdx]: created }));
+      // Intentionally do NOT re-throw — the modal must close so the
+      // recovery chip is the single affordance surfaced to the user.
+    }
+  };
+
+  const _onRetryCreateLink = async (created) => {
+    if (!batchId) return;
+    const linkPatch = {
+      matched_customer_id: created.id,
+      customer_name: created.name || "",
+      customer_address: created.billing_address || created.address || "",
+    };
+    try {
+      await patchPreview(batchId, { doc_idx: activeDocIdx, patch: linkPatch });
+      const currPreview = batchPreviews[activeDocIdx] || {};
+      const nextPreview = { ...currPreview };
+      const nextQuoteIn = { ...(currPreview.quote_in || {}) };
+      nextPreview.matched_customer_id = linkPatch.matched_customer_id;
+      nextQuoteIn.customer_name = linkPatch.customer_name;
+      nextQuoteIn.customer_address = linkPatch.customer_address;
+      nextPreview.quote_in = nextQuoteIn;
+      const nextPreviews = [...batchPreviews];
+      nextPreviews[activeDocIdx] = nextPreview;
+      setBatchPreviews(nextPreviews);
+      toast.success(`Customer "${linkPatch.customer_name}" linked`);
+      setCreateRecoveryByDoc((prev) => {
+        const next = { ...prev };
+        delete next[activeDocIdx];
+        return next;
+      });
+    } catch (err) {
+      toast.error(`Retry failed: ${err?.message || "try again"}`);
+    }
   };
 
   const _onPickPricebook = (lineIdx, item) => {
@@ -449,6 +528,9 @@ export default function PdfInvoiceUploadSidePanel({
                 onEditName={(v) => _applyPatch({ customer_name: v })}
                 onEditAddress={(v) => _applyPatch({ customer_address: v })}
                 onPickCustomer={_onPickCustomer}
+                onCreateCustomer={_onCreateCustomer}
+                createRecoveryCustomer={createRecoveryByDoc[activeDocIdx] || null}
+                onRetryCreateLink={_onRetryCreateLink}
               />
               <DateTile
                 docDate={qi.doc_date}

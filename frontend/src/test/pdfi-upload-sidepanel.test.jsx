@@ -44,6 +44,10 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/api/customers", () => ({
+  createCustomer: vi.fn(),
+}));
+
 vi.mock("@/components/customers/CustomerCombobox", () => ({
   CustomerCombobox: ({ customers, onChange, testid }) => (
     <div data-testid={testid || "customer-combobox-mock"}>
@@ -82,6 +86,7 @@ import PdfInvoiceUploadSidePanel from
 import {
   kickoffUpload, pollBatch, patchPreview, commitBatch, rollbackBatch,
 } from "@/api/pdfImports";
+import { createCustomer } from "@/api/customers";
 import { toast } from "sonner";
 
 
@@ -156,6 +161,7 @@ beforeEach(() => {
   patchPreview.mockReset();
   commitBatch.mockReset();
   rollbackBatch.mockReset();
+  createCustomer.mockReset();
   toast.error.mockReset();
   toast.success.mockReset();
   toast.info.mockReset();
@@ -378,6 +384,59 @@ describe("PDFI-V · wired pickers + edge states", () => {
     );
     expect(retry).toBeTruthy();
     expect(screen.getByTestId("pdfi-upload-timeout-bulk-btn")).toBeTruthy();
+  });
+});
+
+
+describe("PDFI-VB · new-customer modal on CustomerTile", () => {
+  it("(q) Click 'New' opens the create modal pre-filled with the parsed customer name", async () => {
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-customer-create-btn"));
+    const modal = await screen.findByTestId("pdfi-tile-customer-create-modal");
+    expect(modal).toBeTruthy();
+    const nameInput = screen.getByTestId("pdfi-tile-customer-create-name-input");
+    expect(nameInput.value).toBe("Diane Lloyd");
+    const addressInput = screen.getByTestId("pdfi-tile-customer-create-address-input");
+    expect(addressInput.value).toBe("123 Lake View Drive");
+  });
+
+  it("(r) Save fires createCustomer with payload AND patchPreview with the new customer id, then modal closes", async () => {
+    createCustomer.mockResolvedValue({
+      id: "cust-new-99",
+      name: "Diane Lloyd",
+      billing_address: "123 Lake View Drive",
+    });
+    patchPreview.mockResolvedValue({ ok: true });
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-customer-create-btn"));
+    await screen.findByTestId("pdfi-tile-customer-create-modal");
+    fireEvent.change(screen.getByTestId("pdfi-tile-customer-create-email-input"), {
+      target: { value: "diane@example.com" },
+    });
+    fireEvent.change(screen.getByTestId("pdfi-tile-customer-create-phone-input"), {
+      target: { value: "480-555-0199" },
+    });
+    fireEvent.click(screen.getByTestId("pdfi-tile-customer-create-save-btn"));
+    await waitFor(() => expect(createCustomer).toHaveBeenCalledTimes(1));
+    const [payload] = createCustomer.mock.calls[0];
+    expect(payload.name).toBe("Diane Lloyd");
+    expect(payload.email).toBe("diane@example.com");
+    expect(payload.phone).toBe("480-555-0199");
+    expect(payload.billing_address).toBe("123 Lake View Drive");
+
+    await waitFor(() => expect(patchPreview).toHaveBeenCalled());
+    const linkCall = patchPreview.mock.calls.find(
+      (call) => call[1]?.patch?.matched_customer_id === "cust-new-99",
+    );
+    expect(linkCall).toBeTruthy();
+    expect(linkCall[1].patch.customer_name).toBe("Diane Lloyd");
+    expect(linkCall[1].patch.customer_address).toBe("123 Lake View Drive");
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("pdfi-tile-customer-create-modal")).toBeFalsy();
+    });
   });
 });
 
