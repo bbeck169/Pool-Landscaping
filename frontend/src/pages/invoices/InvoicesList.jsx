@@ -888,6 +888,14 @@ export default function InvoicesList() {
           }}
         />
       ) : null}
+      {/* PDFI-IV · Feb-2026 — upload-flow sidepanel */}
+      <PdfInvoiceUploadSidePanel
+        open={pdfPanelOpen}
+        onClose={() => setPdfPanelOpen(false)}
+        onImportComplete={(createdId) => {
+          if (createdId) navigate(`/invoices/${createdId}`);
+        }}
+      />
     </div>
   );
 }
@@ -1068,14 +1076,5 @@ function _BulkPaySummaryModal({ results, onClose }) {
         </div>
       </div>
     </div>
-      {/* PDFI-IV · Feb-2026 — upload-flow sidepanel */}
-      <PdfInvoiceUploadSidePanel
-        open={pdfPanelOpen}
-        onClose={() => setPdfPanelOpen(false)}
-        onImportComplete={(createdId) => {
-          if (createdId) navigate(`/invoices/${createdId}`);
-        }}
-      />
-
   );
 }

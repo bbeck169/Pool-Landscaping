@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { parse as babelParse } from "@babel/parser";
 
 vi.mock("@/api/pdfImports", () => ({
   kickoffUpload: vi.fn(),
@@ -377,5 +378,21 @@ describe("PDFI-V · wired pickers + edge states", () => {
     );
     expect(retry).toBeTruthy();
     expect(screen.getByTestId("pdfi-upload-timeout-bulk-btn")).toBeTruthy();
+  });
+});
+
+
+describe("HOTFIX-PDFI-IV · parse-lock regression", () => {
+  it("[regression] InvoicesList.jsx parses cleanly as a JSX module (no top-level JSX siblings outside the return's root)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "../pages/invoices/InvoicesList.jsx"),
+      "utf8",
+    );
+    expect(() =>
+      babelParse(src, {
+        sourceType: "module",
+        plugins: ["jsx"],
+      }),
+    ).not.toThrow();
   });
 });
