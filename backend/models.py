@@ -64,8 +64,12 @@ class CustomerIn(BaseModel):
     avatar: Optional[str] = ""
     # Phase 2 additions:
     tags: Optional[List[str]] = []           # e.g. ["VIP", "Specialty"] plus arbitrary custom tags
-    alert_email: Optional[str] = ""          # after-hours escalation channel
-    alert_phone: Optional[str] = ""          # after-hours SMS escalation
+    # APR-II · Feb-2026 — removed ``alert_email`` + ``alert_phone``
+    # (after-hours escalation channels).  Zero divergent rows in DB
+    # at removal time; recap SMS routing collapsed to
+    # ``customer.phone`` only.  See
+    # ``service_reports.py::_send_recap_sms`` for the fallback
+    # simplification.
     waitlisted: Optional[bool] = False       # unscheduled customer flagged as waiting for a slot
     secondary_addresses: Optional[List[str]] = []
     # Phase 34d — pool volume in US gallons. Feeds Phase 34e chemical dosing.

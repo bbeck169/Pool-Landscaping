@@ -2584,8 +2584,14 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
 async def _send_recap_sms(customer: dict, plain: str) -> dict:
     """Feb-2026 · Twilio→RC consolidation — route through the shipped
     RingCentral adapter. Fails-closed with a neutral reason string
-    when RC creds are absent."""
-    to = customer.get("alert_phone") or customer.get("phone")
+    when RC creds are absent.
+
+    APR-II · Feb-2026 — the after-hours ``alert_phone`` channel was
+    removed from ``CustomerIn``; routing now resolves to the single
+    primary ``phone`` field.  Customers without a primary phone fall
+    through to the no-phone-on-file reason string.
+    """
+    to = customer.get("phone")
     if not to:
         return {"sent": False, "mocked": True,
                  "reason": "customer has no phone on file"}
@@ -2654,7 +2660,8 @@ async def send_visit_recap(sr_id: str, body: RecapReq,
         raise HTTPException(404, "Job not found")
     cust = await db.customers.find_one({"id": job.get("customer_id"),
                                           "tenant_id": tenant["id"]}, {"_id": 0}) or {}
-    if not (cust.get("phone") or cust.get("alert_phone") or cust.get("email")):
+    # APR-II · Feb-2026 — collapsed to primary phone + email only.
+    if not (cust.get("phone") or cust.get("email")):
         raise HTTPException(400, "Customer has neither phone nor email on file")
 
     tech = None
