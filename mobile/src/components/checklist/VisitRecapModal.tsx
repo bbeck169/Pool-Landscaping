@@ -22,14 +22,16 @@ type RecapResult = {
 export type VisitRecapModalProps = {
   visible: boolean;
   serviceReportId: string | null;
-  customer: { name?: string; email?: string; phone?: string; alert_phone?: string } | null;
+  customer: { name?: string; email?: string; phone?: string } | null;
   onClose: () => void;
 };
 
 export default function VisitRecapModal({
   visible, serviceReportId, customer, onClose,
 }: VisitRecapModalProps) {
-  const hasPhone = !!(customer?.phone || customer?.alert_phone);
+  // APR-IV — the legacy after-hours fallback was dropped in APR-II;
+  // SMS availability now depends solely on primary phone.
+  const hasPhone = !!customer?.phone;
   const hasEmail = !!customer?.email;
   const defaultChannel =
     hasPhone && hasEmail ? "both" : hasEmail ? "email" : hasPhone ? "sms" : "";
