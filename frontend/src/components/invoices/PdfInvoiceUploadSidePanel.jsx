@@ -66,6 +66,11 @@ export default function PdfInvoiceUploadSidePanel({
   // ``activeDocIdx`` so each doc in a multi-doc batch can carry
   // its own post-create link-failure state.
   const [createRecoveryByDoc, setCreateRecoveryByDoc] = useState({});
+  // PDFI-PAID-C · Feb-2026 — nonce the parent increments on a
+  // 422 ``paid_without_date`` so the TotalTile's date input
+  // gets a re-focus + scroll-into-view without the parent
+  // reaching across component boundaries.
+  const [focusPaidAtKey, setFocusPaidAtKey] = useState(0);
   const pollTimerRef = useRef(null);
   const pollStartRef = useRef(0);
 
@@ -77,6 +82,7 @@ export default function PdfInvoiceUploadSidePanel({
     setActiveDocIdx(0);
     setErrorMsg("");
     setCreateRecoveryByDoc({});
+    setFocusPaidAtKey(0);
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -208,6 +214,11 @@ export default function PdfInvoiceUploadSidePanel({
       "customer_name", "customer_address",
       "doc_number", "doc_date", "grand_total",
       "matched_customer_id",
+      // PDFI-PAID-C · Feb-2026 — paid-status whitelist mirrors
+      // the backend PATCH /preview whitelist landed in
+      // PDFI-PAID-B. Operator-driven edits land on quote_in
+      // and the commit-lane validator reads them.
+      "is_paid", "amount_paid", "paid_at",
     ]) {
       if (k in patch) {
         if (k === "matched_customer_id") {
@@ -328,11 +339,29 @@ export default function PdfInvoiceUploadSidePanel({
     Boolean(qi.doc_date) &&
     Number(qi.grand_total) > 0 &&
     Array.isArray(qi.line_items) &&
-    qi.line_items.length > 0
+    qi.line_items.length > 0 &&
+    // PDFI-PAID-C · Feb-2026 — paid-status pre-flight. Blocks
+    // commit when the preview is marked is_paid=true but the
+    // required follow-on fields are missing. The backend
+    // validation gate (PDFI-PAID-B) will reject these too
+    // with 422 paid_without_date / paid_without_amount; this
+    // front-end block saves the round-trip + keeps the
+    // operator in-context.
+    !(qi.is_paid === true && !qi.paid_at) &&
+    !(qi.is_paid === true && (Number(qi.amount_paid) || 0) <= 0)
   );
 
   const _onCommit = async () => {
     if (!batchId) return;
+    // PDFI-PAID-C · Feb-2026 — defense-in-depth client-side
+    // block. _readyToCommit already disables the button; this
+    // guards keyboard-triggered submits and surfaces the exact
+    // same message the backend would return on 422.
+    if (qi.is_paid === true && !qi.paid_at) {
+      toast.error("Pick a payment date in the Totals tile before committing.");
+      setFocusPaidAtKey((k) => k + 1);
+      return;
+    }
     setStep("committing");
     try {
       const res = await commitBatch(batchId, { on_duplicate: "skip" });
@@ -342,10 +371,38 @@ export default function PdfInvoiceUploadSidePanel({
       setStep("committed");
       const invNum = qi.doc_number || createdId || "";
       toast.success(invNum ? `Invoice created · #${invNum}` : "Invoice created.");
+      // PDFI-PAID-C · Feb-2026 — paid-invoice success toast.
+      // Fires when the commit response carried a payment row
+      // (committed.payments.created > 0) so the operator gets
+      // a confirmation that revenue landed in db.payments.
+      const paymentsCreated = Number(
+        res?.committed?.payments?.created || 0,
+      );
+      if (paymentsCreated > 0 && qi.amount_paid && qi.paid_at) {
+        const amt = Number(qi.amount_paid).toFixed(2);
+        toast.success(`Invoice paid: $${amt} on ${qi.paid_at}`);
+      }
       onImportComplete?.(createdId);
       _reset();
       onClose?.();
     } catch (err) {
+      // PDFI-PAID-C · Feb-2026 — specific 422 handling for the
+      // PDFI-PAID-B validation gate. On paid_without_date we
+      // bump the focus nonce so TotalTile re-focuses the date
+      // input; batch is already reset to preview_complete by
+      // the backend so we drop step back to preview_ready.
+      const errCode = err?.data?.detail?.error;
+      if (errCode === "paid_without_date") {
+        setStep("preview_ready");
+        setFocusPaidAtKey((k) => k + 1);
+        toast.error("Payment date required.");
+        return;
+      }
+      if (errCode === "paid_without_amount") {
+        setStep("preview_ready");
+        toast.error("Amount paid is required to commit a paid invoice.");
+        return;
+      }
       setErrorMsg(err?.message || "Create failed.");
       setStep("error");
       toast.error("Create failed. Please try again.");
@@ -561,7 +618,12 @@ export default function PdfInvoiceUploadSidePanel({
                 subtotal={qi.subtotal}
                 amountPaid={qi.amount_paid}
                 totalDue={qi.total_due}
+                isPaid={qi.is_paid}
+                paidAt={qi.paid_at}
+                focusPaidAtKey={focusPaidAtKey}
                 onEditGrandTotal={(v) => _applyPatch({ grand_total: v })}
+                onEditAmountPaid={(v) => _applyPatch({ amount_paid: v })}
+                onEditPaidAt={(v) => _applyPatch({ paid_at: v })}
               />
               <button
                 type="button"

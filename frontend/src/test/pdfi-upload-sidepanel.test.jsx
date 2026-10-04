@@ -441,6 +441,127 @@ describe("PDFI-VB · new-customer modal on CustomerTile", () => {
 });
 
 
+describe("PDFI-PAID-C · paid-status UI", () => {
+  function _paidPreviewRow({ is_paid = true, paid_at = "2026-08-28",
+                              amount_paid = 140.0 } = {}) {
+    return {
+      status: "preview_complete",
+      mapper_previews: [{
+        source_doc_index: 0,
+        doc_kind: "invoice",
+        mapped_target: "quote_in",
+        customer_resolution: "matched",
+        matched_customer_id: "cust-1",
+        quote_in: {
+          customer_name: "Diane Lloyd",
+          customer_address: "123 Lake View Drive",
+          doc_number: "10774",
+          doc_date: "2026-08-28",
+          grand_total: 140.0,
+          subtotal: 140.0,
+          amount_paid,
+          total_due: is_paid ? 0.0 : 140.0,
+          is_paid,
+          paid_at,
+          line_items: [{
+            item_name: "Full Weekly Pool Service",
+            description: "weekly chem + clean",
+            quantity: 1,
+            unit_price: 140.0,
+            line_total: 140.0,
+            pricebook_item_id: "pb-1",
+          }],
+        },
+      }],
+    };
+  }
+
+  it("(s) TotalTile renders PAID chip when preview carries is_paid=true", async () => {
+    _render();
+    await _advanceToPreviewReady(_paidPreviewRow());
+    const chip = screen.getByTestId("pdfi-tile-total-paid-chip");
+    expect(chip).toBeTruthy();
+    expect(chip.textContent.toUpperCase()).toMatch(/PAID/);
+    expect(screen.getByTestId("pdfi-tile-total-paid-row")).toBeTruthy();
+    expect(screen.getByTestId("pdfi-tile-total-paid-at-input")).toBeTruthy();
+    expect(screen.getByTestId("pdfi-tile-total-amount-paid-input")).toBeTruthy();
+  });
+
+  it("(t) is_paid=true + paid_at=null shows date-required warning + disables commit", async () => {
+    _render();
+    await _advanceToPreviewReady(_paidPreviewRow({ paid_at: null }));
+    expect(screen.getByTestId("pdfi-tile-total-paid-at-warning")).toBeTruthy();
+    const commitBtn = screen.getByTestId("pdfi-upload-commit-btn");
+    expect(commitBtn.disabled).toBe(true);
+    const dateInput = screen.getByTestId("pdfi-tile-total-paid-at-input");
+    expect(dateInput.className).toMatch(/border-red/);
+  });
+
+  it("(u) editing paid_at fires patchPreview with the paid_at diff", async () => {
+    patchPreview.mockResolvedValue({ ok: true });
+    _render();
+    await _advanceToPreviewReady(_paidPreviewRow({ paid_at: null }));
+    const dateInput = screen.getByTestId("pdfi-tile-total-paid-at-input");
+    fireEvent.change(dateInput, { target: { value: "2026-08-28" } });
+    await waitFor(() => expect(patchPreview).toHaveBeenCalled());
+    const [bid, body] = patchPreview.mock.calls[0];
+    expect(bid).toBe("bat-x");
+    expect(body.doc_idx).toBe(0);
+    expect(body.patch).toEqual({ paid_at: "2026-08-28" });
+  });
+
+  it("(v) commit button re-enables after paid_at is set", async () => {
+    patchPreview.mockResolvedValue({ ok: true });
+    _render();
+    await _advanceToPreviewReady(_paidPreviewRow({ paid_at: null }));
+    expect(screen.getByTestId("pdfi-upload-commit-btn").disabled).toBe(true);
+    const dateInput = screen.getByTestId("pdfi-tile-total-paid-at-input");
+    fireEvent.change(dateInput, { target: { value: "2026-08-28" } });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("pdfi-upload-commit-btn").disabled,
+      ).toBe(false);
+    });
+    expect(
+      screen.queryByTestId("pdfi-tile-total-paid-at-warning"),
+    ).toBeFalsy();
+  });
+
+  it("(w) 422 paid_without_date on commit triggers toast + re-focuses date input", async () => {
+    const err422 = Object.assign(
+      new Error("Payment date required to commit."),
+      {
+        status: 422,
+        data: {
+          detail: {
+            error: "paid_without_date",
+            batch_id: "bat-x",
+            doc_indices: [0],
+            message: "Payment date required.",
+          },
+        },
+      },
+    );
+    commitBatch.mockRejectedValueOnce(err422);
+    _render();
+    await _advanceToPreviewReady(_paidPreviewRow({ paid_at: "2026-08-28" }));
+    fireEvent.click(screen.getByTestId("pdfi-upload-commit-btn"));
+    await waitFor(() => expect(commitBatch).toHaveBeenCalled());
+    await waitFor(() => {
+      const hit = toast.error.mock.calls.find(
+        (c) => /payment date/i.test(String(c[0])),
+      );
+      expect(hit).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId("pdfi-tile-total-paid-at-input"),
+      );
+    });
+  });
+});
+
+
 describe("HOTFIX-PDFI-IV · parse-lock regression", () => {
   it("[regression] InvoicesList.jsx parses cleanly as a JSX module (no top-level JSX siblings outside the return's root)", () => {
     const src = readFileSync(
