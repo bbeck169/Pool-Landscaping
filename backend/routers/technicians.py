@@ -66,8 +66,15 @@ async def list_technicians(user: dict = Depends(get_current_user),
     #     ``user_id`` since ``db.technicians`` rows don't carry an
     #     ``active`` field of their own.
     # (a) Real technician rows for THIS tenant.
+    # SCH Phase II · Feb-2026 — strip soft-deleted techs (parity
+    # with the users arm below). Prior behavior returned docs where
+    # ``deleted_at`` was non-null, so a soft-deleted tech kept
+    # haunting the Schedule / Dispatch / Workstream dropdowns.
     tech_docs = await db.technicians.find(
-        {"tenant_id": tid}, {"_id": 0},
+        {"tenant_id": tid,
+         "$or": [{"deleted_at": None},
+                 {"deleted_at": {"$exists": False}}]},
+        {"_id": 0},
     ).sort("name", 1).to_list(1000)
     linked_user_ids: set = {t.get("user_id") for t in tech_docs
                               if t.get("user_id")}
