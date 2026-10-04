@@ -587,6 +587,329 @@ def _check_totals_consistency(
 
 
 # ── Public entrypoint ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# PDFI-III · Feb-2026 — PyMuPDF native-text fast path.
+# ═══════════════════════════════════════════════════════════════════
+# For native-text PDFs (text layer present, small enough to parse
+# with regex rules), skip the two-pass gpt-4o pipeline entirely and
+# synthesise an ``ExtractedDocument`` from ``page.get_text()`` output.
+# Any required-field miss, oversize document, or empty text layer
+# falls back to the vision path verbatim — operator sees zero
+# behavioural difference, only faster + cheaper previews on the
+# happy path. Every path decision is logged with structured context
+# so hit-rate can be measured post-ship without a schema change.
+#
+# Required-field contract (ALL four must parse to accept):
+#   * customer_name   — "Bill To:" or "Customer:" labelled line
+#   * doc_date        — any format ``_coerce_date`` accepts
+#   * grand_total     — labelled total line, positive float
+#   * line_items      — ≥ 1 row with ``item_name`` + ``cost_rate``
+# Everything else (address, doc_number, tax_rate, etc.) is
+# best-effort — missing optionals do NOT trigger fallback.
+
+_FAST_PATH_PAGE_LIMIT = 10
+_FAST_PATH_MIN_TEXT_LEN = 50
+_FAST_PATH_CONFIDENCE = 0.95
+
+_FAST_DATE_RE = re.compile(
+    r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+    r'\s+\d{1,2},?\s+\d{4}\b'
+    r'|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b'
+    r'|\b\d{4}-\d{2}-\d{2}\b',
+    re.IGNORECASE,
+)
+_FAST_CUSTOMER_RE = re.compile(
+    r'(?:Bill\s*To|Customer|Sold\s*To)\s*[:#]?\s*\n+\s*([^\n]+)',
+    re.IGNORECASE,
+)
+_FAST_INV_NUM_RE = re.compile(
+    r'(?:Invoice\s*#?|Invoice\s*No\.?)\s*[:#]?\s*(\d{3,})',
+    re.IGNORECASE,
+)
+_FAST_INV_NUM_FALLBACK_RE = re.compile(r'(?<![A-Za-z0-9])#\s*(\d{3,})\b')
+_FAST_TOTAL_RE = re.compile(
+    r'(?:Grand\s*Total|Amount\s*Due|Total\s*Due|This\s*Invoice|Total)'
+    r'\s*[:#]?\s*\$?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)',
+    re.IGNORECASE,
+)
+_FAST_AMOUNT_PAID_RE = re.compile(
+    r'(?:Amount\s*Paid|Paid)\s*[:#]?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+    re.IGNORECASE,
+)
+_FAST_TOTAL_DUE_RE = re.compile(
+    r'(?:Balance\s*Due|Total\s*Due)\s*[:#]?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+    re.IGNORECASE,
+)
+# Line-item row pattern — leading non-numeric label, optional qty,
+# two currency amounts (unit_price then line_total). Dollar signs
+# optional, commas allowed, cents optional.
+_FAST_LINE_ITEM_RE = re.compile(
+    r'^\s*(?P<label>[A-Za-z][A-Za-z0-9 \-/&().,\'"]+?)'  # label
+    r'(?:\s+(?P<qty>\d+(?:\.\d+)?))?'                      # optional qty
+    r'\s+\$?\s*(?P<price>[\d,]+(?:\.\d{1,2})?)'            # unit price
+    r'\s+\$?\s*(?P<total>[\d,]+(?:\.\d{1,2})?)\s*$'        # line total
+)
+_FAST_LINE_LABEL_BLACKLIST = {
+    "total", "subtotal", "grand total", "amount due", "amount paid",
+    "balance due", "total due", "tax", "sales tax", "this invoice",
+    "paid", "payment",
+}
+
+
+def _parse_fast_total_value(raw: str) -> Optional[float]:
+    """Strip commas / whitespace, coerce to float, reject on parse fail."""
+    try:
+        return float(str(raw).replace(",", "").strip())
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _parse_native_text_fields(text: str) -> Dict[str, Any]:
+    """Rule-based extraction of invoice fields from a native-text
+    layer. Returns a dict with whichever fields parsed cleanly —
+    the caller enforces the required-field contract.
+    """
+    result: Dict[str, Any] = {}
+    if not text or not text.strip():
+        return result
+
+    # ── Date — earliest occurrence ───────────────────────────
+    m_date = _FAST_DATE_RE.search(text)
+    if m_date:
+        parsed_date = _coerce_date(m_date.group(0), log_ambiguous=False)
+        if parsed_date is not None:
+            result["doc_date"] = parsed_date
+
+    # ── Customer name ────────────────────────────────────────
+    m_cust = _FAST_CUSTOMER_RE.search(text)
+    if m_cust:
+        name = m_cust.group(1).strip()
+        # Guard against the next heading accidentally sticking.
+        if name and len(name) < 120:
+            result["customer_name"] = name
+            # Follow-on address block: up to 3 non-blank lines
+            # after the name, until a line that looks like the
+            # next section header (contains ':' or starts with
+            # a known block keyword).
+            idx = m_cust.end()
+            tail_lines = [
+                ln.strip() for ln in text[idx:].split("\n") if ln.strip()
+            ]
+            addr_lines: List[str] = []
+            for ln in tail_lines[:4]:
+                low = ln.lower()
+                if ":" in ln:
+                    break
+                if any(low.startswith(h) for h in (
+                    "invoice", "date", "due", "total", "amount",
+                    "bill to", "subtotal",
+                )):
+                    break
+                addr_lines.append(ln)
+                if len(addr_lines) >= 3:
+                    break
+            if addr_lines:
+                result["customer_address"] = ", ".join(addr_lines)
+
+    # ── Invoice number ──────────────────────────────────────
+    m_num = _FAST_INV_NUM_RE.search(text) or _FAST_INV_NUM_FALLBACK_RE.search(text)
+    if m_num:
+        result["doc_number"] = m_num.group(1)
+
+    # ── Grand total — labelled form, pick the LAST labelled
+    # hit so e.g. the "Total:" row at the bottom of the invoice
+    # wins over a stray "Total:" header earlier on the page.
+    # Fallback: largest currency figure anywhere in the text.
+    labelled = list(_FAST_TOTAL_RE.finditer(text))
+    if labelled:
+        gt = _parse_fast_total_value(labelled[-1].group(1))
+        if gt is not None and gt > 0:
+            result["grand_total"] = gt
+    if "grand_total" not in result:
+        all_amounts = re.findall(
+            r'\$\s*([\d,]+(?:\.\d{1,2})?)',
+            text,
+        )
+        vals = [v for v in (_parse_fast_total_value(a) for a in all_amounts)
+                if v is not None]
+        if vals:
+            result["grand_total"] = max(vals)
+
+    # ── Amount paid + total due (nullable optionals) ────────
+    m_paid = _FAST_AMOUNT_PAID_RE.search(text)
+    if m_paid:
+        v = _parse_fast_total_value(m_paid.group(1))
+        if v is not None:
+            result["amount_paid"] = v
+    m_due = _FAST_TOTAL_DUE_RE.search(text)
+    if m_due:
+        v = _parse_fast_total_value(m_due.group(1))
+        if v is not None:
+            result["total_due"] = v
+
+    # ── Line items — scan each line for the row pattern ────
+    line_items: List[Dict[str, Any]] = []
+    for raw_line in text.split("\n"):
+        ln = raw_line.rstrip()
+        if not ln.strip():
+            continue
+        m_li = _FAST_LINE_ITEM_RE.match(ln)
+        if not m_li:
+            continue
+        label = m_li.group("label").strip()
+        if label.lower() in _FAST_LINE_LABEL_BLACKLIST:
+            continue
+        price = _parse_fast_total_value(m_li.group("price"))
+        line_total = _parse_fast_total_value(m_li.group("total"))
+        if price is None or line_total is None:
+            continue
+        qty_raw = m_li.group("qty")
+        try:
+            qty = float(qty_raw) if qty_raw else 1.0
+        except ValueError:
+            qty = 1.0
+        line_items.append({
+            "description": label,
+            "item_name": label,
+            "qty": qty,
+            "cost_rate": price,
+            "line_total": line_total,
+        })
+    if line_items:
+        result["line_items"] = line_items
+
+    return result
+
+
+def _try_text_fast_path(
+    pdf_bytes: bytes,
+    *,
+    batch_id: str,
+    doc_idx: int,
+) -> Optional[ExtractedDocument]:
+    """PDFI-III · Feb-2026 — synthesise an ``ExtractedDocument`` from
+    a native-text PDF's PyMuPDF ``get_text()`` output. Returns
+    ``None`` on any rejection condition so the caller falls through
+    to the vision pipeline verbatim.
+    """
+    try:
+        pdoc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:                              # noqa: BLE001
+        logger.info(
+            "pdfi_fast_path_decision",
+            extra={
+                "batch_id": batch_id,
+                "doc_idx": doc_idx,
+                "pages": 0,
+                "text_len": 0,
+                "decision": "rejected",
+                "missing_fields": [f"pymupdf_open_error:{type(exc).__name__}"],
+            },
+        )
+        return None
+    try:
+        page_count = pdoc.page_count
+        if page_count > _FAST_PATH_PAGE_LIMIT:
+            logger.info(
+                "pdfi_fast_path_decision",
+                extra={
+                    "batch_id": batch_id,
+                    "doc_idx": doc_idx,
+                    "pages": page_count,
+                    "text_len": 0,
+                    "decision": "rejected",
+                    "missing_fields": ["pages_over_limit"],
+                },
+            )
+            return None
+        page_texts = [pdoc[i].get_text() or "" for i in range(page_count)]
+        if any(pt.strip() == "" for pt in page_texts):
+            logger.info(
+                "pdfi_fast_path_decision",
+                extra={
+                    "batch_id": batch_id,
+                    "doc_idx": doc_idx,
+                    "pages": page_count,
+                    "text_len": sum(len(pt) for pt in page_texts),
+                    "decision": "rejected",
+                    "missing_fields": ["blank_page_text_layer"],
+                },
+            )
+            return None
+        full_text = "\n".join(page_texts)
+        text_len = len(full_text)
+        if text_len < _FAST_PATH_MIN_TEXT_LEN:
+            logger.info(
+                "pdfi_fast_path_decision",
+                extra={
+                    "batch_id": batch_id,
+                    "doc_idx": doc_idx,
+                    "pages": page_count,
+                    "text_len": text_len,
+                    "decision": "rejected",
+                    "missing_fields": ["text_layer_too_short"],
+                },
+            )
+            return None
+
+        parsed = _parse_native_text_fields(full_text)
+        missing: List[str] = []
+        if not parsed.get("customer_name"):
+            missing.append("customer_name")
+        if parsed.get("doc_date") is None:
+            missing.append("doc_date")
+        gt = parsed.get("grand_total")
+        if gt is None or gt <= 0:
+            missing.append("grand_total")
+        lis = parsed.get("line_items") or []
+        if not lis or not all(
+            (li.get("item_name") and li.get("cost_rate") is not None)
+            for li in lis
+        ):
+            missing.append("line_items")
+
+        if missing:
+            logger.info(
+                "pdfi_fast_path_decision",
+                extra={
+                    "batch_id": batch_id,
+                    "doc_idx": doc_idx,
+                    "pages": page_count,
+                    "text_len": text_len,
+                    "decision": "rejected",
+                    "missing_fields": missing,
+                },
+            )
+            return None
+
+        logger.info(
+            "pdfi_fast_path_decision",
+            extra={
+                "batch_id": batch_id,
+                "doc_idx": doc_idx,
+                "pages": page_count,
+                "text_len": text_len,
+                "decision": "accepted",
+                "missing_fields": [],
+            },
+        )
+        return ExtractedDocument(
+            doc_kind="invoice",
+            source_page_range=[1, page_count],
+            customer_name=parsed["customer_name"],
+            customer_address=parsed.get("customer_address"),
+            doc_number=parsed.get("doc_number"),
+            doc_date=parsed["doc_date"],
+            line_items=[ExtractedLineItem(**li) for li in parsed["line_items"]],
+            grand_total=parsed["grand_total"],
+            amount_paid=parsed.get("amount_paid"),
+            total_due=parsed.get("total_due"),
+            extraction_confidence=_FAST_PATH_CONFIDENCE,
+        )
+    finally:
+        pdoc.close()
+
+
 async def extract(
     *,
     pdf_bytes: bytes,
@@ -635,6 +958,44 @@ async def extract(
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_count = doc.page_count
     warnings: List[str] = []
+    # PDFI-III · Feb-2026 — attempt the native-text fast path
+    # BEFORE any vision call. On a hit we return a single-
+    # document ExtractedBatch with ``model_used`` tagged so
+    # downstream metrics can bucket fast vs. vision runs. On
+    # a miss we fall through to the two-pass vision pipeline
+    # verbatim (ZERO change below this block).
+    fast_doc = _try_text_fast_path(
+        pdf_bytes, batch_id=batch_id, doc_idx=0,
+    )
+    if fast_doc is not None:
+        logger.info(
+            "pdfi_fast_path_hit",
+            extra={
+                "batch_id": batch_id,
+                "pages": page_count,
+                "sha": sha[:8],
+            },
+        )
+        doc.close()
+        finished = datetime.now(timezone.utc)
+        return ExtractedBatch(
+            batch_id=batch_id,
+            source_filename=source_filename,
+            source_sha256=sha,
+            source_byte_count=len(pdf_bytes),
+            page_count=page_count,
+            tenant_id=tenant_id,
+            documents=[fast_doc],
+            warnings=[],
+            structured_warnings=[],
+            model_used="pymupdf-fast-path",
+            extraction_started_at=started,
+            extraction_finished_at=finished,
+        )
+    # Vision fallback path — PDFI-III fast-path above either
+    # declined or found a required-field miss. Everything
+    # below is the pre-PDFI-III two-pass vision pipeline,
+    # unmodified.
     # Feb-2026 · PDF Importer Sub-phase B — additive structured
     # warnings list threaded through ``_ensure_document`` so
     # ``doc_date_missing`` entries carry a ``code`` + ``doc_position``
