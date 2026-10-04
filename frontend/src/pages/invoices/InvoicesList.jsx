@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye } from "lucide-react";
+import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, Landmark, ArrowUp, ArrowDown, Eye, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
 import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
+// PDFI-IV · Feb-2026 — sidepanel upload flow for native PDFs.
+import PdfInvoiceUploadSidePanel from "@/components/invoices/PdfInvoiceUploadSidePanel";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 import { formatRelativeFromIso } from "@/lib/relativeTime";
@@ -90,6 +92,8 @@ export default function InvoicesList() {
   // /quotes is intentionally left untouched.
   const [pmByInvoice, setPmByInvoice] = useState({});
   const [summary, setSummary] = useState(null);
+  // PDFI-IV · Feb-2026 — sidepanel open flag.
+  const [pdfPanelOpen, setPdfPanelOpen] = useState(false);
   const [q, setQ] = useState(params.get("q") || "");
   // FIN-PARITY-B · Feb-2026 — Invoice list defaults to Unpaid.
   // URL param renamed from ``status`` → ``payment_status`` so the
@@ -432,6 +436,10 @@ export default function InvoicesList() {
           <>
             <Button variant="ghost" onClick={() => navigate("/invoices/master")} testid="inv-master-list">
               <Layers size={16} /> Master invoices
+            </Button>
+            {/* PDFI-IV · Feb-2026 — opens the sidepanel upload flow. */}
+            <Button variant="ghost" onClick={() => setPdfPanelOpen(true)} testid="inv-list-upload-pdf-btn">
+              <UploadCloud size={16} /> Upload PDF
             </Button>
             <Button onClick={() => navigate("/invoices/new")} testid="inv-new">
               <Plus size={16} /> New Invoice
@@ -1060,5 +1068,14 @@ function _BulkPaySummaryModal({ results, onClose }) {
         </div>
       </div>
     </div>
+      {/* PDFI-IV · Feb-2026 — upload-flow sidepanel */}
+      <PdfInvoiceUploadSidePanel
+        open={pdfPanelOpen}
+        onClose={() => setPdfPanelOpen(false)}
+        onImportComplete={(createdId) => {
+          if (createdId) navigate(`/invoices/${createdId}`);
+        }}
+      />
+
   );
 }
