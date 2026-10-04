@@ -397,3 +397,118 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "legacy_iteration" in item.keywords:
                 item.add_marker(skip_legacy)
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# SCH Phase II-C · Feb-2026 — session-autouse demo-tech seed fixture.
+# ═════════════════════════════════════════════════════════════════════
+# The three demo technicians (pool/landscape/landscaping-user) used to
+# be re-seeded on every uvicorn boot via ``server.py::_background_seed``.
+# Phase II established that those seed helpers were the recreator of the
+# records a nuclear-purge atomic kept hard-deleting. Option-Y resolution
+# (user-approved) removed the three ``await step(...)`` calls from the
+# live-boot path and anchored the fixture responsibility here instead,
+# so the 316 test files that depend on these demo logins
+# (``mike@aquaterra.com``, ``carlos@aquaterra.com``,
+# ``landscaper@aquaterra.com``) keep working. See
+# ``test_sch_live_seed_not_run.py`` for the regression lock.
+#
+# Idempotent — upserts by ``(email, tenant_id)``; a run against a
+# freshly-purged Mongo creates the rows, a run against a Mongo already
+# holding them patches drift. Mirrors the field shapes in
+# ``backend/seed.py`` (seed_landscaping_user / seed_landscape_tech_carlos
+# / seed_pool_tech_mike) VERBATIM — grep those three functions if the
+# live schema drifts.
+_SCH_IIC_DEMO_TECHS = (
+    {"email": "landscaper@aquaterra.com", "name": "Luis Marquez",
+     "phone": "480-555-0166", "specialty": "Landscaping",
+     "department": "landscaping",
+     "avatar": ""},
+    {"email": "carlos@aquaterra.com", "name": "Carlos Rivera",
+     "phone": "480-555-0158", "specialty": "Landscaping",
+     "department": "landscaping",
+     "avatar": ""},
+    {"email": "mike@aquaterra.com", "name": "Mike Rivera",
+     "phone": "480-555-0142", "specialty": "Pool Maintenance",
+     "department": "pool_tech",
+     "avatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330"
+               "?crop=entropy&cs=srgb&fm=jpg&w=200&q=85"},
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_schedule_demo_techs():
+    """Session-start upsert of the 3 schedule-demo techs under aquaterra.
+
+    Idempotent. Runs before any test touches ``db.users`` /
+    ``db.technicians``, so login fixtures that rely on these demo
+    accounts see them regardless of what the live uvicorn did.
+    """
+    import os as _os
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+    from pathlib import Path as _Path
+    from dotenv import load_dotenv as _load_dotenv
+    from pymongo import MongoClient as _MongoClient
+
+    _load_dotenv(_Path("/app/backend/.env"))
+    _sync_db = _MongoClient(_os.environ["MONGO_URL"])[_os.environ["DB_NAME"]]
+
+    # Hash the demo password once up-front; falls back to a static sentinel
+    # if ``backend/utils`` is unimportable from this interpreter.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app/backend")
+        from utils import hash_password as _hash  # type: ignore
+        _pwd_hash = _hash("password123")
+    except Exception:
+        # Pre-hashed bcrypt of "password123" from the Phase II backup JSON;
+        # safe to pin because the password is a public demo credential.
+        _pwd_hash = "$2b$12$IBJrD2gsHqVT4vvvAom5Kuf9ktbQdHiGpTDJ/S0pGzuM8PA4SLG92"
+
+    tenant = _sync_db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+    tenant_id = tenant["id"] if tenant else None
+
+    now = _dt.now(_tz.utc).isoformat()
+    for spec in _SCH_IIC_DEMO_TECHS:
+        existing_user = _sync_db.users.find_one({"email": spec["email"]}, {"_id": 0})
+        if existing_user:
+            # Patch drift — role / department / tenant_id / active.
+            upd = {}
+            if existing_user.get("role") != "technician":
+                upd["role"] = "technician"
+            if (existing_user.get("department") or "").lower() != spec["department"]:
+                upd["department"] = spec["department"]
+            if tenant_id and existing_user.get("tenant_id") != tenant_id:
+                upd["tenant_id"] = tenant_id
+            if not existing_user.get("active", True):
+                upd["active"] = True
+            if upd:
+                _sync_db.users.update_one({"id": existing_user["id"]}, {"$set": upd})
+            continue
+        tech_id = str(_uuid.uuid4())
+        _sync_db.technicians.insert_one({
+            "id": tech_id, "name": spec["name"], "email": spec["email"],
+            "phone": spec["phone"], "specialty": spec["specialty"],
+            "avatar": spec["avatar"], "active": True, "created_at": now,
+            **({"department": spec["department"]} if spec["department"] == "pool_tech" else {}),
+            **({"tenant_id": tenant_id} if tenant_id else {}),
+        })
+        _sync_db.users.insert_one({
+            "id": str(_uuid.uuid4()),
+            "name": spec["name"],
+            "email": spec["email"],
+            "password_hash": _pwd_hash,
+            "role": "technician",
+            "department": spec["department"],
+            "avatar": spec["avatar"],
+            "technician_id": tech_id,
+            "active": True,
+            "created_at": now,
+            **({"tenant_id": tenant_id} if tenant_id else {}),
+        })
+    yield
+    # No teardown — the fixture is session-autouse and the next run
+    # upserts drift-free. Downstream test cleanup remains the responsibility
+    # of each test's own TAG-prefixed teardown (see ``_purge_test_data``).

@@ -2203,15 +2203,20 @@ async def _background_seed():
     # SEED_DEMO_DATA guard here is the belt-and-braces defense for
     # a prod pod that gets misconfigured.
     if _SEED_DEMO_DATA:
-        await step("landscaping_user", seed_landscaping_user())
-        await step("landscape_tech_carlos", seed_landscape_tech_carlos())
-        # Phase 41.1b · Feb 2026 — idempotent backfill of mike@aquaterra.com
-        # (pool tech). Historically he lived only inside the one-shot
-        # ``seed()`` bulk seed, which early-returns when users exist —
-        # any deployment where another user was created first never got
-        # Mike, leaving `test_ai_employees_ae1.py` + `test_phase50.py`
-        # with a 401-on-login fixture failure. Now backfilled on every boot.
-        await step("pool_tech_mike", seed_pool_tech_mike())
+        # SCH Phase II-C · Feb-2026 — the three schedule-demo-tech
+        # seeds previously called here (landscaper, carlos landscape
+        # tech, mike pool tech) were REMOVED from the live-boot path.
+        # They re-created themselves on every uvicorn hot-reload after
+        # the Phase II hard-delete finished (6s after commit SHA
+        # 88417c1bc), making the purge futile. The three helpers in
+        # ``seed.py`` are still importable (kept for parity with
+        # ``test_seed_demo_users_gate.py``) and are now re-seeded via
+        # a session-scoped autouse fixture in ``tests/conftest.py``
+        # — the 316-test pytest harness is unaffected, but the live
+        # uvicorn boot path no longer re-materializes the three
+        # demo-tech rows. See /app/logs/scheduled_tech_purge_backup_c_*.json
+        # for the final purge artefact.
+        pass
         # Phase 5A follow-up · Feb 2026 — realign Mike (pool) / Carlos
         # (landscape) + seed the manager role-gate test account. Both are
         # idempotent and safe to run on every boot.
