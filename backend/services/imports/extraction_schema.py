@@ -101,6 +101,14 @@ class ExtractedDocument(BaseModel):
     tax_rate: Optional[float] = None
     amount_paid: Optional[float] = None
     total_due: Optional[float] = None
+    # PDFI-PAID-A · Feb-2026 — derived paid-status boolean. True when
+    # STRICT ruling holds: ``amount_paid > 0`` AND ``total_due <= 0.01``
+    # (floating-point tolerance for a nominal zero). Set by the
+    # extractor (fast-path and vision path both compute it) so the
+    # mapper + commit path downstream can promote an invoice to a
+    # "paid" status without re-deriving the rule.  None when neither
+    # input is present (operator still edits at preview).
+    is_paid: Optional[bool] = None
     notes: Optional[str] = None
     raw_operator_audit_line: Optional[str] = None
     extraction_confidence: float = Field(default=1.0, ge=0.0, le=1.0)

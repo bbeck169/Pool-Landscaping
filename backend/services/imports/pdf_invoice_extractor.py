@@ -149,6 +149,7 @@ _EXTRACTION_USER_TMPL = (
     '  "grand_total": float | null,\n'
     '  "amount_paid": float | null,\n'
     '  "total_due": float | null,\n'
+    '  "is_paid": true | false | null,\n'
     '  "notes": str | null,\n'
     '  "raw_operator_audit_line": str | null,\n'
     '  "extraction_confidence": 0.0-1.0\n'
@@ -201,6 +202,21 @@ _EXTRACTION_USER_TMPL = (
     "When all three (subtotal / tax_total / grand_total) are "
     "visible, verify that ``subtotal + tax_total ≈ grand_total`` "
     "(small rounding differences <$0.01 are fine).\n"
+    "- PDFI-PAID-A · Feb-2026 — ``is_paid`` is a DERIVED boolean. "
+    "Return true ONLY when the invoice is clearly marked paid: "
+    "a visible ``PAID`` watermark / stamp, OR ``Total Due`` prints as "
+    "$0.00, OR ``Amount Paid`` equals ``Total`` / ``Grand Total``. "
+    "Return false when a positive balance remains (``Total Due`` > 0 "
+    "or ``Amount Paid`` < ``Grand Total``).  Return null when the PDF "
+    "shows no paid-status indicators at all.  ``amount_paid`` and "
+    "``total_due`` are the raw-value inputs the backend uses to re-"
+    "derive ``is_paid`` under a strict ruling when you return null; "
+    "always extract them verbatim when visible.\n"
+    "- ``paid_at`` MUST be an ISO date (``YYYY-MM-DD``) when a payment "
+    "date is explicitly printed (``Paid on``, ``Payment Date``, "
+    "``Received``, a dated ``PAID`` stamp).  Return null when the PDF "
+    "shows ``is_paid=true`` indicators but no explicit date — the "
+    "operator fills it in at the preview-confirm step.\n"
 )
 
 # PDF-FIX-C · Feb-2026 — prompt-version stamp for A/B measurement
@@ -514,6 +530,15 @@ def _ensure_document(raw: Dict[str, Any], warnings: List[str],
         grand_total=raw.get("grand_total"),
         amount_paid=raw.get("amount_paid"),
         total_due=raw.get("total_due"),
+        # PDFI-PAID-A · Feb-2026 — honor model-supplied ``is_paid`` when
+        # the vision prompt returns an explicit bool; otherwise re-derive
+        # under the STRICT ruling using the raw inputs the model
+        # extracted.  Keeps vision + fast-path aligned on the same rule.
+        is_paid=(
+            raw["is_paid"]
+            if isinstance(raw.get("is_paid"), bool)
+            else _derive_is_paid(raw.get("amount_paid"), raw.get("total_due"))
+        ),
         notes=raw.get("notes"),
         raw_operator_audit_line=raw.get("raw_operator_audit_line"),
         extraction_confidence=float(raw.get("extraction_confidence") or 1.0),
@@ -640,6 +665,21 @@ _FAST_TOTAL_DUE_RE = re.compile(
     r'(?:Balance\s*Due|Total\s*Due)\s*[:#]?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)',
     re.IGNORECASE,
 )
+# PDFI-PAID-A · Feb-2026 — payment-date keyword prefix followed by any
+# of the shapes ``_FAST_DATE_RE`` already accepts (long-month, slash-
+# separated, ISO).  Keyword list intentionally narrow — "Paid on" /
+# "Payment Date" / "Date Paid" / "Received on".  Bare "Paid" (which
+# would also match ``Amount Paid`` labels) is excluded so we don't
+# false-positive on a dollar amount.
+_FAST_PAID_AT_RE = re.compile(
+    r'(?:Paid\s+on|Payment\s+Date|Date\s+Paid|Received\s+on)'
+    r'\s*[:#]?\s*'
+    r'((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*'
+    r'\s+\d{1,2},?\s+\d{4}'
+    r'|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}'
+    r'|\d{4}-\d{2}-\d{2})',
+    re.IGNORECASE,
+)
 # Line-item row pattern — leading non-numeric label, optional qty,
 # two currency amounts (unit_price then line_total). Dollar signs
 # optional, commas allowed, cents optional.
@@ -662,6 +702,39 @@ def _parse_fast_total_value(raw: str) -> Optional[float]:
         return float(str(raw).replace(",", "").strip())
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+# PDFI-PAID-A · Feb-2026 — derived paid-status rule.
+# STRICT ruling: both inputs must be present AND satisfy the predicate.
+# ``amount_paid > 0`` AND ``total_due <= 0.01`` (tolerance for a nominal
+# zero after float arithmetic).  Any missing input returns False — the
+# caller surfaces this as "not clearly paid" and operator confirms at
+# preview.  Never raises.
+_PAID_ZERO_TOLERANCE = 0.01
+
+
+def _derive_is_paid(
+    amount_paid: Optional[float],
+    total_due: Optional[float],
+) -> bool:
+    """Return True IFF the invoice is strictly marked paid.
+
+    Required: both ``amount_paid`` and ``total_due`` are present (not
+    None) AND ``amount_paid > 0`` AND ``total_due <= 0.01``.  Any
+    missing input OR partial-payment state (``total_due > 0.01``)
+    returns False.  Kept side-effect-free so both fast-path and
+    vision-path callers can invoke it without threading context.
+    """
+    if amount_paid is None or total_due is None:
+        return False
+    try:
+        if float(amount_paid) <= 0:
+            return False
+        if float(total_due) > _PAID_ZERO_TOLERANCE:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _parse_native_text_fields(text: str) -> Dict[str, Any]:
@@ -746,6 +819,25 @@ def _parse_native_text_fields(text: str) -> Dict[str, Any]:
         v = _parse_fast_total_value(m_due.group(1))
         if v is not None:
             result["total_due"] = v
+
+    # PDFI-PAID-A · Feb-2026 — payment date (nullable optional).
+    # Vision path has carried ``paid_at`` since H.1; fast-path finally
+    # extracts it here so a native-text invoice marked paid also
+    # surfaces its payment date without a vision round-trip.
+    m_paid_at = _FAST_PAID_AT_RE.search(text)
+    if m_paid_at:
+        parsed_paid_at = _coerce_date(m_paid_at.group(1), log_ambiguous=False)
+        if parsed_paid_at is not None:
+            result["paid_at"] = parsed_paid_at
+
+    # Derived paid-status flag (STRICT ruling).  Written whenever
+    # BOTH inputs parsed cleanly, otherwise defaults to False so
+    # downstream readers get a definite bool rather than tri-state
+    # None semantics.
+    result["is_paid"] = _derive_is_paid(
+        result.get("amount_paid"),
+        result.get("total_due"),
+    )
 
     # ── Line items — scan each line for the row pattern ────
     line_items: List[Dict[str, Any]] = []
@@ -891,6 +983,12 @@ def _try_text_fast_path(
                 "text_len": text_len,
                 "decision": "accepted",
                 "missing_fields": [],
+                # PDFI-PAID-A · Feb-2026 — paid-status telemetry so
+                # post-ship analytics can measure how often native-
+                # text invoices land already-paid vs. open.
+                "is_paid": bool(parsed.get("is_paid")),
+                "amount_paid": parsed.get("amount_paid"),
+                "paid_at_found": parsed.get("paid_at") is not None,
             },
         )
         return ExtractedDocument(
@@ -904,6 +1002,13 @@ def _try_text_fast_path(
             grand_total=parsed["grand_total"],
             amount_paid=parsed.get("amount_paid"),
             total_due=parsed.get("total_due"),
+            # PDFI-PAID-A · Feb-2026 — carry paid_at + derived is_paid
+            # through the fast-path write.  Both nullable: paid_at is
+            # None when the invoice is marked paid but no date is
+            # printed (test (e) locks this); is_paid is False when the
+            # STRICT ruling isn't satisfied.
+            paid_at=parsed.get("paid_at"),
+            is_paid=bool(parsed.get("is_paid")),
             extraction_confidence=_FAST_PATH_CONFIDENCE,
         )
     finally:
