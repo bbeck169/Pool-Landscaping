@@ -121,6 +121,11 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Marketing Campaigns", route: "/marketing/campaigns",            icon: "flag-outline",         tier: "t3", testID: "drawer-nav-t3-campaigns" },
       { label: "Social Composer",     route: "/social/composer",                icon: "chatbubbles-outline",  tier: "t3", testID: "drawer-nav-t3-social" },
       { label: "SEO Articles",        route: "/seo/articles",                   icon: "reader-outline",       tier: "t3", testID: "drawer-nav-t3-seo-articles" },
+      // NAV-REORG — legacy standalone group folded into marketing.
+      { label: "Reviews Dashboard",  route: "/admin/reviews",            icon: "star-outline",     tier: "t2", testID: "drawer-nav-reviews" },
+      { label: "Review Requests",    route: "/admin/reviews/requests",   icon: "send-outline",     tier: "t2", testID: "drawer-nav-reviews-requests" },
+      { label: "Review Platforms",   route: "/admin/reviews/platforms",  icon: "logo-google",      tier: "t2", testID: "drawer-nav-reviews-platforms" },
+      { label: "Review Widget",      route: "/admin/reviews/widget",     icon: "cube-outline",     tier: "t2", testID: "drawer-nav-reviews-widget" },
     ],
   },
   {
@@ -249,16 +254,6 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Templates",          route: "/admin/comms/templates",   icon: "file-tray-outline",  tier: "t2", testID: "drawer-nav-comms-templates" },
       { label: "Automations",        route: "/admin/comms/automations", icon: "flash-outline",      tier: "t2", testID: "drawer-nav-comms-automations" },
       { label: "Sends History",      route: "/admin/comms/sends",       icon: "paper-plane-outline",tier: "t2", testID: "drawer-nav-comms-sends" },
-    ],
-  },
-  {
-    key: "reviews",
-    label: "Reviews",
-    entries: [
-      { label: "Dashboard",   route: "/admin/reviews",           icon: "star-outline",     tier: "t2", testID: "drawer-nav-reviews" },
-      { label: "Requests",    route: "/admin/reviews/requests",  icon: "send-outline",     tier: "t2", testID: "drawer-nav-reviews-requests" },
-      { label: "Platforms",   route: "/admin/reviews/platforms", icon: "logo-google",      tier: "t2", testID: "drawer-nav-reviews-platforms" },
-      { label: "Widget",      route: "/admin/reviews/widget",    icon: "cube-outline",     tier: "t2", testID: "drawer-nav-reviews-widget" },
     ],
   },
   // Phase 37 · Feb-2026 — Business OS parity (P1.3). New top-level
