@@ -1000,6 +1000,21 @@ export default function CustomerDetail() {
                       : null,
               warn: true },
             { icon: BellRing, label: "Alert email", value: customer.alert_email, warn: true },
+            /* CP-1-B · Feb-2026 — Gate code promoted into the top
+             * stat-tile row (previously only rendered inside the
+             * lower ``cd-address-block`` <Info> row at line 1109,
+             * which is kept intact for continuity).  Unconditional
+             * render for every role; the shared ``{c.value || "—"}``
+             * fallback in the loop below surfaces an em-dash when
+             * ``customer.gate_code`` is null / undefined / empty
+             * string.  No role guard — gate codes are visible to
+             * anyone with access to the customer profile. */
+            {
+              icon: KeyRound,
+              label: "Gate code",
+              value: customer.gate_code,
+              testid: "cd-stat-gate-code",
+            },
           ].map((c) => (
             <div
               key={c.label}
