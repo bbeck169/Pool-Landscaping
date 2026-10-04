@@ -1,20 +1,35 @@
 /**
- * PDFI-IV · Feb-2026 — Side-panel upload flow for /invoices.
- *
- * Single-file upload → poll → preview (5 color-coded tiles) →
- * inline edit via PATCH → commit → fire ``onImportComplete(id)``
- * and close. On cancel after a successful upload, best-effort
- * rollback so the batch doesn't leak.
+ * PDFI-V · Feb-2026 — Side-panel upload flow for /invoices.
  *
  * State machine (``step``):
- *   idle → uploading → polling → preview_ready → editing →
- *   committing → committed
+ *   idle → uploading → polling → preview_ready → committing →
+ *   committed
  *                              ↘ error (recoverable; "Retry")
+ *                              ↘ timeout (recoverable; "Retry" +
+ *                                 "Open bulk hub")
+ *
+ * Multi-doc PDF support: when the batch's ``mapper_previews``
+ * array has length > 1, a doc selector dropdown lets the
+ * operator switch between invoices in the file. Commit only
+ * creates the currently-selected doc.
+ *
+ * Picker wiring:
+ *   * No-match customer → inline CustomerCombobox mounts;
+ *     parent dispatches ``patchPreview`` with
+ *     ``matched_customer_id + customer_name + customer_address``.
+ *   * Line without ``pricebook_item_id`` → inline
+ *     PricebookItemPicker mounts per row; parent dispatches
+ *     ``patchPreview`` with the ``line_items`` partial.
+ *
+ * ``pollTimeoutMs`` prop (default 60000) is parametrized so
+ * unit tests can inject a short deadline — makes the timeout
+ * path deterministically reachable under real timers.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Upload, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Upload, X, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
+import { api } from "@/api";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from "@/components/ui/sheet";
@@ -29,19 +44,24 @@ import TotalTile from "@/components/invoices/pdfPreviewTiles/TotalTile";
 import DateTile from "@/components/invoices/pdfPreviewTiles/DateTile";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 60000;
+const DEFAULT_POLL_INTERVAL_MS = 2000;
+const DEFAULT_POLL_TIMEOUT_MS = 60000;
+const BULK_HUB_URL = "/admin/imports/pdf-invoice";
 
 export default function PdfInvoiceUploadSidePanel({
   open,
   onClose,
   onImportComplete,
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  pollTimeoutMs = DEFAULT_POLL_TIMEOUT_MS,
 }) {
   const [step, setStep] = useState("idle");
   const [file, setFile] = useState(null);
   const [batchId, setBatchId] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [batchPreviews, setBatchPreviews] = useState([]);
+  const [activeDocIdx, setActiveDocIdx] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
+  const [customers, setCustomers] = useState([]);
   const pollTimerRef = useRef(null);
   const pollStartRef = useRef(0);
 
@@ -49,7 +69,8 @@ export default function PdfInvoiceUploadSidePanel({
     setStep("idle");
     setFile(null);
     setBatchId(null);
-    setPreview(null);
+    setBatchPreviews([]);
+    setActiveDocIdx(0);
     setErrorMsg("");
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
@@ -58,18 +79,18 @@ export default function PdfInvoiceUploadSidePanel({
   }, []);
 
   const _close = useCallback(async () => {
-    // Best-effort rollback if the operator closed mid-flow without
-    // committing. Fire-and-forget — the admin bulk hub can clean up
-    // any orphan batch if this request fails.
     if (batchId && step !== "committed") {
-      try { await rollbackBatch(batchId, { reason: "user_cancelled_sidepanel" }); }
-      catch { /* swallow — not critical for client UX */ }
+      try {
+        await rollbackBatch(batchId, { reason: "user_cancelled_sidepanel" });
+        toast.success("Upload cancelled.");
+      } catch {
+        // Non-critical — admin hub can clean up any orphan.
+      }
     }
     _reset();
     onClose?.();
   }, [batchId, step, _reset, onClose]);
 
-  // ── File drop / pick ───────────────────────────────────────
   const _onPickFile = (f) => {
     if (!f) return;
     if (f.type !== "application/pdf" && !f.name?.toLowerCase().endsWith(".pdf")) {
@@ -101,7 +122,6 @@ export default function PdfInvoiceUploadSidePanel({
     }
   };
 
-  // ── Polling loop ───────────────────────────────────────────
   useEffect(() => {
     if (step !== "polling" || !batchId) return undefined;
     let cancelled = false;
@@ -112,25 +132,27 @@ export default function PdfInvoiceUploadSidePanel({
         if (cancelled) return;
         if (row?.status === "preview_complete") {
           const previews = row.mapper_previews || [];
-          setPreview(previews[0] || null);
+          setBatchPreviews(previews);
+          setActiveDocIdx(0);
           setStep("preview_ready");
           return;
         }
         if (row?.status === "failed" || row?.status === "commit_failed") {
           setErrorMsg(row?.error || "Extraction failed.");
           setStep("error");
+          toast.error("Extraction failed.");
           return;
         }
-        if (Date.now() - pollStartRef.current > POLL_TIMEOUT_MS) {
-          setErrorMsg("Polling timed out after 60s — try again.");
-          setStep("error");
+        if (Date.now() - pollStartRef.current > pollTimeoutMs) {
+          setStep("timeout");
           return;
         }
-        pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS);
+        pollTimerRef.current = setTimeout(tick, pollIntervalMs);
       } catch (err) {
         if (cancelled) return;
         setErrorMsg(err?.message || "Polling failed.");
         setStep("error");
+        toast.error("Polling failed.");
       }
     };
     tick();
@@ -141,13 +163,27 @@ export default function PdfInvoiceUploadSidePanel({
         pollTimerRef.current = null;
       }
     };
-  }, [step, batchId]);
+  }, [step, batchId, pollIntervalMs, pollTimeoutMs]);
 
-  // ── Preview edit helpers ───────────────────────────────────
+  useEffect(() => {
+    if (step !== "preview_ready" || customers.length > 0) return;
+    (async () => {
+      try {
+        const rows = await api.get("/customers?active=true");
+        setCustomers(Array.isArray(rows) ? rows : []);
+      } catch {
+        setCustomers([]);
+      }
+    })();
+  }, [step, customers.length]);
+
+  const preview = batchPreviews[activeDocIdx] || null;
+  const qi = preview?.quote_in || {};
+
   const _applyPatch = useCallback(async (patch) => {
     if (!batchId || !preview) return;
-    // Optimistic update.
-    const prevSnapshot = preview;
+    const prevSnapshot = batchPreviews;
+    const nextPreview = { ...preview };
     const nextQuoteIn = { ...(preview.quote_in || {}) };
     if (patch.line_items) {
       const curr = [...(nextQuoteIn.line_items || [])];
@@ -163,20 +199,51 @@ export default function PdfInvoiceUploadSidePanel({
       }
       nextQuoteIn.line_items = curr;
     }
-    for (const k of ["customer_name", "customer_address", "doc_number", "doc_date", "grand_total"]) {
-      if (k in patch) nextQuoteIn[k] = patch[k];
+    for (const k of [
+      "customer_name", "customer_address",
+      "doc_number", "doc_date", "grand_total",
+      "matched_customer_id",
+    ]) {
+      if (k in patch) {
+        if (k === "matched_customer_id") {
+          nextPreview.matched_customer_id = patch[k];
+        } else {
+          nextQuoteIn[k] = patch[k];
+        }
+      }
     }
-    setPreview({ ...preview, quote_in: nextQuoteIn });
+    nextPreview.quote_in = nextQuoteIn;
+    const nextPreviews = [...batchPreviews];
+    nextPreviews[activeDocIdx] = nextPreview;
+    setBatchPreviews(nextPreviews);
     try {
-      await patchPreview(batchId, { doc_idx: 0, patch });
+      await patchPreview(batchId, { doc_idx: activeDocIdx, patch });
     } catch (err) {
-      setPreview(prevSnapshot);
+      setBatchPreviews(prevSnapshot);
       toast.error(err?.message || "Save failed.");
     }
-  }, [batchId, preview]);
+  }, [batchId, preview, batchPreviews, activeDocIdx]);
 
-  // ── Readiness gate for the Create Invoice button ──────────
-  const qi = preview?.quote_in || {};
+  const _onPickCustomer = (customer) => {
+    _applyPatch({
+      matched_customer_id: customer.id,
+      customer_name: customer.name || "",
+      customer_address: customer.address || "",
+    });
+  };
+
+  const _onPickPricebook = (lineIdx, item) => {
+    _applyPatch({
+      line_items: {
+        [lineIdx]: {
+          pricebook_item_id: item.id,
+          item_name: item.name || "",
+          unit_price: Number(item.unit_price) || 0,
+        },
+      },
+    });
+  };
+
   const _readyToCommit = (
     Boolean(qi.customer_name) &&
     Boolean(qi.doc_date) &&
@@ -194,7 +261,8 @@ export default function PdfInvoiceUploadSidePanel({
         || res?.commit_result?.created_quote_ids?.[0]
         || null;
       setStep("committed");
-      toast.success("Invoice created from PDF.");
+      const invNum = qi.doc_number || createdId || "";
+      toast.success(invNum ? `Invoice created · #${invNum}` : "Invoice created.");
       onImportComplete?.(createdId);
       _reset();
       onClose?.();
@@ -205,8 +273,19 @@ export default function PdfInvoiceUploadSidePanel({
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────
-  const previewCount = (preview && preview.quote_in) ? 1 : 0;
+  const _onTimeoutRetry = () => {
+    if (!batchId) return;
+    setStep("polling");
+    pollStartRef.current = Date.now();
+  };
+
+  const _onOpenBulkHub = () => {
+    if (typeof window !== "undefined" && window.location) {
+      window.location.assign(BULK_HUB_URL);
+    }
+  };
+
+  const docCount = batchPreviews.length;
   return (
     <Sheet
       open={open}
@@ -258,8 +337,11 @@ export default function PdfInvoiceUploadSidePanel({
                 Choose file
               </label>
               {file && (
-                <div className="mt-3 text-xs text-slate-700" data-testid="pdfi-upload-filename">
-                  {file.name} · {(file.size / 1024).toFixed(1)} KB
+                <div
+                  className="mt-3 text-xs text-slate-700"
+                  data-testid="pdfi-upload-filename"
+                >
+                  {file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB · ready to upload
                 </div>
               )}
               {file && (
@@ -287,20 +369,86 @@ export default function PdfInvoiceUploadSidePanel({
             </div>
           )}
 
+          {step === "timeout" && (
+            <div
+              className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4"
+              data-testid="pdfi-upload-timeout"
+            >
+              <div className="flex items-center gap-2 font-semibold text-amber-900 mb-1">
+                <Clock size={16} /> Taking longer than usual
+              </div>
+              <div className="text-xs text-amber-900 mb-3">
+                Your PDF is still being processed. Retry to resume
+                polling or open the bulk hub to track it there.
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={_onTimeoutRetry}
+                  className="flex-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-xs px-3 py-1"
+                  data-testid="pdfi-upload-timeout-retry-btn"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={_onOpenBulkHub}
+                  className="flex-1 rounded-md border border-amber-700 text-amber-900 hover:bg-amber-100 text-xs px-3 py-1"
+                  data-testid="pdfi-upload-timeout-bulk-btn"
+                >
+                  Open bulk hub
+                </button>
+              </div>
+            </div>
+          )}
+
           {step === "preview_ready" && preview && (
             <div className="space-y-4" data-testid="pdfi-preview-ready">
-              {previewCount > 0 && (
-                <div className="text-xs text-slate-600 italic" data-testid="pdfi-preview-doc-count">
-                  Previewing invoice 1 of 1.
+              {docCount > 1 && (
+                <div
+                  className="rounded-md bg-slate-100 border border-slate-300 p-3"
+                  data-testid="pdfi-preview-doc-selector"
+                >
+                  <label className="block text-xs text-slate-700 mb-1">
+                    Document ({activeDocIdx + 1} of {docCount})
+                  </label>
+                  <select
+                    value={activeDocIdx}
+                    onChange={(e) => setActiveDocIdx(Number(e.target.value))}
+                    className="w-full px-2 py-1 rounded border border-slate-400 bg-white text-sm"
+                    data-testid="pdfi-preview-doc-selector-input"
+                  >
+                    {batchPreviews.map((p, i) => (
+                      <option key={i} value={i}>
+                        Document {i + 1}
+                        {p?.quote_in?.doc_number ? ` · #${p.quote_in.doc_number}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div
+                    className="mt-2 text-[11px] text-slate-600"
+                    data-testid="pdfi-preview-doc-selector-hint"
+                  >
+                    {docCount - 1} additional invoice{docCount > 2 ? "s" : ""} in this file —
+                    <a
+                      href={BULK_HUB_URL}
+                      className="underline ml-1"
+                      data-testid="pdfi-preview-doc-selector-bulk-link"
+                    >
+                      use the bulk import hub
+                    </a>
+                    {" "}to process all at once.
+                  </div>
                 </div>
               )}
               <CustomerTile
                 customerName={qi.customer_name}
                 customerAddress={qi.customer_address}
                 matchedCustomerId={preview.matched_customer_id}
+                customers={customers}
                 onEditName={(v) => _applyPatch({ customer_name: v })}
                 onEditAddress={(v) => _applyPatch({ customer_address: v })}
-                onPickCustomer={() => toast.info("Customer picker — select from the admin customer directory.")}
+                onPickCustomer={_onPickCustomer}
               />
               <DateTile
                 docDate={qi.doc_date}
@@ -311,12 +459,20 @@ export default function PdfInvoiceUploadSidePanel({
               <LineItemsTile
                 lineItems={qi.line_items || []}
                 onEditLine={(i, p) => _applyPatch({ line_items: { [i]: p } })}
-                onPickPricebook={() => toast.info("Pricebook picker — attach a catalogue item.")}
-                onAddLine={() => _applyPatch({ line_items: { [(qi.line_items || []).length]: { item_name: "", quantity: 1, unit_price: 0, line_total: 0 } } })}
+                onPickPricebook={_onPickPricebook}
+                onAddLine={() => _applyPatch({
+                  line_items: {
+                    [(qi.line_items || []).length]: {
+                      item_name: "", quantity: 1, unit_price: 0, line_total: 0,
+                    },
+                  },
+                })}
               />
               <LineItemDescriptionsTile
                 lineItems={qi.line_items || []}
-                onEditDescription={(i, v) => _applyPatch({ line_items: { [i]: { description: v } } })}
+                onEditDescription={(i, v) => _applyPatch({
+                  line_items: { [i]: { description: v } },
+                })}
               />
               <TotalTile
                 grandTotal={qi.grand_total}
@@ -338,9 +494,12 @@ export default function PdfInvoiceUploadSidePanel({
           )}
 
           {step === "committing" && (
-            <div className="text-center text-sm text-slate-600" data-testid="pdfi-upload-committing">
+            <div
+              className="text-center text-sm text-slate-600"
+              data-testid="pdfi-upload-committing"
+            >
               <Loader2 size={20} className="mx-auto mb-2 animate-spin text-green-600" />
-              Creating invoice…
+              Creating…
             </div>
           )}
 

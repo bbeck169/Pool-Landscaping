@@ -1,11 +1,17 @@
 /**
- * PDFI-IV · Feb-2026 — Line Items tile (YELLOW).
+ * PDFI-V · Feb-2026 — Line Items tile (YELLOW).
+ *
  * Mini-table with inline-editable item_name / quantity /
  * unit_price / line_total. Per-row catalogue-match chip +
- * "Pick from catalog" affordance when no pricebook id is set.
+ * inline ``PricebookItemPicker`` on the no-match rows — the
+ * operator opens the picker, searches, selects an item; the
+ * parent dispatches ``patchPreview`` with the line_items
+ * partial on ``onPickPricebook(lineIdx, item)``.
  */
-import React from "react";
-import { List, Package, Plus } from "lucide-react";
+import React, { useState } from "react";
+import { List, Package, Plus, X as XIcon } from "lucide-react";
+
+import PricebookItemPicker from "@/components/pricebook/PricebookItemPicker";
 
 export default function LineItemsTile({
   lineItems,
@@ -14,6 +20,15 @@ export default function LineItemsTile({
   onAddLine,
 }) {
   const rows = lineItems || [];
+  const [openPickerIdx, setOpenPickerIdx] = useState(null);
+  const [pickerQueries, setPickerQueries] = useState({});
+
+  const _closePicker = () => setOpenPickerIdx(null);
+  const _onPick = (lineIdx, row) => {
+    onPickPricebook?.(lineIdx, row);
+    _closePicker();
+  };
+
   return (
     <div
       className="rounded-xl border-2 border-yellow-400 bg-yellow-100 p-4 shadow-sm"
@@ -40,6 +55,7 @@ export default function LineItemsTile({
         )}
         {rows.map((li, i) => {
           const matched = Boolean(li.pricebook_item_id);
+          const pickerOpen = openPickerIdx === i;
           return (
             <div
               key={i}
@@ -62,17 +78,41 @@ export default function LineItemsTile({
                   >
                     <Package size={12} /> pb-match
                   </span>
-                ) : (
+                ) : !pickerOpen ? (
                   <button
                     type="button"
-                    onClick={() => onPickPricebook?.(i)}
+                    onClick={() => setOpenPickerIdx(i)}
                     className="inline-flex items-center gap-1 rounded-md bg-yellow-200 hover:bg-yellow-300 text-yellow-900 text-xs px-2 py-0.5"
                     data-testid={`pdfi-tile-lineitems-row-${i}-pick-btn`}
                   >
                     <Package size={12} /> Pick from catalog
                   </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={_closePicker}
+                    className="inline-flex items-center gap-1 rounded-md bg-yellow-200 hover:bg-yellow-300 text-yellow-900 text-xs px-2 py-0.5"
+                    data-testid={`pdfi-tile-lineitems-row-${i}-picker-cancel`}
+                  >
+                    <XIcon size={12} /> Cancel
+                  </button>
                 )}
               </div>
+              {pickerOpen && (
+                <div
+                  className="mb-2"
+                  data-testid={`pdfi-tile-lineitems-row-${i}-picker-container`}
+                >
+                  <PricebookItemPicker
+                    value={pickerQueries[i] || li.item_name || ""}
+                    onChange={(next) => setPickerQueries((q) => ({ ...q, [i]: next }))}
+                    onSelect={(row) => _onPick(i, row)}
+                    inputTestid={`pdfi-tile-lineitems-row-${i}-picker-input`}
+                    wrapperTestid={`pdfi-tile-lineitems-row-${i}-picker-wrapper`}
+                    placeholder="Search catalog…"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="block text-[10px] text-yellow-900">Qty</label>

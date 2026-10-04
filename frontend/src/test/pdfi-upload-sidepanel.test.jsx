@@ -1,37 +1,16 @@
 /**
- * PDFI-IV · Feb-2026 — Sidepanel upload flow contract tests.
+ * PDFI-IV + V · Feb-2026 — Sidepanel contract tests.
  *
- * Locks the user-facing surface shipped alongside the backend
- * PDFI-II / PDFI-III work:
- *
- *   (a) "Upload PDF" button is wired on InvoicesList with the
- *       correct testid (source-inspected; mounting the full
- *       page tree hangs vitest's collection phase per
- *       vitest.config.js note).
- *   (b) Dropzone rejects non-PDF files via a sonner error toast.
- *   (c) Pick + click Upload → kickoffUpload called with the file
- *       in form data.
- *   (d) Poll loop advances to ``preview_ready`` on
- *       ``status: "preview_complete"``.
- *   (e) All 5 color-coded tiles render in preview_ready state
- *       with the expected ``data-testid`` wiring.
- *   (f) Inline edit on CustomerTile name → ``patchPreview`` fires
- *       with the expected diff shape ``{doc_idx:0, patch:{customer_name:…}}``.
- *   (g) ``matched_customer_id`` absent → "Pick customer"
- *       affordance renders.
- *   (h) Line item without ``pricebook_item_id`` → "Pick from
- *       catalog" button renders on that row.
- *   (i) Click "Create Invoice" → ``commitBatch`` fires AND
- *       ``onImportComplete`` is invoked with the created id.
- *   (j) Cancel after upload → ``rollbackBatch`` fires.
+ * (a)-(j) locked by PDFI-IV, (k)-(p) added by PDFI-V. Each test
+ * is self-contained; the shared harness builds a known preview
+ * shape and advances through upload + poll → preview_ready.
  */
 import React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
-// Mock the API client module — all five fns stubbed as vi.fn().
 vi.mock("@/api/pdfImports", () => ({
   kickoffUpload: vi.fn(),
   pollBatch: vi.fn(),
@@ -40,13 +19,61 @@ vi.mock("@/api/pdfImports", () => ({
   rollbackBatch: vi.fn(),
 }));
 
-// Mock sonner so toast calls don't need a Toaster mounted.
+vi.mock("@/api", () => ({
+  api: {
+    get: vi.fn(() => Promise.resolve([
+      { id: "cust-1", name: "Diane Lloyd", address: "123 Lake View" },
+      { id: "cust-2", name: "Other Customer", address: "456 Elsewhere" },
+    ])),
+    post: vi.fn(),
+    patch: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    del: vi.fn(),
+  },
+  api_base: () => "http://localhost/api",
+  TOKEN_KEY: "token",
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
     info: vi.fn(),
   },
+}));
+
+vi.mock("@/components/customers/CustomerCombobox", () => ({
+  CustomerCombobox: ({ customers, onChange, testid }) => (
+    <div data-testid={testid || "customer-combobox-mock"}>
+      <button
+        type="button"
+        data-testid={`${testid || "customer-combobox-mock"}-pick-first`}
+        onClick={() => onChange(customers?.[0]?.id || "cust-mock-1")}
+      >
+        Mock pick first customer
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/pricebook/PricebookItemPicker", () => ({
+  __esModule: true,
+  default: ({ onSelect, inputTestid }) => (
+    <div data-testid={inputTestid ? `${inputTestid}-wrapper` : "pricebook-picker-mock"}>
+      <button
+        type="button"
+        data-testid={inputTestid ? `${inputTestid}-pick` : "pricebook-picker-mock-pick"}
+        onClick={() => onSelect({
+          id: "pb-mock-1",
+          name: "Mock Service",
+          unit_price: 99.5,
+        })}
+      >
+        Mock pick first pricebook item
+      </button>
+    </div>
+  ),
 }));
 
 import PdfInvoiceUploadSidePanel from
@@ -81,12 +108,43 @@ function _samplePreviewRow(overrides = {}) {
           quantity: 1,
           unit_price: 140.0,
           line_total: 140.0,
-          // No pricebook_item_id — triggers the "Pick from catalog"
-          // fallback render.
         }],
       },
       ...overrides,
     }],
+  };
+}
+
+function _multiDocRow() {
+  const makeDoc = (idx, name, total) => ({
+    source_doc_index: idx,
+    doc_kind: "invoice",
+    mapped_target: "quote_in",
+    customer_resolution: "matched",
+    matched_customer_id: `cust-doc-${idx}`,
+    quote_in: {
+      customer_name: name,
+      customer_address: `addr ${idx}`,
+      doc_number: `100${idx}`,
+      doc_date: "2026-08-28",
+      grand_total: total,
+      line_items: [{
+        item_name: `Service ${idx}`,
+        description: "",
+        quantity: 1,
+        unit_price: total,
+        line_total: total,
+        pricebook_item_id: `pb-${idx}`,
+      }],
+    },
+  });
+  return {
+    status: "preview_complete",
+    mapper_previews: [
+      makeDoc(0, "First Customer",  140.0),
+      makeDoc(1, "Second Customer", 220.5),
+      makeDoc(2, "Third Customer",  310.0),
+    ],
   };
 }
 
@@ -103,15 +161,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Scrub any Radix portals leaked between tests (sidepanel uses
-  // shadcn Sheet which portals to document.body).
   document.body.innerHTML = "";
 });
 
-
-// ══════════════════════════════════════════════════════════════════
-// (a) InvoicesList source-inspect — button wiring
-// ══════════════════════════════════════════════════════════════════
 
 describe("PDFI-IV · InvoicesList button wiring", () => {
   const _SRC = readFileSync(
@@ -128,28 +180,32 @@ describe("PDFI-IV · InvoicesList button wiring", () => {
 });
 
 
-// ══════════════════════════════════════════════════════════════════
-// (b-j) Sidepanel behaviour tests
-// ══════════════════════════════════════════════════════════════════
+function _render(propsOverride = {}) {
+  const props = {
+    open: true,
+    onClose: vi.fn(),
+    onImportComplete: vi.fn(),
+    ...propsOverride,
+  };
+  const utils = render(<PdfInvoiceUploadSidePanel {...props} />);
+  return { ...utils, props };
+}
 
-describe("PDFI-IV · PdfInvoiceUploadSidePanel", () => {
-  function _render(propsOverride = {}) {
-    const props = {
-      open: true,
-      onClose: vi.fn(),
-      onImportComplete: vi.fn(),
-      ...propsOverride,
-    };
-    const utils = render(<PdfInvoiceUploadSidePanel {...props} />);
-    return { ...utils, props };
-  }
+function _fakePdfFile(name = "sample.pdf") {
+  return new File(["%PDF-1.4 sample"], name, { type: "application/pdf" });
+}
 
-  function _fakePdfFile() {
-    return new File(["%PDF-1.4 sample"], "sample.pdf", {
-      type: "application/pdf",
-    });
-  }
+async function _advanceToPreviewReady(previewRow = _samplePreviewRow()) {
+  kickoffUpload.mockResolvedValue({ batch_id: "bat-x" });
+  pollBatch.mockResolvedValue(previewRow);
+  const input = await screen.findByTestId("pdfi-upload-file-input");
+  fireEvent.change(input, { target: { files: [_fakePdfFile()] } });
+  fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
+  await screen.findByTestId("pdfi-preview-ready", {}, { timeout: 5000 });
+}
 
+
+describe("PDFI-IV · PdfInvoiceUploadSidePanel baseline", () => {
   it("(b) rejects a non-PDF file with an error toast", async () => {
     _render();
     const input = await screen.findByTestId("pdfi-upload-file-input");
@@ -164,139 +220,162 @@ describe("PDFI-IV · PdfInvoiceUploadSidePanel", () => {
     kickoffUpload.mockResolvedValue({ batch_id: "bat-c" });
     pollBatch.mockResolvedValue({ status: "processing" });
     _render();
-    const input = await screen.findByTestId("pdfi-upload-file-input");
-    fireEvent.change(input, { target: { files: [_fakePdfFile()] } });
-    const startBtn = await screen.findByTestId("pdfi-upload-start-btn");
-    fireEvent.click(startBtn);
+    fireEvent.change(
+      await screen.findByTestId("pdfi-upload-file-input"),
+      { target: { files: [_fakePdfFile()] } },
+    );
+    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
     await waitFor(() => expect(kickoffUpload).toHaveBeenCalledTimes(1));
-    const [passedFile] = kickoffUpload.mock.calls[0];
-    expect(passedFile.name).toBe("sample.pdf");
+    expect(kickoffUpload.mock.calls[0][0].name).toBe("sample.pdf");
   });
 
   it("(d) polling advances to preview_ready on preview_complete", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-d" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
     _render();
-    const input = await screen.findByTestId("pdfi-upload-file-input");
-    fireEvent.change(input, { target: { files: [_fakePdfFile()] } });
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    await screen.findByTestId("pdfi-preview-ready", {}, { timeout: 5000 });
+    await _advanceToPreviewReady();
     expect(screen.getByTestId("pdfi-tile-customer")).toBeTruthy();
   });
 
-  it("(e) all 5 tiles render in preview_ready with their color-coded testids", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-e" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
+  it("(e) all 5 tiles render in preview_ready with their color classes", async () => {
     _render();
-    fireEvent.change(
-      await screen.findByTestId("pdfi-upload-file-input"),
-      { target: { files: [_fakePdfFile()] } },
-    );
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    await screen.findByTestId("pdfi-preview-ready", {}, { timeout: 5000 });
-
-    const custTile = screen.getByTestId("pdfi-tile-customer");
-    expect(custTile.className).toMatch(/bg-green-100/);
-    const dateTile = screen.getByTestId("pdfi-tile-date");
-    expect(dateTile.className).toMatch(/bg-purple-100/);
-    const lineTile = screen.getByTestId("pdfi-tile-lineitems");
-    expect(lineTile.className).toMatch(/bg-yellow-100/);
-    const descTile = screen.getByTestId("pdfi-tile-descriptions");
-    expect(descTile.className).toMatch(/bg-emerald-800/);
-    const totalTile = screen.getByTestId("pdfi-tile-total");
-    expect(totalTile.className).toMatch(/bg-orange-100/);
+    await _advanceToPreviewReady();
+    expect(screen.getByTestId("pdfi-tile-customer").className).toMatch(/bg-green-100/);
+    expect(screen.getByTestId("pdfi-tile-date").className).toMatch(/bg-purple-100/);
+    expect(screen.getByTestId("pdfi-tile-lineitems").className).toMatch(/bg-yellow-100/);
+    expect(screen.getByTestId("pdfi-tile-descriptions").className).toMatch(/bg-emerald-800/);
+    expect(screen.getByTestId("pdfi-tile-total").className).toMatch(/bg-orange-100/);
   });
 
   it("(f) editing customer name fires patchPreview with the right diff", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-f" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
     patchPreview.mockResolvedValue({ ok: true });
     _render();
-    fireEvent.change(
-      await screen.findByTestId("pdfi-upload-file-input"),
-      { target: { files: [_fakePdfFile()] } },
-    );
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    const nameInput = await screen.findByTestId(
-      "pdfi-tile-customer-name-input", {}, { timeout: 5000 },
-    );
+    await _advanceToPreviewReady();
+    const nameInput = screen.getByTestId("pdfi-tile-customer-name-input");
     fireEvent.change(nameInput, { target: { value: "Diane A. Lloyd" } });
     await waitFor(() => expect(patchPreview).toHaveBeenCalled());
     const [bid, body] = patchPreview.mock.calls[0];
-    expect(bid).toBe("bat-f");
+    expect(bid).toBe("bat-x");
     expect(body.doc_idx).toBe(0);
     expect(body.patch).toEqual({ customer_name: "Diane A. Lloyd" });
   });
 
   it("(g) no-match customer shows the Pick customer affordance", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-g" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
     _render();
-    fireEvent.change(
-      await screen.findByTestId("pdfi-upload-file-input"),
-      { target: { files: [_fakePdfFile()] } },
-    );
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    const btn = await screen.findByTestId(
-      "pdfi-tile-customer-pick-btn", {}, { timeout: 5000 },
-    );
-    expect(btn).toBeTruthy();
-    expect(
-      screen.getByTestId("pdfi-tile-customer-no-match-badge"),
-    ).toBeTruthy();
+    await _advanceToPreviewReady();
+    expect(screen.getByTestId("pdfi-tile-customer-pick-btn")).toBeTruthy();
+    expect(screen.getByTestId("pdfi-tile-customer-no-match-badge")).toBeTruthy();
   });
 
-  it("(h) line item without pricebook id shows Pick from catalog", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-h" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
+  it("(h) line without pricebook id shows Pick from catalog", async () => {
     _render();
-    fireEvent.change(
-      await screen.findByTestId("pdfi-upload-file-input"),
-      { target: { files: [_fakePdfFile()] } },
-    );
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    const pickBtn = await screen.findByTestId(
-      "pdfi-tile-lineitems-row-0-pick-btn", {}, { timeout: 5000 },
-    );
-    expect(pickBtn).toBeTruthy();
+    await _advanceToPreviewReady();
+    expect(screen.getByTestId("pdfi-tile-lineitems-row-0-pick-btn")).toBeTruthy();
   });
 
   it("(i) commit fires and onImportComplete gets the created id", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-i" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
-    commitBatch.mockResolvedValue({
-      status: "committed",
-      quote_ids: ["q-77"],
-    });
+    commitBatch.mockResolvedValue({ status: "committed", quote_ids: ["q-77"] });
     const { props } = _render();
-    fireEvent.change(
-      await screen.findByTestId("pdfi-upload-file-input"),
-      { target: { files: [_fakePdfFile()] } },
-    );
-    fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    const commitBtn = await screen.findByTestId(
-      "pdfi-upload-commit-btn", {}, { timeout: 5000 },
-    );
-    fireEvent.click(commitBtn);
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-upload-commit-btn"));
     await waitFor(() => expect(commitBatch).toHaveBeenCalled());
     await waitFor(() => expect(props.onImportComplete).toHaveBeenCalledWith("q-77"));
   });
 
   it("(j) cancel after upload fires rollbackBatch", async () => {
-    kickoffUpload.mockResolvedValue({ batch_id: "bat-j" });
-    pollBatch.mockResolvedValue(_samplePreviewRow());
     rollbackBatch.mockResolvedValue({ ok: true });
     _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-upload-cancel-btn"));
+    await waitFor(() => expect(rollbackBatch).toHaveBeenCalled());
+    expect(rollbackBatch.mock.calls[0][0]).toBe("bat-x");
+  });
+});
+
+
+describe("PDFI-V · wired pickers + edge states", () => {
+  it("(k) Pick customer click mounts the CustomerCombobox", async () => {
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-customer-pick-btn"));
+    const combo = await screen.findByTestId("pdfi-tile-customer-combobox");
+    expect(combo).toBeTruthy();
+  });
+
+  it("(l) combobox pick fires patchPreview with matched_customer_id + name + address", async () => {
+    patchPreview.mockResolvedValue({ ok: true });
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-customer-pick-btn"));
+    const pickBtn = await screen.findByTestId("pdfi-tile-customer-combobox-pick-first");
+    fireEvent.click(pickBtn);
+    await waitFor(() => expect(patchPreview).toHaveBeenCalled());
+    const [, body] = patchPreview.mock.calls[0];
+    expect(body.doc_idx).toBe(0);
+    expect(body.patch.matched_customer_id).toBe("cust-1");
+    expect(body.patch.customer_name).toBe("Diane Lloyd");
+    expect(body.patch.customer_address).toBe("123 Lake View");
+  });
+
+  it("(m) Pick from catalog mounts PricebookItemPicker on that row", async () => {
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-lineitems-row-0-pick-btn"));
+    const picker = await screen.findByTestId(
+      "pdfi-tile-lineitems-row-0-picker-input-wrapper",
+    );
+    expect(picker).toBeTruthy();
+  });
+
+  it("(n) picker pick fires patchPreview with the line_items partial at the right index", async () => {
+    patchPreview.mockResolvedValue({ ok: true });
+    _render();
+    await _advanceToPreviewReady();
+    fireEvent.click(screen.getByTestId("pdfi-tile-lineitems-row-0-pick-btn"));
+    const pickBtn = await screen.findByTestId(
+      "pdfi-tile-lineitems-row-0-picker-input-pick",
+    );
+    fireEvent.click(pickBtn);
+    await waitFor(() => expect(patchPreview).toHaveBeenCalled());
+    const [, body] = patchPreview.mock.calls[0];
+    expect(body.doc_idx).toBe(0);
+    expect(body.patch.line_items).toEqual({
+      0: {
+        pricebook_item_id: "pb-mock-1",
+        item_name: "Mock Service",
+        unit_price: 99.5,
+      },
+    });
+  });
+
+  it("(o) multi-doc batch renders selector + switching changes the preview", async () => {
+    _render();
+    await _advanceToPreviewReady(_multiDocRow());
+    const selector = await screen.findByTestId("pdfi-preview-doc-selector-input");
+    expect(screen.getByTestId("pdfi-tile-customer-name-input").value).toBe("First Customer");
+    fireEvent.change(selector, { target: { value: "2" } });
+    await waitFor(() => {
+      expect(screen.getByTestId("pdfi-tile-customer-name-input").value).toBe("Third Customer");
+    });
+    expect(screen.getByTestId("pdfi-preview-doc-selector-bulk-link")).toBeTruthy();
+  });
+
+  it("(p) poll timeout renders the retry + bulk-hub affordances", async () => {
+    // Parametrize the component with a short real-timer deadline:
+    // 10ms poll interval, 50ms timeout. pollBatch returns the
+    // sentinel ``processing`` indefinitely → Date.now() crosses
+    // the deadline on the second tick and the component switches
+    // to the ``timeout`` step.
+    kickoffUpload.mockResolvedValue({ batch_id: "bat-p" });
+    pollBatch.mockResolvedValue({ status: "processing" });
+    _render({ pollIntervalMs: 10, pollTimeoutMs: 50 });
     fireEvent.change(
       await screen.findByTestId("pdfi-upload-file-input"),
       { target: { files: [_fakePdfFile()] } },
     );
     fireEvent.click(await screen.findByTestId("pdfi-upload-start-btn"));
-    const cancelBtn = await screen.findByTestId(
-      "pdfi-upload-cancel-btn", {}, { timeout: 5000 },
+    const retry = await screen.findByTestId(
+      "pdfi-upload-timeout-retry-btn", {}, { timeout: 3000 },
     );
-    fireEvent.click(cancelBtn);
-    await waitFor(() => expect(rollbackBatch).toHaveBeenCalled());
-    expect(rollbackBatch.mock.calls[0][0]).toBe("bat-j");
+    expect(retry).toBeTruthy();
+    expect(screen.getByTestId("pdfi-upload-timeout-bulk-btn")).toBeTruthy();
   });
 });
