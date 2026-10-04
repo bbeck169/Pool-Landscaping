@@ -218,3 +218,11 @@ frontend/node_modules/.cache/default-development/64.pack
 # feature / runbook / diagnostic docs) remains freely trackable.
 memory/SPEC_*.md
 memory/FOLLOWUP_*.md
+
+# CLEAN-1 · Feb-2026 — these build caches are per-dev-machine
+# artifacts. Never commit them. node_modules/ above is a catchall;
+# these two patterns are belt-and-suspenders so a bad grep-pattern
+# future edit to the catchall cannot regress the historical mistake
+# (9260 .cache files were tracked prior to CLEAN-1).
+node_modules/.cache/
+node_modules/.vite/
