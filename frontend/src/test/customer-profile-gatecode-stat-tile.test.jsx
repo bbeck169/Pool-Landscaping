@@ -29,10 +29,12 @@
  *      / ``user.role`` symbol appears inside the stat-tile array
  *      literal scope.
  *
- * Belt-and-suspenders: the pre-existing lower ``<Info label="Gate
- * code" value={customer.gate_code} />`` render at ~line 1109 is
- * preserved — asserted below so a future diff that removes it fails
- * loudly.
+ * GCR · Feb-2026 (follow-up to CP-1-B) — the lower ``<Info label=
+ * "Gate code" value={customer.gate_code} />`` render inside
+ * ``cd-address-block`` was DELETED.  Gate code now lives ONLY on
+ * the top stat-tile grid.  The regression lock below is INVERTED:
+ * assertions (e)+(f) prove the lower <Info> is absent and the
+ * ``cd-address-block`` scope carries no residual "Gate code" text.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -121,22 +123,51 @@ describe("CP-1-B · Gate code stat tile · structural contract", () => {
 });
 
 
-describe("CP-1-B · regression lock · lower <Info> render preserved", () => {
-  it("the pre-existing lower ``<Info label=\"Gate code\" value={customer.gate_code} />`` is untouched", () => {
-    // Belt-and-suspenders: the lower address-block render stays in
-    // place so any existing test / selector that depends on it keeps
-    // resolving (e.g. the ``cd-address-block`` DOM check in
-    // ``phase48-admin-customer-contact-redesign.test.jsx`` /
-    // ``customer-primary-address-line.test.jsx``).
-    expect(SRC).toMatch(
-      /<Info label="Gate code" value=\{customer\.gate_code\} \/>/,
-    );
-    // Exactly ONE occurrence — this is the single lower-render site
-    // (the new stat tile declares the value via the array literal
-    // key, not via a <Info> JSX call).
+describe("GCR · lower <Info> render DELETED (replaces CP-1-B regression lock)", () => {
+  /* Flipped by GCR (Feb 2026) — the CP-1-B belt-and-suspenders assertion
+   * that the LOWER ``<Info label="Gate code" value={customer.gate_code} />``
+   * stays in place inside ``cd-address-block`` is INVERTED now that the
+   * user has approved removing the duplicate render.  Gate code lives
+   * ONLY in the top stat-tile grid (``cd-stat-gate-code``). */
+  it("e. no ``<Info label=\"Gate code\" …>`` remains anywhere in CustomerDetail.jsx", () => {
+    // The lower address-block render is gone — zero <Info> occurrences
+    // of the Gate code label survive.
+    expect(SRC).not.toMatch(/<Info label="Gate code"/);
     const infoHits = (
       SRC.match(/<Info label="Gate code"/g) || []
     ).length;
-    expect(infoHits).toBe(1);
+    expect(infoHits).toBe(0);
+    // The literal "Gate code" string appears exactly ONCE across the
+    // file — on the ``label:`` key of the stat-tile array entry.  That
+    // single occurrence proves the top-tile label is still wired AND
+    // locks against a future diff that accidentally re-introduces the
+    // duplicate render.
+    const labelHits = (
+      SRC.match(/"Gate code"/g) || []
+    ).length;
+    expect(labelHits).toBe(1);
+  });
+
+  it("f. the ``cd-address-block`` scope contains no gate_code JSX render or data binding", () => {
+    // Slice the cd-address-block scope — from the opening ``<div
+    // data-testid="cd-address-block" …>`` to the sibling
+    // ``<MasterBillingCard`` tag that always follows the block.  The
+    // assertions below check for JSX-renderable patterns (not the
+    // English words "Gate code" in a comment) so an in-source
+    // tombstone comment that happens to mention gate-code doesn't
+    // trip the test.
+    const addressScope = SRC.split(
+      'data-testid="cd-address-block"',
+    )[1]?.split('<MasterBillingCard')[0] || "";
+    expect(addressScope.length).toBeGreaterThan(0);
+    // No <Info> element rendering the Gate code label.
+    expect(addressScope).not.toMatch(/<Info label="Gate code"/);
+    // No data binding to the customer.gate_code field.
+    expect(addressScope).not.toMatch(/customer\.gate_code/);
+    // Belt-and-braces: Primary + Billing address siblings are still
+    // in the scope (we removed the Gate code line only, not the
+    // whole address block).
+    expect(addressScope).toMatch(/label="Primary address"/);
+    expect(addressScope).toMatch(/label="Billing address"/);
   });
 });

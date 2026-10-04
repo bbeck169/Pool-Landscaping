@@ -1000,11 +1000,12 @@ export default function CustomerDetail() {
                       : null,
               warn: true },
             { icon: BellRing, label: "Alert email", value: customer.alert_email, warn: true },
-            /* CP-1-B · Feb-2026 — Gate code promoted into the top
-             * stat-tile row (previously only rendered inside the
-             * lower ``cd-address-block`` <Info> row at line 1109,
-             * which is kept intact for continuity).  Unconditional
-             * render for every role; the shared ``{c.value || "—"}``
+            /* CP-1-B · Feb-2026 (updated by GCR · Feb-2026) —
+             * Gate code lives in the top stat-tile row and NOWHERE
+             * else on the Overview tab.  The CP-1-B shim that kept
+             * a duplicate ``<Info>`` inside ``cd-address-block``
+             * was removed in the GCR atomic.  Unconditional render
+             * for every role; the shared ``{c.value || "—"}``
              * fallback in the loop below surfaces an em-dash when
              * ``customer.gate_code`` is null / undefined / empty
              * string.  No role guard — gate codes are visible to
@@ -1121,7 +1122,13 @@ export default function CustomerDetail() {
                           ? <AddressLink address={customer.billing_address} />
                           : null}
                 />
-                <Info label="Gate code" value={customer.gate_code} />
+                {/* GCR · Feb-2026 — the lower duplicate <Info>
+                     render was removed from this block.  The
+                     value is now surfaced ONLY by the top stat-
+                     tile grid (testid ``cd-stat-gate-code``,
+                     line ~1012).  Primary address / Billing
+                     address / Secondary addresses siblings
+                     untouched. */}
                 {(customer.secondary_addresses || []).length ? (
                   <div>
                     <div className="text-xs uppercase font-semibold mb-1" style={{ color: colors.muted }}>
