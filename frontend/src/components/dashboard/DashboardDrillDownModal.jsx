@@ -49,6 +49,7 @@ import {
 import { toast } from "sonner";
 import PortalErrorBoundary from "@/components/errors/PortalErrorBoundary";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors, money } from "@/theme";
 
 /* ── helpers ─────────────────────────────────────────────────── */
@@ -341,6 +342,18 @@ function IncomeRow({
    * crashes the row. */
   serviceCategories = [],
 }) {
+  /* Atomic A2 · Feb-2026 — role-aware auto-pass of the paid/sent
+   * confirmation flags for CATEGORY edits only.  Privileged roles
+   * (admin, super_admin, manager, owner) carry both
+   * ``confirm_edit_sent`` and ``acknowledged_lock_bypass`` on
+   * category PATCH bodies so sent / accepted invoice categories
+   * can be re-classified without the 409 friction dialog.  Non-
+   * category fields keep the existing status gate (regression
+   * lock), and non-privileged roles never get the auto-flags. */
+  const { role } = useAuth() || {};
+  const canBypassCategoryConfirm = [
+    "admin", "super_admin", "manager", "owner",
+  ].includes(String(role || "").toLowerCase());
   const [draft, setDraft] = useState({
     description: row.description || "",
     quantity: row.quantity ?? 0,
@@ -505,6 +518,15 @@ function IncomeRow({
       else if (field === "category") target.category = String(after || "");
       items[idx] = target;
       const patchBody = { line_items: items };
+      // Atomic A2 · Feb-2026 — ONLY for CATEGORY edits, privileged
+      // roles auto-carry the paid/sent confirmation flags so the
+      // status gate on PATCH does not surface a 409.  Non-category
+      // edits (quantity / unit_price / description) still hit the
+      // lock → regression preserved.
+      if (field === "category" && canBypassCategoryConfirm) {
+        patchBody.confirm_edit_sent = true;
+        patchBody.acknowledged_lock_bypass = true;
+      }
       // If invoice is paid/sent the PATCH will reject with a 409; the
       // modal surfaces the message and prompts "Open full edit".
       await api.patch(`/quotes/${row.invoice_id}`, patchBody);
@@ -769,7 +791,19 @@ function IncomeRow({
         income_category_id: nextCat.id,
         category: nextCat.name,
       };
-      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      // Atomic A2 · Feb-2026 — privileged roles bypass the sent /
+      // accepted lock without a confirm dialog.  Non-privileged
+      // fallback keeps the pre-A2 call shape so lower roles still
+      // hit the backend status gate (409 surfaced via toast).
+      if (canBypassCategoryConfirm) {
+        await api.patch(`/quotes/${row.invoice_id}`, {
+          line_items: items,
+          confirm_edit_sent: true,
+          acknowledged_lock_bypass: true,
+        });
+      } else {
+        await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      }
       try {
         await api.post("/dashboard/drilldown/line-item-audit", {
           tile,
