@@ -669,6 +669,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from services.imports.pdf_commit import (                          # noqa: E402
     DuplicateBatchError,
+    PaidStatusValidationError,
     UnresolvedCustomersError,
     check_duplicates,
     commit_batch,
@@ -890,6 +891,40 @@ async def commit_pdf_invoice_batch(
                     f"admin review UI before commit."
                 ),
                 "unresolved": _serialise_unresolved(exc.unresolved),
+            },
+        )
+    except PaidStatusValidationError as exc:
+        # PDFI-PAID-B · Feb-2026 — paid-status validation gate
+        # fired BEFORE any db writes. Reset batch to
+        # preview_complete so the operator can PATCH /preview
+        # with the missing paid_at / amount_paid and rerun.
+        await db.import_batches.update_one(
+            {"id": batch_id, "tenant_id": tenant_id},
+            {"$set": {"status": _STATUS_PREVIEW_COMPLETE},
+              "$unset": {"commit_started_at": ""}},
+        )
+        _PAID_ERR_MSG = {
+            "paid_without_date": (
+                "One or more previews are marked is_paid=True "
+                "but have no paid_at. Set paid_at via PATCH "
+                "/preview or clear is_paid before commit."
+            ),
+            "paid_without_amount": (
+                "One or more previews are marked is_paid=True "
+                "but have amount_paid=0/null. Set amount_paid "
+                "via PATCH /preview or clear is_paid before "
+                "commit."
+            ),
+        }
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": exc.error_code,
+                "message": _PAID_ERR_MSG.get(
+                    exc.error_code, exc.error_code,
+                ),
+                "batch_id": batch_id,
+                "doc_indices": exc.doc_indices,
             },
         )
     except DuplicateBatchError as exc:
@@ -1200,6 +1235,12 @@ async def patch_pdf_invoice_preview(
     _TOP_LEVEL_KEYS = {
         "customer_name", "customer_address",
         "doc_number", "doc_date", "grand_total",
+        # PDFI-PAID-B · Feb-2026 — paid-status whitelist. The
+        # operator fills these at preview-confirm when the
+        # extractor couldn't derive them from the PDF (no
+        # Payment Date line, operator-marked paid). Required
+        # by the commit path's paid-status validation gate.
+        "is_paid", "amount_paid", "paid_at",
     }
     for k in _TOP_LEVEL_KEYS:
         if k in patch:

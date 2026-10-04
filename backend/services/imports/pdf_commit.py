@@ -269,6 +269,43 @@ def collect_unresolved_customers(
 
 
 # ═════════════════════════════════════════════════════════════
+# PDFI-PAID-B · Feb-2026 — paid-status validation helper.
+# ═════════════════════════════════════════════════════════════
+def _validate_paid_status(
+    previews: List[Dict[str, Any]],
+) -> Optional[Tuple[str, List[int]]]:
+    """Return ``(error_code, [doc_indices])`` on the first
+    paid-status rule violation, else ``None``.
+
+    Rules (both required when ``quote_in.is_paid is True``):
+      * ``paid_at`` must be truthy — else ``paid_without_date``.
+      * ``amount_paid`` must be > 0 — else
+        ``paid_without_amount``.
+
+    All indices for ONE error code are aggregated so the
+    operator sees every offending row in a single 422 reply.
+    """
+    without_date: List[int] = []
+    without_amount: List[int] = []
+    for p in previews:
+        qi = p.get("quote_in") or {}
+        if qi.get("is_paid") is not True:
+            continue
+        idx = int(p.get("source_doc_index", -1))
+        if not qi.get("paid_at"):
+            without_date.append(idx)
+            continue  # don't double-report on the same row
+        amt = qi.get("amount_paid")
+        if amt in (None, 0, 0.0):
+            without_amount.append(idx)
+    if without_date:
+        return ("paid_without_date", without_date)
+    if without_amount:
+        return ("paid_without_amount", without_amount)
+    return None
+
+
+# ═════════════════════════════════════════════════════════════
 # Commit
 # ═════════════════════════════════════════════════════════════
 async def commit_batch(
@@ -309,6 +346,15 @@ async def commit_batch(
         # 400. Raise a plain ValueError for the router to
         # rewrap as HTTPException.
         raise UnresolvedCustomersError(unresolved)
+
+    # ── Pre-flight: PDFI-PAID-B paid-status validation ───
+    # Scan quote_in.is_paid=True previews for the two required
+    # follow-on fields; reject (and let the router roll the
+    # batch back to preview_complete) if either is missing.
+    paid_err = _validate_paid_status(previews)
+    if paid_err is not None:
+        err_code, idxs = paid_err
+        raise PaidStatusValidationError(err_code, idxs)
 
     # ── Pre-flight: duplicate scan ─────────────────────────
     duplicates = await check_duplicates(
@@ -761,7 +807,15 @@ async def _commit_payment_previews(
     }
 
     for preview in previews:
-        if preview.get("mapped_target") != "payment_in":
+        # PDFI-PAID-B · Feb-2026 — process every preview that
+        # carries a ``payment_in`` dict, regardless of
+        # ``mapped_target``:
+        #   * payment_receipt docs land here via
+        #     mapped_target == "payment_in" (PDF-C lane).
+        #   * paid invoices (is_paid=True) land here via
+        #     mapped_target == "quote_in" with an attached
+        #     payment_in dict (PDFI-PAID-B lane).
+        if not (preview.get("payment_in") or {}):
             continue
         if preview.get("errors"):
             # Mapper emitted a hard error — refuse to persist
@@ -1225,3 +1279,20 @@ class DuplicateBatchError(Exception):
     def __init__(self, duplicates: List[DuplicateWarning]) -> None:
         self.duplicates = duplicates
         super().__init__(f"{len(duplicates)} duplicates detected")
+
+
+class PaidStatusValidationError(Exception):
+    """PDFI-PAID-B · Feb-2026 — raised when a batch carries
+    ``quote_in.is_paid=True`` previews missing required
+    paid-status fields (``paid_at`` or ``amount_paid``).
+
+    Caught in ``routers.imports.commit_pdf_invoice_batch`` and
+    rewrapped as HTTP 422 with error_code + doc_indices in
+    the detail body. Batch resets to ``preview_complete`` so
+    the operator can patch via PATCH /preview and rerun commit.
+    """
+
+    def __init__(self, error_code: str, doc_indices: List[int]) -> None:
+        self.error_code = error_code
+        self.doc_indices = doc_indices
+        super().__init__(f"{error_code}: doc_indices={doc_indices}")

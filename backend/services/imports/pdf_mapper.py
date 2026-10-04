@@ -616,6 +616,14 @@ async def map_extracted_to_quote_in(
         "amount_paid": doc.amount_paid,
         "payment_method": doc.payment_method,
         "notes": doc.notes,
+        # PDFI-PAID-B · Feb-2026 — paid-status fields for
+        # commit-lane validation + payment_in builder.
+        # Propagates verbatim from the extractor (PDFI-PAID-A
+        # fast-path or vision parse); operator may patch via
+        # PATCH /preview before commit when the extractor
+        # couldn't derive paid status from the PDF.
+        "is_paid": doc.is_paid,
+        "paid_at": doc.paid_at.isoformat() if doc.paid_at else None,
         "import_batch_id": batch_id,
         # PDF-FIX-D · Feb-2026 — provenance flag. Signals to
         # downstream commit + read paths + reports that these
@@ -660,6 +668,21 @@ async def map_extracted_to_quote_in(
     # cross-field reconciliation and logs a warning if
     # ``subtotal + tax_total != grand_total``.  We no longer
     # emit a mapper-side warning for the same signal.
+
+    # PDFI-PAID-B · Feb-2026 — paid invoices get an attached
+    # payment_in dict so pdf_commit._commit_payment_previews
+    # writes a db.payments row linked back to the just-
+    # inserted invoice (via doc_number match in the same
+    # tenant). The FIN-PARITY-A reconciler then flips
+    # payment_status to "paid" + status to "accepted".
+    # Only fires for invoices the extractor flagged
+    # is_paid=True under the STRICT ruling (amount_paid
+    # present + total_due <= 0.01).
+    if doc.doc_kind == "invoice" and doc.is_paid is True:
+        report.payment_in = _build_payment_in(
+            doc=doc, customer_id_field=customer_id_field,
+            batch_id=batch_id,
+        )
 
     report.quote_in = quote_in
     return report
