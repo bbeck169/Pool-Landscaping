@@ -404,14 +404,24 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                         value={li.description}
                         onChange={(text) => setLine(i, "description", text)}
                         onSelect={(item) => {
+                          // QF-1 · Feb-2026 — Option B + legacy-
+                          // string.  ``item.name`` → item_name
+                          // slot (SKU label); ``item.description``
+                          // → free-text description; both fall
+                          // back to the row's existing value so
+                          // a half-populated pricebook row never
+                          // blanks the user's prior entries.
                           setForm((f) => ({
                             ...f,
                             line_items: f.line_items.map((x, idx) => {
                               if (idx !== i) return x;
                               const next = { ...x };
-                              next.description = item.name
-                                                    || item.description
-                                                    || x.description;
+                              next.item_name = item.name
+                                                    || x.item_name
+                                                    || "";
+                              next.description = item.description
+                                                    || x.description
+                                                    || "";
                               const raw = Number(item.unit_price);
                               if (Number.isFinite(raw)) {
                                 next.unit_price = raw;

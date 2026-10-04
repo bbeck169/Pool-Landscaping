@@ -288,11 +288,18 @@ describe("Task G · K71 Pricebook picker · behaviour", () => {
     fireEvent.click(screen.getByTestId("k71-pricebook-search-item-0"));
     await act(async () => { await Promise.resolve(); });
 
-    expect(screen.getByTestId("k71-input-item-0-input").value)
+    // Flipped by QF-1 (Feb 2026) — mapping corrected per Option B
+    // + legacy-string.  pricebook ``name`` now lands in the new
+    // item_name slot (bold label); pricebook ``description`` lands
+    // in the description/picker input; long_description is NO
+    // LONGER auto-filled on pick (operator types freely).
+    expect(screen.getByTestId("k71-input-itemname-0").value)
       .toBe("Chlorine Tablets (25 lb)");
-    expect(screen.getByTestId("k71-input-price-0").value).toBe("89");
-    expect(screen.getByTestId("k71-input-longdesc-0").value)
+    expect(screen.getByTestId("k71-input-item-0-input").value)
       .toBe("Weekly shock — 3 tablets per pool.");
+    expect(screen.getByTestId("k71-input-price-0").value).toBe("89");
+    // Long-desc is NO LONGER auto-filled on pick (QF-1 Option B).
+    expect(screen.getByTestId("k71-input-longdesc-0").value).toBe("");
 
     // Both CategoryPickers now show the resolved names — this is
     // the observable proof that ``setServiceCategoryId`` +
@@ -322,9 +329,14 @@ describe("Task G · K71 Pricebook picker · behaviour", () => {
     fireEvent.click(screen.getByTestId("k71-pricebook-search-item-0"));
     await act(async () => { await Promise.resolve(); });
 
-    // Title / price / service-category filled from the pick.
-    expect(screen.getByTestId("k71-input-item-0-input").value)
+    // Flipped by QF-1 (Feb 2026) — mapping corrected per Option B
+    // + legacy-string.  item.name → item_name slot; item.description
+    // → description/picker input.
+    // Item-name / description / price / service-category filled from the pick.
+    expect(screen.getByTestId("k71-input-itemname-0").value)
       .toBe("Winterization Service");
+    expect(screen.getByTestId("k71-input-item-0-input").value)
+      .toBe("End-of-season shutdown.");
     expect(screen.getByTestId("k71-input-price-0").value).toBe("275");
     expect(screen.getByTestId("k71-service-picker-0").textContent)
       .toContain("Landscape");

@@ -131,6 +131,12 @@ function isLegacyLine(li) {
 }
 
 function EditableRow({ line, index, onSave, onCancel }) {
+  // QF-1 · Feb-2026 — NEW item_name state (bold label, distinct
+  // from the free-text description) + legacyCategory passthrough
+  // so ``line.category`` keeps the pricebook row's string on commit
+  // without any UI slot (hidden pass-through).
+  const [itemName, setItemName] = useState(line.item_name || "");
+  const [legacyCategory, setLegacyCategory] = useState(line.category || "");
   const [description, setDescription] = useState(line.description || "");
   const [longDesc, setLongDesc] = useState(line.long_description || "");
   const [quantity, setQuantity] = useState(String(line.quantity ?? 1));
@@ -186,6 +192,14 @@ function EditableRow({ line, index, onSave, onCancel }) {
     if (laborOverride !== "" && (Number.isNaN(Number(laborOverride)) || Number(laborOverride) < 0)) return;
     onSave({
       ...line,
+      // QF-1 · Feb-2026 — carry item_name + legacy category string.
+      // ``item_name`` is nullable in the LineItem schema (models.py
+      // :392) so an empty trim collapses to null — grandfathers to
+      // legacy rows that never populated it.  ``category`` writes
+      // the pricebook string when a pick seeded it, else keeps the
+      // existing legacy value (Pydantic default ``Pool``).
+      item_name: itemName.trim() || null,
+      category: legacyCategory || line.category || "Pool",
       description: description.trim(),
       long_description: longDesc || null,
       quantity: Number(quantity) || 0,
@@ -219,31 +233,60 @@ function EditableRow({ line, index, onSave, onCancel }) {
     >
       <td colSpan={5} className="px-2 py-3">
         <div className="grid grid-cols-12 gap-2">
+          {/* QF-1 · Feb-2026 — NEW Item-name input (bold SKU label,
+               distinct from the free-text description).  Full row
+               above the picker so it reads naturally top-to-bottom:
+               label → item (picker/description) → qty/price. */}
+          <div className="col-span-12">
+            <label className="text-[10px] uppercase font-bold block mb-1"
+                    style={{ color: colors.muted }}>Item name</label>
+            <input
+              type="text"
+              value={itemName}
+              onChange={(e) => setItemName(e.target.value)}
+              placeholder="Item name"
+              className="w-full px-2 py-1 text-sm rounded"
+              style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}` }}
+              data-testid={`k71-input-itemname-${index}`}
+            />
+          </div>
           <div className="col-span-12 sm:col-span-5">
             <label className="text-[10px] uppercase font-bold block mb-1"
                     style={{ color: colors.muted }}>Item</label>
             {/* Task G · Feb-2026 — Pricebook picker in place of the
                  legacy MasterServiceCombobox. Debounced 250ms search
                  against ``GET /api/items?search=…&active=true&limit=50``
-                 (tenant-scoped after P59 HIGH #1). Picking a row
+                 (tenant-scoped after P59 HIGH #1).
+
+                 QF-1 · Feb-2026 — mapping corrected (Option B +
+                 legacy-string).  Picking a pricebook row now
                  auto-fills:
-                   • description  ← item.name
-                   • long_desc    ← item.description (only if present;
-                                     preserves any user-typed override)
-                   • unit_price   ← item.unit_price
+                   • item_name    ← item.name  (NEW bold-label slot,
+                                     SKU / catalog name; distinct
+                                     from the free-text description)
+                   • description  ← item.description  (free-text;
+                                     the SWAP that fixes QF-1)
+                   • long_desc    ← NOT auto-filled anymore — the
+                                     operator types optional multi-
+                                     line notes freely
+                   • unit_price   ← item.unit_price (decimal dollars)
                    • service_cat  ← item.service_category_id (direct
-                                     id assignment; no name→id lookup
-                                     since the endpoint already
-                                     returns the tenant's real ids)
+                                     id; the endpoint returns the
+                                     tenant's real ids)
                    • income_cat   ← item.income_category_id, ONLY IF
                                      item.item_type !== "service"
                                      (backend rule at items.py :183-
                                      202 — services can't own an
-                                     income_category or supplier
-                                     pricing). Service items leave
-                                     the income cell untouched so
-                                     the operator picks manually via
-                                     the CategoryPicker below.
+                                     income_category).  Services
+                                     leave the income cell untouched.
+                   • category     ← item.category  (NEW legacy
+                                     string wire; zero UI impact,
+                                     carried through the commit() so
+                                     ``line_items[].category`` keeps
+                                     downstream K71-parity reports
+                                     and the LineItem.category
+                                     Pydantic default stays sane)
                  Free-typing (no pick) still saves the raw string on
                  commit — backwards-compatible with legacy line items
                  that never lived in the pricebook. */}
@@ -251,13 +294,17 @@ function EditableRow({ line, index, onSave, onCancel }) {
               value={description}
               onChange={(next) => setDescription(next)}
               onSelect={(item) => {
-                setDescription(item.name || "");
-                // Only overwrite description when the item has one —
-                // preserves a user-typed note if they picked a row
-                // that has an empty pricebook description.
-                if (item.description) {
-                  setLongDesc(item.description);
-                }
+                // QF-1 · Feb-2026 — Option B + legacy-string.
+                // ``item.name`` → NEW item_name slot (SKU label).
+                setItemName(item.name || "");
+                // ``item.description`` → description state (the
+                // free-text field).  Fallback: empty string — the
+                // user can type freely after an item with no
+                // pricebook description.
+                setDescription(item.description || "");
+                // ``long_description`` is NO LONGER auto-filled on
+                // pick.  Preserves whatever the user typed in the
+                // textarea prior to the pick (per QF-1 Option B).
                 if (Number.isFinite(Number(item.unit_price))) {
                   setUnitPrice(String(Number(item.unit_price) || 0));
                 }
@@ -270,6 +317,15 @@ function EditableRow({ line, index, onSave, onCancel }) {
                 const itemType = String(item.item_type || "product").toLowerCase();
                 if (itemType !== "service" && item.income_category_id) {
                   setIncomeCategoryId(item.income_category_id);
+                }
+                // QF-1 · legacy-string wire — ``line.category`` is
+                // the pre-K71 string label (Pydantic default
+                // ``Pool``).  Keep it in sync with the pricebook
+                // row's ``category`` so downstream K71-parity
+                // reports stay accurate.  Fallback preserves the
+                // existing value if the pricebook row has none.
+                if (item.category) {
+                  setLegacyCategory(item.category);
                 }
               }}
               placeholder="Search pricebook or type a one-off name…"
@@ -543,7 +599,15 @@ function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete
                                             ? "3px solid #DC2626"
                                             : undefined }}>
         <div className="flex items-center gap-2">
-          <span className="font-semibold">{line.description}</span>
+          {/* QF-1 · Feb-2026 — primary bold = item_name if set,
+               fallback to description for legacy rows that never
+               populated item_name (grandfathered-null in schema). */}
+          <span
+            className="font-semibold"
+            data-testid={`k71-itemname-${index}`}
+          >
+            {line.item_name || line.description}
+          </span>
           {line.is_late_fee ? (
             <span
               className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
@@ -564,6 +628,18 @@ function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete
             </span>
           ) : null}
         </div>
+        {/* QF-1 · Feb-2026 — secondary muted description row,
+             shown only when item_name is populated AND the free-
+             text description differs (legacy rows that never got
+             an item_name keep description as the primary bold
+             above, so skipping here avoids a visible duplicate). */}
+        {line.item_name && line.description && line.item_name !== line.description ? (
+          <div className="text-xs mt-0.5"
+                style={{ color: colors.muted }}
+                data-testid={`k71-description-${index}`}>
+            {line.description}
+          </div>
+        ) : null}
         {line.long_description ? (
           <div className="text-xs mt-0.5"
                 style={{ color: colors.muted }}
@@ -638,9 +714,14 @@ function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDel
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold break-words"
-                  style={{ color: colors.onSurface }}>
-              {line.description}
+            {/* QF-1 · Feb-2026 — primary = item_name if set,
+                 fallback to description for legacy rows. */}
+            <span
+              className="font-semibold break-words"
+              style={{ color: colors.onSurface }}
+              data-testid={`k71-itemname-mobile-${index}`}
+            >
+              {line.item_name || line.description}
             </span>
             {line.is_late_fee ? (
               <span
@@ -662,6 +743,13 @@ function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDel
               </span>
             ) : null}
           </div>
+          {line.item_name && line.description && line.item_name !== line.description ? (
+            <div className="text-xs mt-1"
+                 style={{ color: colors.muted }}
+                 data-testid={`k71-description-mobile-${index}`}>
+              {line.description}
+            </div>
+          ) : null}
           {line.long_description ? (
             <div className="text-xs mt-1"
                  style={{ color: colors.muted }}
