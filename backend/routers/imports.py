@@ -693,6 +693,25 @@ class _CommitOptions(BaseModel):
     notes: Optional[str] = None
 
 
+class _PreviewPatchIn(BaseModel):
+    """PDFI-II · Feb-2026 — body for the preview-edit route.
+
+    * ``doc_idx`` — 0-based index into ``batch.mapper_previews``
+      (same ordering as the extractor emits).
+    * ``patch`` — partial dict with any subset of top-level
+      keys (``customer_name``, ``customer_address``,
+      ``doc_number``, ``doc_date``, ``grand_total``) + a
+      nested ``line_items`` dict keyed by integer index.
+      Per-line value may be ``None`` (remove that line) or a
+      partial dict (merge into the existing line). Indices
+      beyond ``len(line_items)`` append the new line at the
+      end — sparse appends pad with empty dicts, mirroring
+      the JSON-array semantics the FE sends.
+    """
+    doc_idx: int
+    patch: Dict[str, Any]
+
+
 def _serialise_duplicates(dups) -> List[Dict[str, Any]]:
     return [{
         "source_doc_index": d.source_doc_index,
@@ -1085,4 +1104,219 @@ async def rollback_pdf_invoice_batch(
         "quotes_deleted": rollback_result.quotes_deleted,
         "collision_count": rollback_result.collision_count,
         "audit_id": audit_id,
+    }
+
+
+@router.patch("/pdf-invoice/{batch_id}/preview")
+async def patch_pdf_invoice_preview(
+    batch_id: str,
+    body: _PreviewPatchIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """PDFI-II · Feb-2026 — edit a single preview before commit.
+
+    Deep-merges ``body.patch`` into
+    ``batch.mapper_previews[body.doc_idx].quote_in`` and persists
+    to Mongo. Also bumps ``preview_patches_applied`` + appends to
+    ``preview_patch_log`` (bounded to the most recent 50 entries)
+    for observability.
+
+    Guards:
+      * 404 ``batch_not_found`` — row missing OR owned by another
+        tenant (same cross-tenant posture the sibling GET uses).
+      * 409 ``batch_wrong_status`` — only ``preview_complete`` is
+        editable. Transient (``committing`` / ``rolling_back``)
+        and terminal states are locked.
+      * 422 ``doc_idx_out_of_range``.
+      * 400 ``empty_patch`` / ``no_recognised_keys`` / malformed
+        ``line_items`` shape.
+
+    Unknown line-item sub-keys are silently dropped (narrow-merge
+    semantics) so the FE can send a superset dict without tripping
+    validation. Allowed per-line keys mirror the
+    ``_line_item_to_quote_shape`` output: ``item_name``,
+    ``description``, ``quantity``, ``unit_price``,
+    ``line_total``, ``pricebook_item_id``, ``sku``, ``tax_pct``,
+    ``tax_line``.
+    """
+    tenant_id = tenant["id"]
+    row = await db.import_batches.find_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "batch_not_found",
+                "message": (
+                    f"No import batch with id={batch_id!r} for this tenant."
+                ),
+            },
+        )
+    cur_status = row.get("status")
+    _PATCHABLE_STATES = {_STATUS_PREVIEW_COMPLETE}
+    if cur_status not in _PATCHABLE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "batch_wrong_status",
+                "message": (
+                    f"Batch {batch_id!r} is in status {cur_status!r}; "
+                    f"preview edits allowed only in "
+                    f"{sorted(_PATCHABLE_STATES)!r}."
+                ),
+                "current_status": cur_status,
+            },
+        )
+    previews = row.get("mapper_previews") or []
+    if body.doc_idx < 0 or body.doc_idx >= len(previews):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "doc_idx_out_of_range",
+                "message": (
+                    f"doc_idx={body.doc_idx} is outside "
+                    f"[0,{len(previews)})."
+                ),
+                "doc_count": len(previews),
+            },
+        )
+    patch = body.patch or {}
+    if not patch:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "empty_patch",
+                "message": "patch body cannot be empty.",
+            },
+        )
+
+    preview = previews[body.doc_idx]
+    quote_in = preview.setdefault("quote_in", {}) or {}
+    preview["quote_in"] = quote_in
+    patched_keys: List[str] = []
+
+    _TOP_LEVEL_KEYS = {
+        "customer_name", "customer_address",
+        "doc_number", "doc_date", "grand_total",
+    }
+    for k in _TOP_LEVEL_KEYS:
+        if k in patch:
+            quote_in[k] = patch[k]
+            patched_keys.append(k)
+
+    if "line_items" in patch:
+        li_patch = patch["line_items"]
+        if not isinstance(li_patch, dict):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "line_items_patch_must_be_dict",
+                    "message": (
+                        "line_items patch must be a "
+                        "{index: patch|null} dict."
+                    ),
+                },
+            )
+        _ALLOWED_LINE_KEYS = {
+            "item_name", "description", "quantity",
+            "unit_price", "line_total",
+            "pricebook_item_id", "sku",
+            "tax_pct", "tax_line",
+        }
+        existing_items = list(quote_in.get("line_items") or [])
+        indexed: Dict[int, Any] = {}
+        for raw_k, v in li_patch.items():
+            try:
+                i = int(raw_k)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "line_items_key_not_int",
+                        "message": (
+                            f"line_items patch key must be an "
+                            f"integer index, got {raw_k!r}."
+                        ),
+                    },
+                )
+            indexed[i] = v
+        delete_indices = sorted(
+            (i for i, v in indexed.items() if v is None), reverse=True,
+        )
+        for i in delete_indices:
+            if 0 <= i < len(existing_items):
+                existing_items.pop(i)
+        updates = sorted(
+            ((i, v) for i, v in indexed.items() if v is not None),
+            key=lambda t: t[0],
+        )
+        for i, line_patch in updates:
+            if not isinstance(line_patch, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "line_patch_must_be_dict",
+                        "message": (
+                            f"line_items[{i}] patch must be a "
+                            f"dict or null."
+                        ),
+                    },
+                )
+            filtered = {
+                kk: vv for kk, vv in line_patch.items()
+                if kk in _ALLOWED_LINE_KEYS
+            }
+            if i < len(existing_items):
+                existing_items[i] = {**existing_items[i], **filtered}
+            else:
+                while len(existing_items) < i:
+                    existing_items.append({})
+                existing_items.append(filtered)
+        quote_in["line_items"] = existing_items
+        patched_keys.append("line_items")
+
+    if not patched_keys:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "no_recognised_keys",
+                "message": (
+                    "patch contained no recognised keys. Allowed: "
+                    + repr(sorted(_TOP_LEVEL_KEYS | {"line_items"}))
+                    + "."
+                ),
+            },
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    log_entry = {
+        "ts": now_iso,
+        "user_id": user.get("id") or user.get("sub"),
+        "doc_idx": body.doc_idx,
+        "patched_keys": patched_keys,
+    }
+    new_log = list(row.get("preview_patch_log") or [])
+    new_log.append(log_entry)
+    if len(new_log) > 50:
+        new_log = new_log[-50:]
+    new_counter = int(row.get("preview_patches_applied") or 0) + 1
+
+    await db.import_batches.update_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+        {"$set": {
+            f"mapper_previews.{body.doc_idx}": preview,
+            "preview_patches_applied": new_counter,
+            "preview_patch_log": new_log,
+            "preview_last_patched_at": now_iso,
+        }},
+    )
+
+    return {
+        "batch_id": batch_id,
+        "doc_idx": body.doc_idx,
+        "patched_keys": patched_keys,
+        "preview": preview,
+        "preview_patches_applied": new_counter,
     }

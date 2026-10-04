@@ -38,6 +38,14 @@ logger = logging.getLogger("imports.pdf_mapper")
 # binding to a near-miss customer.
 _FUZZY_THRESHOLD = 80
 
+# PDFI-II · Feb-2026 — line-item catalogue fuzzy threshold
+# (rapidfuzz 0-100 scale). Mirrors the customer-match floor —
+# below this score we leave the line as free-form so the
+# operator can accept the extractor text or swap in a catalogue
+# pick via the sidepanel. Match is a HINT only — identity
+# fields (name/description/unit_price) stay verbatim.
+_PRICEBOOK_FUZZY_THRESHOLD = 80
+
 # Task H.1 spec §Response payload cap — 25 line items per doc.
 _LINE_ITEM_CAP = 25
 
@@ -142,6 +150,80 @@ async def _fuzzy_match_customer(
     row = next((r for r in rows if r["id"] == matched_id), None)
     return {"customer": row, "score": score,
             "candidate_id": matched_id, "candidate_name": matched_name}
+
+
+async def _attach_pricebook_matches(
+    line_items: List[Dict[str, Any]],
+    *,
+    tenant_id: str,
+    db,
+    batch_id: str,
+    doc_idx: int,
+) -> List[Dict[str, Any]]:
+    """PDFI-II · Feb-2026 — best-effort catalogue match per line.
+
+    For every line that lacks a ``pricebook_item_id``, probe
+    the tenant catalogue (``db.items``, tenant-scoped + not
+    soft-deleted — same predicate shape ``GET /api/items`` uses
+    for its default ``active=true`` branch) with
+    ``rapidfuzz.token_set_ratio``. Score >=
+    ``_PRICEBOOK_FUZZY_THRESHOLD`` attaches ``pricebook_item_id``
+    on the dict. Below-threshold hits log the score + candidate
+    id for observability but leave the line unchanged so the FE
+    sidepanel renders the row as free-form.
+
+    Deliberately **non-mutating** on identity fields
+    (``item_name``, ``description``, ``unit_price``,
+    ``quantity``, ``line_total``, ``sku``) — the catalogue
+    match is a hint; the operator-approved verbatim shape is
+    what commit replays. Tenant isolation is enforced by the
+    ``tenant_id`` filter — items owned by other tenants cannot
+    win here regardless of name similarity.
+    """
+    if not line_items:
+        return line_items
+    cursor = db.items.find(
+        {
+            "tenant_id": tenant_id,
+            "$or": [
+                {"deleted_at": None},
+                {"deleted_at": {"$exists": False}},
+            ],
+        },
+        {"_id": 0, "id": 1, "name": 1},
+    )
+    catalogue = await cursor.to_list(length=None)
+    if not catalogue:
+        return line_items
+    choices = {row["id"]: (row.get("name") or "") for row in catalogue}
+    for idx, li in enumerate(line_items):
+        if li.get("pricebook_item_id"):
+            continue
+        probe = (li.get("item_name") or li.get("description") or "").strip()
+        if not probe:
+            continue
+        best = process.extractOne(
+            probe, choices,
+            scorer=fuzz.token_set_ratio,
+            processor=default_process,
+        )
+        if best is None:
+            continue
+        matched_name, score, matched_id = best
+        logger.info(
+            "pdfi_pricebook_match",
+            extra={
+                "batch_id": batch_id,
+                "doc_idx": doc_idx,
+                "line_idx": idx,
+                "candidate_count": len(catalogue),
+                "best_score": float(score),
+                "matched_id": matched_id,
+            },
+        )
+        if score >= _PRICEBOOK_FUZZY_THRESHOLD:
+            li["pricebook_item_id"] = matched_id
+    return line_items
 
 
 async def _insert_pending_customer(
@@ -455,6 +537,16 @@ async def map_extracted_to_quote_in(
 
     # ── Line items with truncation ─────────────────────────
     all_items = [_line_item_to_quote_shape(li) for li in doc.line_items]
+    # PDFI-II · Feb-2026 — attach best-effort catalogue match
+    # BEFORE truncation so a doc that lands over the 25-line
+    # cap still gets its first 25 enriched with ``pricebook_
+    # item_id`` where a match exists. ``extracted_documents_full``
+    # retains the untruncated enrichment too (same slice logic
+    # as pre-PDFI-II).
+    all_items = await _attach_pricebook_matches(
+        all_items, tenant_id=tenant_id, db=db,
+        batch_id=batch_id, doc_idx=source_doc_index,
+    )
     if len(all_items) > _LINE_ITEM_CAP:
         report.truncated = True
         report.warnings.append(
