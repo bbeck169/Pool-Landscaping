@@ -5,7 +5,7 @@ import { api } from "@/api";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
 import { useAuth } from "@/auth";
-import { colors } from '@/theme';
+import { colors, money, statusMeta } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import { MediaLibraryPicker } from "@/components/marketing/MediaLibraryPicker";
@@ -1191,6 +1191,11 @@ export default function CustomerDetail() {
                   onSeeAll={() => setTab("notes")}
                 />
               </div>
+              {/* CP-2 · Feb-2026 — Recent Invoices + Recent Estimates
+                   sections, appended at the end of the Overview
+                   stack per the brief (``do NOT refactor the existing
+                   Overview layout; just append''). */}
+              <RecentDocsSection customerId={id} />
             </div>
           ) : null}
 
@@ -1542,6 +1547,167 @@ function Info({ label, value, preserveNewlines }) {
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CP-2 · Feb-2026 — Recent Invoices + Recent Estimates sections.
+
+   Appended at the end of the Overview stack (NOT refactoring the
+   surrounding layout).  Reuses the existing
+   ``GET /api/quotes?doc_type={invoice|quote}&customer_id={id}``
+   endpoint (``backend/routers/quotes.py:252``) — no backend
+   changes.  Both lists fetch in parallel via ``Promise.allSettled``
+   so one failure never blanks the other (criterion e. in the vitest).
+
+   Named export (``RecentDocsSection``) so the CP-2 vitest can mount
+   this sub-tree in isolation; CustomerDetail itself is ~3000 lines
+   and would need a mountain of mocks to render.  The ``api`` prop
+   is an injection point for the test — defaults to the real client.
+   ═══════════════════════════════════════════════════════════════ */
+export function RecentDocsSection({ customerId, api: apiProp }) {
+  const client = apiProp || api;
+  const [invoices, setInvoices] = useState([]);
+  const [estimates, setEstimates] = useState([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [estimatesLoading, setEstimatesLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setInvoicesLoading(true);
+    setEstimatesLoading(true);
+    Promise.allSettled([
+      client.get(`/quotes?doc_type=invoice&customer_id=${customerId}`),
+      client.get(`/quotes?doc_type=quote&customer_id=${customerId}`),
+    ]).then(([inv, est]) => {
+      if (cancelled) return;
+      if (inv.status === "fulfilled") {
+        setInvoices(Array.isArray(inv.value) ? inv.value.slice(0, 5) : []);
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn("[cp-2] recent invoices fetch failed", inv.reason);
+        setInvoices([]);
+      }
+      if (est.status === "fulfilled") {
+        setEstimates(Array.isArray(est.value) ? est.value.slice(0, 5) : []);
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn("[cp-2] recent estimates fetch failed", est.reason);
+        setEstimates([]);
+      }
+      setInvoicesLoading(false);
+      setEstimatesLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [customerId, client]);
+
+  return (
+    <div
+      className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4"
+      data-testid="cd-recent-docs-section"
+    >
+      <RecentDocsList
+        title="Recent invoices"
+        testidPrefix="cd-recent-invoices"
+        docs={invoices}
+        loading={invoicesLoading}
+        emptyLabel="No recent invoices"
+        hrefPrefix="/invoices"
+        numberKey="invoice_number"
+      />
+      <RecentDocsList
+        title="Recent estimates"
+        testidPrefix="cd-recent-estimates"
+        docs={estimates}
+        loading={estimatesLoading}
+        emptyLabel="No recent estimates"
+        hrefPrefix="/quotes"
+        numberKey="quote_number"
+      />
+    </div>
+  );
+}
+
+function RecentDocsList({
+  title, testidPrefix, docs, loading, emptyLabel, hrefPrefix, numberKey,
+}) {
+  return (
+    <div
+      className="rounded-xl p-3"
+      style={{
+        backgroundColor: colors.surfaceSecondary,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid={`${testidPrefix}-section`}
+    >
+      <div
+        className="text-xs font-semibold uppercase tracking-wide mb-2"
+        style={{ color: colors.onSurfaceSecondary }}
+      >
+        {title}
+      </div>
+      {loading ? (
+        <div className="space-y-1" data-testid={`${testidPrefix}-loading`}>
+          <Skeleton className="h-6" />
+          <Skeleton className="h-6" />
+          <Skeleton className="h-6" />
+        </div>
+      ) : docs.length === 0 ? (
+        <div
+          className="text-sm"
+          style={{ color: colors.muted }}
+          data-testid={`${testidPrefix}-empty`}
+        >
+          {emptyLabel}
+        </div>
+      ) : (
+        <ul className="space-y-1" data-testid={`${testidPrefix}-list`}>
+          {docs.map((d) => (
+            <li key={d.id} data-testid={`${testidPrefix}-row-${d.id}`}>
+              <Link
+                to={`${hrefPrefix}/${d.id}`}
+                className="flex items-center justify-between gap-2 text-sm rounded-lg px-2 py-1 hover:underline"
+                style={{ color: colors.onSurface }}
+                data-testid={`${testidPrefix}-link-${d.id}`}
+              >
+                <span className="truncate" style={{ minWidth: 0 }}>
+                  <span style={{ color: colors.muted }}>
+                    {(d.created_at || "").slice(0, 10)}
+                  </span>
+                  <span className="mx-2">·</span>
+                  <span>{d[numberKey] || (d.id || "").slice(0, 8)}</span>
+                </span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  <span style={{ fontFamily: "monospace" }}>
+                    {money(d.total || 0)}
+                  </span>
+                  <RecentDocStatusPill status={d.status} />
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function RecentDocStatusPill({ status }) {
+  const meta =
+    statusMeta[status] || {
+      label: status || "—",
+      bg: colors.surfaceTertiary,
+      fg: colors.muted,
+    };
+  return (
+    <span
+      className="text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+      style={{ backgroundColor: meta.bg, color: meta.fg }}
+      data-testid={`recent-doc-status-pill-${status || "none"}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 
 
 function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
