@@ -98,6 +98,21 @@ export const ROUTE_META = {
   "/marketing/campaigns":         { label: "Campaigns", parent: "/marketing" },
   "/marketing/analytics":         { label: "Analytics", parent: "/marketing" },
 
+  // NAV-REORG · Feb-2026 — admin review surfaces nest under
+  // Marketing in the breadcrumb trail (matches the sidebar/
+  // top-bar reorg). ``/admin/reviews`` is the hub landing page
+  // AND the clickable intermediate node for its three children.
+  "/admin/reviews":            { label: "Reviews",   parent: "/marketing" },
+  "/admin/reviews/requests":   { label: "Requests",  parent: "/admin/reviews" },
+  "/admin/reviews/platforms":  { label: "Platforms", parent: "/admin/reviews" },
+  "/admin/reviews/widget":     { label: "Widget",    parent: "/admin/reviews" },
+  // Proactive-alerts surface nests under Reports (synthetic
+  // ``/admin/intelligence`` crumb node — no route is mounted at
+  // that bare path; it exists purely so the breadcrumb trail
+  // reads Reports > Intelligence > Alerts).
+  "/admin/intelligence":       { label: "Intelligence", parent: "/reports" },
+  "/admin/intelligence/alerts":{ label: "Alerts",    parent: "/admin/intelligence" },
+
   // Admin nested surfaces (analytics, ops, integrations, etc.)
   "/admin":                       { label: "Admin", parent: "/" },
   "/admin/analytics":             { label: "Analytics", parent: "/admin" },

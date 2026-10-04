@@ -122,9 +122,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/notifications", label: "Notification Prefs", icon: BellIcon,    feature: "marketing", subsection: "Automations & Templates" },
     { to: "/tasks",                 label: "Tasks",            icon: CheckSquare,  feature: "marketing", subsection: "Automations & Templates" },
     // Reviews & public
-    { to: "/marketing/reviews",     label: "Reviews",          icon: StarIcon,     feature: "marketing", subsection: "Reviews & Public" },
-    { to: "/csat",                  label: "CSAT / NPS",       icon: Sparkles,     feature: "marketing", subsection: "Reviews & Public" },
-    { to: "/forms",                 label: "Forms",            icon: FileEdit,     feature: "marketing", subsection: "Reviews & Public" },
+    { to: "/marketing/reviews",     label: "Reviews",          icon: StarIcon,     feature: "marketing", subsection: "Reviews" },
+    { to: "/csat",                  label: "CSAT / NPS",       icon: Sparkles,     feature: "marketing", subsection: "Reviews" },
+    { to: "/forms",                 label: "Forms",            icon: FileEdit,     feature: "marketing", subsection: "Reviews" },
     // Referrals
     { to: "/admin/referrals/analytics", label: "Referral Analytics", icon: BarChart3, feature: "marketing", subsection: "Referrals" },
     { to: "/admin/referrals/settings",  label: "Referral Tiers",     icon: StarIcon,  feature: "marketing", subsection: "Referrals" },
@@ -160,6 +160,14 @@ export const ADMIN_NAV_V2 = [
     { to: "/gbp/posts",    label: "GBP Posts",    icon: FileText,  feature: "gbp", subsection: "Google Business" },
     { to: "/gbp/reviews",  label: "GBP Reviews",  icon: StarIcon,  feature: "gbp", subsection: "Google Business" },
     { to: "/gbp/business", label: "GBP Business", icon: Building2, feature: "gbp", subsection: "Google Business" },
+    // NAV-REORG · Feb-2026 — admin-side review surfaces nested
+    // into Marketing (legacy standalone top-level group folded).
+    // Grouped alongside the pre-existing public-facing review
+    // rows under one consolidated subsection header.
+    { to: "/admin/reviews",           label: "Dashboard", icon: StarIcon, feature: "marketing", hard_rule: "admin_only", subsection: "Reviews" },
+    { to: "/admin/reviews/requests",  label: "Requests",  icon: Send,     feature: "marketing", hard_rule: "admin_only", subsection: "Reviews" },
+    { to: "/admin/reviews/platforms", label: "Platforms", icon: Globe,    feature: "marketing", hard_rule: "admin_only", subsection: "Reviews" },
+    { to: "/admin/reviews/widget",    label: "Widget",    icon: Globe,    feature: "marketing", hard_rule: "admin_only", subsection: "Reviews" },
   ]},
 
   { key: "operations", label: "Operations", icon: Wrench, entries: [
@@ -355,42 +363,42 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "reports", label: "Reports", icon: BarChart3, entries: [
-    { to: "/",                            label: "Dashboard",         icon: LayoutDashboard, feature: "dashboard" },
-    { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports", aliases: ["Analytics", "Reporting", "Business Reports"] },
-    { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
-    { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports" },
-    { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports" },
-    { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports" },
+    { to: "/",                            label: "Dashboard",         icon: LayoutDashboard, feature: "dashboard", subsection: "Reports" },
+    { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports", aliases: ["Analytics", "Reporting", "Business Reports"], subsection: "Reports" },
+    { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports", subsection: "Reports" },
+    { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports", subsection: "Reports" },
+    { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports", subsection: "Reports" },
+    { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports", subsection: "Reports" },
     // Feb-2026 · P37d — dispatcher-facing GPS Auto-Start audit
     // dashboard. Ops uses this to tune the 75m radius default and
     // diagnose consent / throttle patterns.
-    { to: "/reports/gps-auto-start-audit", label: "GPS Auto-Start Audit", icon: MapPin,   feature: "reports" },
-    { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
-    { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling" },
-    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports", industry: "pools" },
-    { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
+    { to: "/reports/gps-auto-start-audit", label: "GPS Auto-Start Audit", icon: MapPin,   feature: "reports", subsection: "Reports" },
+    { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports", subsection: "Reports" },
+    { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling", subsection: "Reports" },
+    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports", industry: "pools", subsection: "Reports" },
+    { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports", subsection: "Reports" },
     // G2 · Feb-2026 — Driver Activity (server-detected GPS stops).
-    { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // MR0 · Feb-2026 — Public check-in moderation queue.
-    { to: "/admin/moderation/checkins",     label: "Check-in Moderation", icon: ShieldCheck, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/moderation/checkins",     label: "Check-in Moderation", icon: ShieldCheck, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // Phase SEO-A · Feb-2026 — Free on-page SEO auditor.
-    { to: "/admin/seo/auditor",             label: "SEO Auditor",         icon: SearchIcon, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/seo/auditor",             label: "SEO Auditor",         icon: SearchIcon, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // Phase SEO-C · Feb-2026 — Free keyword ideation (autocomplete + trends).
-    { to: "/admin/seo/keywords",            label: "Keyword Ideation",    icon: SearchIcon, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/seo/keywords",            label: "Keyword Ideation",    icon: SearchIcon, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // Phase G4 · Feb-2026 — Per-user GPS controls (admin+/manager).
-    { to: "/admin/settings/gps-users",      label: "GPS Per-User Controls", icon: MapPin, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/settings/gps-users",      label: "GPS Per-User Controls", icon: MapPin, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // MR1+MR2 · Feb-2026 — Public widget embed preview.
-    { to: "/admin/moderation/widget-embed", label: "Widget Embed",        icon: Globe, feature: "reports", hard_rule: "manager_only" },
-    { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
+    { to: "/admin/moderation/widget-embed", label: "Widget Embed",        icon: Globe, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
+    { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports", subsection: "Reports" },
     // Phase 56-c · Aug-2026 — Pricebook cost comparison (per-item
     // supplier spread report). Same three-role gate as neighbouring
     // reports rows (admin + super_admin + manager) via
     // ``manager_only`` hard_rule.
-    { to: "/admin/reports/pricebook-cost-comparison", label: "Cost Comparison", icon: Scale, feature: "reports", hard_rule: "manager_only" },
+    { to: "/admin/reports/pricebook-cost-comparison", label: "Cost Comparison", icon: Scale, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // Phase 56-d · Aug-2026 — Supplier spend + margin report.
     // Tighter role gate than Cost Comparison — admin + super_admin
     // only, no manager. Cost basis is sensitive.
-    { to: "/admin/reports/supplier-spend", label: "Supplier Spend & Margin", icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
+    { to: "/admin/reports/supplier-spend", label: "Supplier Spend & Margin", icon: TrendingUp, feature: "reports", hard_rule: "admin_only", subsection: "Reports" },
     // Phase 54g · Feb-2026 — Wholesale supplier sync analytics.
     // Route guard: ``AdminOrManagerForSuppliers`` in App.js → admin +
     // super_admin + manager. Mirror by using ``feature: "reports"``
@@ -399,7 +407,7 @@ export const ADMIN_NAV_V2 = [
     // ``manager_only`` isn't handled restrictively in the sidebar
     // filter and every one of those roles reads the ``reports``
     // feature).
-    { to: "/reports/supplier-syncs",       label: "Supplier Syncs",       icon: RefreshCw, feature: "reports", hard_rule: "manager_only" },
+    { to: "/reports/supplier-syncs",       label: "Supplier Syncs",       icon: RefreshCw, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
     // Phase 54h · Aug-2026 — Wholesale Suppliers credentials/config page.
     // Sibling of the analytics-facing "Supplier Syncs" row above —
     // this one links operators to the credentials + connection-test
@@ -407,15 +415,15 @@ export const ADMIN_NAV_V2 = [
     // (admin / super_admin / manager) via ``AdminOrManagerForSuppliers``
     // in App.js. ``feature: "settings"`` lands the entry in the same
     // RBAC bucket as neighbouring integrations rows below.
-    { to: "/settings/suppliers",           label: "Wholesale Suppliers", icon: Boxes,     feature: "settings", hard_rule: "manager_only" },
+    { to: "/settings/suppliers",           label: "Wholesale Suppliers", icon: Boxes,     feature: "settings", hard_rule: "manager_only", subsection: "Reports" },
     // Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin (vendor CRUD
     // that feeds the Ops Hub Price Book multi-supplier grid). Sibling
     // of the Wholesale Suppliers row above, but tighter role gate
     // (admin + super_admin only, no manager) per preflight §3.
-    { to: "/settings/pricebook-suppliers", label: "Pricebook Suppliers", icon: Store,     feature: "settings", hard_rule: "admin_only" },
+    { to: "/settings/pricebook-suppliers", label: "Pricebook Suppliers", icon: Store,     feature: "settings", hard_rule: "admin_only", subsection: "Reports" },
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
-    { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
-    { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
+    { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only", subsection: "Reports" },
+    { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports", subsection: "Reports" },
     // ``Vendor Bills`` (was here) relocated to Finance/Invoicing
     // in Commit 1.5 · Feb-2026 — see adminNav.js top of file for
     // rationale (payable-side invoice surface belongs in
@@ -424,19 +432,24 @@ export const ADMIN_NAV_V2 = [
     // now that Stripe SDK is retired. Payment link generation
     // happens transparently via Lumino/Zapier; there is no
     // longer a Stripe reconciliation screen to link to.
-    { to: "/admin/settings/chemical-costs",label: "Chemical Costs",      icon: Calculator, feature: "settings" },
-    { to: "/admin/settings/ringcentral",   label: "RingCentral",         icon: Phone, feature: "settings" },
-    { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings" },
-    { to: "/admin/budget/dashboard",       label: "Budget Dashboard",    icon: TrendingUp, feature: "reports" },
-    { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings" },
-    { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs", industry: "landscaping" },
-    { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
+    { to: "/admin/settings/chemical-costs",label: "Chemical Costs",      icon: Calculator, feature: "settings", subsection: "Reports" },
+    { to: "/admin/settings/ringcentral",   label: "RingCentral",         icon: Phone, feature: "settings", subsection: "Reports" },
+    { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings", subsection: "Reports" },
+    { to: "/admin/budget/dashboard",       label: "Budget Dashboard",    icon: TrendingUp, feature: "reports", subsection: "Reports" },
+    { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings", subsection: "Reports" },
+    { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs", industry: "landscaping", subsection: "Reports" },
+    { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs", subsection: "Reports" },
     // Feb-2026 · Diagnostics — browse client-side errors captured by
     // the frontend Error Boundary (admin+ / super_admin only).
-    { to: "/admin/diagnostics/errors",    label: "Client Errors",     icon: AlertTriangleIcon, feature: "audit_logs", hard_rule: "admin_only" },
+    { to: "/admin/diagnostics/errors",    label: "Client Errors",     icon: AlertTriangleIcon, feature: "audit_logs", hard_rule: "admin_only", subsection: "Reports" },
     // LZ5 · Feb-2026 — Lumino payment-link backfill (super_admin only).
     // Not pinned by default; visible only to super_admin via hard_rule.
-    { to: "/admin/tools/lumino-backfill", label: "Lumino Backfill",   icon: Zap,        feature: "reports", hard_rule: "super_admin_only" },
+    { to: "/admin/tools/lumino-backfill", label: "Lumino Backfill",   icon: Zap,        feature: "reports", hard_rule: "super_admin_only", subsection: "Reports" },
+    // NAV-REORG · Feb-2026 — legacy standalone top-level group
+    // for proactive alerts was folded into Reports under its own
+    // subsection header. Role gate, feature flag, icon, label,
+    // and route path preserved byte-for-byte from pre-reorg.
+    { to: "/admin/intelligence/alerts", label: "Alerts", icon: BellIcon, feature: "settings", hard_rule: "admin_or_super_admin", subsection: "Intelligence" },
   ]},
 
   { key: "communications", label: "Communications", icon: Send, entries: [
@@ -448,24 +461,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/comms/notes-archive", label: "Notes Archive", icon: FileText,     feature: "settings", hard_rule: "admin_only" },
   ]},
 
-  { key: "reviews", label: "Reviews", icon: StarIcon, entries: [
-    { to: "/admin/reviews",            label: "Dashboard", icon: StarIcon,       feature: "marketing", hard_rule: "admin_only" },
-    { to: "/admin/reviews/requests",   label: "Requests",  icon: Send,           feature: "marketing", hard_rule: "admin_only" },
-    { to: "/admin/reviews/platforms",  label: "Platforms", icon: Globe,          feature: "marketing", hard_rule: "admin_only" },
-    { to: "/admin/reviews/widget",     label: "Widget",    icon: Globe,          feature: "marketing", hard_rule: "admin_only" },
-  ]},
 
-  // Phase A1 · Feb-2026 — Proactive Intelligence.
-  // Bell + full-list page for missed-service (A1), chemistry upsell
-  // (A2), churn risk (A3), and renewal-due (A4) alerts. The single
-  // Alerts entry here lives at the same admin surface as the top-nav
-  // <AlertBell/>; A2/A3/A4 will add sub-entries later. ``hard_rule``
-  // is ``admin_or_super_admin`` — mirrors the backend contract
-  // (``insufficient_role_for_alerts`` 403) so no other role sees the
-  // link, even though the full-list page also role-gates itself.
-  { key: "intelligence", label: "Intelligence", icon: BellIcon, entries: [
-    { to: "/admin/intelligence/alerts", label: "Alerts", icon: BellIcon, feature: "settings", hard_rule: "admin_or_super_admin" },
-  ]},
 
 ];
 

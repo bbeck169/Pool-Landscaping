@@ -24,6 +24,10 @@ const SUBGROUPED_GROUPS = new Set([
   "marketing",
   "operations",
   "customers",
+  // NAV-REORG · Feb-2026 — Reports now surfaces subsection
+  // headers so the folded Alerts tab lands under its own
+  // bucket instead of the fallback bucket.
+  "reports",
 ]);
 
 const LS_PINNED = "nav_pinned_v1";
