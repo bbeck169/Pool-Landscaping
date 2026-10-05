@@ -226,3 +226,14 @@ memory/FOLLOWUP_*.md
 # (9260 .cache files were tracked prior to CLEAN-1).
 node_modules/.cache/
 node_modules/.vite/
+
+# CLEAN-5 · Feb-2026 — ``yarn build`` emits the webpack production
+# bundle into ``frontend/build/`` (asset-manifest.json, index.html,
+# static/js/*, static/css/*, plus mirrored copies of /public/).
+# These artifacts are per-build, content-hashed, and must never be
+# tracked. The pre-existing ``/build`` rule above is anchored to the
+# repo root — it does NOT bite nested paths. CLEAN-5 followed the
+# CLEAN-1 pattern: this same commit untracks 953 previously-tracked
+# files under ``frontend/build/`` via ``git rm -r --cached`` so the
+# ignore rule can actually take effect.
+frontend/build/
