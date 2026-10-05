@@ -13,9 +13,13 @@ import AdminTopBar from "@/layouts/AdminTopBar";
 // per breakpoint); the command-K palette still mounts headless
 // there as a singleton.
 import GlobalSearchBar from "@/components/GlobalSearchBar";
-// Phase 4-landscape · Feb-2026 — full-screen clock-in gate for
-// landscape technicians.
-import LandscapeTechClockInGate from "@/components/schedule/LandscapeTechClockInGate";
+// CLOCK-GATE-FIX · Feb-2026 — the full-screen clock-in gate
+// wrapper around ``<Outlet />`` was removed; the per-tap gate
+// at ``CalendarSchedule.jsx:540`` (``useClockInGate(user)`` +
+// ``<ClockInGateDialog>``) is the real UX contract. The gate
+// component + its tests stay in
+// ``@/components/schedule/LandscapeTechClockInGate`` for a
+// clean reinstatement if the policy flips again.
 import UniversalMenu from "@/layouts/UniversalMenu";
 // K75 · Step B · Feb-2026 — user-editable Quick Access rail.
 // Replaces the inline ``<QuickNavRail>`` (retained below as
@@ -831,13 +835,20 @@ function AppLayout() {
               <AppBreadcrumbs variant="admin" />
               <OnboardingGate>
                 <div data-testid="admin-outlet-wrapper">
-                  {/* Phase 4-landscape · Feb-2026 — landscape-tech
-                      clock-in gate.  Short-circuits for admins /
-                      pool techs via its own useClockInStatus
-                      guard. */}
-                  <LandscapeTechClockInGate>
-                    <Outlet />
-                  </LandscapeTechClockInGate>
+                  {/* CLOCK-GATE-FIX · Feb-2026 — the former
+                      full-screen clock-in gate wrapper here
+                      blocked EVERY admin route for landscape
+                      techs who were not yet clocked in. The
+                      real UX contract is "see your schedule,
+                      gate the job tap", which is already
+                      enforced at ``CalendarSchedule.jsx:540``
+                      via ``useClockInGate(user)`` +
+                      ``<ClockInGateDialog>``. The
+                      ``<LandscapingClockWidget>`` mounted at
+                      L825 still surfaces the Clock In CTA so
+                      a landscape tech can start their day
+                      straight from the Schedule page. */}
+                  <Outlet />
                 </div>
               </OnboardingGate>
             </DynamicCrumbProvider>
