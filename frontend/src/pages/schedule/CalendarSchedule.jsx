@@ -2790,7 +2790,7 @@ export function GridPanel({
             return (
               <div
                 key={j.id}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer"
+                className="flex flex-wrap items-center gap-3 px-3 py-3 rounded-xl cursor-pointer"
                 style={{
                   background: k50CardBg,
                   border: `1px solid ${colors.border}`,
@@ -2837,7 +2837,7 @@ export function GridPanel({
                 >
                   {isChecked ? <CheckCircle2 size={13} color="#fff" /> : null}
                 </button>
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-[180px]">
                   <div className="text-[11px] font-bold uppercase tracking-wide"
                        style={{ color: svc.tag }}>
                     {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
