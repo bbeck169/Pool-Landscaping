@@ -63,11 +63,19 @@ const commonRules = {
             "!@/lib/utils",
             "!@/lib/stripeConfig",
             "!@/lib/checklistType",
+            // CLEAN-2 · Feb-2026 — relativeTime is a shared ISO→
+            // relative-string util used by 4 feature files
+            // (invoices/InvoicesList, invoices/InvoiceViewHistory,
+            // quotes/QuotesList, quotes/QuoteViewHistory) plus its
+            // test. Follows the same utility-exception pattern as
+            // utils / stripeConfig / checklistType above.
+            "!@/lib/relativeTime",
           ],
           message:
-            "The '@/lib/*' alias only exposes utils, stripeConfig, and " +
-            "checklistType. Use '@/api' for the API client, '@/hooks/*', " +
-            "'@/components/*', or a relative path. See Phase 40b hotfix.",
+            "The '@/lib/*' alias only exposes utils, stripeConfig, " +
+            "checklistType, and relativeTime. Use '@/api' for the API " +
+            "client, '@/hooks/*', '@/components/*', or a relative path. " +
+            "See Phase 40b hotfix.",
         },
       ],
     },
