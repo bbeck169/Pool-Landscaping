@@ -36,7 +36,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import db, logger
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, get_current_user, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -479,6 +479,228 @@ async def reject_timesheet(eid: str, body: RejectReq,
     doc = await db.time_entries.find_one({"id": eid, "tenant_id": tenant["id"]}, {"_id": 0})
     await _broadcast(doc["user_id"], "workforce.timesheet_rejected",
                      {"entry_id": eid, "reason": body.reason or ""})
+    return doc
+
+
+# ─── Timecard edit (admin / manager) · TIMECARD-EDIT atomic ────────────────
+class TimecardEditReq(BaseModel):
+    """PATCH body for ``/workforce/timesheets/{eid}``.
+
+    All fields optional. ``date`` (``YYYY-MM-DD``) acts as a day-only
+    re-anchor on whichever of ``clock_in_at`` / ``clock_out_at`` the
+    body did NOT also supply verbatim — the stored HH:MM:SS + tz
+    offset is preserved. ``reason`` is a free-text audit note capped
+    at 500 chars.
+    """
+    clock_in_at: Optional[str] = None
+    clock_out_at: Optional[str] = None
+    date: Optional[str] = None
+    reason: Optional[str] = None
+
+
+_REASON_MAX_LEN = 500
+# After midnight-crossing auto-advance (``co <= ci`` → +1 day on co),
+# any resolved shift > 20h is a fat-finger reversal, not a real shift.
+# 20h covers legitimate split-shifts (~18h) with headroom; a true 24h
+# on-call pass-through is rare enough to be worth a conscious re-key.
+# See TIMECARD-EDIT atomic receipt for rationale.
+_SHIFT_MAX_HOURS = 20.0
+
+
+def _reanchor_iso_day(iso_str: str, new_date_yyyymmdd: str) -> str:
+    """Replace the DATE portion of ``iso_str`` with ``new_date_yyyymmdd``,
+    preserving ``HH:MM:SS.ffffff`` and timezone. Raises 400 on malformed
+    input."""
+    try:
+        new_d = datetime.strptime(new_date_yyyymmdd, "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(400, f"Invalid date: {new_date_yyyymmdd!r} (expected YYYY-MM-DD)")
+    try:
+        orig = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, f"Invalid ISO timestamp: {iso_str!r}")
+    return orig.replace(year=new_d.year, month=new_d.month, day=new_d.day).isoformat()
+
+
+def _shift_iso_by_days(iso_str: str, delta_days: int) -> str:
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except Exception:
+        return iso_str
+    return (dt + timedelta(days=delta_days)).isoformat()
+
+
+def _shift_breaks_by_days(breaks: List[dict], delta_days: int) -> List[dict]:
+    """Shift every break ``start``/``end`` by ``delta_days`` while keeping
+    non-ISO / unset fields untouched. Zero delta → identity."""
+    if not breaks or delta_days == 0:
+        return list(breaks or [])
+    out: List[dict] = []
+    for b in breaks:
+        nb = dict(b)
+        if nb.get("start"):
+            nb["start"] = _shift_iso_by_days(nb["start"], delta_days)
+        if nb.get("end"):
+            nb["end"] = _shift_iso_by_days(nb["end"], delta_days)
+        out.append(nb)
+    return out
+
+
+@router.patch("/workforce/timesheets/{eid}")
+async def edit_timesheet(
+    eid: str, body: TimecardEditReq,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """TIMECARD-EDIT · admin/manager/owner/super_admin edit of
+    ``clock_in_at`` / ``clock_out_at`` / day-attribution on a
+    ``time_entries`` row with an embedded audit trail (``edits: [...]``).
+
+    Resolution order:
+      1. Load row (tenant-scoped). 404 if missing / soft-deleted.
+         400 if the row is on a paid payroll run.
+      2. Apply ``clock_in_at`` / ``clock_out_at`` verbatim overrides.
+      3. If ``date`` supplied, re-anchor DATE part of each timestamp
+         the body did NOT already supply verbatim.
+      4. Open shifts (``clock_out_at is None``): reject any body-level
+         ``clock_out_at`` write (callers must use ``/workforce/clock-out``);
+         ``clock_in_at`` / ``date`` edits are permitted and leave the
+         shift open with ``duration_minutes`` unchanged.
+      5. If closed shift and ``clock_out_at <= clock_in_at`` after
+         resolution → auto-advance ``clock_out_at`` by +1 day
+         (overnight shift). Then if resolved duration > 20h →
+         ``400 shift_duration_unreasonable`` (fat-finger guard).
+      6. Breaks: shift ``start``/``end`` by the day-delta applied to
+         ``clock_in_at`` so breaks stay inside the (possibly re-dated)
+         shift.
+      7. Recompute ``duration_minutes`` from final (ci, co) minus
+         break minutes (closed shifts only).
+      8. No-op short-circuit: if resolved values match stored, return
+         the row untouched and do NOT append an edit record.
+      9. Successful mutation appends one ``edits[]`` entry capturing
+         actor + per-field from/to deltas. Rejected PATCHes do NOT
+         write an audit entry.
+    """
+    if body.reason is not None and len(body.reason) > _REASON_MAX_LEN:
+        raise HTTPException(400, f"reason too long (>{_REASON_MAX_LEN} chars)")
+    if (body.clock_in_at is None and body.clock_out_at is None
+            and body.date is None):
+        raise HTTPException(400, "No editable fields supplied")
+
+    entry = await db.time_entries.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not entry or entry.get("deleted_at"):
+        raise HTTPException(404, "Time entry not found")
+    if entry.get("payroll_run_id") and entry.get("payroll_paid_at"):
+        raise HTTPException(400, "Time entry is on a paid payroll run — not editable")
+
+    old_ci = entry.get("clock_in_at")
+    old_co = entry.get("clock_out_at")
+    was_open = old_co is None
+
+    if was_open and body.clock_out_at is not None:
+        raise HTTPException(
+            400,
+            "Open shift — use /workforce/clock-out to close, not PATCH",
+        )
+
+    new_ci = body.clock_in_at if body.clock_in_at is not None else old_ci
+    new_co = body.clock_out_at if body.clock_out_at is not None else old_co
+
+    if body.date is not None:
+        if body.clock_in_at is None and new_ci:
+            new_ci = _reanchor_iso_day(new_ci, body.date)
+        if body.clock_out_at is None and new_co:
+            new_co = _reanchor_iso_day(new_co, body.date)
+
+    ci_dt = _parse_iso(new_ci) if new_ci else None
+    if new_ci is not None and ci_dt is None:
+        raise HTTPException(400, f"Invalid clock_in_at: {new_ci!r}")
+    co_dt = _parse_iso(new_co) if new_co else None
+    if new_co is not None and co_dt is None:
+        raise HTTPException(400, f"Invalid clock_out_at: {new_co!r}")
+
+    if ci_dt and co_dt and co_dt <= ci_dt:
+        co_dt = co_dt + timedelta(days=1)
+        new_co = co_dt.isoformat()
+
+    if ci_dt and co_dt:
+        hrs = (co_dt - ci_dt).total_seconds() / 3600.0
+        if hrs > _SHIFT_MAX_HOURS:
+            raise HTTPException(
+                400,
+                f"shift_duration_unreasonable: {hrs:.1f}h exceeds "
+                f"{_SHIFT_MAX_HOURS:.0f}h cap; verify start/end times",
+            )
+
+    breaks = list(entry.get("breaks") or [])
+    if body.date is not None and ci_dt and old_ci:
+        try:
+            old_ci_date = datetime.fromisoformat(old_ci.replace("Z", "+00:00")).date()
+            delta_days = (ci_dt.date() - old_ci_date).days
+            if delta_days:
+                breaks = _shift_breaks_by_days(breaks, delta_days)
+        except Exception:
+            pass
+
+    old_dur = entry.get("duration_minutes") or 0
+    if ci_dt and co_dt:
+        new_dur = round(
+            max(0.0, (co_dt - ci_dt).total_seconds() / 60.0
+                - _sum_break_minutes(breaks)),
+            2,
+        )
+    else:
+        new_dur = old_dur
+
+    changes: dict = {}
+    if new_ci != old_ci:
+        changes["clock_in_at"] = {"from": old_ci, "to": new_ci}
+    if new_co != old_co:
+        changes["clock_out_at"] = {"from": old_co, "to": new_co}
+    if body.date is not None:
+        try:
+            old_d = (datetime.fromisoformat(old_ci.replace("Z", "+00:00"))
+                     .date().isoformat() if old_ci else None)
+        except Exception:
+            old_d = None
+        if old_d != body.date:
+            changes["date"] = {"from": old_d, "to": body.date}
+    if new_dur != old_dur:
+        changes["duration_minutes"] = {"from": old_dur, "to": new_dur}
+
+    if not changes:
+        return entry
+
+    edit = {
+        "edit_id": new_id(),
+        "edited_by": user["id"],
+        "edited_by_name": user.get("name") or user.get("email"),
+        "edited_by_role": user.get("role"),
+        "edited_at": now_iso(),
+        "changes": changes,
+    }
+    if body.reason:
+        edit["reason"] = body.reason
+
+    upd: dict = {}
+    if "clock_in_at" in changes:
+        upd["clock_in_at"] = new_ci
+    if "clock_out_at" in changes:
+        upd["clock_out_at"] = new_co
+    if "duration_minutes" in changes:
+        upd["duration_minutes"] = new_dur
+    if breaks != (entry.get("breaks") or []):
+        upd["breaks"] = breaks
+
+    await db.time_entries.update_one(
+        {"id": eid, "tenant_id": tenant["id"]},
+        {"$set": upd, "$push": {"edits": edit}},
+    )
+    doc = await db.time_entries.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
     return doc
 
 
