@@ -88,8 +88,14 @@ def test_admin_full_shape(admin_headers):
     assert r.status_code == 200, r.text
     body = r.json()
     for key in ("company", "bill_to", "property_address", "header",
-                "line_items", "totals", "notes", "is_due_on_receipt"):
+                "line_items", "totals", "notes", "is_due_on_receipt",
+                "paid_at", "is_paid"):
         assert key in body, f"missing key {key}"
+    # INV-SERIALIZE-PAID · Feb-2026 — the derived ``is_paid`` is
+    # always a plain bool. ``paid_at`` is either an ISO string or
+    # None depending on the invoice state.
+    assert isinstance(body["is_paid"], bool)
+    assert body["paid_at"] is None or isinstance(body["paid_at"], str)
     for key in ("invoice_number", "invoice_date",
                 "credit_available", "outstanding_balance"):
         assert key in body["header"], f"missing header.{key}"
@@ -162,6 +168,53 @@ def test_pdf_tech_forbidden(tech_headers):
     r = requests.get(f"{API}/invoices/{iid}/pdf",
                       headers=tech_headers, timeout=15)
     assert r.status_code == 403
+
+
+# ── INV-SERIALIZE-PAID · Feb-2026 — paid_at + is_paid round-trip ──
+def test_full_paid_vs_unpaid_shape(admin_headers):
+    """Flip an existing aquaterra invoice between paid / unpaid states
+    at the DB layer, round-trip GET /full, and assert the two new
+    top-level fields reflect each state. Restores the original
+    snapshot in a finally block so repeated runs are idempotent."""
+    iid = _run(_pick_any_invoice())
+    assert iid, "need an invoice in aquaterra"
+
+    async def _snapshot():
+        return await _db().quotes.find_one(
+            {"id": iid},
+            {"_id": 0, "payment_status": 1, "paid_at": 1},
+        )
+
+    async def _patch(payment_status, paid_at):
+        await _db().quotes.update_one(
+            {"id": iid},
+            {"$set": {"payment_status": payment_status, "paid_at": paid_at}},
+        )
+
+    snap = _run(_snapshot())
+    try:
+        # (1) Paid state → is_paid=True, paid_at=<ISO>.
+        _run(_patch("paid", "2026-02-15T10:00:00Z"))
+        r = requests.get(f"{API}/invoices/{iid}/full",
+                          headers=admin_headers, timeout=15)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_paid"] is True, body
+        assert body["paid_at"] == "2026-02-15T10:00:00Z", body
+
+        # (2) Unpaid state → is_paid=False, paid_at=None.
+        _run(_patch("unpaid", None))
+        r = requests.get(f"{API}/invoices/{iid}/full",
+                          headers=admin_headers, timeout=15)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_paid"] is False, body
+        assert body["paid_at"] is None, body
+    finally:
+        _run(_patch(
+            snap.get("payment_status") if snap else "unpaid",
+            snap.get("paid_at") if snap else None,
+        ))
 
 
 def test_missing_invoice_404(admin_headers):

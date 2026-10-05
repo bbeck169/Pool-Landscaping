@@ -291,6 +291,18 @@ async def _build_viewer_payload(iid: str, tenant: dict, user: dict) -> Dict[str,
         "credits_applied_cents": int(inv.get("credits_applied_cents") or 0),
         "paid_method": inv.get("paid_method"),
         "title": inv.get("title") or "",
+        # INV-SERIALIZE-PAID · Feb-2026 — surface the paid-status
+        # fields the mobile invoice detail view consumes (see
+        # mobile/app/invoice/[id].tsx:166-167). ``paid_at`` is a
+        # straight pass-through of the ISO string stamped by the
+        # PDFI-PAID-B commit lane (pdf_commit.py:749) or the
+        # FIN-PARITY-A reconciler. ``is_paid`` is derived from
+        # ``payment_status == "paid"`` — matches the precedent
+        # in routers/quotes.py:1865 and the mobile consumer's
+        # own fallback. ``is_paid`` is NOT persisted on the
+        # invoice doc; it is a view-only convenience.
+        "paid_at": inv.get("paid_at"),
+        "is_paid": payment_status == "paid",
     }
 
 
