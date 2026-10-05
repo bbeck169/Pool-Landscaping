@@ -4,21 +4,32 @@
  * Locked-state: entries on paid payroll runs refuse hard delete.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { Clock, RefreshCw } from "lucide-react";
+import { Clock, RefreshCw, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { useAuth } from "@/auth";
 import {
   useBulkSelect, BulkSelectAll, BulkSelectRow,
   BulkActionBar, BulkConfirmModal, LockedPill,
 } from "@/components/bulk-select/BulkSelectToolkit";
+import {
+  TimecardEditModal, AuditHistoryPopover, canEditTimecards,
+} from "./TimecardEditModal";
 
 export default function AdminTimeEntriesList() {
+  const { user } = useAuth() || {};
+  const canEdit = canEditTimecards(user);
   const [rows, setRows] = useState(null);
   const [approvedFilter, setApprovedFilter] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
+  const [editingRow, setEditingRow] = useState(null);
+  const handleRowUpdated = (updated) => {
+    if (!updated || !updated.id) return;
+    setRows((prev) => (prev || []).map((r) => (r.id === updated.id ? updated : r)));
+  };
   const load = () => {
     const qs = approvedFilter === "yes" ? "?is_approved=true"
       : approvedFilter === "no" ? "?is_approved=false" : "";
@@ -109,11 +120,16 @@ export default function AdminTimeEntriesList() {
               <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Date</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Hours</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Approved</th>
+              {canEdit ? (
+                <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>
+                  Actions
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
             {(rows || []).length === 0 && rows !== null ? (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-sm"
+              <tr><td colSpan={canEdit ? 7 : 6} className="px-3 py-6 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="admin-time-entries-empty">
                 No time entries match this filter.
               </td></tr>
@@ -137,11 +153,30 @@ export default function AdminTimeEntriesList() {
                     <LockedPill reason={lockedFailures[r.id]}
                                   testid={`bulk-locked-pill-${r.id}`} />
                   ) : null}
+                  {(r.edits || []).length > 0 ? (
+                    <AuditHistoryPopover
+                      edits={r.edits}
+                      testid={`timecard-audit-badge-${r.id}`}
+                    />
+                  ) : null}
                 </td>
                 <td className="px-3 py-3 hidden md:table-cell text-xs" style={{ color: colors.muted }}>{r.assigned_job_id || "—"}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-xs" style={{ color: colors.muted }}>{(r.date || r.created_at || "").slice(0, 10)}</td>
                 <td className="px-3 py-3 text-xs" style={{ color: colors.onSurface }}>{r.hours || 0}</td>
                 <td className="px-3 py-3 text-xs" style={{ color: colors.muted }}>{r.is_approved ? "Yes" : "No"}</td>
+                {canEdit ? (
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setEditingRow(r)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border hover:bg-slate-50"
+                      style={{ borderColor: colors.border, color: colors.onSurface }}
+                      data-testid={`timecard-edit-btn-${r.id}`}
+                    >
+                      <Pencil size={11} /> Edit
+                    </button>
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -167,6 +202,15 @@ export default function AdminTimeEntriesList() {
         confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
         busy={busy}
       />
+      {canEdit && editingRow ? (
+        <TimecardEditModal
+          key={editingRow.id}
+          row={editingRow}
+          open={!!editingRow}
+          onClose={() => setEditingRow(null)}
+          onUpdated={handleRowUpdated}
+        />
+      ) : null}
     </div>
   );
 }
