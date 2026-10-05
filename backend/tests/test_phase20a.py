@@ -136,10 +136,52 @@ def test_route_optimize_cross_tenant_denied(tech_h, sunbelt_tech_h, dbc):
 
 
 # ─── 20A.2 · Auto-invoicing on submit ──────────────────────────────────────
+# CLEAN-3 · Feb-2026 — Required Four chemistry readings (chlorine, ph,
+# alkalinity, cyanuric) are mandatory at submit time per the Phase P17
+# chemistry gate (``services/chemistry_gate.py``). Seed them between
+# the bootstrap GET and the submit POST so the gate does not 422 the
+# 20A auto-invoice tests.
+#
+# Key choice: ``chlorine`` is the current canonical post-Phase-P17.1
+# (Feb-2026) end-to-end rename from ``free_chlorine`` → ``chlorine``.
+# The bootstrap now emits rows with ``{"key": "chlorine"}``; using the
+# legacy ``free_chlorine`` spelling (as test_service_report.py:237-253
+# still does — pre-existing known-broken) would miss the overlay and
+# the submit would still 422.
+_PHASE20A_REQUIRED_READINGS = {
+    "chlorine":   2.5,
+    "ph":         7.5,
+    "alkalinity": 100,
+    "cyanuric":   40,
+}
+
+
 def _do_submit(tech_h, jid):
-    requests.get(f"{API}/jobs/{jid}/service-report", headers=tech_h, timeout=15)
-    return requests.post(f"{API}/jobs/{jid}/service-report/submit",
-                         headers=tech_h, timeout=15)
+    bootstrap = requests.get(
+        f"{API}/jobs/{jid}/service-report",
+        headers=tech_h, timeout=15,
+    ).json()
+    readings = list(bootstrap.get("chemical_readings") or [])
+    # Overlay the Required Four onto the bootstrapped reading shape
+    # (which carries the canonical ``key`` labels but zero values).
+    # For non-pool templates (warranty / landscape / generic) the
+    # bootstrap returns ``chemical_readings=[]`` — the loop no-ops,
+    # the PATCH sends an empty array, and the gate correctly skips
+    # non-pool reports.
+    for row in readings:
+        k = row.get("key")
+        if k in _PHASE20A_REQUIRED_READINGS:
+            row["value"] = _PHASE20A_REQUIRED_READINGS[k]
+    requests.patch(
+        f"{API}/jobs/{jid}/service-report",
+        headers=tech_h,
+        json={"chemical_readings": readings},
+        timeout=15,
+    )
+    return requests.post(
+        f"{API}/jobs/{jid}/service-report/submit",
+        headers=tech_h, timeout=15,
+    )
 
 
 def test_auto_invoice_on_billable_submit(tech_h, dbc):
