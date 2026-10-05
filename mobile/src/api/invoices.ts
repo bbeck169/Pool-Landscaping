@@ -23,10 +23,17 @@ export type InvoiceFull = {
     this_invoice: number;
     amount_paid: number;
     total_due: number;
+    paid_method?: string;
   };
   notes: string;
   is_due_on_receipt?: boolean;
   payment_status?: string;
+  // PDFI-PAID-D — paid-state fields. ``paid_at`` comes from the raw
+  // invoice document when the backend serialises it; ``paid_method``
+  // lives on ``totals`` but is also surfaced top-level for convenience.
+  paid_at?: string;
+  is_paid?: boolean;
+  paid_method?: string;
 };
 
 export const getInvoiceFull = (iid: string): Promise<InvoiceFull> =>

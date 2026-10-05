@@ -162,6 +162,10 @@ export default function InvoiceDetail() {
   const { company, bill_to, property_address, header, line_items, totals, notes, is_due_on_receipt, payment_status } = data;
   const canPay = (payment_status || "").toLowerCase() !== "paid" && (totals?.total_due || 0) > 0;
   const brandPrimary = branding?.brand_primary_hex || "#0B4A6F";
+  // PDFI-PAID-D — derive paid state from available fields.
+  const isPaid = (payment_status || "").toLowerCase() === "paid" || data.is_paid === true;
+  const paidAt = data.paid_at;
+  const paidMethod = data.paid_method || totals?.paid_method;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -188,11 +192,18 @@ export default function InvoiceDetail() {
         {/* Status + amount */}
         <View style={s.card} testID="invoice-header-card">
           <View style={s.statusRow}>
-            <View style={[s.statusPill, { backgroundColor: payment_status === "paid" ? "#DCFCE7" : "#FEF9C3" }]}>
-              <Text style={[s.statusText, { color: payment_status === "paid" ? "#166534" : "#A16207" }]}>
-                {(payment_status || "unpaid").toUpperCase()}
-              </Text>
-            </View>
+            {isPaid ? (
+              <View style={s.paidChip} testID="invoice-paid-chip">
+                <Ionicons name="checkmark-circle" size={13} color="#fff" />
+                <Text style={s.paidChipText}>PAID</Text>
+              </View>
+            ) : (
+              <View style={[s.statusPill, { backgroundColor: "#FEF9C3" }]}>
+                <Text style={[s.statusText, { color: "#A16207" }]}>
+                  {(payment_status || "unpaid").toUpperCase()}
+                </Text>
+              </View>
+            )}
             {is_due_on_receipt && <Text style={s.duePill}>Due on Receipt</Text>}
           </View>
           <Text style={s.invoiceNum} testID="invoice-number">
@@ -225,6 +236,26 @@ export default function InvoiceDetail() {
               </View>
             ) : null}
           </View>
+          {/* PDFI-PAID-D — paid sub-row. Only renders when the invoice
+              is paid and there is supporting date/method info to show. */}
+          {isPaid && (paidAt || paidMethod) ? (
+            <View style={s.paidSubRow} testID="invoice-paid-sub-row">
+              <View style={s.paidSubRowHeader}>
+                <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
+                <Text style={s.paidSubRowTitle}>Payment Received</Text>
+              </View>
+              {paidAt ? (
+                <Text style={s.paidSubRowDetail} testID="invoice-paid-at">
+                  Paid on {paidAt.length >= 10 ? paidAt.slice(0, 10) : paidAt}
+                </Text>
+              ) : null}
+              {paidMethod ? (
+                <Text style={s.paidSubRowDetail} testID="invoice-paid-method">
+                  Method: {paidMethod.replace(/_/g, " ")}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
         {/* Promo Code Section (Phase 13B) */}
@@ -656,4 +687,43 @@ const s = StyleSheet.create({
   brandBandCompany: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", marginTop: 4 },
   brandFooter: { borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.md },
   brandFooterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#fff", textAlign: "center" },
+  // PDFI-PAID-D — paid chip + sub-row styles
+  paidChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#16A34A",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  paidChipText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#fff",
+    letterSpacing: 0.5,
+  },
+  paidSubRow: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  paidSubRowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  paidSubRowTitle: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: "#16A34A",
+  },
+  paidSubRowDetail: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    marginTop: 3,
+    marginLeft: 20,
+  },
 });
