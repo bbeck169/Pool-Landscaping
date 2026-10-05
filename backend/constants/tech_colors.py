@@ -56,6 +56,11 @@ TECH_COLOR_PALETTE: Final[List[Tuple[str, str]]] = [
     ("midnight_blue",   "#1E3A8A"),
     ("chestnut",        "#78350F"),
     ("moss",            "#365314"),
+    # ─── Feb-2026 · CREWS-FIX 2b (slot 25) ───────────────────────
+    # Sky-600 — matches brand accent used across emails + widget
+    # so crews pinned to the brand color aren't rejected by the
+    # palette-lock guard. Contrast vs white ≈ 4.10 (passes 3.0).
+    ("sky",             "#0284C7"),
 ]
 
 PALETTE_HEXES: Final[List[str]] = [hex_ for (_, hex_) in TECH_COLOR_PALETTE]

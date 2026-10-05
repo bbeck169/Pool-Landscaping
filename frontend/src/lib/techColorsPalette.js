@@ -42,6 +42,10 @@ export const TECH_COLOR_PALETTE = [
   { name: "midnight_blue", hex: "#1E3A8A" },
   { name: "chestnut",      hex: "#78350F" },
   { name: "moss",          hex: "#365314" },
+  // ─── Feb-2026 · CREWS-FIX 2b (slot 25) ───────────────────────
+  // Sky-600, mirrors backend. Order + case MUST match
+  // backend/constants/tech_colors.py.
+  { name: "sky",           hex: "#0284C7" },
 ];
 
 export const PALETTE_HEXES = TECH_COLOR_PALETTE.map((p) => p.hex);
