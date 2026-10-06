@@ -225,7 +225,7 @@ class TestPaletteEndpoint:
 
 
 # ═════════════════════════════════════════════════════════════════
-# 05 · PATCH /users/{uid} palette lock
+# 05 · PATCH /users/{uid} WCAG contrast gate (Feb-2026 Global Color Picker)
 # ═════════════════════════════════════════════════════════════════
 class TestUserDisplayColorPatch:
     def test_admin_can_set_palette_color(self):
@@ -242,18 +242,61 @@ class TestUserDisplayColorPatch:
         doc = _sync.users.find_one({"id": target_uid}, {"_id": 0})
         assert doc["display_color_hex"] == "#3B82F6"
 
-    def test_rejects_off_palette_hex(self):
+    def test_accepts_dark_off_palette_hex(self):
+        """Feb-2026 Global Color Picker tripwire — any ``#RRGGBB`` with
+        WCAG contrast ≥ 3.0 vs white must persist, even outside the
+        legacy 12-slot palette. Prevents accidental re-introduction of
+        the palette lock on this endpoint. ``#123456`` (dark navy) has
+        contrast ≈ 12.4 vs white."""
         _skip_if_no_mongo()
         tid = _mk_tenant()
         target_uid, _ = _mk_user(tid, "technician")
         hdrs = _admin_hdrs(tid)
         r = httpx.patch(
             f"{BASE}/api/users/{target_uid}",
-            # Valid #RRGGBB shape but NOT in the 12-slot palette.
             json={"display_color_hex": "#123456"},
             headers=hdrs, timeout=30,
         )
+        assert r.status_code == 200, r.text
+        doc = _sync.users.find_one({"id": target_uid}, {"_id": 0})
+        # Validator canonicalises to upper-case ``#RRGGBB``.
+        assert doc["display_color_hex"] == "#123456"
+
+    def test_rejects_low_contrast_hex(self):
+        """WCAG gate — hex with contrast < 3.0 vs white (too light to
+        read on the pin's white inner disc) must be rejected with
+        ``color_contrast_too_low``. ``#F0F0F0`` has contrast ≈ 1.08."""
+        _skip_if_no_mongo()
+        tid = _mk_tenant()
+        target_uid, _ = _mk_user(tid, "technician")
+        hdrs = _admin_hdrs(tid)
+        r = httpx.patch(
+            f"{BASE}/api/users/{target_uid}",
+            json={"display_color_hex": "#F0F0F0"},
+            headers=hdrs, timeout=30,
+        )
         assert r.status_code == 400, r.text
+        detail = r.json().get("detail")
+        assert isinstance(detail, dict), detail
+        assert detail.get("code") == "color_contrast_too_low", detail
+
+    def test_rejects_malformed_hex(self):
+        """Malformed hex (non-hex chars, wrong length) must be rejected
+        with ``color_hex_invalid`` before the contrast check runs."""
+        _skip_if_no_mongo()
+        tid = _mk_tenant()
+        target_uid, _ = _mk_user(tid, "technician")
+        hdrs = _admin_hdrs(tid)
+        for bad in ("not a color", "#GGGGGG", "#1234"):
+            r = httpx.patch(
+                f"{BASE}/api/users/{target_uid}",
+                json={"display_color_hex": bad},
+                headers=hdrs, timeout=30,
+            )
+            assert r.status_code == 400, (bad, r.text)
+            detail = r.json().get("detail")
+            assert isinstance(detail, dict), (bad, detail)
+            assert detail.get("code") == "color_hex_invalid", (bad, detail)
 
     def test_tech_cannot_patch(self):
         _skip_if_no_mongo()
