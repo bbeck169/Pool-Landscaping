@@ -176,13 +176,18 @@ def test_record_dead_letter_upsert_bumps_retry(db):
 def test_admin_list_endpoint_requires_super_admin(db):
     # Seed a row so the endpoint has something to return / gate.
     evt = _err_event(f"evt_{PREFIX}_c")
-    batch_safe_run(
+    res = batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail", stack_trace="…",
             raw_payload=evt,
         ),
     )
+    # STRIPE-TEST-ISOLATION-SEED-ASSERTIONS · Feb-2026 — mirror
+    # PART-3's defensive status assertion on seed calls so a
+    # silently-swallowed ledger write failure surfaces loudly
+    # instead of masquerading as a mis-shaped auth-gate response.
+    assert res["status"] == "recorded", res
     # No auth header → 401/403.
     r = requests.get(f"{BASE}/api/admin/stripe/dead-letter", timeout=10)
     assert r.status_code in (401, 403), r.text
@@ -195,13 +200,17 @@ def test_admin_list_endpoint_requires_super_admin(db):
 
 def test_admin_list_endpoint_super_admin_returns_rows(db):
     evt = _err_event(f"evt_{PREFIX}_d")
-    batch_safe_run(
+    res = batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail", stack_trace="…",
             raw_payload=evt,
         ),
     )
+    # STRIPE-TEST-ISOLATION-SEED-ASSERTIONS · Feb-2026 — defensive
+    # ``recorded`` assertion on the seed so the row-list downstream
+    # assertion can never be a false-positive on an empty table.
+    assert res["status"] == "recorded", res
     tok = _login("super@aquaterra.com")
     r = requests.get(f"{BASE}/api/admin/stripe/dead-letter",
                        headers={"Authorization": f"Bearer {tok}"}, timeout=10)
@@ -221,7 +230,7 @@ def test_admin_retry_endpoint_replays_handler_and_resolves(db):
         "type": "payment_intent.canceled",
         "data": {"object": {"id": "pi_x", "amount": 100}},
     }
-    batch_safe_run(
+    res = batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail",
@@ -229,6 +238,13 @@ def test_admin_retry_endpoint_replays_handler_and_resolves(db):
             raw_payload=evt,
         ),
     )
+    # STRIPE-TEST-ISOLATION-SEED-ASSERTIONS · Feb-2026 — defensive
+    # ``recorded`` assertion on the seed.  The retry endpoint
+    # under test only works when the dead-letter row genuinely
+    # landed in Mongo; without this guard a swallowed write could
+    # surface as a confusing 404 on the retry POST instead of a
+    # loud seed-write failure.
+    assert res["status"] == "recorded", res
     batch_safe_run(ledger.insert_or_skip(evt))
     tok = _login("super@aquaterra.com")
     r = requests.post(
