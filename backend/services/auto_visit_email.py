@@ -494,6 +494,81 @@ def _landscape_body_sections(sr: dict) -> list[dict]:
     }]
 
 
+# AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — generic non_pool body
+# sections.  Mirrors ``_landscape_body_sections`` but with a
+# generic "Completed:" title so the auto-visit email reads
+# cleanly for tree_service / hvac / pest_control / irrigation /
+# fencing / snow_removal (and any other industry that
+# ``_derive_checklist_kind`` classifies as ``"non_pool"``).
+# Returns an empty list when nothing was checked off so the
+# auto-email never emits an orphan "Completed:" header on an
+# empty data set.
+def _non_pool_body_sections(sr: dict) -> list[dict]:
+    checklist = sr.get("checklist_completed") or sr.get("checklist_items") or []
+    done = [c for c in checklist if _checklist_is_done(c)]
+    if not done:
+        return []
+    items = "".join(f"<li>✓ {c.get('label', 'Item')}</li>" for c in done)
+    return [{
+        "title": "Completed",
+        "html": f"<ul>{items}</ul>",
+        "text": "\n".join(f"  ✓ {c.get('label', 'Item')}" for c in done),
+    }]
+
+
+# AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — kind-detection seam.
+#
+# The auto-visit email path historically did a naive substring
+# match on ``sr.kind | job.service_type`` (``"landscape" in kind``)
+# which left tree_service / hvac / pest_control / irrigation /
+# fencing / snow_removal falling through to the pool template.
+# The canonical priority chain lives in
+# ``routers.jobs._derive_checklist_kind`` and already returns
+# ``"pool" | "landscape" | "non_pool"``.
+#
+# Import is deferred to call time so an interpreter-load ordering
+# surprise (routers.jobs still loading, or a lightweight unit test
+# that mocks the module out) safely falls back to the pre-fix
+# ``"landscape"`` keyword check — zero regression on existing
+# landscape routing.
+#
+# NB: there is NO circular import between
+# ``services.auto_visit_email`` and ``routers.jobs``
+# (``routers.jobs`` carries no auto_visit_email import at either
+# module scope or inside its handlers — verified Feb-2026).  The
+# lazy pattern here is defence-in-depth, not a cycle break.
+def _derive_recap_kind(sr: Mapping[str, Any],
+                       job: Mapping[str, Any]) -> str:
+    """Return ``"pool" | "landscape" | "non_pool"`` for a visit.
+
+    ``_derive_checklist_kind`` consults, in order:
+      1. ``job.checklist_kind_override``
+      2. ``job.industry`` (``"pool"`` / ``"landscaping"`` / else
+         ``"non_pool"``)
+      3. ``job.service_type`` / ``job.title`` keyword matches
+      4. Tech department fallback
+
+    Falls back to the pre-fix keyword match on import / runtime
+    error so a surprise interpreter state keeps the previous
+    landscape routing intact.
+    """
+    try:
+        from routers.jobs import _derive_checklist_kind as _der
+    except Exception:
+        _der = None
+    if _der is not None:
+        try:
+            return _der(job or {}, None)
+        except Exception:
+            pass
+    # Keyword-match fallback (pre-fix behaviour).
+    kind = (sr.get("kind") or (job or {}).get("service_type")
+             or "pool").lower() if sr is not None else "pool"
+    if "landscap" in kind:
+        return "landscape"
+    return "pool"
+
+
 def _photo_ts(p: Dict[str, Any]) -> str:
     """Sort-key extractor for the photos grid — newest first. Falls
     back to a stable string so the sort is deterministic when the
@@ -1048,7 +1123,13 @@ def render_email(
             or ((tenant.get("settings") or {}).get("business_card") or {}).get("logo_url")
             or "https://app.plofv.com/logo-full.png")
     kind = (sr.get("kind") or job.get("service_type") or "pool").lower()
-    is_landscape = "landscape" in kind or "landscap" in kind
+    # AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — canonical 3-way
+    # discriminator via ``routers.jobs._derive_checklist_kind``.
+    # ``_recap_kind`` preserves the pre-fix keyword fallback so a
+    # mocked-out routers.jobs still routes landscape correctly.
+    _recap_kind = _derive_recap_kind(sr, job)
+    is_landscape = _recap_kind == "landscape"
+    is_non_pool = _recap_kind == "non_pool"
     visit_date = _visit_date_formatted(sr, job)
     # Phase D5 · Feb-2026 — subject line resolves through the i18n
     # loader so a customer with ``locale="es"`` receives a Spanish
@@ -1092,6 +1173,13 @@ def render_email(
 
     if is_landscape:
         sections = _landscape_body_sections(sr)
+    elif is_non_pool:
+        # AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — route non_pool to the
+        # generic "Completed:" sections builder instead of pool
+        # metrics / readings so tree_service, hvac, pest_control,
+        # irrigation, fencing, snow_removal (and any catch-all
+        # ``non_pool`` industry) stop auto-firing with pool framing.
+        sections = _non_pool_body_sections(sr)
     else:
         sections = _pool_body_sections(sr, palette)
 
@@ -1124,7 +1212,14 @@ def render_email(
     # the card composers above. Landscape branch stays on the
     # pre-existing single-column render path (no visual regression
     # for landscape reports).
-    if is_landscape:
+    #
+    # AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — the non_pool branch
+    # reuses the landscape single-column renderer (same shape,
+    # same visual language) and injects an optional "Service type"
+    # info row when the job carries a service_type so the customer
+    # sees "HVAC Tune-up" / "Weekly pest control" etc. instead of
+    # a bare "Service visit summary" header.
+    if is_landscape or is_non_pool:
         # Landscape branch — unchanged inline render.
         header_html = (
             f'<table cellspacing="0" cellpadding="0" style="width:100%;'
@@ -1150,6 +1245,18 @@ def render_email(
             ("Technician", sr.get("tech_name") or ""),
             ("Address", job.get("address") or ""),
         ]
+        # AUTO-NON-POOL-EMAIL-FIX · Feb-2026 — surface the service
+        # type on non_pool emails so the customer can tell "HVAC
+        # tune-up" from "Pest control re-treat" at a glance.  Only
+        # emitted when the job carries an explicit service_type /
+        # job_type to avoid a bare "Service type: " row.
+        if is_non_pool:
+            _svc = (str(job.get("service_type") or job.get("job_type") or "")
+                    .strip())
+            if _svc:
+                # Insert directly after the Date row so the service
+                # type is the second row the eye lands on.
+                info_rows.insert(1, ("Service type", _svc))
         info_html = "".join(
             f"<tr><td style='padding:2px 12px 2px 0;color:#555'>{k}</td>"
             f"<td style='padding:2px 0;font-weight:600'>{v}</td></tr>"
@@ -1223,7 +1330,8 @@ def render_email(
         text_lines.append("")
         text_lines.append("Internal service notes are not included in this summary.")
         return {"subject": subject, "html": html,
-                "text": "\n".join(text_lines), "kind": "landscape"}
+                "text": "\n".join(text_lines),
+                "kind": "non_pool" if is_non_pool else "landscape"}
 
     # ─── Portal-style pool branch (Feb-2026) ─────────────────────────
     # Copy for pill / card composition — falls back to sane defaults
