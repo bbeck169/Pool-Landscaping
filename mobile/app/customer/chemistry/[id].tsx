@@ -94,7 +94,7 @@ export default function CustomerChemistry() {
                 style={s.volumeInput}
                 value={volume}
                 onChangeText={setVolume}
-                keyboardType="numeric"
+                keyboardType="decimal-pad"
                 testID="chemistry-volume-input"
               />
               <Text style={s.volumeUnit}>gallons</Text>
