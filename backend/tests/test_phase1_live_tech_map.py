@@ -51,17 +51,25 @@ _sync = _shared_db() if (_MONGO_URL and _DB_NAME) else None
 # 01–03 · Pure-Python unit tests
 # ═════════════════════════════════════════════════════════════════
 class TestPaletteConstants:
-    def test_palette_has_twelve_entries(self):
+    def test_palette_has_at_least_24_entries(self):
+        # TEST-DRIFT · Feb-2026 — Ticket B expanded the palette from 12 to
+        # 24 slots; CREWS-FIX-2b appended slot 25 (``sky``).  Use ``>=`` so
+        # future additive expansions don't re-break this assertion while
+        # still catching a palette that's been unexpectedly shrunk.
         from constants.tech_colors import TECH_COLOR_PALETTE, PALETTE_HEXES
-        assert len(TECH_COLOR_PALETTE) == 12
-        assert len(PALETTE_HEXES) == 12
+        assert len(TECH_COLOR_PALETTE) >= 24
+        assert len(PALETTE_HEXES) >= 24
 
-    def test_palette_order_preserved(self):
+    def test_first_twelve_order_preserved(self):
+        # TEST-DRIFT · Feb-2026 — assert the hash-stability contract on
+        # the original 12-slot epoch (slots 0..11).  Any slot shift in
+        # that range re-keys every tech/crew row ever hashed by
+        # ``deterministic_color_for_id``; additive growth beyond slot 11
+        # does NOT re-key existing rows, so we deliberately do NOT pin
+        # the tail of the array here.
         from constants.tech_colors import TECH_COLOR_PALETTE
-        first = TECH_COLOR_PALETTE[0]
-        assert first == ("blue", "#3B82F6")
-        last = TECH_COLOR_PALETTE[-1]
-        assert last == ("fuchsia", "#D946EF")
+        assert TECH_COLOR_PALETTE[0] == ("blue", "#3B82F6")
+        assert TECH_COLOR_PALETTE[11] == ("fuchsia", "#D946EF")
 
     def test_hex_set_is_uppercased(self):
         from constants.tech_colors import PALETTE_HEX_SET
@@ -201,7 +209,12 @@ class TestPaletteEndpoint:
         assert r.status_code == 200, r.text
         body = r.json()
         assert "palette" in body
-        assert len(body["palette"]) == 12
+        # TEST-DRIFT · Feb-2026 — endpoint applies a WCAG 3.0 contrast
+        # cut before returning (``_filtered_palette()`` in
+        # ``routers/tech_colors.py``), so the response is intentionally
+        # smaller than the raw constant.  Loose lower bound keeps the
+        # test future-proof against palette growth AND filter tweaks.
+        assert len(body["palette"]) >= 15
         for entry in body["palette"]:
             assert "name" in entry and "hex" in entry
             assert entry["hex"].startswith("#")

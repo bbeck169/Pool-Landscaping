@@ -250,15 +250,19 @@ def test_cross_tenant_token_cannot_view_other_tenant_invoice():
         asyncio.get_event_loop().run_until_complete(_clean())
 
 
-def test_deleted_invoice_still_returns_payload_per_aggregator_contract():
-    """The existing aggregator (``_build_viewer_payload`` in
-    ``invoice_viewer.py``) does NOT filter by ``deleted_at`` — see
-    that module's own contract. This test pins the current behavior
-    so a future aggregator change that DOES start filtering is a
-    conscious, review-visible break rather than a silent one.
-    Documented here rather than "fixed" because dunning + audit
-    both rely on being able to view the soft-deleted invoice
-    payload via the magic link after a customer receives a refund."""
+def test_deleted_invoice_rejected_404_per_aggregator_contract():
+    """TEST-DRIFT · Feb-2026 — the aggregator ``_load_invoice`` now
+    filters by ``deleted_at`` and 404s soft-deleted docs.  Previous
+    version of this test asserted 200 and documented that the
+    aggregator intentionally did NOT filter; ops has since tightened
+    the contract to fail-closed on soft-deleted invoices.
+
+    This flip is paired with the sibling
+    ``test_invoice_viewer_load_invariants::test_load_invoice_rejects_soft_deleted_invoice``
+    which asserts the same 404 contract from the aggregator side.
+    Dunning + audit flows that previously relied on soft-deleted
+    payload access must now use the authenticated ``/full`` endpoint
+    with an admin token rather than the magic-link viewer."""
     async def _seed():
         db, client = _fresh_db()
         try:
@@ -275,10 +279,10 @@ def test_deleted_invoice_still_returns_payload_per_aggregator_contract():
             f"{API}/invoices/{inv_id}/full-magic",
             params={"token": token}, timeout=15,
         )
-        # Current contract — the aggregator returns 200 even for
-        # ``deleted_at``-stamped docs. If ops ever tightens this,
-        # flip this assertion to 404 in the same commit.
-        assert r.status_code == 200, r.text
+        # Fail-closed: soft-deleted invoice should NOT be viewable via
+        # magic token.  See docstring for the paired aggregator-side
+        # invariant test.
+        assert r.status_code == 404, r.text
     finally:
         async def _clean():
             db, client = _fresh_db()
