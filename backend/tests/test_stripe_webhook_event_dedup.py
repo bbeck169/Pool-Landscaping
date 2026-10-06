@@ -17,6 +17,7 @@ import pytest
 from dotenv import dotenv_values
 
 from services.payments import stripe_webhook_ledger as ledger
+from tests._phase34_asyncio import batch_safe_run
 from services.payments import stripe_charge as sc
 
 
@@ -26,6 +27,13 @@ PREFIX = f"b3dedup-{uuid.uuid4().hex[:8]}"
 
 @pytest.fixture
 def db():
+    # STRIPE-TEST-ISOLATION · Feb-2026 — trigger the Phase-41.1d
+    # Motor-client rebuild on the session-persistent loop BEFORE
+    # handing ``sc.db`` to the test. After the rebuild, ``sc.db``
+    # points at the fresh client bound to the persistent loop
+    # (see tests/_phase34_asyncio._rebuild_motor_client_on_loop).
+    import asyncio as _asyncio
+    batch_safe_run(_asyncio.sleep(0))
     return sc.db
 
 
@@ -35,9 +43,9 @@ def _clean(db):
         await db.stripe_webhook_events.delete_many(
             {"event_id": {"$regex": f"^evt_{PREFIX}"}},
         )
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
     yield
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
 
 
 def _snapshot_event(evt_id: str, tenant_id: str = "tenA") -> dict:
@@ -54,10 +62,10 @@ def _snapshot_event(evt_id: str, tenant_id: str = "tenA") -> dict:
 
 def test_first_insert_returns_received(db):
     evt = _snapshot_event(f"evt_{PREFIX}_1")
-    res = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
+    res = batch_safe_run(ledger.insert_or_skip(evt))
     assert res["status"] == "received"
     assert res["event_id"] == f"evt_{PREFIX}_1"
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.stripe_webhook_events.find_one({"event_id": f"evt_{PREFIX}_1"}, {"_id": 0}),
     )
     assert row is not None
@@ -68,13 +76,13 @@ def test_first_insert_returns_received(db):
 
 def test_duplicate_event_id_returns_skipped_duplicate(db):
     evt = _snapshot_event(f"evt_{PREFIX}_2")
-    first = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
-    second = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
-    third = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
+    first = batch_safe_run(ledger.insert_or_skip(evt))
+    second = batch_safe_run(ledger.insert_or_skip(evt))
+    third = batch_safe_run(ledger.insert_or_skip(evt))
     assert first["status"] == "received"
     assert second["status"] == "skipped_duplicate"
     assert third["status"] == "skipped_duplicate"
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.stripe_webhook_events.find_one({"event_id": f"evt_{PREFIX}_2"}, {"_id": 0}),
     )
     # Two duplicate attempts should bump the retry counter twice.
@@ -85,18 +93,18 @@ def test_duplicate_event_id_returns_skipped_duplicate(db):
 def test_different_event_ids_both_insert(db):
     a = _snapshot_event(f"evt_{PREFIX}_a")
     b = _snapshot_event(f"evt_{PREFIX}_b")
-    ra = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(a))
-    rb = asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(b))
+    ra = batch_safe_run(ledger.insert_or_skip(a))
+    rb = batch_safe_run(ledger.insert_or_skip(b))
     assert ra["status"] == "received"
     assert rb["status"] == "received"
-    count = asyncio.get_event_loop().run_until_complete(
+    count = batch_safe_run(
         db.stripe_webhook_events.count_documents({"event_id": {"$regex": f"^evt_{PREFIX}_[ab]$"}}),
     )
     assert count == 2
 
 
 def test_event_with_no_id_returns_no_event_id():
-    res = asyncio.get_event_loop().run_until_complete(
+    res = batch_safe_run(
         ledger.insert_or_skip({"type": "payment_intent.succeeded", "data": {"object": {}}}),
     )
     assert res["status"] == "no_event_id"
@@ -104,19 +112,19 @@ def test_event_with_no_id_returns_no_event_id():
 
 def test_mark_handled_and_failed_transitions(db):
     evt = _snapshot_event(f"evt_{PREFIX}_flow")
-    asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(ledger.insert_or_skip(evt))
+    batch_safe_run(
         ledger.mark_handled(f"evt_{PREFIX}_flow", result={"handled": True}),
     )
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.stripe_webhook_events.find_one({"event_id": f"evt_{PREFIX}_flow"}, {"_id": 0}),
     )
     assert row["status"] == "handled"
     assert row.get("first_handled_at")
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.mark_failed(f"evt_{PREFIX}_flow", error="downstream boom"),
     )
-    row2 = asyncio.get_event_loop().run_until_complete(
+    row2 = batch_safe_run(
         db.stripe_webhook_events.find_one({"event_id": f"evt_{PREFIX}_flow"}, {"_id": 0}),
     )
     assert row2["status"] == "failed"
@@ -135,8 +143,8 @@ def test_tenant_hint_falls_back_to_customer_metadata(db):
             "customer": {"id": "cus_x", "metadata": {"crm_tenant_id": "fallback-ten"}},
         }},
     }
-    asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
-    row = asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(ledger.insert_or_skip(evt))
+    row = batch_safe_run(
         db.stripe_webhook_events.find_one({"event_id": f"evt_{PREFIX}_th"}, {"_id": 0}),
     )
     assert row["tenant_id_hint"] == "fallback-ten"

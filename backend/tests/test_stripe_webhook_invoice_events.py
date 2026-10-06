@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
+from tests._phase34_asyncio import batch_safe_run
 from services.payments import stripe_charge as sc
 
 
@@ -27,6 +28,13 @@ TID = f"tenINV-{uuid.uuid4().hex[:8]}"
 
 @pytest.fixture
 def db():
+    # STRIPE-TEST-ISOLATION · Feb-2026 — trigger the Phase-41.1d
+    # Motor-client rebuild on the session-persistent loop BEFORE
+    # handing ``sc.db`` to the test. After the rebuild, ``sc.db``
+    # points at the fresh client bound to the persistent loop
+    # (see tests/_phase34_asyncio._rebuild_motor_client_on_loop).
+    import asyncio as _asyncio
+    batch_safe_run(_asyncio.sleep(0))
     return sc.db
 
 
@@ -34,9 +42,9 @@ def db():
 def _clean(db):
     async def _wipe():
         await db.quotes.delete_many({"tenant_id": TID})
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
     yield
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
 
 
 async def _seed_invoice(inv_id: str, total: float = 50.0):
@@ -66,11 +74,11 @@ def _inv_event(evt_type: str, inv_id: str, crm_invoice_id: str | None = None,
 
 def test_invoice_paid_marks_local_invoice_paid(db):
     inv_id = f"inv-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(_seed_invoice(inv_id))
+    batch_safe_run(_seed_invoice(inv_id))
     evt = _inv_event("invoice.paid", f"in_stripe_{inv_id}", crm_invoice_id=inv_id)
-    res = asyncio.get_event_loop().run_until_complete(sc.handle_webhook_event(evt))
+    res = batch_safe_run(sc.handle_webhook_event(evt))
     assert res["handled"] is True
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.quotes.find_one({"id": inv_id, "tenant_id": TID}, {"_id": 0}),
     )
     assert row["payment_status"] == "paid"
@@ -78,12 +86,12 @@ def test_invoice_paid_marks_local_invoice_paid(db):
 
 def test_invoice_payment_failed_marks_local_invoice_failed(db):
     inv_id = f"inv-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(_seed_invoice(inv_id))
+    batch_safe_run(_seed_invoice(inv_id))
     evt = _inv_event("invoice.payment_failed", f"in_stripe_{inv_id}",
                        crm_invoice_id=inv_id, error_msg="Your card was declined.")
-    res = asyncio.get_event_loop().run_until_complete(sc.handle_webhook_event(evt))
+    res = batch_safe_run(sc.handle_webhook_event(evt))
     assert res["handled"] is True
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.quotes.find_one({"id": inv_id, "tenant_id": TID}, {"_id": 0}),
     )
     # ``_mark_invoice_failed`` writes payment_status="payment_failed".
@@ -93,11 +101,11 @@ def test_invoice_payment_failed_marks_local_invoice_failed(db):
 def test_invoice_finalized_stamps_stripe_invoice_id(db):
     inv_id = f"inv-{uuid.uuid4().hex[:8]}"
     stripe_inv_id = f"in_stripe_{inv_id}"
-    asyncio.get_event_loop().run_until_complete(_seed_invoice(inv_id))
+    batch_safe_run(_seed_invoice(inv_id))
     evt = _inv_event("invoice.finalized", stripe_inv_id, crm_invoice_id=inv_id)
-    res = asyncio.get_event_loop().run_until_complete(sc.handle_webhook_event(evt))
+    res = batch_safe_run(sc.handle_webhook_event(evt))
     assert res["handled"] is True
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.quotes.find_one({"id": inv_id, "tenant_id": TID}, {"_id": 0}),
     )
     assert row["stripe_invoice_id"] == stripe_inv_id
@@ -107,5 +115,5 @@ def test_invoice_finalized_stamps_stripe_invoice_id(db):
 def test_untracked_stripe_invoice_is_noop(db):
     # No crm_invoice_id in metadata → handler logs + returns unhandled.
     evt = _inv_event("invoice.paid", "in_dashboard_only", crm_invoice_id=None)
-    res = asyncio.get_event_loop().run_until_complete(sc.handle_webhook_event(evt))
+    res = batch_safe_run(sc.handle_webhook_event(evt))
     assert res["handled"] is False

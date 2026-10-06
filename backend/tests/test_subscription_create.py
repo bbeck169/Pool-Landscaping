@@ -17,6 +17,7 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
+from tests._phase34_asyncio import batch_safe_run
 from services.payments import stripe_charge as sc
 from services.payments import stripe_subscription as sub_svc
 
@@ -45,6 +46,13 @@ def _login(email: str) -> str:
 
 @pytest.fixture
 def db():
+    # STRIPE-TEST-ISOLATION · Feb-2026 — trigger the Phase-41.1d
+    # Motor-client rebuild on the session-persistent loop BEFORE
+    # handing ``sc.db`` to the test. After the rebuild, ``sc.db``
+    # points at the fresh client bound to the persistent loop
+    # (see tests/_phase34_asyncio._rebuild_motor_client_on_loop).
+    import asyncio as _asyncio
+    batch_safe_run(_asyncio.sleep(0))
     return sc.db
 
 
@@ -53,9 +61,9 @@ def _clean(db):
     async def _wipe():
         await db.customers.delete_many({"tenant_id": TID})
         await db.stripe_subscriptions.delete_many({"tenant_id": TID})
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
     yield
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
 
 
 @pytest.fixture
@@ -105,8 +113,8 @@ async def _seed_customer(cid: str, tenant_id: str = TID,
 
 def test_create_happy_path_creates_stripe_customer_and_mirror(db, stripe_stub):
     cid = f"crm-cust-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(_seed_customer(cid))
-    row = asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(_seed_customer(cid))
+    row = batch_safe_run(
         sub_svc.create_subscription(
             tenant_id=TID, customer_id=cid, price_id="price_stub_1",
             quantity=2,
@@ -133,10 +141,10 @@ def test_create_reuses_existing_stripe_customer(db, stripe_stub):
     """When the CRM row already has a stripe_customer_id, don't
     create a fresh Stripe Customer."""
     cid = f"crm-cust-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         _seed_customer(cid, stripe_customer_id="cus_existing_ABC"),
     )
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         sub_svc.create_subscription(
             tenant_id=TID, customer_id=cid, price_id="price_stub_1",
         ),
@@ -148,10 +156,10 @@ def test_create_reuses_existing_stripe_customer(db, stripe_stub):
 
 def test_create_with_payment_method_sets_default_pm(db, stripe_stub):
     cid = f"crm-cust-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         _seed_customer(cid, stripe_customer_id="cus_pm_test"),
     )
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         sub_svc.create_subscription(
             tenant_id=TID, customer_id=cid, price_id="price_x",
             payment_method_id="pm_xyz",
@@ -164,7 +172,7 @@ def test_create_with_payment_method_sets_default_pm(db, stripe_stub):
 
 def test_create_rejects_missing_customer(db, stripe_stub):
     with pytest.raises(ValueError, match="customer_not_found"):
-        asyncio.get_event_loop().run_until_complete(
+        batch_safe_run(
             sub_svc.create_subscription(
                 tenant_id=TID, customer_id="does-not-exist",
                 price_id="price_x",
@@ -178,11 +186,11 @@ def test_create_tenant_isolation(db, stripe_stub):
     ``tenant_id`` so the wrong-tenant call raises customer_not_found."""
     cid = f"crm-cust-{uuid.uuid4().hex[:8]}"
     other_tid = f"tenSUBC-OTHER-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         _seed_customer(cid, tenant_id=other_tid),  # seeded on OTHER tenant
     )
     with pytest.raises(ValueError, match="customer_not_found"):
-        asyncio.get_event_loop().run_until_complete(
+        batch_safe_run(
             sub_svc.create_subscription(
                 tenant_id=TID, customer_id=cid,  # attempted from TID
                 price_id="price_x",
@@ -206,8 +214,8 @@ def test_create_reserved_metadata_keys_are_not_overrideable(db, stripe_stub):
     """Caller-supplied metadata should not be able to spoof the
     tenant/customer identity of the resulting Stripe object."""
     cid = f"crm-cust-{uuid.uuid4().hex[:8]}"
-    asyncio.get_event_loop().run_until_complete(_seed_customer(cid))
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(_seed_customer(cid))
+    batch_safe_run(
         sub_svc.create_subscription(
             tenant_id=TID, customer_id=cid, price_id="price_x",
             metadata={"crm_tenant_id": "SPOOFED", "note": "hi"},

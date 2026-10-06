@@ -16,6 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 # Import the service — its ``db`` handle is bound at module import
 # time to the real MONGO_URL / DB_NAME already set in /app/backend/.env.
+from tests._phase34_asyncio import batch_safe_run
 from services.payments import stripe_charge as sc
 
 
@@ -34,6 +35,13 @@ PMID  = f"pm_{uuid4().hex[:14]}"
 
 @pytest.fixture(scope="module")
 def db():
+    # STRIPE-TEST-ISOLATION · Feb-2026 — trigger the Phase-41.1d
+    # Motor-client rebuild on the session-persistent loop BEFORE
+    # handing ``sc.db`` to the test. After the rebuild, ``sc.db``
+    # points at the fresh client bound to the persistent loop
+    # (see tests/_phase34_asyncio._rebuild_motor_client_on_loop).
+    import asyncio as _asyncio
+    batch_safe_run(_asyncio.sleep(0))
     return sc.db
 
 
@@ -49,7 +57,7 @@ def _clean(db, monkeypatch):
         await db.stripe_charges.delete_many(
             {"stripe_payment_intent_id": {"$regex": "^pi_(ok|dashboard|fail|r1|r2|iso_a|iso_b|dbl|dbl2|refidem|refpart|refuptd)$"}}
         )
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
     # Seed the payment method so ``charge_card_on_file`` clears its
     # own attach guard.
     async def _seed_pm():
@@ -58,7 +66,7 @@ def _clean(db, monkeypatch):
             "provider_payment_method_id": PMID,
             "provider_customer_id": "cus_test", "stripe_mode": "test",
         })
-    asyncio.get_event_loop().run_until_complete(_seed_pm())
+    batch_safe_run(_seed_pm())
 
     # Stub the actual Stripe call inside charge_card_on_file so tests
     # don't hit the network. Returns deterministic PI per idempotency key.
@@ -81,7 +89,7 @@ async def _seed_invoice(inv_id: str, tenant_id: str = TID_A, total: float = 50.0
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return batch_safe_run(coro)
 
 
 # ── Test 1 — double-charge blocked ────────────────────────────────────

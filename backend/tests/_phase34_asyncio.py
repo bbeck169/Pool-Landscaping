@@ -57,12 +57,17 @@ _REBUILT: bool = False
 
 def _get_persistent_loop() -> "asyncio.AbstractEventLoop":
     """Return the process-wide persistent event loop, lazily creating
-    it on first use. Once created, this loop is reused for the entire
-    pytest session so Motor's initial binding stays valid across every
-    subsequent call from these six test files."""
-    global _MODULE_LOOP  # noqa: PLW0603
+    it on first use. If a prior test closed the previous loop, a
+    fresh one is minted. STRIPE-TEST-ISOLATION · Feb-2026 — when a
+    new loop is minted, we also reset ``_REBUILT`` so the next
+    ``_rebuild_motor_client_on_loop`` call rebinds Motor onto the
+    fresh loop. Without this reset, the Motor client stays pinned
+    to the closed loop and every subsequent Motor call raises
+    ``RuntimeError: Event loop is closed``."""
+    global _MODULE_LOOP, _REBUILT  # noqa: PLW0603
     if _MODULE_LOOP is None or _MODULE_LOOP.is_closed():
         _MODULE_LOOP = asyncio.new_event_loop()
+        _REBUILT = False  # force rebuild on the fresh loop
     return _MODULE_LOOP
 
 
@@ -71,12 +76,23 @@ def _rebuild_motor_client_on_loop(loop: "asyncio.AbstractEventLoop") -> None:
     bound explicitly to ``loop`` via the documented ``io_loop=``
     kwarg. Also repoint ``config.db`` at the new client's database.
 
-    Idempotent — guarded by module-level flag. Only fires ONCE per
-    session, on the first ``batch_safe_run`` call.
+    STRIPE-TEST-ISOLATION · Feb-2026 — rebuild on every call. The
+    original one-shot design (``_REBUILT`` flag) and the subsequent
+    identity-based fast-path both failed under broader batches:
+
+      * ``_REBUILT`` pinned the client to a closed persistent loop
+        when a later test closed it (pytest-asyncio cleanup, etc.).
+      * ``_io_loop is loop`` fast-path matches when
+        ``_phase41_1d_ensure_motor_loop`` rebinds ``_io_loop``, but
+        Motor's connection-pool futures remain pinned to the
+        original loop (per Motor topology; see module docstring).
+
+    New policy: unconditionally rebuild on every invocation. The
+    ``AsyncIOMotorClient`` constructor is lazy — the connection
+    pool is deferred until first I/O — so the per-call cost is
+    negligible but the correctness win is total.
     """
     global _REBUILT  # noqa: PLW0603
-    if _REBUILT:
-        return
     try:
         import config  # noqa: PLC0415
         from motor.motor_asyncio import AsyncIOMotorClient  # noqa: PLC0415
@@ -86,12 +102,41 @@ def _rebuild_motor_client_on_loop(loop: "asyncio.AbstractEventLoop") -> None:
     db_name = os.environ.get("DB_NAME")
     if not (mongo_url and db_name):
         return
-    # Force the new client's io_loop to be the persistent loop.
-    # AsyncIOMotorClient(io_loop=loop, ...) is a documented Motor 3.x
-    # API and is used exactly for this scenario.
     config.client = AsyncIOMotorClient(mongo_url, io_loop=loop)
     config.db = config.client[db_name]
-    _REBUILT = True
+    _REBUILT = True  # kept for backwards-compat with any external
+                     # introspection; no longer gates the rebuild.
+
+
+def _rebind_service_module_dbs() -> None:
+    """STRIPE-TEST-ISOLATION · Feb-2026 — rebind service modules that
+    captured ``db`` from ``config`` at THEIR import time. Idempotent;
+    safe to call on every ``batch_safe_run`` invocation. MUST run
+    AFTER ``config.db`` has been set/rebuilt by
+    ``_rebuild_motor_client_on_loop`` so each rebind picks up the
+    freshly-bound Motor database. Deliberately UNguarded by
+    ``_REBUILT`` because the one-shot rebuild above fires before our
+    Stripe-cluster test files get a chance to import this helper —
+    without this unconditional rebind, their ``sc.db`` would still
+    reference the stale pre-rebuild database."""
+    try:
+        import config  # noqa: PLC0415
+        import importlib  # noqa: PLC0415
+    except Exception:
+        return
+    for _modname in (
+        "services.payments.stripe_charge",
+        "services.payments.stripe_webhook_ledger",
+        "services.payments.mark_invoice_paid",
+    ):
+        try:
+            _mod = importlib.import_module(_modname)
+            if hasattr(_mod, "db"):
+                _mod.db = config.db
+        except Exception:
+            # Module may not be importable in every test session.
+            # Affected tests will surface the issue directly.
+            pass
 
 
 def batch_safe_run(coro):
@@ -109,6 +154,12 @@ def batch_safe_run(coro):
     # the primary path; this is a safety net for anyone importing
     # this helper outside of pytest collection order.
     _rebuild_motor_client_on_loop(loop)
+    # Unconditional service-module rebind — fires every call so
+    # Stripe tests pick up the fresh ``config.db`` even when a
+    # Phase-34 test triggered the one-shot rebuild earlier in the
+    # session (which would have flipped ``_REBUILT=True`` before
+    # the Stripe tests got a chance to import this helper).
+    _rebind_service_module_dbs()
     return loop.run_until_complete(coro)
 
 
@@ -124,3 +175,4 @@ def batch_safe_run(coro):
 # call is TOO LATE because by then the fixture has already captured
 # the stale ``config.db`` reference.
 _rebuild_motor_client_on_loop(_get_persistent_loop())
+_rebind_service_module_dbs()

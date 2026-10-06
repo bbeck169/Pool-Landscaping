@@ -25,6 +25,7 @@ import requests
 from dotenv import dotenv_values
 
 from services.payments import stripe_webhook_ledger as ledger
+from tests._phase34_asyncio import batch_safe_run
 from services.payments import stripe_charge as sc
 
 
@@ -65,6 +66,13 @@ def _login(email: str) -> str:
 
 @pytest.fixture
 def db():
+    # STRIPE-TEST-ISOLATION · Feb-2026 — trigger the Phase-41.1d
+    # Motor-client rebuild on the session-persistent loop BEFORE
+    # handing ``sc.db`` to the test. After the rebuild, ``sc.db``
+    # points at the fresh client bound to the persistent loop
+    # (see tests/_phase34_asyncio._rebuild_motor_client_on_loop).
+    import asyncio as _asyncio
+    batch_safe_run(_asyncio.sleep(0))
     return sc.db
 
 
@@ -77,9 +85,9 @@ def _clean(db):
         await db.stripe_webhook_events.delete_many(
             {"event_id": {"$regex": f"^evt_{PREFIX}"}},
         )
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
     yield
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    batch_safe_run(_wipe())
 
 
 def _err_event(evt_id: str) -> dict:
@@ -93,7 +101,7 @@ def _err_event(evt_id: str) -> dict:
 
 def test_record_dead_letter_inserts_row(db):
     evt = _err_event(f"evt_{PREFIX}_a")
-    res = asyncio.get_event_loop().run_until_complete(
+    res = batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="upstream mongo write timeout",
@@ -102,7 +110,7 @@ def test_record_dead_letter_inserts_row(db):
         ),
     )
     assert res["status"] == "recorded"
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.stripe_webhook_dead_letter.find_one(
             {"event_id": f"evt_{PREFIX}_a"}, {"_id": 0},
         ),
@@ -117,21 +125,21 @@ def test_record_dead_letter_inserts_row(db):
 
 def test_record_dead_letter_upsert_bumps_retry(db):
     evt = _err_event(f"evt_{PREFIX}_b")
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail one", stack_trace="…",
             raw_payload=evt,
         ),
     )
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail two", stack_trace="…",
             raw_payload=evt,
         ),
     )
-    row = asyncio.get_event_loop().run_until_complete(
+    row = batch_safe_run(
         db.stripe_webhook_dead_letter.find_one({"event_id": f"evt_{PREFIX}_b"}, {"_id": 0}),
     )
     assert row["retry_count"] == 1
@@ -142,7 +150,7 @@ def test_record_dead_letter_upsert_bumps_retry(db):
 def test_admin_list_endpoint_requires_super_admin(db):
     # Seed a row so the endpoint has something to return / gate.
     evt = _err_event(f"evt_{PREFIX}_c")
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail", stack_trace="…",
@@ -161,7 +169,7 @@ def test_admin_list_endpoint_requires_super_admin(db):
 
 def test_admin_list_endpoint_super_admin_returns_rows(db):
     evt = _err_event(f"evt_{PREFIX}_d")
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail", stack_trace="…",
@@ -187,7 +195,7 @@ def test_admin_retry_endpoint_replays_handler_and_resolves(db):
         "type": "payment_intent.canceled",
         "data": {"object": {"id": "pi_x", "amount": 100}},
     }
-    asyncio.get_event_loop().run_until_complete(
+    batch_safe_run(
         ledger.record_dead_letter(
             evt, error_class="RuntimeError",
             error_message="fail",
@@ -195,7 +203,7 @@ def test_admin_retry_endpoint_replays_handler_and_resolves(db):
             raw_payload=evt,
         ),
     )
-    asyncio.get_event_loop().run_until_complete(ledger.insert_or_skip(evt))
+    batch_safe_run(ledger.insert_or_skip(evt))
     tok = _login("super@aquaterra.com")
     r = requests.post(
         f"{BASE}/api/admin/stripe/dead-letter/evt_{PREFIX}_e/retry",
@@ -205,7 +213,7 @@ def test_admin_retry_endpoint_replays_handler_and_resolves(db):
     body = r.json()
     assert body["status"] == "resolved"
     assert body["event_id"] == f"evt_{PREFIX}_e"
-    dl = asyncio.get_event_loop().run_until_complete(
+    dl = batch_safe_run(
         db.stripe_webhook_dead_letter.find_one({"event_id": f"evt_{PREFIX}_e"}, {"_id": 0}),
     )
     assert dl["resolved"] is True
