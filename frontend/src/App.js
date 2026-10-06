@@ -607,19 +607,23 @@ function AdminOnly({ children }) {
   return children;
 }
 
-// ROUTE-GUARD-WIDEN · Feb-2026 — admit the ``owner`` role alongside
-// admin / super_admin on surfaces whose backend contract already
-// permits owners (``utils.require_admin`` resolves to
-// ``{admin, super_admin, owner}``).  The sibling ``AdminOrManager``
-// wrapper intentionally includes manager but excludes owner — this
-// one is its mirror image.  Keep manager OUT of this gate until the
-// paired backend widen (TIMECARDS-BE-WIDEN) lifts the LIST + bulk
-// endpoints from ``require_admin`` to ``require_admin_or_manager``.
-function AdminOrOwner({ children }) {
+// TIMECARDS-BE-WIDEN · Feb-2026 — matches backend
+// ``utils.require_admin_or_manager`` exactly: admit all four of
+// {admin, super_admin, manager, owner}.  Shipped specifically for
+// ``/admin/time-entries`` where the LIST + bulk-delete + bulk-update
+// endpoints were widened in the same atomic.  Deliberately a NEW
+// wrapper rather than extending ``AdminOrManager`` — that one is
+// used across 13 routes with un-audited owner-safety; silently
+// adding owner there could expose unintended surfaces.  Keep this
+// gate narrow to its one caller for now; future consolidation
+// candidate once a full ROUTE-GUARD-AUDIT atomic verifies parity.
+function AdminManagerOrOwner({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
   const role = user?.role;
-  const allowed = role === "admin" || role === "super_admin" || role === "owner";
+  const allowed =
+    role === "admin" || role === "super_admin" ||
+    role === "manager" || role === "owner";
   if (!user || !allowed) {
     return <Navigate to="/" replace />;
   }
@@ -933,7 +937,7 @@ export default function App() {
                 Log viewer, super_admin-only per P0 safety directive. */}
             <Route path="admin/comms/suppression-log" element={<SuperAdminOnly><AdminCommsSuppressionLog /></SuperAdminOnly>} />
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
-            <Route path="admin/time-entries" element={<AdminOrOwner><AdminTimeEntriesList /></AdminOrOwner>} />
+            <Route path="admin/time-entries" element={<AdminManagerOrOwner><AdminTimeEntriesList /></AdminManagerOrOwner>} />
             {/* Feb-2026 · C3 — Chemical Applications regulatory spray log.
                 Admin + super_admin + manager per C-series compliance role
                 brief; techs create sprays from mobile / field-log surfaces

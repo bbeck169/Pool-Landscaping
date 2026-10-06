@@ -32,7 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
-from utils import require_admin
+from utils import require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
 from routers.bulk_crm import (
     _BulkIdsIn, _BulkUpdateIn, _resolve_ids,
@@ -233,7 +233,7 @@ async def list_time_entries(
     search: Optional[str] = Query(None),
     include_deleted: bool = Query(False),
     limit: int = Query(500, ge=1, le=2000),
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_or_manager),
     tenant: dict = Depends(get_current_tenant),
 ):
     """Task NN follow-up · Feb 2026 — canonical admin list endpoint
@@ -270,7 +270,7 @@ async def list_time_entries(
 @router.post("/time-entries/bulk-delete",
               operation_id="timeEntries.bulkDelete")
 async def time_entries_bulk_delete(body: _BulkIdsIn,
-                                          user: dict = Depends(require_admin),
+                                          user: dict = Depends(require_admin_or_manager),
                                           tenant: dict = Depends(get_current_tenant)):
     ids = (await _resolve_ids("time_entries", tenant["id"],
                                     body.query_selector or {},
@@ -285,7 +285,7 @@ async def time_entries_bulk_delete(body: _BulkIdsIn,
 @router.post("/time-entries/bulk-update",
               operation_id="timeEntries.bulkUpdate")
 async def time_entries_bulk_update(body: _BulkUpdateIn,
-                                          user: dict = Depends(require_admin),
+                                          user: dict = Depends(require_admin_or_manager),
                                           tenant: dict = Depends(get_current_tenant)):
     ids = (await _resolve_ids("time_entries", tenant["id"],
                                     body.query_selector or {},
