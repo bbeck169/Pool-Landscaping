@@ -1064,7 +1064,7 @@ export default function JobDetail() {
                 data-testid={`jd-photo-${i}`}
               >
                 <img
-                  src={p.url || p.data_url || p}
+                  src={p.url || p.data || p.data_url || p}
                   alt=""
                   className="w-full h-full object-cover"
                 />
@@ -1210,6 +1210,7 @@ export default function JobDetail() {
           <img
             src={
               (job.photos[lightbox] || {}).url ||
+              (job.photos[lightbox] || {}).data ||
               (job.photos[lightbox] || {}).data_url ||
               job.photos[lightbox]
             }

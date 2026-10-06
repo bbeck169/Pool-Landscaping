@@ -2181,6 +2181,15 @@ async def get_job(jid: str,
         strip_s3_metadata_from_photos(doc)
     except Exception:
         pass
+    # JOB-PHOTOS-FIX · Feb-2026 — resolve every ``photos[].url`` so
+    # the FE grid in ``JobDetail.jsx`` can render ``<img src={p.url}>``
+    # instead of coercing the raw dict to ``[object Object]``.  The
+    # streaming route behind the URL owns the S3/base64 cascade.
+    try:
+        from services.jobs_slim_photos import inject_photo_url_on_doc
+        inject_photo_url_on_doc(doc, jid)
+    except Exception:
+        pass
     if not doc:
         raise HTTPException(404, "Job not found")
     # Feb-2026 · P4.5 — mirror the soft-delete two-branch check that the
@@ -6022,6 +6031,14 @@ async def add_job_photo(jid: str, body: PhotoIn,
     try:
         from services.jobs_slim_photos import strip_s3_metadata_from_photos
         strip_s3_metadata_from_photos(resp)
+    except Exception:
+        pass
+    # JOB-PHOTOS-FIX · Feb-2026 — mirror the detail-endpoint
+    # ``photos[].url`` injection on the upload response so the FE
+    # grid renders the new row immediately without a reload.
+    try:
+        from services.jobs_slim_photos import inject_photo_url_on_doc
+        inject_photo_url_on_doc(resp, jid)
     except Exception:
         pass
     if idem_key:

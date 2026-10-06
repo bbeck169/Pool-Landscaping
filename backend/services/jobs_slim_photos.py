@@ -200,6 +200,59 @@ def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dic
     return doc
 
 
+# ─────────────────────────────────────────────────────────────────
+# JOB-PHOTOS-FIX · Feb-2026 — inject a resolved ``url`` field on
+# every ``photos[]`` element returned by the single-job detail
+# endpoint (``GET /api/jobs/{jid}``) and the photo-upload response
+# (``POST /api/jobs/{jid}/photos``).
+#
+# Historically the FE grid in ``pages/jobs/JobDetail.jsx`` read
+# ``src={p.url || p.data_url || p}`` which fell through to the
+# raw photo object (base64 ``data`` is NOT read, and ``url`` was
+# never populated).  The sibling Service-Report grid already got
+# a resolved ``url`` via
+# ``workstream_job_detail._build_service_report_photos`` so SR
+# photos rendered fine while legacy ``jobs.photos`` showed
+# ``[object Object]``.
+#
+# This helper closes that gap by pointing every photo at the
+# existing streaming route ``/api/public/job-photo/{jid}/{pid}``
+# — which already owns the S3-first / base64-fallback cascade
+# (see ``public_job_photo`` in ``routers/jobs.py``).  Idempotent:
+# if the serializer upstream already populated ``url`` we leave
+# it alone so there's no silent override.
+# ─────────────────────────────────────────────────────────────────
+def inject_photo_url_on_doc(doc: Optional[Dict[str, Any]],
+                             jid: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Stamp a resolved ``url`` on every photo in ``doc["photos"]``.
+
+    * ``url`` points at ``/api/public/job-photo/{jid}/{photo_id}``
+      — the streaming endpoint that transparently handles both
+      S3-backed and base64-backed photos.
+    * Skips entries without an ``id`` (defensive — those cannot
+      be resolved by the proxy anyway).
+    * Idempotent: pre-existing ``url`` fields are preserved.
+    * ``None`` doc or missing ``jid`` → no-op.
+
+    Mutates + returns ``doc`` for ergonomic chaining.
+    """
+    if not doc or not jid:
+        return doc
+    plist = doc.get("photos")
+    if not isinstance(plist, list):
+        return doc
+    for p in plist:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("id")
+        if not pid:
+            continue
+        if p.get("url"):
+            continue
+        p["url"] = f"/api/public/job-photo/{jid}/{pid}"
+    return doc
+
+
 
 # ─────────────────────────────────────────────────────────────────
 # Task L+P · Feb-2026 — Batched SR-photo id enricher.
