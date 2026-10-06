@@ -2570,20 +2570,33 @@ def _completed_checklist_labels(report: dict) -> list:
     return out
 
 
-def _is_landscape_job(job: dict) -> bool:
-    """Thin wrapper over ``routers.jobs._derive_checklist_kind`` that
-    swallows any import error (e.g. during a lightweight unit test
-    that mocks the module) and returns False as a safe default so
-    the pool path remains the fallback.
+def _recap_kind(job: dict) -> str:
+    """Return ``"pool"`` / ``"landscape"`` / ``"non_pool"`` for a
+    job doc using the canonical ``routers.jobs._derive_checklist_kind``
+    priority chain.  Falls back to ``"pool"`` on import / runtime
+    error so the Phase-39 default remains the safe fallback (pre-
+    NON-POOL-EMAIL-FIX behaviour).
+
+    NON-POOL-EMAIL-FIX · Feb-2026 — shared source of truth for both
+    ``_compose_recap``'s 3-way branch and the kept-for-backward-
+    compat ``_is_landscape_job`` wrapper below.
     """
     try:
         from routers.jobs import _derive_checklist_kind
     except Exception:
-        return False
+        return "pool"
     try:
-        return _derive_checklist_kind(job or {}, None) == "landscape"
+        return _derive_checklist_kind(job or {}, None)
     except Exception:
-        return False
+        return "pool"
+
+
+def _is_landscape_job(job: dict) -> bool:
+    """Thin wrapper over ``_recap_kind``.  Preserved verbatim for the
+    LANDSCAPE-EMAIL-FIX test file + any other downstream consumer
+    pinned to this signature.
+    """
+    return _recap_kind(job) == "landscape"
 
 
 def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
@@ -2597,6 +2610,13 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
     jobs keep the historical Phase-39 composition unchanged.  Photo
     URLs are promoted to absolute URLs via ``APP_PUBLIC_URL`` so
     email clients can resolve them.
+
+    NON-POOL-EMAIL-FIX · Feb-2026 — the else-branch is now itself a
+    2-way split: ``_recap_kind`` returning ``"non_pool"`` picks a
+    generic service-visit recap (service_type line + checklist +
+    photos, NO chemistry); ``"pool"`` keeps the historical pool
+    composition (chemicals + readings + photos).  Priority:
+    landscape → non_pool → pool.
     """
     # Chemicals-added block.
     chems = report.get("chemicals_added") or []
@@ -2629,8 +2649,20 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
     biz_name = tenant.get("name") or "Your pool service"
 
     # LANDSCAPE-EMAIL-FIX · Feb-2026 — type branch.
-    is_landscape = _is_landscape_job(job)
-    checklist_labels = _completed_checklist_labels(report) if is_landscape else []
+    # NON-POOL-EMAIL-FIX · Feb-2026 — 3-way branch over
+    # ``_recap_kind`` so non-pool / non-landscape service types
+    # (tree_service, hvac, pest_control, irrigation, fencing,
+    # snow_removal) no longer fall through to the pool composition.
+    kind = _recap_kind(job)
+    is_landscape = kind == "landscape"
+    is_non_pool = kind == "non_pool"
+    needs_checklist = is_landscape or is_non_pool
+    checklist_labels = _completed_checklist_labels(report) if needs_checklist else []
+    service_type_line = ""
+    if is_non_pool:
+        _svc = str(job.get("service_type") or job.get("job_type") or "").strip()
+        if _svc:
+            service_type_line = f"Service type: {_svc}"
 
     if is_landscape:
         # Landscape jobs use ``"<Business> service"`` as the default
@@ -2638,6 +2670,16 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
         # a tenant without ``tenant.name`` doesn't leak pool framing.
         biz_name_display = tenant.get("name") or "Your landscape service"
         subject = f"Your landscape visit recap — {date_str}"
+    elif is_non_pool:
+        # Generic non-pool branch — subject uses the tenant's name
+        # when available ("Your <Business> service visit recap"),
+        # otherwise a neutral fallback that doesn't leak either the
+        # pool or landscape framing.
+        _biz = tenant.get("name")
+        biz_name_display = _biz or "Your service"
+        subject = (f"Your {_biz} service visit recap — {date_str}"
+                   if _biz
+                   else f"Your service visit recap — {date_str}")
     else:
         biz_name_display = biz_name
         subject = f"Your pool visit recap — {date_str}"
@@ -2648,12 +2690,14 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
     ]
     if tech_name:
         lines.append(f"Tech: {tech_name}")
-    if is_landscape:
-        # ── Landscape body ──────────────────────────────────────
+    if service_type_line:
+        lines.append(service_type_line)
+    if needs_checklist:
+        # ── Landscape / non-pool body ─────────────────────────────
         # Checklist first (the only service artifact a customer
-        # sees for a grooming visit), photos next, next visit at
-        # the end.  Chemistry / readings blocks are intentionally
-        # suppressed — landscape jobs have neither.
+        # sees for a non-chemistry visit), photos next, next visit
+        # at the end.  Chemistry / readings blocks are intentionally
+        # suppressed — these service types have neither.
         if checklist_labels:
             lines.append("")
             lines.append("Completed:")
@@ -2684,7 +2728,9 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
                   f"<p>Your <b>{date_str}</b> visit with <b>{biz_name_display}</b> is complete.</p>"]
     if tech_name:
         html_parts.append(f"<p>Tech: <b>{tech_name}</b></p>")
-    if is_landscape:
+    if service_type_line:
+        html_parts.append(f"<p>{service_type_line}</p>")
+    if needs_checklist:
         if checklist_labels:
             html_parts.append(
                 "<p><b>Completed:</b></p><ul>"
