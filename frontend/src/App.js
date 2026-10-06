@@ -607,6 +607,25 @@ function AdminOnly({ children }) {
   return children;
 }
 
+// ROUTE-GUARD-WIDEN · Feb-2026 — admit the ``owner`` role alongside
+// admin / super_admin on surfaces whose backend contract already
+// permits owners (``utils.require_admin`` resolves to
+// ``{admin, super_admin, owner}``).  The sibling ``AdminOrManager``
+// wrapper intentionally includes manager but excludes owner — this
+// one is its mirror image.  Keep manager OUT of this gate until the
+// paired backend widen (TIMECARDS-BE-WIDEN) lifts the LIST + bulk
+// endpoints from ``require_admin`` to ``require_admin_or_manager``.
+function AdminOrOwner({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role;
+  const allowed = role === "admin" || role === "super_admin" || role === "owner";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
 
 // Feb 2026 · Task A hotfix (route-guard companion) — generic
 // AdminOrManager wrapper. Matches the sidebar/top-bar filter's
@@ -914,7 +933,7 @@ export default function App() {
                 Log viewer, super_admin-only per P0 safety directive. */}
             <Route path="admin/comms/suppression-log" element={<SuperAdminOnly><AdminCommsSuppressionLog /></SuperAdminOnly>} />
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
-            <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
+            <Route path="admin/time-entries" element={<AdminOrOwner><AdminTimeEntriesList /></AdminOrOwner>} />
             {/* Feb-2026 · C3 — Chemical Applications regulatory spray log.
                 Admin + super_admin + manager per C-series compliance role
                 brief; techs create sprays from mobile / field-log surfaces
