@@ -135,6 +135,8 @@ export default function CustomerChemistry() {
           <TextInput
             label="POOL VOLUME (gallons)"
             type="number"
+            inputMode="decimal"
+            pattern="[0-9]*[.,]?[0-9]*"
             value={volume}
             onChange={(e) => setVolume(e.target.value)}
             wrapperClass="mb-3"
@@ -148,6 +150,8 @@ export default function CustomerChemistry() {
                 label={r.label}
                 type="number"
                 step="0.1"
+                inputMode="decimal"
+                pattern="[0-9]*[.,]?[0-9]*"
                 value={readings[r.k]}
                 onChange={(e) =>
                   setReadings((s) => ({ ...s, [r.k]: e.target.value }))
