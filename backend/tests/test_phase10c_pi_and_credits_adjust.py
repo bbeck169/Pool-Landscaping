@@ -113,15 +113,37 @@ def test_credits_adjust_blocks_negative_balance():
             {"$set": {"balance_cents": 0, "balance": 0}})
 
 
-def test_credits_adjust_rejects_short_reason():
+def test_credits_adjust_accepts_blank_reason():
+    """CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — the historical
+    ``reason`` ≥ 5-char gate has been relaxed so the action-bar
+    shortcut can post a credit without forcing a reason prompt.
+    This test replaces the previous ``..._rejects_short_reason``
+    guard; the backend now accepts blank / missing reason."""
     tok = _admin_tok()
     tid = _tenant_id()
     cid = _sync.customers.find_one({"tenant_id": tid}, {"_id": 0, "id": 1})["id"]
-    r = requests.post(f"{API}/customers/{cid}/credits/adjust",
-                       headers=_hdr(tok), json={"delta_cents": 100, "reason": "no"},
-                       timeout=15)
-    assert r.status_code == 400
-    assert r.json()["detail"]["code"] == "REASON_REQUIRED"
+    # Reset to a known state so the floor check doesn't 400 us.
+    _sync.customer_credits_balance.update_one(
+        {"tenant_id": tid, "customer_id": cid},
+        {"$set": {"balance_cents": 0, "balance": 0}}, upsert=True,
+    )
+    try:
+        r = requests.post(f"{API}/customers/{cid}/credits/adjust",
+                           headers=_hdr(tok),
+                           json={"delta_cents": 100, "reason": ""},
+                           timeout=15)
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert j["balance_cents"] == 100
+        # Reason key is still present on the ledger row (empty).
+        assert j["ledger_entry"].get("reason", None) == ""
+    finally:
+        _sync.customer_credits.delete_many(
+            {"tenant_id": tid, "customer_id": cid, "delta_cents": 100,
+             "reason": ""})
+        _sync.customer_credits_balance.update_one(
+            {"tenant_id": tid, "customer_id": cid},
+            {"$set": {"balance_cents": 0, "balance": 0}})
 
 
 def test_credits_adjust_denies_technician():

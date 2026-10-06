@@ -44,7 +44,7 @@ import { useSetDynamicCrumb }
   from "@/components/nav/dynamicCrumbContext";
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
-import { CustomerCreditsPanel } from "./CustomerCreditsPage";
+import { CustomerCreditsPanel, AdjustDialog } from "./CustomerCreditsPage";
 // Feb-2026 · Customer name relocation — the PageHeader import
 // was removed alongside the JSX call site.  The customer name
 // now lives INSIDE the identity card (see the inline
@@ -411,6 +411,34 @@ export default function CustomerDetail() {
   const canSeeCardControls =
     meRole === "admin" || meRole === "manager" || meRole === "super_admin";
 
+  // CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Issue Credit shortcut
+  // on the top navy action strip.  Visible to the four privileged
+  // roles that the backend ``_require_credit_adjuster`` dep
+  // accepts (admin / super_admin / manager / owner).  The modal
+  // state + the balance it previews live on this component so the
+  // existing ``AdjustDialog`` can be reused verbatim from
+  // ``CustomerCreditsPage.jsx`` (no fork, no new positive-only
+  // variant — see CUSTOMER-PROFILE-ACTION-BAR brief gate 4ii).
+  const canIssueCredit = ["admin", "super_admin", "manager", "owner"]
+    .includes((meRole || "").toLowerCase());
+  const [issueCreditOpen, setIssueCreditOpen] = useState(false);
+  const [issueCreditBalanceCents, setIssueCreditBalanceCents] = useState(0);
+  const openIssueCreditModal = async () => {
+    // Fetch the current ledger balance so the modal's live-preview
+    // ("will change the balance from X to Y") shows a correct
+    // starting value.  Guarded with try/catch so a transient
+    // credits-service error still opens the modal (preview will
+    // show "$0.00 → delta" which the backend floor-check will
+    // still reject if the real balance can't absorb it).
+    try {
+      const r = await api.get(`/customers/${id}/credits`);
+      setIssueCreditBalanceCents(Number(r?.balance_cents) || 0);
+    } catch {
+      setIssueCreditBalanceCents(0);
+    }
+    setIssueCreditOpen(true);
+  };
+
   const load = async () => {
     try {
       // Phase F3.5 · Feb-2026 — sub-3s customer profile.
@@ -630,28 +658,26 @@ export default function CustomerDetail() {
           single horizontal navy container sitting directly below
           the Portal Access panel. All handlers, testids, and
           disabled-state logic are preserved verbatim — this is a
-          layout + styling move only. */}
+          layout + styling move only.
+
+          CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — the strip is
+          now a 2-row ``flex-col`` so the Overview dropdown
+          (``cd-tabs-dropdown-shell``) lives on its own row BELOW
+          the action buttons (``cd-action-row``).  Row 2 keeps
+          the shared navy background but the dropdown trigger
+          renders with a white background + dark text (``cd-tabs-
+          dropdown-shell-light``) so the Overview control stands
+          out visually against the navy strip.  All existing
+          action-bar buttons on row 1 keep their testids +
+          handlers byte-for-byte. */}
       <div
-        className="rounded-2xl mb-4 px-3 py-3 flex flex-row items-center gap-4 overflow-x-auto"
+        className="rounded-2xl mb-4 px-3 py-3 flex flex-col gap-3"
         style={{
           backgroundColor: colors.nav.bg,
           border: `1px solid ${colors.nav.border}`,
         }}
         data-testid="cd-command-strip"
       >
-        <div style={{ minWidth: 220 }} data-testid="cd-tabs-dropdown-shell">
-          <ResponsiveTabs
-            tabs={visibleTabs}
-            active={tab}
-            onChange={setTab}
-            testidPrefix="cd-tab"
-            ariaLabel="Customer sections"
-            forceDropdown
-            recentStorageKey={
-              customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
-            }
-          />
-        </div>
         <div
           className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
           data-testid="cd-action-row"
@@ -729,6 +755,30 @@ export default function CustomerDetail() {
               <GitMerge size={14} /> Merge
             </Button>
           ) : null}
+          {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Issue Credit
+              shortcut.  Visible to admin / super_admin / manager /
+              owner (matches the widened backend gate on
+              ``POST /customers/{id}/credits/adjust``).  Reuses the
+              existing ``AdjustDialog`` modal from
+              ``CustomerCreditsPage.jsx`` so the two entry points
+              (action-bar shortcut + Credits tab button) share one
+              component.  Click handler fetches the current ledger
+              balance so the modal's live preview reads correctly. */}
+          {canIssueCredit ? (
+            <Button
+              variant="ghost"
+              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
+              onClick={openIssueCreditModal}
+              testid="cd-issue-credit-btn"
+              style={{
+                background: "transparent",
+                color: colors.nav.fg,
+                border: `1px solid rgba(255,255,255,0.20)`,
+              }}
+            >
+              <DollarSign size={14} /> Issue Credit
+            </Button>
+          ) : null}
           {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
               cleanup — action bar consolidated to a single row, so we
               suppress the ClickToCallButton's stacked ``Dial from this
@@ -769,7 +819,54 @@ export default function CustomerDetail() {
             );
           })()}
         </div>
+        {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Row 2: Overview
+            dropdown lives on its own line BELOW the action buttons.
+            Shares the parent strip's navy background but the
+            trigger area renders white (``cd-tabs-dropdown-shell-
+            light``) so the dropdown stands out visually.  Everyone
+            sees row 2 (no role gate on the Overview dropdown). */}
+        <div
+          className="rounded-xl bg-white"
+          style={{ minWidth: 220, width: "fit-content" }}
+          data-testid="cd-tabs-dropdown-shell-light"
+        >
+          <div
+            style={{ minWidth: 220 }}
+            data-testid="cd-tabs-dropdown-shell"
+          >
+            <ResponsiveTabs
+              tabs={visibleTabs}
+              active={tab}
+              onChange={setTab}
+              testidPrefix="cd-tab"
+              ariaLabel="Customer sections"
+              forceDropdown
+              recentStorageKey={
+                customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
+              }
+            />
+          </div>
+        </div>
       </div>
+
+      {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Issue Credit
+          modal rendered at the page root so it layers above the
+          navy strip + the rest of the profile.  Reused verbatim
+          from ``CustomerCreditsPage.jsx``'s ``AdjustDialog`` — no
+          fork.  ``onSaved`` re-fetches the full customer summary
+          (``load()``) so any surface displaying the balance
+          refreshes without a page reload. */}
+      {issueCreditOpen && canIssueCredit ? (
+        <AdjustDialog
+          customerId={id}
+          currentBalanceCents={issueCreditBalanceCents}
+          onClose={() => setIssueCreditOpen(false)}
+          onSaved={() => {
+            setIssueCreditOpen(false);
+            load();
+          }}
+        />
+      ) : null}
 
       {/* Header card */}
       {/* Feb-2026 · Customer profile typography bump — identity +

@@ -31,6 +31,30 @@ from routers.tenants import get_current_tenant
 router = APIRouter()
 
 
+# ─── CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 ────────────────────────
+# Credit adjustments on ``POST /customers/{cid}/credits/adjust``
+# were historically ``require_admin`` only.  The CUSTOMER-PROFILE-
+# ACTION-BAR brief widens the gate to ``{admin, super_admin,
+# manager, owner}`` so the two mid-privilege roles can also issue
+# a credit from the customer-detail action bar shortcut.  Kept
+# co-located with its only caller (keeps the role surface
+# auditable without a global dependency sprawl).
+_CREDIT_ADJUSTER_ROLES = frozenset({"admin", "super_admin",
+                                      "manager", "owner"})
+
+
+async def _require_credit_adjuster(
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Admin OR manager OR owner-only dependency.  Mirrors the
+    ``require_admin`` shape (returns the ``user`` dict so handlers
+    can read ``id`` / ``email``) and 403s otherwise."""
+    role = (user.get("role") or "").lower()
+    if role not in _CREDIT_ADJUSTER_ROLES:
+        raise HTTPException(403, "Not allowed")
+    return user
+
+
 PHASE10_STATUSES = (
     "pending_conversion", "pending_paid_window",
     "crediting_in_progress", "credited", "voided",
@@ -43,7 +67,12 @@ class VoidBody(BaseModel):
 
 class CreditsAdjustBody(BaseModel):
     delta_cents: int
-    reason: str
+    # CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — ``reason`` is now
+    # optional + unvalidated for length so the action-bar shortcut
+    # can post a credit without a mandatory reason prompt.  Default
+    # ``""`` preserves the historical ledger-row shape (``reason``
+    # key always present even when blank).
+    reason: Optional[str] = ""
 
 
 # ═══════════════════════════ Summary ══════════════════════════════════
@@ -137,18 +166,21 @@ async def void_referral(
 @router.post("/customers/{cid}/credits/adjust")
 async def adjust_customer_credits(
     cid: str, body: CreditsAdjustBody,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(_require_credit_adjuster),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Admin-only manual balance adjustment. Positive OR negative
-    delta. Never allows the balance to go below zero — returns 400
-    ``INSUFFICIENT_BALANCE`` if the requested delta would break the
-    floor."""
-    if not (body.reason or "").strip() or len(body.reason.strip()) < 5:
-        raise HTTPException(400, detail={
-            "code": "REASON_REQUIRED",
-            "message": "Reason must be at least 5 characters.",
-        })
+    """Admin / manager / owner manual balance adjustment. Positive OR
+    negative delta. Never allows the balance to go below zero —
+    returns 400 ``INSUFFICIENT_BALANCE`` if the requested delta would
+    break the floor.
+
+    CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — role gate widened from
+    ``admin``-only to ``{admin, super_admin, manager, owner}`` and
+    the ``reason`` minimum-length check relaxed to accept blank /
+    missing so the action-bar shortcut can issue a credit without
+    forcing the caller through a 5-char reason prompt.  Ledger row
+    still stores whatever reason text landed (empty string is OK).
+    """
     if body.delta_cents == 0:
         raise HTTPException(400, "delta_cents must be non-zero")
 
@@ -166,6 +198,7 @@ async def adjust_customer_credits(
             "message": f"Cannot decrement below zero (current ${current/100:.2f}).",
         })
     from utils import new_id as _new_id
+    _reason = (body.reason or "").strip()
     entry = {
         "id": _new_id(),
         "tenant_id": tenant["id"],
@@ -174,8 +207,8 @@ async def adjust_customer_credits(
         "source": "manual",
         "actor_user_id": user.get("id"),
         "actor_email": user.get("email"),
-        "reason": body.reason.strip(),
-        "note": body.reason.strip(),
+        "reason": _reason,
+        "note": _reason,
         "created_at": now_iso(),
     }
     await db.customer_credits.insert_one(entry)
