@@ -405,6 +405,35 @@ async def _evaluate_tech(
             # Nothing to send — treat as skipped (terminal, dedupe-worthy)
             per_status["skipped"] += 1
             continue
+        # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list.
+        # Delay-SMS fan-out → silently skip + WARN when the resolved
+        # phone belongs to a workforce/tenant line. Matches the
+        # ``on_my_way.py:321-333`` precedent byte-for-byte.
+        try:
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients,
+            )
+            _kept, _stripped = await strip_admin_owned_recipients(
+                tenant_id=tid, kind="customer_facing", channel="sms",
+                recipients=[phone],
+                context={"trigger": "live_dispatcher_delay",
+                          "visit_id": visit.get("id"),
+                          "tech_id": tech_id, "customer_id": cid},
+            )
+            if _stripped:
+                logger.warning(
+                    "[live_dispatcher] denied_admin_owned_recipient "
+                    "tenant=%s tech=%s customer=%s phone=%s",
+                    tid, tech_id, cid, phone,
+                )
+                per_status["skipped"] += 1
+                continue
+            phone = _kept[0] if _kept else phone
+        except Exception as exc:  # noqa: BLE001 — never break cron
+            logger.warning(
+                "[live_dispatcher] deny_list crashed — proceeding "
+                "without strip (fail-open): %s", exc,
+            )
         body = _compose_delay_sms(
             customer_name=cust.get("name") or "there",
             projected_arrival=projected_arrival,

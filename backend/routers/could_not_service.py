@@ -282,33 +282,57 @@ async def could_not_service(
             if not allowed:
                 sms_result["reason"] = "outbound_disabled"
             else:
-                sms_body = _render_body(
-                    customer_first=_first_name(cust) or "there",
-                    tech_first=_first_name(tech) or "your technician",
-                    company=_company_name(tenant) or "our team",
-                    reason_label=reason_label,
+                # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list
+                # guardrail; keeps workforce/tenant-owned numbers off the
+                # could-not-service outcome SMS even if the customer
+                # record is contaminated. Matches the
+                # ``on_my_way.py:321-333`` precedent.
+                from services.comms_hardening.deny_list import (
+                    strip_admin_owned_recipients,
                 )
-                from services.comms_sms_adapter import send_sms
-                from services.comms_env_guard import CommsContext
-                result = await send_sms(tid, phone, sms_body,
-                                        context=CommsContext.SYSTEM)
-                status = result.get("status")
-                if status == "failed":
-                    sms_result["reason"] = "send_failed"
+                _kept, _stripped = await strip_admin_owned_recipients(
+                    tenant_id=tid, kind="customer_facing", channel="sms",
+                    recipients=[phone],
+                    context={"trigger": "could_not_service",
+                              "job_id": job_id,
+                              "customer_id": cust.get("id")},
+                )
+                if _stripped:
+                    logger.warning(
+                        "[could_not_service] denied_admin_owned_recipient "
+                        "tenant=%s job=%s customer=%s phone=%s",
+                        tid, job_id, cust.get("id"), phone,
+                    )
+                    sms_result["reason"] = "denied_admin_owned_recipient"
                 else:
-                    comm_id = new_id()
-                    await db.communications.insert_one({
-                        "id": comm_id, "tenant_id": tid,
-                        "customer_id": cust.get("id"), "job_id": job_id,
-                        "channel": "sms", "direction": "outbound",
-                        "template_key": _TEMPLATE_KEY, "body": sms_body,
-                        "to": phone, "sent_by_user_id": user.get("id"),
-                        "sent_at": now,
-                        "status": "sent" if status in ("sent", "mocked") else "queued",
-                        "provider_message_id": result.get("provider_id"),
-                    })
-                    sms_result = {"sent": True, "reason": None,
-                                    "communication_id": comm_id}
+                    phone = _kept[0] if _kept else phone
+                    sms_body = _render_body(
+                        customer_first=_first_name(cust) or "there",
+                        tech_first=_first_name(tech) or "your technician",
+                        company=_company_name(tenant) or "our team",
+                        reason_label=reason_label,
+                    )
+                    from services.comms_sms_adapter import send_sms
+                    from services.comms_env_guard import CommsContext
+                    result = await send_sms(tid, phone, sms_body,
+                                            context=CommsContext.SYSTEM)
+                    status = result.get("status")
+                    if status == "failed":
+                        sms_result["reason"] = "send_failed"
+                    else:
+                        comm_id = new_id()
+                        await db.communications.insert_one({
+                            "id": comm_id, "tenant_id": tid,
+                            "customer_id": cust.get("id"), "job_id": job_id,
+                            "channel": "sms", "direction": "outbound",
+                            "template_key": _TEMPLATE_KEY, "body": sms_body,
+                            "to": phone, "sent_by_user_id": user.get("id"),
+                            "sent_at": now,
+                            "status": "sent" if status in ("sent", "mocked") else "queued",
+                            "provider_message_id": result.get("provider_id"),
+                        })
+                        sms_result = {"sent": True, "reason": None,
+                                        "communication_id": comm_id}
 
     logger.info(
         "[could_not_service] tenant=%s job=%s user=%s reason_key=%s sms=%s",

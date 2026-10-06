@@ -433,6 +433,24 @@ async def notify_quote_decision(
                 sms_rl += 1
             else:
                 try:
+                    # SMS-AUDIENCE-FIX · Feb-2026 — working-as-designed
+                    # [SMS-AUDIENCE-FIX: working-as-designed]
+                    #
+                    # ``audience="internal"`` is INTENTIONAL on this
+                    # call site. The quote-decision notification is
+                    # delivered to the TENANT (admins / workforce)
+                    # about a customer action — the recipient list
+                    # ``r["phone"]`` is resolved earlier in this
+                    # module from ``tenant.lead_notification_recipients``
+                    # or a workforce-admin fallback (see the recipient
+                    # resolver at the top of this file). Setting
+                    # ``audience="customer"`` here would subject these
+                    # admin alerts to the K72 customer kill-switch and
+                    # suppress legitimate internal notifications. The
+                    # customer-facing deny-list wired in by
+                    # ``SMS-RECIPIENT-FIX`` does NOT apply here either,
+                    # for the same reason — admins ARE the intended
+                    # recipient. Do not re-ticket.
                     resp = await _send_sms(
                         to=r["phone"], body=sms_body,
                         tenant_id=tenant_id,

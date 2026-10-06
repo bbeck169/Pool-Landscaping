@@ -1156,6 +1156,43 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
                     context="automation",
                 )
             return None
+        # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list.
+        # Strip workforce/tenant-owned phones from the automation
+        # fan-out BEFORE the per-recipient loop so a contaminated
+        # customer record can't leak to an admin line. Each stripped
+        # entry is logged by the helper + recorded as an audit row.
+        from services.comms_hardening.deny_list import (
+            strip_admin_owned_recipients,
+        )
+        _kept, _stripped = await strip_admin_owned_recipients(
+            tenant_id=tenant_id, kind="customer_facing", channel="sms",
+            recipients=recipients,
+            context={"trigger": "comms_deliver_one_by_ids_sms_automation",
+                      "automation_code": automation_code,
+                      "template_code": template_code,
+                      "customer_id": customer.get("id")},
+        )
+        for _st in _stripped:
+            await db.communication_sends.insert_one({
+                "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
+                "template_code": template_code,
+                "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": None,
+                "recipient_phone": _st.get("address"),
+                "subject": None, "rendered_body": None,
+                "tokens_resolved": {},
+                "status": "denied_admin_owned_recipient",
+                "provider_message_id": None,
+                "error": _st.get("reason"),
+                "character_count": 0, "segment_count": 0,
+                "queued_at": now_iso(), "sent_at": None,
+                "retry_count": 0, "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            })
+        recipients = _kept
+        if not recipients:
+            return None
         last_clean = None
         for contact in recipients:
             ctx = sample_tokens_context()
@@ -1266,6 +1303,45 @@ async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
         recipients = active_phone_recipients(customer, context="manual")
         if not recipients:
             raise HTTPException(422, "customer has no active phone recipients")
+        # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list on
+        # the manual send-now fan-out. Mirrors the automation branch
+        # above verbatim. Stripped recipients record an audit row with
+        # ``status="denied_admin_owned_recipient"`` and never hit the
+        # adapter.
+        from services.comms_hardening.deny_list import (
+            strip_admin_owned_recipients,
+        )
+        _kept, _stripped = await strip_admin_owned_recipients(
+            tenant_id=tenant_id, kind="customer_facing", channel="sms",
+            recipients=recipients,
+            context={"trigger": "comms_deliver_one_sms_manual",
+                      "automation_code": automation_code,
+                      "template_code": template_code,
+                      "customer_id": customer.get("id")},
+        )
+        for _st in _stripped:
+            await db.communication_sends.insert_one({
+                "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
+                "template_code": template_code,
+                "automation_code": automation_code,
+                "recipient_id": customer.get("id"),
+                "recipient_email": None,
+                "recipient_phone": _st.get("address"),
+                "subject": None, "rendered_body": None,
+                "tokens_resolved": {},
+                "status": "denied_admin_owned_recipient",
+                "provider_message_id": None,
+                "error": _st.get("reason"),
+                "character_count": 0, "segment_count": 0,
+                "queued_at": now_iso(), "sent_at": None,
+                "retry_count": 0, "fanned_out": True,
+                "fanout_recipient_count": len(recipients),
+            })
+        recipients = _kept
+        if not recipients:
+            raise HTTPException(422,
+                                 "all customer phone recipients were denied by "
+                                 "the admin-owned deny-list")
         last_clean = None
         for contact in recipients:
             ctx = sample_tokens_context()

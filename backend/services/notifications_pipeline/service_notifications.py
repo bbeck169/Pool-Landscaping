@@ -332,6 +332,37 @@ async def _fire(
     elif not _pref_enabled(cust, sms_pref_key):
         channels_skipped.append(f"sms:{sms_pref_key}_off")
     else:
+        # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list
+        # applied at the shared ``_fire`` chokepoint so BOTH the
+        # 24-hr reminder cron (``run_due_reminders``) and the
+        # reschedule-event path (``fire_rescheduled``) are protected
+        # by a single wire. See ``services/comms_hardening/deny_list.py``.
+        try:
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients,
+            )
+            _kept, _stripped = await strip_admin_owned_recipients(
+                tenant_id=tenant_id, kind="customer_facing", channel="sms",
+                recipients=[phone],
+                context={"trigger": "service_notifications",
+                          "sms_pref_key": sms_pref_key,
+                          "customer_id": cust.get("id")},
+            )
+            if _stripped:
+                logger.warning(
+                    "[service_notifications] sms denied_admin_owned_recipient "
+                    "tenant=%s customer=%s phone=%s",
+                    tenant_id, cust.get("id"), phone,
+                )
+                channels_skipped.append("sms:denied_admin_owned_recipient")
+                return {"channels_sent": channels_sent,
+                         "channels_skipped": channels_skipped}
+            phone = _kept[0] if _kept else phone
+        except Exception as exc:  # noqa: BLE001 — never break cron
+            logger.warning(
+                "[service_notifications] deny_list crashed — "
+                "proceeding without strip (fail-open): %s", exc,
+            )
         try:
             from services.comms_sms_adapter import send_sms
             from services.comms_env_guard import CommsContext

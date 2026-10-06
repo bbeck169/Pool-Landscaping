@@ -215,12 +215,43 @@ async def maybe_send_on_the_way(
         if customer.get("mobiles") else None
     )
     if sms_opt_in and phone:
-        channels["sms"] = await send_sms(
-            tenant_id=tenant_id,
-            to_phone=phone,
-            body=text_body,
-            context=CommsContext.SYSTEM,
-        )
+        # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list
+        # strip on the fleet ETA fan-out. Keeps workforce/tenant-owned
+        # numbers off the "tech on the way" SMS even if the customer
+        # record is contaminated.
+        try:
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients,
+            )
+            _kept, _stripped = await strip_admin_owned_recipients(
+                tenant_id=tenant_id, kind="customer_facing", channel="sms",
+                recipients=[phone],
+                context={"trigger": "fleet_eta_sms",
+                          "tech_user_id": tech_user_id,
+                          "job_id": job_id,
+                          "customer_id": customer.get("id")},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[fleet.notify] deny_list crashed — proceeding without "
+                "strip (fail-open): %s", exc,
+            )
+            _kept, _stripped = [phone], []
+        if _stripped:
+            logger.warning(
+                "[fleet.notify] denied_admin_owned_recipient tenant=%s "
+                "tech=%s job=%s phone=%s",
+                tenant_id, tech_user_id, job_id, phone,
+            )
+            channels["sms"] = {"status": "denied_admin_owned_recipient"}
+        else:
+            phone = _kept[0] if _kept else phone
+            channels["sms"] = await send_sms(
+                tenant_id=tenant_id,
+                to_phone=phone,
+                body=text_body,
+                context=CommsContext.SYSTEM,
+            )
     else:
         channels["sms"] = {"status": "skipped_opt_out_or_missing"}
 

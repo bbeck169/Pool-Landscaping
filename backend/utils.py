@@ -268,7 +268,8 @@ def deny_impersonation(user: dict) -> None:
         raise HTTPException(status_code=403, detail="This action is disabled while viewing as a customer.")
 
 
-def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None) -> bool:
+def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None,
+              kind: str = "internal") -> bool:
     """Legacy sync-return SMS helper.
 
     Feb-2026 · Twilio→RC consolidation — delegates to the shipped
@@ -286,9 +287,61 @@ def send_sms(to: str, body: str, *, tenant_id: Optional[str] = None) -> bool:
     the env fallback applies — a warning is logged with call-site
     info so we can eventually reach 100% coverage. See
     ``services/sms/rc_adapter.py::_resolve_from``.
+
+    SMS-RECIPIENT-FIX · Feb-2026 — accepts ``kind`` kwarg. Strict
+    default ``kind="internal"`` means pre-existing callers (admin
+    flows, lead-request admin dispatch, CSAT admin alerts, etc.)
+    are untouched. Call sites that are customer-facing — currently
+    only ``notify_customer`` — pass ``kind="customer_facing"`` to
+    engage the deny-list that strips workforce/tenant-owned numbers
+    even when the customer record is contaminated (see
+    ``services/comms_hardening/deny_list.py``). On strip, returns
+    False (silent skip) + emits a structured WARN log.
     """
     if not to:
         return False
+    # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list.
+    # Only engages for callers that explicitly opt in via
+    # ``kind="customer_facing"``. ``tenant_id`` is required for the
+    # strip to apply — without it the helper fails-open.
+    if kind == "customer_facing" and tenant_id:
+        try:
+            import asyncio as _asyncio_dl
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients as _strip_dl,
+            )
+
+            async def _strip():
+                return await _strip_dl(
+                    tenant_id=tenant_id, kind="customer_facing",
+                    channel="sms", recipients=[to],
+                    context={"trigger": "utils.send_sms"},
+                )
+
+            try:
+                _loop_dl = _asyncio_dl.get_running_loop()
+            except RuntimeError:
+                _loop_dl = None
+            if _loop_dl is None:
+                _kept_dl, _stripped_dl = _asyncio_dl.run(_strip())
+            else:
+                _fut_dl = _asyncio_dl.run_coroutine_threadsafe(
+                    _strip(), _loop_dl,
+                )
+                _kept_dl, _stripped_dl = _fut_dl.result(timeout=15)
+            if _stripped_dl:
+                logger.warning(
+                    "[send_sms] denied_admin_owned_recipient "
+                    "tenant=%s recipient=%s reason=%s",
+                    tenant_id, to, _stripped_dl[0].get("reason"),
+                )
+                return False
+            to = _kept_dl[0] if _kept_dl else to
+        except Exception as exc_dl:  # noqa: BLE001 — fail-open
+            logger.warning(
+                "[send_sms] deny_list crashed — proceeding without "
+                "strip (fail-open): %s", exc_dl,
+            )
     if tenant_id is None:
         # Call-site attribution — helps ops audit which caller is
         # still missing the plumbing.
@@ -387,8 +440,12 @@ async def notify_customer(customer_id: str, title: str, body: str, job_id: str =
             # Phase G2 · Feb-2026 (TD-G1-1) — plumb tenant_id so the
             # RC adapter can honour ``tenants.rc_sms_from_number`` for
             # the notification recipient's tenant.
+            # SMS-RECIPIENT-FIX · Feb-2026 — ``notify_customer`` is a
+            # customer-facing dispatch (title/body goes to the
+            # customer's phone), so opt into the deny-list strip
+            # inside ``send_sms`` with ``kind="customer_facing"``.
             send_sms(cust["phone"], f"{title}: {body}",
-                        tenant_id=tenant_id)
+                        tenant_id=tenant_id, kind="customer_facing")
 
 
 async def notify_technician(technician_id: str, title: str, body: str, job_id: str = None):

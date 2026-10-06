@@ -1685,6 +1685,38 @@ async def submit_service_report(
                     {"$set": {"customer_notified.sms_status": "no_phone"}},
                 )
                 return
+            # SMS-RECIPIENT-FIX · Feb-2026 — customer-facing deny-list
+            # guardrail. If the resolved recipient maps to a workforce
+            # user, the tenant business-card phone, the RC_FROM_NUMBER
+            # env, or the COMMS_TEST_ALLOWLIST_PHONES overlap, strip
+            # and record ``denied_admin_owned_recipient`` instead of
+            # delivering. See
+            # ``services/comms_hardening/deny_list.py`` for the
+            # scanner logic and ``on_my_way.py:321-333`` for the
+            # original pattern.
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients,
+            )
+            _kept, _stripped = await strip_admin_owned_recipients(
+                tenant_id=_tid, kind="customer_facing", channel="sms",
+                recipients=[phone],
+                context={"trigger": "completion_sms",
+                          "job_id": _jid,
+                          "customer_id": _job.get("customer_id")},
+            )
+            if _stripped:
+                logger.warning(
+                    "[task-u] completion SMS denied_admin_owned_recipient "
+                    "tenant=%s job=%s customer=%s phone=%s",
+                    _tid, _jid, _job.get("customer_id"), phone,
+                )
+                await db.service_reports.update_one(
+                    {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                    {"$set": {"customer_notified.sms_status":
+                                "denied_admin_owned_recipient"}},
+                )
+                return
+            phone = _kept[0] if _kept else phone
             import os as _os_task_u
             app_url = _os_task_u.environ.get("APP_PUBLIC_URL", "").rstrip("/")
             portal_link = f"{app_url}/portal/service-reports"
@@ -2760,7 +2792,8 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
              "subject": subject}
 
 
-async def _send_recap_sms(customer: dict, plain: str) -> dict:
+async def _send_recap_sms(customer: dict, plain: str,
+                            *, tenant_id: str | None = None) -> dict:
     """Feb-2026 · Twilio→RC consolidation — route through the shipped
     RingCentral adapter. Fails-closed with a neutral reason string
     when RC creds are absent.
@@ -2769,14 +2802,42 @@ async def _send_recap_sms(customer: dict, plain: str) -> dict:
     removed from ``CustomerIn``; routing now resolves to the single
     primary ``phone`` field.  Customers without a primary phone fall
     through to the no-phone-on-file reason string.
+
+    SMS-RECIPIENT-FIX · Feb-2026 — accepts ``tenant_id`` so the
+    customer-facing deny-list (``services.comms_hardening.deny_list``)
+    can strip workforce/tenant-owned phones before delivery. If the
+    resolved recipient maps to an admin line, the function returns
+    ``{"sent": False, "mocked": True, "reason":
+    "denied_admin_owned_recipient"}`` without hitting the adapter.
     """
     to = customer.get("phone")
     if not to:
         return {"sent": False, "mocked": True,
                  "reason": "customer has no phone on file"}
+    # SMS-RECIPIENT-FIX · Feb-2026 — belt-and-suspenders strip.
+    if tenant_id:
+        from services.comms_hardening.deny_list import (
+            strip_admin_owned_recipients,
+        )
+        _kept, _stripped = await strip_admin_owned_recipients(
+            tenant_id=tenant_id, kind="customer_facing", channel="sms",
+            recipients=[to],
+            context={"trigger": "visit_recap_sms",
+                      "customer_id": customer.get("id")},
+        )
+        if _stripped:
+            logger.warning(
+                "[visit_recap] denied_admin_owned_recipient "
+                "tenant=%s customer=%s phone=%s",
+                tenant_id, customer.get("id"), to,
+            )
+            return {"sent": False, "mocked": True,
+                     "reason": "denied_admin_owned_recipient"}
+        to = _kept[0] if _kept else to
     from services.sms.rc_adapter import send as _sms_send
     res = await _sms_send(
         to=to, body=plain[:1500], category="transactional",
+        tenant_id=tenant_id,
         customer_id=customer.get("id"),
     )
     provider = res.get("provider")
@@ -2868,7 +2929,10 @@ async def send_visit_recap(sr_id: str, body: RecapReq,
     results = {}
     mocked_channels = []
     if channel in ("sms", "both"):
-        results["sms"] = await _send_recap_sms(cust, composed["plain"])
+        # SMS-RECIPIENT-FIX · Feb-2026 — plumb tenant_id so the
+        # customer-facing deny-list fires inside ``_send_recap_sms``.
+        results["sms"] = await _send_recap_sms(cust, composed["plain"],
+                                                 tenant_id=tenant["id"])
         if results["sms"].get("mocked"):
             mocked_channels.append("sms")
     if channel in ("email", "both"):
