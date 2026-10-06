@@ -2498,10 +2498,106 @@ def _reading_indicator(key: str, value) -> str:
     return "[target]"
 
 
+# ─── LANDSCAPE-EMAIL-FIX · Feb-2026 — shared helpers ───────────────
+# The Phase-39 ``send_visit_recap`` dispatcher historically hard-
+# coded the "Your pool visit recap" subject and composed a pool-
+# only body (chemicals + readings) regardless of job type.  For a
+# landscape job the chem/reading blocks were empty so the customer
+# received a mis-subjected email with just the header lines.
+#
+# These helpers power the type-branch inside ``_compose_recap``:
+#   * ``_absolute_photo_url`` promotes a relative photo URL from
+#     ``inject_photo_url_on_doc`` (JOB-PHOTOS-FIX) to an absolute
+#     URL for email clients which do not resolve same-origin
+#     paths.  ``APP_PUBLIC_URL`` is the canonical absolute-base
+#     config and is already used by every other outbound-email
+#     path (see ``services.auto_visit_email._absolute_url``,
+#     ``routers.csat._cta_url``, ``routers.referrals``).
+#   * ``_completed_checklist_labels`` extracts the labels of items
+#     the tech checked off during the visit.  Accepts BOTH the
+#     tech-portal shape ``{"label", "checked"}`` and the
+#     redacted/customer shape ``{"label", "done"}`` so a key
+#     normalisation hiccup can't blank the section (same posture
+#     as ``services.auto_visit_email._checklist_is_done``).
+def _absolute_photo_url(url: str) -> str:
+    """Promote a relative ``/api/public/...`` photo URL to an
+    absolute URL rooted at ``APP_PUBLIC_URL`` so email clients can
+    resolve it.  Already-absolute URLs are returned unchanged;
+    empty / falsy input returns ``""``.
+    """
+    if not url:
+        return ""
+    u = str(url).strip()
+    if not u:
+        return ""
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    try:
+        from config import APP_PUBLIC_URL
+    except Exception:
+        APP_PUBLIC_URL = ""
+    base = (APP_PUBLIC_URL or "").rstrip("/")
+    if not base:
+        # No absolute base configured — ship the relative URL
+        # verbatim rather than mangling it.  Same-origin webmail
+        # (e.g. Gmail-in-iframe test fixtures) still resolves it.
+        return u
+    if u.startswith("/"):
+        return f"{base}{u}"
+    return f"{base}/{u}"
+
+
+def _completed_checklist_labels(report: dict) -> list:
+    """Return the labels of every checklist item the tech checked
+    off.  Reads both ``checklist_completed`` (canonical) and
+    ``checklist_items`` (legacy).  Honors both ``done`` and
+    ``checked`` key shapes.  Falls back to the ``key`` or
+    ``name`` field when the item lacks a human label.
+    """
+    items = (report.get("checklist_completed")
+             or report.get("checklist_items")
+             or [])
+    out: list = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if not (it.get("done") or it.get("checked")):
+            continue
+        label = (it.get("label") or it.get("name") or it.get("key") or "")
+        label = str(label).strip()
+        if label:
+            out.append(label)
+    return out
+
+
+def _is_landscape_job(job: dict) -> bool:
+    """Thin wrapper over ``routers.jobs._derive_checklist_kind`` that
+    swallows any import error (e.g. during a lightweight unit test
+    that mocks the module) and returns False as a safe default so
+    the pool path remains the fallback.
+    """
+    try:
+        from routers.jobs import _derive_checklist_kind
+    except Exception:
+        return False
+    try:
+        return _derive_checklist_kind(job or {}, None) == "landscape"
+    except Exception:
+        return False
+
+
 def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
                     include_photos: bool, next_visit: str | None,
                     tenant: dict, photo_limit: int = 3):
-    """Return `{plain, html, photo_urls}` for the recap message."""
+    """Return `{plain, html, photo_urls, subject}` for the recap message.
+
+    LANDSCAPE-EMAIL-FIX · Feb-2026 — branches on job type.  Landscape
+    jobs ship a landscape-specific subject + body (completed grooming
+    checklist + photos, NO pool-chemistry sections).  Pool / non-pool
+    jobs keep the historical Phase-39 composition unchanged.  Photo
+    URLs are promoted to absolute URLs via ``APP_PUBLIC_URL`` so
+    email clients can resolve them.
+    """
     # Chemicals-added block.
     chems = report.get("chemicals_added") or []
     chem_lines = [f"• {_chem_added_line(c)}" for c in chems if
@@ -2517,31 +2613,60 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
         ind = _reading_indicator(key, v)
         unit = r.get("unit") or ""
         reading_lines.append(f"  {r.get('name') or key}: {v}{(' ' + unit) if unit else ''} {ind}".rstrip())
-    # Photos.
+    # Photos.  LANDSCAPE-EMAIL-FIX · Feb-2026 — promote to absolute
+    # URLs so mail clients (which don't resolve relative paths) can
+    # follow the ``/api/public/job-photo/...`` link produced by the
+    # JOB-PHOTOS-FIX serializer.
     photo_urls = []
     if include_photos:
         for p in (report.get("photos") or [])[:photo_limit]:
-            url = p.get("url") or p.get("public_url") or p.get("thumbnail_url")
-            if url:
-                photo_urls.append(url)
+            raw = p.get("url") or p.get("public_url") or p.get("thumbnail_url")
+            abs_url = _absolute_photo_url(raw)
+            if abs_url:
+                photo_urls.append(abs_url)
 
     date_str = str(job.get("scheduled_at") or job.get("service_report_submitted_at") or "")[:10]
     biz_name = tenant.get("name") or "Your pool service"
 
+    # LANDSCAPE-EMAIL-FIX · Feb-2026 — type branch.
+    is_landscape = _is_landscape_job(job)
+    checklist_labels = _completed_checklist_labels(report) if is_landscape else []
+
+    if is_landscape:
+        # Landscape jobs use ``"<Business> service"`` as the default
+        # biz-name fallback instead of the pool-specific literal so
+        # a tenant without ``tenant.name`` doesn't leak pool framing.
+        biz_name_display = tenant.get("name") or "Your landscape service"
+        subject = f"Your landscape visit recap — {date_str}"
+    else:
+        biz_name_display = biz_name
+        subject = f"Your pool visit recap — {date_str}"
+
     lines = [
         f"Hi {customer.get('name') or 'there'},",
-        f"Your {date_str} visit with {biz_name} is complete.",
+        f"Your {date_str} visit with {biz_name_display} is complete.",
     ]
     if tech_name:
         lines.append(f"Tech: {tech_name}")
-    if chem_lines:
-        lines.append("")
-        lines.append("Chemicals added:")
-        lines.extend(chem_lines)
-    if reading_lines:
-        lines.append("")
-        lines.append("Water readings:")
-        lines.extend(reading_lines)
+    if is_landscape:
+        # ── Landscape body ──────────────────────────────────────
+        # Checklist first (the only service artifact a customer
+        # sees for a grooming visit), photos next, next visit at
+        # the end.  Chemistry / readings blocks are intentionally
+        # suppressed — landscape jobs have neither.
+        if checklist_labels:
+            lines.append("")
+            lines.append("Completed:")
+            lines.extend(f"• {label}" for label in checklist_labels)
+    else:
+        if chem_lines:
+            lines.append("")
+            lines.append("Chemicals added:")
+            lines.extend(chem_lines)
+        if reading_lines:
+            lines.append("")
+            lines.append("Water readings:")
+            lines.extend(reading_lines)
     if next_visit:
         lines.append("")
         lines.append(f"Next visit: {next_visit}")
@@ -2556,18 +2681,26 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
 
     # HTML for email — very lightweight, no external assets.
     html_parts = [f"<p>Hi {customer.get('name') or 'there'},</p>",
-                  f"<p>Your <b>{date_str}</b> visit with <b>{biz_name}</b> is complete.</p>"]
+                  f"<p>Your <b>{date_str}</b> visit with <b>{biz_name_display}</b> is complete.</p>"]
     if tech_name:
         html_parts.append(f"<p>Tech: <b>{tech_name}</b></p>")
-    if chem_lines:
-        html_parts.append("<p><b>Chemicals added:</b></p><ul>"
-                           + "".join(f"<li>{_chem_added_line(c)}</li>" for c in chems
-                                      if c.get('raw_label') or c.get('quantity') or c.get('amount'))
-                           + "</ul>")
-    if reading_lines:
-        html_parts.append("<p><b>Water readings:</b></p><ul>"
-                           + "".join(f"<li>{line.strip()}</li>" for line in reading_lines)
-                           + "</ul>")
+    if is_landscape:
+        if checklist_labels:
+            html_parts.append(
+                "<p><b>Completed:</b></p><ul>"
+                + "".join(f"<li>{label}</li>" for label in checklist_labels)
+                + "</ul>"
+            )
+    else:
+        if chem_lines:
+            html_parts.append("<p><b>Chemicals added:</b></p><ul>"
+                               + "".join(f"<li>{_chem_added_line(c)}</li>" for c in chems
+                                          if c.get('raw_label') or c.get('quantity') or c.get('amount'))
+                               + "</ul>")
+        if reading_lines:
+            html_parts.append("<p><b>Water readings:</b></p><ul>"
+                               + "".join(f"<li>{line.strip()}</li>" for line in reading_lines)
+                               + "</ul>")
     if photo_urls:
         html_parts.append("<p><b>Photos:</b></p>"
                            + "".join(f'<img src="{u}" style="max-width:300px;margin-right:8px;">'
@@ -2578,7 +2711,7 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
     html = "".join(html_parts)
 
     return {"plain": plain, "html": html, "photo_urls": photo_urls,
-             "subject": f"Your pool visit recap — {date_str}"}
+             "subject": subject}
 
 
 async def _send_recap_sms(customer: dict, plain: str) -> dict:
