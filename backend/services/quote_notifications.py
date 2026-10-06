@@ -439,7 +439,6 @@ async def notify_quote_decision(
                         idempotency_key=f"{event}:{doc_id}:{r['phone']}",
                         category="transactional",
                         audience="internal",
-                        allow_off_allowlist=True,
                     ) or {}
                     status = resp.get("status") or "sent"
                     if status in ("sent", "queued", "mocked",
