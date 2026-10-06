@@ -1,0 +1,51 @@
+/**
+ * PORTAL-INVOICE-PAY-NOW-UX · Feb 2026
+ *
+ * Looping red ↔ yellow halo pulse applied to the public invoice
+ * "Pay Now" button on BOTH magic-link surfaces:
+ *   • PublicInvoicePay.jsx   — /pay/invoice/:id?token=<jwt>
+ *   • PublicInvoiceMagic.jsx — /i/:token
+ *
+ * One shared class → single source of truth so the two surfaces
+ * mirror each other byte-for-byte. Keyframe name is prefixed
+ * (``publicInvoicePayNowHalo``) to prevent collisions with any
+ * future global animation.
+ *
+ * The halo renders via ``box-shadow`` (no pseudo-element) so the
+ * button's own layout, hit target, hover state, focus ring, and
+ * disabled state remain untouched. ``pointer-events`` is explicitly
+ * untouched — the button stays fully clickable.
+ *
+ * Reduced-motion: under ``prefers-reduced-motion: reduce`` the
+ * animation is disabled entirely and the button paints a static
+ * soft red ring so motion-sensitive users still see the CTA
+ * emphasised without a looping pulse.
+ */
+.public-invoice-pay-now-halo {
+  animation: publicInvoicePayNowHalo 2s ease-in-out infinite;
+}
+
+@keyframes publicInvoicePayNowHalo {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(239, 68, 68, 0.65),
+      0 0 14px 2px rgba(239, 68, 68, 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px rgba(250, 204, 21, 0),
+      0 0 24px 6px rgba(250, 204, 21, 0.60);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(239, 68, 68, 0.65),
+      0 0 14px 2px rgba(239, 68, 68, 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .public-invoice-pay-now-halo {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.40);
+  }
+}

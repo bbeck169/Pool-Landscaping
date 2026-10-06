@@ -34,6 +34,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import InvoiceView from "@/components/InvoiceView";
 import PaymentForm from "@/components/PaymentForm";
+import "./public-invoice-pay-now.css";
 
 
 /** base64url-decode a JWT payload (middle segment). */
@@ -111,29 +112,20 @@ export default function PublicInvoiceMagic() {
       data-testid="public-invoice-magic-root"
     >
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
-        {/* Feb 2026 · Invoice Pay Now restyle — top-of-page red
-            full-width CTA. Mirrors the portal viewer's ``port-pay``
-            button one-for-one so both customer-facing surfaces
-            (magic link + logged-in portal) ship the same primary
-            action. The class list is asserted verbatim in
-            invoice-pay-now-restyle.test.jsx. */}
-        {canPay ? (
-          <button
-            type="button"
-            onClick={() => setPayOpen(true)}
-            data-testid="public-invoice-magic-pay-now"
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition mb-3"
-          >
-            <CreditCard size={16} /> {`Pay $${fmtMoney(totalDue)}`}
-          </button>
-        ) : null}
-        {/* Feb 2026 · Cards-accepted composite banner — same asset
-            + same styling as PublicInvoicePay so both magic-link
-            surfaces surface an identical "cards accepted"
-            affordance directly below the red primary action. */}
+        {/* PORTAL-INVOICE-PAY-NOW-UX · Feb 2026 — card-network
+            composite banner now renders ABOVE the red Pay Now CTA
+            (prior order had the button on top). Button carries
+            ``public-invoice-pay-now-halo`` which drives a looping
+            red↔yellow box-shadow pulse (see
+            ``public-invoice-pay-now.css``). ``prefers-reduced-motion:
+            reduce`` users get a static soft red ring instead.
+            Mirror of ``PublicInvoicePay`` — the shared CSS class and
+            identical DOM shape keep both magic-link surfaces visually
+            in lockstep. Reorder + halo contract is asserted in
+            ``portal-invoice-pay-now-ux.test.jsx``. */}
         {canPay ? (
           <div
-            className="mt-3 mb-3 flex justify-center"
+            className="mb-3 flex justify-center"
             data-testid="public-invoice-magic-card-logos-wrap"
           >
             <img
@@ -143,6 +135,16 @@ export default function PublicInvoiceMagic() {
               className="h-24 w-auto max-w-[400px] mx-auto block"
             />
           </div>
+        ) : null}
+        {canPay ? (
+          <button
+            type="button"
+            onClick={() => setPayOpen(true)}
+            data-testid="public-invoice-magic-pay-now"
+            className="public-invoice-pay-now-halo w-full bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition mb-3"
+          >
+            <CreditCard size={16} /> {`Pay $${fmtMoney(totalDue)}`}
+          </button>
         ) : null}
         <InvoiceView
           invoiceId={invoiceId}

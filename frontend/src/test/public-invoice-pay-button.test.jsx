@@ -94,15 +94,20 @@ describe("PublicInvoicePay · red Pay Now CTA + card-logos banner", () => {
     expect(PAY_SRC).not.toContain('data-testid="pay-icon-discover"');
   });
 
-  it("card-logos wrapper is centered (flex + justify-center) with mt-3 gap below the button", () => {
-    // Wrapper class list.
+  it("card-logos wrapper is centered (flex + justify-center) with mb-3 gap above the button", () => {
+    // Feb 2026 · PORTAL-INVOICE-PAY-NOW-UX — the card-logos banner
+    // now renders ABOVE the Pay Now button, so the wrapper carries
+    // ``mb-3`` (margin BELOW the logos) to create the gap before
+    // the CTA. The pre-swap ``mt-3`` (gap FROM the button above) is
+    // gone — see portal-invoice-pay-now-ux.test.jsx for the full
+    // reorder + halo-pulse lock-in across both public surfaces.
     expect(
       nearBoth(PAY_SRC, "public-invoice-pay-card-logos-wrap",
                 "flex justify-center"),
     ).toBe(true);
-    // mt-3 gap from the Pay Now button above.
+    // mb-3 gap below the logos, above the Pay Now button.
     expect(
-      nearBoth(PAY_SRC, "public-invoice-pay-card-logos-wrap", "\\bmt-3\\b"),
+      nearBoth(PAY_SRC, "public-invoice-pay-card-logos-wrap", "\\bmb-3\\b"),
     ).toBe(true);
   });
 
@@ -146,12 +151,15 @@ describe("PublicInvoiceMagic · mirrors the composite card-logos banner", () => 
       nearBoth(MAGIC_SRC, "public-invoice-magic-card-logos-wrap",
                 "flex justify-center"),
     ).toBe(true);
-    // The image block must sit AFTER the pay-now button in source
-    // order — that's what places it directly below on the page.
+    // Feb 2026 · PORTAL-INVOICE-PAY-NOW-UX — the image block now
+    // sits BEFORE the pay-now button in source order so the banner
+    // renders ABOVE the CTA on the page. See
+    // portal-invoice-pay-now-ux.test.jsx for the full reorder +
+    // halo-pulse lock-in across both public surfaces.
     const btnIdx = MAGIC_SRC.indexOf('data-testid="public-invoice-magic-pay-now"');
     const imgIdx = MAGIC_SRC.indexOf('data-testid="public-invoice-magic-card-logos"');
     expect(btnIdx).toBeGreaterThan(-1);
-    expect(imgIdx).toBeGreaterThan(btnIdx);
+    expect(btnIdx).toBeGreaterThan(imgIdx);
   });
 });
 

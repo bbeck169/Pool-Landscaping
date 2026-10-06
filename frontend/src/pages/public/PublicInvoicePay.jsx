@@ -25,6 +25,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import InvoiceView from "@/components/InvoiceView";
 import PaymentForm from "@/components/PaymentForm";
+import "./public-invoice-pay-now.css";
 
 /** Match the ``fmtMoney`` helper used by ``InvoiceView`` and
  * ``PublicInvoiceMagic`` — plain 2-decimal string, no locale coercion. */
@@ -127,18 +128,36 @@ export default function PublicInvoicePay() {
   return (
     <div style={{ minHeight: "100vh", padding: 24, background: colors.nav.bgDeep }} data-testid="public-invoice-pay-root">
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
-        {/* Feb 2026 · Pay Now CTA restyle — top-of-page red
-            full-width CTA + card-network icon row. Class list is
-            asserted in ``public-invoice-pay-button.test.jsx``.
-            ``hideToolbarPayNow`` prevents InvoiceView's own toolbar
-            pay button from duplicating this one. */}
+        {/* PORTAL-INVOICE-PAY-NOW-UX · Feb 2026 — card-network
+            composite banner now renders ABOVE the red Pay Now CTA.
+            Button carries ``public-invoice-pay-now-halo`` which
+            drives a looping red↔yellow box-shadow pulse (see
+            ``public-invoice-pay-now.css``). ``prefers-reduced-motion:
+            reduce`` users get a static soft red ring instead.
+            Class list is asserted in
+            ``public-invoice-pay-button.test.jsx`` and the reorder
+            + halo contract in ``portal-invoice-pay-now-ux.test.jsx``.
+            ``hideToolbarPayNow`` suppresses InvoiceView's own
+            toolbar pay button so the customer sees ONE primary
+            action at the top of the page. */}
         {canPay ? (
           <div data-testid="public-invoice-pay-cta-block">
+            <div
+              className="flex justify-center mb-3"
+              data-testid="public-invoice-pay-card-logos-wrap"
+            >
+              <img
+                src="/logos/credit-card-logos.png"
+                alt="Cards accepted"
+                data-testid="public-invoice-pay-card-logos"
+                className="h-24 w-auto max-w-[400px] mx-auto block"
+              />
+            </div>
             <button
               type="button"
               onClick={() => setPayOpen(true)}
               data-testid="public-invoice-pay-now"
-              className="w-full bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition"
+              className="public-invoice-pay-now-halo w-full bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 text-white font-semibold rounded-xl inline-flex items-center justify-center gap-2 px-5 py-3 transition"
             >
               <CreditCard size={16} aria-hidden="true" />
               {/* Responsive label: full label on ≥sm, compact on
@@ -150,17 +169,6 @@ export default function PublicInvoicePay() {
                 {`Pay Now - $${amountStr}`}
               </span>
             </button>
-            <div
-              className="mt-3 flex justify-center"
-              data-testid="public-invoice-pay-card-logos-wrap"
-            >
-              <img
-                src="/logos/credit-card-logos.png"
-                alt="Cards accepted"
-                data-testid="public-invoice-pay-card-logos"
-                className="h-24 w-auto max-w-[400px] mx-auto block"
-              />
-            </div>
           </div>
         ) : null}
         <div style={{ marginTop: canPay ? 20 : 0 }}>
