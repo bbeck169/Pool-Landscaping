@@ -559,14 +559,32 @@ export default function CalendarSchedule() {
   const [assignPickedTechId, setAssignPickedTechId] = useState("");
   const [assignBusy, setAssignBusy] = useState(false);
   const canMultiSelectAssign = canMultiSelectDelete;
+  // BULK-RESCHEDULE-FIX · Feb-2026 — unified selection.
+  //
+  // The Schedule grid historically carried TWO parallel selection
+  // pools: ``checked`` (round pill, drove Complete + Bulk
+  // Reschedule) and ``selectedJobIds`` (square, drove Delete +
+  // Reassign + Route). Either checkbox updated only one pool, so
+  // operators who tapped the visually-obvious SQUARE and then hit
+  // "Bulk Reschedule" saw "(0)" and a disabled button. Mirroring
+  // every write across both setters keeps the two toolbars in
+  // lockstep without changing their individual action semantics.
   const toggleJobSelected = (jid) => {
     setSelectedJobIds((prev) => {
       const next = new Set(prev);
       if (next.has(jid)) next.delete(jid); else next.add(jid);
       return next;
     });
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(jid)) next.delete(jid); else next.add(jid);
+      return next;
+    });
   };
-  const clearSelection = () => setSelectedJobIds(new Set());
+  const clearSelection = () => {
+    setSelectedJobIds(new Set());
+    setChecked(new Set());
+  };
   // Feb-2026 · Bulk-selection "Select all in view" — picks every
   // job currently rendered on the focused day (post-filter,
   // post-search). Uses ``dayJobs`` (derived below) via a ref so
@@ -576,6 +594,7 @@ export default function CalendarSchedule() {
   const selectAllInView = React.useCallback(() => {
     const ids = (dayJobsRef.current || []).map((j) => j.id);
     setSelectedJobIds(new Set(ids));
+    setChecked(new Set(ids));
   }, []);
   const doBulkDelete = async () => {
     setDeleteBusy(true);
@@ -1338,11 +1357,22 @@ export default function CalendarSchedule() {
     setToast({ text, kind });
     setTimeout(() => setToast(null), 3200);
   };
-  const toggleCheck = (id) => setChecked((cur) => {
-    const n = new Set(cur);
-    if (n.has(id)) n.delete(id); else n.add(id);
-    return n;
-  });
+  // BULK-RESCHEDULE-FIX · Feb-2026 — the round-pill handler also
+  // mirrors into ``selectedJobIds`` so the delete / reassign /
+  // route toolbars pick up selections made via the legacy pill.
+  // See ``toggleJobSelected`` above for the symmetrical mirror.
+  const toggleCheck = (id) => {
+    setChecked((cur) => {
+      const n = new Set(cur);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+    setSelectedJobIds((cur) => {
+      const n = new Set(cur);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
   const bulkComplete = async () => {
     if (!checked.size) return;
     setBusy(true);
@@ -1351,7 +1381,7 @@ export default function CalendarSchedule() {
       try { await api.put(`/jobs/${id}`, { status: "completed" }); ok++; }
       catch { fail++; }
     }
-    setBusy(false); setChecked(new Set());
+    setBusy(false); setChecked(new Set()); setSelectedJobIds(new Set());
     toast_(`${ok} closed · ${fail} failed`, fail > ok ? "err" : "info");
     await load();
   };
@@ -1372,6 +1402,7 @@ export default function CalendarSchedule() {
         toast: toast_,
         onClear: () => {
           setChecked(new Set());
+          setSelectedJobIds(new Set());
           setMoveOpen(false);
           setMoveDate("");
         },
