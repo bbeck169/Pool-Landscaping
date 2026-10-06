@@ -52,6 +52,19 @@ const COMMIT_FIELD = INCOME_ROW.split(
 const COMMIT_LINE_CAT = INCOME_ROW.split(
   "const commitLineCategoryPaired = async",
 )[1].split("\n  };\n")[0];
+/* REV-CONFIRM-FIX · Feb-2026 — add slices for the two commit paths
+ * extended in this ship: ``commitBusinessUnit`` (invoice-level BU
+ * dropdown on the income-by-category variant) and
+ * ``commitServiceUnit`` (line-level Service Unit dropdown on both
+ * income variants).  Each slice is bounded at the arrow-function
+ * closer so the per-test regex scans stay in the right lexical
+ * scope. */
+const COMMIT_BU = INCOME_ROW.split(
+  "const commitBusinessUnit = async",
+)[1].split("\n  };\n")[0];
+const COMMIT_SVC = INCOME_ROW.split(
+  "const commitServiceUnit = async",
+)[1].split("\n  };\n")[0];
 
 
 describe("Atomic A2 · privileged role detection", () => {
@@ -150,11 +163,93 @@ describe("Atomic A2 · non-privileged roles do NOT auto-pass flags (criterion d)
     // commitField category branch is also wrapped by canBypassCategoryConfirm.
     expect(COMMIT_FIELD).toMatch(/canBypassCategoryConfirm/);
     // Declaration (1) + commitField guard (1) + commitLineCategoryPaired
-    // branch (1) = 3 occurrences minimum, locking the spelling in BOTH
-    // commit paths so typo drift can't silently open the bypass.
+    // branch (1) + commitBusinessUnit branch (1) + commitServiceUnit
+    // branch (1) = 5 occurrences minimum post REV-CONFIRM-FIX, locking
+    // the spelling in ALL FOUR commit paths so typo drift can't
+    // silently open the bypass.
     const occurrences = (
       INCOME_ROW.match(/canBypassCategoryConfirm/g) || []
     ).length;
-    expect(occurrences).toBeGreaterThanOrEqual(3);
+    expect(occurrences).toBeGreaterThanOrEqual(5);
+  });
+});
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * REV-CONFIRM-FIX · Feb-2026 — extend the Atomic A2 bypass to the
+ * remaining two Revenue-by-Category drill-down save paths:
+ *   • commitBusinessUnit — invoice-level BU dropdown (``category``
+ *     in user-facing language).  Pre-fix only sent
+ *     ``confirm_edit_sent`` when ``k48Status.needsSentConfirm``,
+ *     and NEVER sent ``acknowledged_lock_bypass`` → ``accepted``
+ *     invoices 409'd even for admins.
+ *   • commitServiceUnit — line-level Service Unit dropdown.
+ *     Pre-fix shape had NO confirm flags at all → every edit on a
+ *     non-draft invoice 409'd regardless of role.
+ * Both paths now mirror ``commitLineCategoryPaired``: privileged →
+ * auto-pass both flags; non-privileged → pre-fix shape (backend
+ * 409 surfaced via toast).
+ * ═══════════════════════════════════════════════════════════════ */
+
+describe("REV-CONFIRM-FIX · commitBusinessUnit · auto-pass confirm flags for privileged roles", () => {
+  it("privileged branch injects BOTH confirm_edit_sent AND acknowledged_lock_bypass unconditionally", () => {
+    // Role gate wraps the two flag writes.
+    expect(COMMIT_BU).toMatch(/if \(canBypassCategoryConfirm\) \{/);
+    // Both flags land on patchBody inside the privileged branch —
+    // consecutive-line match locks the exact write order.
+    expect(COMMIT_BU).toMatch(
+      /patchBody\.confirm_edit_sent = true;\s*\n\s*patchBody\.acknowledged_lock_bypass = true;/,
+    );
+    // Non-privileged fallback preserves the pre-fix conditional
+    // behaviour so lower roles still hit the K48 status gate.
+    expect(COMMIT_BU).toMatch(/\} else \{/);
+    expect(COMMIT_BU).toMatch(/if \(k48Status\.needsSentConfirm\)/);
+    expect(COMMIT_BU).toMatch(/if \(k48Status\.needsPaidConfirm\)/);
+  });
+
+  it("the privileged branch is NOT gated on k48Status (admin never sees 409 friction)", () => {
+    // Slice the privileged branch body out of COMMIT_BU and assert
+    // k48Status is absent.  Branch spans from the ``if
+    // (canBypassCategoryConfirm) {`` opener up to the ``} else {``.
+    const bypassOpen = COMMIT_BU.indexOf(
+      "if (canBypassCategoryConfirm) {",
+    );
+    expect(bypassOpen).toBeGreaterThan(-1);
+    const elseIdx = COMMIT_BU.indexOf("} else {", bypassOpen);
+    expect(elseIdx).toBeGreaterThan(bypassOpen);
+    const privilegedBranch = COMMIT_BU.slice(bypassOpen, elseIdx);
+    expect(privilegedBranch).not.toMatch(/k48Status\./);
+  });
+});
+
+describe("REV-CONFIRM-FIX · commitServiceUnit · auto-pass confirm flags for privileged roles", () => {
+  it("privileged branch sends the paired-ID line_items PATCH WITH both confirm flags", () => {
+    expect(COMMIT_SVC).toMatch(/if \(canBypassCategoryConfirm\) \{/);
+    // Full body shape — line_items, confirm_edit_sent,
+    // acknowledged_lock_bypass on the SAME call.
+    expect(COMMIT_SVC).toMatch(
+      /line_items: items,\s*\n\s*confirm_edit_sent: true,\s*\n\s*acknowledged_lock_bypass: true,/,
+    );
+  });
+
+  it("non-privileged fallback preserves the pre-fix lean payload shape", () => {
+    // The ``\} else \{`` branch sends only line_items — no confirm
+    // flags — so technician edits on non-draft invoices still 409
+    // and surface the backend message via toast (regression lock).
+    expect(COMMIT_SVC).toMatch(/\} else \{/);
+    expect(COMMIT_SVC).toMatch(
+      /api\.patch\(`\/quotes\/\$\{row\.invoice_id\}`,\s*\{ line_items: items \}\)/,
+    );
+  });
+
+  it("privileged branch is NOT gated on k48Status (admin bypasses on sent/accepted/paid)", () => {
+    const bypassOpen = COMMIT_SVC.indexOf(
+      "if (canBypassCategoryConfirm) {",
+    );
+    expect(bypassOpen).toBeGreaterThan(-1);
+    const elseIdx = COMMIT_SVC.indexOf("} else {", bypassOpen);
+    expect(elseIdx).toBeGreaterThan(bypassOpen);
+    const privilegedBranch = COMMIT_SVC.slice(bypassOpen, elseIdx);
+    expect(privilegedBranch).not.toMatch(/k48Status\./);
   });
 });

@@ -631,11 +631,23 @@ function IncomeRow({
         business_unit: nextCat.name,
         business_unit_id: nextCat.id,
       };
-      if (k48Status.needsSentConfirm) {
+      // REV-CONFIRM-FIX · Feb-2026 — privileged roles bypass the
+      // sent / accepted / paid lock without a confirm dialog.
+      // Covers the ``accepted`` gap in the Atomic A2 ship (which
+      // handled line-level CATEGORY only, not the invoice-level BU
+      // dropdown). Non-privileged roles keep the pre-fix k48Status
+      // conditional so the backend status gate still surfaces 409
+      // as a toast.
+      if (canBypassCategoryConfirm) {
         patchBody.confirm_edit_sent = true;
-      }
-      if (k48Status.needsPaidConfirm) {
-        patchBody.confirm_edit_paid_invoice_number = row.invoice_number || "";
+        patchBody.acknowledged_lock_bypass = true;
+      } else {
+        if (k48Status.needsSentConfirm) {
+          patchBody.confirm_edit_sent = true;
+        }
+        if (k48Status.needsPaidConfirm) {
+          patchBody.confirm_edit_paid_invoice_number = row.invoice_number || "";
+        }
       }
       await api.patch(`/quotes/${row.invoice_id}`, patchBody);
       try {
@@ -722,7 +734,21 @@ function IncomeRow({
         service_category_id: nextCat.id,
         service_category: nextCat.name,
       };
-      await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      // REV-CONFIRM-FIX · Feb-2026 — privileged roles bypass the
+      // sent / accepted / paid lock without a confirm dialog.
+      // Pre-fix shape had no confirm flags whatsoever, so every
+      // Service Unit edit on a non-draft invoice 409'd even for
+      // admins. Non-privileged roles keep the pre-fix call shape
+      // (backend 409 surfaced via toast).
+      if (canBypassCategoryConfirm) {
+        await api.patch(`/quotes/${row.invoice_id}`, {
+          line_items: items,
+          confirm_edit_sent: true,
+          acknowledged_lock_bypass: true,
+        });
+      } else {
+        await api.patch(`/quotes/${row.invoice_id}`, { line_items: items });
+      }
       try {
         await api.post("/dashboard/drilldown/line-item-audit", {
           tile,
