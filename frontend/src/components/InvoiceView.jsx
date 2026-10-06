@@ -33,6 +33,14 @@ import DocMobileHeader from "@/components/documents/DocMobileHeader";
 // Feb-2026 · Desktop-unification — shared shell so invoice /
 // estimate / quote all render the same skeleton at ≥ 768 px.
 import DocDesktopShell from "@/components/documents/DocDesktopShell";
+// INVOICE-STATUS-STAMP · Feb-2026 — shared PAID / PAST DUE grunge
+// rubber-stamp overlay for the top-right of the invoice header.
+// Renders on admin + portal + both public magic-link surfaces
+// because they all mount <InvoiceView>. Status derivation lives
+// next to the component so every surface uses the same rule.
+import InvoiceStatusStamp, {
+  deriveInvoiceStampStatus,
+} from "@/components/InvoiceStatusStamp";
 // Feb-2026 · Currency-format standardization — every money field on
 // InvoiceView (and its sibling EstimateView) now routes through the
 // canonical ``formatCurrency`` helper so both surfaces render
@@ -161,6 +169,19 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
         docType="invoice"
         testId="invoice-desktop-shell"
         printable={printable}
+        headerOverlay={
+          /* INVOICE-STATUS-STAMP · Feb-2026 — grunge rubber-stamp
+             rendered absolutely-positioned inside ``.iv-header``.
+             ``deriveInvoiceStampStatus`` returns null when neither
+             paid nor past-due, so the stamp component renders
+             nothing in the happy path. ``pointer-events: none`` on
+             ``.invoice-stamp`` keeps the Pay Now / Print / Download
+             buttons underneath clickable. Status rule mirrors the
+             existing ``canPay`` gate (paid wins over past-due). */
+          <InvoiceStatusStamp
+            status={deriveInvoiceStampStatus(data)}
+          />
+        }
         toolbar={!printable ? (
           <>
             {canPay && !hideToolbarPayNow ? (

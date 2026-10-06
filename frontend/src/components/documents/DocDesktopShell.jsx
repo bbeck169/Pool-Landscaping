@@ -66,6 +66,15 @@ export default function DocDesktopShell({
   termsSection = null,
   stub = null,
   disclaimer = null,
+  // INVOICE-STATUS-STAMP · Feb-2026 — optional slot that renders as
+  // the first child of ``.iv-header`` so a caller can overlay a
+  // PAID / PAST DUE rubber-stamp (or any other absolutely-positioned
+  // badge) in the header's top-right. CSS pairs this with
+  // ``position: relative`` on ``.iv-header`` so the overlay's
+  // ``position: absolute`` works. Default null → zero behaviour
+  // change for callers that don't opt in (``EstimateView``,
+  // ``QuoteView``).
+  headerOverlay = null,
   // Extension slots — anything above/below the shell.
   banner = null,
   belowToolbar = null,
@@ -176,6 +185,7 @@ export default function DocDesktopShell({
           className="iv-header"
           data-testid="doc-desktop-shell-header"
         >
+          {headerOverlay}
           <div className="iv-header-left">
             {headerLeft}
           </div>

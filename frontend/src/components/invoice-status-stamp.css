@@ -1,0 +1,167 @@
+/**
+ * INVOICE-STATUS-STAMP · Feb-2026
+ *
+ * CSS-only grunge "PAID" / "PAST DUE" rubber-stamp overlays that
+ * render in the top-right corner of the invoice header on every
+ * surface that mounts ``<InvoiceView>`` (admin console, portal,
+ * ``/pay/invoice/:id`` magic link, ``/i/:token`` bypass link).
+ *
+ * Grunge technique: SVG filter (``feTurbulence`` +
+ * ``feDisplacementMap``) applied via CSS ``filter: url(#invoice-stamp-grunge)``.
+ * The filter is defined inside ``<InvoiceStatusStamp>`` itself so
+ * nothing lives in global ``index.css`` and no external asset is
+ * required. Chromium / WebKit / Gecko all honour SVG filters in
+ * print output (Chrome ≥61, 2017), which is why we picked this over
+ * ``clip-path: polygon(...)``: fewer handcrafted coordinates, cleaner
+ * distress, same print fidelity.
+ *
+ * Transparent middle preserved — the filter only distorts the border
+ * + text pixels; invoice content underneath remains visible.
+ *
+ * Fallback font stack — "Oswald" isn't shipped by the app (Plus
+ * Jakarta Sans is the only Google Font loaded in index.html), so the
+ * CSS lists "Oswald" first per the spec but relies on Impact /
+ * Arial Black everywhere in practice. No new font loader was added.
+ *
+ * Click-safety: ``pointer-events: none`` on the stamp wrapper so the
+ * Pay Now / Charge-on-file / Print toolbar buttons underneath stay
+ * clickable.
+ *
+ * Print: ``@media print`` keeps the stamp coloured + the red border
+ * forced via ``print-color-adjust: exact`` (and the ``-webkit-*``
+ * alias for Blink). The browser's "Background graphics" print option
+ * is not required because ``print-color-adjust`` forces fidelity.
+ */
+
+.invoice-stamp-filter-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.invoice-stamp {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  pointer-events: none;
+  z-index: 5;
+  color: #c0272d;
+  text-transform: uppercase;
+  font-family: "Oswald", "Impact", "Arial Black", "Helvetica Inserat", sans-serif;
+  letter-spacing: 0.08em;
+  filter: url(#invoice-stamp-grunge);
+  user-select: none;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+  background: transparent;
+}
+
+/* ── PAST DUE — rectangular slab ─────────────────────────────── */
+.invoice-stamp--past-due {
+  padding: 10px 20px;
+  border: 5px solid #c0272d;
+  border-radius: 2px;
+  text-align: center;
+  transform: rotate(-12deg);
+  box-shadow: inset 0 0 0 2px #c0272d;
+}
+.invoice-stamp--past-due .invoice-stamp__title {
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+  display: block;
+}
+.invoice-stamp--past-due .invoice-stamp__sub {
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 4px;
+  display: block;
+}
+
+/* ── PAID — circular stamp with inner rectangular ring ────────── */
+.invoice-stamp--paid {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  border: 5px solid #c0272d;
+  box-shadow: inset 0 0 0 2px #c0272d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  transform: rotate(10deg);
+  text-align: center;
+}
+.invoice-stamp--paid::before {
+  content: "";
+  position: absolute;
+  top: 20px;
+  right: 18px;
+  bottom: 20px;
+  left: 18px;
+  border: 2px solid #c0272d;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.invoice-stamp--paid .invoice-stamp__title {
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+.invoice-stamp--paid .invoice-stamp__sub {
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 2px;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Mobile scale-down ───────────────────────────────────────── */
+@media (max-width: 480px) {
+  .invoice-stamp {
+    top: 8px;
+    right: 8px;
+    letter-spacing: 0.06em;
+  }
+  .invoice-stamp--past-due {
+    padding: 6px 12px;
+    border-width: 4px;
+  }
+  .invoice-stamp--past-due .invoice-stamp__title { font-size: 20px; }
+  .invoice-stamp--past-due .invoice-stamp__sub { font-size: 9px; }
+  .invoice-stamp--paid {
+    width: 110px;
+    height: 110px;
+    border-width: 4px;
+  }
+  .invoice-stamp--paid::before {
+    top: 14px;
+    right: 12px;
+    bottom: 14px;
+    left: 12px;
+  }
+  .invoice-stamp--paid .invoice-stamp__title { font-size: 22px; }
+  .invoice-stamp--paid .invoice-stamp__sub { font-size: 11px; }
+}
+
+/* ── Print fidelity ──────────────────────────────────────────── */
+@media print {
+  .invoice-stamp {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    color: #c0272d !important;
+  }
+  .invoice-stamp--past-due,
+  .invoice-stamp--paid {
+    border-color: #c0272d !important;
+  }
+  .invoice-stamp--paid::before {
+    border-color: #c0272d !important;
+  }
+}

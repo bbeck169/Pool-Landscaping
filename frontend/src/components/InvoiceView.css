@@ -51,6 +51,13 @@
   grid-template-columns: 1fr auto;
   gap: 32px;
   align-items: start;
+  /* INVOICE-STATUS-STAMP · Feb-2026 — anchor for the absolutely-
+     positioned PAID / PAST DUE grunge rubber-stamp overlay
+     (``.invoice-stamp``) rendered via DocDesktopShell's new
+     ``headerOverlay`` slot. ``position: relative`` is required so
+     the stamp's ``top`` / ``right`` offsets resolve against the
+     header, not the whole page. */
+  position: relative;
 }
 .iv-header-left { font-size: 15px; line-height: 1.5; }
 /* Phase 34 · Feb 2026 — brand logo header on invoice/estimate previews.
