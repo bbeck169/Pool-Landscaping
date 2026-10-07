@@ -966,19 +966,39 @@ export default function EstimateView({
                   <tr key={i} data-testid={`estimate-line-item-row-${i}`}
                        data-customer-status={li.customer_status || "pending"}>
                     <td style={rowStyle}>
-                      {li.description}
-                      {isDeclined ? (
-                        <span style={{
-                                marginLeft: 8, fontSize: 11,
-                                padding: "2px 6px",
-                                borderRadius: 6,
-                                background: "#FEE2E2",
-                                color: "#7F1D1D",
-                                textDecoration: "none",
-                              }}
-                              data-testid={`estimate-line-item-declined-chip-${i}`}>
-                          Declined
-                        </span>
+                      {/* QUOTE-VIEW-DESCRIPTION-UNGROUPED · Feb-2026 —
+                           primary = item_name when populated, fallback
+                           to description for legacy rows that never
+                           got an item_name (grandfathered-null in
+                           schema). Mirrors the admin K71 pattern
+                           (``K71LineItemsEditor.jsx`` row ~597-640)
+                           so customer-facing + admin editor stay in
+                           parity when both ``item_name`` and
+                           ``description`` are populated. */}
+                      <div>
+                        <b data-testid={`estimate-line-item-name-${i}`}>
+                          {li.item_name || li.description}
+                        </b>
+                        {isDeclined ? (
+                          <span style={{
+                                  marginLeft: 8, fontSize: 11,
+                                  padding: "2px 6px",
+                                  borderRadius: 6,
+                                  background: "#FEE2E2",
+                                  color: "#7F1D1D",
+                                  textDecoration: "none",
+                                }}
+                                data-testid={`estimate-line-item-declined-chip-${i}`}>
+                            Declined
+                          </span>
+                        ) : null}
+                      </div>
+                      {li.item_name && li.description
+                        && li.item_name !== li.description ? (
+                        <div className="ev-group-desc"
+                             data-testid={`estimate-line-item-desc-${i}`}>
+                          {li.description}
+                        </div>
                       ) : null}
                     </td>
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
@@ -1037,19 +1057,37 @@ export default function EstimateView({
                       data-testid={`estimate-line-item-card-${i}`}
                       data-customer-status={li.customer_status || "pending"}>
                     <div className="ev-line-card-desc" style={cardStyle}>
-                      {li.description}
-                      {isDeclined ? (
-                        <span style={{
-                                marginLeft: 8, fontSize: 11,
-                                padding: "2px 6px",
-                                borderRadius: 6,
-                                background: "#FEE2E2",
-                                color: "#7F1D1D",
-                                textDecoration: "none",
-                              }}
-                              data-testid={`estimate-line-item-declined-chip-mobile-${i}`}>
-                          Declined
-                        </span>
+                      {/* QUOTE-VIEW-DESCRIPTION-UNGROUPED · Feb-2026 —
+                           mobile-card parity with the ``<sm:table>``
+                           desktop surface above: primary = item_name,
+                           fallback to description for legacy rows.
+                           Secondary muted ``description`` only when
+                           both populated AND differ (no visible
+                           duplicate on legacy rows). */}
+                      <div>
+                        <b data-testid={`estimate-line-item-name-mobile-${i}`}>
+                          {li.item_name || li.description}
+                        </b>
+                        {isDeclined ? (
+                          <span style={{
+                                  marginLeft: 8, fontSize: 11,
+                                  padding: "2px 6px",
+                                  borderRadius: 6,
+                                  background: "#FEE2E2",
+                                  color: "#7F1D1D",
+                                  textDecoration: "none",
+                                }}
+                                data-testid={`estimate-line-item-declined-chip-mobile-${i}`}>
+                            Declined
+                          </span>
+                        ) : null}
+                      </div>
+                      {li.item_name && li.description
+                        && li.item_name !== li.description ? (
+                        <div className="ev-group-desc"
+                             data-testid={`estimate-line-item-desc-mobile-${i}`}>
+                          {li.description}
+                        </div>
                       ) : null}
                     </div>
                     <div className="ev-line-card-row" style={cardStyle}>
