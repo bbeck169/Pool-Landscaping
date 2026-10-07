@@ -50,7 +50,7 @@ const _READING_RULES = {
   alkalinity:       { min: 0, max: 500,  decimals: 1, unit: "ppm" },
   cyanuric_acid:    { min: 0, max: 300,  decimals: 1, unit: "ppm" },
   cya:              { min: 0, max: 300,  decimals: 1, unit: "ppm" },
-  salt:             { min: 0, max: 6000, decimals: 0, unit: "ppm" },
+  salt:             { min: 0, max: 6000, decimals: 1, unit: "ppm" },
 };
 const _READING_DEFAULTS = {
   chlorine: 3, free_chlorine: 3, combined_chlorine: 0.5,
