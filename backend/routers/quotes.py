@@ -737,9 +737,19 @@ async def create_quote(body: QuoteIn,
 )
 async def update_quote(qid: str, body: QuoteUpdate,
                        request: Request,
-                       user: dict = Depends(require_admin),
+                       user: dict = Depends(require_admin_or_manager),
                        tenant: dict = Depends(get_current_tenant)):
-    """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items)."""
+    """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items).
+
+    DOC-DATE-EDITING-PUT-GATE · Feb-2026 — the role gate was widened
+    from ``require_admin`` → ``require_admin_or_manager`` so DOC-DATE-EDITING's
+    H0 resolver widening actually fires on the PUT path (manager / owner
+    were previously 403'd at the dep layer, making the H0 widening dead
+    code on quote PUT — see DOC-DATE-EDITING live-smoke S2 report).
+    Non-admin roles (manager / owner) are restricted to the date-only
+    subset ``{created_at, due_date}`` via the inner gate below; mirrors
+    the ``_is_date_only_diff`` carve-out in ``invoice_edit.patch_invoice``.
+    Admin / super_admin retain full access to all ``QuoteUpdate`` fields."""
     existing = await db.quotes.find_one(
         {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
@@ -789,6 +799,28 @@ async def update_quote(qid: str, body: QuoteUpdate,
     # the gate accept the mutation without the ack flag, and (b) emit
     # a distinct audit line after ``upd`` is sanitised.
     _role = str((user or {}).get("role") or "").lower()
+    # DOC-DATE-EDITING-PUT-GATE · Feb-2026 — inner date-only carve-out.
+    # The dep widened from ``require_admin`` → ``require_admin_or_manager``
+    # so manager/owner now reach this handler, but they must only be able
+    # to touch ``created_at`` + ``due_date`` (same contract as the invoice
+    # PATCH path's ``_is_date_only_diff`` carve-out). Any other field
+    # (``line_items``, ``tax_rate``, ``title``, ``terms`` / ``terms_and_conditions``,
+    # ``flipbook_*``, ``customer_group_*``, ``property_id``) stays
+    # admin+super_admin only — matches the ticket scope and prevents a
+    # drift where manager/owner silently gained broader write access.
+    # Meta keys (``acknowledged_lock_bypass`` / ``edit_reason``) are
+    # request-only sentinels and ignored by the subset check.
+    if _role in ("manager", "owner"):
+        _DATE_ONLY_PUT_FIELDS = {"created_at", "due_date"}
+        _META_PUT_FIELDS = {"acknowledged_lock_bypass", "edit_reason"}
+        _provided_set = set(body.dict(exclude_unset=True).keys()) - _META_PUT_FIELDS
+        _non_date = sorted(_provided_set - _DATE_ONLY_PUT_FIELDS)
+        if _non_date:
+            raise HTTPException(
+                403,
+                "manager/owner may only edit {created_at, due_date} via "
+                f"PUT /quotes/{{id}}; got non-date fields: {_non_date}",
+            )
     _silent_bypass = should_super_admin_silent_bypass(existing, _role)
     if not is_quote_mutable_for_put(existing, bypass_lock=_ack, role=_role):
         await audit_put_denial(db, quote=existing, actor=user)

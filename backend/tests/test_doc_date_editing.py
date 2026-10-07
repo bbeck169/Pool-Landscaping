@@ -410,3 +410,95 @@ def test_h0_is_admin_role_now_includes_manager():
     assert not is_admin_role({"role": "employee"})
     assert not is_admin_role({"role": "customer"})
     assert not is_admin_role(None)
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# DOC-DATE-EDITING-PUT-GATE · Feb-2026 — quote PUT role widening
+# ═════════════════════════════════════════════════════════════════════
+def test_put_quote_dep_require_admin_or_manager_accepts_manager_and_owner():
+    """DOC-DATE-EDITING-PUT-GATE · dep swap from ``require_admin`` →
+    ``require_admin_or_manager`` on quote PUT. Manager + owner now
+    pass the dep without 403'ing at the HTTP layer. Technician still
+    blocked (role not in the widened set)."""
+    from fastapi import HTTPException
+    from utils import require_admin_or_manager
+    assert require_admin_or_manager({"role": "admin"})["role"] == "admin"
+    assert require_admin_or_manager({"role": "super_admin"})["role"] == "super_admin"
+    assert require_admin_or_manager({"role": "manager"})["role"] == "manager"
+    assert require_admin_or_manager({"role": "owner"})["role"] == "owner"
+    with pytest.raises(HTTPException) as e:
+        require_admin_or_manager({"role": "technician"})
+    assert e.value.status_code == 403
+
+
+def test_put_quote_manager_rejected_on_non_date_fields():
+    """DOC-DATE-EDITING-PUT-GATE · inner date-only gate. Manager
+    reaches the handler but is 403'd when the body touches any
+    field outside ``{created_at, due_date}``. Mirrors the invoice
+    PATCH ``_is_date_only_diff`` carve-out."""
+    from fastapi import HTTPException
+    qid = f"{PREFIX}-q-mgr-linefail"
+    _run(_seed_tenant(TENANT_A))
+    _run(_seed_doc(qid, TENANT_A, doc_type="quote", status="sent"))
+    with pytest.raises(HTTPException) as e:
+        _call_put_quote(qid, {
+            "line_items": [{"description": "hack", "quantity": 1,
+                             "unit_price": 999.0, "category": "service"}],
+        }, _MANAGER)
+    assert e.value.status_code == 403
+    assert "manager/owner may only edit" in e.value.detail
+    assert "line_items" in e.value.detail
+
+
+def test_put_quote_owner_rejected_on_non_date_fields():
+    """DOC-DATE-EDITING-PUT-GATE · owner follows the same date-only
+    carve-out as manager (both in the widened dep set, both scoped
+    to dates only on quote PUT)."""
+    from fastapi import HTTPException
+    qid = f"{PREFIX}-q-own-termsfail"
+    _run(_seed_tenant(TENANT_A))
+    _run(_seed_doc(qid, TENANT_A, doc_type="quote", status="sent"))
+    with pytest.raises(HTTPException) as e:
+        _call_put_quote(qid, {"tax_rate": 0.15, "notes": "owner tried"},
+                          _OWNER)
+    assert e.value.status_code == 403
+    assert "tax_rate" in e.value.detail
+    assert "notes" in e.value.detail
+
+
+def test_put_quote_manager_date_only_edit_passes_inner_gate():
+    """DOC-DATE-EDITING-PUT-GATE · the happy path. Manager touching
+    only ``created_at`` + ``due_date`` (plus meta sentinels) passes
+    the inner gate end-to-end AND H0's resolver stamps the override
+    sentinels."""
+    qid = f"{PREFIX}-q-mgr-dateonly"
+    _run(_seed_tenant(TENANT_A))
+    _run(_seed_doc(qid, TENANT_A, doc_type="quote", status="sent"))
+    historical = datetime(2025, 8, 15, tzinfo=timezone.utc)
+    res = _call_put_quote(qid, {
+        "created_at": historical,
+        "due_date": "2025-09-15",
+    }, _MANAGER)
+    assert res["created_at"].startswith("2025-08-15")
+    assert res["due_date"] == "2025-09-15"
+    assert res["created_at_override_by"] == _MANAGER["id"]
+
+
+def test_put_quote_manager_meta_only_ack_bypass_does_not_trip_gate():
+    """DOC-DATE-EDITING-PUT-GATE · ``acknowledged_lock_bypass`` and
+    ``edit_reason`` are request-only sentinels. They must not count
+    as 'non-date fields' when the gate inspects the diff — otherwise
+    a manager hitting Save on a sent doc with ack=true would 403."""
+    qid = f"{PREFIX}-q-mgr-metaonly"
+    _run(_seed_tenant(TENANT_A))
+    _run(_seed_doc(qid, TENANT_A, doc_type="quote", status="sent"))
+    # Date-only edit + ack flag — must not raise, must not treat
+    # ``acknowledged_lock_bypass`` as a gated field.
+    res = _call_put_quote(qid, {
+        "created_at": datetime(2025, 7, 4, tzinfo=timezone.utc),
+        "acknowledged_lock_bypass": True,
+        "edit_reason": "backfill from paper quote",
+    }, _MANAGER)
+    assert res["created_at"].startswith("2025-07-04")
+    assert res["created_at_override_by"] == _MANAGER["id"]
