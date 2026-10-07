@@ -131,6 +131,27 @@ export default function InvoicesList() {
     setSelected(new Set());
   };
   const [sort, _setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
+
+  // INVOICES-TILES-CLICKABLE · Feb-2026 — URL-persisted tile filter.
+  // Values: "collected" | "outstanding" | "overdue" | "aging-current"
+  // | "aging-1-30" | "aging-31-60" | "aging-61-90" | "aging-90+".
+  // Empty / missing → no tile filter active (summary + aging shown
+  // informationally only). Only ONE tile can be active at a time;
+  // clicking the active tile again clears the filter. Combines
+  // AND-wise with the existing filter row (payment_status dropdown,
+  // late-fee, has-declined, card-on-file, categories, search) per
+  // gate 5a of this ticket — the tile narrows the list further on
+  // top of whatever filters are already in place.
+  const activeTile = params.get("tile") || "";
+  const toggleTile = (tile) => {
+    const s = new URLSearchParams(params);
+    if (activeTile === tile) s.delete("tile");
+    else s.set("tile", tile);
+    setParams(s, { replace: true });
+    // Clear selection when the filter narrows — same policy as the
+    // other filter mutators above.
+    setSelected(new Set());
+  };
   // Phase 34 · Task BB — bulk-select state.
   const [selected, setSelected] = useState(() => new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -315,8 +336,87 @@ export default function InvoicesList() {
     return out;
   }, [rows, pmByInvoice, hasLateFee, hasDeclined, q, cardFilter, sort]);
 
+  // INVOICES-TILES-CLICKABLE · Feb-2026 — tile-driven client-side
+  // filter applied AFTER the existing filter row so the tile narrows
+  // the list further on top of ``payment_status`` / search / late-fee
+  // / etc. Boundaries per gate Q6:
+  //   current   : unpaid, due_date >= today (midnight local TZ)
+  //   1-30      : unpaid, 1 <= overdue_days <= 30
+  //   31-60     : unpaid, 31 <= overdue_days <= 60
+  //   61-90     : unpaid, 61 <= overdue_days <= 90
+  //   90+       : unpaid, overdue_days >= 91
+  //   overdue   : unpaid + due_date < today (any aged-bucket union)
+  //   outstanding : unpaid + balance > 0
+  //   collected : paid + paid_at within current calendar month
+  // TODO (tenant timezone): tenant-TZ midnight isn't exposed on the
+  // invoice list payload today; falling back to the viewer's local
+  // midnight (ISO conversion via Date). Day boundaries will shift
+  // by one for operators in a different TZ than the tenant.
+  // Downstream list rendering + visibleIds use ``tileFiltered`` so
+  // bulk-select + sort + pagination all respect the tile scope.
+  const tileFiltered = useMemo(() => {
+    if (!activeTile) return filtered;
+
+    const today0 = new Date();
+    today0.setHours(0, 0, 0, 0);
+
+    return filtered.filter((r) => {
+      const bal = Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0));
+      const stLower = String(r.status || "").toLowerCase();
+      const pstLower = String(r.payment_status || "").toLowerCase();
+      const isPaid = r.is_paid === true || stLower === "paid" || pstLower === "paid";
+      const isTerminal = stLower === "void" || stLower === "cancelled";
+      const isUnpaid = !isPaid && !isTerminal;
+
+      // ``due_days`` is positive when overdue, negative when still
+      // in the future. Normalised to full days by rounding so the
+      // bucket boundaries are inclusive at the exact day cutover.
+      let dueDays = null;
+      if (r.due_date) {
+        const d = new Date(r.due_date);
+        if (!Number.isNaN(d.getTime())) {
+          d.setHours(0, 0, 0, 0);
+          dueDays = Math.round((today0 - d) / (24 * 3600 * 1000));
+        }
+      }
+
+      switch (activeTile) {
+        case "collected": {
+          if (!isPaid) return false;
+          if (!r.paid_at) return false;
+          const paidAt = new Date(r.paid_at);
+          if (Number.isNaN(paidAt.getTime())) return false;
+          const now = new Date();
+          return (
+            paidAt.getFullYear() === now.getFullYear() &&
+            paidAt.getMonth() === now.getMonth()
+          );
+        }
+        case "outstanding":
+          return isUnpaid && bal > 0;
+        case "overdue":
+          return isUnpaid && dueDays !== null && dueDays > 0;
+        case "aging-current":
+          // No due_date → treated as "current" per the aging grid
+          // computation above (bal with no due_date lands in
+          // ``current``).
+          return isUnpaid && (dueDays === null || dueDays <= 0);
+        case "aging-1-30":
+          return isUnpaid && dueDays !== null && dueDays >= 1 && dueDays <= 30;
+        case "aging-31-60":
+          return isUnpaid && dueDays !== null && dueDays >= 31 && dueDays <= 60;
+        case "aging-61-90":
+          return isUnpaid && dueDays !== null && dueDays >= 61 && dueDays <= 90;
+        case "aging-90+":
+          return isUnpaid && dueDays !== null && dueDays >= 91;
+        default:
+          return true;
+      }
+    });
+  }, [filtered, activeTile]);
+
   // Phase 34 · Task BB · Feb 2026 — visible-page selection helpers.
-  const visibleIds = filtered.map((r) => r.id);
+  const visibleIds = tileFiltered.map((r) => r.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someVisibleSelected = visibleIds.some((id) => selected.has(id));
   const indeterminate = someVisibleSelected && !allVisibleSelected;
@@ -369,7 +469,7 @@ export default function InvoicesList() {
   const selectionBuckets = useMemo(() => {
     const chargeable = [];
     const skips = { no_card: [], draft: [], paid: [], other: [] };
-    for (const r of filtered) {
+    for (const r of tileFiltered) {
       if (!selected.has(r.id)) continue;
       if (isChargeableInvoice(r)) chargeable.push(r);
       else {
@@ -386,7 +486,7 @@ export default function InvoicesList() {
     );
     const uniqueCustomers = new Set(chargeable.map((r) => r.customer_id)).size;
     return { chargeable, skips, totalAmount, uniqueCustomers };
-  }, [filtered, selected]);
+  }, [tileFiltered, selected]);
 
   const _doBulkPay = async () => {
     if (paying) return;
@@ -422,7 +522,7 @@ export default function InvoicesList() {
           // header count ("N unpaid invoices") rather than the
           // legacy month label. Falls back to the month label when
           // the row count is still loading (rows === null).
-          const count = rows === null ? null : (filtered || []).length;
+          const count = rows === null ? null : (tileFiltered || []).length;
           const monthLbl = (summary && summary.month_label) || "";
           if (count === null) return monthLbl;
           const suffix = (
@@ -448,12 +548,45 @@ export default function InvoicesList() {
         }
       />
 
-      {/* Summary + aging */}
+      {/* Summary + aging — INVOICES-TILES-CLICKABLE · Feb-2026.
+          Every tile is now a filter button. ``aria-pressed`` on the
+          active tile; thicker tone-coloured border + soft ring when
+          selected (styled via ``SummaryTile``'s ``active`` prop).
+          Clicking a different tile replaces the active filter;
+          clicking the same tile clears it (toggle). URL is updated
+          via ``?tile=<slug>`` with ``history.replace`` so refresh +
+          share preserves the state without polluting back-button
+          history. See ``toggleTile`` above for the handler. */}
       {summary ? (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-          <SummaryTile icon={TrendingUp} tone={colors.success} label="Collected this month" value={money(summary.collected_this_month)} />
-          <SummaryTile icon={Clock} tone="#A16207" label="Outstanding" value={money(summary.outstanding_total)} sub={`${summary.outstanding_count} inv`} />
-          <SummaryTile icon={AlertCircle} tone={colors.error} label="Overdue count" value={String(summary.overdue?.length ?? 0)} />
+          <SummaryTile
+            icon={TrendingUp} tone={colors.success}
+            label="Collected this month"
+            value={money(summary.collected_this_month)}
+            testid="inv-tile-collected"
+            active={activeTile === "collected"}
+            onClick={() => toggleTile("collected")}
+            ariaLabel="Filter invoices to paid this calendar month"
+          />
+          <SummaryTile
+            icon={Clock} tone="#A16207"
+            label="Outstanding"
+            value={money(summary.outstanding_total)}
+            sub={`${summary.outstanding_count} inv`}
+            testid="inv-tile-outstanding"
+            active={activeTile === "outstanding"}
+            onClick={() => toggleTile("outstanding")}
+            ariaLabel="Filter invoices to unpaid outstanding"
+          />
+          <SummaryTile
+            icon={AlertCircle} tone={colors.error}
+            label="Overdue count"
+            value={String(summary.overdue?.length ?? 0)}
+            testid="inv-tile-overdue"
+            active={activeTile === "overdue"}
+            onClick={() => toggleTile("overdue")}
+            ariaLabel="Filter invoices to overdue (unpaid, due date in the past)"
+          />
         </div>
       ) : null}
 
@@ -461,16 +594,72 @@ export default function InvoicesList() {
         className="rounded-2xl p-4 mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       >
-        <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
-          Aging (open balances)
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
+            Aging (open balances)
+          </div>
+          {/* INVOICES-TILES-CLICKABLE · Feb-2026 — clear-filter
+              affordance surfaces ONLY while a tile is active so
+              the header stays quiet in the default view. Button
+              clears ``?tile`` via ``toggleTile(activeTile)``. */}
+          {activeTile ? (
+            <button
+              type="button"
+              onClick={() => toggleTile(activeTile)}
+              className="text-xs font-semibold rounded-md px-2 py-1 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+              style={{ color: colors.error, backgroundColor: `${colors.error}10` }}
+              data-testid="inv-tile-clear"
+              aria-label="Clear active tile filter"
+            >
+              Clear filter · {activeTile}
+            </button>
+          ) : null}
         </div>
+        {/* Aging buckets — each cell is a filter button. The slug
+            on ``?tile=`` is ``aging-<bucket-key>`` so ``current``
+            / ``1-30`` / ``31-60`` / ``61-90`` / ``90+`` all round-
+            trip verbatim. ``aria-pressed`` + Enter/Space activation
+            + visible focus ring handled by the native ``<button>``
+            + the focus-visible utility. */}
         <div className="grid grid-cols-5 gap-2 text-sm">
-          {Object.entries(aging).map(([k, v]) => (
-            <div key={k} className="text-center rounded-lg p-2" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`aging-${k}`}>
-              <div className="text-xs font-semibold" style={{ color: colors.muted }}>{k}</div>
-              <div className="font-bold" style={{ color: colors.onSurface }}>{money(v)}</div>
-            </div>
-          ))}
+          {Object.entries(aging).map(([k, v]) => {
+            const slug = `aging-${k}`;
+            const isActive = activeTile === slug;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => toggleTile(slug)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleTile(slug);
+                  }
+                }}
+                aria-pressed={isActive}
+                aria-label={`Filter invoices to aging bucket ${k}`}
+                data-testid={`aging-${k}`}
+                data-active={isActive ? "true" : undefined}
+                className="text-center rounded-lg p-2 cursor-pointer transition-shadow focus:outline-none focus-visible:ring-2"
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  // k === "current" uses a muted tone so the "all
+                  // good" bucket doesn't look alarming when selected.
+                  border: isActive
+                    ? `2px solid ${k === "current" ? colors.success : colors.error}`
+                    : `1px solid transparent`,
+                  boxShadow: isActive
+                    ? `0 0 0 3px ${k === "current" ? colors.success : colors.error}33`
+                    : undefined,
+                  font: "inherit",
+                  width: "100%",
+                }}
+              >
+                <div className="text-xs font-semibold" style={{ color: colors.muted }}>{k}</div>
+                <div className="font-bold" style={{ color: colors.onSurface }}>{money(v)}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -627,7 +816,7 @@ export default function InvoicesList() {
 
       {rows === null ? (
         <Skeleton style={{ height: 240 }} />
-      ) : filtered.length === 0 ? (
+      ) : tileFiltered.length === 0 ? (
         <EmptyState icon={FileText} title="No invoices" hint="Create an invoice to see it here." />
       ) : (
         <div
@@ -663,7 +852,7 @@ export default function InvoicesList() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {tileFiltered.map((r) => (
                 <tr
                   key={r.id}
                   className="cursor-pointer hover:bg-zinc-50"
