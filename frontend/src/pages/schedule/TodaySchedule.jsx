@@ -1054,7 +1054,28 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                       neither usable coords nor an address, the
                       button falls back to a plain ``<span>`` so
                       users don't tap a broken affordance. */}
-                  {buildDirectionsUrl(j) ? (
+                  {/* SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 —
+                       admin + super_admin see the customer name as
+                       a profile-link (``<CustomerLink>``) that
+                       navigates to ``/customers/<id>``.  Mirrors
+                       the shared primitive used across the reports
+                       panels, hero cards, and admin dashboards so
+                       every customer-name click lands on the same
+                       detail page.
+                       Non-admin roles (manager/owner/tech/customer)
+                       keep the pre-existing "name = directions
+                       shortcut" affordance below — directions
+                       remain accessible via the address button so
+                       admins don't lose that UX either. */}
+                  {(user?.role === "admin"
+                     || user?.role === "super_admin")
+                     && j.customer_id ? (
+                    <CustomerLink
+                      customerId={j.customer_id}
+                      name={j.customer_name || "—"}
+                      data-testid={`schedule-card-customer-link-${j.id}`}
+                    />
+                  ) : buildDirectionsUrl(j) ? (
                     <button
                       type="button"
                       onClick={(e) => openDirections(j, e)}
@@ -1066,7 +1087,11 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                       {j.customer_name || "—"}
                     </button>
                   ) : (
-                    <span>{j.customer_name || "—"}</span>
+                    <span
+                      data-testid={`schedule-card-customer-static-${j.id}`}
+                    >
+                      {j.customer_name || "—"}
+                    </span>
                   )}
                   {j.customer_is_vip ? (
                     <span

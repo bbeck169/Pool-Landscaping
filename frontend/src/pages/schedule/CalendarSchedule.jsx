@@ -2890,7 +2890,24 @@ export function GridPanel({
                         inside the fixed card grid.  Falls back to
                         a plain ``<span>`` when neither coords nor
                         address are resolvable. */}
-                    {buildDirectionsUrl(j) ? (
+                    {/* SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 —
+                         admin + super_admin see the customer name
+                         as a ``<CustomerLink>`` navigating to
+                         ``/customers/<id>``.  Non-admin roles keep
+                         the pre-existing directions shortcut on the
+                         name below — directions stay accessible via
+                         the address button so admins keep that UX
+                         too. */}
+                    {(user?.role === "admin"
+                       || user?.role === "super_admin")
+                       && j.customer_id ? (
+                      <CustomerLink
+                        customerId={j.customer_id}
+                        name={j.customer_name || "Unknown"}
+                        className="flex-1 min-w-0 truncate"
+                        data-testid={`schedule-card-customer-link-${j.id}`}
+                      />
+                    ) : buildDirectionsUrl(j) ? (
                       <button
                         type="button"
                         onClick={(e) => openDirections(j, e)}
@@ -2918,7 +2935,7 @@ export function GridPanel({
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}
-                        data-testid={`grid-job-title-${j.id}`}
+                        data-testid={`schedule-card-customer-static-${j.id}`}
                       >
                         {j.customer_name || "Unknown"}
                       </span>
