@@ -2615,12 +2615,39 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
 
     Assumes the caller has ALREADY persisted the new `is_active` value on
     the customer document — this helper only handles the side-effects
-    (cancel future jobs, log event, notify admins).
+    (cancel future jobs, pause recurring templates, log event, notify
+    admins).
 
-    Returns (cancelled_job_count, deactivated_recurring_count).
+    Returns (cancelled_job_count, deactivated_recurring_count,
+             paused_template_count).
+
+    INACTIVE-CUSTOMER-CASCADE · Feb-2026 — gap-closing addition.  The
+    original Phase-34f cascade only mutated materialised instances in
+    ``db.jobs`` (filtered by ``auto_recurring: true``).  The underlying
+    ``db.recurring_job_templates`` rows were LEFT ACTIVE, so the
+    nightly generator (``_generate_from_template``) would silently
+    rematerialise visits every night and the cascade effectively
+    reverted within 24h.
+
+    Phase B closes that gap by piggy-backing on the existing P18
+    pause side-effect contract (``_cancel_future_visits_on_pause`` in
+    ``routers.recurring_jobs``) — flip each template's ``is_active``
+    + ``active`` to False, stamp provenance fields
+    (``stopped_at``, ``stopped_by_customer_cascade=true``), then fire
+    the P18 helper so templates + their visits cancel through the
+    SAME code path.  Prevents drift between the customer-cascade and
+    the template-cascade: there is now exactly one place the visit-
+    cancel semantics live.
+
+    Idempotency: templates that are ALREADY ``is_active=false`` are
+    SKIPPED — the fresh filter (``is_active: True``) ensures the
+    ``stopped_by_customer_cascade`` provenance is only stamped the
+    first time, and a manually-paused template never gets our
+    provenance stamp mis-attributed.
     """
     cancelled_job_count = 0
     deactivated_recurring_count = 0
+    paused_template_count = 0
     deactivating = was_active is True and now_active is False
     reactivating = was_active is False and now_active is True
 
@@ -2650,6 +2677,61 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
         )
         cancelled_job_count = int(upd.modified_count or 0)
 
+        # ─────────── INACTIVE-CUSTOMER-CASCADE · template pause.
+        # Scope filter targets ONLY currently-active templates for this
+        # customer.  Manually-paused templates (``is_active=false``) are
+        # left alone so their original ``stopped_at`` / reason provenance
+        # survives.  Legacy ``active`` field is also written for parity
+        # with the ``_generate_from_template`` short-circuit at
+        # ``routers/recurring_jobs.py:2004-2007`` which checks either
+        # field.
+        try:
+            _now = now_iso()
+            active_tpls = await db.recurring_job_templates.find(
+                {"tenant_id": tenant_id, "customer_id": cid,
+                 "is_active": True},
+                {"_id": 0, "id": 1},
+            ).to_list(1000)
+            if active_tpls:
+                tpl_ids = [t["id"] for t in active_tpls]
+                tpl_upd = await db.recurring_job_templates.update_many(
+                    {"tenant_id": tenant_id, "id": {"$in": tpl_ids},
+                     "is_active": True},
+                    {"$set": {
+                        "is_active": False,
+                        "active": False,
+                        "stopped_at": _now,
+                        "stopped_by_customer_cascade": True,
+                        "updated_at": _now,
+                    }},
+                )
+                paused_template_count = int(tpl_upd.modified_count or 0)
+                # Fire the shared P18 visit-cancel helper per template.
+                # Best-effort — a per-template cancel failure is logged
+                # but doesn't abort the broader cascade.  The helper is
+                # idempotent on its own (its filter requires
+                # ``status in [pending, scheduled]``) so a retry is
+                # safe.
+                from routers.recurring_jobs import (
+                    _cancel_future_visits_on_pause,
+                )
+                for tpl_id in tpl_ids:
+                    try:
+                        await _cancel_future_visits_on_pause(
+                            tenant_id=tenant_id, tpl_id=tpl_id,
+                            actor=user,
+                        )
+                    except Exception as _p18_exc:
+                        logger.warning(
+                            "[inactive-cascade] visit-cancel failed "
+                            "tpl=%s err=%s", tpl_id, _p18_exc,
+                        )
+        except Exception as _tpl_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "[inactive-cascade] template pause failed cid=%s err=%s",
+                cid, _tpl_exc,
+            )
+
     if deactivating or reactivating:
         await db.customer_activation_events.insert_one({
             "id": new_id(),
@@ -2661,6 +2743,9 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
             "changed_by_user_id": user["id"],
             "cancelled_job_count": cancelled_job_count,
             "deactivated_recurring_count": deactivated_recurring_count,
+            # INACTIVE-CUSTOMER-CASCADE · Feb-2026 — audit the number
+            # of recurring_job_templates paused by this cascade.
+            "paused_template_count": paused_template_count,
         })
         try:
             from services.notifications import emit as notify_emit, KIND_LABELS
@@ -2702,7 +2787,8 @@ async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
         except Exception as _p42_exc:  # pragma: no cover — best-effort
             logger.warning("[p42] cascade stamp failed cid=%s err=%s",
                               cid, _p42_exc)
-    return cancelled_job_count, deactivated_recurring_count
+    return (cancelled_job_count, deactivated_recurring_count,
+             paused_template_count)
 
 
 async def _mirror_address_to_primary_property(
@@ -2952,7 +3038,9 @@ async def update_customer(cid: str, body: CustomerIn,
                 f"failed cid={cid}: {_pm_exc}"
             )
 
-    cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
+    (cancelled_job_count,
+     deactivated_recurring_count,
+     paused_template_count) = await _apply_activation_cascade(
         cid, tenant["id"], user, was_active, now_active, existing.get("name")
     )
 
@@ -2977,6 +3065,11 @@ async def update_customer(cid: str, body: CustomerIn,
     if was_active is True and now_active is False:
         doc["cancelled_job_count"] = cancelled_job_count
         doc["deactivated_recurring_count"] = deactivated_recurring_count
+        # INACTIVE-CUSTOMER-CASCADE · Feb-2026 — expose template-pause
+        # count on the PUT response envelope so the ``ActivationControl``
+        # confirm-toast surface can read it alongside the existing
+        # job-cancel count.
+        doc["paused_template_count"] = paused_template_count
     return doc
 
 
@@ -3005,7 +3098,9 @@ async def patch_customer_activation(cid: str, body: dict,
         {"$set": {"is_active": now_active}},
     )
 
-    cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
+    (cancelled_job_count,
+     deactivated_recurring_count,
+     paused_template_count) = await _apply_activation_cascade(
         cid, tenant["id"], user, was_active, now_active, existing.get("name")
     )
 
@@ -3015,6 +3110,8 @@ async def patch_customer_activation(cid: str, body: dict,
     if was_active is True and now_active is False:
         doc["cancelled_job_count"] = cancelled_job_count
         doc["deactivated_recurring_count"] = deactivated_recurring_count
+        # INACTIVE-CUSTOMER-CASCADE · Feb-2026 — parity with PUT path.
+        doc["paused_template_count"] = paused_template_count
     return doc
 
 

@@ -228,3 +228,187 @@ def test_non_admin_forbidden(tech_tok, admin_tok):
         assert r2.status_code == 403
     finally:
         _cleanup_customer(admin_tok, cid, jobs)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# INACTIVE-CUSTOMER-CASCADE · Phase B · Feb-2026 — gap-closing
+# extensions.  The customer cascade now ALSO flips every active
+# recurring_job_template on the customer to ``is_active=false`` and
+# stamps provenance (``stopped_at`` + ``stopped_by_customer_cascade``),
+# then fires the shared P18 ``_cancel_future_visits_on_pause`` helper
+# for each template so templates + visits cancel through the same
+# code path.
+#
+# Helpers that reach into Mongo directly use the same pattern as the
+# existing ``test_activation_events_logged`` test above (``from
+# config import db`` with asyncio.run).  The HTTP seeding path for
+# templates uses ``POST /api/recurring-jobs`` with ``is_active=false``
+# on create to avoid the instant-generation side-effect, then flips
+# the field via direct Mongo so we deterministically control the
+# "template is active at cascade time" invariant.
+# ═══════════════════════════════════════════════════════════════════
+
+def _db_sync():
+    """Pull the module-level motor db + a fresh event loop + return
+    a sync-wrapper that runs a coroutine on it.  Mirrors the local
+    pattern in ``test_activation_events_logged``."""
+    import sys, asyncio
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from config import db
+    def _sync(coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+    return db, _sync
+
+
+def _get_tenant_id(admin_tok):
+    """Resolve the admin's tenant_id so direct Mongo seeds carry
+    the right scope."""
+    me = http.get(f"{API}/auth/me", headers=_auth(admin_tok),
+                      timeout=15).json()
+    return me["tenant_id"]
+
+
+def _seed_template(admin_tok, cid, *, is_active=True):
+    """Create a recurring_job_template owned by ``cid`` in the exact
+    shape the Phase-2 generator expects.  Direct Mongo insert so we
+    don't trigger the instant-generation 14-day materialisation that
+    ``POST /api/recurring-jobs`` performs when ``is_active=true``."""
+    db, _sync = _db_sync()
+    tid = _get_tenant_id(admin_tok)
+    tpl_id = f"tpl-{uuid.uuid4().hex[:10]}"
+    _sync(db.recurring_job_templates.insert_one({
+        "id": tpl_id, "tenant_id": tid, "customer_id": cid,
+        "service_type": "pool-weekly", "frequency": "weekly",
+        "day_of_week": 1, "start_date": _iso(1),
+        "is_active": is_active, "active": is_active,
+        "price_cents": 0, "notes": "test template",
+    }))
+    return tpl_id
+
+
+def _get_template(cid, tpl_id):
+    db, _sync = _db_sync()
+    return _sync(db.recurring_job_templates.find_one(
+        {"id": tpl_id}, {"_id": 0},
+    ))
+
+
+def _cleanup_templates(cid):
+    db, _sync = _db_sync()
+    _sync(db.recurring_job_templates.delete_many({"customer_id": cid}))
+
+
+def _latest_activation_event(cid):
+    db, _sync = _db_sync()
+    docs = _sync(db.customer_activation_events.find(
+        {"customer_id": cid}, {"_id": 0},
+    ).sort("changed_at", -1).to_list(5))
+    return docs[0] if docs else None
+
+
+def test_cascade_pauses_recurring_templates_and_cancels_visits(admin_tok):
+    """INACTIVE-CUSTOMER-CASCADE Phase B — flipping a customer to
+    inactive now ALSO pauses every active recurring template on
+    the customer AND stamps ``stopped_by_customer_cascade=true`` for
+    audit."""
+    cid, jobs = _seed(admin_tok, future=0)
+    tpl_a = _seed_template(admin_tok, cid, is_active=True)
+    tpl_b = _seed_template(admin_tok, cid, is_active=True)
+    try:
+        r = http.put(f"{API}/customers/{cid}",
+                          json={"name": "test", "is_active": False},
+                          headers=_auth(admin_tok), timeout=15)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_active"] is False
+        # Both templates flipped is_active=false.
+        for tid in (tpl_a, tpl_b):
+            t = _get_template(cid, tid)
+            assert t is not None
+            assert t["is_active"] is False, (
+                f"template {tid} not flipped off"
+            )
+            assert t["active"] is False, (
+                f"template {tid} legacy ``active`` not flipped off"
+            )
+            assert t["stopped_by_customer_cascade"] is True
+            assert t["stopped_at"]
+    finally:
+        _cleanup_templates(cid)
+        _cleanup_customer(admin_tok, cid, jobs)
+
+
+def test_cascade_audit_includes_paused_template_count(admin_tok):
+    """Audit row on ``db.customer_activation_events`` now carries
+    ``paused_template_count`` so ops can see at a glance how many
+    templates the cascade touched."""
+    cid, jobs = _seed(admin_tok, future=0)
+    tpl_1 = _seed_template(admin_tok, cid, is_active=True)
+    tpl_2 = _seed_template(admin_tok, cid, is_active=True)
+    try:
+        r = http.put(f"{API}/customers/{cid}",
+                          json={"name": "test", "is_active": False},
+                          headers=_auth(admin_tok), timeout=15)
+        assert r.status_code == 200
+        assert r.json().get("paused_template_count") == 2
+        evt = _latest_activation_event(cid)
+        assert evt is not None
+        assert evt["to_status"] == "inactive"
+        assert evt["paused_template_count"] == 2
+    finally:
+        _cleanup_templates(cid)
+        _cleanup_customer(admin_tok, cid, jobs)
+
+
+def test_reactivate_does_not_resume_templates(admin_tok):
+    """G3=a — reactivating a customer does NOT auto-resume paused
+    templates. Users manually resume. Mirrors the pre-fix
+    ``test_reactivate_does_not_restore_cancelled`` job-level
+    contract."""
+    cid, jobs = _seed(admin_tok, future=0)
+    tpl = _seed_template(admin_tok, cid, is_active=True)
+    try:
+        http.put(f"{API}/customers/{cid}",
+                     json={"name": "test", "is_active": False},
+                     headers=_auth(admin_tok), timeout=15)
+        http.put(f"{API}/customers/{cid}",
+                     json={"name": "test", "is_active": True},
+                     headers=_auth(admin_tok), timeout=15)
+        # Template stays paused.
+        t = _get_template(cid, tpl)
+        assert t["is_active"] is False, (
+            "reactivating customer must NOT auto-resume paused template"
+        )
+        assert t["active"] is False
+        assert t["stopped_by_customer_cascade"] is True
+    finally:
+        _cleanup_templates(cid)
+        _cleanup_customer(admin_tok, cid, jobs)
+
+
+def test_cascade_idempotent_on_already_paused_templates(admin_tok):
+    """Manually-paused templates (``is_active=false`` BEFORE cascade)
+    must not get our ``stopped_by_customer_cascade`` provenance
+    stamped — otherwise a future reactivate-and-resume flow would
+    misattribute them to this cascade."""
+    cid, jobs = _seed(admin_tok, future=0)
+    # Template that was paused by the user BEFORE the cascade.
+    tpl_already = _seed_template(admin_tok, cid, is_active=False)
+    # Template that is active and SHOULD get paused by the cascade.
+    tpl_new = _seed_template(admin_tok, cid, is_active=True)
+    try:
+        r = http.put(f"{API}/customers/{cid}",
+                          json={"name": "test", "is_active": False},
+                          headers=_auth(admin_tok), timeout=15)
+        assert r.status_code == 200
+        # Only the active template was flipped — count is 1.
+        assert r.json().get("paused_template_count") == 1
+        t_already = _get_template(cid, tpl_already)
+        assert t_already["is_active"] is False  # unchanged
+        assert t_already.get("stopped_by_customer_cascade") is not True
+        t_new = _get_template(cid, tpl_new)
+        assert t_new["is_active"] is False
+        assert t_new["stopped_by_customer_cascade"] is True
+    finally:
+        _cleanup_templates(cid)
+        _cleanup_customer(admin_tok, cid, jobs)

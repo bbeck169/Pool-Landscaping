@@ -487,6 +487,28 @@ export default function CalendarSchedule() {
     });
   }, []);
 
+  // INACTIVE-CUSTOMER-CASCADE · Feb-2026 — opt-in "Show cancelled"
+  // toggle (G4=c).  Default = HIDE cancelled on the schedule so a
+  // customer flipped to inactive feels truly "removed from the
+  // schedule" per the user brief.  Terminal/skipped visits never
+  // belonged in the day's workqueue; the toggle preserves
+  // visibility for ops users (reconciliation, audits) without
+  // forcing it on them.  Persisted per-user under the shared
+  // ``schedule_show_cancelled`` localStorage key so TodaySchedule
+  // + CalendarSchedule stay in lockstep when the user flips once
+  // on one surface and expects the other to match.
+  const [showCancelled, setShowCancelled] = useState(() => {
+    try { return localStorage.getItem("schedule_show_cancelled") === "true"; }
+    catch { return false; }
+  });
+  const toggleShowCancelled = React.useCallback(() => {
+    setShowCancelled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("schedule_show_cancelled", String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   // Phase 30W · grid-mode bookkeeping.
   const [checked, setChecked] = useState(new Set());
   const [busy, setBusy] = useState(false);
@@ -961,13 +983,24 @@ export default function CalendarSchedule() {
       }
       if (status && j.status !== status) return false;
       if (service && (j.service_type || "").toLowerCase() !== service.toLowerCase()) return false;
+      // INACTIVE-CUSTOMER-CASCADE · Feb-2026 — hide terminal / skipped
+      // visits by default so cancelled jobs disappear from the grid
+      // when the user hasn't explicitly flipped the toggle on.  When
+      // the ``status`` dropdown filter is actively set to one of
+      // these values the user clearly WANTS to see them, so we
+      // short-circuit the hidden filter and let the dropdown's own
+      // filter above take precedence.
+      if (!showCancelled && !["cancelled", "canceled", "skipped"].includes(status)) {
+        const s = String(j.status || "").toLowerCase();
+        if (s === "cancelled" || s === "canceled" || s === "skipped") return false;
+      }
       if (ql) {
         const hay = `${j.customer_name || ""} ${j.title || ""} ${j.service_type || ""} ${j.address || ""}`.toLowerCase();
         if (!hay.includes(ql)) return false;
       }
       return true;
     });
-  }, [rawJobs, q, techId, status, service, crewId, crewMemberIds]);
+  }, [rawJobs, q, techId, status, service, crewId, crewMemberIds, showCancelled]);
 
   // Phase K73 · Feb-2026 — build tech-id → color map using the
   // crew-hued palette (crew hue + individual saturation). Falls
@@ -1868,6 +1901,33 @@ export default function CalendarSchedule() {
             <Filter size={11} className="inline mr-1" /> Clear
           </button>
         ) : null}
+
+        {/* INACTIVE-CUSTOMER-CASCADE · Feb-2026 — "Show cancelled"
+             toggle.  Lives alongside the existing filter chips.
+             Default off → cancelled visits are hidden; toggling on
+             surfaces them (restyled per k50 color) for ops users
+             who need reconciliation visibility.  Shares the
+             ``schedule_show_cancelled`` localStorage key with
+             TodaySchedule.jsx so the two surfaces stay in lockstep. */}
+        <button
+          type="button"
+          onClick={toggleShowCancelled}
+          data-testid="schedule-toggle-show-cancelled"
+          aria-pressed={showCancelled}
+          className="text-xs font-semibold px-2 py-1.5 rounded-lg"
+          style={{
+            color: showCancelled ? "#fff" : colors.nav.fg,
+            background: showCancelled
+              ? "rgba(99,102,241,0.80)"
+              : "rgba(255,255,255,0.10)",
+            border: `1px solid ${colors.nav.border}`,
+          }}
+          title={showCancelled
+            ? "Hide cancelled visits"
+            : "Show cancelled visits"}
+        >
+          {showCancelled ? "Hide cancelled" : "Show cancelled"}
+        </button>
       </div>
 
       {/* Phase F6a · Feb-2026 — crew-member chips row.  Renders only

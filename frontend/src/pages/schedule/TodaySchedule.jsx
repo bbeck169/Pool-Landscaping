@@ -362,6 +362,41 @@ export default function TodaySchedule() {
     return out;
   }, [jobItems, optimizedIds]);
 
+  // INACTIVE-CUSTOMER-CASCADE · Feb-2026 — opt-in "Show cancelled"
+  // toggle (G4=c).  Default = HIDE cancelled on the schedule so a
+  // customer flipped to inactive feels truly "removed from the
+  // schedule" per the user brief.  Terminal/skipped visits never
+  // belonged in the day's workqueue; the toggle preserves
+  // visibility for ops users (reconciliation, audits) without
+  // forcing it on techs.  Persisted per-user under the shared
+  // ``schedule_show_cancelled`` key (matches the snake_case
+  // convention of ``schedule_view_mode`` + ``schedule_grid_sub_mode``).
+  const [showCancelled, setShowCancelled] = useState(() => {
+    try { return localStorage.getItem("schedule_show_cancelled") === "true"; }
+    catch { return false; }
+  });
+  const toggleShowCancelled = () => {
+    setShowCancelled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("schedule_show_cancelled", String(next)); } catch {}
+      return next;
+    });
+  };
+  const visibleJobItems = useMemo(() => {
+    if (showCancelled) return orderedJobItems;
+    const hidden = new Set(["cancelled", "canceled", "skipped"]);
+    return orderedJobItems.filter(
+      (j) => !hidden.has(String(j.status || "").toLowerCase()),
+    );
+  }, [orderedJobItems, showCancelled]);
+  const hiddenCancelledCount = useMemo(() => {
+    if (showCancelled) return 0;
+    const hidden = new Set(["cancelled", "canceled", "skipped"]);
+    return orderedJobItems.filter(
+      (j) => hidden.has(String(j.status || "").toLowerCase()),
+    ).length;
+  }, [orderedJobItems, showCancelled]);
+
   // Feb-2026 · Phase 1 — first non-terminal job in today's order. Powers
   // the top-level "On my way — next job" CTA. Sorted by ``route_index``
   // then ``scheduled_time`` (both baked into ``orderedJobItems``).
@@ -518,6 +553,41 @@ export default function TodaySchedule() {
                   </button>
                 ))}
               </div>
+              {/* INACTIVE-CUSTOMER-CASCADE · Feb-2026 — "Show cancelled"
+                   toggle. Default off → terminal (cancelled / canceled /
+                   skipped) visits are hidden from the schedule so a
+                   customer flipped to inactive feels truly "removed
+                   from the schedule" per the user brief.  Count badge
+                   mirrors the existing viewMode chip visual language.
+                   Persisted per-user under ``schedule_show_cancelled``. */}
+              <button
+                type="button"
+                onClick={toggleShowCancelled}
+                className="rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wide inline-flex items-center gap-1.5"
+                style={{
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: showCancelled ? colors.brand : "transparent",
+                  color: showCancelled ? "#fff" : colors.onSurfaceSecondary,
+                }}
+                data-testid="schedule-toggle-show-cancelled"
+                aria-pressed={showCancelled}
+                title={showCancelled
+                  ? "Hide cancelled visits"
+                  : (hiddenCancelledCount > 0
+                      ? `Show ${hiddenCancelledCount} cancelled visit${hiddenCancelledCount === 1 ? "" : "s"}`
+                      : "Show cancelled visits")}
+              >
+                {showCancelled ? "Hide cancelled" : "Show cancelled"}
+                {!showCancelled && hiddenCancelledCount > 0 ? (
+                  <span
+                    className="inline-flex items-center justify-center min-w-[1.1rem] h-4 px-1 rounded-full text-[10px] font-semibold"
+                    style={{ background: colors.onSurfaceSecondary, color: colors.surface }}
+                    data-testid="schedule-hidden-cancelled-count"
+                  >
+                    {hiddenCancelledCount}
+                  </span>
+                ) : null}
+              </button>
               {viewMode === "list" && jobItems.length > 0 ? (
                 <div className="rounded-xl flex items-center overflow-hidden"
                      style={{ border: `1px solid ${colors.border}` }}
@@ -707,7 +777,7 @@ export default function TodaySchedule() {
 
       {/* List view — default */}
       {data && data.items.length > 0 && viewMode === "list" && gridSubMode === "list" && (
-        <ScheduleCardList jobs={orderedJobItems} tz={data.tz}
+        <ScheduleCardList jobs={visibleJobItems} tz={data.tz}
                           isTech={isTech}
                           onOpen={(id) => navigate(`/jobs/${id}`)}
                           onClockIn={async (job) => {
@@ -744,7 +814,7 @@ export default function TodaySchedule() {
         && gridSubMode === "map" && mappableCount > 0 && (
         <div data-testid="tech-schedule-map-wrap">
           <ScheduleMap
-            jobs={orderedJobItems}
+            jobs={visibleJobItems}
             techs={user ? [user] : []}
             techColorMap={selfColorMap}
           />
@@ -805,7 +875,18 @@ export default function TodaySchedule() {
           )}
 
           {/* Items */}
-          {data.items.map((it, i) => (
+          {/* INACTIVE-CUSTOMER-CASCADE · Feb-2026 — honour the
+               ``showCancelled`` toggle in the timeline view too so
+               cancelled/skipped visits disappear from BOTH list and
+               timeline surfaces when the toggle is off. */}
+          {data.items
+            .filter((it) => {
+              if (showCancelled) return true;
+              if (it.type !== "job") return true;
+              const s = String(it.status || "").toLowerCase();
+              return !(s === "cancelled" || s === "canceled" || s === "skipped");
+            })
+            .map((it, i) => (
             <TimelineItem
               key={i} item={it} idx={i} yFor={yFor}
               tz={data.tz}
