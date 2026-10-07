@@ -3587,6 +3587,13 @@ async def patch_job_edit_window(
         "id": edit_id,
         "tenant_id": tenant["id"],
         "job_id": jid,
+        # CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — new ``event`` tag on
+        # the canonical ``db.job_edits`` audit collection so the
+        # Communication Timeline + ops dashboards can distinguish
+        # pre-K6 edits (window-gated), K6 bypass edits, and post-
+        # CLOSED-JOB-EDIT-UNLOCK "closed job" edits.  Legacy rows
+        # (no ``event``) continue to render as "Job edited".
+        "event": "closed_job_edit",
         "edited_by": user.get("id"),
         "edited_by_name": user.get("name") or user.get("email"),
         "edited_by_role": role,
@@ -6066,6 +6073,40 @@ async def add_job_photo(jid: str, body: PhotoIn,
                 tenant.get("id"), jid, photo["id"], _audit_exc,
             )
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
+    # CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — audit-row parity for
+    # photo adds on COMPLETED jobs.  The ``patch_job_edit_window``
+    # path already writes a ``db.job_edits`` row on every post-
+    # completion field edit; photos were historically silent.
+    # Writing a parallel audit row with the shared row shape (plus
+    # a dedicated ``event="closed_job_photo_add"`` discriminator)
+    # keeps the Communication Timeline in sync so staff can audit
+    # which photos were added AFTER completion.  Open jobs stay
+    # silent to avoid double-logging routine work.
+    if (job.get("status") or "").lower() == "completed":
+        try:
+            await db.job_edits.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "job_id": jid,
+                "event": "closed_job_photo_add",
+                "edited_by": user.get("id"),
+                "edited_by_name": user.get("name") or user.get("email"),
+                "edited_by_role": (user.get("role") or "").lower(),
+                "edited_at": now_iso(),
+                "changes": {
+                    "photos": {"before": None,
+                                "after": {"id": photo["id"],
+                                            "label": photo.get("label")}},
+                },
+                "reason": None,
+                "source": "web",
+            })
+        except Exception as _audit_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "[closed-job-edit] photo-add audit soft-fail "
+                "tenant=%s job=%s photo=%s err=%s",
+                tenant.get("id"), jid, photo.get("id"), _audit_exc,
+            )
     resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     # Feb-2026 · Photos-in-S3 Phase 1 — strip s3_key from the
     # wire so the storage backend key never leaks to clients.
@@ -6122,6 +6163,41 @@ async def delete_job_photo(jid: str, pid: str,
     await db.jobs.update_one(
         {"id": jid, "tenant_id": tenant["id"]}, {"$pull": {"photos": {"id": pid}}}
     )
+    # CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — audit-row parity for
+    # photo deletes on COMPLETED jobs. Fetching the parent job
+    # AFTER the pull so we can read the authoritative status
+    # without a race against a concurrent transition.  Audit row
+    # fires only if the status is completed — open jobs stay
+    # silent to avoid double-logging routine work.
+    _parent_after_pull = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "status": 1},
+    )
+    if _parent_after_pull and (
+        (_parent_after_pull.get("status") or "").lower() == "completed"
+    ):
+        try:
+            await db.job_edits.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "job_id": jid,
+                "event": "closed_job_photo_delete",
+                "edited_by": user.get("id"),
+                "edited_by_name": user.get("name") or user.get("email"),
+                "edited_by_role": (user.get("role") or "").lower(),
+                "edited_at": now_iso(),
+                "changes": {
+                    "photos": {"before": {"id": pid}, "after": None},
+                },
+                "reason": None,
+                "source": "web",
+            })
+        except Exception as _audit_exc:  # pragma: no cover - defensive
+            logger.warning(
+                "[closed-job-edit] photo-delete audit soft-fail "
+                "tenant=%s job=%s photo=%s err=%s",
+                tenant.get("id"), jid, pid, _audit_exc,
+            )
     if _s3_key_to_delete:
         try:
             from services.aws_s3.photos import delete_photo as _s3_delete

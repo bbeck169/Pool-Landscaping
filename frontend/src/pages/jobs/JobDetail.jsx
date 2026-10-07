@@ -248,6 +248,15 @@ export default function JobDetail() {
   // (customer, viewer, marketer, sales …) remain locked out.
   const K6_UNLOCK_ROLES = new Set([
     "super_admin", "admin", "manager", "tech", "technician", "owner",
+    // CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — "employee" is a
+    // forward-compat entry.  Zero behavioural impact at ship
+    // time (no seeded user carries ``role="employee"``) but the
+    // moment the staff-role expansion lands these users will
+    // inherit the K6 unlock without a follow-up patch here.
+    // Kept in lockstep with ``services.edit_window.K6_UNLOCK_
+    // ROLES`` on the backend — change ONE place and every gate
+    // moves together.
+    "employee",
   ]);
   const canEditCompleted =
     !isCustomer

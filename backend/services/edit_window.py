@@ -37,6 +37,15 @@ EDIT_WINDOW_HOURS = 24
 K6_UNLOCK_ROLES = frozenset({
     "super_admin", "admin", "manager",
     "tech", "technician", "owner",
+    # CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — "employee" added as a
+    # forward-compat string.  Zero behavioral impact at ship
+    # time: no seeded user carries ``role="employee"`` today.
+    # The row lives here so when the staff-role expansion lands,
+    # the new users inherit the K6 unlock automatically without
+    # a follow-up patch to this file.  Keeps web + mobile +
+    # pytest in lockstep — change this set ONCE and every gate
+    # moves together.
+    "employee",
 })
 
 
@@ -76,22 +85,50 @@ def _parse_completed_at(job: Dict[str, Any]) -> Optional[datetime]:
 
 
 def is_within_edit_window(job: Optional[Dict[str, Any]]) -> bool:
-    """True iff the job is ``completed`` AND
-    ``utcnow() - completed_at <= EDIT_WINDOW_HOURS``.
+    """CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — SEMANTIC CHANGE.
+
+    True iff the job is ``completed``.  The pre-fix contract
+    additionally required ``utcnow() - completed_at <=
+    EDIT_WINDOW_HOURS`` so late corrections after 24h hit a 403
+    ``edit_window_expired``.  Field-tech + admin-equivalent feedback
+    was unanimous: real-world corrections (missed photos, chemistry
+    tweaks, note typos, pricing adjustments) land days later and the
+    24h gate was blocking legitimate work.
+
+    The window check is now dropped.  All gating moves one layer out:
+      * The role check (``_authorize_edit`` → K6 + role gate in
+        ``routers/jobs.py::patch_job_edit_window``) still fences
+        non-staff out of the edit path.
+      * The status check still fences non-completed jobs out — the
+        PATCH endpoint only operates on ``status="completed"``.
+      * ``IMMUTABLE_FIELDS`` still fences off customer_id /
+        technician_id / tenant_id / created_at reassignments.
+      * The audit trail (``db.job_edits``) still fires on every
+        edit regardless of elapsed time, so every post-completion
+        change remains discoverable on the Communication Timeline.
 
     Missing ``completed_at`` or non-completed status → False.
-    Never raises.
+    Never raises.  Returning True for any completed job means the
+    403 ``edit_window_expired`` path is now effectively dead code
+    for the web PATCH endpoint; the dead branch is retained
+    one-gate-up as a defensive fallback in case a future refactor
+    reinstates a window.
     """
     if not job:
         return False
     if (job.get("status") or "").lower() != "completed":
         return False
+    # No ``completed_at`` → the job claims to be ``completed`` but
+    # has no timestamp; conservative stance is to treat as "not
+    # inside the window" so the edit path falls through to the
+    # explicit K6-bypass branch in ``patch_job_edit_window``.
     completed_at = _parse_completed_at(job)
     if completed_at is None:
         return False
-    return datetime.now(timezone.utc) - completed_at <= timedelta(
-        hours=EDIT_WINDOW_HOURS,
-    )
+    # Was: ``datetime.now(utc) - completed_at <= timedelta(hours=
+    # EDIT_WINDOW_HOURS)``.  Now: unconditionally True for
+    # completed jobs with a parseable ``completed_at``.
+    return True
 
 
 def hours_since_completion(job: Optional[Dict[str, Any]]) -> Optional[float]:

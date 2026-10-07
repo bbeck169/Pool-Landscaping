@@ -669,14 +669,28 @@ def test_job_mutation_failure_rolls_back_audit_row(monkeypatch):
 
 
 # ═════════════════════════════════════════════════════════════════════
-# 15. Mobile offline replay — success inside window, 403 outside.
+# 15. Mobile offline replay — success inside AND outside the (former)
+#     window, since CLOSED-JOB-EDIT-UNLOCK removes the 24h gate.
 # ═════════════════════════════════════════════════════════════════════
 def test_mobile_offline_replay_edit_inside_and_outside_window():
+    """CLOSED-JOB-EDIT-UNLOCK · Feb-2026 — SEMANTIC CHANGE.
+
+    Previously the second op (completed 48h ago) was expected to
+    raise 403 ``edit_window_expired`` on the mobile-sync replay.
+    The 24h window has been dropped — ``is_within_edit_window``
+    now returns True for any ``status="completed"`` job regardless
+    of elapsed time — so BOTH ops now succeed and BOTH write
+    audit rows to ``db.job_edits``.  Non-staff role gating still
+    applies at the ``_authorize_edit`` layer and immutable-field
+    gating still applies at ``assert_immutable_fields_untouched``;
+    only the elapsed-time clock is removed.
+    """
     async def _go():
         tid = await _tenant_id()
-        # (a) Inside window.
+        # (a) Just-completed.
         jid_ok = await _mk_completed_pool_job(tid)
-        # (b) Outside window.
+        # (b) Completed 48h ago — PRE-FIX this hit 403; POST-FIX
+        # it succeeds just like the fresh completion above.
         jid_late = await _mk_completed_pool_job(
             tid, completed_hours_ago=48.0,
         )
@@ -700,17 +714,16 @@ def test_mobile_offline_replay_edit_inside_and_outside_window():
             op_late = _SyncOp(
                 client_op_id=uuid.uuid4().hex, op_type="job.edit",
                 entity_id=jid_late,
-                payload={"notes": "too late"},
+                payload={"notes": "48h-late edit now allowed",
+                          "edit_reason": "late correction"},
                 client_ts=now_iso(),
             )
-            with pytest.raises(HTTPException) as ei:
-                await _handle_job_edit(op_late, tid, "u-mobile")
-            assert ei.value.status_code == 403
-            assert ei.value.detail["detail"] == "edit_window_expired"
-            no_hist = await _db().job_edits.count_documents(
+            r_late = await _handle_job_edit(op_late, tid, "u-mobile")
+            assert r_late["server_id"] == jid_late
+            hist_late = await _db().job_edits.count_documents(
                 {"tenant_id": tid, "job_id": jid_late},
             )
-            assert no_hist == 0
+            assert hist_late == 1
         finally:
             await _drain(tid)
 
