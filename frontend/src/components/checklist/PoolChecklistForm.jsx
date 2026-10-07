@@ -185,13 +185,38 @@ export function ReadingInputRow({ testKey, reading, previous, recent, locked, on
       </div>
       <div className="flex items-center gap-2">
         <input
-          type="number"
+          /* CHECKLIST-DECIMAL-INPUT-FIX · Feb-2026 — the pre-fix
+             ``type="number"`` surface intercepted intermediate
+             decimal states ("7.", ".5") because HTML5 fails those
+             strings per spec and most browsers (Chrome, Firefox,
+             iOS Safari) return ``e.target.value === ""`` for them.
+             ``setDraft("")`` would then blank the input before the
+             user could finish typing — effectively locking users
+             into integers.
+             Switching to ``type="text"`` + ``inputMode="decimal"``
+             keeps the mobile numeric keypad and lets the raw
+             string flow through to our existing ``_validateReading``
+             regex (``/^\d*\.?\d*$/``) which already handles every
+             intermediate state cleanly. The onChange guard below
+             strips anything that fails the regex at keystroke so
+             the invalid-state red border only triggers on
+             pathological paste cases. ``step`` + ``min`` are
+             no-ops on ``type="text"`` and are intentionally
+             omitted. */
+          type="text"
           inputMode="decimal"
-          step={rule && rule.decimals === 0 ? "1" : (rule && rule.decimals === 1 ? "0.1" : "0.01")}
-          min="0"
+          autoComplete="off"
           disabled={locked || notTested}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value;
+            // Reject anything that isn't digits + at most one dot
+            // at keystroke time (prevents accidentally keeping
+            // pasted letters in state).  Allow empty.
+            if (v === "" || /^\d*\.?\d*$/.test(v)) {
+              setDraft(v);
+            }
+          }}
           onBlur={commit}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
           placeholder={String(_READING_DEFAULTS[testKey] ?? "")}
