@@ -1523,6 +1523,19 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
               <Text style={gStyles.vipText}>VIP</Text>
             </View>
           ) : null}
+          {/* CREW-SCHEDULE-FANOUT — crew role badge */}
+          {job.crew_id && (job._crew_role === "direct" || job._crew_role === "member") ? (
+            <View
+              style={job._crew_role === "direct" ? gStyles.crewBadgeDirect : gStyles.crewBadgeMember}
+              testID={`schedule-card-crew-badge-${job.id}`}
+              accessibilityLabel={job._crew_role === "direct" ? "Crew lead" : "Crew member"}
+            >
+              <Ionicons name="people-outline" size={10} color={job._crew_role === "direct" ? "#1E3A8A" : "#3730A3"} />
+              <Text style={job._crew_role === "direct" ? gStyles.crewBadgeDirectText : gStyles.crewBadgeMemberText}>
+                {job._crew_role === "direct" ? "Crew lead" : "Crew member"}
+              </Text>
+            </View>
+          ) : null}
         </View>
         {job.property_label ? (
           <View
@@ -1740,6 +1753,19 @@ function CalendarView({
                       <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
                         {j.customer_is_vip ? "★ " : ""}{formatCustomerName(j)}
                       </Text>
+                      {/* CREW-SCHEDULE-FANOUT — compact crew badge in calendar card */}
+                      {j.crew_id && (j._crew_role === "direct" || j._crew_role === "member") ? (
+                        <View
+                          style={j._crew_role === "direct" ? gStyles.crewBadgeDirect : gStyles.crewBadgeMember}
+                          testID={`schedule-card-crew-badge-${j.id}`}
+                          accessibilityLabel={j._crew_role === "direct" ? "Crew lead" : "Crew member"}
+                        >
+                          <Ionicons name="people-outline" size={9} color={j._crew_role === "direct" ? "#1E3A8A" : "#3730A3"} />
+                          <Text style={j._crew_role === "direct" ? gStyles.crewBadgeDirectText : gStyles.crewBadgeMemberText}>
+                            {j._crew_role === "direct" ? "Lead" : "Member"}
+                          </Text>
+                        </View>
+                      ) : null}
                       {showBH ? (
                         <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
                       ) : null}
@@ -1916,6 +1942,25 @@ const gStyles = StyleSheet.create({
   vipText: {
     fontFamily: font.bold, fontSize: 9, color: "#92400E",
     letterSpacing: 0.8, textTransform: "uppercase",
+  },
+  // CREW-SCHEDULE-FANOUT — crew role badge styles
+  crewBadgeDirect: {
+    flexDirection: "row", alignItems: "center",
+    gap: 3, backgroundColor: "#DBEAFE", borderColor: "#3B82F6", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
+  },
+  crewBadgeMember: {
+    flexDirection: "row", alignItems: "center",
+    gap: 3, backgroundColor: "#E0E7FF", borderColor: "#6366F1", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
+  },
+  crewBadgeDirectText: {
+    fontFamily: font.bold, fontSize: 9, color: "#1E3A8A",
+    letterSpacing: 0.4, textTransform: "uppercase",
+  },
+  crewBadgeMemberText: {
+    fontFamily: font.bold, fontSize: 9, color: "#3730A3",
+    letterSpacing: 0.4, textTransform: "uppercase",
   },
   gateChip: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 4,
