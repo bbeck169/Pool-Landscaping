@@ -32,7 +32,7 @@ import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
-import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide } from "lucide-react";
+import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide, Users } from "lucide-react";
 // Feb-2026 · Schedule card redesign — customer name + address now
 // open Google Maps directions directly (no dedicated Navigate
 // button).  Shared helpers in ``@/utils/directions`` produce the
@@ -1081,6 +1081,35 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                       title="VIP customer"
                     >
                       <Star size={9} fill="#F59E0B" color="#F59E0B" /> VIP
+                    </span>
+                  ) : null}
+                  {/* CREW-SCHEDULE-FANOUT · Feb-2026 — render a
+                      "Crew lead" (direct) vs "Crew member" (via
+                      crew) chip when the job carries a ``crew_id``
+                      AND the backend tagged a ``_crew_role``.
+                      Overlay (tech on BOTH direct and crew) tags
+                      as "direct" server-side → "Crew lead" chip.
+                      Non-tech callers get ``_crew_role=null`` so
+                      the chip is suppressed for admins/dispatchers
+                      viewing the same schedule.  Chip visuals match
+                      the VIP sibling above so the two chips align
+                      on the same row. */}
+                  {j.crew_id && (j._crew_role === "direct" || j._crew_role === "member") ? (
+                    <span
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
+                      style={{
+                        backgroundColor: j._crew_role === "direct" ? "#DBEAFE" : "#E0E7FF",
+                        color: j._crew_role === "direct" ? "#1E3A8A" : "#3730A3",
+                        border: `1px solid ${j._crew_role === "direct" ? "#3B82F6" : "#6366F1"}`,
+                      }}
+                      data-testid={`schedule-card-crew-badge-${j.id}`}
+                      data-crew-role={j._crew_role}
+                      title={j._crew_role === "direct"
+                        ? "You lead this crew job"
+                        : "You're a member of the crew on this job"}
+                    >
+                      <Users size={9} />
+                      {j._crew_role === "direct" ? "Crew lead" : "Crew member"}
                     </span>
                   ) : null}
                 </div>

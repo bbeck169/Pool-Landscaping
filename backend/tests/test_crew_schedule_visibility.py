@@ -293,3 +293,132 @@ def test_user_in_zero_crews_still_sees_own_jobs(tenant_id):
     )
     # No crew seeded — the crew-clause branch must skip cleanly.
     assert job["id"] in [j["id"] for j in _fetch_today(mike)]
+
+
+
+# ══════════════════════════════════════════════════════════════════
+# 7 · CREW-SCHEDULE-FANOUT · Feb-2026 — time-boxed membership.
+#     Members only see jobs scheduled on/after their ``added_at``
+#     floor; the pre-ship behavior exposed all historical crew
+#     jobs to a brand-new member.
+# ══════════════════════════════════════════════════════════════════
+def test_member_added_after_job_does_not_see_old_job(tenant_id):
+    """Member joined TODAY, job was scheduled YESTERDAY — hidden."""
+    mike = _seed_user(tenant_id, "technician", department="pool")
+    crew = _seed_crew(tenant_id, [])
+    # Yesterday's crew-only job (seeded BEFORE mike was added).
+    yesterday = (datetime.now(timezone.utc).date()
+                 - timedelta(days=1)).isoformat()
+    old_job = _seed_job(
+        tenant_id, day_iso=yesterday,
+        technician_id=None, crew_id=crew["id"],
+    )
+    # Simulate "mike added to the crew TODAY" by stamping his
+    # ``added_at`` floor to now_iso() — mirrors what
+    # ``ops.add_crew_member`` writes on real admin add actions.
+    _sync.crews.update_one(
+        {"id": crew["id"]},
+        {
+            "$addToSet": {"tech_ids": mike["id"]},
+            "$set": {
+                f"member_added_at.{mike['id']}":
+                    datetime.now(timezone.utc).isoformat(),
+            },
+        },
+    )
+    # Fetch yesterday's schedule — mike must NOT see the old job.
+    r = requests.get(
+        f"{API}/schedule/today",
+        params={"date": yesterday},
+        headers=_auth(mike["token"], mike["tenant_id"]),
+    )
+    assert r.status_code == 200, r.text
+    items = [i for i in (r.json().get("items") or []) if i.get("type") == "job"]
+    assert old_job["id"] not in [i["id"] for i in items], (
+        "member joined today must NOT see yesterday's crew job"
+    )
+
+
+def test_member_added_before_job_sees_it_with_member_role(tenant_id):
+    """Member was on the crew YESTERDAY, job scheduled TOMORROW —
+    visible, and the response tags ``_crew_role=member``."""
+    mike = _seed_user(tenant_id, "technician", department="pool")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    crew = _seed_crew(tenant_id, [])
+    # Stamp mike's add BEFORE the job's scheduled_date.
+    _sync.crews.update_one(
+        {"id": crew["id"]},
+        {
+            "$addToSet": {"tech_ids": mike["id"]},
+            "$set": {f"member_added_at.{mike['id']}": yesterday},
+        },
+    )
+    future_job = _seed_job(
+        tenant_id, day_iso=_today_iso(),
+        technician_id=None, crew_id=crew["id"],
+    )
+    items = _fetch_today(mike)
+    hit = next((i for i in items if i["id"] == future_job["id"]), None)
+    assert hit is not None, "member added yesterday must see today's crew job"
+    assert hit.get("_crew_role") == "member", (
+        f"expected _crew_role=member for crew-only visibility, "
+        f"got {hit.get('_crew_role')!r}"
+    )
+
+
+def test_lead_tech_payload_tags_direct_regardless_of_crew_membership(tenant_id):
+    """Overlay dedupe (Q6): tech is BOTH the job's direct lead AND
+    a crew member → ``_crew_role=direct``, badge shows "Crew lead"."""
+    lead = _seed_user(tenant_id, "technician", department="pool")
+    crew = _seed_crew(tenant_id, [lead["id"]])
+    # Backfill-equivalent stamp — ensure the member's floor is
+    # before "today" so the time-box doesn't accidentally hide the
+    # job.
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    _sync.crews.update_one(
+        {"id": crew["id"]},
+        {"$set": {f"member_added_at.{lead['id']}": yesterday}},
+    )
+    overlay_job = _seed_job(
+        tenant_id, day_iso=_today_iso(),
+        technician_id=lead["id"], crew_id=crew["id"],
+    )
+    items = _fetch_today(lead)
+    hit = next((i for i in items if i["id"] == overlay_job["id"]), None)
+    assert hit is not None, "lead must see overlay job"
+    assert hit.get("_crew_role") == "direct", (
+        f"overlay dedupe: direct wins over member — "
+        f"expected 'direct', got {hit.get('_crew_role')!r}"
+    )
+    # Dedupe guarantee: the job appears exactly once in the response.
+    matches = [i for i in items if i["id"] == overlay_job["id"]]
+    assert len(matches) == 1, (
+        f"dedupe violated — overlay job appears {len(matches)} times"
+    )
+
+
+def test_fallback_floor_uses_crew_created_at_when_member_added_at_missing(tenant_id):
+    """Legacy / un-migrated crews lack ``member_added_at``. Fallback
+    floor = ``crew.created_at`` so the pre-ship visibility
+    semantics are preserved for pre-existing rows."""
+    mike = _seed_user(tenant_id, "technician", department="pool")
+    # Seed a crew whose ``created_at`` is a WEEK AGO (floor well in
+    # the past) with no ``member_added_at`` map.
+    cid = f"crew-{uuid.uuid4().hex[:8]}"
+    week_ago = (datetime.now(timezone.utc)
+                - timedelta(days=7)).isoformat()
+    _sync.crews.insert_one({
+        "id": cid, "tenant_id": tenant_id, "name": "Legacy Crew",
+        "color": "#0284C7", "tech_ids": [mike["id"]],
+        "created_at": week_ago,
+        # NOTE — no ``member_added_at`` key at all.
+    })
+    today_job = _seed_job(
+        tenant_id, day_iso=_today_iso(),
+        technician_id=None, crew_id=cid,
+    )
+    items = _fetch_today(mike)
+    assert today_job["id"] in [i["id"] for i in items], (
+        "legacy crew (no member_added_at) must still fan out "
+        "— fallback floor = crew.created_at"
+    )

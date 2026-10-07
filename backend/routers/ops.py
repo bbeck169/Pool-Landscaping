@@ -27,6 +27,24 @@ class CrewIn(BaseModel):
     tech_ids: Optional[List[str]] = []
 
 
+def _crew_member_added_at_map(
+    tech_ids: Optional[List[str]], ts: Optional[str] = None,
+) -> dict:
+    """CREW-SCHEDULE-FANOUT · Feb-2026 — ``member_added_at`` seeder.
+
+    Returns ``{tech_id: iso_utc_now_or_ts}`` for every id in
+    ``tech_ids`` (empty-safe).  Used by ``create_crew`` (every initial
+    member gets the same join timestamp — the crew's own
+    ``created_at``) and by the migration backfill. The map value is a
+    full ISO datetime; the schedule-query path floors it to the
+    ``YYYY-MM-DD`` prefix before comparing to ``jobs.scheduled_date``
+    so bare-date and ISO-datetime schedule values both lex-compare
+    correctly.
+    """
+    ts = ts or now_iso()
+    return {tid: ts for tid in (tech_ids or []) if tid}
+
+
 @router.get("/crews")
 async def list_crews(user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant)):
@@ -85,7 +103,16 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
     # GET → the user sees "crews not saving". Mirror the tenant-
     # scoping already applied to /technicians and /jobs.
     doc = body.dict()
-    doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
+    _now = now_iso()
+    doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": _now})
+    # CREW-SCHEDULE-FANOUT · Feb-2026 — stamp a ``member_added_at``
+    # map so the schedule-view time-box can compare each member's
+    # join date against ``jobs.scheduled_date``. Initial members
+    # share the crew's own ``created_at`` as their floor; later
+    # ``add_crew_member`` writes stamp ``now_iso()``.
+    doc["member_added_at"] = _crew_member_added_at_map(
+        doc.get("tech_ids"), ts=_now,
+    )
     await db.crews.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -165,15 +192,39 @@ class CrewMemberIn(BaseModel):
 
 @router.post("/crews/{cid}/members")
 async def add_crew_member(cid: str, body: CrewMemberIn, user: dict = Depends(require_admin)):
-    r = await db.crews.update_one({"id": cid}, {"$addToSet": {"tech_ids": body.tech_id}})
+    # CREW-SCHEDULE-FANOUT · Feb-2026 — stamp ``member_added_at.<tid>``
+    # on every add so the schedule-view time-box has a per-member
+    # floor. New members only see jobs ``scheduled_date >= today``
+    # (same-day joins), closing the "member just added can see
+    # 3-year-old crew jobs" leak. ``$addToSet`` + dotted ``$set``
+    # compose cleanly in one update op.
+    _now = now_iso()
+    r = await db.crews.update_one(
+        {"id": cid},
+        {
+            "$addToSet": {"tech_ids": body.tech_id},
+            "$set": {f"member_added_at.{body.tech_id}": _now},
+        },
+    )
     if r.matched_count == 0:
         raise HTTPException(404, "Crew not found")
-    return {"ok": True}
+    return {"ok": True, "added_at": _now}
 
 
 @router.delete("/crews/{cid}/members/{tid}")
 async def remove_crew_member(cid: str, tid: str, user: dict = Depends(require_admin)):
-    await db.crews.update_one({"id": cid}, {"$pull": {"tech_ids": tid}})
+    # CREW-SCHEDULE-FANOUT · Feb-2026 — unset the ``member_added_at``
+    # entry alongside the ``$pull`` so re-adds get a fresh floor
+    # (otherwise a stale pre-removal ``added_at`` would widen the
+    # new member's visibility window). ``$unset`` on a dotted path
+    # that doesn't exist is a safe no-op.
+    await db.crews.update_one(
+        {"id": cid},
+        {
+            "$pull": {"tech_ids": tid},
+            "$unset": {f"member_added_at.{tid}": ""},
+        },
+    )
     return {"ok": True}
 
 

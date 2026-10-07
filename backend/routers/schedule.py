@@ -261,19 +261,42 @@ async def schedule_today(request: Request,
     # (via ``ops.py::create_crew``) but the field has legacy rows
     # from a prior seed migration that stored ``technicians.id``.
     # Match either so no crew memberships are silently skipped.
+    #
+    # CREW-SCHEDULE-FANOUT · Feb-2026 — the crew branch was widened
+    # from a single ``{crew_id: {$in: [...]}}`` to per-crew branches
+    # each carrying the current user's own ``member_added_at`` floor
+    # so a tech just added to a crew doesn't retroactively see
+    # historical jobs they weren't on the crew for.  Floor is a
+    # ``YYYY-MM-DD`` date-prefix (``added_at[:10]``) so bare-date and
+    # ISO-datetime ``scheduled_date`` values both lex-compare
+    # correctly against ``$gte``.  Fallback floor when the migration
+    # hasn't yet run / a legacy crew lacks the map = ``crew.created_at``
+    # (best-effort; same semantics as the backfill script).
     _t_crews = _t.perf_counter()
-    my_crew_ids = [
-        c["id"] async for c in db.crews.find(
-            {"tenant_id": tid, "tech_ids": {"$in": _tech_ids}},
-            {"_id": 0, "id": 1},
-        )
-    ]
+    my_crew_ids: list = []
+    async for _c in db.crews.find(
+        {"tenant_id": tid, "tech_ids": {"$in": _tech_ids}},
+        {"_id": 0, "id": 1, "member_added_at": 1, "created_at": 1},
+    ):
+        _added_at = None
+        _mam = _c.get("member_added_at") or {}
+        for _tid_var in _tech_ids:
+            if _mam.get(_tid_var):
+                _added_at = _mam[_tid_var]
+                break
+        if not _added_at:
+            _added_at = _c.get("created_at")
+        _floor = str(_added_at or "")[:10]  # YYYY-MM-DD prefix
+        tech_or_clauses.append({
+            "crew_id": _c["id"],
+            # Guard the ``$gte`` so an un-migrated crew with no
+            # ``created_at`` (shouldn't happen but defense-in-depth)
+            # falls back to "match any date", preserving the pre-ship
+            # visibility semantics.
+            **({"scheduled_date": {"$gte": _floor}} if _floor else {}),
+        })
+        my_crew_ids.append(_c["id"])
     _timings.append(f"crews;dur={(_t.perf_counter()-_t_crews)*1000:.1f}")
-    # Guardrail — only add the crew clause when the list is non-empty.
-    # ``$in: []`` would emit an always-false branch that Mongo still
-    # has to plan; skip entirely instead.
-    if my_crew_ids:
-        tech_or_clauses.append({"crew_id": {"$in": my_crew_ids}})
     # Feb-2026 · Crew Phase A · $and-compose the tech-visibility $or
     # with ``not_deleted_filter()``'s own $or (soft-delete predicate).
     # Prior code did ``{**job_q, **_nd()}`` where Python dict-spread
@@ -381,12 +404,30 @@ async def schedule_today(request: Request,
         # serialization-time enrichment only.
         from services.geo_resolver import resolve_job_coordinates
         _lat, _lng, _cs = resolve_job_coordinates(j, cust_map)
+        # CREW-SCHEDULE-FANOUT · Feb-2026 — tag ``_crew_role`` so the
+        # client can render "Crew lead" vs "Crew member" badges. A
+        # job is "direct" when any of the ``JOB_TECH_FIELDS`` holds a
+        # value in the caller's identity union (overlay wins per the
+        # ticket's Q6 dedupe gate); otherwise the caller reached the
+        # job only via the crew ``$or`` branch above and is a
+        # "member".  Non-tech callers (admin / dispatcher) get
+        # ``_crew_role = None`` so the FE suppresses the badge.
+        from services.tech_id_resolver import JOB_TECH_FIELDS as _JTF
+        _crew_role = None
+        if _role == "technician":
+            _tid_set = set(_tech_ids)
+            if any(j.get(_f) in _tid_set for _f in _JTF):
+                _crew_role = "direct"
+            elif j.get("crew_id") in set(my_crew_ids):
+                _crew_role = "member"
         items.append({
             "type": "job",
             "id": j.get("id"),
             "title": j.get("title") or j.get("service_type") or "Job",
             "service_type": j.get("service_type") or j.get("job_type") or j.get("title") or "Service",
             "job_type": j.get("job_type") or j.get("service_type"),
+            "crew_id": j.get("crew_id"),
+            "_crew_role": _crew_role,
             # Feb 2026 · work-class dimension surfaced on each item so
             # the frontend can render Repair badges + drive the summary
             # split. Legacy jobs without the field read as "service"

@@ -383,16 +383,37 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
         # ``$in`` over the full identity union — otherwise a legacy
         # crew keyed on ``user.id`` would be invisible to a modern
         # tech resolved by ``technician_id``, and vice versa.
+        #
+        # CREW-SCHEDULE-FANOUT · Feb-2026 — crew branch is now
+        # per-crew with each caller's ``member_added_at`` floor
+        # (same contract shipped on ``routers/schedule.py``).
+        # Fallback floor on legacy / un-migrated rows =
+        # ``crew.created_at``.
         crew_ids: list = []
+        crew_branches: list = []
         try:
             async for row in db.crews.find(
                 {"tenant_id": tid, "tech_ids": {"$in": tech_ids}},
-                {"_id": 0, "id": 1},
+                {"_id": 0, "id": 1, "member_added_at": 1, "created_at": 1},
             ):
                 if row.get("id"):
                     crew_ids.append(row["id"])
+                    _added_at = None
+                    _mam = row.get("member_added_at") or {}
+                    for _tid_var in tech_ids:
+                        if _mam.get(_tid_var):
+                            _added_at = _mam[_tid_var]
+                            break
+                    if not _added_at:
+                        _added_at = row.get("created_at")
+                    _floor = str(_added_at or "")[:10]  # YYYY-MM-DD
+                    _branch = {"crew_id": row["id"]}
+                    if _floor:
+                        _branch["scheduled_date"] = {"$gte": _floor}
+                    crew_branches.append(_branch)
         except Exception:  # noqa: BLE001 — never block on membership lookup
             crew_ids = []
+            crew_branches = []
         # Phase K42 / Phase P9-A · Feb-2026 — the tech's OWN jobs may
         # be persisted under either variant (technicians.id or
         # users.id) across any of :data:`JOB_TECH_FIELDS`.  Build a
@@ -403,8 +424,8 @@ async def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], tech
         tech_or_clauses: list = []
         if _tech_or:
             tech_or_clauses.extend(_tech_or["$or"])
-        if crew_ids:
-            tech_or_clauses.append({"crew_id": {"$in": crew_ids}})
+        if crew_branches:
+            tech_or_clauses.extend(crew_branches)
         # Preserve the single-key shape when possible so downstream
         # $and merges stay clean.
         if len(tech_or_clauses) == 1:
@@ -1515,6 +1536,26 @@ async def list_jobs(
     _warned: set = set()
     for _d in docs:
         _coerce_job_address_for_read(_d, tenant["id"], _warned)
+    # CREW-SCHEDULE-FANOUT · Feb-2026 — tag ``_crew_role`` per row
+    # for tech callers so the client renders "Crew lead" (direct) vs
+    # "Crew member" (via crew) badges without re-querying the crews
+    # roster.  Overlay wins per the ticket's Q6 dedupe gate: if the
+    # tech is BOTH on ``JOB_TECH_FIELDS`` and in the crew, the job
+    # tags as ``direct``.  Non-tech callers get ``_crew_role=None``
+    # so the FE suppresses the badge.
+    _list_role = (user.get("role") or "").lower()
+    if _list_role == "technician":
+        from services.tech_id_resolver import JOB_TECH_FIELDS as _JTF
+        _list_tech_ids = {
+            _v for _v in (user.get("technician_id"), user.get("id")) if _v
+        }
+        for _d in docs:
+            if any(_d.get(_f) in _list_tech_ids for _f in _JTF):
+                _d["_crew_role"] = "direct"
+            elif _d.get("crew_id"):
+                _d["_crew_role"] = "member"
+            else:
+                _d["_crew_role"] = None
     return docs
 
 
