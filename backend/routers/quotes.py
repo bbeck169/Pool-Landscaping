@@ -844,21 +844,49 @@ async def update_quote(qid: str, body: QuoteUpdate,
     # flags — never persist them on the doc row.
     _edit_reason = upd.pop("edit_reason", None)
     upd.pop("acknowledged_lock_bypass", None)
+    # DOC-DATE-EDITING · Feb-2026 — carve ``created_at`` out of the
+    # H0 strip block below.  The H0 contract originally forbade
+    # post-create ``created_at`` edits; the Feb-2026 widening
+    # (ticket DOC-DATE-EDITING, SHA will land in the atomic commit)
+    # routes any supplied value through ``resolve_date_override``
+    # for validation + stamps the ``created_at_override_by`` /
+    # ``created_at_override_at`` sentinels, same shape as the
+    # create-time path. Silent-drop semantics for non-admin
+    # actors are preserved by ``resolve_date_override`` itself.
+    _created_at_override = upd.pop("created_at", None)
+    if _created_at_override is not None:
+        from services.quotes.date_override import resolve_date_override
+        _eff_iso, _ovr_by, _ovr_at = resolve_date_override(
+            _created_at_override,
+            user=user, tenant_id=tenant["id"],
+            field_name="created_at",
+            entity_kind=existing.get("doc_type") or "quote",
+            entity_id=qid, log_level="warn",
+        )
+        if _ovr_by is not None:
+            # Admin path — stamp the effective value + sentinels.
+            upd["created_at"] = _eff_iso
+            upd["created_at_override_by"] = _ovr_by
+            upd["created_at_override_at"] = _ovr_at
+        # Non-admin silent-drop path: ``_ovr_by`` is None; we
+        # intentionally do NOT re-add ``created_at`` to ``upd``,
+        # matching H0's "silent from the user-facing standpoint"
+        # contract. The strip block below will no-op since the key
+        # is already absent.
     # Task H0 · Feb-2026 — Historical Date Backfill defense.
     # The PATCH schema (``QuoteUpdate``) does not declare
-    # ``created_at`` / ``paid_at`` / the override audit fields,
+    # ``paid_at`` / the override audit fields,
     # so Pydantic already drops them silently. This belt-and-
     # suspenders strip locks the contract against a future
     # schema drift that adds one of these keys to ``QuoteUpdate``:
-    # the create-only override path is the sole authoritative
-    # writer of historical dates, and mutating either the value
-    # or the audit sentinel via PATCH would break the "imported
-    # vs real-time" distinction Task H (PDF importer) relies on.
+    # the create-only override path (plus DOC-DATE-EDITING's
+    # explicit ``created_at`` carve-out above) are the sole
+    # authoritative writers of historical dates / audit sentinels,
+    # and mutating any OTHER sentinel via PATCH would break the
+    # "imported vs real-time" distinction Task H (PDF importer)
+    # relies on.
     for _h0_key in (
-        "created_at",
         "paid_at",
-        "created_at_override_by",
-        "created_at_override_at",
         "paid_at_override_by",
         "paid_at_override_at",
     ):

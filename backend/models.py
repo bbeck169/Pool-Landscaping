@@ -596,6 +596,15 @@ class QuoteUpdate(BaseModel):
     # money-neutral and persist on the doc row.
     flipbook_enabled: Optional[bool] = None
     flipbook_background_ids: Optional[List[str]] = None
+    # DOC-DATE-EDITING · Feb-2026 — admin-editable document date.
+    # Routed through ``services.quotes.date_override`` for validation
+    # (max 50y back, max now+60s, naive-UTC coerced). Role-gated to
+    # ``{admin, super_admin, manager, owner}`` server-side.  Stamps
+    # ``created_at_override_by`` + ``created_at_override_at`` on the
+    # persisted doc so H0's "override vs real-time" audit trail
+    # survives the post-create edit path.  Silently dropped (not
+    # written) when the actor is outside the allowlist.
+    created_at: Optional[datetime] = None
 
 
 class TermsSettingsIn(BaseModel):

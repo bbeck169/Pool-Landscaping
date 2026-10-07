@@ -110,6 +110,15 @@ _MONETARY_SCALAR_FIELDS: tuple = (
 )
 
 
+# DOC-DATE-EDITING · Feb-2026 — date field names whose before/after
+# values are captured on every ``audit_put_success`` row as a
+# ``date_delta`` sibling to ``monetary_delta``. Scoped to the two
+# editable dates (``created_at`` + ``due_date``) — lifecycle
+# timestamps (``sent_at`` / ``paid_at`` / etc) are not user-editable
+# via PATCH/PUT and are deliberately excluded from the diff.
+_DATE_SCALAR_FIELDS: tuple = ("created_at", "due_date")
+
+
 def _external_doc_type(quote: Dict[str, Any]) -> str:
     """Map DB ``doc_type`` (quote/invoice) → external label
     (estimate/invoice). Falls back to ``estimate`` when missing
@@ -355,6 +364,28 @@ def _monetary_delta(
     return delta
 
 
+def _date_delta(
+    before: Dict[str, Any], after: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """DOC-DATE-EDITING · Feb-2026 — capture before/after values on
+    the two user-editable date fields (``created_at`` + ``due_date``).
+
+    Kept as a sibling to :func:`_monetary_delta` rather than folded
+    into it so grep-based audit queries can distinguish "did the
+    money change?" from "did the dates change?" without needing to
+    inspect field keys. Values are stored verbatim (ISO-8601 string
+    for ``created_at``, ``YYYY-MM-DD`` for ``due_date``) — no
+    normalisation / timezone coercion happens here; callers that
+    care feed in already-normalised values.
+    """
+    delta: Dict[str, Dict[str, Any]] = {}
+    for f in _DATE_SCALAR_FIELDS:
+        b, a = before.get(f), after.get(f)
+        if b != a:
+            delta[f] = {"before": b, "after": a}
+    return delta
+
+
 async def audit_put_success(
     db,
     *,
@@ -385,6 +416,10 @@ async def audit_put_success(
               ...,
               [line_items.length]: { before, after },
           },
+          date_delta: {
+              created_at: { before, after },  # DOC-DATE-EDITING · Feb-2026
+              due_date:   { before, after },
+          },
           source: "put_quote" | "patch_invoice",
         }
 
@@ -398,6 +433,7 @@ async def audit_put_success(
             return
         edited_fields = _diff_top_level_keys(before, after)
         monetary = _monetary_delta(before, after)
+        dates = _date_delta(before, after)
         await db.doc_edit_audit.insert_one({
             "event": "put_quote_edit_after_send",
             "at": datetime.now(timezone.utc).isoformat(),
@@ -410,6 +446,7 @@ async def audit_put_success(
             "editor_role": (actor or {}).get("role"),
             "edited_fields": edited_fields,
             "monetary_delta": monetary,
+            "date_delta": dates,
             "source": source,
         })
     except Exception:

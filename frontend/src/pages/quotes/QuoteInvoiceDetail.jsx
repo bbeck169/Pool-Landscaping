@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useSetDynamicCrumb } from "@/components/nav/dynamicCrumbContext";
 import {
@@ -247,6 +247,18 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [hasVersions, setHasVersions] = useState(false);
   const isStaff = ["admin", "super_admin"].includes(String(user?.role || ""));
+  // DOC-DATE-EDITING · Feb-2026 — the detail-view "Date" + "Due"
+  // header fields render as inline date editors for the admin
+  // 4-role set and as static text for everyone else. Role gate
+  // mirrors the backend ``_require_staff(allow_date_only=True)``
+  // + ``_DEFAULT_ADMIN_ALLOWLIST`` carve-outs so the UI never
+  // offers an edit path the server will 403.
+  const canEditDates = ["admin", "super_admin", "manager", "owner"]
+    .includes(String(user?.role || ""));
+  // Flash-green indicator state (keyed by field; cleared after
+  // 1.8s on each successful save).
+  const [savedFlash, setSavedFlash] = useState({ created_at: 0, due_date: 0 });
+  const [savingDate, setSavingDate] = useState("");
   // Feb-2026 · Item 3 — soft-delete (admin/super only). Two flavours:
   //   * ``deleteInvoiceOpen`` → REST ``DELETE /invoices/{id}`` — full
   //     invoice soft-delete (typed-confirm on the invoice number).
@@ -694,6 +706,142 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
     }
   };
 
+  // ─────────────────────────────────────────────────────────────
+  // DOC-DATE-EDITING · Feb-2026 — inline date-editor helpers.
+  // Save on blur/Enter; revert on Esc; flash green + "Saved" chip
+  // on success; toast + revert on 400 (future_date_not_allowed /
+  // date_too_old). ``_dateInputValue`` normalises any stored
+  // timestamp (ISO-8601 or ``YYYY-MM-DD``) to the ``<input
+  // type="date">`` wire format. The commit helper picks PATCH
+  // for invoices (``invoice_edit.py::patch_invoice``) vs PUT for
+  // quotes (``quotes.py::update_quote``) to match the existing
+  // write surfaces on both doc types.
+  // ─────────────────────────────────────────────────────────────
+  const _dateInputValue = (val) => {
+    if (!val) return "";
+    if (typeof val === "string") {
+      if (val.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+        return val.slice(0, 10);
+      }
+    }
+    try { return new Date(val).toISOString().slice(0, 10); } catch { return ""; }
+  };
+  const _flashSaved = (field) => {
+    setSavedFlash((s) => ({ ...s, [field]: Date.now() }));
+    setTimeout(
+      () => setSavedFlash((s) => ({ ...s, [field]: 0 })), 1800,
+    );
+  };
+  const _commitDate = async (field, newYmd, prevYmd) => {
+    if (newYmd === prevYmd) return;
+    if (savingDate) return;
+    setSavingDate(field);
+    try {
+      const body = {};
+      if (field === "created_at") {
+        // Full ISO at UTC-midnight so the backend's
+        // ``resolve_date_override`` validation + sentinel
+        // stamping run on an unambiguous value.
+        body.created_at = newYmd
+          ? new Date(`${newYmd}T00:00:00Z`).toISOString()
+          : null;
+      } else {
+        body.due_date = newYmd || null;
+      }
+      const _isInvoice = doc?.doc_type === "invoice";
+      if (_isInvoice) {
+        await api.patch(`/quotes/${id}`, body);
+      } else {
+        await api.put(`/quotes/${id}`, body);
+      }
+      // Mirror the write into local state so the editor + the
+      // header text stay in sync without a round-trip reload.
+      setDoc((d) => d ? { ...d, [field]: body[field] } : d);
+      _flashSaved(field);
+    } catch (err) {
+      const code = err?.data?.detail?.error
+        || err?.data?.error
+        || err?.detail?.error;
+      const msg = code === "future_date_not_allowed"
+        ? "Date can't be in the future."
+        : code === "date_too_old"
+        ? "Date can't be more than 50 years ago."
+        : (err?.message || "Date save failed.");
+      setToast({ tone: "error", message: msg });
+      // Revert handled by the input component — it re-reads from
+      // ``doc[field]`` via useEffect when the save round-trip
+      // leaves the stored value untouched.
+    } finally {
+      setSavingDate("");
+    }
+  };
+
+  const InlineDateEditor = ({ field, label, testidPrefix }) => {
+    const current = _dateInputValue(doc?.[field]);
+    const [local, setLocal] = useState(current);
+    useEffect(() => setLocal(current), [current]);
+    const ref = useRef(null);
+    const isSaved = (savedFlash?.[field] || 0) > 0;
+    const _commit = () => _commitDate(field, local, current);
+    const _revert = () => setLocal(current);
+    if (!canEditDates) {
+      if (!current) return null;
+      return (
+        <span data-testid={`${testidPrefix}-static`}>
+          {label} {current}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span className="opacity-70">{label}</span>
+        <input
+          ref={ref}
+          type="date"
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={_commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              // Call ``_commit`` directly rather than relying on
+              // ``ref.current.blur()`` → onBlur, because JSDOM
+              // doesn't fire blur on programmatic ``.blur()`` when
+              // the element isn't focused.  Explicit Enter → commit
+              // + synthetic blur keeps the UX identical while
+              // staying testable.
+              _commit();
+              ref.current?.blur();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              _revert();
+              ref.current?.blur();
+            }
+          }}
+          disabled={savingDate === field}
+          data-testid={`${testidPrefix}-input`}
+          data-saved={isSaved ? "1" : "0"}
+          style={{
+            background: isSaved ? "#DCFCE7" : "transparent",
+            border: `1px solid ${isSaved ? "#16A34A" : colors.border}`,
+            borderRadius: 4,
+            padding: "1px 4px",
+            fontSize: 12,
+            transition: "background 300ms ease, border-color 300ms ease",
+          }}
+        />
+        {isSaved ? (
+          <span
+            data-testid={`${testidPrefix}-saved-indicator`}
+            style={{ color: "#16A34A", fontSize: 10, fontWeight: 700 }}
+          >
+            Saved
+          </span>
+        ) : null}
+      </span>
+    );
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid={`${isInvoice ? "invoice" : "quote"}-detail`}>
       <button
@@ -889,7 +1037,25 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               >
                 {doc.customer_name}
               </span>
-              {doc.due_date ? <> · Due {doc.due_date}</> : null}
+              {/* DOC-DATE-EDITING · Feb-2026 — inline editors for
+                  Date (``created_at``) + Due (``due_date``). Role
+                  gate inside ``InlineDateEditor``: admin/super_admin/
+                  manager/owner get editors; everyone else sees
+                  static text (and ``due_date`` static is hidden
+                  entirely when the field is empty, matching the
+                  pre-DOC-DATE-EDITING behaviour). */}
+              <span data-testid="doc-header-dates" className="ml-2 inline-flex items-center gap-2">
+                <InlineDateEditor
+                  field="created_at"
+                  label="Date"
+                  testidPrefix="doc-header-created-at"
+                />
+                <InlineDateEditor
+                  field="due_date"
+                  label="Due"
+                  testidPrefix="doc-header-due-date"
+                />
+              </span>
             </p>
             </div>
           </div>

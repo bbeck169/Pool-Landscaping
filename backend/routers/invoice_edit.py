@@ -48,6 +48,16 @@ _EDITABLE_FIELDS = [
     # FK alongside the denormalized ``business_unit`` name on every
     # Business Unit auto-save. Money-neutral; persisted via ``$set``.
     "business_unit_id",
+    # DOC-DATE-EDITING · Feb-2026 — admin-editable "Date" field on
+    # the detail-view header.  Routed through
+    # ``services.quotes.date_override.resolve_date_override`` for
+    # validation (max 50y back, max now+60s, naive-UTC coerced).
+    # ``created_at_override_by`` + ``created_at_override_at`` are
+    # stamped on every successful edit so H0's audit trail survives
+    # the post-create edit path.
+    "created_at",
+    "created_at_override_by",
+    "created_at_override_at",
 ]
 
 
@@ -84,6 +94,13 @@ class InvoiceEditBody(BaseModel):
     # authorization path to the legacy ``confirm_edit_sent`` and
     # ``confirm_edit_paid_invoice_number`` flags (both still honoured).
     acknowledged_lock_bypass: Optional[bool] = None
+    # DOC-DATE-EDITING · Feb-2026 — admin-editable document date.
+    # Accepts ISO-8601 strings or ``YYYY-MM-DD``; coerced to UTC in
+    # ``resolve_date_override``.  Role-gated to
+    # ``{admin, super_admin, manager, owner}`` server-side via the
+    # ``allow_date_only`` carve-out below. Silently dropped when
+    # the actor is outside the H0 admin allowlist.
+    created_at: Optional[datetime] = None
 
 
 def _now() -> datetime:
@@ -103,6 +120,14 @@ _AUTH_META_FIELDS = {
     "reason", "confirm_edit_sent",
     "confirm_edit_paid_invoice_number", "acknowledged_lock_bypass",
 }
+
+# DOC-DATE-EDITING · Feb-2026 — manager/owner date-only bypass set.
+# Mirrors the ``_CATEGORY_ONLY_TOP_FIELDS`` carve-out pattern: an edit
+# touching ONLY ``created_at`` + ``due_date`` is allowed for the
+# 4-role set (admin/super_admin/manager/owner), matching the
+# frontend affordance gate.  Any mix with a non-date field falls back
+# to ``_require_staff``'s default admin+super_admin restriction.
+_DATE_ONLY_TOP_FIELDS = {"created_at", "due_date"}
 
 
 def _is_category_only_diff(
@@ -148,13 +173,37 @@ def _is_category_only_diff(
     return True
 
 
-def _require_staff(user: dict, *, allow_category_only: bool = False) -> None:
+def _is_date_only_diff(
+    provided: Dict[str, Any],
+) -> bool:
+    """DOC-DATE-EDITING · Feb-2026 — True iff the only effectively
+    changed top-level fields are ``created_at`` + ``due_date``.
+    Auth / meta flags (``reason`` / ``acknowledged_lock_bypass`` /
+    the confirm sentinels) are ignored when evaluating the diff."""
+    diff_keys = set(provided.keys()) - _AUTH_META_FIELDS
+    if not diff_keys:
+        return False
+    return diff_keys.issubset(_DATE_ONLY_TOP_FIELDS)
+
+
+def _require_staff(
+    user: dict,
+    *,
+    allow_category_only: bool = False,
+    allow_date_only: bool = False,
+) -> None:
     """admin + super_admin always allowed. When ``allow_category_only=True``,
-    manager + owner are also allowed (Feb-2026 narrow bypass)."""
+    manager + owner are also allowed (Feb-2026 narrow bypass).
+    When ``allow_date_only=True`` (DOC-DATE-EDITING · Feb-2026),
+    manager + owner are also allowed on edits whose only effective
+    fields are ``created_at`` + ``due_date`` — matches the frontend
+    4-role date-editor gate."""
     role = (user or {}).get("role")
     if role in ("admin", "super_admin"):
         return
     if allow_category_only and role in ("manager", "owner"):
+        return
+    if allow_date_only and role in ("manager", "owner"):
         return
     raise HTTPException(403, "admin_only")
 
@@ -282,11 +331,40 @@ async def patch_invoice(
 
     # Feb-2026 · narrow role bypass — full check: compute category-only
     # signal, then gate role on it. admin/super_admin always pass.
+    # DOC-DATE-EDITING · Feb-2026 — also compute the date-only signal
+    # so manager/owner get the same bypass on {created_at, due_date}
+    # edits that they get on {business_unit, business_unit_id} edits.
     provided = body.dict(exclude_unset=True)
     _require_staff(
         user,
         allow_category_only=_is_category_only_diff(provided, inv),
+        allow_date_only=_is_date_only_diff(provided),
     )
+
+    # DOC-DATE-EDITING · Feb-2026 — route the optional ``created_at``
+    # override through H0's resolver so validation (max 50y back /
+    # max now+60s / naive-UTC coerce) + the silent-drop semantics
+    # match the create-time path verbatim. Writes BOTH the effective
+    # value AND the ``*_override_by`` / ``*_override_at`` sentinels
+    # into ``provided`` so the editable-fields loop below naturally
+    # picks them up via the extended ``_EDITABLE_FIELDS`` whitelist.
+    _created_at_input = provided.pop("created_at", None)
+    if _created_at_input is not None:
+        from services.quotes.date_override import resolve_date_override
+        _eff_iso, _ovr_by, _ovr_at = resolve_date_override(
+            _created_at_input,
+            user=user, tenant_id=inv.get("tenant_id") or "",
+            field_name="created_at", entity_kind="invoice",
+            entity_id=invoice_id, log_level="warn",
+        )
+        if _ovr_by is not None:
+            provided["created_at"] = _eff_iso
+            provided["created_at_override_by"] = _ovr_by
+            provided["created_at_override_at"] = _ovr_at
+        # Non-admin silent-drop: ``_ovr_by`` is None — leave
+        # ``created_at`` out of ``provided`` so no change lands on
+        # the doc.  Matches H0's "silent from the user-facing
+        # standpoint" contract.
 
     status = (inv.get("status") or "").lower()
 

@@ -16,12 +16,15 @@ Contract summary (see also ``memory/PRD.md`` § Task H0):
     to UTC. Rejects future / ancient dates. Silently drops the
     override when the caller isn't in the admin allowlist.
 
-  * Role allowlist: ``{"admin", "super_admin", "owner"}`` — matches
-    ``utils.require_admin`` verbatim. An ``owner`` receiving a
-    silent-drop would be surprising given owners already have
-    admin-level trust everywhere else in the codebase; the PRD
-    § Task H0 § "Role gate rationale" section documents the
-    decision.
+  * Role allowlist: ``{"admin", "super_admin", "manager", "owner"}`` — the
+    original H0 set was 3-role; DOC-DATE-EDITING · Feb-2026 widened the
+    set to 4-role so the admin-side detail-view date editors share the
+    same gate on both the CREATE path (``POST /quotes``) and the
+    POST-CREATE edit path (``PATCH /quotes/{id}`` + ``PUT /quotes/{id}``).
+    An ``owner`` receiving a silent-drop would be surprising given
+    owners already have admin-level trust everywhere else in the
+    codebase; the PRD § Task H0 § "Role gate rationale" section
+    documents the decision.
 
   * Future / ancient thresholds:
       * ``> now + 60s``  → 400 ``future_date_not_allowed``  (60s
@@ -67,7 +70,7 @@ from typing import Optional, Tuple
 from fastapi import HTTPException
 
 
-_DEFAULT_ADMIN_ALLOWLIST = frozenset({"admin", "super_admin", "owner"})
+_DEFAULT_ADMIN_ALLOWLIST = frozenset({"admin", "super_admin", "manager", "owner"})
 _FUTURE_SLACK_SECONDS = 60
 # Feb-2026 · PDF Importer Sub-phase A — relaxed from ~10 years to
 # ~50 years per ruling R6=B.  Rationale: the PDF Importer needs to

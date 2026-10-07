@@ -288,8 +288,15 @@ def test_naive_datetime_coerced_to_utc(
     assert stored_dt.hour == 8 and stored_dt.minute == 30, stored_dt
 
 
-# ── 7) PATCH-path defense — created_at in body is stripped ─────
-def test_patch_defense_created_at_stripped(
+# ── 7) PATCH-path defense — paid_at + raw sentinels stripped ──
+# DOC-DATE-EDITING · Feb-2026 — ``created_at`` is NOW editable via
+# PATCH/PUT by the 4-role admin set.  This test flipped from asserting
+# the OLD "strip everything" contract to the NEW "created_at lands,
+# but paid_at + attacker-sent audit sentinels are still rejected"
+# contract. The server-side H0 resolver stamps its OWN
+# ``created_at_override_by`` / ``*_at`` sentinels — the attacker-sent
+# values in the body are overwritten, not honoured.
+def test_patch_defense_created_at_now_editable_sentinels_server_stamped(
     admin_h, h0_customer_id, dbc, aquaterra_id,
 ):
     # Create a quote first.
@@ -300,18 +307,17 @@ def test_patch_defense_created_at_stripped(
     )
     assert r.status_code == 200
     qid = r.json()["id"]
-    pre = dbc.quotes.find_one(
-        {"id": qid, "tenant_id": aquaterra_id}, {"_id": 0},
-    )
-    pre_created_at = pre["created_at"]
 
-    # Now PATCH with created_at + paid_at + the audit sentinels
-    # in the body. Every one must be stripped by the H0 defense.
+    # Admin PATCH with created_at + paid_at + the audit sentinels
+    # in the body. ``created_at`` IS applied (DOC-DATE-EDITING);
+    # ``paid_at`` + the attacker-sent sentinels are stripped;
+    # the server stamps its OWN sentinels on the admin's identity.
+    admin_edit_target = "2024-06-01T00:00:00+00:00"
     r2 = requests.put(
         f"{API}/quotes/{qid}", headers=admin_h,
         json={
             "title": "PATCH defense test",
-            "created_at": "2020-01-01T00:00:00+00:00",
+            "created_at": admin_edit_target,
             "paid_at": "2020-01-01T00:00:00+00:00",
             "created_at_override_by": "attacker-user-id",
             "created_at_override_at": "2020-01-01T00:00:00+00:00",
@@ -325,18 +331,26 @@ def test_patch_defense_created_at_stripped(
     post = dbc.quotes.find_one(
         {"id": qid, "tenant_id": aquaterra_id}, {"_id": 0},
     )
-    assert post["created_at"] == pre_created_at, (
-        f"PATCH must not overwrite created_at — pre={pre_created_at}, post={post['created_at']}"
-    )
+    # ``created_at`` lands at the admin-supplied value (coerced to
+    # ISO through the H0 resolver — exact string equality skipped
+    # because the resolver may canonicalise the timezone offset).
+    from datetime import datetime as _dt
+    assert _dt.fromisoformat(post["created_at"]) == _dt.fromisoformat(admin_edit_target)
+    # Server stamped the H0 sentinels — NOT the attacker-sent values.
+    assert post.get("created_at_override_by")
+    assert post["created_at_override_by"] != "attacker-user-id", post["created_at_override_by"]
+    assert post.get("created_at_override_at")
+    assert post["created_at_override_at"] != "2020-01-01T00:00:00+00:00", post["created_at_override_at"]
+    # ``paid_at`` + its sentinels are still stripped (DOC-DATE-EDITING
+    # explicitly left paid_at untouchable via PATCH — paid-at edits
+    # go through the record-payment path only).
     assert "paid_at" not in post or post.get("paid_at") is None, (
         f"paid_at should not be leaked via PATCH — got {post.get('paid_at')}"
     )
-    assert "created_at_override_by" not in post, post.get("created_at_override_by")
-    assert "created_at_override_at" not in post, post.get("created_at_override_at")
     assert "paid_at_override_by" not in post, post.get("paid_at_override_by")
     assert "paid_at_override_at" not in post, post.get("paid_at_override_at")
     # Title DID land — control assertion showing the PATCH itself
-    # went through (only the H0 override keys were filtered).
+    # went through (only the paid_at + attacker sentinels were filtered).
     assert post["title"] == "PATCH defense test"
 
 
