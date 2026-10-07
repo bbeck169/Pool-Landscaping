@@ -7,7 +7,8 @@ import uuid
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, require_admin_or_manager,
+                   send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
 from models import (
     CreateLoginRequest,
@@ -5932,4 +5933,133 @@ async def customer_notes_history(
             "notes": cust.get("notes") or "",
         },
     }
+
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026
+#
+# A customer can be flagged as an "Account Correction" to exclude the
+# record from retention / churn analytics (test accounts, bookkeeping
+# duplicates, mis-entered rows the office doesn't want to count against
+# their numbers). The exclusion is retroactive — flipping the flag ON
+# removes the customer from every past, present, and future tile count
+# on the retention report (predicate: ``{account_correction: {$ne: true}}``
+# — sparse-safe, so unflagged rows and legacy rows both pass through).
+#
+# Role gate matches the DOC-DATE-EDITING-PUT-GATE widening shipped this
+# session: admin / super_admin / manager / owner. Reuses
+# ``require_admin_or_manager`` from utils.py; no new dep code.
+#
+# Audit shape (``db.customer_account_correction_audit``):
+#   {id, event:"toggle", customer_id, tenant_id, from_state, to_state,
+#    actor_user_id, actor_role, note, at}
+# ═════════════════════════════════════════════════════════════════════════
+class AccountCorrectionBody(BaseModel):
+    """Body for ``POST /customers/{cid}/account-correction``.
+
+    ``active`` is the desired post-call state (true = toggle ON, false =
+    toggle OFF).  ``note`` is a free-form reason captured on the audit
+    row for review; the field is optional with no length validation
+    (CUSTOMER-RETENTION-ACCOUNT-CORRECTION G4).
+    """
+    active: bool
+    note: Optional[str] = None
+
+
+@router.post("/customers/{cid}/account-correction")
+async def toggle_customer_account_correction(
+    cid: str,
+    body: AccountCorrectionBody,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Toggle the per-customer ``account_correction`` flag.
+
+    * Idempotent: toggling ON when already ON is a no-op (returns
+      ``no_change=true``) but still writes nothing to the audit log —
+      only genuine state transitions emit a row.
+    * Sets ``account_correction_at`` + ``account_correction_by`` on
+      transition ON; clears ``account_correction_at`` / ``_by`` /
+      ``_note`` on transition OFF so stale audit metadata doesn't
+      survive a re-toggle.
+    * The retroactive exclusion in retention tiles / drill-downs is
+      live-computed off the current flag — no cache invalidation step.
+    """
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    from_state = bool(cust.get("account_correction") or False)
+    to_state = bool(body.active)
+    if from_state == to_state:
+        return {
+            "ok": True, "no_change": True, "customer_id": cid,
+            "account_correction": to_state,
+        }
+    _now = now_iso()
+    if to_state:
+        patch = {
+            "account_correction": True,
+            "account_correction_at": _now,
+            "account_correction_by": user.get("id"),
+            "account_correction_note": body.note,
+        }
+        unset: dict = {}
+    else:
+        # Transition OFF — unset the metadata so a future OFF→ON
+        # transition writes a fresh timestamp instead of a stale
+        # one from the prior ON cycle.
+        patch = {"account_correction": False}
+        unset = {
+            "account_correction_at": "",
+            "account_correction_by": "",
+            "account_correction_note": "",
+        }
+    update_op: dict = {"$set": patch}
+    if unset:
+        update_op["$unset"] = unset
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, update_op,
+    )
+    await db.customer_account_correction_audit.insert_one({
+        "id": new_id(),
+        "event": "toggle",
+        "customer_id": cid,
+        "tenant_id": tenant["id"],
+        "from_state": from_state,
+        "to_state": to_state,
+        "actor_user_id": user.get("id"),
+        "actor_role": (user.get("role") or "").lower(),
+        "note": body.note,
+        "at": _now,
+    })
+    return {
+        "ok": True,
+        "no_change": False,
+        "customer_id": cid,
+        "account_correction": to_state,
+        "account_correction_at": _now if to_state else None,
+        "account_correction_by": user.get("id") if to_state else None,
+    }
+
+
+@router.get("/customers/{cid}/account-correction/history")
+async def get_customer_account_correction_history(
+    cid: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Return the N most recent audit entries for a customer's flag.
+
+    Supports the "why was this flipped" trail on the profile toggle
+    panel. Scoped to tenant for cross-tenant leak safety.
+    """
+    rows = await db.customer_account_correction_audit.find(
+        {"customer_id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    ).sort("at", -1).to_list(length=limit)
+    return {"items": rows, "count": len(rows)}
 

@@ -2656,6 +2656,27 @@ export default function CustomersList() {
                           Inactive
                         </span>
                       ) : null}
+                      {/* CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 —
+                          grey "Account Correction" pill when the customer
+                          is flagged.  Muted on purpose (G6) — matches the
+                          existing Inactive pill palette but with distinct
+                          copy so the two signals don't visually collide
+                          when BOTH are true (a flagged + inactive row
+                          shows two pills side-by-side). */}
+                      {c.account_correction ? (
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider"
+                          style={{
+                            backgroundColor: "#F3F4F6",
+                            color: "#6B7280",
+                            border: "1px solid #D1D5DB",
+                          }}
+                          data-testid={`row-${c.id}-account-correction-pill`}
+                          title="Excluded from retention reports"
+                        >
+                          Account Correction
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>

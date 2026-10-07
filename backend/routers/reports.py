@@ -765,28 +765,156 @@ def _generate_buckets(period: str, start_dt: datetime, end_dt: datetime) -> list
 
 
 async def _count_gained(tenant_id: str, s: str, e: str) -> int:
-    """Customers created in [s, e). `created_at` is stored as ISO strings."""
+    """Customers created in [s, e). `created_at` is stored as ISO strings.
+
+    CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — the
+    ``{account_correction: {$ne: true}}`` predicate excludes rows the
+    office has flagged as bookkeeping / test accounts.  Retroactive by
+    design: flipping the flag ON drops the customer from every past
+    bucket on the very next refresh (no cache invalidation).
+    """
     n = await db.customers.count_documents({
         "tenant_id": tenant_id,
         "created_at": {"$gte": s, "$lt": e},
+        "account_correction": {"$ne": True},
     })
     return int(n)
 
 
 async def _count_lost(tenant_id: str, s: str, e: str) -> int:
-    """Deactivation events (active→inactive) in [s, e)."""
-    n = await db.customer_activation_events.count_documents({
+    """Deactivation events (active→inactive) in [s, e).
+
+    CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — the lost tile
+    joins the activation event with its customer row so flagged
+    customers drop out.  We fetch the IDs of currently-flagged
+    customers in-tenant, then subtract via ``customer_id: {$nin}``
+    on the events query.  The flagged-ID set is small (hundreds at
+    most) and this call fires at report time, not request time.
+    """
+    excluded = await db.customers.find(
+        {"tenant_id": tenant_id, "account_correction": True},
+        {"_id": 0, "id": 1},
+    ).to_list(length=None)
+    excluded_ids = [r["id"] for r in excluded if r.get("id")]
+    q = {
         "tenant_id": tenant_id,
         "to_status": "inactive",
         "changed_at": {"$gte": s, "$lt": e},
-    })
+    }
+    if excluded_ids:
+        q["customer_id"] = {"$nin": excluded_ids}
+    n = await db.customer_activation_events.count_documents(q)
     return int(n)
 
 
+# CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — MRR normalization.
+# Mirrors the formula already used by ``dashboard_revenue.py`` +
+# ``reports_recurring_vs_project.py`` so the recurring-revenue tile on
+# the retention report is numerically consistent with the dashboard tile.
+# Semantics: SUM each customer's CURRENT ``billing_plans`` snapshot —
+# not a point-in-time replay of what the plans looked like at
+# gained/lost moment.  Documented inline because "current snapshot vs
+# historical replay" is the kind of subtle thing a future reader
+# would otherwise rediscover painfully.
+_FREQ_PER_MONTH = {"weekly": 4.333, "monthly": 1.0, "quarterly": 1 / 3.0}
+
+
+def _customer_mrr_from_plans(plans: list) -> float:
+    """Return MRR dollar amount for a list of billing_plans docs.
+
+    Only ACTIVE plans contribute.  Unknown frequencies fall back to
+    monthly (consistent with the write-side default on
+    ``BillingPlanIn.frequency``).  Rounded to 2 decimals so sums
+    stay commutative across callers.
+    """
+    total = 0.0
+    for p in plans or []:
+        if not p.get("active"):
+            continue
+        amt = float(p.get("amount") or 0.0)
+        freq = (p.get("frequency") or "monthly").lower()
+        total += amt * _FREQ_PER_MONTH.get(freq, 1.0)
+    return round(total, 2)
+
+
+async def _mrr_sum_for_customers(
+    tenant_id: str, customer_ids: list,
+) -> float:
+    """Hydrate ``billing_plans`` for a list of customer_ids and return
+    the aggregated MRR dollar sum (not per-row — grand total).  Empty
+    input → 0.0 without hitting Mongo."""
+    if not customer_ids:
+        return 0.0
+    plans = await db.billing_plans.find(
+        {"tenant_id": tenant_id,
+         "customer_id": {"$in": customer_ids},
+         "active": True},
+        {"_id": 0, "customer_id": 1, "amount": 1, "frequency": 1,
+         "active": 1},
+    ).to_list(length=None)
+    # Group by customer so the per-customer MRR is intact (callers
+    # that need per-row MRR use the drill-down endpoint which groups
+    # explicitly).  Grand total is the same either way.
+    return _customer_mrr_from_plans(plans)
+
+
+async def _gained_customer_ids(tenant_id: str, s: str, e: str) -> list:
+    """IDs of non-flagged customers created in [s, e)."""
+    rows = await db.customers.find(
+        {"tenant_id": tenant_id,
+         "created_at": {"$gte": s, "$lt": e},
+         "account_correction": {"$ne": True}},
+        {"_id": 0, "id": 1},
+    ).to_list(length=None)
+    return [r["id"] for r in rows if r.get("id")]
+
+
+async def _lost_customer_ids(tenant_id: str, s: str, e: str) -> list:
+    """IDs of non-flagged customers whose activation flipped
+    active→inactive in [s, e).  Join hop: look up each event's
+    ``customer_id`` and filter out ones currently flagged."""
+    excluded_rows = await db.customers.find(
+        {"tenant_id": tenant_id, "account_correction": True},
+        {"_id": 0, "id": 1},
+    ).to_list(length=None)
+    excluded_ids = {r["id"] for r in excluded_rows if r.get("id")}
+    events = await db.customer_activation_events.find(
+        {"tenant_id": tenant_id,
+         "to_status": "inactive",
+         "changed_at": {"$gte": s, "$lt": e}},
+        {"_id": 0, "customer_id": 1},
+    ).to_list(length=None)
+    out = []
+    seen: set = set()
+    for ev in events:
+        cid = ev.get("customer_id")
+        if not cid or cid in excluded_ids or cid in seen:
+            continue
+        out.append(cid)
+        seen.add(cid)
+    return out
+
+
 async def _totals_for_range(tenant_id: str, s: str, e: str) -> dict:
-    g = await _count_gained(tenant_id, s, e)
-    l = await _count_lost(tenant_id, s, e)
-    return {"gained": g, "lost": l, "net": g - l}
+    """Return the full tile payload for [s, e).
+
+    CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — the two new
+    MRR tiles (``recurring_revenue_gained`` / ``_lost``) sum each
+    non-flagged customer's CURRENT ``billing_plans`` snapshot.
+    Documented inline (and in ``_customer_mrr_from_plans``) so a
+    future reader doesn't assume this is a historical replay.
+    """
+    gained_ids = await _gained_customer_ids(tenant_id, s, e)
+    lost_ids = await _lost_customer_ids(tenant_id, s, e)
+    rr_gained = await _mrr_sum_for_customers(tenant_id, gained_ids)
+    rr_lost = await _mrr_sum_for_customers(tenant_id, lost_ids)
+    return {
+        "gained": len(gained_ids),
+        "lost": len(lost_ids),
+        "net": len(gained_ids) - len(lost_ids),
+        "recurring_revenue_gained": rr_gained,
+        "recurring_revenue_lost": rr_lost,
+    }
 
 
 def _pct_change(cur: int, prev: int) -> Optional[float]:
@@ -842,6 +970,19 @@ async def customer_retention_report(
         "gained": sum(b["gained"] for b in buckets),
         "lost":   sum(b["lost"]   for b in buckets),
         "net":    sum(b["net"]    for b in buckets),
+        # CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — new
+        # MRR tiles.  Sum per-bucket so the number stays consistent
+        # with the per-bucket counts rendered in the chart (same
+        # dedupe semantics inside each bucket).  Rounded to 2 dp
+        # since each bucket is already rounded — floats compose
+        # into enough drift to see a half-penny delta without this
+        # final round.
+        "recurring_revenue_gained": round(
+            sum(b.get("recurring_revenue_gained", 0.0) for b in buckets), 2,
+        ),
+        "recurring_revenue_lost": round(
+            sum(b.get("recurring_revenue_lost", 0.0) for b in buckets), 2,
+        ),
     }
 
     # YoY block — same window shifted back 1 year.
@@ -882,6 +1023,188 @@ async def customer_retention_report(
         "totals": totals,
         "yoy": yoy,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — drill-down lists.
+#
+# Two sister endpoints feeding the Gained / Lost tile modals on
+# ``/reports/customer-retention``.  Each returns a paginated list of
+# {customer_id, name, date, mrr, account_correction} rows so the FE
+# modal can render a sortable table + per-row Account Correction
+# toggle without a second round-trip for every column.
+#
+# ``account_correction`` is included on the row so the FE can show
+# the current toggle state inline (even though we filter them OUT of
+# the list by default — a page REFRESH after a flag flip will drop
+# them from the list; the row's own ``account_correction`` field
+# supports the pre-refresh optimistic UI).
+#
+# Pagination: ``page`` (1-based) + ``limit`` (default 50, max 500).
+# Response envelope: ``{items, total, has_more, page, limit}``.
+# ═════════════════════════════════════════════════════════════════════════
+async def _retention_drilldown_rows(
+    tenant_id: str,
+    kind: str,            # "gained" | "lost"
+    start: str,
+    end: str,
+    page: int,
+    limit: int,
+) -> dict:
+    """Shared pipeline for the two drill-down routes."""
+    if kind == "gained":
+        all_ids = await _gained_customer_ids(tenant_id, start, end)
+    else:
+        all_ids = await _lost_customer_ids(tenant_id, start, end)
+    total = len(all_ids)
+    if total == 0:
+        return {"items": [], "total": 0, "has_more": False,
+                "page": page, "limit": limit}
+    off = max(0, (page - 1) * limit)
+    page_ids = all_ids[off: off + limit]
+    # Hydrate names + created_at per row (sparse — one Mongo call for
+    # the WHOLE page).
+    cust_rows = await db.customers.find(
+        {"tenant_id": tenant_id, "id": {"$in": page_ids}},
+        {"_id": 0, "id": 1, "name": 1, "first_name": 1, "last_name": 1,
+         "created_at": 1, "account_correction": 1,
+         "account_correction_at": 1, "account_correction_by": 1},
+    ).to_list(length=len(page_ids))
+    cust_map = {r["id"]: r for r in cust_rows if r.get("id")}
+    # For "lost" we also need the activation event's ``changed_at``
+    # (the "cancelled on" date rendered in the UI).  For "gained"
+    # the ``created_at`` on the customer row IS the "added on" date.
+    changed_at_map: dict = {}
+    if kind == "lost" and page_ids:
+        ev_rows = await db.customer_activation_events.find(
+            {"tenant_id": tenant_id,
+             "to_status": "inactive",
+             "customer_id": {"$in": page_ids},
+             "changed_at": {"$gte": start, "$lt": end}},
+            {"_id": 0, "customer_id": 1, "changed_at": 1},
+        ).sort("changed_at", -1).to_list(length=None)
+        for ev in ev_rows:
+            # Latest event wins (we sorted DESC above).
+            changed_at_map.setdefault(ev["customer_id"], ev["changed_at"])
+    # Per-customer MRR map — single aggregation call for the whole page.
+    plan_rows: list = []
+    if page_ids:
+        plan_rows = await db.billing_plans.find(
+            {"tenant_id": tenant_id,
+             "customer_id": {"$in": page_ids},
+             "active": True},
+            {"_id": 0, "customer_id": 1, "amount": 1, "frequency": 1,
+             "active": 1},
+        ).to_list(length=None)
+    mrr_by_cust: dict = {}
+    for p in plan_rows:
+        cid = p.get("customer_id")
+        if not cid:
+            continue
+        mrr_by_cust.setdefault(cid, []).append(p)
+    items: list = []
+    for cid in page_ids:
+        c = cust_map.get(cid)
+        if not c:
+            # Skip orphan — customer row deleted between the id
+            # fetch and the hydrate.  Keeps the list truthful.
+            continue
+        name = (c.get("name")
+                or " ".join(_x for _x in
+                            (c.get("first_name"), c.get("last_name")) if _x)
+                or "—")
+        date_iso = (changed_at_map.get(cid) if kind == "lost"
+                    else c.get("created_at"))
+        items.append({
+            "customer_id": cid,
+            "name": name,
+            "date": date_iso,
+            "mrr": _customer_mrr_from_plans(mrr_by_cust.get(cid, [])),
+            "account_correction": bool(c.get("account_correction") or False),
+        })
+    has_more = off + len(page_ids) < total
+    return {"items": items, "total": total, "has_more": has_more,
+            "page": page, "limit": limit}
+
+
+@router.get("/reports/customer-retention/gained-list")
+async def customer_retention_gained_list(
+    user: dict = Depends(require_admin),
+    period: str = Query("month"),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Paginated drill-down of customers counted in Gained tile."""
+    if period not in ("week", "month", "year"):
+        raise HTTPException(400, "period must be week|month|year")
+    tenant_id = user["tenant_id"]
+    # Default to the same window the main report uses so the modal's
+    # row count equals the tile's total.
+    today = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    end_dt = (
+        today + timedelta(days=1) if not end else
+        datetime.fromisoformat(end + "T00:00:00").replace(tzinfo=timezone.utc)
+    )
+    if not start:
+        if period == "week":
+            start_dt = end_dt - timedelta(weeks=52)
+        elif period == "year":
+            start_dt = end_dt.replace(year=end_dt.year - 4, month=1, day=1)
+        else:
+            start_dt = (end_dt - timedelta(days=365)).replace(day=1)
+    else:
+        start_dt = datetime.fromisoformat(
+            start + "T00:00:00",
+        ).replace(tzinfo=timezone.utc)
+    return await _retention_drilldown_rows(
+        tenant_id, "gained",
+        start_dt.strftime("%Y-%m-%d"),
+        end_dt.strftime("%Y-%m-%d"),
+        page, limit,
+    )
+
+
+@router.get("/reports/customer-retention/lost-list")
+async def customer_retention_lost_list(
+    user: dict = Depends(require_admin),
+    period: str = Query("month"),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Paginated drill-down of customers counted in Lost tile."""
+    if period not in ("week", "month", "year"):
+        raise HTTPException(400, "period must be week|month|year")
+    tenant_id = user["tenant_id"]
+    today = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    end_dt = (
+        today + timedelta(days=1) if not end else
+        datetime.fromisoformat(end + "T00:00:00").replace(tzinfo=timezone.utc)
+    )
+    if not start:
+        if period == "week":
+            start_dt = end_dt - timedelta(weeks=52)
+        elif period == "year":
+            start_dt = end_dt.replace(year=end_dt.year - 4, month=1, day=1)
+        else:
+            start_dt = (end_dt - timedelta(days=365)).replace(day=1)
+    else:
+        start_dt = datetime.fromisoformat(
+            start + "T00:00:00",
+        ).replace(tzinfo=timezone.utc)
+    return await _retention_drilldown_rows(
+        tenant_id, "lost",
+        start_dt.strftime("%Y-%m-%d"),
+        end_dt.strftime("%Y-%m-%d"),
+        page, limit,
+    )
 
 
 # ─── Phase 39 · Algae-risk auto-flag ────────────────────────────────────────

@@ -423,6 +423,16 @@ export default function CustomerDetail() {
     .includes((meRole || "").toLowerCase());
   const [issueCreditOpen, setIssueCreditOpen] = useState(false);
   const [issueCreditBalanceCents, setIssueCreditBalanceCents] = useState(0);
+  // CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — Account
+  // Correction toggle.  Same role gate as Issue Credit above
+  // (``require_admin_or_manager`` on the backend).  The modal
+  // collects an optional ``note`` on toggle-ON per G4.  State is
+  // local — refetches ``customer`` on success so the inline chip
+  // + badge reflect immediately.
+  const canToggleAccountCorrection = canIssueCredit;
+  const [accountCorrectionOpen, setAccountCorrectionOpen] = useState(false);
+  const [accountCorrectionNote, setAccountCorrectionNote] = useState("");
+  const [accountCorrectionBusy, setAccountCorrectionBusy] = useState(false);
   const openIssueCreditModal = async () => {
     // Fetch the current ledger balance so the modal's live-preview
     // ("will change the balance from X to Y") shows a correct
@@ -779,6 +789,40 @@ export default function CustomerDetail() {
               <DollarSign size={14} /> Issue Credit
             </Button>
           ) : null}
+          {/* CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — Account
+              Correction toggle on the action strip.  Same role gate
+              as Issue Credit above (admin / super_admin / manager /
+              owner — backend ``require_admin_or_manager``).  Visually
+              muted compared to Issue Credit so the primary CTA stays
+              dominant; the button copy reflects the CURRENT state so
+              the admin always sees the action they're about to take. */}
+          {canToggleAccountCorrection ? (
+            <Button
+              variant="ghost"
+              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
+              onClick={() => {
+                setAccountCorrectionNote("");
+                setAccountCorrectionOpen(true);
+              }}
+              testid="cd-account-correction-btn"
+              style={{
+                background: "transparent",
+                color: colors.nav.fg,
+                border: `1px solid rgba(255,255,255,0.20)`,
+                opacity: 0.85,
+              }}
+              title={
+                customer.account_correction
+                  ? "Un-flag Account Correction (will be counted in retention tiles)"
+                  : "Mark Account Correction (excluded from retention tiles)"
+              }
+            >
+              <ShieldCheck size={14} />
+              {customer.account_correction
+                ? "Un-flag Correction"
+                : "Mark Correction"}
+            </Button>
+          ) : null}
           {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
               cleanup — action bar consolidated to a single row, so we
               suppress the ClickToCallButton's stacked ``Dial from this
@@ -866,6 +910,99 @@ export default function CustomerDetail() {
             load();
           }}
         />
+      ) : null}
+
+      {/* CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — toggle
+          confirmation modal.  Simple shape (title / note textarea /
+          2-button footer) because the action is reversible + fully
+          audited.  The note field stays optional per G4 — no
+          validation, blank POSTs through as ``null``. */}
+      {accountCorrectionOpen && canToggleAccountCorrection ? (
+        <Modal
+          open={accountCorrectionOpen}
+          onClose={() =>
+            accountCorrectionBusy ? null : setAccountCorrectionOpen(false)
+          }
+          title={
+            customer.account_correction
+              ? "Un-flag Account Correction"
+              : "Mark Account Correction"
+          }
+          testid="account-correction-modal"
+        >
+          <div className="space-y-3 p-1" data-testid="account-correction-form">
+            <p className="text-sm" style={{ color: colors.onSurface }}>
+              {customer.account_correction ? (
+                <>
+                  This customer is currently <strong>excluded</strong> from
+                  retention / churn tile counts.  Un-flagging will
+                  re-include them on the next page refresh.
+                </>
+              ) : (
+                <>
+                  Flagged customers are <strong>excluded</strong> from
+                  retention / churn tile counts — past, present, and
+                  future.  Use this for test accounts, bookkeeping
+                  duplicates, or rows the office doesn't want to count
+                  against their numbers.
+                </>
+              )}
+            </p>
+            <label className="block text-xs" style={{ color: colors.onMuted }}>
+              Note (optional)
+              <textarea
+                value={accountCorrectionNote}
+                onChange={(e) => setAccountCorrectionNote(e.target.value)}
+                data-testid="account-correction-note-input"
+                className="mt-1 w-full rounded-lg border p-2 text-sm"
+                rows={3}
+                placeholder="Why is this account being flagged? (optional)"
+                style={{
+                  background: colors.surface,
+                  color: colors.onSurface,
+                  borderColor: colors.border,
+                }}
+              />
+            </label>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button
+                variant="ghost"
+                onClick={() => setAccountCorrectionOpen(false)}
+                disabled={accountCorrectionBusy}
+                testid="account-correction-cancel-btn"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={async () => {
+                  setAccountCorrectionBusy(true);
+                  try {
+                    await api.post(
+                      `/customers/${id}/account-correction`,
+                      {
+                        active: !customer.account_correction,
+                        note: accountCorrectionNote || null,
+                      },
+                    );
+                    setAccountCorrectionOpen(false);
+                    setAccountCorrectionNote("");
+                    load();
+                  } catch (err) {
+                    // Fall through — Toast primitive consumed by load()
+                    // path; keep the modal open so the admin can retry.
+                  } finally {
+                    setAccountCorrectionBusy(false);
+                  }
+                }}
+                disabled={accountCorrectionBusy}
+                testid="account-correction-confirm-btn"
+              >
+                {customer.account_correction ? "Un-flag" : "Mark Correction"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       ) : null}
 
       {/* Header card */}
