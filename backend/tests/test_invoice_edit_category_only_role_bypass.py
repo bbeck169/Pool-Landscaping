@@ -544,28 +544,32 @@ def test_non_privileged_roles_403_on_category_only(role):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 11 · requires_confirmation still fires on sent (bypass is upstream only)
+# 11 · DOC-LOCK-POLICY-RELAX · Feb-2026 — sent invoice no longer
+# requires confirmation. The ``acknowledged_lock_bypass`` flag is
+# accepted on the body for back-compat but is no longer required.
 # ═══════════════════════════════════════════════════════════════════
-def test_sent_invoice_requires_confirmation_still_fires_for_manager():
+def test_sent_invoice_manager_now_succeeds_without_confirmation():
     uid, tok = _mint_token("manager")
     incats = _real_income_categories()
     inv_id = _seed_invoice(status="sent")
     try:
         r = _patch(inv_id, {"business_unit": incats[1]["name"]}, tok)
-        assert r.status_code == 409, (
-            f"expected 409 requires_confirmation, got "
+        assert r.status_code == 200, (
+            f"DOC-LOCK-POLICY-RELAX: sent invoice should accept the "
+            f"manager-category-only PATCH without confirm; got "
             f"{r.status_code}: {r.text[:400]}"
         )
-        assert r.json()["detail"]["error"] == "requires_confirmation"
+        assert r.json()["changed"] is True
     finally:
         _cleanup_invoice(inv_id)
         _cleanup_user(uid)
 
 
 def test_sent_invoice_manager_with_acknowledged_lock_bypass_succeeds():
-    """Locks the A2 contract: once the frontend auto-passes
-    ``acknowledged_lock_bypass``, manager + category-only on a sent
-    invoice → 200."""
+    """Back-compat: the frontend still sends
+    ``acknowledged_lock_bypass`` on PATCH; sent invoice continues to
+    return 200 — the flag is now ignored by the gate but the shape
+    stays stable so unmigrated callers aren't broken."""
     uid, tok = _mint_token("manager")
     incats = _real_income_categories()
     inv_id = _seed_invoice(status="sent")

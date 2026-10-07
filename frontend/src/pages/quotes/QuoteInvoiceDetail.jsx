@@ -1322,29 +1322,21 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           }
           onLinesUpdated={async (nextLines) => {
             // Feb-2026 · Editable Sent Docs · Phase 1 — for non-draft
-            // statuses (sent | accepted | paid) we require a one-time
-            // confirmation dialog before the PUT fires. The shared
-            // dialog handles the Stripe-paid + signature-invalidation
-            // warnings. Once ack'd in this session we short-circuit
-            // subsequent inline saves and forward the ack flag on the
-            // PUT body so the backend lock gate accepts the mutation.
+            // DOC-LOCK-POLICY-RELAX · Feb-2026 — estimates are now
+            // always editable regardless of status. Invoices are
+            // editable unless the status is ``paid`` (the only
+            // user-defined read-only state). ``void`` / ``cancelled``
+            // are terminal and 409 server-side, but we don't gate
+            // them here either — let the backend be the single
+            // source of truth for lock state so a client-side drift
+            // can't deny a legitimate edit the server would accept.
+            // The lock dialog + ack flag are gone — PUT fires
+            // immediately on save and the toast surfaces any 409
+            // the backend returns (currently only ``paid`` invoices).
+            const _doc_type = String(doc.doc_type || "quote").toLowerCase();
             const _st = String(doc.status || "").toLowerCase();
-            // Feb 2026 · Follow-up — extend the ack-bypass list to
-            // ``past_due`` / ``unpaid`` / ``overdue`` so admin
-            // operators can correct aged-status invoices without a
-            // void-and-re-issue dance. Backend
-            // ``_ALLOWED_WITH_ACK`` is kept in sync.
-            const _locked = ["sent", "accepted", "paid",
-                              "past_due", "unpaid", "overdue"].includes(_st);
-            // Feb-2026 · Invoice God Mode — super_admins skip the
-            // ack popup entirely on aged-invoice statuses. The
-            // server-side gate applies the role-based bypass and
-            // writes a distinct audit line, so we intentionally
-            // omit the ack flag from the payload here to keep the
-            // silent path traceable in ops dashboards.
-            const _role = String(user?.role || "").toLowerCase();
-            const _silentBypass = _role === "super_admin"
-                                    && ["past_due", "unpaid", "overdue"].includes(_st);
+            const _locked = _doc_type === "invoice" && _st === "paid";
+            const _silentBypass = false;
             if (_locked && !_silentBypass && !lockBypassAcked) {
               setPendingLines(nextLines);
               setLockDialogOpen(true);
@@ -1645,20 +1637,14 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                     type="button"
                     disabled={termsSaving}
                     onClick={async () => {
+                      // DOC-LOCK-POLICY-RELAX · Feb-2026 — mirrors
+                      // the line-items save above. Estimates always
+                      // editable; invoices locked only when status
+                      // is ``paid``.
+                      const _doc_type = String(doc.doc_type || "quote").toLowerCase();
                       const _st = String(doc.status || "").toLowerCase();
-                      // Feb 2026 · Follow-up — see the K71 editor
-                      // save above; ack-bypass list widened for
-                      // aged invoice statuses.
-                      const _locked = ["sent", "accepted", "paid",
-                                        "past_due", "unpaid", "overdue"].includes(_st);
-                      // Feb-2026 · Invoice God Mode — super_admin
-                      // silent-bypass mirrors the line-items save
-                      // above. Omit the ack flag so the backend
-                      // writes the distinct silent-bypass audit
-                      // line instead of the standard ack one.
-                      const _role = String(user?.role || "").toLowerCase();
-                      const _silentBypass = _role === "super_admin"
-                                              && ["past_due", "unpaid", "overdue"].includes(_st);
+                      const _locked = _doc_type === "invoice" && _st === "paid";
+                      const _silentBypass = false;
                       if (_locked && !_silentBypass && !lockBypassAcked) {
                         setPendingLines({ __terms__: termsDraft });
                         setLockDialogOpen(true);

@@ -755,6 +755,7 @@ async def update_quote(qid: str, body: QuoteUpdate,
     from services.quotes.status_gate import (
         assert_quote_mutable_for_put,
         audit_put_denial,
+        audit_put_success,
         audit_super_admin_silent_bypass,
         is_quote_mutable_for_put,
         should_super_admin_silent_bypass,
@@ -1035,10 +1036,34 @@ async def update_quote(qid: str, body: QuoteUpdate,
                 "[pricebook_writeback] fan-out failed for invoice=%s (put)",
                 qid,
             )
-    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
+    # DOC-LOCK-POLICY-RELAX · Feb-2026 — reload the post-mutation
+    # doc so the audit helper sees the final totals + mutated
+    # fields, then write ``put_quote_edit_after_send`` to the
+    # dedicated ``doc_edit_audit`` collection when the PRE-mutation
+    # status was in ``_POST_SEND_STATUSES``. Internal to
+    # ``audit_put_success`` — draft-only edits short-circuit so this
+    # is cheap on the hot path. Best-effort: audit write failures
+    # never convert a 200 into a 500.
+    _after_doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    await audit_put_success(
+        db,
+        before=existing,
+        after=(_after_doc or {**existing, **upd}),
+        actor=user,
+        source="put_quote",
+    )
+    return _after_doc
 
 
-@router.get("/quotes/ready-to-schedule")
+# ────────────────────────────────────────────────────────────────
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — successful-edit audit helper
+# wired at the bottom of the PUT handler. Captures editor identity
+# + edited field names + monetary deltas on every successful PUT
+# against a post-send doc. See ``status_gate.audit_put_success``
+# for the row shape + the ``_POST_SEND_STATUSES`` gate.
+# ────────────────────────────────────────────────────────────────
 async def ready_to_schedule(admin: dict = Depends(require_admin),
                             tenant: dict = Depends(get_current_tenant)):
     """Approved online estimates not yet turned into a scheduled job."""

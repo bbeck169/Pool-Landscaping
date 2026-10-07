@@ -290,9 +290,6 @@ async def patch_invoice(
 
     status = (inv.get("status") or "").lower()
 
-    # Feb-2026 · Editable Sent Docs · Phase 1 — confirm-dialog ack.
-    _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
-
     # ── Terminal statuses can never be edited ─────────────────────
     if status in ("void", "cancelled"):
         raise HTTPException(
@@ -300,30 +297,16 @@ async def patch_invoice(
             detail={"error": "invoice_terminal", "status": status},
         )
 
-    # ── Sent — requires acknowledgement ──────────────────────────
-    #
-    # Either the legacy ``confirm_edit_sent`` or the Phase 1
-    # ``acknowledged_lock_bypass`` flag satisfies the guard.
-    if status == "sent" and not (body.confirm_edit_sent or _ack):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "requires_confirmation",
-                "warning": "This invoice was sent to the customer. "
-                            "They may have already reviewed the old version.",
-            },
-        )
-
-    # ── Accepted — requires acknowledgement (Phase 1) ────────────
-    if status == "accepted" and not _ack:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "requires_confirmation",
-                "warning": "This invoice was accepted by the customer. "
-                            "Editing may create audit / bookkeeping issues.",
-            },
-        )
+    # DOC-LOCK-POLICY-RELAX · Feb-2026 — the ``sent`` / ``accepted``
+    # confirm-ack gates are gone per product direction. Sent + viewed
+    # + accepted + declined + the aged lifecycle statuses are now
+    # editable with no ack. The ``acknowledged_lock_bypass`` and
+    # ``confirm_edit_sent`` flags are still accepted on the body
+    # (callers haven't been fully migrated); the gates below just
+    # don't require them. The ``paid`` / ``partial`` gate still
+    # requires EITHER the Phase-1 ack flag OR the typed-invoice-
+    # number proof (gate 5a of DOC-LOCK-POLICY-RELAX).
+    _ack = bool(getattr(body, "acknowledged_lock_bypass", False))
 
     # ── Paid — accepts EITHER typed invoice-number OR Phase 1 ack ─
     if status in ("paid", "partial"):
@@ -573,6 +556,27 @@ async def patch_invoice(
     audit_doc.pop("_id", None)
 
     updated_full = await _fetch_updated(collection, invoice_id, tenant_id)
+
+    # DOC-LOCK-POLICY-RELAX · Feb-2026 — write the dedicated
+    # ``doc_edit_audit`` row when the PRE-mutation status indicates
+    # the doc had already been exposed to the customer. The helper
+    # short-circuits on draft/other low-exposure statuses so the
+    # row only lands when it carries dispute-defence signal.
+    # ``invoice_edit_history`` above remains the rich per-field
+    # history; ``doc_edit_audit`` is the lighter cross-doc audit
+    # trail that ops queries by ``doc_id`` for ad-hoc investigations.
+    try:
+        from services.quotes.status_gate import audit_put_success
+        await audit_put_success(
+            db,
+            before=inv,
+            after=updated_full or {**inv, **upd},
+            actor=user,
+            source="patch_invoice",
+        )
+    except Exception:
+        # Never fail the caller because of an audit-log write.
+        pass
 
     return {
         "ok": True,

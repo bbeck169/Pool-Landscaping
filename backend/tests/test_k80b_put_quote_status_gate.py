@@ -1,27 +1,32 @@
-"""Phase K80.b · Feb-2026 — PUT /api/quotes/{id} status gate HTTP tests.
+"""Phase K80.b (relaxed) · Feb-2026 — DOC-LOCK-POLICY-RELAX
+PUT /api/quotes/{id} status gate HTTP tests.
 
-Product policy locked this session:
+Product policy (DOC-LOCK-POLICY-RELAX):
 
     Estimates (doc_type='quote'):
-        draft  → PUT allowed
-        sent   → PUT allowed
-        accepted / declined / voided → PUT blocked (409)
+        ANY status → PUT allowed. There is NO status that denies
+        a PUT against an estimate.
 
     Invoices (doc_type='invoice'):
-        draft → PUT allowed
-        sent / partially_paid / paid / voided → PUT blocked (409)
+        paid / void / cancelled → PUT blocked (409 status_locked)
+        anything else           → PUT allowed
 
-Denial shape:
+Denial shape (unchanged):
     HTTP 409 with JSON body
     ``{ error: "status_locked", current_status, doc_type, message }``
     where ``doc_type`` is the customer-friendly ``estimate|invoice``.
 
 Audit trail:
-    Every denied PUT persists a row to ``db.audit_logs`` with
-    ``event: "put_quote_status_denied"``.
+    * Denied PUT writes ``event: "put_quote_status_denied"`` to
+      ``db.audit_logs`` (unchanged).
+    * Successful PUT against a post-send status writes
+      ``event: "put_quote_edit_after_send"`` to the dedicated
+      ``db.doc_edit_audit`` collection (NEW, per Risk C of
+      DOC-LOCK-POLICY-RELAX). Tested in
+      ``test_doc_lock_policy_relax.py``.
 
-Non-goals: PATCH behaviour is intentionally untouched by K80.b. These
-tests do not exercise PATCH gates.
+Non-goals: PATCH behaviour is covered by ``test_invoice_edit*.py``;
+this file does not exercise PATCH gates.
 """
 from __future__ import annotations
 
@@ -166,7 +171,7 @@ def _put_line_update(client, qid: str) -> requests.Response:
 
 
 # ═════════════════════════════════════════════════════════════════════
-# ALLOWED cases — 200 OK
+# ALLOWED cases — 200 OK (expanded post-DOC-LOCK-POLICY-RELAX)
 # ═════════════════════════════════════════════════════════════════════
 def test_put_draft_estimate_allowed(client, raw_mongo,
                                     customer_id, category_ids):
@@ -192,8 +197,47 @@ def test_put_draft_invoice_allowed(client, raw_mongo,
     assert r.status_code == 200, r.text
 
 
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — formerly BLOCKED estimate
+# statuses now allow PUT. Admins / managers need to add + remove
+# line items on viewed / accepted / declined / voided quotes without
+# a duplicate-the-estimate dance.
+@pytest.mark.parametrize(
+    "status",
+    ["viewed", "accepted", "declined", "void"],
+)
+def test_put_formerly_blocked_estimate_now_allowed(
+    status, client, raw_mongo, customer_id, category_ids,
+):
+    qid = _seed_doc(client, raw_mongo, doc_type="quote", status=status,
+                    customer_id=customer_id, category_ids=category_ids)
+    r = _put_line_update(client, qid)
+    assert r.status_code == 200, (
+        f"DOC-LOCK-POLICY-RELAX: estimate status={status!r} should "
+        f"accept PUT; got {r.status_code} {r.text[:200]}"
+    )
+
+
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — formerly BLOCKED invoice sent /
+# partially_paid now allow PUT without any ack. Only paid / void /
+# cancelled remain locked.
+@pytest.mark.parametrize(
+    "status",
+    ["sent", "partially_paid"],
+)
+def test_put_formerly_blocked_invoice_now_allowed(
+    status, client, raw_mongo, customer_id, category_ids,
+):
+    qid = _seed_doc(client, raw_mongo, doc_type="invoice", status=status,
+                    customer_id=customer_id, category_ids=category_ids)
+    r = _put_line_update(client, qid)
+    assert r.status_code == 200, (
+        f"DOC-LOCK-POLICY-RELAX: invoice status={status!r} should "
+        f"accept PUT; got {r.status_code} {r.text[:200]}"
+    )
+
+
 # ═════════════════════════════════════════════════════════════════════
-# BLOCKED cases — 409 status_locked
+# BLOCKED cases — 409 status_locked (narrowed to invoice paid/void)
 # ═════════════════════════════════════════════════════════════════════
 def _assert_blocked(r: requests.Response, expected_status: str,
                     expected_doc_type: str) -> Dict:
@@ -208,34 +252,17 @@ def _assert_blocked(r: requests.Response, expected_status: str,
     return detail
 
 
-@pytest.mark.parametrize("status", ["accepted", "declined", "void"])
-def test_put_terminal_estimate_blocked_409(status, client, raw_mongo,
-                                            customer_id, category_ids):
-    qid = _seed_doc(client, raw_mongo, doc_type="quote", status=status,
-                    customer_id=customer_id, category_ids=category_ids)
-    r = _put_line_update(client, qid)
-    _assert_blocked(r, expected_status=status, expected_doc_type="estimate")
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — estimate terminal statuses
+# (accepted / declined / void) are now editable per product
+# direction. The old "terminal estimate 409" test is gone — see
+# ``test_put_formerly_blocked_estimate_now_allowed`` above for the
+# inverse coverage.
 
 
-def test_put_sent_invoice_blocked_409(client, raw_mongo,
-                                       customer_id, category_ids):
-    """Delta vs PATCH: PATCH allows sent+confirm; PUT never allows sent."""
-    qid = _seed_doc(client, raw_mongo, doc_type="invoice", status="sent",
-                    customer_id=customer_id, category_ids=category_ids)
-    r = _put_line_update(client, qid)
-    _assert_blocked(r, expected_status="sent", expected_doc_type="invoice")
-
-
-def test_put_partially_paid_invoice_blocked_409(client, raw_mongo,
-                                                  customer_id, category_ids):
-    qid = _seed_doc(client, raw_mongo, doc_type="invoice",
-                    status="partially_paid",
-                    customer_id=customer_id, category_ids=category_ids)
-    r = _put_line_update(client, qid)
-    _assert_blocked(r, expected_status="partially_paid",
-                     expected_doc_type="invoice")
-
-
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — the user-visible read-only
+# invoice state is PAID only (gate 3a of this ticket). The three
+# BLOCKED tests below are kept to lock the policy in place:
+# paid + void + cancelled.
 def test_put_paid_invoice_blocked_409(client, raw_mongo,
                                        customer_id, category_ids):
     qid = _seed_doc(client, raw_mongo, doc_type="invoice", status="paid",

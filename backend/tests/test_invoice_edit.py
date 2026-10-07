@@ -170,20 +170,26 @@ def test_non_admin_cannot_edit_403():
         _cleanup_invoice(inv_id)
 
 
-# ─────────────── 3. sent w/o confirm → 409 ─────────────────────────
-def test_edit_sent_without_confirm_returns_409_requires_confirmation():
+# ─────────────── 3. sent now succeeds without confirm ──────────────
+# DOC-LOCK-POLICY-RELAX · Feb-2026 — the sent-invoice confirm-ack
+# gate is gone. PATCH on a sent invoice now returns 200 with no
+# body-side flag required.
+def test_edit_sent_without_confirm_now_succeeds():
     tok = _cached_admin_token()
     inv_id = _seed_invoice(status="sent")
     try:
         r = _patch(inv_id, {"notes": "TEST_note"}, tok)
-        assert r.status_code == 409, r.text
-        assert r.json()["detail"]["error"] == "requires_confirmation"
+        assert r.status_code == 200, (
+            f"DOC-LOCK-POLICY-RELAX: sent invoice should accept PATCH "
+            f"without confirm_edit_sent; got {r.status_code} {r.text[:200]}"
+        )
+        assert r.json()["changed"] is True
     finally:
         _cleanup_invoice(inv_id)
 
 
-# ─────────────── 4. sent w/ confirm succeeds ───────────────────────
-def test_edit_sent_with_confirm_succeeds():
+# ─────────────── 4. sent w/ confirm still succeeds (back-compat) ────
+def test_edit_sent_with_confirm_still_succeeds():
     tok = _cached_admin_token()
     inv_id = _seed_invoice(status="sent")
     try:
