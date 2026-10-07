@@ -289,6 +289,18 @@ async def get_lead(lid: str,
     )
     if not row:
         raise HTTPException(404, "Lead not found")
+    # LEAD-CREATE-QUOTE · Feb-2026 — attached-quote count badge. The
+    # lead-detail "Create Quote" button renders a small count badge
+    # when ``quotes_count > 0`` so staff can see at a glance that
+    # quotes exist on this lead without opening a drill-down. Cheap
+    # ``count_documents`` on the Phase-2 ``(tenant_id,
+    # recipient_type, recipient_id)`` compound index — see
+    # ``migrations/quotes_recipient_index_v1``. Additive to the
+    # response envelope (not persisted) so writers remain untouched.
+    row["quotes_count"] = int(await db.quotes.count_documents(
+        {"tenant_id": tenant["id"], "recipient_type": "lead",
+         "recipient_id": lid},
+    ))
     return row
 
 
@@ -688,6 +700,58 @@ async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
              customer_id=cid, was_merged=was_merged,
          )}},
     )
+
+    # ─────────── LEAD-CREATE-QUOTE · Feb-2026 — Reparent lead-recipient
+    # quotes (and invoices — ``db.quotes`` holds both doc_types) onto
+    # the newly-materialised customer. Phase-2 Quote-to-Lead
+    # Recipient ships customer_id=None on these docs; without this
+    # reparent, revenue/aging/portal queries that scope by
+    # ``customer_id`` would silently miss everything the lead was
+    # quoted BEFORE conversion.
+    #
+    # Full-reparent write shape (G2=c per ticket brief):
+    #   * customer_id          → cid           (fills Phase-2 null)
+    #   * recipient_type       → "customer"    (flips polymorphic tag)
+    #   * recipient_id         → cid           (new owner)
+    #   * converted_from_lead_id → <lid>       (provenance preserved
+    #                                           for audit + future
+    #                                           drill-down)
+    #
+    # Idempotent at TWO layers:
+    #   1. The pipeline-level ``converted_customer_id`` short-circuit
+    #      at the top of this function already prevents a second
+    #      pipeline run.
+    #   2. The filter is scoped to ``recipient_type="lead" +
+    #      recipient_id=<lid>``; a second call (e.g. if the pipeline
+    #      is retried mid-notification) finds zero matching docs
+    #      because the first reparent flipped the recipient_type to
+    #      "customer".  modified_count==0 on retry.
+    try:
+        _reparent_result = await db.quotes.update_many(
+            {"tenant_id": tenant_id, "recipient_type": "lead",
+             "recipient_id": lead["id"]},
+            {"$set": {
+                "customer_id": cid,
+                "recipient_type": "customer",
+                "recipient_id": cid,
+                "converted_from_lead_id": lead["id"],
+            }},
+        )
+        logger.info(
+            "[phase8] close-won reparented %d lead-recipient quotes/"
+            "invoices lead_id=%s → customer_id=%s",
+            int(_reparent_result.modified_count or 0),
+            lead["id"], cid,
+        )
+    except Exception as _exc:  # pragma: no cover - defensive
+        # Reparent is best-effort — a Mongo hiccup here should NOT
+        # block the welcome bundle + referral hook below. The lead
+        # is already flagged ``converted_customer_id`` so a repair
+        # script can re-run the same ``update_many`` safely.
+        logger.warning(
+            "[phase8] quote reparent failed lead_id=%s → %s: %s",
+            lead["id"], cid, _exc,
+        )
 
     # ─────────── Notifications (best-effort, non-blocking)
     email_id, sms_id, drip_id = None, None, None
