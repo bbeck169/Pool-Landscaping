@@ -462,15 +462,24 @@ def test_reopen_writes_audit_log_row():
 # List filter — view=open / converted / declined / all / absent
 # ═════════════════════════════════════════════════════════════════════
 def _seed_list_fixtures(tid):
-    """Seed a mixed set of quotes + 1 invoice row for list filter tests."""
+    """Seed a mixed set of quotes + 1 invoice row for list filter tests.
+
+    QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — now also seeds
+    ``viewed`` + ``cancelled`` quote rows so the extended Open
+    predicate (``{draft, sent, viewed}``) and the Accepted-tab
+    predicate (``status=accepted`` OR ``converted_invoice_id`` set)
+    can be exercised against a fully-populated corpus.
+    """
     _run(_seed_tenant(tid))
-    _run(_seed_quote(qid=f"{PREFIX}-l-draft",   tid=tid, status="draft"))
-    _run(_seed_quote(qid=f"{PREFIX}-l-sent",    tid=tid, status="sent"))
-    _run(_seed_quote(qid=f"{PREFIX}-l-accepted",tid=tid, status="accepted"))
-    _run(_seed_quote(qid=f"{PREFIX}-l-declined",tid=tid, status="declined"))
-    _run(_seed_quote(qid=f"{PREFIX}-l-conv",    tid=tid, status="sent",
+    _run(_seed_quote(qid=f"{PREFIX}-l-draft",    tid=tid, status="draft"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-sent",     tid=tid, status="sent"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-viewed",   tid=tid, status="viewed"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-accepted", tid=tid, status="accepted"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-cancelled",tid=tid, status="cancelled"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-declined", tid=tid, status="declined"))
+    _run(_seed_quote(qid=f"{PREFIX}-l-conv",     tid=tid, status="sent",
                      converted_invoice_id=f"{PREFIX}-inv-X"))
-    _run(_seed_quote(qid=f"{PREFIX}-l-inv",     tid=tid,
+    _run(_seed_quote(qid=f"{PREFIX}-l-inv",      tid=tid,
                      doc_type="invoice", status="draft"))
 
 
@@ -489,8 +498,23 @@ def test_list_view_open_returns_only_open_quotes():
     _seed_list_fixtures(TENANT_A)
     rows = _call_list("open", TENANT_A)
     ids = {r["id"] for r in rows}
+    # QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — Open now surfaces
+    # {draft, sent, viewed} only. Accepted moved to its own tab.
     assert ids == {f"{PREFIX}-l-draft", f"{PREFIX}-l-sent",
-                   f"{PREFIX}-l-accepted"}
+                   f"{PREFIX}-l-viewed"}
+
+
+def test_list_view_accepted_returns_accepted_and_converted_quotes():
+    """QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — new Accepted tab.
+    Shows ``status=accepted`` AND rows with ``converted_invoice_id``
+    set, side-by-side (overlapping with the Converted tab is
+    intentional pending a product decision)."""
+    _seed_list_fixtures(TENANT_A)
+    rows = _call_list("accepted", TENANT_A)
+    assert {r["id"] for r in rows} == {
+        f"{PREFIX}-l-accepted",
+        f"{PREFIX}-l-conv",
+    }
 
 
 def test_list_view_converted_returns_only_converted_quotes():
@@ -509,9 +533,11 @@ def test_list_view_all_returns_all_quote_doctype_only():
     _seed_list_fixtures(TENANT_A)
     rows = _call_list("all", TENANT_A)
     ids = {r["id"] for r in rows}
-    # All 5 quote-doctype rows; invoice row excluded.
+    # QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — fixture now seeds
+    # 7 quote-doctype rows: draft, sent, viewed, accepted,
+    # cancelled, declined, converted. The invoice row is excluded.
     assert f"{PREFIX}-l-inv" not in ids
-    assert len(ids) == 5
+    assert len(ids) == 7
 
 
 def test_list_view_absent_preserves_back_compat():
@@ -520,9 +546,9 @@ def test_list_view_absent_preserves_back_compat():
     rows = _call_list(None, TENANT_A)
     ids = {r["id"] for r in rows}
     # Back-compat: no doc_type restriction either, so the invoice row
-    # IS included.
+    # IS included. 7 quotes + 1 invoice = 8.
     assert f"{PREFIX}-l-inv" in ids
-    assert len(ids) == 6
+    assert len(ids) == 8
 
 
 def test_list_view_invalid_returns_400():

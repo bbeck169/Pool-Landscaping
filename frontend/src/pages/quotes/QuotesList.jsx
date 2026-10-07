@@ -19,13 +19,16 @@ const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 // Phase 3 B2 · Feb-2026 — Quote lifecycle view filter.
 // Mirrors the backend ``GET /api/quotes?view=…`` enum shipped in
 // Atomic B1 (``cfe1a5d41``). "Open" scopes to
-// ``status in {draft, sent, accepted}`` + not-converted. "All" is
+// ``status in {draft, sent, viewed}``.  "Accepted" scopes to
+// ``status=accepted`` OR a converted-invoice-id (see
+// QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026).  "All" is
 // quote-only (``doc_type="quote"``) — NOT a drop-in for the
 // no-view back-compat path, which still returns BOTH doc_types for
 // other callers.
-const LIFECYCLE_VIEWS = ["open", "converted", "declined", "all"];
+const LIFECYCLE_VIEWS = ["open", "accepted", "converted", "declined", "all"];
 const LIFECYCLE_LABELS = {
   open: "Open",
+  accepted: "Accepted",
   converted: "Converted",
   declined: "Declined",
   all: "All",
@@ -150,13 +153,19 @@ export default function QuotesList() {
   ];
 
   // Phase 3 B2 · Feb-2026 — Row-level Decline / Reopen gates.
+  // QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — extended the status
+  // set from ``{draft, sent, accepted}`` to all five actionable
+  // statuses. ``converted_invoice_id`` guard still blocks converted
+  // rows (declining a converted quote is semantically ambiguous
+  // because an invoice exists downstream — backend 400s with
+  // ``already_converted`` too).
   const roleAllowed = canUserLifecycle(user?.role);
   const canDeclineRow = (r) => {
     if (!roleAllowed) return false;
     if (r?.converted_invoice_id) return false;
     const s = String(r?.status || "").toLowerCase();
     if (s === "declined") return false;
-    return ["draft", "sent", "accepted"].includes(s);
+    return ["draft", "sent", "viewed", "accepted", "cancelled"].includes(s);
   };
   const canReopenRow = (r) => {
     if (!roleAllowed) return false;
@@ -165,7 +174,11 @@ export default function QuotesList() {
 
   const handleRowDecline = async (e, r) => {
     e.stopPropagation();
-    if (!window.confirm("Decline this quote? You can reopen it later.")) return;
+    // QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — silent decline.
+    // Removed the ``window.confirm`` prompt per the DOC-LOCK-POLICY-
+    // RELAX "always editable" philosophy — the Decline action is
+    // reversible via Reopen, so a confirmation modal is friction
+    // for no benefit.
     try {
       await api.post(`/quotes/${r.id}/decline`, {});
       setToast({ tone: "success", message: "Quote declined" });

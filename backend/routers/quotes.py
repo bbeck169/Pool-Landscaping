@@ -310,17 +310,25 @@ async def list_quotes(user: dict = Depends(get_current_user),
     # existing deleted_at $or (set below) doesn't collide.
     _view = (view or "").strip().lower()
     if _view:
-        if _view not in ("open", "converted", "declined", "all"):
+        # QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — lifecycle enum
+        # extended to add the "accepted" tab. The Open tab predicate
+        # now excludes ``accepted`` (which has moved to its own tab)
+        # and includes ``viewed`` (customer-opened-but-not-decided).
+        # Accepted tab shows accepted-not-yet-converted + already-
+        # converted quotes side-by-side; the existing Converted tab
+        # stays — overlap is intentional pending a product decision
+        # to collapse the two tabs.
+        if _view not in ("open", "accepted", "converted", "declined", "all"):
             raise HTTPException(
                 status_code=400,
                 detail={
                     "error_code": "invalid_view",
                     "message": (
                         "view must be one of "
-                        "['open','converted','declined','all'], "
+                        "['open','accepted','converted','declined','all'], "
                         f"got {view!r}"
                     ),
-                    "accepted_values": ["open", "converted",
+                    "accepted_values": ["open", "accepted", "converted",
                                         "declined", "all"],
                 },
             )
@@ -328,11 +336,21 @@ async def list_quotes(user: dict = Depends(get_current_user),
         _view_and = q.get("$and", [])
         if _view == "open":
             _view_and.append(
-                {"status": {"$in": ["draft", "sent", "accepted"]}}
+                {"status": {"$in": ["draft", "sent", "viewed"]}}
             )
             _view_and.append({"$or": [
                 {"converted_invoice_id": None},
                 {"converted_invoice_id": {"$exists": False}},
+            ]})
+        elif _view == "accepted":
+            # Accepted-not-yet-converted (``status=accepted``) OR
+            # converted (``converted_invoice_id`` set). Quote docs
+            # never store ``status="converted"`` — conversion is
+            # tracked via the ``converted_invoice_id`` field, same
+            # pattern as the Converted tab predicate below.
+            _view_and.append({"$or": [
+                {"status": "accepted"},
+                {"converted_invoice_id": {"$nin": [None, ""]}},
             ]})
         elif _view == "converted":
             _view_and.append(
@@ -3179,6 +3197,33 @@ async def decline_quote(
         })
     except Exception as e:  # pragma: no cover
         logger.warning(f"quote.decline audit_logs insert failed: {e}")
+
+    # QUOTES-OPEN-TAB-DECLINE-EXTEND · Feb-2026 — parallel audit row
+    # on the ``doc_edit_audit`` collection introduced by
+    # DOC-LOCK-POLICY-RELAX. One admin-decline event per invocation;
+    # ``cancelled_at_preserved`` is True iff the pre-mutation doc
+    # had a ``cancelled_at`` field (the surgical ``$set`` above
+    # leaves it untouched; this flag just lets ops filter the audit
+    # feed for cancelled→declined reclassifications). Best-effort —
+    # never fail the 200 on an audit write.
+    try:
+        await db.doc_edit_audit.insert_one({
+            "event": "admin_decline",
+            "at": declined_at,
+            "tenant_id": tenant["id"],
+            "doc_id": qid,
+            "doc_type": "estimate",
+            "status_before": previous_status,
+            "editor_user_id": user.get("id"),
+            "editor_email": user.get("email"),
+            "editor_role": user.get("role"),
+            "cancelled_at_preserved": bool(src.get("cancelled_at")),
+            "source": "post_quote_decline",
+        })
+    except Exception as e:  # pragma: no cover
+        logger.warning(
+            f"quote.decline doc_edit_audit insert failed: {e}",
+        )
 
     return {
         "status": "declined",
