@@ -25,11 +25,19 @@ const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 // quote-only (``doc_type="quote"``) — NOT a drop-in for the
 // no-view back-compat path, which still returns BOTH doc_types for
 // other callers.
-const LIFECYCLE_VIEWS = ["open", "accepted", "converted", "declined", "all"];
+//
+// QUOTES-TAB-COLLAPSE-CONVERTED · Feb-2026 — the standalone
+// ``converted`` tab was dropped from the shell because converted
+// quotes already surface on the Accepted tab via the ``$or``
+// predicate shipped with QUOTES-OPEN-TAB-DECLINE-EXTEND. The
+// backend predicate branch for ``?view=converted`` is retained for
+// API back-compat (see ``backend/routers/quotes.py``); any landing
+// URL carrying ``?view=converted`` is silently rewritten to
+// ``?view=accepted`` in the initial-mount effect below.
+const LIFECYCLE_VIEWS = ["open", "accepted", "declined", "all"];
 const LIFECYCLE_LABELS = {
   open: "Open",
   accepted: "Accepted",
-  converted: "Converted",
   declined: "Declined",
   all: "All",
 };
@@ -74,9 +82,12 @@ export default function QuotesList() {
     setParams(s, { replace: true });
   };
 
-  // Phase 3 B2 · Feb-2026 — Lifecycle view (open|converted|declined|all).
+  // Phase 3 B2 · Feb-2026 — Lifecycle view (open|accepted|declined|all).
   // Defaults to "open" on first mount (reflected in the URL so the
-  // view is deep-linkable + refresh-safe).
+  // view is deep-linkable + refresh-safe).  QUOTES-TAB-COLLAPSE-CONVERTED
+  // · Feb-2026 — the shell now has 4 tabs; a landing URL carrying
+  // ``?view=converted`` is rewritten to ``?view=accepted`` by the
+  // mount effect below (back-compat for shared deep-links).
   const viewRaw = (params.get("view") || "").toLowerCase();
   const view = LIFECYCLE_VIEWS.includes(viewRaw) ? viewRaw : "open";
   const setView = (v) => {
@@ -85,7 +96,17 @@ export default function QuotesList() {
     setParams(s, { replace: true });
   };
   useEffect(() => {
-    if (!params.get("view")) {
+    const current = (params.get("view") || "").toLowerCase();
+    // QUOTES-TAB-COLLAPSE-CONVERTED · Feb-2026 — silently redirect the
+    // deprecated ``converted`` deep-link to ``accepted`` (the Accepted
+    // tab's ``$or`` predicate already covers converted rows).
+    if (current === "converted") {
+      const s = new URLSearchParams(params);
+      s.set("view", "accepted");
+      setParams(s, { replace: true });
+      return;
+    }
+    if (!current) {
       const s = new URLSearchParams(params);
       s.set("view", "open");
       setParams(s, { replace: true });

@@ -353,6 +353,13 @@ async def list_quotes(user: dict = Depends(get_current_user),
                 {"converted_invoice_id": {"$nin": [None, ""]}},
             ]})
         elif _view == "converted":
+            # QUOTES-TAB-COLLAPSE-CONVERTED · Feb-2026 — frontend
+            # collapsed the standalone Converted tab into Accepted
+            # (converted rows surface via the ``$or`` predicate in
+            # the ``accepted`` branch above). This endpoint branch is
+            # retained for API back-compat so external tooling /
+            # third-party integrations that still hit
+            # ``?view=converted`` keep returning the same result set.
             _view_and.append(
                 {"converted_invoice_id": {"$nin": [None, ""]}}
             )

@@ -9,8 +9,11 @@
  * ``backend/tests/test_quote_decline_reopen.py`` +
  * ``test_quotes_decline_extended.py``). This suite focuses on:
  *
- *   1.  The segmented control renders the 5-tab shell including the
- *       new ``quotes-list-filter-accepted`` entry.
+ *   1.  The segmented control renders the 4-tab shell (Open,
+ *       Accepted, Declined, All) after QUOTES-TAB-COLLAPSE-CONVERTED
+ *       folded the standalone Converted tab into Accepted. Legacy
+ *       deep-links carrying ``?view=converted`` are silently
+ *       rewritten to ``?view=accepted`` on mount.
  *   2.  Clicking each lifecycle tab issues a GET to
  *       ``/quotes?doc_type=quote&view=<v>``; the Open tab is the
  *       default on first mount.
@@ -105,15 +108,24 @@ async function _mountList(role = "admin") {
 
 
 // ═════════════════════════════════════════════════════════════════
-// 1 · Lifecycle tab shell — 5 tabs including the new Accepted tab
+// 1 · Lifecycle tab shell — 4 tabs after QUOTES-TAB-COLLAPSE-CONVERTED
+//     (Open, Accepted, Declined, All; Converted collapsed into
+//     Accepted via the ``$or`` predicate shipped in
+//     QUOTES-OPEN-TAB-DECLINE-EXTEND)
 // ═════════════════════════════════════════════════════════════════
 describe("QuotesList · lifecycle tab shell", () => {
-  it("renders all 5 tabs with stable testids including the new Accepted tab", async () => {
+  it("renders exactly 4 tabs with stable testids (no standalone Converted tab)", async () => {
     await _mountList();
     await screen.findByTestId("quotes-list-filter");
-    for (const v of ["open", "accepted", "converted", "declined", "all"]) {
+    for (const v of ["open", "accepted", "declined", "all"]) {
       expect(screen.getByTestId(`quotes-list-filter-${v}`)).toBeTruthy();
     }
+    // QUOTES-TAB-COLLAPSE-CONVERTED — standalone Converted button is gone.
+    expect(screen.queryByTestId("quotes-list-filter-converted")).toBeNull();
+    // Shell has exactly 4 tab buttons (role="tab" children of the
+    // ``quotes-list-filter`` segmented control).
+    const shell = screen.getByTestId("quotes-list-filter");
+    expect(shell.querySelectorAll('[role="tab"]')).toHaveLength(4);
   });
 
   it("Open is the default-selected tab on first mount", async () => {
@@ -132,6 +144,31 @@ describe("QuotesList · lifecycle tab shell", () => {
         .map((c) => String(c[0] || ""))
         .filter((p) => p.startsWith("/quotes"));
       expect(quoteCalls.some((p) => p.includes("view=accepted"))).toBe(true);
+    });
+  });
+
+  // QUOTES-TAB-COLLAPSE-CONVERTED · Feb-2026 — shared deep-links
+  // carrying the deprecated ``?view=converted`` querystring must be
+  // silently rewritten to ``?view=accepted`` on mount so they land
+  // on the surviving tab and the backend receives the Accepted
+  // predicate (which already covers converted rows).
+  it("landing on ?view=converted silently redirects to ?view=accepted", async () => {
+    const mod = await import("@/pages/quotes/QuotesList");
+    const ListPage = mod.default;
+    render(
+      <MemoryRouter initialEntries={["/quotes?view=converted"]}>
+        <ListPage />
+      </MemoryRouter>,
+    );
+    const accepted = await screen.findByTestId("quotes-list-filter-accepted");
+    expect(accepted.getAttribute("aria-pressed")).toBe("true");
+    // The backend GET fires with view=accepted (not converted).
+    await waitFor(() => {
+      const quoteCalls = _apiGet.mock.calls
+        .map((c) => String(c[0] || ""))
+        .filter((p) => p.startsWith("/quotes"));
+      expect(quoteCalls.some((p) => p.includes("view=accepted"))).toBe(true);
+      expect(quoteCalls.every((p) => !p.includes("view=converted"))).toBe(true);
     });
   });
 });
