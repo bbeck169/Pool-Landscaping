@@ -19,6 +19,7 @@ import {
   READING_ALLOWLIST, READING_LABELS, READING_REQUIRED,
 } from "@/src/lib/waterBodies";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import DecimalInput from "@/src/components/common/DecimalInput";
 import ChemicalDropdownStack from "./ChemicalDropdownStack";
 
 // Phase CHEM2 — alias: legacy `cyanuric` → canonical `cyanuric_acid`.
@@ -67,11 +68,7 @@ export default function WaterBodyPanel({
   }, [body.readings]);
 
   // Phase P17.M — coerce to number | null; preserve 0 as a valid reading.
-  const setReading = useCallback((key: string, raw: string) => {
-    const trimmed = raw.trim();
-    const coerced: number | null =
-      trimmed === "" ? null : Number.isFinite(Number(trimmed)) ? Number(trimmed) : null;
-
+  const setReading = useCallback((key: string, coerced: number | null) => {
     let next = [...(body.readings || [])];
     const meta = READING_LABELS[key] || { name: key, unit: "ppm" };
     if (key === "cyanuric_acid") {
@@ -171,11 +168,10 @@ export default function WaterBodyPanel({
               </Text>
               {meta.unit ? <Text style={s.readingUnit}>{meta.unit}</Text> : null}
             </View>
-            <AppTextInput
+            <DecimalInput
               style={[s.readingInput, isMissing && s.readingInputMissing]}
-              value={cur?.value != null ? String(cur.value) : ""}
-              onChangeText={(v) => setReading(key, v)}
-              keyboardType="decimal-pad"
+              value={cur?.value != null && String(cur.value) !== "" ? Number(cur.value) : null}
+              onChangeValue={(n) => setReading(key, n)}
               editable={!locked}
               placeholder="—"
               placeholderTextColor={colors.muted}
