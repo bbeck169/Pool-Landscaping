@@ -32,7 +32,33 @@ function copyResult(text) {
   if (navigator.clipboard) navigator.clipboard.writeText(text);
 }
 
-function Field({ label, value, onChange, unit, type = "number", testid, placeholder = "0" }) {
+function Field({ label, value, onChange, unit, type: _type = "number", testid, placeholder = "0" }) {
+  // CHECKLIST-DECIMAL-INPUT-FIX · PoolCalculators sweep · Feb-2026 —
+  // the pre-fix shape rendered the raw HTML5 ``number`` input which
+  // (per spec) made Chrome / Firefox / iOS Safari return
+  // ``e.target.value === ""`` for intermediate decimal states like
+  // ``"7."`` or ``".5"``.  ``onChange`` wrote that blank straight
+  // into the parent panel's state, so every chemistry reading in
+  // the LSI calculator (pH, water temp, calcium hardness, total
+  // alkalinity, TDS, CYA) + the Salt / Volume / Turnover / Heater
+  // / Material panels was effectively integer-only.
+  //
+  // Fix: switch the native ``type`` attribute to ``"text"`` so the
+  // raw string flows through unchanged, keep ``inputMode="decimal"``
+  // + a decimal-friendly ``pattern`` for Android keyboards, and
+  // guard the keystroke handler with ``/^-?\d*\.?\d*$/`` so paste
+  // of letters / multi-dot cases is dropped without clobbering
+  // the user's in-progress input.  Negative signs are allowed so
+  // the Material density override + any future delta-style LSI
+  // inputs don't need a second migration pass.
+  //
+  // The incoming ``type`` prop is accepted and intentionally
+  // ignored — no existing caller sets it, and we don't want a
+  // caller to accidentally re-opt into the broken shape by passing
+  // ``type="number"``.  Keeping it in the signature preserves the
+  // API shape for API-shape regression tests + any future caller
+  // that passes ``type="date"`` / ``"time"``, which currently has
+  // zero coverage anyway.
   return (
     <label className="block">
       <span className="text-xs font-bold uppercase tracking-wider"
@@ -40,11 +66,19 @@ function Field({ label, value, onChange, unit, type = "number", testid, placehol
       <div className="flex items-center gap-2 mt-1 rounded-lg px-3 py-2"
            style={{ backgroundColor: colors.background,
                      border: `1px solid ${colors.border}` }}>
-        <input value={value} onChange={(e) => onChange(e.target.value)}
-               type={type} step="any" placeholder={placeholder}
-               className="w-full bg-transparent focus:outline-none text-base"
-               style={{ color: colors.onSurface }}
-               data-testid={testid} />
+        <input
+          value={value}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "" || /^-?\d*\.?\d*$/.test(v)) onChange(v);
+          }}
+          type="text"
+          inputMode="decimal"
+          pattern="[0-9]*[.,]?[0-9]*"
+          placeholder={placeholder}
+          className="w-full bg-transparent focus:outline-none text-base"
+          style={{ color: colors.onSurface }}
+          data-testid={testid} />
         {unit ? (
           <span className="text-xs font-semibold"
                 style={{ color: colors.muted }}>{unit}</span>
@@ -486,6 +520,13 @@ const UNIT_OPTIONS = [
 ];
 
 function AxisWithUnit({ label, testidBase, value, onChangeValue, unit, onChangeUnit }) {
+  // CHECKLIST-DECIMAL-INPUT-FIX · PoolCalculators sweep · Feb-2026 —
+  // same keystroke-safe migration as the ``Field`` component above
+  // (see that block for the full rationale).  The axis value is
+  // always a positive dimension (feet / inches / yards for the
+  // Material calculator), so the regex drops the leading-minus
+  // branch to prevent nonsensical negatives slipping into the
+  // volume formula.
   return (
     <label className="block">
       <span className="text-xs font-bold uppercase tracking-wider"
@@ -494,11 +535,19 @@ function AxisWithUnit({ label, testidBase, value, onChangeValue, unit, onChangeU
         <div className="flex items-center gap-2 rounded-lg px-3 py-2 flex-1"
              style={{ backgroundColor: colors.background,
                        border: `1px solid ${colors.border}` }}>
-          <input value={value} onChange={(e) => onChangeValue(e.target.value)}
-                  type="number" step="any" placeholder="0"
-                  className="w-full bg-transparent focus:outline-none text-base"
-                  style={{ color: colors.onSurface }}
-                  data-testid={`${testidBase}-value`} />
+          <input
+            value={value}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || /^\d*\.?\d*$/.test(v)) onChangeValue(v);
+            }}
+            type="text"
+            inputMode="decimal"
+            pattern="[0-9]*[.,]?[0-9]*"
+            placeholder="0"
+            className="w-full bg-transparent focus:outline-none text-base"
+            style={{ color: colors.onSurface }}
+            data-testid={`${testidBase}-value`} />
         </div>
         <select value={unit} onChange={(e) => onChangeUnit(e.target.value)}
                 className="rounded-lg px-3 py-2 text-sm font-semibold"

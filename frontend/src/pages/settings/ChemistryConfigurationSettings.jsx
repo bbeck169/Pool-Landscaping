@@ -309,13 +309,36 @@ export default function ChemistryConfigurationSettings() {
                       <div className="flex items-center gap-2">
                         <label className="text-xs"
                                 style={{ color: colors.muted }}>Min</label>
+                        {/* CHECKLIST-DECIMAL-INPUT-FIX · ChemistryConfigurationSettings
+                            sweep · Feb-2026 — the pre-fix shape rendered the raw
+                            HTML5 ``number`` input which (per spec) made Chrome /
+                            Firefox / iOS Safari return ``e.target.value === ""`` for
+                            intermediate decimal states like ``"7."``. The onChange
+                            wrote that blank straight into the ``drafts`` state, so
+                            tenants could not set a target like pH 7.4 — only pH 7
+                            or 8. Switch to ``type="text"`` + ``inputMode="decimal"``
+                            + keystroke regex guard, mirroring the CustomerChemistry
+                            AI Dosing fix (commit ``43a9f7bcf``). Using the pattern
+                            inline (not ``<DecimalInput>``) because the parent
+                            ``dirty`` flag + Save button enablement rely on LIVE
+                            per-keystroke updates to ``drafts[key].min/max`` —
+                            ``<DecimalInput>``'s blur-only commit would strand the
+                            Save button disabled until the input lost focus. The
+                            ``step`` attribute is kept because screen readers surface
+                            it as "increment hint" even on text-mode inputs. */}
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
+                          pattern="[0-9]*[.,]?[0-9]*"
                           step={step}
                           value={draft.min ?? ""}
-                          onChange={(e) => setDrafts((s) => ({
-                            ...s, [key]: { ...s[key], min: e.target.value },
-                          }))}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                            setDrafts((s) => ({
+                              ...s, [key]: { ...s[key], min: v },
+                            }));
+                          }}
                           className="w-24 px-2 py-1 rounded-lg text-sm"
                           style={{ background: colors.surfaceSecondary,
                                     border: `1px solid ${colors.border}`,
@@ -325,12 +348,18 @@ export default function ChemistryConfigurationSettings() {
                         <label className="text-xs"
                                 style={{ color: colors.muted }}>Max</label>
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
+                          pattern="[0-9]*[.,]?[0-9]*"
                           step={step}
                           value={draft.max ?? ""}
-                          onChange={(e) => setDrafts((s) => ({
-                            ...s, [key]: { ...s[key], max: e.target.value },
-                          }))}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                            setDrafts((s) => ({
+                              ...s, [key]: { ...s[key], max: v },
+                            }));
+                          }}
                           className="w-24 px-2 py-1 rounded-lg text-sm"
                           style={{ background: colors.surfaceSecondary,
                                     border: `1px solid ${colors.border}`,
