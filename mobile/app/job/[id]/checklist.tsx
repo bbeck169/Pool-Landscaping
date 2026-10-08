@@ -892,6 +892,15 @@ export default function JobChecklistScreen() {
   }
 
   const locked = !!report.submitted_at;
+  // K6 edit unlock · CLOSED-JOB-EDIT-UNLOCK — admins/managers/techs/owners
+  // can still edit completed jobs (no 24h window). Mirrors web K6_UNLOCK_ROLES.
+  const K6_UNLOCK_ROLES = new Set([
+    "super_admin", "admin", "manager", "tech", "technician", "owner", "employee",
+  ]);
+  const canEditCompleted = !locked ? false : (
+    K6_UNLOCK_ROLES.has(role || "") && (job?.status === "completed")
+  );
+  const effectiveLocked = locked && !canEditCompleted;
   const clientType: ChecklistType = getChecklistType(job);
   const backendKind: string = report.template || "generic";
   // Feb-2026 · Checklist reclassifier — mirrors ChecklistModal's rule:
@@ -900,7 +909,7 @@ export default function JobChecklistScreen() {
   // `role` is already declared at line 89 (component top scope) — reuse
   // it here rather than shadowing (fixes the eas-export SyntaxError
   // from the prior ticket).
-  const canEditServiceType: boolean = !locked && (
+  const canEditServiceType: boolean = !effectiveLocked && (
     role === "admin" || role === "super_admin" || role === "manager" ||
     (role === "technician" && !!myTechId
       && myTechId === job.technician_id)
@@ -914,7 +923,7 @@ export default function JobChecklistScreen() {
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <OfflineBadge testID="checklist-header-offline-badge" />
-            {!locked && (
+            {!effectiveLocked && (
               <Pressable onPress={attemptClose} hitSlop={10} testID="checklist-header-close-btn">
                 <Ionicons name="close" size={24} color={colors.onSurface} />
               </Pressable>
@@ -925,7 +934,7 @@ export default function JobChecklistScreen() {
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 160 + insets.bottom }}>
         <View style={styles.hero} testID="checklist-hero">
           <Text style={styles.heroLabel}>
-            {clientType} · backend:{backendKind}{locked ? " · LOCKED" : ""}
+            {clientType} · backend:{backendKind}{effectiveLocked ? " · LOCKED" : canEditCompleted ? " · K6 UNLOCKED" : ""}
           </Text>
           <Text style={styles.heroTitle}>
             {job.title || job.service_type || "Service"}
@@ -965,7 +974,7 @@ export default function JobChecklistScreen() {
         </View>
 
         {/* FLEET-B · Fleet check-in buttons — On My Way / Arrived */}
-        {!locked && job?.id && (
+        {!effectiveLocked && job?.id && (
           <View style={{ marginBottom: spacing.md }}>
             <CheckInButtons jobId={job.id} testID="checklist-fleet-checkin" />
           </View>
@@ -981,7 +990,7 @@ export default function JobChecklistScreen() {
               videos={srVideos}
               onPhotosChange={setSrPhotos}
               onVideosChange={setSrVideos}
-              readonly={locked}
+              readonly={effectiveLocked}
             />
           </View>
         )}
@@ -993,7 +1002,7 @@ export default function JobChecklistScreen() {
             <View testID="checklist-water-bodies-section">
               <WaterBodyManager
                 bodies={waterBodies}
-                locked={locked}
+                locked={effectiveLocked}
                 highlightBodies={highlightBodies}
                 onChange={handleBodiesChange}
               />
@@ -1003,7 +1012,7 @@ export default function JobChecklistScreen() {
             <PoolChecklistForm
               jobId={String(id)}
               customerId={job?.customer_id || null}
-              locked={locked}
+              locked={effectiveLocked}
               readings={report.chemical_readings || []}
               readingFields={report.chemical_reading_fields || []}
               chemicalsAdded={report.chemicals_added || []}
@@ -1022,7 +1031,7 @@ export default function JobChecklistScreen() {
           )}
           {clientType === "landscaping" && (
             <LandscapingChecklistForm
-              locked={locked}
+              locked={effectiveLocked}
               checklistItems={report.checklist_items || []}
               notes={report.notes || ""}
               internalNotes={report.internal_notes || ""}
@@ -1038,7 +1047,7 @@ export default function JobChecklistScreen() {
               return (
                 <IndustryChecklistForm
                   industry={derived}
-                  locked={locked}
+                  locked={effectiveLocked}
                   checklistItems={report.checklist_items || []}
                   notes={report.notes || ""}
                   onChange={patchReport}
@@ -1049,7 +1058,7 @@ export default function JobChecklistScreen() {
             return (
               <IndustryChecklistForm
                 industry="handyman"
-                locked={locked}
+                locked={effectiveLocked}
                 checklistItems={report.checklist_items || []}
                 notes={report.notes || ""}
                 onChange={patchReport}
@@ -1067,7 +1076,7 @@ export default function JobChecklistScreen() {
             photos={report.photos || []}
             onPhotosChange={(next) => setReport({ ...report, photos: next })}
             max={PHOTO_CAP}
-            disabled={locked}
+            disabled={effectiveLocked}
           />
         </View>
 
@@ -1082,12 +1091,12 @@ export default function JobChecklistScreen() {
             onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
             onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
             onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
-            readonly={locked}
+            readonly={effectiveLocked}
           />
         </View>
       </ScrollView>
 
-      {!locked && (
+      {!effectiveLocked && (
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
           <Pressable
             style={styles.draftBtn}
