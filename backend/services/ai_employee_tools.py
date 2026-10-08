@@ -88,6 +88,24 @@ class ToolSpec:
     # handler receives it as a kwarg.  Read-only tools default to
     # False and never see the extra state.
     needs_conversation_context: bool = False
+    # Feb-2026 · MARCO-AI-CHAT Phase B — safe-action tools.
+    # ``confirmation_required=True`` tools return a dry-run payload
+    # on the first call (plus persist a ``marco_inline_confirm`` row
+    # in ``ai_employee_actions``) and only fire the real side effect
+    # when invoked a second time with ``_confirm_token`` in args.
+    # Pure handler-side protocol — the dispatcher does not short-
+    # circuit, so a tool with ``confirmation_required=True`` is
+    # free to omit the second-call branch if it is actually
+    # idempotent.  Default False preserves pre-B behavior for the
+    # existing 10 tools.
+    confirmation_required: bool = False
+    # ``admin_only=True`` refuses any caller whose ``caller_kind``
+    # is not ``"admin"`` AND requires the persona to be either an
+    # orchestrator or ``tenant_all``-scoped.  Blocks the three
+    # Marco safe-action tools from leaking onto Skedra / Billy
+    # (customer-audience personas) even if a seed accidentally
+    # flips their scope.  Default False preserves pre-B behavior.
+    admin_only: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -633,6 +651,471 @@ async def _t_create_admin_todo(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Feb-2026 · MARCO-AI-CHAT Phase B — Safe-action tools.
+#
+# Three admin-write tools that follow a dry-run-then-confirm wire
+# protocol (B2-a: reuse ``ai_employee_actions`` queue with
+# ``kind=marco_inline_confirm``).  Flow:
+#
+#   1. Admin asks MARCO ("email invoice X to the customer").
+#   2. MARCO emits ``{"name": "send_invoice_email", "args": {...}}``.
+#   3. Dispatcher runs the handler WITHOUT ``_confirm_token`` in args.
+#      Handler persists a pending ``marco_inline_confirm`` row and
+#      returns ``{dry_run: True, action_id, ...payload}``.
+#   4. The orchestrator tool-loop stamps the next assistant message
+#      with ``pending_confirmation`` so the FE renders an inline
+#      Confirm / Cancel card inside MARCO's bubble.
+#   5. User clicks Confirm → FE POSTs the existing
+#      ``/ai-employees/actions/{aid}/approve`` endpoint → the
+#      approve handler for ``kind==marco_inline_confirm`` re-
+#      dispatches the stored tool with ``_confirm_token=aid`` →
+#      the real side effect fires.
+#
+# All three tools are tagged ``admin_only=True`` + ``confirmation_
+# required=True`` + ``required_scope=SCOPE_TENANT_ALL`` so only
+# MARCO (orchestrator) and any future tenant_all-scoped admin
+# persona can see them in ``tool_schema_prompt_snippet``.
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _mask_email(email: Any) -> str:
+    s = str(email or "").strip()
+    if not s or "@" not in s:
+        return "***"
+    local, _, domain = s.partition("@")
+    if len(local) <= 2:
+        return f"*@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+
+def _mask_phone(phone: Any) -> str:
+    digits = "".join(c for c in str(phone or "") if c.isdigit())
+    if len(digits) < 4:
+        return "***"
+    last4 = digits[-4:]
+    if len(digits) >= 10:
+        return f"+{digits[:1]}***-***-{last4}"
+    return f"***-{last4}"
+
+
+async def _create_marco_confirm_action(
+    *, tenant_id: str, invoker_persona: Dict[str, Any],
+    conversation_id: str, user_id: str,
+    tool_name: str, args: Dict[str, Any],
+    title: str, summary: str, draft: Dict[str, Any],
+) -> str:
+    """Persist a ``marco_inline_confirm`` row in
+    ``ai_employee_actions``.  Returns the new action id — handler
+    returns this as ``action_id`` so the FE can call the approve
+    endpoint with it.
+    """
+    from config import db as _db
+    from datetime import datetime as _dt, timezone as _tz
+    from uuid import uuid4 as _uuid4
+    aid = _uuid4().hex[:24]
+    now = _dt.now(_tz.utc).isoformat().replace("+00:00", "Z")
+    doc = {
+        "id": aid,
+        "tenant_id": tenant_id,
+        "employee_id": invoker_persona.get("id"),
+        "employee_key": invoker_persona.get("key") or "marco_executive",
+        "conversation_id": conversation_id,
+        "action": f"marco.{tool_name}",
+        "params": dict(args),
+        "draft": dict(draft),
+        "title": (title or "")[:280],
+        "summary": (summary or "")[:400],
+        "status": "pending",
+        # Discriminator the ``approve_action`` endpoint routes on so
+        # the Casey / Soshie / Emmie branches never fire for a
+        # MARCO row and the FE knows to render inline instead of
+        # the top-chip strip.
+        "kind": "marco_inline_confirm",
+        "requested_by": user_id,
+        "decided_by": None,
+        "decision_note": None,
+        "executed_at": None,
+        "result": None,
+        "moderation_flags": [],
+        "requires_human_approval": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await _db.ai_employee_actions.insert_one(dict(doc))
+    return aid
+
+
+async def _consume_marco_confirm_token(
+    *, tenant_id: str, confirm_token: str, tool_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Validate ``confirm_token`` matches a pending-or-approved
+    ``marco_inline_confirm`` row for this tool.  Returns the doc
+    on match, None otherwise.  The caller (``approve_action`` in
+    ``routers/ai_employees.py``) owns the status flip."""
+    from config import db as _db
+    if not confirm_token:
+        return None
+    row = await _db.ai_employee_actions.find_one(
+        {"id": confirm_token, "tenant_id": tenant_id,
+          "action": f"marco.{tool_name}"},
+        {"_id": 0},
+    )
+    if not row:
+        return None
+    if row.get("status") not in ("pending", "approved"):
+        return None
+    return row
+
+
+async def _t_send_invoice_email(
+    tenant_id: str,
+    *,
+    invoice_id: str,
+    email: Optional[str] = None,
+    custom_message: Optional[str] = None,
+    _confirm_token: Optional[str] = None,
+    conversation_context: Dict[str, Any],
+) -> Any:
+    """Email a payment-reminder shape for an existing invoice.
+
+    B1-a: uses the existing ``send_invoice_reminder_email`` primitive
+    (semantically a reminder, not a first-send).  Follow-up ticket
+    could split out a dedicated first-send template.
+    """
+    from config import db as _db
+    doc = await _db.quotes.find_one(
+        {"tenant_id": tenant_id, "id": invoice_id,
+          "doc_type": "invoice"},
+        {"_id": 0},
+    )
+    if not doc:
+        return {"error": "not_found", "detail": "invoice not found"}
+    cid = doc.get("customer_id")
+    cust = await _db.customers.find_one(
+        {"id": cid, "tenant_id": tenant_id}, {"_id": 0},
+    ) if cid else None
+    recipient = (
+        (email or "").strip() or ((cust or {}).get("email") or "").strip()
+    )
+    if not recipient or "@" not in recipient:
+        return {
+            "error": "no_recipient",
+            "detail": "no email on file for this invoice's customer",
+        }
+    invoice_number = (
+        doc.get("invoice_number") or doc.get("number")
+        or f"#{str(invoice_id)[:8]}"
+    )
+    total = float(doc.get("total") or 0)
+    balance = round(total - float(doc.get("amount_paid") or 0), 2)
+    masked = _mask_email(recipient)
+
+    if _confirm_token:
+        action = await _consume_marco_confirm_token(
+            tenant_id=tenant_id, confirm_token=_confirm_token,
+            tool_name="send_invoice_email",
+        )
+        if not action:
+            return {
+                "error": "bad_confirm_token",
+                "detail": "confirm token unknown or already fired",
+            }
+        try:
+            from emailer import send_invoice_reminder_email
+            ok = await send_invoice_reminder_email(doc)
+        except Exception as exc:                                   # noqa: BLE001
+            return {"error": "send_failed", "detail": str(exc)}
+        return {
+            "ok": bool(ok),
+            "recipient_masked": masked,
+            "invoice_number": invoice_number,
+            "sent_at": datetime.now(timezone.utc)
+                        .isoformat().replace("+00:00", "Z"),
+        }
+
+    subject_preview = f"Payment reminder — Invoice {invoice_number}"
+    draft = {
+        "recipient_masked": masked,
+        "subject_preview": subject_preview,
+        "invoice_number": invoice_number,
+        "total": total,
+        "balance": balance,
+        "custom_message": (custom_message or "")[:400] or None,
+    }
+    aid = await _create_marco_confirm_action(
+        tenant_id=tenant_id,
+        invoker_persona=conversation_context.get("invoker_persona") or {},
+        conversation_id=conversation_context.get("conversation_id") or "",
+        user_id=(conversation_context.get("user") or {}).get("id")
+                 or "marco",
+        tool_name="send_invoice_email",
+        args={"invoice_id": invoice_id, "email": email,
+                "custom_message": custom_message},
+        title=f"Email invoice {invoice_number} to {masked}",
+        summary=(
+            f"Payment reminder for {invoice_number} "
+            f"(${total:.2f}) → {masked}"
+        ),
+        draft=draft,
+    )
+    return {"dry_run": True, "action_id": aid, **draft}
+
+
+async def _t_send_estimate_email(
+    tenant_id: str,
+    *,
+    quote_id: str,
+    email: Optional[str] = None,
+    custom_message: Optional[str] = None,
+    _confirm_token: Optional[str] = None,
+    conversation_context: Dict[str, Any],
+) -> Any:
+    """Email an estimate/quote to the customer on file.
+
+    B1-a: uses the existing ``send_estimate_reminder_email``
+    primitive which already supports ``override_to``.
+    """
+    from config import db as _db
+    doc = await _db.quotes.find_one(
+        {"tenant_id": tenant_id, "id": quote_id, "doc_type": "quote"},
+        {"_id": 0},
+    )
+    if not doc:
+        return {"error": "not_found", "detail": "quote not found"}
+    cid = doc.get("customer_id")
+    cust = await _db.customers.find_one(
+        {"id": cid, "tenant_id": tenant_id}, {"_id": 0},
+    ) if cid else None
+    recipient = (
+        (email or "").strip() or ((cust or {}).get("email") or "").strip()
+    )
+    if not recipient or "@" not in recipient:
+        return {
+            "error": "no_recipient",
+            "detail": "no email on file for this quote's customer",
+        }
+    quote_number = (
+        doc.get("quote_number") or doc.get("number")
+        or f"#{str(quote_id)[:8]}"
+    )
+    total = float(doc.get("total") or 0)
+    masked = _mask_email(recipient)
+
+    if _confirm_token:
+        action = await _consume_marco_confirm_token(
+            tenant_id=tenant_id, confirm_token=_confirm_token,
+            tool_name="send_estimate_email",
+        )
+        if not action:
+            return {
+                "error": "bad_confirm_token",
+                "detail": "confirm token unknown or already fired",
+            }
+        tenant_doc = await _db.tenants.find_one(
+            {"id": tenant_id}, {"_id": 0},
+        ) or {}
+        try:
+            from emailer import send_estimate_reminder_email
+            ok = await send_estimate_reminder_email(
+                doc, tenant_doc, "",
+                override_to=recipient, magic_token="",
+            )
+        except Exception as exc:                                   # noqa: BLE001
+            return {"error": "send_failed", "detail": str(exc)}
+        return {
+            "ok": bool(ok),
+            "recipient_masked": masked,
+            "quote_number": quote_number,
+            "sent_at": datetime.now(timezone.utc)
+                        .isoformat().replace("+00:00", "Z"),
+        }
+
+    subject_preview = f"Your estimate — {quote_number}"
+    draft = {
+        "recipient_masked": masked,
+        "subject_preview": subject_preview,
+        "quote_number": quote_number,
+        "total": total,
+        "custom_message": (custom_message or "")[:400] or None,
+    }
+    aid = await _create_marco_confirm_action(
+        tenant_id=tenant_id,
+        invoker_persona=conversation_context.get("invoker_persona") or {},
+        conversation_id=conversation_context.get("conversation_id") or "",
+        user_id=(conversation_context.get("user") or {}).get("id")
+                 or "marco",
+        tool_name="send_estimate_email",
+        args={"quote_id": quote_id, "email": email,
+                "custom_message": custom_message},
+        title=f"Email estimate {quote_number} to {masked}",
+        summary=f"Estimate {quote_number} (${total:.2f}) → {masked}",
+        draft=draft,
+    )
+    return {"dry_run": True, "action_id": aid, **draft}
+
+
+async def _t_bulk_sms_scheduled(
+    tenant_id: str,
+    *,
+    when: str,
+    message: str,
+    _confirm_token: Optional[str] = None,
+    conversation_context: Dict[str, Any],
+) -> Any:
+    """SMS every customer scheduled today or tomorrow.
+
+    Applies ``strip_admin_owned_recipients`` to the batch on the
+    confirm path so admin / workforce / RC-from numbers are never
+    looped-back into the customer-facing SMS stream.  Each send
+    goes through the same ``services.comms_sms_adapter.send_sms``
+    adapter the service-reminder cron uses.
+    """
+    from config import db as _db
+    when_norm = (when or "").strip().lower()
+    if when_norm not in ("today", "tomorrow"):
+        return {"error": "bad_args",
+                 "detail": "when must be 'today' or 'tomorrow'"}
+    if (not message or not isinstance(message, str)
+            or len(message.strip()) < 2):
+        return {"error": "bad_args",
+                 "detail": "message must be at least 2 characters"}
+    body_text = message.strip()[:400]
+    today = datetime.now(timezone.utc).date()
+    target_date = (
+        today if when_norm == "today"
+        else today + timedelta(days=1)
+    )
+    date_prefix = target_date.isoformat()
+
+    jobs = await _db.jobs.find(
+        {
+            "tenant_id": tenant_id,
+            "status": {"$in": ["scheduled", "confirmed", "pending"]},
+            "$or": [
+                {"scheduled_date": date_prefix},
+                {"scheduled_date": {"$regex": f"^{date_prefix}"}},
+                {"scheduled_start": {"$regex": f"^{date_prefix}"}},
+            ],
+        },
+        {"_id": 0, "customer_id": 1},
+    ).to_list(2000)
+    customer_ids = sorted({
+        j.get("customer_id") for j in jobs if j.get("customer_id")
+    })
+
+    customers: List[Dict[str, Any]] = []
+    if customer_ids:
+        customers = await _db.customers.find(
+            {"tenant_id": tenant_id, "id": {"$in": customer_ids}},
+            {"_id": 0, "id": 1, "name": 1, "phone": 1,
+              "sms_opt_in": 1},
+        ).to_list(5000)
+    phones_masked: List[str] = []
+    recipients: List[Dict[str, Any]] = []
+    for c in customers:
+        if c.get("sms_opt_in") is False:
+            continue
+        phone = (c.get("phone") or "").strip()
+        if not phone:
+            continue
+        phones_masked.append(_mask_phone(phone))
+        recipients.append({
+            "customer_id": c["id"],
+            "phone": phone,
+            "name": c.get("name") or "",
+        })
+    customer_count = len(recipients)
+
+    if _confirm_token:
+        action = await _consume_marco_confirm_token(
+            tenant_id=tenant_id, confirm_token=_confirm_token,
+            tool_name="bulk_sms_scheduled",
+        )
+        if not action:
+            return {
+                "error": "bad_confirm_token",
+                "detail": "confirm token unknown or already fired",
+            }
+        # Deny-list the batch so admin / workforce numbers never
+        # receive the customer-facing SMS loop-back.
+        try:
+            from services.comms_hardening.deny_list import (
+                strip_admin_owned_recipients,
+            )
+            _kept, _stripped = await strip_admin_owned_recipients(
+                tenant_id=tenant_id, kind="customer_facing",
+                channel="sms",
+                recipients=[r["phone"] for r in recipients],
+                context={"trigger": "marco_bulk_sms_scheduled",
+                          "when": when_norm},
+            )
+            kept_set = {str(p).strip() for p in _kept}
+            recipients = [
+                r for r in recipients
+                if str(r["phone"]).strip() in kept_set
+            ]
+        except Exception as exc:                                   # noqa: BLE001
+            log.warning("[marco-bulk-sms] deny_list crashed: %s", exc)
+
+        sent = 0
+        failed = 0
+        errors: List[str] = []
+        try:
+            from services.comms_sms_adapter import send_sms
+            from services.comms_env_guard import CommsContext
+        except Exception as exc:                                   # noqa: BLE001
+            return {"error": "sms_adapter_missing", "detail": str(exc)}
+        for r in recipients:
+            try:
+                res = await send_sms(
+                    tenant_id=tenant_id, to_phone=r["phone"],
+                    body=body_text, context=CommsContext.AGENT,
+                )
+                if (res or {}).get("status") in ("sent", "mocked"):
+                    sent += 1
+                else:
+                    failed += 1
+                    errors.append(
+                        f"{r['customer_id']}:{(res or {}).get('status')}"
+                    )
+            except Exception as exc:                               # noqa: BLE001
+                failed += 1
+                errors.append(f"{r['customer_id']}:{type(exc).__name__}")
+        return {
+            "ok": True,
+            "sent": sent,
+            "failed": failed,
+            "errors": errors[:10],
+            "when": when_norm,
+        }
+
+    draft = {
+        "when": when_norm,
+        "date": date_prefix,
+        "customer_count": customer_count,
+        "phones_masked": phones_masked[:50],
+        "message_preview": body_text,
+    }
+    aid = await _create_marco_confirm_action(
+        tenant_id=tenant_id,
+        invoker_persona=conversation_context.get("invoker_persona") or {},
+        conversation_id=conversation_context.get("conversation_id") or "",
+        user_id=(conversation_context.get("user") or {}).get("id")
+                 or "marco",
+        tool_name="bulk_sms_scheduled",
+        args={"when": when_norm, "message": body_text},
+        title=(
+            f"Bulk SMS {customer_count} customers scheduled {when_norm}"
+        ),
+        summary=f"'{body_text[:80]}' → {customer_count} customers ({when_norm})",
+        draft=draft,
+    )
+    return {"dry_run": True, "action_id": aid, **draft}
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Registry.
 # ═══════════════════════════════════════════════════════════════════
 TOOL_REGISTRY: Dict[str, ToolSpec] = {
@@ -749,6 +1232,67 @@ TOOL_REGISTRY: Dict[str, ToolSpec] = {
         required_scope=SCOPE_TENANT_ALL,
         needs_customer_id=False,
         needs_conversation_context=True,
+    ),
+    # ─── Feb-2026 · MARCO-AI-CHAT Phase B · admin-write safe tools ──
+    "send_invoice_email": ToolSpec(
+        name="send_invoice_email",
+        description=(
+            "Email a payment reminder for an existing invoice to the"
+            " customer on file.  Requires admin confirmation — the"
+            " first call returns a dry-run payload and persists a"
+            " pending ai_employee_actions row (kind=marco_inline_"
+            "confirm); only when the admin clicks Confirm & Send in"
+            " the inline card does the send actually fire.  ``email``"
+            " is an optional override for the customer's primary"
+            " address.  ``custom_message`` is reserved for a future"
+            " email-template addendum (currently audit-only)."
+        ),
+        params=["invoice_id", "email?", "custom_message?"],
+        handler=_t_send_invoice_email,
+        required_scope=SCOPE_TENANT_ALL,
+        needs_customer_id=False,
+        needs_conversation_context=True,
+        confirmation_required=True,
+        admin_only=True,
+    ),
+    "send_estimate_email": ToolSpec(
+        name="send_estimate_email",
+        description=(
+            "Email an estimate/quote to the customer on file."
+            "  Confirmation-gated like send_invoice_email — first"
+            " call returns a dry-run, second call (via inline"
+            " Confirm & Send) fires the real email through the"
+            " existing send_estimate_reminder_email primitive."
+            "  ``email`` optionally overrides the customer's"
+            " on-file address."
+        ),
+        params=["quote_id", "email?", "custom_message?"],
+        handler=_t_send_estimate_email,
+        required_scope=SCOPE_TENANT_ALL,
+        needs_customer_id=False,
+        needs_conversation_context=True,
+        confirmation_required=True,
+        admin_only=True,
+    ),
+    "bulk_sms_scheduled": ToolSpec(
+        name="bulk_sms_scheduled",
+        description=(
+            "SMS every customer scheduled today or tomorrow with the"
+            " given message body.  Confirmation-gated — first call"
+            " returns the customer count + masked phones so the"
+            " admin can sanity-check the blast radius; second call"
+            " (via inline Confirm & Send) fans out via the shared"
+            " comms_sms_adapter with strip_admin_owned_recipients"
+            " applied so admin / workforce numbers never receive"
+            " the loop-back.  ``when`` is 'today' or 'tomorrow'."
+        ),
+        params=["when", "message"],
+        handler=_t_bulk_sms_scheduled,
+        required_scope=SCOPE_TENANT_ALL,
+        needs_customer_id=False,
+        needs_conversation_context=True,
+        confirmation_required=True,
+        admin_only=True,
     ),
 }
 
@@ -908,6 +1452,45 @@ async def dispatch_tool(
                   "detail": "this tool requires tenant-wide access, which "
                                 "this AI is not authorized for"}
 
+    # ── Feb-2026 · MARCO-AI-CHAT Phase B · admin_only safe-tools.
+    # Three sanity checks:
+    #   (i)  Caller MUST be admin — refuse any customer-kind caller
+    #        regardless of persona scope.
+    #   (ii) Persona MUST be either an orchestrator (MARCO) OR
+    #        tenant_all-scoped so a mis-configured customer-audience
+    #        persona can never see or invoke the tool.
+    #   (iii) Both guards are defense-in-depth — ``tool_schema_
+    #         prompt_snippet`` already hides these tools from
+    #         ineligible personas so the LLM wouldn't emit them.
+    if spec.admin_only:
+        if caller_kind != "admin":
+            audit_row["result_status"] = "permission_denied"
+            audit_row["result_summary"] = (
+                "admin_only tool from non-admin caller"
+            )
+            await _audit(audit_row)
+            return {
+                "error": "permission_denied",
+                "detail": (
+                    "this is an admin-only action and cannot be"
+                    " invoked by a customer-scope persona"
+                ),
+            }
+        if not (persona_is_orchestrator
+                 or persona_scope == SCOPE_TENANT_ALL):
+            audit_row["result_status"] = "permission_denied"
+            audit_row["result_summary"] = (
+                "admin_only tool from customer_scoped non-orchestrator persona"
+            )
+            await _audit(audit_row)
+            return {
+                "error": "permission_denied",
+                "detail": (
+                    "this tool requires an orchestrator persona or"
+                    " a tenant_all-scoped admin persona"
+                ),
+            }
+
     # ── Cross-customer guard (customer-scoped personas only) ────
     if persona_scope == SCOPE_CUSTOMER and spec.required_scope == SCOPE_CUSTOMER:
         # Auto-inject the caller's own customer_id when the tool
@@ -1011,6 +1594,16 @@ def tool_schema_prompt_snippet(persona: Dict[str, Any]) -> str:
     for t in TOOL_REGISTRY.values():
         if t.required_scope == SCOPE_ORCHESTRATOR:
             if is_orch:
+                available.append(t)
+            continue
+        # Feb-2026 · MARCO-AI-CHAT Phase B — admin_only safe-action
+        # tools (send_invoice_email, send_estimate_email,
+        # bulk_sms_scheduled) are visible to orchestrators OR
+        # tenant_all-scoped personas.  Keeps the three new tools
+        # reachable by MARCO even when the legacy seed left
+        # ``read_access_scope`` at "customer_scoped".
+        if t.admin_only:
+            if is_orch or scope == SCOPE_TENANT_ALL:
                 available.append(t)
             continue
         if t.required_scope == SCOPE_TENANT_ALL:

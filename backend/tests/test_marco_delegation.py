@@ -473,7 +473,12 @@ def test_orchestrator_tool_loop_terminates_at_cap_iterations(
 
     try:
         with caplog.at_level(logging.WARNING, logger="pool_crm"):
-            terminal = _run(ai_emps._run_orchestrator_tool_loop(
+            # Feb-2026 · MARCO-AI-CHAT Phase B — the loop now returns
+            # a 2-tuple ``(assistant_text, pending_confirmation)`` so
+            # safe-action dry-runs can be stamped onto the assistant
+            # message.  Unpack here; ``pending_confirmation`` is None
+            # for pure-delegation turns.
+            terminal, _pending = _run(ai_emps._run_orchestrator_tool_loop(
                 tenant={"id": "t-1"},
                 user={"id": "user-1"},
                 emp=marco,
@@ -486,6 +491,7 @@ def test_orchestrator_tool_loop_terminates_at_cap_iterations(
 
     # Ruling #1 — terminal message string.
     assert terminal == ai_emps._ORCH_TOOL_LOOP_TERMINAL_MSG
+    assert _pending is None
 
     # Cap fired at exactly 5 iterations.
     assert llm_calls["n"] == 5, (

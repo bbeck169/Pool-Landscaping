@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from config import db, logger, EMERGENT_LLM_KEY
 from routers.tenants import get_current_tenant
-from utils import get_current_user, new_id, now_iso, require_admin
+from utils import get_current_user, new_id, now_iso, require_admin, require_admin_or_manager
 from services.ai_credits import debit_credits, credit_credits
 # Sprint 3c · Feb-2026 — Feature Marketplace guard for the AI
 # Copilot **write / consume** boundary (LLM-costing POSTs). Reads
@@ -234,7 +234,29 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "Your reply always ends with the specialist's name + a "
          "short status of what they'll do next.\n"
          "7. Keep replies conversational and short — 2-4 "
-         "sentences unless the admin explicitly asks for a plan."
+         "sentences unless the admin explicitly asks for a plan.\n"
+         "8. You also have THREE admin-write safe-action tools "
+         "(all confirmation-gated — the FE renders an inline "
+         "Confirm & Send card after your dry-run reply, so NEVER "
+         "fire these without first proposing them to the admin "
+         "and showing the dry-run summary):\n"
+         "   • ``send_invoice_email(invoice_id, email?, "
+         "custom_message?)`` — email a payment-reminder shape of"
+         " an existing invoice to the customer on file.\n"
+         "   • ``send_estimate_email(quote_id, email?, "
+         "custom_message?)`` — email an estimate/quote to the"
+         " customer on file.\n"
+         "   • ``bulk_sms_scheduled(when, message)`` — text every"
+         " customer scheduled today or tomorrow (when ∈ "
+         "'today' / 'tomorrow').  First call returns a dry-run"
+         " with the customer_count + masked phones so you can"
+         " state the blast radius in your reply.\n"
+         "   When the admin asks for one of these outcomes, call"
+         " the matching tool with the plain args (never pass"
+         " ``_confirm_token`` — the approve path adds that"
+         " automatically).  Your reply should name the recipient"
+         " / scope and tell the admin to click Confirm & Send on"
+         " the inline card to actually fire the action."
      )},
 ]
 
@@ -713,7 +735,7 @@ async def _run_orchestrator_tool_loop(
     system_prompt: str,
     assistant_text: str,
     source_channel: Optional[str] = None,
-) -> str:
+) -> tuple:
     """Run the orchestrator's tool-call loop.
 
     Called immediately after the initial LLM reply for personas
@@ -729,15 +751,24 @@ async def _run_orchestrator_tool_loop(
       * The iteration cap (``_ORCH_TOOL_LOOP_MAX_ITERS = 5``) is
         hit — returns the terminal-message string per Sub-phase B
         ruling #1 with a warning logged.
+
+    Returns a 2-tuple ``(assistant_text, pending_confirmation)``.
+    ``pending_confirmation`` is populated when a confirmation-
+    required tool (Phase B safe-actions) returned a dry-run
+    payload during the loop — the caller stamps it onto the
+    assistant message so the FE renders an inline Confirm & Send
+    card inside MARCO's bubble.  ``None`` for conversations that
+    didn't trigger a safe-action tool.
     """
     from services.ai_employee_tools import (
         parse_tool_fence, dispatch_tool,
     )
     iters = 0
+    pending_confirmation: Optional[Dict[str, Any]] = None
     while iters < _ORCH_TOOL_LOOP_MAX_ITERS:
         parsed = parse_tool_fence(assistant_text)
         if not parsed:
-            return assistant_text
+            return assistant_text, pending_confirmation
         iters += 1
         tname, targs = parsed
 
@@ -765,6 +796,28 @@ async def _run_orchestrator_tool_loop(
             args=targs,
             conversation_context=conv_ctx,
         )
+
+        # Feb-2026 · MARCO-AI-CHAT Phase B — capture safe-action
+        # dry-runs so the caller can stamp ``pending_confirmation``
+        # on the assistant message.  Only the LATEST dry-run on a
+        # single tool-loop pass is surfaced; a message that fires
+        # multiple safe-actions would need the FE to render each
+        # inline card separately (not shipped in Phase B — follow-up
+        # ticket candidate if that pattern emerges).
+        _result = (outcome.get("result")
+                     if isinstance(outcome, dict) else None)
+        if (isinstance(_result, dict)
+                and _result.get("dry_run")
+                and _result.get("action_id")):
+            pending_confirmation = {
+                "action_id": _result["action_id"],
+                "tool_name": tname,
+                "kind": "marco_inline_confirm",
+                "payload": {
+                    k: v for k, v in _result.items()
+                    if k not in ("dry_run", "action_id")
+                },
+            }
 
         # Persist the tool call itself as a ``role="tool"`` row so
         # the transcript audit shows exactly what MARCO fetched /
@@ -824,8 +877,8 @@ async def _run_orchestrator_tool_loop(
             " cid=%s eid=%s user=%s iters=%s",
             cid, emp.get("id"), user.get("id"), iters,
         )
-        return _ORCH_TOOL_LOOP_TERMINAL_MSG
-    return assistant_text
+        return _ORCH_TOOL_LOOP_TERMINAL_MSG, pending_confirmation
+    return assistant_text, pending_confirmation
 
 
 
@@ -873,7 +926,7 @@ async def _llm_chat(system_prompt: str, user_text: str,
 # ─── Employee CRUD ────────────────────────────────────────────────────
 
 @router.get("/ai-employees")
-async def list_employees(user: dict = Depends(require_admin),
+async def list_employees(user: dict = Depends(require_admin_or_manager),
                           tenant: dict = Depends(get_current_tenant)):
     # Lazy seed for pods provisioned before AE1 shipped.
     await seed_ai_employees_for_tenant(tenant["id"])
@@ -893,7 +946,7 @@ async def list_employees(user: dict = Depends(require_admin),
 @router.get("/ai-employees/actions")
 async def list_actions(status: Optional[str] = None,
                         employee_key: Optional[str] = None,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_admin_or_manager),
                         tenant: dict = Depends(get_current_tenant)):
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if status:
@@ -908,7 +961,7 @@ async def list_actions(status: Optional[str] = None,
 
 @router.get("/ai-employees/{eid}")
 async def get_employee(eid: str,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_admin_or_manager),
                         tenant: dict = Depends(get_current_tenant)):
     return await _get_employee(tenant["id"], eid, expected_audience="admin")
 
@@ -1103,7 +1156,7 @@ async def patch_brand_brain(body: BrandBrainPatch,
 
 @router.get("/ai-employees/{eid}/conversations")
 async def list_conversations(eid: str,
-                              user: dict = Depends(require_admin),
+                              user: dict = Depends(require_admin_or_manager),
                               tenant: dict = Depends(get_current_tenant)):
     await _get_employee(tenant["id"], eid, expected_audience="admin")
     rows = await db.ai_employee_conversations.find(
@@ -1120,7 +1173,7 @@ async def list_conversations(eid: str,
     dependencies=[Depends(require_feature("ai_copilot"))],
 )
 async def create_conversation(eid: str, body: ConversationCreate,
-                                user: dict = Depends(require_admin),
+                                user: dict = Depends(require_admin_or_manager),
                                 tenant: dict = Depends(get_current_tenant)):
     await _get_employee(tenant["id"], eid, expected_audience="admin")
     # Feb-2026 · MARCO · Sub-phase B — multi-persona conversation
@@ -1217,7 +1270,7 @@ async def _load_conversation(tenant_id: str, eid: str, cid: str,
 
 @router.get("/ai-employees/{eid}/conversations/{cid}/messages")
 async def list_messages(eid: str, cid: str,
-                          user: dict = Depends(require_admin),
+                          user: dict = Depends(require_admin_or_manager),
                           tenant: dict = Depends(get_current_tenant)):
     await _load_conversation(tenant["id"], eid, cid, user["id"])
     rows = await db.ai_employee_messages.find(
@@ -1233,7 +1286,7 @@ async def list_messages(eid: str, cid: str,
               # Copilot gate on the LLM-costing send-message path.
               dependencies=[Depends(require_feature("ai_copilot"))])
 async def send_message(eid: str, cid: str, body: MessageIn,
-                         user: dict = Depends(require_admin),
+                         user: dict = Depends(require_admin_or_manager),
                          tenant: dict = Depends(get_current_tenant)):
     """Send a user turn + get the assistant response. When ``action``
     is set, routes to the employee's action handler which produces a
@@ -1314,6 +1367,12 @@ async def send_message(eid: str, cid: str, body: MessageIn,
 
     # 4) Route: action handler OR plain chat.
     action_doc: Optional[Dict[str, Any]] = None
+    # Feb-2026 · MARCO-AI-CHAT Phase B — safe-action dry-run payload
+    # produced inside the orchestrator tool loop.  Attached to the
+    # assistant_msg so the FE renders an inline Confirm & Send card.
+    # None for non-orchestrator personas AND for orchestrator turns
+    # that didn't invoke a confirmation-required tool.
+    pending_confirmation: Optional[Dict[str, Any]] = None
     # Phase S1 · Feb-2026 — Soshie intent detector.  When the caller
     # asks in natural language to "publish this as a blog" (or
     # equivalent), auto-emit ``soshie.publish_blog`` seeded with the
@@ -1369,7 +1428,7 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         # cap we replace the reply with the terminal message and
         # log a warning.
         if emp.get("orchestrator"):
-            assistant_text = await _run_orchestrator_tool_loop(
+            assistant_text, pending_confirmation = await _run_orchestrator_tool_loop(
                 tenant=tenant,
                 user=user,
                 emp=emp,
@@ -1397,6 +1456,12 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         # the frontend can render a "Sources referenced" section and
         # so history replays keep the citation trail intact.
         "sources": kb_sources,
+        # Feb-2026 · MARCO-AI-CHAT Phase B — safe-action dry-run
+        # payload (B2-a).  Non-null when MARCO called send_invoice_
+        # email / send_estimate_email / bulk_sms_scheduled this
+        # turn; the FE renders an inline Confirm & Send card inside
+        # this message bubble.
+        "pending_confirmation": pending_confirmation,
         "created_at": now_iso(),
     }
     await db.ai_employee_messages.insert_one(assistant_msg)
@@ -1417,6 +1482,11 @@ async def send_message(eid: str, cid: str, body: MessageIn,
         # pick whichever surface fits their UI.  Empty list means the
         # tenant has no matching KB docs (or an empty KB entirely).
         "sources": kb_sources,
+        # Feb-2026 · MARCO-AI-CHAT Phase B — mirror the dry-run
+        # pending-confirm payload at the top of the response so FE
+        # callers can treat the inline UX as a first-class signal
+        # without digging into assistant_message.
+        "pending_confirmation": pending_confirmation,
     }
 
 
@@ -1743,6 +1813,53 @@ async def approve_action(aid: str, body: Optional[ActionDecision] = None,
             "kind": "casey_draft_ready",
             "draft": doc.get("draft"),
         }
+    # Feb-2026 · MARCO-AI-CHAT Phase B — inline-confirm safe actions.
+    # The dry-run tool handler stashed the real tool name + params on
+    # this row with ``kind="marco_inline_confirm"``.  On approve, re-
+    # dispatch the stored tool with ``_confirm_token=aid`` so the
+    # handler fires the real send; flip the row to
+    # executed / failed based on dispatch outcome.
+    elif doc.get("kind") == "marco_inline_confirm":
+        from services.ai_employee_tools import (
+            dispatch_tool as _marco_dispatch_tool,
+        )
+        tool_name = str(doc.get("action") or "").replace("marco.", "", 1)
+        stored_params = dict(doc.get("params") or {})
+        marco_emp = await db.ai_employees.find_one(
+            {"id": doc["employee_id"], "tenant_id": tenant["id"]},
+            {"_id": 0},
+        ) or {
+            "id": doc["employee_id"],
+            "key": doc.get("employee_key") or "marco_executive",
+            "orchestrator": True,
+            "read_access_scope": "tenant_all",
+        }
+        outcome = await _marco_dispatch_tool(
+            tenant_id=tenant["id"],
+            persona=marco_emp,
+            caller_kind="admin",
+            caller_id=user["id"],
+            tool_name=tool_name,
+            args={**stored_params, "_confirm_token": aid},
+            conversation_context={
+                "confirm_token": aid,
+                "conversation_id": doc.get("conversation_id"),
+                "tenant_id": tenant["id"],
+                "invoker_persona": marco_emp,
+                "user": user,
+            },
+        )
+        if outcome.get("error"):
+            upd["status"] = "failed"
+            upd["executed_at"] = now_iso()
+            upd["result"] = {"kind": "marco_action_failed", **outcome}
+        else:
+            upd["status"] = "executed"
+            upd["executed_at"] = now_iso()
+            upd["result"] = {
+                "kind": "marco_action_executed",
+                **(outcome.get("result") or {}),
+            }
     # AE2 · Emmie — approval side-effects. Each action has its own
     # execute path; the underlying M2 campaigns are the source of
     # truth so we never duplicate copy on the ai_employee_actions row.

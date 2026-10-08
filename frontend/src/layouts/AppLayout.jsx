@@ -35,6 +35,13 @@ import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 // DTP-1 · Feb-2026 — Portal dark-theme scope wrapper.
 import PortalThemeShell from "@/components/portal/PortalThemeShell";
 import AIDock from "@/components/AIDock/AIDock";
+// Feb-2026 · MARCO-AI-CHAT Phase B — wake-word hooks for the three
+// admin-adjacent roles (admin / super_admin / manager / owner).
+// Both hooks are mounted globally via <MarcoWakeMount/> below so
+// "Hey Marco" (spoken via SpeechRecognition OR typed anywhere in
+// the admin UI) opens the AIDock drawer and auto-selects MARCO.
+import useWebWakeWord from "@/hooks/useWebWakeWord";
+import useTypedWakePhrase from "@/hooks/useTypedWakePhrase";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import TosGate from "@/components/legal/TosGate";
 // Feb-2026 · Slice 2C — Customer portal per-service ToS gate. Sits
@@ -866,6 +873,7 @@ function AppLayout() {
             non-admins). Mounted here so it's reachable from every
             authenticated route. */}
         <AIDock user={user} />
+        <MarcoWakeMount user={user} />
 
         {/* Bottom tab bar (<md) */}
         <nav
@@ -911,3 +919,27 @@ function AppLayout() {
 }
 
 export default ProtectedShell;
+
+// ──────────────────────────────────────────────────────────────────
+// Feb-2026 · MARCO-AI-CHAT Phase B — wake-word mount.
+//
+// Hosts the ``useWebWakeWord`` + ``useTypedWakePhrase`` hooks
+// behind an admin+ role gate so technicians / customers / portal
+// users never have a global keystroke listener or a mic prompt
+// attached.  Renders ``null`` — the hooks dispatch the
+// ``ai-dock:open-marco`` CustomEvent on the window, which the
+// AIDock component listens for and uses to open the drawer and
+// auto-select MARCO.
+// ──────────────────────────────────────────────────────────────────
+const _MARCO_WAKE_ROLES = new Set(
+  ["admin", "super_admin", "manager", "owner"]
+);
+
+function MarcoWakeMount({ user }) {
+  const role = (user?.role || "").toLowerCase();
+  const canUseMarco = _MARCO_WAKE_ROLES.has(role);
+  useWebWakeWord({ enabled: canUseMarco });
+  useTypedWakePhrase({ enabled: canUseMarco });
+  return null;
+}
+

@@ -18,6 +18,22 @@ import AIAvatar from "@/components/ai/AIAvatar";
 import { colors } from "@/theme";
 import { Button, Chip } from "@/components/ui-kit";
 import { EMPLOYEE_ACTIONS, ACTION_LABELS } from "./actionCatalog";
+// Feb-2026 · MARCO-AI-CHAT Phase B — Marco-only inline UX:
+//   * ChatMicButton — one-shot speech-to-text dictation into the
+//     chat input (append-only, never auto-send).
+//   * InlineConfirm — Confirm & Send card rendered inside a Marco
+//     assistant message bubble when the backend attached a
+//     ``pending_confirmation`` payload from a safe-action tool.
+import ChatMicButton from "./ChatMicButton";
+import InlineConfirm from "./InlineConfirm";
+
+// Feb-2026 · MARCO-AI-CHAT Phase B — widened role gate (B4-b).
+// Chat endpoints on the backend are now admin / super_admin /
+// manager / owner; FE visibility matches.  Approve/reject are
+// still admin-only server-side.
+const _AI_DOCK_ROLES = new Set(
+  ["admin", "super_admin", "manager", "owner"]
+);
 
 const LATEST_CONV_KEY = "ai_dock_latest_convs";
 
@@ -107,9 +123,19 @@ export default function AIDock({ user }) {
   const [activeEid, setActiveEid] = React.useState(null);
   const [balance, setBalance] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  // Feb-2026 · MARCO-AI-CHAT Phase B — stash a persona key here so
+  // the ``ai-dock:open-marco`` wake-event can request MARCO be
+  // auto-selected once the roster finishes loading.
+  const [pendingAutoSelectKey, setPendingAutoSelectKey] = React.useState(null);
 
-  const isAdmin = (user?.role || "").toLowerCase() === "admin"
-    || (user?.role || "").toLowerCase() === "super_admin";
+  // Feb-2026 · MARCO-AI-CHAT Phase B — widened to admin / super_admin
+  // / manager / owner per B4-b. Backend chat endpoints match; backend
+  // approve/reject stays admin-only.
+  const role = (user?.role || "").toLowerCase();
+  const canUseAIDock = _AI_DOCK_ROLES.has(role);
+  // Alias retained for backwards compat with downstream reads in this
+  // file; semantically renamed in Phase B.
+  const isAdmin = canUseAIDock;
 
   const loadRoster = React.useCallback(async () => {
     setLoading(true);
@@ -137,6 +163,37 @@ export default function AIDock({ user }) {
     window.addEventListener("ai-dock:open", onOpen);
     return () => window.removeEventListener("ai-dock:open", onOpen);
   }, [isAdmin]);
+
+  // Feb-2026 · MARCO-AI-CHAT Phase B — wake-word event listener.
+  // When "Hey Marco" is spoken (useWebWakeWord) or typed
+  // (useTypedWakePhrase), both hooks dispatch
+  // ``ai-dock:open-marco``.  Open the drawer, stash the key so the
+  // next effect picks up on it once the roster lands, and let the
+  // auto-select effect focus the input.
+  React.useEffect(() => {
+    if (!isAdmin) return undefined;
+    const onOpenMarco = () => {
+      setOpen(true);
+      setPendingAutoSelectKey("marco_executive");
+    };
+    window.addEventListener("ai-dock:open-marco", onOpenMarco);
+    return () => window.removeEventListener("ai-dock:open-marco", onOpenMarco);
+  }, [isAdmin]);
+
+  // Resolve the pending-auto-select key against the loaded roster.
+  React.useEffect(() => {
+    if (!pendingAutoSelectKey) return;
+    const target = employees.find((e) => e.key === pendingAutoSelectKey);
+    if (!target) return;
+    setActiveEid(target.id);
+    setPendingAutoSelectKey(null);
+    // Focus the chat input shortly after the pane renders.  50ms is
+    // enough for the ChatPane effect chain to mount the <textarea>.
+    setTimeout(() => {
+      const el = document.querySelector('[data-testid="ai-dock-input"]');
+      if (el && typeof el.focus === "function") el.focus();
+    }, 50);
+  }, [pendingAutoSelectKey, employees]);
 
   const refreshBalance = React.useCallback(async () => {
     try {
@@ -330,7 +387,14 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
       const acts = await api.get(
         `/ai-employees/actions?status=pending&employee_key=${employee.key}`
       );
-      setPendingActions(acts || []);
+      // Feb-2026 · MARCO-AI-CHAT Phase B — the ``marco_inline_confirm``
+      // rows render inside Marco's assistant-message bubbles via
+      // <InlineConfirm>.  Suppress them from the top-of-pane chip
+      // strip so the admin isn't shown two confirmation surfaces for
+      // the same action.
+      setPendingActions(
+        (acts || []).filter((a) => a.kind !== "marco_inline_confirm"),
+      );
     } catch (e) {
       setError(e.message || "Failed to load conversation.");
     }
@@ -366,7 +430,7 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
       setInput("");
       setActionKey("");
       setActionParams({});
-      if (r.action) {
+      if (r.action && r.action.kind !== "marco_inline_confirm") {
         setPendingActions((p) => [r.action, ...p]);
       }
       onBalanceChange();
@@ -503,6 +567,19 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
               {m.role === "assistant" && Array.isArray(m.sources) && m.sources.length > 0 ? (
                 <SourcesBlock sources={m.sources} messageId={m.id} />
               ) : null}
+              {/* Feb-2026 · MARCO-AI-CHAT Phase B — inline Confirm &
+                  Send card for Marco safe-action dry-runs.  Other 8
+                  personas keep rendering the top-of-pane chip strip
+                  (``pendingActions`` block above). */}
+              {m.role === "assistant"
+                && employee?.key === "marco_executive"
+                && m.pending_confirmation
+                && m.pending_confirmation.action_id ? (
+                <InlineConfirm
+                  pending={m.pending_confirmation}
+                  onDecided={() => onBalanceChange()}
+                />
+              ) : null}
             </div>
           ))
         )}
@@ -549,6 +626,17 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
           }}
           data-testid="ai-dock-input"
         />
+        {/* Feb-2026 · MARCO-AI-CHAT Phase B — voice dictation button
+            (Marco-only).  Append-only — the admin must still press
+            Send manually per Phase A gate P4.  Renders null on
+            Firefox / Safari without SpeechRecognition. */}
+        {employee?.key === "marco_executive" ? (
+          <ChatMicButton
+            value={input}
+            onChange={setInput}
+            disabled={sending || zeroBalance}
+          />
+        ) : null}
         <Button
           onClick={send}
           disabled={sending || !input.trim() || zeroBalance}
