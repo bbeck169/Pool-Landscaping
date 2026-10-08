@@ -262,6 +262,23 @@ async def clock_in(body: ClockInReq,
     await _broadcast(user["id"], "workforce.clock_in",
                      {"entry_id": doc["id"], "job_id": doc["job_id"],
                       "out_of_geofence": out_of_geofence})
+    # Feb-2026 · MARCO Proactive Alerts — resolve any active
+    # "missing_clock_in" alert for this job now that a clock-in
+    # exists.  Best-effort, no raise.
+    if doc.get("job_id"):
+        try:
+            from services.marco_alerts import (
+                auto_resolve_alert,
+                MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+            )
+            await auto_resolve_alert(
+                db, tenant_id=tenant["id"],
+                kind=MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+                entity_ref={"type": "job", "id": doc["job_id"]},
+                reason="clock_in",
+            )
+        except Exception:
+            pass
     return doc
 
 
@@ -1120,6 +1137,22 @@ async def auto_clock_in(body: AutoClockInReq,
     await _broadcast(uid, "workforce.clock_in",
                      {"entry_id": doc["id"], "job_id": doc["job_id"],
                       "auto": True, "distance_m": doc["distance_m_from_site"]})
+    # Feb-2026 · MARCO Proactive Alerts — mirror the manual
+    # clock-in auto-resolve for the GPS-auto path.
+    if doc.get("job_id"):
+        try:
+            from services.marco_alerts import (
+                auto_resolve_alert,
+                MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+            )
+            await auto_resolve_alert(
+                db, tenant_id=tenant["id"],
+                kind=MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+                entity_ref={"type": "job", "id": doc["job_id"]},
+                reason="clock_in_gps",
+            )
+        except Exception:
+            pass
     _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "clocked_in",
                        {"job_id": best["id"], "distance_m": doc["distance_m_from_site"]})
     return {

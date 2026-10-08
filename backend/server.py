@@ -1533,6 +1533,15 @@ from routers import reports_booked_out_capacity as _p5b2_boc  # noqa: E402
 api_router.include_router(_p5b2_le.router)
 api_router.include_router(_p5b2_boc.router)
 
+# Feb-2026 · MARCO Proactive Alerts — list/count/ack/dismiss/sweep
+# endpoints under ``/api/ai/marco/alerts``. Role gate:
+# admin/super_admin/manager/owner (ack/dismiss); admin-only
+# (manual sweep). See services/marco_alerts.py for detector
+# wiring + the 5-min background sweeper task registered in the
+# lifespan below.
+from routers import marco_alerts as _marco_alerts_router  # noqa: E402
+api_router.include_router(_marco_alerts_router.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
@@ -4769,6 +4778,26 @@ async def _run_boot_sequence():
                 "err=%s — will NOT restart until next boot", e,
             )
     asyncio.create_task(_bg_p47_missed_job_cleanup())
+
+    # Feb-2026 · MARCO Proactive Alerts — 5-min sweep task.  Runs
+    # all 5 detectors (overdue invoices, unassigned jobs, missing
+    # clock-ins, payment failures, SMS failures) across every
+    # active tenant and upserts into ``db.marco_alerts``.  Event-
+    # driven resolve hooks in ``routers/quotes.py``,
+    # ``routers/jobs.py``, and ``routers/workforce.py`` clear
+    # alerts the instant the underlying condition clears.
+    async def _bg_marco_alerts_sweeper():
+        try:
+            from services.marco_alerts import run_sweeper_loop
+            await run_sweeper_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(
+                "[marco-alerts] sweeper loop crashed on start "
+                "err=%s — will NOT restart until next boot", e,
+            )
+    asyncio.create_task(_bg_marco_alerts_sweeper())
 
     # Feb-2026 · P0 fix — Invoice number backfill. Heals invoice
     # docs persisted with a null / missing / empty

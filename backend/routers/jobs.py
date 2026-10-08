@@ -2631,6 +2631,39 @@ async def update_job(jid: str, body: JobUpdate,
             {"id": jid, "tenant_id": tenant["id"]}, _write_op,
         )
 
+    # Feb-2026 · MARCO Proactive Alerts — resolve "unassigned_job"
+    # alert the instant a crew or technician gets attached.  Also
+    # resolve "missing_clock_in" when the job is explicitly
+    # cancelled or rescheduled away from today.  Best-effort —
+    # never breaks the PUT.
+    try:
+        _newly_assigned = (
+            (update.get("crew_id") and not job.get("crew_id"))
+            or (update.get("technician_id") and not job.get("technician_id"))
+        )
+        _cancelled = update.get("status") == "cancelled"
+        if _newly_assigned or _cancelled:
+            from services.marco_alerts import (
+                auto_resolve_alert,
+                MARCO_ALERT_KIND_UNASSIGNED_JOB,
+                MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+            )
+            _entity = {"type": "job", "id": jid}
+            await auto_resolve_alert(
+                db, tenant_id=tenant["id"],
+                kind=MARCO_ALERT_KIND_UNASSIGNED_JOB,
+                entity_ref=_entity,
+                reason="assigned" if _newly_assigned else "cancelled",
+            )
+            if _cancelled:
+                await auto_resolve_alert(
+                    db, tenant_id=tenant["id"],
+                    kind=MARCO_ALERT_KIND_MISSING_CLOCK_IN,
+                    entity_ref=_entity, reason="cancelled",
+                )
+    except Exception:
+        pass
+
     # Feb-2026 · Service Notifications Pipeline — reschedule event.
     # Fires customer-facing dual-channel notification when the
     # ``scheduled_date`` actually changed. Runs as a background

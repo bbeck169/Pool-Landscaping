@@ -26,6 +26,13 @@ import { EMPLOYEE_ACTIONS, ACTION_LABELS } from "./actionCatalog";
 //     ``pending_confirmation`` payload from a safe-action tool.
 import ChatMicButton from "./ChatMicButton";
 import InlineConfirm from "./InlineConfirm";
+// Feb-2026 · MARCO Proactive Alerts — FAB badge overlay +
+// in-chat panel.  The badge polls ``GET /ai/marco/alerts/count``
+// every 30s via ``useMarcoAlerts`` and renders only when count>0.
+// The panel renders inside Marco's chat view (above message list).
+import useMarcoAlerts from "@/hooks/useMarcoAlerts";
+import AlertsBadge from "./AlertsBadge";
+import AlertsPanel from "./AlertsPanel";
 
 // Feb-2026 · MARCO-AI-CHAT Phase B — widened role gate (B4-b).
 // Chat endpoints on the backend are now admin / super_admin /
@@ -195,6 +202,34 @@ export default function AIDock({ user }) {
     }, 50);
   }, [pendingAutoSelectKey, employees]);
 
+  // Feb-2026 · MARCO Proactive Alerts — polling hook; empty for
+  // non-admin+ users. Powers the FAB badge AND is the source of
+  // truth for the top-bar counter in Marco's chat.
+  const alerts = useMarcoAlerts({ user });
+
+  // Feb-2026 · MARCO Proactive Alerts — the AlertsBadge button
+  // fires ``ai-dock:open-alerts`` on click.  Listen for it so a
+  // click on the badge opens the drawer, auto-selects Marco, and
+  // (via Marco's AlertsPanel) scrolls the panel into view.
+  React.useEffect(() => {
+    if (!isAdmin) return undefined;
+    const onOpenAlerts = () => {
+      setOpen(true);
+      setPendingAutoSelectKey("marco_executive");
+      // Give AlertsPanel a tick to mount, then nudge it into view.
+      setTimeout(() => {
+        const el = document.querySelector(
+          '[data-testid="marco-alerts-panel"]');
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 120);
+    };
+    window.addEventListener("ai-dock:open-alerts", onOpenAlerts);
+    return () => window.removeEventListener(
+      "ai-dock:open-alerts", onOpenAlerts);
+  }, [isAdmin]);
+
   const refreshBalance = React.useCallback(async () => {
     try {
       const bal = await api.get("/ai-credits/balance");
@@ -206,20 +241,34 @@ export default function AIDock({ user }) {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-24 md:bottom-6 right-6 z-40 rounded-full shadow-lg p-3 flex items-center gap-2 transition"
-        style={{
-          backgroundColor: colors.brand,
-          color: colors.onBrand,
-          border: `2px solid ${colors.surface}`,
-        }}
-        title="Open AI Dock"
-        data-testid="ai-dock-fab"
+      <div
+        className="fixed bottom-24 md:bottom-6 right-6 z-40"
+        style={{ position: "fixed" }}
       >
-        <Bot size={20} />
-        <span className="hidden sm:inline text-xs font-bold">AI Dock</span>
-      </button>
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={() => setOpen(true)}
+            className="rounded-full shadow-lg p-3 flex items-center gap-2 transition"
+            style={{
+              backgroundColor: colors.brand,
+              color: colors.onBrand,
+              border: `2px solid ${colors.surface}`,
+            }}
+            title="Open AI Dock"
+            data-testid="ai-dock-fab"
+          >
+            <Bot size={20} />
+            <span className="hidden sm:inline text-xs font-bold">AI Dock</span>
+          </button>
+          {/* Feb-2026 · MARCO Proactive Alerts — overlay badge on
+              the FAB.  Click → fires ``ai-dock:open-alerts`` so the
+              listener above opens the drawer + auto-selects Marco. */}
+          <AlertsBadge
+            count={alerts.count}
+            bySeverity={alerts.bySeverity}
+          />
+        </div>
+      </div>
 
       {open ? (
         <div
@@ -498,6 +547,11 @@ function ChatPane({ employee, onBack, onBalanceChange, balance }) {
           </div>
         </div>
       </div>
+
+      {/* Feb-2026 · MARCO Proactive Alerts — in-chat panel.  Only
+          Marco surfaces it; other 8 personas keep rendering just
+          the pending-approvals chip strip below. */}
+      {employee?.key === "marco_executive" ? <AlertsPanel /> : null}
 
       {pendingActions.length > 0 ? (
         <div className="px-3 py-2" style={{ borderBottom: `1px solid ${colors.border}` }}>

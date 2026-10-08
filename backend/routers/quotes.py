@@ -2093,6 +2093,29 @@ async def record_payment(qid: str, body: RecordPaymentIn,
             )
         except Exception:
             pass
+        # Feb-2026 · MARCO Proactive Alerts — auto-resolve the
+        # overdue-invoice alert AND any lingering payment-failed
+        # alert for this same invoice the instant it flips to
+        # paid.  Best-effort — never breaks the payment path.
+        try:
+            from services.marco_alerts import (
+                auto_resolve_alert,
+                MARCO_ALERT_KIND_OVERDUE_INVOICE,
+                MARCO_ALERT_KIND_PAYMENT_FAILED,
+            )
+            _entity = {"type": "invoice", "id": qid}
+            await auto_resolve_alert(
+                db, tenant_id=tenant["id"],
+                kind=MARCO_ALERT_KIND_OVERDUE_INVOICE,
+                entity_ref=_entity, reason="invoice_paid",
+            )
+            await auto_resolve_alert(
+                db, tenant_id=tenant["id"],
+                kind=MARCO_ALERT_KIND_PAYMENT_FAILED,
+                entity_ref=_entity, reason="invoice_paid",
+            )
+        except Exception:
+            pass
         # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
         try:
             from services.marketing.event_dispatcher import emit_event
@@ -2141,6 +2164,27 @@ async def pay_quote(qid: str,
             tenant_id=tenant["id"],
             entity_kind="invoice", entity_id=qid,
             customer_id=(fresh or {}).get("customer_id"),
+        )
+    except Exception:
+        pass
+    # Feb-2026 · MARCO Proactive Alerts — auto-resolve overdue +
+    # payment-failed alerts for this invoice.  Best-effort.
+    try:
+        from services.marco_alerts import (
+            auto_resolve_alert,
+            MARCO_ALERT_KIND_OVERDUE_INVOICE,
+            MARCO_ALERT_KIND_PAYMENT_FAILED,
+        )
+        _entity = {"type": "invoice", "id": qid}
+        await auto_resolve_alert(
+            db, tenant_id=tenant["id"],
+            kind=MARCO_ALERT_KIND_OVERDUE_INVOICE,
+            entity_ref=_entity, reason="manual_pay",
+        )
+        await auto_resolve_alert(
+            db, tenant_id=tenant["id"],
+            kind=MARCO_ALERT_KIND_PAYMENT_FAILED,
+            entity_ref=_entity, reason="manual_pay",
         )
     except Exception:
         pass
