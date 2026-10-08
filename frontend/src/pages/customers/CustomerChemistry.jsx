@@ -132,13 +132,31 @@ export default function CustomerChemistry() {
             </div>
           </div>
 
+          {/* CHECKLIST-DECIMAL-INPUT-FIX · Feb-2026 — Pool volume and
+              per-reading inputs previously rendered as HTML5 number
+              inputs which (per spec) made Chrome / Firefox / iOS
+              Safari return ``e.target.value === ""`` for intermediate
+              decimal states like ``"7."`` or ``".5"``. The adjacent
+              inputMode hint only steers which mobile keyboard
+              surfaces — it does NOT bypass the number-input
+              validation gate, so pH / FC / salt entry was effectively
+              integer-only.  Switching the type attribute to text keeps
+              the decimal-friendly keypad (via inputMode + pattern)
+              and lets the raw string flow through to our state —
+              identical pattern to ``ReadingInputRow`` /
+              ``<DecimalInput>``.  The keystroke-level regex guard
+              rejects paste of letters / multi-dot cases without
+              clobbering the user's in-progress input. */}
           <TextInput
             label="POOL VOLUME (gallons)"
-            type="number"
+            type="text"
             inputMode="decimal"
             pattern="[0-9]*[.,]?[0-9]*"
             value={volume}
-            onChange={(e) => setVolume(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || /^\d*\.?\d*$/.test(v)) setVolume(v);
+            }}
             wrapperClass="mb-3"
             testid="cx-volume"
           />
@@ -148,14 +166,16 @@ export default function CustomerChemistry() {
               <TextInput
                 key={r.k}
                 label={r.label}
-                type="number"
-                step="0.1"
+                type="text"
                 inputMode="decimal"
                 pattern="[0-9]*[.,]?[0-9]*"
                 value={readings[r.k]}
-                onChange={(e) =>
-                  setReadings((s) => ({ ...s, [r.k]: e.target.value }))
-                }
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                    setReadings((s) => ({ ...s, [r.k]: v }));
+                  }
+                }}
                 placeholder={r.range}
                 testid={`cx-reading-${r.k}`}
               />
