@@ -6,6 +6,7 @@ import { MapPin, Play, Info } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
 import MapView from "@/components/MapView";
+import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 function rankColor(rank) {
   if (rank == null) return "#F3F4F6";
@@ -123,6 +124,18 @@ export default function RankHeatmap() {
   //   * ``rank-heatmap-error``           — server or network.
   const [error, setError] = useState("");
 
+  // RANK-HEATMAP-ADDRESS-AUTOCOMPLETE · Feb-2026 — the center of
+  // the grid is now resolved from a Google Places autocomplete
+  // selection; the raw lat/lng inputs stay visible but render
+  // read-only so power users still see the resolved coordinates
+  // without being tempted to edit them manually.  ``manualCoords``
+  // is an escape hatch — when the Maps SDK key is unavailable (the
+  // ``AddressAutocomplete`` component surfaces its own
+  // ``-unavailable`` banner in that case) the user can toggle the
+  // lat/lng fields back to editable so the page still functions.
+  const [addressText, setAddressText] = useState("");
+  const [manualCoords, setManualCoords] = useState(false);
+
   const loadList = () => api.get("/seo/rank-heatmaps").then(setRows);
   useEffect(() => { loadList(); }, []);
 
@@ -235,16 +248,61 @@ export default function RankHeatmap() {
                             color: colors.onSurface }}
                    data-testid="rank-heatmap-kw" />
           </div>
+          {/* RANK-HEATMAP-ADDRESS-AUTOCOMPLETE · Feb-2026 — a single
+              address field drives the grid center.  On selection the
+              resolved lat / lng auto-populate the read-only fields
+              below.  Clearing the address also clears the coords so
+              the Generate button's client-side validation guard
+              catches the empty-form case naturally. */}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider"
+                   style={{ color: colors.muted }}>Address</label>
+            <AddressAutocomplete
+              value={addressText}
+              placeholder="Start typing an address…"
+              testid="rank-heatmap-address"
+              onChange={(v) => {
+                setAddressText(v);
+                if (!v || !v.trim()) {
+                  // Explicit clear — drop the resolved coords so a
+                  // stale selection doesn't survive into Generate.
+                  setForm((f) => ({ ...f, center_lat: 0, center_lng: 0 }));
+                }
+              }}
+              onSelect={(parsed) => {
+                const lat = Number(parsed?.lat);
+                const lng = Number(parsed?.lng);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                setAddressText(parsed.formatted || parsed.address || "");
+                setForm((f) => ({ ...f, center_lat: lat, center_lng: lng }));
+                setManualCoords(false);
+              }}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold uppercase tracking-wider"
+                   style={{ color: colors.muted }}>Resolved coordinates</label>
+            <button
+              type="button"
+              onClick={() => setManualCoords((v) => !v)}
+              className="text-[10px] font-semibold underline"
+              style={{ color: colors.muted }}
+              data-testid="rank-heatmap-manual-toggle">
+              {manualCoords ? "Use address lookup" : "Enter coords manually"}
+            </button>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider"
                      style={{ color: colors.muted }}>Center lat</label>
               <input type="number" step="0.001" value={form.center_lat}
                      onChange={(e) => setForm({ ...form, center_lat: Number(e.target.value) })}
+                     readOnly={!manualCoords}
                      className="w-full p-2 text-sm rounded-lg"
-                     style={{ backgroundColor: colors.background,
+                     style={{ backgroundColor: manualCoords ? colors.background : colors.surfaceSecondary,
                               border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }}
+                              color: manualCoords ? colors.onSurface : colors.muted,
+                              cursor: manualCoords ? "text" : "not-allowed" }}
                      data-testid="rank-heatmap-lat" />
             </div>
             <div>
@@ -252,10 +310,12 @@ export default function RankHeatmap() {
                      style={{ color: colors.muted }}>Center lng</label>
               <input type="number" step="0.001" value={form.center_lng}
                      onChange={(e) => setForm({ ...form, center_lng: Number(e.target.value) })}
+                     readOnly={!manualCoords}
                      className="w-full p-2 text-sm rounded-lg"
-                     style={{ backgroundColor: colors.background,
+                     style={{ backgroundColor: manualCoords ? colors.background : colors.surfaceSecondary,
                               border: `1px solid ${colors.border}`,
-                              color: colors.onSurface }}
+                              color: manualCoords ? colors.onSurface : colors.muted,
+                              cursor: manualCoords ? "text" : "not-allowed" }}
                      data-testid="rank-heatmap-lng" />
             </div>
           </div>
