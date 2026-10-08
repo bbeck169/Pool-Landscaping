@@ -37,7 +37,15 @@ describe("CustomersList · H1 bulk portal invite", () => {
   it("the H1 button renders ONLY for admin+ role (isAdmin gate)", () => {
     // The block that renders the button MUST be inside an isAdmin
     // conditional so tech/customer roles never see it.
-    const idx = SRC.indexOf("bulk-portal-invite");
+    //
+    // Feb-2026 — ``c4af1ec80`` added a second ``bulk-portal-invite``-
+    // bearing testid (the filter-bar flow at
+    // ``customers-filter-bulk-portal-invite-btn``), which the
+    // original ``SRC.indexOf("bulk-portal-invite")`` lookup now
+    // hits first.  Anchor on the SELECTION button's exact testid
+    // literal so this check stays scoped to the top-right toolbar
+    // H1 flow (the filter-bar flow has its own vitest file).
+    const idx = SRC.indexOf('testid="bulk-portal-invite"');
     expect(idx).toBeGreaterThan(0);
     const preamble = SRC.slice(Math.max(0, idx - 500), idx);
     expect(preamble).toMatch(/isAdmin\s*\?\s*\(/);
@@ -73,11 +81,20 @@ describe("CustomersList · H1 bulk portal invite", () => {
     // ``closeH1ConfirmModal`` helper (which calls ``load()``) so
     // Cancel/backdrop close paths also invalidate the list. Accept
     // either the direct ``load()`` (legacy) or the helper call.
-    const idx = SRC.indexOf('api.post(\n        "/admin/customers/portal-invite/bulk"');
-    // Fallback if line-wrap differs.
-    const alt = SRC.indexOf('api.post');
-    const start = idx > 0 ? idx : alt;
-    const body = SRC.slice(start, start + 1500);
+    //
+    // Feb-2026 — anchor on the SELECTION-flow function definition
+    // (``const doBulkPortalInvite = async () =>``) so this check
+    // isn't disturbed by the filter-bar flow's ``api.post`` call
+    // that landed with ``c4af1ec80`` and now sits earlier in the
+    // file.  The filter-bar flow owns its own vitest coverage.
+    const idx = SRC.indexOf("const doBulkPortalInvite = async () =>");
+    expect(idx).toBeGreaterThan(0);
+    // 2000-char window — the ``closeH1ConfirmModal()`` call sits
+    // ~1532 chars after the function definition (past
+    // ``setSelected(new Set())`` and the explanatory block comment
+    // that mentions the helper name without parens).  Bump above
+    // 1500 so the regex catches the actual call, not the comment.
+    const body = SRC.slice(idx, idx + 2000);
     expect(body).toMatch(/setSelected\(new Set\(\)\)/);
     expect(body).toMatch(/load\(\)|closeH1ConfirmModal\(\)/);
   });
