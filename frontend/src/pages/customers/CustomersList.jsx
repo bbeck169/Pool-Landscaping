@@ -145,12 +145,13 @@ export default function CustomersList() {
   const isAdminTier = canManageDeleted;
   const [includeDeleted, setIncludeDeleted] = useState(false);
   // BULK-PORTAL-INVITE-FILTER · Feb-2026 — confirmation modal
-  // state.  ``preview`` carries ``{total, ids}`` from the
-  // ``GET /customers?...&first_access=never&page_size=200``
-  // preview call; ``ids`` is already clamped to 200 by the
-  // backend's page_size, so the confirm handler can POST them
-  // directly.  ``busy`` guards the Cancel + Confirm CTAs during
-  // both the preview fetch and the confirm POST.
+  // state.  ``preview`` carries ``{total}`` populated by the
+  // preview GET ``/customers?...&first_access=never&page_size=1``
+  // (count-only; the eligible-id list is materialized on confirm
+  // by paginating ``page_size=100`` — the backend
+  // ``page_size_too_large`` cap — up to the 200-batch limit).
+  // ``busy`` guards the Cancel + Confirm CTAs during both the
+  // preview fetch and the confirm materialize + POST.
   const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
   const [bulkInvitePreview, setBulkInvitePreview] = useState(null);
   const [bulkInviteBusy, setBulkInviteBusy] = useState(false);
@@ -1226,20 +1227,23 @@ export default function CustomersList() {
 
   // BULK-PORTAL-INVITE-FILTER · Feb-2026 — "Bulk Portal Invite"
   // button in the Customers filter bar.  Flow:
-  //   1. Click → fire a preview GET against ``/customers`` with
-  //      the CURRENT filter state + a hard ``first_access=never``
+  //   1. Click → preview GET against ``/customers`` with the
+  //      CURRENT filter state + hard ``first_access=never``
   //      override (eligibility = customers who have never signed
-  //      into the portal).  Uses ``page_size=200`` so the ids
-  //      returned match the existing Phase-H1 bulk endpoint's
-  //      per-batch cap exactly.  ``total`` in the envelope is the
-  //      true eligible count regardless of the 200-page clamp —
-  //      the confirmation dialog uses that to show a cap warning
-  //      when ``total > 200``.
-  //   2. On confirm → POST those ids to
-  //      ``/admin/customers/portal-invite/bulk`` (existing
-  //      Phase-H1 endpoint).  Zero backend changes — the endpoint
-  //      already reuses ``_do_portal_provision`` per-id.
-  const _buildBulkInvitePreviewParams = () => {
+  //      into the portal).  Preview uses ``page_size=1`` so only
+  //      the envelope ``total`` field is read — modal shows the
+  //      count + a cap warning when ``total > 200``.
+  //   2. On confirm → paginate ``page_size=100`` (the backend
+  //      ``GET /customers`` upper bound, enforced by routers/
+  //      customers.py:1294 — above 100 returns HTTP 400
+  //      ``page_size_too_large``) until up to 200 ids are
+  //      materialized, then POST to
+  //      ``/admin/customers/portal-invite/bulk`` (existing Phase-
+  //      H1 endpoint, which already enforces its own 200 cap +
+  //      reuses ``_do_portal_provision`` per-id).
+  const _BULK_INVITE_BATCH_CAP = 200;
+  const _BULK_INVITE_PAGE_SIZE = 100;
+  const _buildBulkInviteBaseParams = () => {
     const params = new URLSearchParams();
     const kw = (q || "").trim();
     if (kw) params.set("search", kw);
@@ -1260,10 +1264,6 @@ export default function CustomersList() {
     // HARD override — eligibility pool is anyone who has never
     // signed into the portal (matches the user-approved spec).
     params.set("first_access", "never");
-    // Grab a full batch worth of ids in one call; ``total`` on
-    // the envelope still reports the un-clamped eligible count.
-    params.set("page", "1");
-    params.set("page_size", "200");
     return params;
   };
 
@@ -1271,13 +1271,19 @@ export default function CustomersList() {
     if (bulkInviteBusy) return;
     setBulkInviteBusy(true);
     try {
-      const params = _buildBulkInvitePreviewParams();
+      // Preview — count only.  Backend ``GET /customers`` caps
+      // ``page_size`` at 100 (rejects larger with HTTP 400
+      // ``page_size_too_large``); the envelope's ``total`` field
+      // is populated regardless, so ``page_size=1`` is the
+      // cheapest way to materialize the eligible count.
+      const params = _buildBulkInviteBaseParams();
+      params.set("page", "1");
+      params.set("page_size", "1");
       const data = await api.get(`/customers?${params.toString()}`);
       const items = Array.isArray(data) ? data : (data?.items || []);
       const totalEligible = Number.isFinite(data?.total)
         ? data.total : items.length;
-      const ids = items.map((c) => c.id).filter(Boolean);
-      setBulkInvitePreview({ total: totalEligible, ids });
+      setBulkInvitePreview({ total: totalEligible });
       setBulkInviteOpen(true);
     } catch (e) {
       const msg = e?.data?.detail?.message || e?.message
@@ -1288,11 +1294,46 @@ export default function CustomersList() {
     }
   };
 
+  const _materializeBulkInviteIds = async (totalEligible) => {
+    // Paginate ``GET /customers`` at the backend cap
+    // (``page_size=100``) until we have up to
+    // ``_BULK_INVITE_BATCH_CAP`` ids OR the pool is exhausted.
+    const target = Math.min(
+      Math.max(0, Number(totalEligible || 0)),
+      _BULK_INVITE_BATCH_CAP,
+    );
+    const ids = [];
+    let page = 1;
+    while (ids.length < target) {
+      const params = _buildBulkInviteBaseParams();
+      params.set("page", String(page));
+      params.set("page_size", String(_BULK_INVITE_PAGE_SIZE));
+      const data = await api.get(`/customers?${params.toString()}`);
+      const items = Array.isArray(data) ? data : (data?.items || []);
+      if (!items.length) break;
+      for (const c of items) {
+        if (c?.id) ids.push(c.id);
+        if (ids.length >= target) break;
+      }
+      if (items.length < _BULK_INVITE_PAGE_SIZE) break;
+      page += 1;
+    }
+    return ids.slice(0, _BULK_INVITE_BATCH_CAP);
+  };
+
   const confirmBulkPortalInviteFromFilter = async () => {
-    if (!bulkInvitePreview || !bulkInvitePreview.ids.length) return;
-    const idsToSend = bulkInvitePreview.ids.slice(0, 200);
+    if (!bulkInvitePreview
+         || !Number(bulkInvitePreview.total || 0)) return;
     setBulkInviteBusy(true);
     try {
+      const idsToSend = await _materializeBulkInviteIds(
+        bulkInvitePreview.total,
+      );
+      if (!idsToSend.length) {
+        setToast({ tone: "warning",
+                     message: "No eligible customers to invite." });
+        return;
+      }
       const res = await api.post(
         "/admin/customers/portal-invite/bulk",
         { customer_ids: idsToSend,

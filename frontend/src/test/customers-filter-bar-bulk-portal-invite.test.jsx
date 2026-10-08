@@ -7,16 +7,21 @@
  *      / owner, hidden for manager / technician.
  *   2. Disabled state when the visible list is empty (``0 shown``).
  *   3. Click → preview GET fires with the current filter state +
- *      hard ``first_access=never`` + ``page_size=200`` override.
+ *      hard ``first_access=never`` + ``page_size=1`` override
+ *      (count-only; the backend caps ``page_size`` at 100).
  *   4. Confirmation modal shows the eligible count returned by the
  *      preview envelope's ``total`` field.
  *   5. Cancel path — no POST fires.
- *   6. Confirm path — POST fires to the existing Phase-H1 bulk
- *      endpoint with the preview-returned customer ids.
+ *   6. Confirm path — paginates ``page_size=100`` to materialize
+ *      up to 200 ids, then POSTs them to the existing Phase-H1
+ *      bulk endpoint.
  *   7. Cap warning banner renders when ``total > 200`` (the single-
  *      batch backend cap).
  *   8. Zero-eligible edge — modal renders the empty-pool note +
  *      the Send CTA is disabled.
+ *   9. Pagination — when ``total > 100``, confirm issues multiple
+ *      ``page_size=100`` GETs and POSTs the merged, 200-clamped
+ *      id list.
  *
  * Sibling to the pre-existing ``customers-bulk-portal-invite.test
  * .jsx`` (which covers the SELECTION-driven Phase-H1 flow in the
@@ -184,7 +189,7 @@ describe("Customers · filter-bar Bulk Portal Invite · disabled state",
 
 describe("Customers · filter-bar Bulk Portal Invite · preview + "
          + "confirmation", () => {
-  it("fires preview GET with first_access=never + page_size=200 "
+  it("fires preview GET with first_access=never + page_size=1 "
      + "overrides and shows the eligible total in the modal",
      async () => {
     _seedList([{ id: "c1", name: "Alpha" },
@@ -194,13 +199,10 @@ describe("Customers · filter-bar Bulk Portal Invite · preview + "
       "customers-filter-bulk-portal-invite-btn",
     );
     // Chain a second GET response for the preview call (the mount
-    // GET already resolved).
+    // GET already resolved).  Only ``total`` is read — the
+    // envelope's items list is intentionally empty.
     getSpy.mockImplementationOnce(async () => ({
-      items: [
-        { id: "c1", name: "Alpha" },
-        { id: "c2", name: "Bravo" },
-      ],
-      total: 2,
+      items: [], total: 2,
     }));
 
     fireEvent.click(btn);
@@ -217,7 +219,7 @@ describe("Customers · filter-bar Bulk Portal Invite · preview + "
     );
     expect(previewCall).toBeDefined();
     expect(previewCall[0]).toMatch(/first_access=never/);
-    expect(previewCall[0]).toMatch(/page_size=200/);
+    expect(previewCall[0]).toMatch(/page_size=1(?!\d)/);
   });
 
   it("Cancel button closes the modal without firing a POST",
@@ -240,14 +242,20 @@ describe("Customers · filter-bar Bulk Portal Invite · preview + "
     expect(postSpy).not.toHaveBeenCalled();
   });
 
-  it("Confirm button POSTs the preview-returned ids to the "
-     + "existing bulk endpoint", async () => {
+  it("Confirm button paginates eligibility then POSTs the "
+     + "materialized ids to the existing bulk endpoint", async () => {
     _seedList([{ id: "c1", name: "Alpha" },
                 { id: "c2", name: "Bravo" }]);
     _mount();
     const btn = await screen.findByTestId(
       "customers-filter-bulk-portal-invite-btn",
     );
+    // Preview (page_size=1) → total only, items ignored.
+    getSpy.mockImplementationOnce(async () => ({
+      items: [], total: 2,
+    }));
+    // Materialization (page_size=100) → one page below the cap,
+    // loop terminates after reading the short page.
     getSpy.mockImplementationOnce(async () => ({
       items: [{ id: "c1", name: "Alpha" },
               { id: "c2", name: "Bravo" }],
@@ -261,9 +269,88 @@ describe("Customers · filter-bar Bulk Portal Invite · preview + "
     fireEvent.click(screen.getByTestId("bulk-portal-invite-confirm-btn"));
 
     await waitFor(() => expect(postSpy).toHaveBeenCalled());
+
+    // Materialization GET fired with the backend's 100 cap, not 200.
+    const matCall = getSpy.mock.calls.find(
+      ([p]) => typeof p === "string"
+        && p.startsWith("/customers?")
+        && p.includes("first_access=never")
+        && /page_size=100(?!\d)/.test(p),
+    );
+    expect(matCall).toBeDefined();
+
+    // POST carries the merged id list + the Phase-H1 reason tag.
     const [path, body] = postSpy.mock.calls[0];
     expect(path).toBe("/admin/customers/portal-invite/bulk");
     expect(body.customer_ids).toEqual(["c1", "c2"]);
+    expect(body.reason).toBe("bulk-filter-invite");
+  });
+});
+
+
+describe("Customers · filter-bar Bulk Portal Invite · pagination",
+         () => {
+  it("when total > 100, confirm issues multiple page_size=100 "
+     + "GETs and POSTs the 200-clamped id list", async () => {
+    _seedList([{ id: "c1", name: "Alpha" }]);
+    _mount();
+    const btn = await screen.findByTestId(
+      "customers-filter-bulk-portal-invite-btn",
+    );
+    // Preview — 250 eligible > 100 (needs pagination) and > 200
+    // (loop should clamp to the backend bulk cap).
+    getSpy.mockImplementationOnce(async () => ({
+      items: [], total: 250,
+    }));
+    // Page 1 — 100 ids.
+    const _page1 = Array.from(
+      { length: 100 }, (_, i) => ({ id: `c${i + 1}` }),
+    );
+    getSpy.mockImplementationOnce(async () => ({
+      items: _page1, total: 250,
+    }));
+    // Page 2 — next 100 ids.  Loop should stop here (200-cap hit)
+    // and NEVER request page 3.
+    const _page2 = Array.from(
+      { length: 100 }, (_, i) => ({ id: `c${i + 101}` }),
+    );
+    getSpy.mockImplementationOnce(async () => ({
+      items: _page2, total: 250,
+    }));
+    postSpy.mockResolvedValue({ queued: 200, sent: 0,
+                                   failed_send: 0,
+                                   batch_id: "b-2" });
+    fireEvent.click(btn);
+    await screen.findByTestId("bulk-portal-invite-modal");
+    fireEvent.click(screen.getByTestId("bulk-portal-invite-confirm-btn"));
+
+    await waitFor(() => expect(postSpy).toHaveBeenCalled());
+
+    // Collect the materialization GETs — expect page=1 and page=2,
+    // never page=3 (200-cap hit after page 2).
+    const matCalls = getSpy.mock.calls.filter(
+      ([p]) => typeof p === "string"
+        && p.startsWith("/customers?")
+        && p.includes("first_access=never")
+        && /page_size=100(?!\d)/.test(p),
+    );
+    expect(matCalls.length).toBe(2);
+    expect(matCalls[0][0]).toMatch(/[?&]page=1(?!\d)/);
+    expect(matCalls[1][0]).toMatch(/[?&]page=2(?!\d)/);
+    // Never over-fetches.
+    const over = getSpy.mock.calls.find(
+      ([p]) => typeof p === "string"
+        && p.includes("first_access=never")
+        && /[?&]page=3(?!\d)/.test(p),
+    );
+    expect(over).toBeUndefined();
+
+    // POST body — exactly 200 ids, in order c1..c200.
+    const [path, body] = postSpy.mock.calls[0];
+    expect(path).toBe("/admin/customers/portal-invite/bulk");
+    expect(body.customer_ids.length).toBe(200);
+    expect(body.customer_ids[0]).toBe("c1");
+    expect(body.customer_ids[199]).toBe("c200");
     expect(body.reason).toBe("bulk-filter-invite");
   });
 });
