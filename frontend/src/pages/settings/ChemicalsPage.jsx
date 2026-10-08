@@ -278,16 +278,31 @@ function ProductsTab() {
               </div>
               <div className="col-span-2">
                 <Label>Unit cost (cents)</Label>
+                {/* PRICING-DECIMAL-INPUT-PARITY · Feb-2026 — pre-fix
+                    this rendered as type="number" which (per HTML5
+                    spec) blanks ``e.target.value`` on intermediate
+                    decimal states like ``"125."``.  The adjacent
+                    ``centsToDollars`` preview + the save payload both
+                    read ``editing.unit_cost_cents`` LIVE (no blur
+                    commit), so a shared ``<DecimalInput>`` with its
+                    blur-only onChange would strand the preview on
+                    the pre-keystroke value.  Inline the keystroke-
+                    safe pattern (text + inputMode + regex guard) as
+                    documented in ``ChemistryConfigurationSettings``
+                    commit ``0f5e7886f``. */}
                 <Input
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
                   value={editing.unit_cost_cents}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
                     setEditing({
                       ...editing,
-                      unit_cost_cents: e.target.value,
-                    })
-                  }
+                      unit_cost_cents: v,
+                    });
+                  }}
                   data-testid="chem-product-cost"
                 />
                 <p className="text-xs text-muted-foreground mt-1">

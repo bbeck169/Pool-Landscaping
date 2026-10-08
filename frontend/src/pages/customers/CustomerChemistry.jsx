@@ -337,10 +337,17 @@ export default function CustomerChemistry() {
             />
             <TextInput
               label="UNIT PRICE"
-              type="number"
-              step="0.01"
+              type="text"
+              inputMode="decimal"
+              pattern="[0-9]*[.,]?[0-9]*"
               value={newItem.unit_price}
-              onChange={(e) => setNewItem({ ...newItem, unit_price: e.target.value })}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                  setNewItem({ ...newItem, unit_price: v });
+                }
+              }}
+              testid="cx-add-unit-price"
             />
           </div>
         </div>

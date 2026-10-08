@@ -231,12 +231,25 @@ export default function ChemicalCosts() {
                         <td className="px-4 py-2.5 text-right">
                           <div className="inline-flex items-center gap-1">
                             <span className="text-xs" style={{ color: colors.muted }}>$</span>
+                            {/* PRICING-DECIMAL-INPUT-PARITY ·
+                                Feb-2026 — see commit ``0f5e7886f``
+                                for the full rationale.  Save button
+                                in this row reads ``d.dollars`` LIVE
+                                (``editRow`` writes on every
+                                keystroke), so a shared
+                                ``<DecimalInput>`` with its blur-
+                                only onChange would race the Save
+                                button and ship stale values. */}
                             <input
-                              type="number"
-                              min="0"
-                              step="0.01"
+                              type="text"
+                              inputMode="decimal"
+                              pattern="[0-9]*[.,]?[0-9]*"
                               value={d.dollars || ""}
-                              onChange={(e) => editRow(r.chemical_slug, { dollars: e.target.value })}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+                                editRow(r.chemical_slug, { dollars: v });
+                              }}
                               className="w-24 px-2 py-1 rounded text-sm text-right"
                               style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                               data-testid={`chemical-cost-dollars-${r.chemical_slug}`}
