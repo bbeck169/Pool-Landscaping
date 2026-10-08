@@ -179,29 +179,27 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
   // MARCO-AI-CHAT Phase B — mic dictation (Marco only, append-not-send)
   const isMarco = (employee.key || employee.name || "").toLowerCase() === "marco";
   const [recording, setRecording] = useState(false);
-  const recorderRef = useRef<any>(null);
+  const recorder = ExpoAudio.useAudioRecorder(ExpoAudio.RecordingPresets.HIGH_QUALITY);
 
   const startRecording = useCallback(async () => {
     if (!_Audio || recording) return;
     try {
-      await _Audio.requestRecordingPermissionsAsync?.();
-      const rec = new (_Audio as any).Recording();
-      await rec.prepareToRecordAsync(_Audio.RecordingPresets?.HIGH_QUALITY || {});
-      await rec.startAsync();
-      recorderRef.current = rec;
+      const perm = await ExpoAudio.requestRecordingPermissionsAsync();
+      if (!perm.granted) return;
+      await ExpoAudio.setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setRecording(true);
     } catch {
       // If expo-audio unavailable or permission denied, silently fail
     }
-  }, [recording]);
+  }, [recording, recorder]);
 
   const stopRecordingAndTranscribe = useCallback(async () => {
-    if (!recorderRef.current) { setRecording(false); return; }
     try {
       setRecording(false);
-      await recorderRef.current.stopAndUnloadAsync();
-      const uri = recorderRef.current.getURI();
-      recorderRef.current = null;
+      await recorder.stop();
+      const uri = recorder.uri;
       if (!uri) return;
       const result = await transcribeAudio(uri);
       if (result?.transcript) {
@@ -213,7 +211,7 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
     } catch {
       setRecording(false);
     }
-  }, []);
+  }, [recorder]);
 
   // Load or create a conversation on mount
   useEffect(() => {

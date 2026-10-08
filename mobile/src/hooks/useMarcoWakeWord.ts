@@ -17,6 +17,7 @@ import {
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
 } from "expo-audio";
+import * as ExpoSpeech from "expo-speech";
 
 import { useAuth } from "@/src/auth";
 import {
@@ -33,13 +34,8 @@ import {
   executeMarco,
 } from "@/src/services/marco/executeMarco";
 
-/* ── TTS (dynamic import for Expo Go safety) ───────────────────── */
-let _Speech: any = null;
-try {
-  _Speech = require("expo-speech");
-} catch {
-  _Speech = null;
-}
+/* ── TTS ─────────────────────────────────────────────────────────── */
+const _Speech: any = ExpoSpeech;
 
 const RECORD_DURATION_MS = 8000; // Max 8s recording after wake
 
@@ -110,6 +106,12 @@ export function useMarcoWakeWord(onOpenDock?: () => void) {
     }
   }, [recorder, isVoiceCommandScreen, onOpenDock]);
 
+  // Latest-ref: the wake service registers its callback once, so hand it a
+  // stable wrapper that always calls the current (route-aware) handler.
+  const handleWakeRef = useRef(handleWakeDetected);
+  handleWakeRef.current = handleWakeDetected;
+  const onWake = useCallback(() => handleWakeRef.current(), []);
+
   useEffect(() => {
     if (!user) {
       if (startedRef.current) {
@@ -138,7 +140,7 @@ export function useMarcoWakeWord(onOpenDock?: () => void) {
       if (!wakeEnabled || !ttsEnabled) return;
 
       if (!isWakeWordRunning()) {
-        const ok = await startWakeWord(handleWakeDetected);
+        const ok = await startWakeWord(onWake);
         if (ok) startedRef.current = true;
       }
     };
@@ -148,5 +150,5 @@ export function useMarcoWakeWord(onOpenDock?: () => void) {
     return () => {
       // Don't stop on unmount since this is root-level
     };
-  }, [user, handleWakeDetected]);
+  }, [user, onWake]);
 }
