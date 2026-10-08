@@ -71,7 +71,22 @@ TOKEN_SUB = "est"
 MAGIC_LINK_TTL_DAYS = 30
 
 _CUSTOMER_LINE_HIDDEN = ("calc", "m_rate", "bh", "t_bh", "t_b_cost",
-                          "margin_pct", "cost_rate", "unit_price", "cost",
+                          "margin_pct", "cost_rate", "cost",
+                          # Phase K79-UNGROUPED-UNIT · Feb-2026 — unit_price
+                          # moved OUT of the hidden tuple so the customer
+                          # PDF renderer can show the per-line unit price
+                          # column.  The field was already de-facto exposed
+                          # on the live customer PDF path
+                          # (``routers/quotes.py::quote_or_invoice_pdf``
+                          # reads raw ``line_items`` without projection and
+                          # shipped a ``Unit`` column long before this
+                          # change); the hidden-list entry was a soft fence
+                          # that only applied to the deprecated preview
+                          # path.  Removing it unifies behaviour across
+                          # both PDF handlers.  Admin-only cost / margin
+                          # fields (``cost_rate``, ``margin_pct``,
+                          # ``t_b_cost``, ``m_rate``, ``bh``, ``t_bh``,
+                          # ``calc``) stay stripped above.
                           # Pricebook × Profit-Reporting Phase 1 (Feb-2026) —
                           # PB1 write-once cost snapshots + admin-only flags
                           # MUST NEVER surface on customer-facing payloads.
@@ -90,8 +105,8 @@ _CUSTOMER_LINE_HIDDEN = ("calc", "m_rate", "bh", "t_bh", "t_b_cost",
                           # posture as Phase 1 cost snapshots: NEVER leak to
                           # customer-facing payloads (magic-link viewer,
                           # portal, PDF, email). Effective values are
-                          # computed admin-side; the customer only ever
-                          # sees ``unit_price × quantity``.
+                          # computed admin-side; the customer sees
+                          # ``unit_price`` + ``unit_price × quantity``.
                           "wholesale_cost_override",
                           "labor_cost_override",
                           "income_category_id_override",
@@ -1585,17 +1600,69 @@ async def estimate_pdf(qid: str,
             rows.append([Paragraph("No services", styles["Normal"]),
                           "", "0.00"])
     elif is_customer_pdf:
-        headers = ["Description", "Qty/Hr", "Visits", "Total"]
-        colw = [4.0 * inch, 1.0 * inch, 1.0 * inch, 1.5 * inch]
+        # Phase K79-UNGROUPED-UNIT · Feb-2026 — the itemized customer
+        # PDF now mirrors the admin "Line items" editor:
+        #   * 4-column ``[Item | Qty | Unit | Total]`` layout.
+        #     The ``Qty/Hr`` + ``Visits`` columns were dropped —
+        #     ``qty_hr`` / ``visits`` do not exist in the live
+        #     ``line_items`` schema (every row would have rendered
+        #     ``1``, pure noise).
+        #   * Column 1 (``Item``) renders ``name`` as a bold line
+        #     + ``description`` muted below it.  Empty-safe:
+        #       - ``name`` only → bold only, no muted paragraph
+        #       - ``description`` only (legacy rows) → bold
+        #         description, no muted paragraph
+        #       - both empty → empty cell (no ``—`` placeholder)
+        #       - ``description`` == ``name`` → suppress the muted
+        #         duplicate.
+        #   * Column 3 (``Unit``) reads ``unit_price`` directly —
+        #     Phase K79-UNGROUPED-UNIT removed it from
+        #     ``_CUSTOMER_LINE_HIDDEN`` so the field survives
+        #     projection on both PDF handlers.
+        #   * Column 4 (``Total``) prefers the stored
+        #     ``line_total`` (legacy / imported rows carry it)
+        #     and falls back to ``quantity × unit_price``.
+        #   * Degenerate numeric cells render ``—`` to signal
+        #     "not available" rather than ``$0.00``.
+        _muted = ParagraphStyle(
+            "liMuted", parent=styles["Normal"],
+            fontSize=8, textColor=rlcolors.HexColor("#6b7280"),
+            leading=10, spaceBefore=1,
+        )
+        _bold = ParagraphStyle(
+            "liBold", parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+        )
+        headers = ["Item", "Qty", "Unit", "Total"]
+        colw = [3.5 * inch, 1.0 * inch, 1.3 * inch, 1.7 * inch]
         rows = [headers]
         for li in payload["line_items"]:
-            base = [
-                Paragraph(li.get("description") or "—", styles["Normal"]),
-                f"{li.get('qty_hr') or li.get('quantity') or 0:g}",
-                f"{li.get('visits') or 1:g}",
-                f"{float(li.get('total') or 0):.2f}",
-            ]
-            rows.append(base)
+            name = (li.get("item_name") or li.get("name") or "").strip()
+            desc = (li.get("description") or "").strip()
+            primary = name or desc
+            cell_parts = []
+            if primary:
+                cell_parts.append(Paragraph(primary, _bold))
+            if name and desc and desc != name:
+                cell_parts.append(Paragraph(desc, _muted))
+            item_cell = cell_parts if cell_parts \
+                else [Paragraph("", styles["Normal"])]
+            _qty = float(li.get("quantity") or 0)
+            _unit_price = float(li.get("unit_price") or 0)
+            _lt_raw = li.get("line_total")
+            if _lt_raw is not None:
+                _total = float(_lt_raw)
+            else:
+                _total = _qty * _unit_price
+            unit_cell = (f"${_unit_price:,.2f}"
+                           if _unit_price > 0 else "—")
+            total_cell = f"${_total:,.2f}" if _total > 0 else "—"
+            rows.append([
+                item_cell,
+                f"{_qty:g}",
+                unit_cell,
+                total_cell,
+            ])
     else:
         headers = ["Description", "Cost/Rate", "Qty/Hr", "Visits", "Margin %", "Total"]
         colw = [3.0 * inch, 0.9 * inch, 0.7 * inch, 0.7 * inch, 0.8 * inch, 1.0 * inch]

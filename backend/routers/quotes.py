@@ -2247,7 +2247,7 @@ async def quote_or_invoice_pdf(qid: str,
     from io import BytesIO
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors as rlcolors
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
@@ -2323,7 +2323,7 @@ async def quote_or_invoice_pdf(qid: str,
     story.append(t)
     story.append(Spacer(1, 16))
 
-    line_rows = [["Description", "Qty", "Unit", "Total"]]
+    line_rows = [["Item", "Qty", "Unit", "Total"]]
     if render_grouped:
         # Feb-2026 · grouped-lock — replace the itemized rows with
         # per-service-category subtotals. The 4-column shape stays
@@ -2362,11 +2362,59 @@ async def quote_or_invoice_pdf(qid: str,
                     desc_cell_text, "—", "—", total_cell,
                 ])
     else:
+        # Phase K79-UNGROUPED-UNIT · Feb-2026 — the itemized branch
+        # now mirrors the admin "Line items" editor + the deprecated
+        # ``estimate_viewer.py`` preview path:
+        #   * Column 1 (``Item``) renders the schema's ``name`` field
+        #     as a bold line + ``description`` muted below it.
+        #     Falls back to ``description`` alone when ``name`` is
+        #     empty (legacy rows), to empty cell when both are
+        #     empty.  Suppresses the muted sub-line when it would
+        #     just duplicate the item name.
+        #   * Column 4 (``Total``) prefers the stored ``line_total``
+        #     (legacy / imported rows carry it) and falls back to
+        #     ``quantity × unit_price``.
+        #   * Degenerate rows (``unit_price <= 0``, ``_total <= 0``)
+        #     render ``—`` so the dash semantics match the preview
+        #     path.
+        _li_muted = ParagraphStyle(
+            "liMuted", parent=styles["Normal"],
+            fontSize=8, textColor=rlcolors.HexColor("#6b7280"),
+            leading=10, spaceBefore=1,
+        )
+        _li_bold = ParagraphStyle(
+            "liBold", parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+        )
         for li in (doc.get("line_items") or []):
+            name = (li.get("item_name") or li.get("name") or "").strip()
+            desc = (li.get("description") or "").strip()
+            primary = name or desc
+            cell_parts = []
+            if primary:
+                cell_parts.append(Paragraph(primary, _li_bold))
+            if name and desc and desc != name:
+                cell_parts.append(Paragraph(desc, _li_muted))
+            item_cell = cell_parts if cell_parts \
+                else [Paragraph("", styles["Normal"])]
             qty = float(li.get("quantity") or 0)
             unit = float(li.get("unit_price") or 0)
-            line_rows.append([li.get("description", ""), f"{qty:g}", f"${unit:,.2f}", f"${qty * unit:,.2f}"])
-    lt = Table(line_rows, colWidths=[3.6 * inch, 0.8 * inch, 1.1 * inch, 1.1 * inch])
+            _lt_raw = li.get("line_total")
+            if _lt_raw is not None:
+                total_val = float(_lt_raw)
+            else:
+                total_val = qty * unit
+            unit_cell = f"${unit:,.2f}" if unit > 0 else "—"
+            total_cell = (f"${total_val:,.2f}"
+                            if total_val > 0 else "—")
+            line_rows.append([
+                item_cell,
+                f"{qty:g}",
+                unit_cell,
+                total_cell,
+            ])
+    lt = Table(line_rows, colWidths=[3.5 * inch, 1.0 * inch,
+                                        1.3 * inch, 1.7 * inch])
     lt.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
