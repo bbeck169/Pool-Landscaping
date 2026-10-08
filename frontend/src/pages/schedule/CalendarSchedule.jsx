@@ -1113,6 +1113,18 @@ export default function CalendarSchedule() {
   // Feb-2026 · Enhancement 1 — drag-drop reschedule state + handlers.
   const isAdminRole = (user?.role === "admin" || user?.role === "super_admin"
                       || user?.role === "manager");
+  // SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 — admin + super_admin
+  // see customer names on grid-view cards as a ``<CustomerLink>``.
+  // Precomputed here (not inside ``<GridPanel>``) because ``GridPanel``
+  // is a plain function component that does NOT call ``useAuth`` — a
+  // bare ``user?.role`` reference inside its JSX threw
+  // ``ReferenceError: user is not defined`` and crashed ``/schedule``
+  // for every role.  Role gate matches the backend admin dependency
+  // surface (admin + super_admin only — managers / owners / techs /
+  // customers keep the pre-existing name-as-directions shortcut).
+  const canClickCustomerName = ["admin", "super_admin"].includes(
+    (user?.role || "").toLowerCase(),
+  );
   // Feb 2026 · Calendar-view inline edit — double-click on an event
   // opens the ``ScheduleJobEditModal`` (same modal wired to the
   // Grid-view pencil affordance) so admins can retag work_class /
@@ -2200,6 +2212,7 @@ export default function CalendarSchedule() {
           techs={techs}
           onOpenEdit={isAdminRole ? ((jobRow) => setEditingJob(jobRow)) : undefined}
           isAdminForCard={isAdminRole}
+          canClickCustomerName={canClickCustomerName}
           orderController={orderController}
           onOpenBulkReorder={() => {
             // Phase P10 · Feb-2026 — the button below is disabled
@@ -2494,6 +2507,12 @@ export function GridPanel({
   canMultiSelectAssign, onOpenBulkAssign, techs,
   // Feb-2026 · Schedule-screen inline edit — admin+ Pencil affordance.
   onOpenEdit, isAdminForCard,
+  // SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 — precomputed boolean
+  // from the parent (``CalendarSchedule`` owns ``useAuth``). We MUST
+  // NOT reach into ``user`` from here — ``GridPanel`` is also mounted
+  // directly from Vitest harnesses with no AuthProvider in the tree,
+  // and a bare ``user`` reference would throw ReferenceError.
+  canClickCustomerName = false,
   // Feb-2026 · Phase 1 — Could-Not-Service modal opener.
   onOpenCouldNotService,
   // Feb-2026 · numbered-order reorder — the day's ordering
@@ -2957,9 +2976,12 @@ export function GridPanel({
                          the pre-existing directions shortcut on the
                          name below — directions stay accessible via
                          the address button so admins keep that UX
-                         too. */}
-                    {(user?.role === "admin"
-                       || user?.role === "super_admin")
+                         too. The role gate is computed in the parent
+                         (CalendarSchedule) and threaded in as a bool;
+                         a bare ``user?.role`` here would crash
+                         ``/schedule`` because this component does
+                         not call ``useAuth``. */}
+                    {canClickCustomerName
                        && j.customer_id ? (
                       <CustomerLink
                         customerId={j.customer_id}
