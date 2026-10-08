@@ -14,6 +14,7 @@ import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
+import BulkPortalInviteConfirm from "@/components/customers/BulkPortalInviteConfirm";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
 
@@ -135,7 +136,24 @@ export default function CustomersList() {
     isAdmin ||
     role === "owner" ||
     effectiveRole === "owner";
+  // BULK-PORTAL-INVITE-FILTER · Feb-2026 — role gate matches
+  // ``canManageDeleted`` (admin + super_admin + owner, NOT
+  // manager).  Mass-email actions stay tight on purpose; the
+  // backend ``require_admin`` dependency on
+  // ``POST /admin/customers/portal-invite/bulk`` enforces the
+  // same contract so UI + API stay in lockstep.
+  const isAdminTier = canManageDeleted;
   const [includeDeleted, setIncludeDeleted] = useState(false);
+  // BULK-PORTAL-INVITE-FILTER · Feb-2026 — confirmation modal
+  // state.  ``preview`` carries ``{total, ids}`` from the
+  // ``GET /customers?...&first_access=never&page_size=200``
+  // preview call; ``ids`` is already clamped to 200 by the
+  // backend's page_size, so the confirm handler can POST them
+  // directly.  ``busy`` guards the Cancel + Confirm CTAs during
+  // both the preview fetch and the confirm POST.
+  const [bulkInviteOpen, setBulkInviteOpen] = useState(false);
+  const [bulkInvitePreview, setBulkInvitePreview] = useState(null);
+  const [bulkInviteBusy, setBulkInviteBusy] = useState(false);
 
   // Phase 56.2 — active | inactive tabs. `all` retained as a legacy escape
   // hatch (used to be the default) — accessible via `?tab=all` for admins
@@ -1205,6 +1223,101 @@ export default function CustomersList() {
     (rows || []).filter((r) => selected.has(r.id));
   const _h1AlreadyActivatedCount = () =>
     _h1SelectedRows().filter((r) => r.has_login === true).length;
+
+  // BULK-PORTAL-INVITE-FILTER · Feb-2026 — "Bulk Portal Invite"
+  // button in the Customers filter bar.  Flow:
+  //   1. Click → fire a preview GET against ``/customers`` with
+  //      the CURRENT filter state + a hard ``first_access=never``
+  //      override (eligibility = customers who have never signed
+  //      into the portal).  Uses ``page_size=200`` so the ids
+  //      returned match the existing Phase-H1 bulk endpoint's
+  //      per-batch cap exactly.  ``total`` in the envelope is the
+  //      true eligible count regardless of the 200-page clamp —
+  //      the confirmation dialog uses that to show a cap warning
+  //      when ``total > 200``.
+  //   2. On confirm → POST those ids to
+  //      ``/admin/customers/portal-invite/bulk`` (existing
+  //      Phase-H1 endpoint).  Zero backend changes — the endpoint
+  //      already reuses ``_do_portal_provision`` per-id.
+  const _buildBulkInvitePreviewParams = () => {
+    const params = new URLSearchParams();
+    const kw = (q || "").trim();
+    if (kw) params.set("search", kw);
+    // Scope + tab — mirror the ``load()`` builder lines 553-565.
+    if (scope === "unscheduled") params.set("unscheduled", "true");
+    if (tab === "active") params.set("is_active", "true");
+    else if (tab === "inactive") params.set("is_active", "false");
+    else if (tab === "muted") params.set("is_muted", "true");
+    else if (tab === "waitlist") params.set("waitlisted", "true");
+    if (missingCardOnly) params.set("missing_card", "true");
+    if (portalStatus && portalStatus !== "all") {
+      params.set("portal_status", portalStatus);
+    }
+    // Tag + city filters — carry through so "visible filter" ==
+    // "eligible for this bulk run" matches the user's screen.
+    if (city && city.trim()) params.set("city", city.trim());
+    for (const t of selectedTags) params.append("tags", t);
+    // HARD override — eligibility pool is anyone who has never
+    // signed into the portal (matches the user-approved spec).
+    params.set("first_access", "never");
+    // Grab a full batch worth of ids in one call; ``total`` on
+    // the envelope still reports the un-clamped eligible count.
+    params.set("page", "1");
+    params.set("page_size", "200");
+    return params;
+  };
+
+  const openBulkPortalInviteFromFilter = async () => {
+    if (bulkInviteBusy) return;
+    setBulkInviteBusy(true);
+    try {
+      const params = _buildBulkInvitePreviewParams();
+      const data = await api.get(`/customers?${params.toString()}`);
+      const items = Array.isArray(data) ? data : (data?.items || []);
+      const totalEligible = Number.isFinite(data?.total)
+        ? data.total : items.length;
+      const ids = items.map((c) => c.id).filter(Boolean);
+      setBulkInvitePreview({ total: totalEligible, ids });
+      setBulkInviteOpen(true);
+    } catch (e) {
+      const msg = e?.data?.detail?.message || e?.message
+        || "Preview failed";
+      setToast({ tone: "error", message: msg });
+    } finally {
+      setBulkInviteBusy(false);
+    }
+  };
+
+  const confirmBulkPortalInviteFromFilter = async () => {
+    if (!bulkInvitePreview || !bulkInvitePreview.ids.length) return;
+    const idsToSend = bulkInvitePreview.ids.slice(0, 200);
+    setBulkInviteBusy(true);
+    try {
+      const res = await api.post(
+        "/admin/customers/portal-invite/bulk",
+        { customer_ids: idsToSend,
+           reason: "bulk-filter-invite" },
+      );
+      const queued = Number(res.queued ?? res.sent ?? 0);
+      const failed = Number(res.failed_send || 0);
+      setToast({
+        tone: failed ? "warning" : "success",
+        message: failed
+          ? `Queued ${queued} portal invite${queued === 1 ? "" : "s"}, ${failed} failed`
+          : `Queued ${queued} portal invite${queued === 1 ? "" : "s"}`,
+      });
+      setBulkInviteOpen(false);
+      setBulkInvitePreview(null);
+      load();
+    } catch (e) {
+      const msg = e?.data?.detail?.message || e?.message
+        || "Bulk portal invite failed";
+      setToast({ tone: "error", message: msg });
+    } finally {
+      setBulkInviteBusy(false);
+    }
+  };
+
   const doBulkPortalInvite = async () => {
     if (!selected.size) return;
     const ids = Array.from(selected);
@@ -2259,6 +2372,32 @@ export default function CustomersList() {
               ))}
             </NavyFilterBar.Select>
           ) : null}
+          {/* BULK-PORTAL-INVITE-FILTER · Feb-2026 — inline button in
+              the filter-bar bottom row.  Admin-tier only (admin +
+              super_admin + owner, matching the backend
+              ``require_admin`` gate on
+              ``POST /admin/customers/portal-invite/bulk``).  Disabled
+              when the visible list is empty — no eligible customers
+              to invite.  Click → opens the confirmation modal, which
+              owns the preview GET + confirm POST state. */}
+          {isAdminTier && (
+            <button
+              type="button"
+              onClick={openBulkPortalInviteFromFilter}
+              disabled={bulkInviteBusy || ((filtered || []).length === 0)}
+              data-testid="customers-filter-bulk-portal-invite-btn"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: colors.nav.bg,
+                color: colors.nav.fg,
+                border: `1px solid ${colors.nav.border}`,
+              }}
+              title="Send portal invites to all customers who have never signed into the portal"
+            >
+              <Send size={12} />
+              <span>Bulk Portal Invite</span>
+            </button>
+          )}
         </div>
       </NavyFilterBar>
 
@@ -2867,6 +3006,22 @@ export default function CustomersList() {
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* BULK-PORTAL-INVITE-FILTER · Feb-2026 — confirmation dialog
+          for the inline filter-bar "Bulk Portal Invite" button.
+          Mount is unconditional so the modal animates in/out cleanly
+          on open-state transitions; the component itself returns
+          null when ``open === false``. */}
+      <BulkPortalInviteConfirm
+        open={bulkInviteOpen}
+        preview={bulkInvitePreview}
+        busy={bulkInviteBusy}
+        onCancel={() => {
+          setBulkInviteOpen(false);
+          setBulkInvitePreview(null);
+        }}
+        onConfirm={confirmBulkPortalInviteFromFilter}
+      />
 
       {/* Feb 2026 · Customer Merge Phase 2 — merge modal. Hydrated
           with the full customer rows for the currently-selected
