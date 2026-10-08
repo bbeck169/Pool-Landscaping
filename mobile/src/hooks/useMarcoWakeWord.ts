@@ -71,6 +71,7 @@ export function useMarcoWakeWord(onOpenDock?: () => void) {
       }
 
       // 2. Record for a fixed duration
+      await recorder.prepareToRecordAsync();
       recorder.record();
 
       // 3. Stop after RECORD_DURATION_MS
