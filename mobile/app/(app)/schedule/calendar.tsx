@@ -28,6 +28,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
@@ -394,6 +395,35 @@ function ScheduleCalendarInner() {
     return jobs.filter((j) => j.technician_id === techFilter || !j.technician_id);
   }, [jobs, techFilter, isTech, resolvedTechId]);
 
+  // INACTIVE-CUSTOMER-CASCADE — hide cancelled/skipped by default.
+  // Persisted under `schedule_show_cancelled` (matches web key).
+  const [showCancelled, setShowCancelled] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem("schedule_show_cancelled").then((v) => {
+      if (v === "true") setShowCancelled(true);
+    }).catch(() => {});
+  }, []);
+  const toggleShowCancelled = useCallback(() => {
+    setShowCancelled((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem("schedule_show_cancelled", String(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+  const CANCELLED_SET = useMemo(() => new Set(["cancelled", "canceled", "skipped"]), []);
+  const visibleJobs = useMemo(() => {
+    if (showCancelled) return filteredJobs;
+    return filteredJobs.filter(
+      (j) => !CANCELLED_SET.has(String(j.status || "").toLowerCase()),
+    );
+  }, [filteredJobs, showCancelled, CANCELLED_SET]);
+  const hiddenCancelledCount = useMemo(() => {
+    if (showCancelled) return 0;
+    return filteredJobs.filter(
+      (j) => CANCELLED_SET.has(String(j.status || "").toLowerCase()),
+    ).length;
+  }, [filteredJobs, showCancelled, CANCELLED_SET]);
+
   // K15 · per-request AbortController — abort stale loads on new ones.
   const loadAbortRef = useRef<AbortController | null>(null);
 
@@ -479,21 +509,21 @@ function ScheduleCalendarInner() {
 
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
-    const list = filteredJobs.filter((j) => j.scheduled_date === focusISO);
+    const list = visibleJobs.filter((j) => j.scheduled_date === focusISO);
     list.sort((a, b) => (a.route_index ?? a.route_order ?? 999) - (b.route_index ?? b.route_order ?? 999));
     // Phase 30X · schedule is per-day; no time-of-day tiebreaker.
     return list;
-  }, [filteredJobs, focusISO]);
+  }, [visibleJobs, focusISO]);
 
   /** Job-count map for the 7 visible WeekStrip days (client-side). */
   const weekCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const j of filteredJobs) {
+    for (const j of visibleJobs) {
       const d = j.scheduled_date?.slice(0, 10);
       if (d) counts[d] = (counts[d] || 0) + 1;
     }
     return counts;
-  }, [filteredJobs]);
+  }, [visibleJobs]);
 
   // Phase 1 Offline Read — which of today's jobs are cached for offline.
   const dayJobIds = useMemo(() => dayJobs.map((j) => j.id), [dayJobs]);
@@ -656,12 +686,12 @@ function ScheduleCalendarInner() {
   );
   const jobsByDay = useMemo(() => {
     const m: Record<string, Job[]> = {};
-    for (const j of filteredJobs) {
+    for (const j of visibleJobs) {
       const d = j.scheduled_date || "";
       (m[d] = m[d] || []).push(j);
     }
     return m;
-  }, [filteredJobs]);
+  }, [visibleJobs]);
 
   if (role === "customer") return <Redirect href="/(app)/jobs" />;
   if (!modeLoaded) return null;
@@ -670,7 +700,7 @@ function ScheduleCalendarInner() {
     <View style={styles.root}>
       <Header
         title="Schedule"
-        subtitle={loading ? "Loading…" : `${filteredJobs.length} jobs in window · ${mode}`}
+        subtitle={loading ? "Loading…" : `${visibleJobs.length} jobs in window · ${mode}`}
         right={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             {/* Sync route button */}
@@ -823,6 +853,32 @@ function ScheduleCalendarInner() {
           </Pressable>
         </View>
       )}
+
+      {/* INACTIVE-CUSTOMER-CASCADE — show/hide cancelled toggle */}
+      <View style={styles.cancelledToggleRow}>
+        <Pressable
+          onPress={toggleShowCancelled}
+          style={styles.cancelledToggleBtn}
+          testID="schedule-show-cancelled-toggle"
+          accessibilityRole="switch"
+          accessibilityState={{ checked: showCancelled }}
+          accessibilityLabel={showCancelled ? "Hide cancelled" : "Show cancelled"}
+        >
+          <Ionicons
+            name={showCancelled ? "eye-outline" : "eye-off-outline"}
+            size={14}
+            color={showCancelled ? colors.brand : colors.muted}
+          />
+          <Text style={[styles.cancelledToggleText, showCancelled && { color: colors.brand }]}>
+            {showCancelled ? "Hide cancelled" : "Show cancelled"}
+          </Text>
+          {!showCancelled && hiddenCancelledCount > 0 ? (
+            <View style={styles.cancelledCountPill}>
+              <Text style={styles.cancelledCountText}>{hiddenCancelledCount}</Text>
+            </View>
+          ) : null}
+        </Pressable>
+      </View>
 
       {/* K15 · Error card with retry — replaces the old tiny inline bar */}
       {/* K43 — Empty-profile message when tech has no linked technician row. */}
@@ -1874,6 +1930,35 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.onSurfaceSecondary,
     maxWidth: 160,
+  },
+  cancelledToggleRow: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xs,
+  },
+  cancelledToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 6,
+  },
+  cancelledToggleText: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
+  cancelledCountPill: {
+    backgroundColor: colors.error,
+    borderRadius: 999,
+    minWidth: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 5,
+  },
+  cancelledCountText: {
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#fff",
   },
 });
 
