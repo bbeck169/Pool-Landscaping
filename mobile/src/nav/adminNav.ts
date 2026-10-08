@@ -270,6 +270,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Lean Boards",  route: "/os/leanboards",   icon: "grid-outline",           tier: "t1", testID: "drawer-nav-os-leanboards" },
       { label: "Sprints",      route: "/os/sprints",      icon: "flag-outline",           tier: "t1", testID: "drawer-nav-os-sprints" },
       { label: "Lana AI",      route: "/os/lana",         icon: "sparkles-outline",       tier: "t1", testID: "drawer-nav-os-lana" },
+      { label: "Templates Library", route: "/(app)/templates", icon: "library-outline",  tier: "t1", testID: "drawer-nav-os-templates-library" },
     ],
   },
 ];

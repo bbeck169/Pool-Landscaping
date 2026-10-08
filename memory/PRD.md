@@ -52,3 +52,30 @@ customer portal, leads & notifications, reports, telematics, trainings, multi-te
 
 `memory/PRD_HISTORY_ARCHIVE.md` (full phase history) · `CHANGELOG.md` · `memory/PHASE_*.md` (per-phase ship
 reports) · `mobile/*.md` runbooks.
+
+## 5. Templates Library — Phase 3 (Mobile) · shipped 2026-10-08
+
+Mobile parity for the web Templates Library (backend `/api/templates/*` + web unchanged), for admins and techs.
+- **Nav:** Tools ▸ My Records ▸ Templates (techs), Tools ▸ Documents + More ▸ Templates Library (admins), admin drawer
+  ▸ Business OS ▸ Templates Library. Routes: `/(app)/templates` (`?tab=mine`) and `/(app)/templates/[id]`. Only the
+  definitions the backend returns (RBAC-filtered) are shown — techs see 8, admin 23.
+- **Code:** `mobile/src/api/templates.ts` (web client mirror + `downloadPdf`), `src/screens/templates/`
+  (`TemplatesLibraryScreen`, `TemplateFillScreen`, `useTemplateDraft`), `src/components/templates/` (`TemplateCard`,
+  `TemplateFieldRenderer`, `TemplateTableField`, `TemplateStatusPill`, `TemplateInstanceList`, `OfflineIndicator`,
+  `fieldUtils`), offline layer `src/utils/offlineTemplateDrafts.ts`.
+- **Fill:** all field types; table = vertical stacked row cards (labeled input per column, add row, trash or
+  long-press to delete); signature "Sign" stamps `{signer_name, signed_at, stamp: "<name> • <ISO>"}` (the Phase 4
+  draw pad is still there as "Draw instead"); autosave debounce 750 ms + 15 s flush; "Saving…/Saved HH:MM:SS".
+- **PDF:** POST `/pdf` → `expo/fetch` bytes → `File(Paths.cache)` → `Sharing.shareAsync` (same as `exportCsv.ts`);
+  web preview downloads a blob.
+- **Offline (EDIT of existing drafts only):** snapshot `template_drafts:{id}` written before every PATCH; failed /
+  offline PATCH → `template_drafts_pending_sync:{id}` (FIFO by first-failure ts); flushed on NetInfo reconnect, app
+  foreground, cold start, and every 15 s while pending; 4xx (409/404/403) drops the entry, 5xx keeps it. When a draft
+  is opened, a newer or unsynced local snapshot is merged over the server copy and a warning banner is shown.
+  Instances already opened once can be reopened offline from `template_cache:{id}`. **Finalize is blocked while
+  offline or while an edit is waiting to sync.**
+- **NOT offline:** creating a new instance (POST must return the id first), duplicate, delete, PDF. These show an
+  "needs a connection" toast.
+- **Env note:** the preview DB had no system definitions. They were loaded with the documented Phase 1 seed command
+  `python3 backend/templates_seed/seed_templates.py --commit` (data only, no code changed).
+- **Tests:** `mobile/__tests__/templates-{offline-drafts,fields,draft-hook,api}.test.*` (45 tests).

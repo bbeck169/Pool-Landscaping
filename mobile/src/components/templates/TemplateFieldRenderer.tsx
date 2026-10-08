@@ -12,6 +12,7 @@ import { colors, font, fontSize, radius } from "@/src/theme";
 import TemplateTableField from "./TemplateTableField";
 import SignaturePadModal from "./SignaturePadModal";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { parseNumberInput, numberRangeError, makeSignatureStamp, todayISODate } from "./fieldUtils";
 
 type Field = {
   type: string;
@@ -100,17 +101,26 @@ export default function TemplateFieldRenderer({
 
   // Number
   if (type === "number") {
+    const rangeErr = numberRangeError(field, value);
+    const hasMin = typeof field.min === "number";
+    const hasMax = typeof field.max === "number";
+    const rangeHint = hasMin && hasMax ? `Range ${field.min}–${field.max}` : hasMin ? `Min ${field.min}` : hasMax ? `Max ${field.max}` : "";
     return (
       <View testID={testIdBase}>
         {renderLabel()}
         <AppTextInput
           value={value != null ? String(value) : ""}
           editable={!disabled}
-          onChangeText={(t) => onChange(t === "" ? "" : Number(t))}
+          onChangeText={(t) => onChange(parseNumberInput(t))}
           keyboardType="decimal-pad"
-          style={[styles.input, disabled && styles.inputDisabled]}
+          style={[styles.input, disabled && styles.inputDisabled, rangeErr ? styles.inputError : null]}
           testID={`${testIdBase}-input`}
         />
+        {rangeErr ? (
+          <Text style={styles.errorText} testID={`${testIdBase}-range-error`}>{rangeErr}</Text>
+        ) : rangeHint ? (
+          <Text style={styles.helpText}>{rangeHint}</Text>
+        ) : null}
         {renderHelp()}
       </View>
     );
@@ -121,15 +131,22 @@ export default function TemplateFieldRenderer({
     return (
       <View testID={testIdBase}>
         {renderLabel()}
-        <AppTextInput
-          value={value ?? ""}
-          editable={!disabled}
-          onChangeText={onChange}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={colors.muted}
-          style={[styles.input, disabled && styles.inputDisabled]}
-          testID={`${testIdBase}-input`}
-        />
+        <View style={styles.dateRow}>
+          <AppTextInput
+            value={value ?? ""}
+            editable={!disabled}
+            onChangeText={onChange}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.muted}
+            style={[styles.input, styles.dateInput, disabled && styles.inputDisabled]}
+            testID={`${testIdBase}-input`}
+          />
+          {!disabled && (
+            <TouchableOpacity onPress={() => onChange(todayISODate())} style={styles.todayBtn} testID={`${testIdBase}-today`}>
+              <Text style={styles.todayText}>Today</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {renderHelp()}
       </View>
     );
@@ -317,7 +334,9 @@ function SignatureFieldInner({
               <Ionicons name="checkmark-circle" size={18} color={colors.success} />
             )}
             <View style={{ flex: 1 }}>
-              <Text style={styles.signedName}>Signed by {signerName}</Text>
+              <Text style={styles.signedName} testID={`${testIdBase}-stamp`}>
+                {signedAt ? `${signerName} • ${signedAt}` : `Signed by ${signerName}`}
+              </Text>
               {signedAt ? (
                 <Text style={styles.signedDate}>{formatSignedAt(signedAt)}</Text>
               ) : null}
@@ -326,7 +345,7 @@ function SignatureFieldInner({
           {!disabled && (
             <View style={styles.signActions}>
               <TouchableOpacity
-                onPress={() => setPadOpen(true)}
+                onPress={() => onChange(makeSignatureStamp(currentUserName))}
                 testID={`${testIdBase}-resign`}
                 activeOpacity={0.7}
               >
@@ -345,16 +364,23 @@ function SignatureFieldInner({
           )}
         </View>
       ) : (
-        <TouchableOpacity
-          onPress={() => !disabled && setPadOpen(true)}
-          disabled={disabled}
-          style={[styles.signBtn, disabled && { opacity: 0.6 }]}
-          activeOpacity={0.7}
-          testID={`${testIdBase}-sign`}
-        >
-          <Ionicons name="pencil-outline" size={16} color={colors.brand} />
-          <Text style={styles.signBtnText}>Sign</Text>
-        </TouchableOpacity>
+        <View style={styles.signBtnRow}>
+          <TouchableOpacity
+            onPress={() => !disabled && onChange(makeSignatureStamp(currentUserName))}
+            disabled={disabled}
+            style={[styles.signBtn, disabled && { opacity: 0.6 }]}
+            activeOpacity={0.7}
+            testID={`${testIdBase}-sign`}
+          >
+            <Ionicons name="checkmark-done-outline" size={16} color={colors.brand} />
+            <Text style={styles.signBtnText}>Sign</Text>
+          </TouchableOpacity>
+          {!disabled && (
+            <TouchableOpacity onPress={() => setPadOpen(true)} style={styles.drawLink} testID={`${testIdBase}-draw`}>
+              <Text style={styles.drawLinkText}>Draw instead</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )}
 
       {field.help_text ? (
@@ -514,10 +540,23 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     color: colors.error,
   },
+  inputError: { borderColor: colors.error },
+  errorText: { fontSize: 11, fontFamily: font.semibold, color: colors.error, marginTop: 4 },
+  dateRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  dateInput: { flex: 1 },
+  todayBtn: {
+    minHeight: 44, paddingHorizontal: 14, justifyContent: "center", borderRadius: radius.sm,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.brandTertiary,
+  },
+  todayText: { fontSize: fontSize.sm, fontFamily: font.bold, color: colors.brand },
+  signBtnRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  drawLink: { minHeight: 44, justifyContent: "center", paddingHorizontal: 4 },
+  drawLinkText: { fontSize: 12, fontFamily: font.semibold, color: colors.onSurfaceSecondary, textDecorationLine: "underline" },
   signBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    minHeight: 44,
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: radius.sm,

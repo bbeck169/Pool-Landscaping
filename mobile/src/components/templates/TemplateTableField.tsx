@@ -1,205 +1,148 @@
+/**
+ * Templates Library — Phase 3 (Mobile) · table field.
+ *
+ * Mobile-ergonomic: each row is a vertical card with one labeled input
+ * per column (NOT a horizontally scrolled grid). Add-row button at the
+ * bottom; delete via the row's trash button or a long-press (confirmed).
+ */
 import React from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Switch } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Pressable, Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, font, fontSize, radius } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { showConfirm } from "@/src/components/ConfirmModal";
+import { parseNumberInput } from "./fieldUtils";
 
 type Column = { key: string; label?: string; type?: string };
 
-export default function TemplateTableField({
-  field,
-  value,
-  onChange,
-  disabled = false,
-}: {
-  field: any;
-  value: any;
-  onChange: (v: any) => void;
-  disabled?: boolean;
+function CellInput({ col, value, onChange, disabled, testID }: {
+  col: Column; value: any; onChange: (v: any) => void; disabled: boolean; testID: string;
+}) {
+  const ct = col.type || "text";
+  if (ct === "checkbox") {
+    return (
+      <View style={styles.checkRow}>
+        <Switch
+          value={!!value}
+          disabled={disabled}
+          onValueChange={onChange}
+          trackColor={{ false: colors.border, true: colors.brand }}
+          testID={testID}
+        />
+        <Text style={styles.cellLabelInline}>{col.label || col.key}</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={styles.cell}>
+      <Text style={styles.cellLabel}>{col.label || col.key}</Text>
+      <AppTextInput
+        value={value != null ? String(value) : ""}
+        editable={!disabled}
+        onChangeText={(t) => onChange(ct === "number" ? parseNumberInput(t) : t)}
+        keyboardType={ct === "number" ? "decimal-pad" : "default"}
+        placeholder={ct === "date" ? "YYYY-MM-DD" : undefined}
+        style={[styles.cellInput, disabled && styles.cellInputDisabled]}
+        testID={testID}
+      />
+    </View>
+  );
+}
+
+export default function TemplateTableField({ field, value, onChange, disabled = false }: {
+  field: any; value: any; onChange: (v: any) => void; disabled?: boolean;
 }) {
   const cols: Column[] = Array.isArray(field.columns) ? field.columns : [];
   const rows: Record<string, any>[] = Array.isArray(value) ? value : [];
+  const base = `template-table-${field.key}`;
 
-  const setRow = (idx: number, patch: Record<string, any>) => {
-    const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
-    onChange(next);
-  };
-
+  const setCell = (ri: number, key: string, v: any) =>
+    onChange(rows.map((r, i) => (i === ri ? { ...r, [key]: v } : r)));
   const addRow = () => onChange([...rows, {}]);
-  const delRow = (idx: number) => onChange(rows.filter((_, i) => i !== idx));
+  const delRow = (ri: number) => onChange(rows.filter((_, i) => i !== ri));
+  const confirmDel = (ri: number) =>
+    showConfirm({
+      title: `Delete row ${ri + 1}?`,
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: () => delRow(ri),
+    });
 
   return (
-    <View
-      style={styles.container}
-      testID={`template-table-${field.key}`}
-    >
-      {/* Header */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View>
-          <View style={styles.headerRow}>
-            {cols.map((c) => (
-              <View key={c.key} style={styles.headerCell}>
-                <Text style={styles.headerText}>{c.label || c.key}</Text>
-              </View>
-            ))}
-            {!disabled && <View style={styles.actionCell} />}
-          </View>
-          {/* Rows */}
-          {rows.length === 0 ? (
-            <View style={styles.emptyRow}>
-              <Text style={styles.emptyText}>No rows yet.</Text>
+    <View style={styles.container} testID={base}>
+      {rows.length === 0 ? (
+        <Text style={styles.empty} testID={`${base}-empty`}>No rows yet.</Text>
+      ) : (
+        rows.map((row, ri) => (
+          <Pressable
+            key={ri}
+            onLongPress={() => !disabled && confirmDel(ri)}
+            delayLongPress={450}
+            style={({ pressed }) => [styles.rowCard, pressed && !disabled && styles.rowPressed]}
+            testID={`${base}-row-${ri}`}
+          >
+            <View style={styles.rowHeader}>
+              <Text style={styles.rowTitle}>Row {ri + 1}</Text>
+              {!disabled && (
+                <TouchableOpacity onPress={() => delRow(ri)} style={styles.delBtn} testID={`${base}-del-${ri}`}>
+                  <Ionicons name="trash-outline" size={18} color={colors.error} />
+                </TouchableOpacity>
+              )}
             </View>
-          ) : (
-            rows.map((row, ri) => (
-              <View
-                key={ri}
-                style={styles.row}
-                testID={`template-table-${field.key}-row-${ri}`}
-              >
-                {cols.map((c) => {
-                  const ct = c.type || "text";
-                  const val = row?.[c.key];
-                  if (ct === "checkbox") {
-                    return (
-                      <View key={c.key} style={styles.dataCell}>
-                        <Switch
-                          value={!!val}
-                          disabled={disabled}
-                          onValueChange={(v) => setRow(ri, { [c.key]: v })}
-                          trackColor={{ false: colors.border, true: colors.brand }}
-                          testID={`template-table-${field.key}-cell-${ri}-${c.key}`}
-                        />
-                      </View>
-                    );
-                  }
-                  return (
-                    <View key={c.key} style={styles.dataCell}>
-                      <AppTextInput
-                        value={val != null ? String(val) : ""}
-                        editable={!disabled}
-                        onChangeText={(t) => {
-                          const v = ct === "number" ? (t === "" ? "" : Number(t)) : t;
-                          setRow(ri, { [c.key]: v });
-                        }}
-                        keyboardType={ct === "number" ? "decimal-pad" : "default"}
-                        style={[
-                          styles.cellInput,
-                          disabled && { backgroundColor: colors.surfaceSecondary },
-                        ]}
-                        testID={`template-table-${field.key}-cell-${ri}-${c.key}`}
-                      />
-                    </View>
-                  );
-                })}
-                {!disabled && (
-                  <View style={styles.actionCell}>
-                    <TouchableOpacity
-                      onPress={() => delRow(ri)}
-                      hitSlop={8}
-                      testID={`template-table-${field.key}-del-${ri}`}
-                    >
-                      <Ionicons name="trash-outline" size={16} color={colors.error} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
+            {cols.map((c) => (
+              <CellInput
+                key={c.key}
+                col={c}
+                value={row?.[c.key]}
+                disabled={disabled}
+                onChange={(v) => setCell(ri, c.key, v)}
+                testID={`${base}-cell-${ri}-${c.key}`}
+              />
+            ))}
+          </Pressable>
+        ))
+      )}
       {!disabled && (
-        <TouchableOpacity
-          onPress={addRow}
-          style={styles.addBtn}
-          activeOpacity={0.7}
-          testID={`template-table-${field.key}-add`}
-        >
-          <Ionicons name="add" size={14} color={colors.brand} />
+        <TouchableOpacity onPress={addRow} style={styles.addBtn} activeOpacity={0.7} testID={`${base}-add`}>
+          <Ionicons name="add-circle-outline" size={18} color={colors.brand} />
           <Text style={styles.addText}>Add row</Text>
         </TouchableOpacity>
       )}
+      {!disabled && rows.length > 0 ? (
+        <Text style={styles.hint}>Tip: long-press a row to delete it.</Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: "hidden",
+  container: { gap: 10 },
+  empty: { fontSize: fontSize.sm, fontFamily: font.regular, color: colors.muted, paddingVertical: 8 },
+  rowCard: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    padding: 12, gap: 10, backgroundColor: colors.surfaceSecondary,
   },
-  headerRow: {
-    flexDirection: "row",
-    backgroundColor: colors.surfaceSecondary,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  rowPressed: { borderColor: colors.error, opacity: 0.85 },
+  rowHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  rowTitle: {
+    fontSize: 11, fontFamily: font.bold, color: colors.onSurfaceSecondary,
+    textTransform: "uppercase", letterSpacing: 0.5,
   },
-  headerCell: {
-    width: 140,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-  },
-  headerText: {
-    fontSize: 10,
-    fontFamily: font.bold,
-    color: colors.onSurfaceSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  row: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  dataCell: {
-    width: 140,
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    justifyContent: "center",
-  },
+  delBtn: { width: 44, height: 36, alignItems: "flex-end", justifyContent: "center" },
+  cell: { gap: 4 },
+  cellLabel: { fontSize: 12, fontFamily: font.bold, color: colors.onSurfaceSecondary },
+  cellLabelInline: { fontSize: fontSize.base, fontFamily: font.regular, color: colors.onSurface },
+  checkRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44 },
   cellInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    fontSize: fontSize.sm,
-    fontFamily: font.regular,
-    color: colors.onSurface,
-    backgroundColor: "#fff",
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: 12, paddingVertical: 10, minHeight: 44,
+    fontSize: fontSize.base, fontFamily: font.regular,
   },
-  actionCell: {
-    width: 40,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  emptyRow: {
-    padding: 16,
-    alignItems: "center",
-  },
-  emptyText: {
-    fontSize: fontSize.sm,
-    fontFamily: font.regular,
-    color: colors.muted,
-  },
+  cellInputDisabled: { opacity: 0.7 },
   addBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    padding: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44,
+    borderWidth: 1, borderStyle: "dashed", borderColor: colors.brand, borderRadius: radius.md,
   },
-  addText: {
-    fontSize: fontSize.sm,
-    fontFamily: font.bold,
-    color: colors.brand,
-  },
+  addText: { fontSize: fontSize.sm, fontFamily: font.bold, color: colors.brand },
+  hint: { fontSize: 11, fontFamily: font.regular, color: colors.muted },
 });

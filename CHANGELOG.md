@@ -4368,3 +4368,5 @@ Three small extensions bundled together — Response Draft Library (D), Auto-Slo
 ## 2026-10-02 · backend · fix(job-timers): offline-arrival parity + null (not 0) on parse-failure; dashboard aggregates unaffected
 
 ## 2026-10-02 · frontend+backend · feat(jobs-page): inline-edit Scheduled/Technician/Price/Customer tiles on JobDetail (Phase 3a — Jobs Overhaul)
+
+## 2026-10-08 · mobile · feat(templates): Templates Library Phase 3 mobile parity — browse/fill/autosave/finalize/PDF + offline draft edits with FIFO sync
