@@ -75,8 +75,18 @@ export function CustomerActionDropdowns({
     ? "hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
     : "";
 
+  // Phase 2 · Feb-2026 — when rendered inside the navy command
+  // strip (``navy=true``), the pair of trigger buttons must stay
+  // on a SINGLE row with the strip's other actions.  The default
+  // ``flex-wrap`` is retained for every non-navy caller so other
+  // consumers (currently none, but future proofing) still get
+  // multi-row wrap behaviour on narrow viewports.
+  const wrapperClass = navy
+    ? "flex flex-row flex-nowrap gap-2"
+    : "flex flex-wrap gap-2";
+
   return (
-    <div className="flex flex-wrap gap-2" data-testid="customer-action-dropdowns">
+    <div className={wrapperClass} data-testid="customer-action-dropdowns">
       {/* Send ▼ */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

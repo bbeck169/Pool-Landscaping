@@ -33,62 +33,6 @@ const SRC = fs.readFileSync(
   "utf8",
 );
 
-describe("CUSTOMER-PROFILE-ACTION-BAR · row-split structure", () => {
-  it("cd-command-strip is a flex-col (two-row layout)", () => {
-    // The pre-fix strip was ``flex flex-row items-center``.
-    // After the fix it is ``flex flex-col gap-3`` so the two
-    // rows stack vertically inside the shared navy container.
-    expect(SRC).toMatch(
-      /data-testid="cd-command-strip"[^>]*/,
-    );
-    const stripRegion = SRC.match(
-      /className="rounded-2xl mb-4 px-3 py-3 flex flex-col gap-3"/,
-    );
-    expect(stripRegion,
-      "cd-command-strip must be flex flex-col gap-3 (row-split layout)")
-      .toBeTruthy();
-  });
-
-  it("cd-action-row is still a horizontal flex row", () => {
-    // Row 1 preserves the original horizontal layout.
-    expect(SRC).toMatch(
-      /flex flex-row flex-nowrap items-center gap-2 overflow-x-auto[^"]*"\s*\n?\s*data-testid="cd-action-row"/,
-    );
-  });
-
-  it("Overview dropdown lives inside the WHITE wrapper on row 2", () => {
-    // The new ``cd-tabs-dropdown-shell-light`` wrapper exists
-    // and carries ``bg-white`` so the trigger area stands out
-    // against the navy strip background.
-    expect(SRC).toMatch(
-      /data-testid="cd-tabs-dropdown-shell-light"/,
-    );
-    const lightShell = SRC.match(
-      /className="rounded-xl bg-white"[\s\S]{0,120}data-testid="cd-tabs-dropdown-shell-light"/,
-    );
-    expect(lightShell,
-      "cd-tabs-dropdown-shell-light must carry bg-white classes")
-      .toBeTruthy();
-    // The ResponsiveTabs forceDropdown trigger (inner
-    // ``cd-tabs-dropdown-shell``) sits INSIDE the light wrapper.
-    expect(SRC).toMatch(
-      /data-testid="cd-tabs-dropdown-shell-light"[\s\S]{0,300}data-testid="cd-tabs-dropdown-shell"/,
-    );
-  });
-
-  it("Overview dropdown is OUTSIDE cd-action-row (true row-split)", () => {
-    // Pre-fix: dropdown was a sibling INSIDE the single-row flex.
-    // Post-fix: dropdown must appear AFTER cd-action-row closes.
-    const actionRowOpen = SRC.indexOf('data-testid="cd-action-row"');
-    const dropdownShellPos = SRC.indexOf(
-      'data-testid="cd-tabs-dropdown-shell-light"',
-    );
-    expect(actionRowOpen).toBeGreaterThan(0);
-    expect(dropdownShellPos).toBeGreaterThan(actionRowOpen);
-  });
-});
-
-
 describe("CUSTOMER-PROFILE-ACTION-BAR · Issue Credit shortcut", () => {
   it("cd-issue-credit-btn testid is wired", () => {
     expect(SRC).toMatch(/testid="cd-issue-credit-btn"/);
@@ -162,14 +106,28 @@ describe("CUSTOMER-PROFILE-ACTION-BAR · existing action-bar buttons preserved",
   });
 
   it("hard-delete role gate stays admin / super_admin only", () => {
+    // Phase 2 (Feb-2026) · single-row refactor — the inline
+    // ``[...].includes(...)`` expression was extracted to a
+    // ``canHardDelete`` variable so the gate is reused by both
+    // the inline button AND the mobile-kebab item.  The source-
+    // of-truth role array still lives on the ``canHardDelete``
+    // declaration.
     expect(SRC).toMatch(
-      /\["admin", "super_admin"\]\.includes\([\s\S]{0,500}testid="cd-hard-delete-btn"/,
+      /const canHardDelete = \["admin", "super_admin"\]\.includes\(roleLower\)/,
+    );
+    // And the inline button is guarded by that variable.
+    expect(SRC).toMatch(
+      /\{canHardDelete \?[\s\S]{0,500}testid="cd-hard-delete-btn"/,
     );
   });
 
   it("merge role gate stays admin / super_admin / owner", () => {
+    // Same refactor — ``canMerge`` is the source of truth.
     expect(SRC).toMatch(
-      /\["admin", "super_admin", "owner"\]\.includes\([\s\S]{0,500}testid="cd-merge-btn"/,
+      /const canMerge = \["admin", "super_admin", "owner"\]\.includes\(roleLower\)/,
+    );
+    expect(SRC).toMatch(
+      /\{canMerge \?[\s\S]{0,500}testid="cd-merge-btn"/,
     );
   });
 });

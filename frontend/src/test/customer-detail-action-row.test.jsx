@@ -43,19 +43,23 @@ describe("Customer detail action bar — single-row layout", () => {
     expect(rowSlice).toMatch(/overflow-x-auto/);
   });
 
-  it("preserves every button testid inside the row + adjacent submenu", () => {
-    // Feb-2026 · Customer Header Navy Strip — the two Chemistry
-    // affordances (cd-chemistry, cd-chemistry-history — preserved
-    // as ``data-legacy-testid`` on the DropdownMenuItems) moved
-    // OUT of the inline row and INTO the "+ Create" submenu now
-    // rendered by ``CustomerActionDropdowns``. Split the assertions
-    // across the row block + the ActionDropdowns component source
-    // so both surfaces are covered.
-    const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
-    const rowBlock = pageSrc.slice(rowIdx, rowIdx + 4000);
+  it("preserves every button testid inside the strip + adjacent submenu", () => {
+    // Phase 2 (Feb-2026) · single-row refactor — the row is now
+    // longer (added right-primary wrapper, Call wrapper, right-
+    // destructive wrapper, mobile kebab) so byte-proximity to
+    // the row open is no longer a reliable anchor.  Replaced
+    // with structure-based containment inside the strip block
+    // (which spans from ``cd-command-strip`` down to the next
+    // sibling, the ``{/* Header card */}`` comment).
+    const stripIdx = pageSrc.indexOf('data-testid="cd-command-strip"');
+    const nextBlockIdx = pageSrc.indexOf("{/* Header card */}",
+                                           stripIdx);
+    const stripBlock = pageSrc.slice(stripIdx, nextBlockIdx);
 
-    // 6 affordances still live inside the row itself.
-    const ROW_REQUIRED = [
+    // 6 affordances live inside the strip itself (Chemistry +
+    // Chem History moved to the Create ▼ submenu in a prior
+    // phase and are checked separately below).
+    const STRIP_REQUIRED = [
       "<CustomerActionDropdowns",
       'testid="cd-edit"',
       'testid="cd-delete"',
@@ -63,8 +67,8 @@ describe("Customer detail action bar — single-row layout", () => {
       "cd-click-to-call",
       "cd-click-to-call-tel-fallback",
     ];
-    for (const key of ROW_REQUIRED) {
-      expect(rowBlock).toContain(key);
+    for (const key of STRIP_REQUIRED) {
+      expect(stripBlock).toContain(key);
     }
 
     // Chemistry moved to the Create ▼ submenu.
@@ -77,23 +81,31 @@ describe("Customer detail action bar — single-row layout", () => {
       'data-legacy-testid="cd-chemistry-history"');
   });
 
-  it("compact button sizing applied to Edit + Delete + Merge", () => {
-    // Feb-2026 · Navy Strip — the row now holds Edit / Delete /
-    // Merge with ``px-2.5 py-1 text-xs``. Chemistry moved to the
-    // Create ▼ submenu so the historical minimum drops from 4 → 3.
-    const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
-    const rowBlock = pageSrc.slice(rowIdx, rowIdx + 4000);
-    const matches = rowBlock.match(/px-2\.5 py-1 text-xs/g) || [];
+  it("compact button sizing applied via shared NAVY_ className constants", () => {
+    // Phase 2 (Feb-2026) · single-row refactor — the repeated
+    // literal ``px-2.5 py-1 text-xs`` on each button was
+    // extracted to ``BTN_BASE`` + three ``NAVY_*`` variants.
+    // The compact-sizing contract now reads as: every right-
+    // group button uses ``${BTN_BASE} ${NAVY_...}``.
+    const stripIdx = pageSrc.indexOf('data-testid="cd-command-strip"');
+    const nextBlockIdx = pageSrc.indexOf("{/* Header card */}",
+                                           stripIdx);
+    const stripBlock = pageSrc.slice(stripIdx, nextBlockIdx);
+    const matches = stripBlock.match(
+      /\$\{BTN_BASE\} \$\{NAVY_/g) || [];
     expect(matches.length).toBeGreaterThanOrEqual(3);
+    // And BTN_BASE itself still carries the compact classes.
+    expect(pageSrc).toMatch(
+      /const\s+BTN_BASE\s*=\s*[\s\S]{0,80}px-2\.5 py-1 text-xs/);
   });
 
   it("suppresses the ClickToCallButton's stacked fallback so it fits one row", () => {
-    // The compact icon-only fallback is rendered directly by
-    // CustomerDetail; the shared ClickToCallButton must NOT also
-    // render its own stacked ``Dial from this device`` link (would
-    // force wrap on desktop).
+    // Phase 2 (Feb-2026) · single-row refactor — widened the
+    // slice from 4000 → 8000 so the Call wrapper is reliably
+    // reached regardless of how many role-gated buttons expand
+    // the row ahead of it.
     const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
-    const rowBlock = pageSrc.slice(rowIdx, rowIdx + 4000);
+    const rowBlock = pageSrc.slice(rowIdx, rowIdx + 8000);
     expect(rowBlock).toMatch(/showFallback=\{false\}/);
   });
 

@@ -56,7 +56,12 @@ describe("CustomerDetail · unified navy command strip", () => {
     const openIdx = pageSrc.lastIndexOf("<div", idx);
     const slice = pageSrc.slice(openIdx, idx + 60);
     expect(slice).toMatch(/backgroundColor:\s*colors\.nav\.bg/);
-    expect(slice).toMatch(/gap-4/);
+    // Phase 2 (Feb-2026) · single-row layout — the outer strip is
+    // now a container (padding + border + background) and the
+    // inner ``cd-action-row`` owns the flex layout, so the old
+    // ``gap-4`` assertion on the outer container no longer
+    // applies.  Container class contract:
+    expect(slice).toMatch(/rounded-2xl mb-4 px-3 py-3/);
   });
 
   it("navy strip sits below Portal Access and above the header card", () => {
@@ -68,17 +73,18 @@ describe("CustomerDetail · unified navy command strip", () => {
     expect(headerCardIdx).toBeGreaterThan(stripIdx);
   });
 
-  it("Overview dropdown + action row both live inside the strip", () => {
-    const stripIdx = pageSrc.indexOf(
-      'data-testid="cd-command-strip"');
-    // Take a generous forward slice — both testids MUST appear
-    // before the strip's closing tag (i.e. before the "Header
-    // card" comment which starts the next sibling block).
+  it("Overview dropdown + action row both live inside cd-action-row", () => {
+    // CUSTOMER-PROFILE-ACTION-BAR Phase 2 · Feb-2026 — the Row-2
+    // Overview wrapper was retired.  Overview now lives INSIDE
+    // ``cd-action-row`` as a navy-skinned sibling of the other
+    // buttons, so both testids must appear within the row block
+    // instead of merely within the outer strip.
+    const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
+    expect(rowIdx).toBeGreaterThan(-1);
     const nextBlockIdx = pageSrc.indexOf("{/* Header card */}",
-                                            stripIdx);
-    const stripBlock = pageSrc.slice(stripIdx, nextBlockIdx);
-    expect(stripBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
-    expect(stripBlock).toContain('data-testid="cd-action-row"');
+                                            rowIdx);
+    const rowBlock = pageSrc.slice(rowIdx, nextBlockIdx);
+    expect(rowBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
   });
 
   it("standalone Chemistry dropdown is removed from CustomerDetail", () => {
@@ -86,12 +92,18 @@ describe("CustomerDetail · unified navy command strip", () => {
     // inline brand dropdown must NOT appear anywhere in the
     // page source (it lived at ~ line 787 pre-fix).
     expect(pageSrc).not.toContain("cd-chemistry-actions-trigger");
-    // And the file no longer imports the DropdownMenu* primitives
-    // that only powered that removed block.
-    expect(pageSrc).not.toMatch(
-      /^import\s+\{\s*ChevronDown\s*\}\s+from\s+"lucide-react"/m);
-    expect(pageSrc).not.toMatch(
-      /import\s+\{[\s\S]*DropdownMenuTrigger[\s\S]*\}\s+from\s+"@\/components\/ui\/dropdown-menu"/);
+    // The submenu-trigger testid for the Chemistry re-nest is
+    // also gone.
+    expect(pageSrc).not.toContain("customer-create-chemistry-submenu");
+    // NOTE · Phase 2 (Feb-2026) — the broad
+    // ``not.toMatch(DropdownMenuTrigger import)`` guard that
+    // previously lived here has been narrowed above.  The mobile
+    // kebab in the unified action bar now mounts a
+    // ``DropdownMenu`` for a DIFFERENT purpose (collapsing the
+    // destructive affordances below ``md:``), so the overbroad
+    // import-absence check would false-positive on that new
+    // mount.  The testid-absence assertions above are a tighter
+    // regression guard for the ORIGINAL Chemistry use case.
   });
 
   it("+ Create dropdown carries Chemistry items as FLAT siblings — no Sub primitives", () => {

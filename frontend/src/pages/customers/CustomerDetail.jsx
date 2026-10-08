@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, MoreHorizontal, X as XIcon } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { api } from "@/api";
 import { CustomerMeasurementsTab, filterCustomerTabs } from "@/components/customer/CustomerMeasurementsTab";
 import CustomerChemicalHistoryTab, { CHEMICAL_HISTORY_TAB_ROLES } from "@/components/customer/CustomerChemicalHistoryTab";
@@ -662,236 +668,288 @@ export default function CustomerDetail() {
         </div>
       )}
 
-      {/* Feb-2026 · Unified navy command strip. Consolidates the
-          Overview dropdown + every top-right action button
-          (Send / Create / Edit / Delete / Merge / Call) into a
-          single horizontal navy container sitting directly below
-          the Portal Access panel. All handlers, testids, and
-          disabled-state logic are preserved verbatim — this is a
-          layout + styling move only.
+      {/* Feb-2026 · Unified navy command strip — Phase 2 (single row).
+          Consolidates Send / Create / Overview / Edit / Merge /
+          Issue Credit / Mark Correction / Call / Delete / Move to
+          Trash into ONE horizontal navy row.  Below ``md:`` the
+          Edit / Merge / Credit / Correction / Delete / Trash set
+          collapses into a kebab (``cd-mobile-kebab-trigger``) so
+          Send / Create / Overview / Call remain reachable without
+          the strip overflowing.  All handlers, testids, role
+          gates, and modals are preserved byte-for-byte — this is
+          a layout + styling move only.  Role filtering on the
+          kebab items mirrors the inline buttons' role gates so
+          there is zero behavioural drift between surfaces.
 
-          CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — the strip is
-          now a 2-row ``flex-col`` so the Overview dropdown
-          (``cd-tabs-dropdown-shell``) lives on its own row BELOW
-          the action buttons (``cd-action-row``).  Row 2 keeps
-          the shared navy background but the dropdown trigger
-          renders with a white background + dark text (``cd-tabs-
-          dropdown-shell-light``) so the Overview control stands
-          out visually against the navy strip.  All existing
-          action-bar buttons on row 1 keep their testids +
-          handlers byte-for-byte. */}
-      <div
-        className="rounded-2xl mb-4 px-3 py-3 flex flex-col gap-3"
-        style={{
-          backgroundColor: colors.nav.bg,
-          border: `1px solid ${colors.nav.border}`,
-        }}
-        data-testid="cd-command-strip"
-      >
-        <div
-          className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
-          data-testid="cd-action-row"
-        >
-          {/* Feb-2026 Customer Detail Additions — top-right Send + Create dropdowns */}
-          <CustomerActionDropdowns
-            customer={customer}
-            onSend={openSendModal}
-            onQuickTask={openQuickTaskFromDropdown}
-            onSendServiceRecordsLink={() => setSrLinkOpen(true)}
-            navy
-          />
-          <Button
-            variant="ghost"
-            className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
-            onClick={() => navigate(`/customers/${id}/edit`)}
-            testid="cd-edit"
-            style={{
-              background: "transparent",
-              color: colors.nav.fg,
-              border: `1px solid rgba(255,255,255,0.20)`,
-            }}
-          >
-            <Edit3 size={14} /> Edit
-          </Button>
-          <Button
-            variant="danger"
-            className="px-2.5 py-1 text-xs hover:!bg-red-400/25 focus:!ring-2 focus:!ring-red-300/60"
-            onClick={() => setConfirmDelete(true)}
-            testid="cd-delete"
-            style={{
-              background: "rgba(239,68,68,0.18)",
-              color: "#FCA5A5",
-              border: "1px solid rgba(252,165,165,0.40)",
-            }}
-          >
-            <Trash2 size={14} /> Delete
-          </Button>
-          {/* HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" button
-              routes through the unified HD-A endpoints. Sits next to
-              the legacy Delete button so both surfaces stay available
-              until HD-C migrates the last of the legacy callers. */}
-          {["admin", "super_admin"].includes(
-              (meRole || "").toLowerCase()) ? (
-            <Button
-              variant="danger"
-              className="px-2.5 py-1 text-xs hover:!bg-orange-400/25 focus:!ring-2 focus:!ring-orange-300/60"
-              onClick={() => setHardDeleteOpen(true)}
-              testid="cd-hard-delete-btn"
-              style={{
-                background: "rgba(251,146,60,0.18)",
-                color: "#FED7AA",
-                border: "1px solid rgba(254,215,170,0.40)",
-              }}
-            >
-              <Trash2 size={14} /> Move to Trash
-            </Button>
-          ) : null}
-          {/* Phase M1 · Feb-2026 — Customer Merge Wizard trigger.
-               Admin + super_admin only; the wizard modal handles
-               role errors gracefully if the backend 403s. */}
-          {["admin", "super_admin", "owner"].includes(
-              (meRole || "").toLowerCase()) ? (
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
-              onClick={() => setMergeOpen(true)}
-              testid="cd-merge-btn"
-              style={{
-                background: "transparent",
-                color: colors.nav.fg,
-                border: `1px solid rgba(255,255,255,0.20)`,
-              }}
-            >
-              <GitMerge size={14} /> Merge
-            </Button>
-          ) : null}
-          {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Issue Credit
-              shortcut.  Visible to admin / super_admin / manager /
-              owner (matches the widened backend gate on
-              ``POST /customers/{id}/credits/adjust``).  Reuses the
-              existing ``AdjustDialog`` modal from
-              ``CustomerCreditsPage.jsx`` so the two entry points
-              (action-bar shortcut + Credits tab button) share one
-              component.  Click handler fetches the current ledger
-              balance so the modal's live preview reads correctly. */}
-          {canIssueCredit ? (
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
-              onClick={openIssueCreditModal}
-              testid="cd-issue-credit-btn"
-              style={{
-                background: "transparent",
-                color: colors.nav.fg,
-                border: `1px solid rgba(255,255,255,0.20)`,
-              }}
-            >
-              <DollarSign size={14} /> Issue Credit
-            </Button>
-          ) : null}
-          {/* CUSTOMER-RETENTION-ACCOUNT-CORRECTION · Feb-2026 — Account
-              Correction toggle on the action strip.  Same role gate
-              as Issue Credit above (admin / super_admin / manager /
-              owner — backend ``require_admin_or_manager``).  Visually
-              muted compared to Issue Credit so the primary CTA stays
-              dominant; the button copy reflects the CURRENT state so
-              the admin always sees the action they're about to take. */}
-          {canToggleAccountCorrection ? (
-            <Button
-              variant="ghost"
-              className="px-2.5 py-1 text-xs hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40"
-              onClick={() => {
-                setAccountCorrectionNote("");
-                setAccountCorrectionOpen(true);
-              }}
-              testid="cd-account-correction-btn"
-              style={{
-                background: "transparent",
-                color: colors.nav.fg,
-                border: `1px solid rgba(255,255,255,0.20)`,
-                opacity: 0.85,
-              }}
-              title={
-                customer.account_correction
-                  ? "Un-flag Account Correction (will be counted in retention tiles)"
-                  : "Mark Account Correction (excluded from retention tiles)"
-              }
-            >
-              <ShieldCheck size={14} />
-              {customer.account_correction
-                ? "Un-flag Correction"
-                : "Mark Correction"}
-            </Button>
-          ) : null}
-          {/* Phase 6B · Feb 2026 — one-click RingCentral call. Feb-2026 UX
-              cleanup — action bar consolidated to a single row, so we
-              suppress the ClickToCallButton's stacked ``Dial from this
-              device`` fallback and render it here as a compact icon-
-              only sibling with a tooltip. All click handlers, phone
-              normalization, and RingCentral wiring stay identical. */}
-          {(() => {
-            const primary =
-              (customer.mobiles && customer.mobiles[0]?.number_e164) ||
-              customer.phone;
-            if (!primary) return null;
-            const telHref = `tel:${String(primary).replace(/[^0-9+]/g, "")}`;
-            return (
-              <div
-                className="inline-flex items-center gap-1"
-                data-testid="cd-click-to-call-wrapper"
-              >
-                <ClickToCallButton
-                  phoneNumber={primary}
-                  entityKind="customer"
-                  entityId={customer.id}
-                  label={`Call ${customer.name || "customer"}`}
-                  testIdPrefix="cd-click-to-call"
-                  size="sm"
-                  showFallback={false}
-                />
-                <a
-                  href={telHref}
-                  className="inline-flex items-center justify-center w-7 h-7 rounded-md hover:bg-white/10"
-                  style={{ color: colors.nav.fg }}
-                  title="Dial from this device"
-                  aria-label="Dial from this device"
-                  data-testid="cd-click-to-call-tel-fallback"
-                >
-                  <Phone size={12} />
-                </a>
-              </div>
-            );
-          })()}
-        </div>
-        {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Row 2: Overview
-            dropdown lives on its own line BELOW the action buttons.
-            Shares the parent strip's navy background but the
-            trigger area renders white (``cd-tabs-dropdown-shell-
-            light``) so the dropdown stands out visually.  Everyone
-            sees row 2 (no role gate on the Overview dropdown). */}
-        <div
-          className="rounded-xl bg-white"
-          style={{ minWidth: 220, width: "fit-content" }}
-          data-testid="cd-tabs-dropdown-shell-light"
-        >
+          Shared className constants (``NAVY_*``) replace the
+          repeated inline ``className="px-2.5 py-1 text-xs …"`` +
+          ``style={{ ... }}`` blocks that caused the pre-fix
+          inconsistency.  Each variant maps to a single color
+          intention (outline / danger / warn) so a future palette
+          tweak only touches ONE place. */}
+      {(() => {
+        const BTN_BASE =
+          "px-2.5 py-1 text-xs whitespace-nowrap";
+        const NAVY_OUTLINE =
+          "hover:!bg-white/10 focus:!ring-2 focus:!ring-white/40";
+        const NAVY_DANGER =
+          "hover:!bg-red-400/25 focus:!ring-2 focus:!ring-red-300/60";
+        const NAVY_WARN =
+          "hover:!bg-orange-400/25 focus:!ring-2 focus:!ring-orange-300/60";
+        const navyOutlineStyle = {
+          background: "transparent",
+          color: colors.nav.fg,
+          border: `1px solid rgba(255,255,255,0.20)`,
+        };
+        const navyDangerStyle = {
+          background: "rgba(239,68,68,0.18)",
+          color: "#FCA5A5",
+          border: "1px solid rgba(252,165,165,0.40)",
+        };
+        const navyWarnStyle = {
+          background: "rgba(251,146,60,0.18)",
+          color: "#FED7AA",
+          border: "1px solid rgba(254,215,170,0.40)",
+        };
+        const roleLower = (meRole || "").toLowerCase();
+        const canHardDelete = ["admin", "super_admin"].includes(roleLower);
+        const canMerge = ["admin", "super_admin", "owner"].includes(roleLower);
+        const primaryMobile =
+          (customer.mobiles && customer.mobiles[0]?.number_e164) ||
+          customer.phone;
+        const telHref = primaryMobile
+          ? `tel:${String(primaryMobile).replace(/[^0-9+]/g, "")}`
+          : null;
+        return (
           <div
-            style={{ minWidth: 220 }}
-            data-testid="cd-tabs-dropdown-shell"
+            className="rounded-2xl mb-4 px-3 py-3"
+            style={{
+              backgroundColor: colors.nav.bg,
+              border: `1px solid ${colors.nav.border}`,
+            }}
+            data-testid="cd-command-strip"
           >
-            <ResponsiveTabs
-              tabs={visibleTabs}
-              active={tab}
-              onChange={setTab}
-              testidPrefix="cd-tab"
-              ariaLabel="Customer sections"
-              forceDropdown
-              recentStorageKey={
-                customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
-              }
-            />
+            <div
+              className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+              data-testid="cd-action-row"
+            >
+              {/* Left group — Send / Create / Overview. */}
+              <CustomerActionDropdowns
+                customer={customer}
+                onSend={openSendModal}
+                onQuickTask={openQuickTaskFromDropdown}
+                onSendServiceRecordsLink={() => setSrLinkOpen(true)}
+                navy
+              />
+              <div
+                style={{ minWidth: 220 }}
+                data-testid="cd-tabs-dropdown-shell"
+              >
+                <ResponsiveTabs
+                  tabs={visibleTabs}
+                  active={tab}
+                  onChange={setTab}
+                  testidPrefix="cd-tab"
+                  ariaLabel="Customer sections"
+                  forceDropdown
+                  recentStorageKey={
+                    customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
+                  }
+                />
+              </div>
+              {/* Flex spacer separates the left group from the right. */}
+              <div className="flex-1" data-testid="cd-action-row-spacer" />
+              {/* Right-primary group — Edit / Merge / Credit / Correction.
+                  Collapses into the mobile kebab below ``md:``. */}
+              <div
+                className="hidden md:inline-flex items-center gap-2"
+                data-testid="cd-action-row-right-primary"
+              >
+                <Button
+                  variant="ghost"
+                  className={`${BTN_BASE} ${NAVY_OUTLINE}`}
+                  onClick={() => navigate(`/customers/${id}/edit`)}
+                  testid="cd-edit"
+                  style={navyOutlineStyle}
+                >
+                  <Edit3 size={14} /> Edit
+                </Button>
+                {canMerge ? (
+                  <Button
+                    variant="ghost"
+                    className={`${BTN_BASE} ${NAVY_OUTLINE}`}
+                    onClick={() => setMergeOpen(true)}
+                    testid="cd-merge-btn"
+                    style={navyOutlineStyle}
+                  >
+                    <GitMerge size={14} /> Merge
+                  </Button>
+                ) : null}
+                {canIssueCredit ? (
+                  <Button
+                    variant="ghost"
+                    className={`${BTN_BASE} ${NAVY_OUTLINE}`}
+                    onClick={openIssueCreditModal}
+                    testid="cd-issue-credit-btn"
+                    style={navyOutlineStyle}
+                  >
+                    <DollarSign size={14} /> Issue Credit
+                  </Button>
+                ) : null}
+                {canToggleAccountCorrection ? (
+                  <Button
+                    variant="ghost"
+                    className={`${BTN_BASE} ${NAVY_OUTLINE}`}
+                    onClick={() => {
+                      setAccountCorrectionNote("");
+                      setAccountCorrectionOpen(true);
+                    }}
+                    testid="cd-account-correction-btn"
+                    style={{ ...navyOutlineStyle, opacity: 0.85 }}
+                    title={
+                      customer.account_correction
+                        ? "Un-flag Account Correction (will be counted in retention tiles)"
+                        : "Mark Account Correction (excluded from retention tiles)"
+                    }
+                  >
+                    <ShieldCheck size={14} />
+                    {customer.account_correction
+                      ? "Un-flag Correction"
+                      : "Mark Correction"}
+                  </Button>
+                ) : null}
+              </div>
+              {/* Call — always visible (mobile + desktop) between the
+                  primary and destructive groups. */}
+              {primaryMobile ? (
+                <div
+                  className="inline-flex items-center gap-1"
+                  data-testid="cd-click-to-call-wrapper"
+                >
+                  <ClickToCallButton
+                    phoneNumber={primaryMobile}
+                    entityKind="customer"
+                    entityId={customer.id}
+                    label="Call"
+                    testIdPrefix="cd-click-to-call"
+                    size="sm"
+                    showFallback={false}
+                  />
+                  <a
+                    href={telHref}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded-md hover:bg-white/10"
+                    style={{ color: colors.nav.fg }}
+                    title="Dial from this device"
+                    aria-label="Dial from this device"
+                    data-testid="cd-click-to-call-tel-fallback"
+                  >
+                    <Phone size={12} />
+                  </a>
+                </div>
+              ) : null}
+              {/* Right-destructive group — Delete / Move to Trash.
+                  Also collapses into the mobile kebab below ``md:``. */}
+              <div
+                className="hidden md:inline-flex items-center gap-2"
+                data-testid="cd-action-row-right-destructive"
+              >
+                <Button
+                  variant="danger"
+                  className={`${BTN_BASE} ${NAVY_DANGER}`}
+                  onClick={() => setConfirmDelete(true)}
+                  testid="cd-delete"
+                  style={navyDangerStyle}
+                >
+                  <Trash2 size={14} /> Delete
+                </Button>
+                {canHardDelete ? (
+                  <Button
+                    variant="danger"
+                    className={`${BTN_BASE} ${NAVY_WARN}`}
+                    onClick={() => setHardDeleteOpen(true)}
+                    testid="cd-hard-delete-btn"
+                    style={navyWarnStyle}
+                  >
+                    <Trash2 size={14} /> Move to Trash
+                  </Button>
+                ) : null}
+              </div>
+              {/* Mobile kebab — Edit / Merge / Credit / Correction /
+                  Delete / Trash collapse here below ``md:``.  Each
+                  item is filtered by the SAME role flag that gates
+                  the inline button, so permissions are consistent
+                  across the two surfaces. */}
+              <div className="md:hidden" data-testid="cd-mobile-kebab-wrapper">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className={`${BTN_BASE} ${NAVY_OUTLINE}`}
+                      testid="cd-mobile-kebab-trigger"
+                      style={navyOutlineStyle}
+                      aria-label="More actions"
+                    >
+                      <MoreHorizontal size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={() => navigate(`/customers/${id}/edit`)}
+                      data-testid="cd-mobile-kebab-edit"
+                    >
+                      <Edit3 size={14} className="mr-2" /> Edit
+                    </DropdownMenuItem>
+                    {canMerge ? (
+                      <DropdownMenuItem
+                        onSelect={() => setMergeOpen(true)}
+                        data-testid="cd-mobile-kebab-merge"
+                      >
+                        <GitMerge size={14} className="mr-2" /> Merge
+                      </DropdownMenuItem>
+                    ) : null}
+                    {canIssueCredit ? (
+                      <DropdownMenuItem
+                        onSelect={openIssueCreditModal}
+                        data-testid="cd-mobile-kebab-issue-credit"
+                      >
+                        <DollarSign size={14} className="mr-2" /> Issue Credit
+                      </DropdownMenuItem>
+                    ) : null}
+                    {canToggleAccountCorrection ? (
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setAccountCorrectionNote("");
+                          setAccountCorrectionOpen(true);
+                        }}
+                        data-testid="cd-mobile-kebab-correction"
+                      >
+                        <ShieldCheck size={14} className="mr-2" />
+                        {customer.account_correction
+                          ? "Un-flag Correction"
+                          : "Mark Correction"}
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem
+                      onSelect={() => setConfirmDelete(true)}
+                      data-testid="cd-mobile-kebab-delete"
+                    >
+                      <Trash2 size={14} className="mr-2" /> Delete
+                    </DropdownMenuItem>
+                    {canHardDelete ? (
+                      <DropdownMenuItem
+                        onSelect={() => setHardDeleteOpen(true)}
+                        data-testid="cd-mobile-kebab-trash"
+                      >
+                        <Trash2 size={14} className="mr-2" /> Move to Trash
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 — Issue Credit
           modal rendered at the page root so it layers above the
