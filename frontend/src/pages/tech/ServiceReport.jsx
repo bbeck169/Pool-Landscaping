@@ -17,6 +17,10 @@ import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin,
 // Feb-2026 · Chemistry required-readings gate — shared with backend.
 import { missingCoreReadings } from "@/utils/chemistryGate";
 import { CORE_KEYS as _CORE_READING_KEYS } from "@/utils/chemistryGate";
+// CHECKLIST-DECIMAL-INPUT-PARITY · Feb-2026 — shared primitive the
+// chemicals-added amount field uses so intermediate "7." decimal
+// states aren't eaten by the HTML5 ``type="number"`` browser gate.
+import DecimalInput from "@/components/common/DecimalInput";
 // Phase CHEM1 · Feb-2026 — the "*" marker mirrors the backend Required
 // Four. ``canonicalReadingKey`` folds ``alkalinity`` onto
 // ``total_alkalinity``, so the marker set carries both spellings and
@@ -670,12 +674,17 @@ export default function ServiceReport() {
                       {amountOpts.map((o) => <option key={o} value={o}>{o}</option>)}
                     </select>
                   ) : (
-                    <input type="number" step="any" value={c.amount} disabled={locked}
-                           onChange={(e) => updChemical(i, { amount: e.target.value })}
-                           placeholder="Amount"
-                           className="col-span-3 px-2 py-2 rounded-lg text-sm"
-                           style={{ border: `1px solid ${colors.border}` }}
-                           data-testid={`svc-chem-amount-${i}`}/>
+                    <DecimalInput
+                      value={c.amount}
+                      disabled={locked}
+                      onChange={(n) => updChemical(i, {
+                        amount: n == null ? "" : String(n),
+                      })}
+                      placeholder="Amount"
+                      className="col-span-3 px-2 py-2 rounded-lg text-sm"
+                      style={{ border: `1px solid ${colors.border}` }}
+                      testid={`svc-chem-amount-${i}`}
+                    />
                   )}
                   <select value={c.unit} disabled={locked}
                           onChange={(e) => updChemical(i, { unit: e.target.value })}

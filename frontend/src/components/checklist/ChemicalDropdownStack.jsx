@@ -105,9 +105,20 @@ export default function ChemicalDropdownStack({
               </div>
             </div>
             <input
-              type="number"
+              /* CHECKLIST-DECIMAL-INPUT-PARITY · Feb-2026 — swap
+                 ``type="number"`` → ``type="text"`` so the browser
+                 stops intercepting intermediate decimal states
+                 ("7.", ".5") before our onChange sees them.  The
+                 ``.replace(/[^0-9.]/g, "")`` strip below is kept
+                 verbatim and now actually gets a chance to run on
+                 the raw characters the user typed.  Integer rows
+                 (``unit_kind === "integer"``) stay numerically-
+                 constrained via the integer-only replace branch;
+                 ``type="text"`` doesn't change their behavior
+                 because the regex strip rejects everything
+                 non-digit. */
+              type="text"
               inputMode={entry.unit_kind === "integer" ? "numeric" : "decimal"}
-              step={entry.unit_kind === "integer" ? "1" : "0.01"}
               min="0"
               disabled={locked}
               value={draft}

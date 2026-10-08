@@ -46,6 +46,14 @@ import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import CustomerCombobox from "@/components/customers/CustomerCombobox";
 import FileUpload from "@/components/files/FileUpload";
+// CHECKLIST-DECIMAL-INPUT-PARITY · Feb-2026 — shared primitive for
+// the 4 decimal-friendly fields on this form (Temperature, Wind
+// Speed, Amount Sprayed, Concentrate oz).  Replaces
+// ``type="number" step="0.1"`` which browsers blank on
+// intermediate "7." states.  Integer fields (Humidity, Area
+// Treated sqft, REI hours) keep ``type="number"`` because the
+// decimal bug doesn't apply.
+import DecimalInput from "@/components/common/DecimalInput";
 // Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
 import PageHeader from "@/components/layout/PageHeader";
 
@@ -590,14 +598,14 @@ export default function ChemicalApplicationForm() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
             <FieldLabel>Temperature (°F)</FieldLabel>
-            <input type="number" step="0.1" value={form.temp_f}
-                   onChange={(e) => patch({ temp_f: e.target.value })}
+            <DecimalInput value={form.temp_f}
+                   onChange={(n) => patch({ temp_f: n == null ? "" : String(n) })}
                    disabled={!canEdit}
                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                    style={{ backgroundColor: colors.surface,
                              color: colors.onSurface,
                              border: `1px solid ${colors.border}` }}
-                   data-testid="chem-app-form-temp-f" />
+                   testid="chem-app-form-temp-f" />
           </div>
           <div>
             <FieldLabel>Humidity (%)</FieldLabel>
@@ -613,15 +621,14 @@ export default function ChemicalApplicationForm() {
           </div>
           <div>
             <FieldLabel>Wind Speed (mph)</FieldLabel>
-            <input type="number" step="0.1" min="0"
-                   value={form.wind_mph}
-                   onChange={(e) => patch({ wind_mph: e.target.value })}
+            <DecimalInput value={form.wind_mph}
+                   onChange={(n) => patch({ wind_mph: n == null ? "" : String(n) })}
                    disabled={!canEdit}
                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                    style={{ backgroundColor: colors.surface,
                              color: colors.onSurface,
                              border: `1px solid ${colors.border}` }}
-                   data-testid="chem-app-form-wind-mph" />
+                   testid="chem-app-form-wind-mph" />
           </div>
           <div>
             <FieldLabel>Wind Direction</FieldLabel>
@@ -683,28 +690,30 @@ export default function ChemicalApplicationForm() {
           </div>
           <div>
             <FieldLabel required>Amount Sprayed (gal)</FieldLabel>
-            <input type="number" step="0.1" min="0"
-                   value={form.amount_sprayed_gal}
-                   onChange={(e) => patch({ amount_sprayed_gal: e.target.value })}
+            <DecimalInput value={form.amount_sprayed_gal}
+                   onChange={(n) => patch({
+                     amount_sprayed_gal: n == null ? "" : String(n),
+                   })}
                    disabled={!canEdit}
                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                    style={{ backgroundColor: colors.surface,
                              color: colors.onSurface,
                              border: `1px solid ${colors.border}` }}
-                   data-testid="chem-app-form-amount-sprayed-gal" />
+                   testid="chem-app-form-amount-sprayed-gal" />
             <ErrorText>{errors.amount_sprayed_gal}</ErrorText>
           </div>
           <div>
             <FieldLabel required>Concentrate (oz)</FieldLabel>
-            <input type="number" step="0.1" min="0"
-                   value={form.concentrate_oz}
-                   onChange={(e) => patch({ concentrate_oz: e.target.value })}
+            <DecimalInput value={form.concentrate_oz}
+                   onChange={(n) => patch({
+                     concentrate_oz: n == null ? "" : String(n),
+                   })}
                    disabled={!canEdit}
                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
                    style={{ backgroundColor: colors.surface,
                              color: colors.onSurface,
                              border: `1px solid ${colors.border}` }}
-                   data-testid="chem-app-form-concentrate-oz" />
+                   testid="chem-app-form-concentrate-oz" />
             <ErrorText>{errors.concentrate_oz}</ErrorText>
           </div>
         </div>
