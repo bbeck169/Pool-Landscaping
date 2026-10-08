@@ -15,9 +15,23 @@ import {
   listPendingActions, approveAction, rejectAction,
   AIEmployee, AIAction,
 } from "@/src/api/aiDock";
+import * as ExpoAudio from "expo-audio";
+import { transcribeAudio } from "@/src/services/marco/executeMarco";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
-type Msg = { id: string; role: "user" | "assistant"; text: string };
+const _Audio: typeof ExpoAudio | null = ExpoAudio;
+
+type Msg = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  // MARCO-AI-CHAT Phase B — inline confirmation for assistant msgs
+  pending_confirmation?: {
+    action_id: string;
+    title?: string;
+    summary?: string;
+  } | null;
+};
 
 type Props = { visible: boolean; onClose: () => void };
 
@@ -162,6 +176,44 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
   const [pendingActions, setPendingActions] = useState<AIAction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
+  // MARCO-AI-CHAT Phase B — mic dictation (Marco only, append-not-send)
+  const isMarco = (employee.key || employee.name || "").toLowerCase() === "marco";
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<any>(null);
+
+  const startRecording = useCallback(async () => {
+    if (!_Audio || recording) return;
+    try {
+      await _Audio.requestRecordingPermissionsAsync?.();
+      const rec = new (_Audio as any).Recording();
+      await rec.prepareToRecordAsync(_Audio.RecordingPresets?.HIGH_QUALITY || {});
+      await rec.startAsync();
+      recorderRef.current = rec;
+      setRecording(true);
+    } catch {
+      // If expo-audio unavailable or permission denied, silently fail
+    }
+  }, [recording]);
+
+  const stopRecordingAndTranscribe = useCallback(async () => {
+    if (!recorderRef.current) { setRecording(false); return; }
+    try {
+      setRecording(false);
+      await recorderRef.current.stopAndUnloadAsync();
+      const uri = recorderRef.current.getURI();
+      recorderRef.current = null;
+      if (!uri) return;
+      const result = await transcribeAudio(uri);
+      if (result?.transcript) {
+        setInput((prev) => {
+          const sep = prev.trim() ? " " : "";
+          return prev + sep + result.transcript;
+        });
+      }
+    } catch {
+      setRecording(false);
+    }
+  }, []);
 
   // Load or create a conversation on mount
   useEffect(() => {
@@ -194,7 +246,14 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
         setMessages((m) => [...m, { id: res.user_message.id, role: "user", text: res.user_message.text }]);
       }
       if (res.assistant_message) {
-        setMessages((m) => [...m, { id: res.assistant_message.id, role: "assistant", text: res.assistant_message.text }]);
+        setMessages((m) => [...m, {
+          id: res.assistant_message.id,
+          role: "assistant",
+          text: res.assistant_message.text,
+          pending_confirmation: res.action
+            ? { action_id: res.action.id, title: res.action.title, summary: res.action.summary }
+            : null,
+        }]);
       }
       if (res.action) {
         setPendingActions((p) => [res.action, ...p]);
@@ -285,6 +344,37 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
             <Text style={[styles.bubbleText, item.role === "user" && styles.bubbleTextUser]}>
               {item.text}
             </Text>
+            {/* MARCO-AI-CHAT Phase B — inline confirmation card inside bubble */}
+            {item.pending_confirmation && pendingActions.some((a) => a.id === item.pending_confirmation?.action_id) ? (
+              <View style={styles.inlineConfirm} testID={`ai-inline-confirm-${item.pending_confirmation.action_id}`}>
+                <Text style={styles.inlineConfirmTitle}>
+                  {item.pending_confirmation.title || "Confirm action?"}
+                </Text>
+                {item.pending_confirmation.summary ? (
+                  <Text style={styles.inlineConfirmSummary} numberOfLines={2}>
+                    {item.pending_confirmation.summary}
+                  </Text>
+                ) : null}
+                <View style={styles.inlineConfirmBtns}>
+                  <TouchableOpacity
+                    testID={`ai-inline-approve-${item.pending_confirmation.action_id}`}
+                    style={styles.approveBtn}
+                    onPress={() => onApproveChat(item.pending_confirmation!.action_id)}
+                  >
+                    <Ionicons name="checkmark" size={12} color="#fff" />
+                    <Text style={styles.approveBtnText}>Confirm</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID={`ai-inline-reject-${item.pending_confirmation.action_id}`}
+                    style={styles.rejectBtn}
+                    onPress={() => onRejectChat(item.pending_confirmation!.action_id)}
+                  >
+                    <Ionicons name="close" size={12} color={colors.error} />
+                    <Text style={styles.rejectBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
           </View>
         )}
         ListEmptyComponent={
@@ -306,6 +396,21 @@ function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEm
           returnKeyType="send"
           onSubmitEditing={() => send(input)}
         />
+        {/* MARCO-AI-CHAT Phase B — mic dictation button (Marco only) */}
+        {isMarco && _Audio ? (
+          <TouchableOpacity
+            testID="ai-dock-mic"
+            style={[styles.micBtn, recording && styles.micBtnActive]}
+            onPress={recording ? stopRecordingAndTranscribe : startRecording}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={recording ? "stop" : "mic"}
+              size={16}
+              color={recording ? "#fff" : colors.brand}
+            />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           testID="ai-dock-send"
           style={[styles.sendBtn, (!input.trim() || sending || !convId) && styles.sendBtnDisabled]}
@@ -363,6 +468,14 @@ const styles = StyleSheet.create({
   composerInput: { flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 10, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, maxHeight: 100, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   sendBtnDisabled: { opacity: 0.4 },
+  /* MARCO-AI-CHAT Phase B — mic button */
+  micBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border },
+  micBtnActive: { backgroundColor: colors.error, borderColor: colors.error },
+  /* MARCO-AI-CHAT Phase B — inline confirmation card */
+  inlineConfirm: { marginTop: spacing.sm, padding: spacing.md, backgroundColor: "#FEF3C7", borderRadius: radius.sm, borderWidth: 1, borderColor: "#FDE68A" },
+  inlineConfirmTitle: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#92400E", marginBottom: 2 },
+  inlineConfirmSummary: { fontFamily: font.regular, fontSize: fontSize.sm, color: "#78350F", marginBottom: spacing.sm },
+  inlineConfirmBtns: { flexDirection: "row", gap: spacing.sm },
   /* Chat-scoped actions & error */
   chatActionsBar: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
   chatActionsLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },

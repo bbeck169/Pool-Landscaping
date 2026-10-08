@@ -8,6 +8,7 @@ import { colors, font } from "@/src/theme";
 import { SyncBanner } from "@/src/components/SyncBanner";
 import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
 import AIDockDrawer from "@/src/components/ai/AIDockDrawer";
+import { aiDockEvents } from "@/src/events/aiDockEvents";
 import { registerForPushNotifications } from "@/src/services/pushNotifications";
 import { useUnreadCount } from "@/src/hooks/useUnreadCount";
 // FLEET-B · Fleet status chip in the tab bar area.
@@ -18,6 +19,10 @@ import LandscapeTechClockInGate from "@/src/components/LandscapeTechClockInGate"
 export default function AppLayout() {
   const { user, loading } = useAuth();
   const [dockOpen, setDockOpen] = useState(false);
+  // MARCO-AI-CHAT Phase B — wake-word → dock-open bridge
+  useEffect(() => {
+    return aiDockEvents.onOpen(() => setDockOpen(true));
+  }, []);
 
   // G2 · Unread messages badge on the Messages tab.
   // Enabled for admin + tech (same roles that see the tab).
@@ -34,6 +39,8 @@ export default function AppLayout() {
   if (!user) return <Redirect href="/login" />;
 
   const isAdmin = user.role === "admin" || (user.role as string) === "super_admin";
+  // MARCO-AI-CHAT Phase B — manager/owner also access AI dock (matches web role widening)
+  const canAccessAIDock = ["admin", "super_admin", "manager", "owner"].includes(user.role || "");
   const isTech = user.role === "technician";
   const isCustomer = user.role === "customer";
 
@@ -251,9 +258,9 @@ export default function AppLayout() {
           positioned so no per-screen header changes are needed. Sheet
           reuses the Phase 42 body via `<ToolsMenuBody variant="sheet" />`. */}
       <GlobalMenu />
-      {/* B1 · AI Dock FAB — admin/super_admin only. Never for tech or customer.
-          E3 · Raised above the now-visible bottom tab bar. */}
-      {isAdmin && (
+      {/* B1 · AI Dock FAB — admin/super_admin/manager/owner.
+          MARCO-AI-CHAT Phase B — role widened to manager/owner. */}
+      {canAccessAIDock && (
         <TouchableOpacity
           testID="ai-dock-fab"
           style={fabStyles.fab}
@@ -263,7 +270,7 @@ export default function AppLayout() {
           <Ionicons name="sparkles" size={20} color="#fff" />
         </TouchableOpacity>
       )}
-      {isAdmin && <AIDockDrawer visible={dockOpen} onClose={() => setDockOpen(false)} />}
+      {canAccessAIDock && <AIDockDrawer visible={dockOpen} onClose={() => setDockOpen(false)} />}
     </View>
     </LandscapeTechClockInGate>
   );

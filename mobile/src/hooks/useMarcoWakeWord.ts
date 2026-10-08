@@ -9,7 +9,8 @@
  *
  * Mount this in the root layout alongside useFleetEmitter.
  */
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useSegments } from "expo-router";
 import {
   useAudioRecorder,
   RecordingPresets,
@@ -42,14 +43,28 @@ try {
 
 const RECORD_DURATION_MS = 8000; // Max 8s recording after wake
 
-export function useMarcoWakeWord() {
+export function useMarcoWakeWord(onOpenDock?: () => void) {
   const { user } = useAuth();
   const startedRef = useRef(false);
+  const segments = useSegments();
 
   // We need a recorder for the wake-triggered flow
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
+  // MARCO-AI-CHAT Phase B — determine if we're on a voice-command screen
+  // (job/service) or a general screen where wake-word should open the dock.
+  const isVoiceCommandScreen = useMemo(() => {
+    const path = segments.join("/");
+    return path.includes("job/") || path.includes("service-report/");
+  }, [segments]);
+
   const handleWakeDetected = useCallback(async () => {
+    // Option A: on a job/service screen, fire the voice-command pipeline.
+    // On any other screen, open the AI chat dock.
+    if (!isVoiceCommandScreen && onOpenDock) {
+      onOpenDock();
+      return;
+    }
     // Wake-word detected — start the MARCO voice pipeline
     try {
       // 1. Check mic permission
@@ -93,7 +108,7 @@ export function useMarcoWakeWord() {
     } catch {
       // Swallow — wake-word pipeline errors shouldn't crash the app
     }
-  }, [recorder]);
+  }, [recorder, isVoiceCommandScreen, onOpenDock]);
 
   useEffect(() => {
     if (!user) {

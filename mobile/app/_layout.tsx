@@ -30,6 +30,7 @@ import { SyncManagerProvider } from "@/src/services/SyncManager";
 import { useFleetEmitter } from "@/src/hooks/useFleetEmitter";
 // TB-1 · Wake-word listener for "Hey MARCO".
 import { useMarcoWakeWord } from "@/src/hooks/useMarcoWakeWord";
+import { aiDockEvents } from "@/src/events/aiDockEvents";
 // OTA auto-update listener — background check + subtle "update ready" toast.
 import { useOtaUpdateListener } from "@/src/hooks/useOtaUpdateListener";
 // Phase O2 · Offline sync foundation — boot the sync infra.
@@ -85,7 +86,8 @@ export default function RootLayout() {
   useFleetEmitter();
 
   // TB-1 · Start the "Hey MARCO" wake-word listener for techs.
-  useMarcoWakeWord();
+  // MARCO-AI-CHAT Phase B — on non-job screens, wake-word opens AI dock.
+  useMarcoWakeWord(() => aiDockEvents.emitOpen());
 
   // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
   // Phase O3 · Wire photo auto-upload on reconnect.
