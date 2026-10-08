@@ -16,6 +16,7 @@ import {
   RecordingPresets,
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
+  setAudioModeAsync,
 } from "expo-audio";
 import * as ExpoSpeech from "expo-speech";
 
@@ -71,6 +72,7 @@ export function useMarcoWakeWord(onOpenDock?: () => void) {
       }
 
       // 2. Record for a fixed duration
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
 
