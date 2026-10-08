@@ -37,6 +37,25 @@ def _in_range(iso: str | None, dfrom: str | None, dto: str | None) -> bool:
     return True
 
 
+# CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — tenant-
+# scoped excluded-customer-id lookup used by the four high-risk
+# revenue routes patched in this phase.  Mirrors the shape used by
+# ``_lost_customer_ids`` in the retention report so a flagged
+# customer stops contributing to revenue-by-customer, forecasts,
+# the dashboard tile, AND the KPI metric on the very next refresh
+# (no cache invalidation needed).
+async def _excluded_customer_ids(tenant_id: str) -> list:
+    """Return the list of ``customer_id`` strings in this tenant that
+    currently have ``account_correction=True``.  Empty list when
+    the tenant has no flagged customers — callers should treat that
+    as a no-op (no $nin clause to add)."""
+    rows = await db.customers.find(
+        {"tenant_id": tenant_id, "account_correction": True},
+        {"_id": 0, "id": 1},
+    ).to_list(length=None)
+    return [r["id"] for r in rows if r.get("id")]
+
+
 def _paid_amt(q: dict) -> float:
     # FIN-PARITY-C · Feb-2026 — legacy-fallback shim removed.
     # The ``recompute_amount_paid_v1`` migration guarantees every
@@ -187,10 +206,17 @@ async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = 
     # bucketing below can only see the caller's invoices.
     tenant_id = tenant["id"]
     paid = await _fetch_paid(tenant_id, start, end)
+    # CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — skip
+    # invoices whose ``customer_id`` is currently flagged as a
+    # bookkeeping / test account so the revenue-by-customer table
+    # matches the retention tile. Retroactive by design.
+    excluded = set(await _excluded_customer_ids(tenant_id))
     buckets: dict = {}
     counts: dict = {}
     for q in paid:
         cid = q.get("customer_id") or "unknown"
+        if cid in excluded:
+            continue
         name = q.get("customer_name") or "Unknown"
         key = (cid, name)
         buckets[key] = buckets.get(key, 0.0) + _paid_amt(q)
@@ -201,7 +227,8 @@ async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = 
         key=lambda r: -r["amount"],
     )
     total = round(sum(r["amount"] for r in rows), 2)
-    return {"rows": rows, "summary": {"total": total, "customers": len(rows), "invoices": len(paid)}}
+    return {"rows": rows, "summary": {"total": total, "customers": len(rows),
+             "invoices": sum(counts.values())}}
 
 
 @router.get("/reports/gross-sales")
@@ -296,20 +323,41 @@ def _quote_weight(q: dict) -> float:
     return 0.0
 
 
-async def _forecast_series(days_ahead: int = 90) -> list:
-    """Return weekly buckets of projected revenue from active billing plans + weighted quotes."""
+async def _forecast_series(days_ahead: int = 90, excluded_ids: Optional[list] = None) -> list:
+    """Return weekly buckets of projected revenue from active billing plans + weighted quotes.
+
+    CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — the
+    optional ``excluded_ids`` list is passed through to
+    ``_forecast_series_between``; billing plans + quotes tied to any
+    flagged customer are excluded from the projection.  ``None``
+    (the legacy default) preserves pre-filter behavior for callers
+    that haven't threaded through tenant context.
+    """
     today = datetime.now(timezone.utc).date()
     horizon = today + timedelta(days=days_ahead)
-    return await _forecast_series_between(today, horizon)
+    return await _forecast_series_between(today, horizon, excluded_ids=excluded_ids)
 
 
-async def _forecast_series_between(start_date, end_date) -> list:
+async def _forecast_series_between(start_date, end_date, excluded_ids: Optional[list] = None) -> list:
     """Feb-2026 · daily buckets between an inclusive [start_date, end_date]
     window. Reuses the same billing-plan + weighted-quote projection but
     keys each row by ISO date rather than week-start so short windows
     (today / tomorrow) still render meaningful bars.
+
+    CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 —
+    plans + weighted quotes whose ``customer_id`` is in
+    ``excluded_ids`` are dropped before the aggregation.  Known
+    pre-existing cross-tenant leak on these two ``find`` calls
+    (no ``tenant_id`` filter) is **not** addressed here; this
+    phase only ensures a flagged customer in the caller's tenant
+    doesn't contribute to the projection total.  Fixing the
+    tenant leak is tracked as its own follow-up ticket.
     """
-    plans = await db.billing_plans.find({"active": {"$ne": False}}, {"_id": 0}).to_list(2000)
+    _ex = set(excluded_ids or [])
+    plan_q: dict = {"active": {"$ne": False}}
+    if _ex:
+        plan_q["customer_id"] = {"$nin": list(_ex)}
+    plans = await db.billing_plans.find(plan_q, {"_id": 0}).to_list(2000)
     buckets: dict = {}
     for p in plans:
         try:
@@ -324,7 +372,10 @@ async def _forecast_series_between(start_date, end_date) -> list:
                 buckets[key] = buckets.get(key, 0.0) + amt
             nr = nr + timedelta(days=step)
     # Weighted open quotes — land 14 days out.
-    quotes = await db.quotes.find({"doc_type": "quote"}, {"_id": 0}).to_list(3000)
+    quote_q: dict = {"doc_type": "quote"}
+    if _ex:
+        quote_q["customer_id"] = {"$nin": list(_ex)}
+    quotes = await db.quotes.find(quote_q, {"_id": 0}).to_list(3000)
     today = datetime.now(timezone.utc).date()
     for q in quotes:
         w = _quote_weight(q)
@@ -440,13 +491,18 @@ async def revenue_forecast(
         else:
             raise HTTPException(400,
                 "range must be one of today|tomorrow|week|month|custom")
-        series = await _forecast_series_between(start_local, end_local)
+        series = await _forecast_series_between(
+            start_local, end_local,
+            excluded_ids=await _excluded_customer_ids(tenant["id"]),
+        )
         total = round(sum(x["amount"] for x in series), 2)
         return {"series": series, "total": total,
                 "range": preset,
                 "date_from": start_local.isoformat(),
                 "date_to": end_local.isoformat()}
-    series = await _forecast_series(days)
+    series = await _forecast_series(
+        days, excluded_ids=await _excluded_customer_ids(tenant["id"]),
+    )
     total = round(sum(x["amount"] for x in series), 2)
     return {"days": days, "series": series, "total": total}
 

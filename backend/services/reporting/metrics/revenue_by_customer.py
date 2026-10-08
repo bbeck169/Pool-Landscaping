@@ -20,7 +20,11 @@ from __future__ import annotations
 
 from ..aggregation import AggregationEngine
 from ..registry import Metric, register_metric
-from ._revenue_shared import build_lens_filter, resolve_customer_whitelist
+from ._revenue_shared import (
+    build_lens_filter,
+    excluded_customer_ids,
+    resolve_customer_whitelist,
+)
 
 
 def _row_pipeline(match_filter: dict) -> list[dict]:
@@ -71,11 +75,24 @@ class RevenueByCustomer(Metric):
         if whitelist is not None and len(whitelist) == 0:
             return {"total": 0.0, "rows": [], "row_count": 0}
 
+        # CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 —
+        # exclude customers currently flagged as bookkeeping / test
+        # accounts so the KPI "Revenue by Customer" tile matches the
+        # dedicated ``GET /reports/revenue-by-customer`` route (which
+        # already excludes flagged accounts).  Retroactive by design:
+        # flipping the flag ON drops the customer from every past
+        # bucket on the very next refresh (no cache invalidation).
+        # Empty list → no clause added, pre-flag behavior preserved
+        # byte-for-byte.
+        excluded = await excluded_customer_ids(engine)
+
         def _build_match(start: str, end: str) -> dict:
             lens_filter = build_lens_filter(lens, start, end)
             match: dict = {"$and": [lens_filter]}
             if whitelist is not None:
                 match["$and"].append({"customer_id": {"$in": whitelist}})
+            if excluded:
+                match["$and"].append({"customer_id": {"$nin": excluded}})
             return engine._scope(match)
 
         # ── Current window ────────────────────────────────────────

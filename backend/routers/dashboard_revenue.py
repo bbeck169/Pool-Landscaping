@@ -498,12 +498,26 @@ async def revenue_forecast(
     s_dt = datetime.fromisoformat(s_iso)
     e_dt = datetime.fromisoformat(e_iso)
 
+    # CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — fetch
+    # the set of flagged customer ids ONCE and $nin-clamp it onto the
+    # three customer-linked queries below (booked jobs, billing
+    # plans, recurring job templates).  Empty set → no clause added,
+    # preserves pre-flag behavior byte-for-byte.
+    _excluded_cursor = db.customers.find(
+        {"tenant_id": tenant_id, "account_correction": True},
+        {"_id": 0, "id": 1},
+    )
+    _excluded_rows = await _excluded_cursor.to_list(length=None)
+    _excluded_ids = [r["id"] for r in _excluded_rows if r.get("id")]
+
     # ── Booked: upcoming jobs in the window ─────────────────────
     booked_q = {
         "tenant_id": tenant_id,
         "status": {"$in": ["scheduled", "confirmed"]},
         "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
     }
+    if _excluded_ids:
+        booked_q["customer_id"] = {"$nin": _excluded_ids}
     from utils import not_deleted_filter as _nd
     cur = db.jobs.find({**booked_q, **_nd()}, {
         "_id": 0, "id": 1, "price": 1, "total": 1, "quote_total": 1,
@@ -524,6 +538,8 @@ async def revenue_forecast(
 
     # ── Recurring: active billing plans × cycles in range ───────
     rec_q = {"tenant_id": tenant_id, "active": True}
+    if _excluded_ids:
+        rec_q["customer_id"] = {"$nin": _excluded_ids}
     cur = db.billing_plans.find(rec_q, {
         "_id": 0, "id": 1, "amount": 1, "frequency": 1,
     })

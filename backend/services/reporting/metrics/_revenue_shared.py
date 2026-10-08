@@ -79,6 +79,37 @@ async def resolve_customer_whitelist(
     return ids
 
 
+# CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — tenant-
+# scoped excluded-customer-id lookup used by the KPI revenue
+# metrics.  Mirrors the shape of ``_excluded_customer_ids`` in
+# ``routers/reports.py`` so the KPI dashboard tile for Revenue by
+# Customer stays byte-for-byte consistent with the dedicated
+# ``GET /reports/revenue-by-customer`` route (which already excludes
+# flagged accounts).  Keeping the helper here (not in the per-metric
+# module) so future revenue metrics — ``revenue_total``,
+# ``revenue_by_city``, ``revenue_by_service_type`` — can opt in with
+# a single import.
+async def excluded_customer_ids(engine: AggregationEngine) -> list[str]:
+    """Return the list of ``customer_id`` strings in this engine's
+    tenant that currently have ``account_correction=True``.
+
+    Empty list when the tenant has no flagged customers — callers
+    should treat that as a no-op (no ``$nin`` clause to add).  The
+    lookup is tenant-scoped via ``engine._scope`` and NEVER returns
+    customer ids from a different tenant, matching the data-
+    isolation contract of every other helper in this module.
+    """
+    ids: list[str] = []
+    async for row in engine.db.customers.find(
+        engine._scope({"account_correction": True}),
+        {"_id": 0, "id": 1},
+    ):
+        cid = row.get("id")
+        if cid:
+            ids.append(cid)
+    return ids
+
+
 def parse_city(address: str | None) -> str:
     """Best-effort city extraction from the flat ``address`` string
     used by the Feb-2026 customer schema (e.g. "12 Vistancia Blvd,
