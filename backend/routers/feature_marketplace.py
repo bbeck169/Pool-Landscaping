@@ -147,11 +147,34 @@ async def enable_feature(
             db=db, tenant_id=tenant_id, feature_key=feature_key,
             price_id=price_id,
         )
+        bypass_reason: str | None = None
     except NoActiveSubscriptionError as ex:
-        raise HTTPException(status_code=409, detail={
-            "detail": "no_active_subscription",
-            "message": str(ex),
-        })
+        # MARKETPLACE-ROLE-BYPASS · Feb-2026 — super_admin + owner
+        # can enable marketplace features without an active Stripe
+        # subscription so the business owner can validate add-ons in
+        # production without triggering the billing gate.  All other
+        # roles still get the 409 (sub required) response.
+        #
+        # The synthesized ids reuse the existing ``si_sandbox_``
+        # prefix so ``schedule_feature_item_cancel_at_period_end``
+        # recognizes them on the subsequent disable call (stripe_ops
+        # line ~173) and routes through the sandbox branch — Stripe
+        # is never contacted on either leg.  The audit log carries
+        # ``bypass_reason="role"`` so ops / billing can distinguish
+        # these from genuine sandbox-mode items when auditing.
+        _role = (user.get("role") or "").lower()
+        if _role not in {"super_admin", "owner"}:
+            raise HTTPException(status_code=409, detail={
+                "detail": "no_active_subscription",
+                "message": str(ex),
+            })
+        synthetic_id = f"si_sandbox_bypass_{tenant_id[:6]}_{feature_key}"
+        stripe_res = {
+            "stripe_subscription_item_id": synthetic_id,
+            "stripe_subscription_id":      "",
+            "sandbox":                      True,
+        }
+        bypass_reason = "role"
     except StripeFeatureError as ex:
         raise HTTPException(status_code=502, detail={
             "detail": "stripe_error",
@@ -186,6 +209,13 @@ async def enable_feature(
             "stripe_subscription_item_id":
                 stripe_res.get("stripe_subscription_item_id"),
             "sandbox": stripe_res.get("sandbox"),
+            # MARKETPLACE-ROLE-BYPASS · Feb-2026 — present only when
+            # a super_admin / owner enabled a feature on a tenant
+            # that had no active Stripe subscription.  Lets ops /
+            # billing cleanly reconcile these against real Stripe
+            # items when auditing marketplace revenue.
+            **({"bypass_reason": bypass_reason}
+                if bypass_reason else {}),
         },
     )
     doc = await _load_entitlement(tenant_id, feature_key)
