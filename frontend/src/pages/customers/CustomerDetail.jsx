@@ -628,9 +628,167 @@ export default function CustomerDetail() {
   };
 
   if (!customer) {
+    // ───────────────────────────────────────────────────────────
+    // Phase 22 · Feb-2026 — Customer profile skeleton loader.
+    //
+    // Replaces the pre-Phase-22 single thin ``<Skeleton
+    // height={160}>`` bar that read as a blank white page. The
+    // new skeleton mirrors the final layout 1:1 so there is zero
+    // layout shift when the slim fetch resolves and the real
+    // tree takes over:
+    //
+    //   * Outer wrapper matches ``max-w-5xl mx-auto px-4
+    //     sm:px-6 lg:px-8 py-6`` (same as the real tree).
+    //   * Back-button row placeholder.
+    //   * Portal access tile row placeholder (2 tiles).
+    //   * Action row placeholder — matches Phase 20's
+    //     ``cd-command-strip`` chrome + 7 button widths.
+    //   * Tabs row placeholder — matches Phase 20's
+    //     ``cd-command-strip-tabs`` chrome + 3 button widths.
+    //   * Header card placeholder — avatar circle + name bar +
+    //     address line + badge chips.
+    //   * Content area — three stacked content tile placeholders.
+    //
+    // The skeleton swaps out as soon as the slim profile fetch
+    // (``load()``) resolves — ``setCustomer(c)`` flips this
+    // branch and the full tree renders. No minimum render time,
+    // zero intentional flicker. Fast loads (<50ms) flip
+    // instantly; slow loads keep the skeleton visible with no
+    // fallback to a blank page.
+    //
+    // Nav chrome preserved for Phase 20 regression lock — the
+    // skeleton still has an outer ``max-w-5xl`` wrapper and the
+    // ``animate-pulse`` affordance makes the skeleton read as
+    // "loading" rather than "broken".
+    // ───────────────────────────────────────────────────────────
+    const skelBar = (w, h = "h-4") => (
+      <div
+        className={`${h} ${w} rounded animate-pulse`}
+        style={{ backgroundColor: colors.surfaceTertiary }}
+      />
+    );
+    const skelButton = (w) => (
+      <div
+        className={`h-7 ${w} rounded-md animate-pulse`}
+        style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+      />
+    );
+    const skelStripChrome = {
+      backgroundColor: colors.nav.bg,
+      border: `1px solid ${colors.nav.border}`,
+    };
     return (
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <Skeleton style={{ height: 160 }} />
+      <div
+        className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
+        data-testid="customer-detail-skeleton"
+      >
+        {/* Back-button row — matches the real "All customers"
+            back button's visual rhythm. */}
+        <div className="flex items-center gap-2 mb-4">
+          {skelBar("w-32", "h-4")}
+        </div>
+        {/* Portal access tile row placeholder — same mb-4 as
+            the real top-action-stack. */}
+        <div
+          className="space-y-2 mb-4"
+          data-testid="cd-skeleton-portal-stack"
+        >
+          <div
+            className="h-14 rounded-xl animate-pulse w-full"
+            style={{ backgroundColor: colors.surfaceTertiary }}
+          />
+          <div
+            className="h-14 rounded-xl animate-pulse w-full"
+            style={{ backgroundColor: colors.surfaceTertiary }}
+          />
+        </div>
+        {/* Phase 20 action row — placeholder matches navy chrome
+            + 7 button widths in the same source order
+            (Edit / Merge / Credit / Correction / Call / Delete /
+            Trash). Carries the Phase-22 skeleton row testid so
+            tests can assert the shell is in the first paint. */}
+        <div
+          className="rounded-2xl mb-4 px-3 py-3"
+          style={skelStripChrome}
+          data-testid="cd-skeleton-action-strip"
+        >
+          <div
+            className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+            data-testid="cd-skeleton-action-row"
+          >
+            {skelButton("w-14")}
+            {skelButton("w-16")}
+            {skelButton("w-24")}
+            {skelButton("w-28")}
+            {skelButton("w-12")}
+            {skelButton("w-16")}
+            {skelButton("w-28")}
+          </div>
+        </div>
+        {/* Phase 20 tabs row — placeholder matches navy chrome
+            + Send / Create / Overview button widths. */}
+        <div
+          className="rounded-2xl mb-4 px-3 py-3"
+          style={skelStripChrome}
+          data-testid="cd-skeleton-tabs-strip"
+        >
+          <div
+            className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+            data-testid="cd-skeleton-tabs-row"
+          >
+            {skelButton("w-20")}
+            {skelButton("w-20")}
+            {skelButton("w-56")}
+          </div>
+        </div>
+        {/* Header card placeholder — avatar + name + address +
+            badge chips. Mirrors the identity card's visual mass
+            so the skeleton reads as "the customer header" even
+            before any data arrives. */}
+        <div
+          className="rounded-2xl p-5 mb-4"
+          style={{
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="cd-skeleton-header-card"
+        >
+          <div className="flex items-start gap-4">
+            <div
+              className="w-16 h-16 rounded-full animate-pulse flex-shrink-0"
+              style={{ backgroundColor: colors.surfaceTertiary }}
+              data-testid="cd-skeleton-avatar"
+            />
+            <div className="flex-1 min-w-0 space-y-3">
+              <div className="flex items-center gap-2">
+                {skelBar("w-20", "h-5")}
+                {skelBar("w-16", "h-5")}
+                {skelBar("w-16", "h-5")}
+              </div>
+              {skelBar("w-48", "h-7")}
+              {skelBar("w-64", "h-4")}
+              <div className="flex items-center gap-2">
+                {skelBar("w-16", "h-5")}
+                {skelBar("w-20", "h-5")}
+                {skelBar("w-14", "h-5")}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Main content area — three stacked content tiles so the
+            viewport is filled below the fold. */}
+        <div className="space-y-4" data-testid="cd-skeleton-content">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-32 rounded-2xl animate-pulse"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+            />
+          ))}
+        </div>
       </div>
     );
   }
