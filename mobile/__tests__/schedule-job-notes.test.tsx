@@ -44,7 +44,7 @@ describe("Mobile schedule · job-level notes", () => {
     // ``custNote`` bindings (normalized-and-trimmed versions of the
     // ``note`` / ``customerNote`` props) — assert the normalized
     // guard shape.
-    expect(src).toMatch(/if\s*\(!jobNote\s*&&\s*!custNote\)\s*return\s+null;/);
+    expect(src).toMatch(/if\s*\(!jobNote\s*&&\s*!custNote\s*&&\s*!pool\s*&&\s*!landscape\)\s*return\s+null;/);
   });
 
   it("appends the truncation ellipsis when ``truncated`` prop is set", () => {

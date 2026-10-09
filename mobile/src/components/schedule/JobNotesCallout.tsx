@@ -17,6 +17,7 @@
 import React, { useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import NoteBlock from "./NoteBlock";
 
 /* M2 hotfix — white fill with amber left-accent (was amber fill). */
 const AMBER_BG = "#FFFFFF";
@@ -24,7 +25,6 @@ const AMBER_ACCENT = "#F59E0B";
 const AMBER_BORDER = "#E5E7EB";
 const AMBER_ICON = "#B45309";
 const TEXT_DARK = "#111827";
-const TEXT_MUTED = "#4B5563";
 
 function _mayOverflow(s?: string | null): boolean {
   if (!s) return false;
@@ -35,20 +35,26 @@ export interface JobNotesCalloutProps {
   jobId: string;
   note?: string | null;
   customerNote?: string | null;
+  poolNote?: string | null;
+  landscapeNote?: string | null;
   truncated?: boolean;
 }
 
 export default function JobNotesCallout({
-  jobId, note, customerNote, truncated = false,
+  jobId, note, customerNote, poolNote, landscapeNote, truncated = false,
 }: JobNotesCalloutProps) {
   // Rules of Hooks — keep ``useState`` above any early return so the
   // hook order stays stable across renders. Matches the web sibling.
   const [expanded, setExpanded] = useState(false);
   const jobNote = (note && String(note).trim()) ? String(note) : "";
   const custNote = (customerNote && String(customerNote).trim()) ? String(customerNote).trim() : "";
-  const showMoreEligible = _mayOverflow(jobNote) || _mayOverflow(custNote);
+  const pool = (poolNote && String(poolNote).trim()) ? String(poolNote).trim() : "";
+  const landscape = (landscapeNote && String(landscapeNote).trim()) ? String(landscapeNote).trim() : "";
+  // Legacy toggle governs the job free-text note only; customer / pool /
+  // landscape each own their toggle inside <NoteBlock> (web parity).
+  const showMoreEligible = _mayOverflow(jobNote);
   const clampLines = expanded ? undefined : 2;
-  if (!jobNote && !custNote) return null;
+  if (!jobNote && !custNote && !pool && !landscape) return null;
 
   return (
     <View style={s.wrap} testID={`job-notes-callout-${jobId}`}>
@@ -74,17 +80,11 @@ export default function JobNotesCallout({
             {jobNote}{truncated ? "…" : ""}
           </Text>
         ) : null}
-        {custNote ? (
-          <Text
-            style={[s.custNote, { marginTop: jobNote ? 4 : 0 }]}
-            numberOfLines={clampLines}
-            ellipsizeMode="tail"
-            testID={`job-notes-preview-${jobId}`}
-          >
-            <Text style={s.custNotePrefix}>Customer note: </Text>
-            {custNote}
-          </Text>
-        ) : null}
+        {/* Phase 3 · Feb-2026 — Customer → Pool → Landscape, each via
+            the shared <NoteBlock> (120 chars OR 3 lines, own toggle). */}
+        <NoteBlock label="Customer note" text={custNote} testID={`job-notes-preview-${jobId}`} />
+        <NoteBlock label="Pool note" text={pool} testID={`job-notes-pool-${jobId}`} />
+        <NoteBlock label="Landscape note" text={landscape} testID={`job-notes-landscape-${jobId}`} />
         {showMoreEligible ? (
           <Pressable
             onPress={() => setExpanded((x) => !x)}
@@ -111,7 +111,5 @@ const s = StyleSheet.create({
     borderRadius: 6, marginTop: 6,
   },
   jobNote: { fontSize: 13, lineHeight: 18, color: TEXT_DARK, fontWeight: "500" },
-  custNote: { fontSize: 13, lineHeight: 18, color: TEXT_DARK },
-  custNotePrefix: { fontWeight: "700", color: TEXT_MUTED },
   toggle: { fontSize: 12, fontWeight: "700", color: AMBER_ICON, marginTop: 4 },
 });

@@ -34,10 +34,21 @@ export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
     open: "#EAF7F0",
     scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
-    completed: "#FDECEC",
+    // Phase 3 · Feb-2026 — "Bold red" completed (web parity, 5f89f2588).
+    // Was soft-pink #FDECEC. Cards on this bg flip text/icons to white.
+    completed: "#DC2626",
     cancelled: "#FECACA",
     skipped: "#FED7AA",
   });
+
+/** Bold-red completed bg + the white foreground used on it. */
+export const K50_BOLD_RED_BG = "#DC2626";
+export const K50_ON_BOLD_RED_FG = "#FFFFFF";
+
+/** True when the card bg is the bold-red completed treatment. */
+export function isBoldRedStatus(status?: string | null): boolean {
+  return jobStatusColor(status) === K50_BOLD_RED_BG;
+}
 
 const _ALIAS: Readonly<Record<string, string>> = Object.freeze({
   active: "in_progress",

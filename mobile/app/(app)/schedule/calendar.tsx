@@ -61,7 +61,8 @@ import JobTrackerTiles from "./JobTrackerTiles";
 import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 // Web mirror: ``frontend/src/lib/jobStatus.js``.
-import { jobStatusColor as k50JobStatusColor } from "@/src/lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor, isBoldRedStatus, K50_ON_BOLD_RED_FG } from "@/src/lib/jobStatus";
+import NavigateMapsButton from "@/src/components/schedule/NavigateMapsButton";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
 // invariant vs the pre-Phase-27 layout.
@@ -1531,6 +1532,9 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   // Feb-2026 · Schedule-UI · colored left border.
   const statusBorder = getStatusBorderColor(job.status);
   const k50CardBg = k50JobStatusColor(job.status) || colors.surface;
+  // Phase 3 · bold-red completed card → white text/icons (web index.css cascade parity).
+  const onRed = isBoldRedStatus(job.status);
+  const fg = onRed ? { color: K50_ON_BOLD_RED_FG } : null;
   const _TERMINAL_STATUS = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
   const showOnMyWay = !_TERMINAL_STATUS.has((job.status || "").toLowerCase());
   const showDragHandle = rearrangeMode && isAdminForCard && onDrag;
@@ -1558,7 +1562,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         </Pressable>
       )}
       <View style={{ flex: 1 }}>
-        <Text style={[gStyles.svcTag, { color: svc.tag }]} numberOfLines={1}>
+        <Text style={[gStyles.svcTag, { color: svc.tag }, fg]} numberOfLines={1}>
           {isRecurring(job) ? "🔁 " : ""}
           {(job.service_type || "General").toUpperCase()}
         </Text>
@@ -1571,7 +1575,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             header, so the per-card avatar was redundant clutter. */}
         {/* ITEM 3 — Customer name + NavigateJobButton + VIP pill on same row */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-          <Text style={[gStyles.cust, { flexShrink: 1 }]} numberOfLines={1}>{formatCustomerName(job)}</Text>
+          <Text style={[gStyles.cust, { flexShrink: 1 }, fg]} numberOfLines={1}>{formatCustomerName(job)}</Text>
           <NavigateJobButton job={job} />
           {job.customer_is_vip ? (
             <View style={gStyles.vipBadgeInline} testID={`job-vip-badge-${job.id}`}>
@@ -1652,10 +1656,12 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           jobId={job.id}
           note={job.notes}
           customerNote={job.customer_notes || job.account_notes}
+          poolNote={job.service_notes_pool}
+          landscapeNote={job.service_notes_landscape}
           truncated={job.notes_truncated}
         />
         {job.address ? (
-          <AddressLink address={job.address} showIcon={false} style={gStyles.addr} testID={`job-card-addr-${job.id}`} />
+          <AddressLink address={job.address} showIcon={false} style={onRed ? { ...gStyles.addr, color: K50_ON_BOLD_RED_FG } : gStyles.addr} testID={`job-card-addr-${job.id}`} />
         ) : null}
         {/* Phase 1 Offline Read — "Cached ✓" pill */}
         {cachedForOffline ? (
@@ -1669,8 +1675,8 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           <PendingSyncPill testID={`job-pending-sync-${job.id}`} />
         ) : null}
         <View style={gStyles.metaRow}>
-          <Ionicons name="reader-outline" size={12} color={colors.muted} />
-          <Text style={gStyles.metaText}>{jobHours(job)}</Text>
+          <Ionicons name="reader-outline" size={12} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
+          <Text style={[gStyles.metaText, fg]}>{jobHours(job)}</Text>
           {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
         </View>
         {showOnMyWay ? (
@@ -1689,6 +1695,9 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             variant="compact"
           />
         ) : null}
+        {/* Phase 3b · Navigate (Google Maps) — LAST in the action row,
+            same terminal-status gate as OMW / CNS (web parity). */}
+        {showOnMyWay ? <NavigateMapsButton job={job} /> : null}
       </View>
       {rearrangeMode ? (
         <View style={gStyles.reorderActions}>
@@ -1721,7 +1730,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           </View>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <View testID={`grid-open-${job.id}`}>
-              <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+              <Ionicons name="chevron-forward" size={20} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
             </View>
             {isAdminForCard && onEdit ? (
               <Pressable
@@ -1731,7 +1740,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
                 accessibilityLabel="Edit job"
                 style={gStyles.editBtn}
               >
-                <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+                <Ionicons name="pencil-outline" size={16} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
               </Pressable>
             ) : null}
           </View>
