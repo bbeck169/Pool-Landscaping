@@ -39,6 +39,13 @@ vi.mock("@/theme", () => ({
   colors: {
     brand: "#0B4A6F", muted: "#6B7280", onSurface: "#111827",
     border: "#E5E7EB", surface: "#FFFFFF",
+    // Phase C.web Batch 1 (Bucket B) · Feb-2026 — PublicEstimateLanding
+    // reads ``colors.nav.bgDeep`` for its page chassis background.
+    // The pre-C.web mock dropped the ``nav`` sub-object, so render
+    // crashed with ``Cannot read properties of undefined (reading
+    // 'bgDeep')``.  Minimal fix: expose a ``nav`` sub-object with the
+    // single key the page touches.
+    nav: { bgDeep: "#0A0940", bg: "#1B1F5C", border: "#1E293B" },
   },
   money: (n) => `$${Number(n || 0).toFixed(2)}`,
 }));

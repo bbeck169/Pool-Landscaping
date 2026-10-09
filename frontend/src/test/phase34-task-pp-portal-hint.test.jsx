@@ -57,6 +57,19 @@ vi.mock("@/theme", () => ({
       return "#000";
     },
   }),
+  // Phase C.web Batch 1 (Bucket B) · Feb-2026 — PortalServiceReports
+  // imports ``portalColors`` as its named export.  Previous mock
+  // only exposed ``colors``, which caused vitest to raise
+  // ``No "portalColors" export is defined on the "@/theme" mock``.
+  // Re-use the same Proxy pattern so every key read resolves to
+  // ``"#000"`` and the component renders cleanly.
+  portalColors: new Proxy({}, {
+    get: (_target, prop) => {
+      if (typeof prop === "symbol") return undefined;
+      if (prop === "then" || prop === "catch" || prop === "finally") return undefined;
+      return "#000";
+    },
+  }),
 }));
 
 // Mutable holder — swap the fetch response between tests.

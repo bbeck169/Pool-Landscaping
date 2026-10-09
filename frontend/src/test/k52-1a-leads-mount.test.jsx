@@ -16,6 +16,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
@@ -66,7 +67,17 @@ describe("K52.1a · LeadsDashboardPage renders without throwing", () => {
     let renderError = null;
     try {
       LeadsDashboardPage = (await import("@/pages/leads/LeadsDashboardPage")).default;
-      renderResult = render(<LeadsDashboardPage />);
+      // Phase C.web Batch 1 (Bucket B) · Feb-2026 — wrap in
+      // MemoryRouter so ``useLocation()`` + ``useNavigate()`` calls
+      // inside the page don't blow up with
+      // ``useLocation() may be used only in the context of a <Router>``.
+      // The earlier mount pattern pre-dated the page's router-hook
+      // adoption.
+      renderResult = render(
+        <MemoryRouter initialEntries={["/leads"]}>
+          <LeadsDashboardPage />
+        </MemoryRouter>,
+      );
       await tick();
     } catch (err) {
       renderError = err;
@@ -75,10 +86,21 @@ describe("K52.1a · LeadsDashboardPage renders without throwing", () => {
     // Explicit failure message so a future local-shadow of ``colors``
     // that drops the ``nav`` sub-object surfaces as an actionable
     // test failure, NOT a runtime crash in Prod.
+    // Phase C.web Batch 1 (Bucket B) · Feb-2026 — original message
+    // used a template literal containing ``colors`` wrapped in
+    // double-backticks.  Inside a backtick-delimited template, the
+    // double backtick CLOSES the string and starts a tagged-template
+    // call: ``colors`` was being invoked as a function, which
+    // yielded ``TypeError: '...' is not a function`` — masking any
+    // genuine render error.  Replaced with a plain single-quoted
+    // string that renders the useful hint without the syntax trap.
     expect(
       renderError,
       renderError
-        ? `LeadsDashboardPage threw during render — likely a local ``colors`` shadow missing the ``nav`` sub-object.  Import shared ``@/theme`` colors. Underlying error: ${renderError.message}`
+        ? "LeadsDashboardPage threw during render — likely a local "
+          + "`colors` shadow missing the `nav` sub-object.  Import "
+          + "shared `@/theme` colors. Underlying error: "
+          + renderError.message
         : "should mount cleanly",
     ).toBeNull();
 
