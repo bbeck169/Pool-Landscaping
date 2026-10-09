@@ -13,6 +13,10 @@ import { formatRelativeFromIso } from "@/lib/relativeTime";
 // InvoicesList's inline helper) so the two pages read on identical
 // tile shells.
 import SummaryTile from "@/components/SummaryTile";
+// Phase 4b · Feb-2026 — bulk-action toolbar surfaced when 1+ rows
+// are checked.  Component owns its own confirm modal state; this
+// page owns the API fetches + toast surface.
+import QuotesBulkToolbar from "@/components/quotes/QuotesBulkToolbar";
 
 const STATUSES = ["draft", "sent", "approved", "declined", "expired"];
 
@@ -236,6 +240,112 @@ export default function QuotesList() {
     fetchRows();
   };
 
+  // ─── Phase 4b · Feb-2026 — Bulk selection + bulk actions ─────────
+  // Role gate re-uses the exact set that already gates per-row Decline
+  // and Reopen (``canUserLifecycle``) so the three Phase 4b bulk
+  // endpoints (``quotes.bulk-{accept,decline,delete}``) mirror the UI
+  // affordance 1:1.  For non-eligible roles (tech, dispatcher,
+  // customer) checkboxes AND the toolbar are not rendered at all —
+  // the table reverts to its pre-Phase-4b shape.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // Standard-table UX — selection is cleared when a row leaves the
+  // filtered view.  Re-sync on every ``filtered`` change by dropping
+  // ids that no longer appear.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(filtered.map((r) => r.id));
+      let changed = false;
+      const next = new Set();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [filtered]);
+
+  const toggleRowSelect = (id) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+  const allVisibleSelected = visibleIds.length > 0
+    && visibleIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected = !allVisibleSelected
+    && visibleIds.some((id) => selectedIds.has(id));
+  const toggleSelectAllVisible = () =>
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        // Deselect only the currently visible rows (preserve
+        // selections that scrolled off due to filter change).
+        const next = new Set(prev);
+        for (const id of visibleIds) next.delete(id);
+        return next;
+      }
+      // Select all currently visible rows (union with prior).
+      const next = new Set(prev);
+      for (const id of visibleIds) next.add(id);
+      return next;
+    });
+
+  const headerCheckboxRef = React.useRef(null);
+  useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const _toastBulkOutcome = (verb, succeeded, skipped) => {
+    const s = succeeded?.length || 0;
+    const k = skipped?.length  || 0;
+    let message;
+    if (s === 0 && k === 0) message = `No ${verb} action taken.`;
+    else if (k === 0) message = `${s} ${verb}`;
+    else if (s === 0) message = `0 ${verb}, ${k} skipped (ineligible)`;
+    else message = `${s} ${verb}, ${k} skipped (ineligible)`;
+    setToast({
+      tone: s > 0 ? "success" : "info",
+      message,
+    });
+  };
+
+  const _runBulk = async (route, verb) => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    setBulkBusy(true);
+    try {
+      const res = await api.post(`/quotes/${route}`, { quote_ids: ids });
+      _toastBulkOutcome(verb, res?.succeeded, res?.skipped);
+      // Clear only the succeeded ids so the user sees which rows
+      // got skipped on the next render + can retry if desired.
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of res?.succeeded || []) next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      setToast({
+        tone: "error",
+        message: err?.message || `Bulk ${verb} failed.`,
+      });
+    } finally {
+      setBulkBusy(false);
+      fetchRows();
+    }
+  };
+
+  const handleBulkAccept  = () => _runBulk("bulk-accept",  "accepted");
+  const handleBulkDecline = () => _runBulk("bulk-decline", "declined");
+  const handleBulkDelete  = () => _runBulk("bulk-delete",  "deleted");
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="quotes-page">
       <PageHeader
@@ -399,9 +509,46 @@ export default function QuotesList() {
           className="rounded-2xl overflow-hidden"
           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
         >
+          {/* Phase 4b · Feb-2026 — Sticky bulk toolbar.  Only
+              surfaces when 1+ rows are checked AND the viewer's
+              role is admin/super_admin/owner/manager.  Hidden
+              otherwise so techs + dispatchers see the pre-Phase-4b
+              table shape. */}
+          {roleAllowed ? (
+            <QuotesBulkToolbar
+              selectedCount={selectedIds.size}
+              onAccept={handleBulkAccept}
+              onDecline={handleBulkDecline}
+              onDelete={handleBulkDelete}
+              onClear={clearSelection}
+              busy={bulkBusy}
+            />
+          ) : null}
           <table className="w-full text-sm" data-testid="quotes-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                {/* Phase 4b · Feb-2026 — Select-all checkbox column.
+                    Rendered ONLY for admin/super_admin/owner/manager.
+                    Indeterminate when a partial subset of visible
+                    rows is checked. */}
+                {roleAllowed ? (
+                  <th
+                    className="px-3 py-2 w-10"
+                    style={{ color: colors.onSurfaceSecondary }}
+                  >
+                    <input
+                      ref={headerCheckboxRef}
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      aria-label={allVisibleSelected
+                        ? "Deselect all visible quotes"
+                        : "Select all visible quotes"}
+                      data-testid="quotes-select-all-checkbox"
+                      className="cursor-pointer"
+                    />
+                  </th>
+                ) : null}
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Quote</th>
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
                 <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Amount</th>
@@ -426,6 +573,21 @@ export default function QuotesList() {
                   style={{ borderTop: `1px solid ${colors.divider}` }}
                   data-testid={`quote-row-${r.id}`}
                 >
+                  {/* Phase 4b · Feb-2026 — Row-level selection
+                      checkbox. Stops propagation so clicking the
+                      box doesn't navigate into the quote detail. */}
+                  {roleAllowed ? (
+                    <td className="px-3 py-3 w-10" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleRowSelect(r.id)}
+                        aria-label={`Select quote ${r.title || r.id}`}
+                        data-testid={`quote-row-checkbox-${r.id}`}
+                        className="cursor-pointer"
+                      />
+                    </td>
+                  ) : null}
                   <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }}>{r.title}</td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} data-testid={`quote-row-customer-${r.id}`}><CustomerLink customerId={r.customer_id} name={formatCustomerName(r)} /></td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</td>

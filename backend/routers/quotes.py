@@ -3456,3 +3456,236 @@ async def reopen_quote(
         "status": previous_status_used,
         "previous_status_used": previous_status_used,
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 4b · Feb-2026 — Quotes bulk actions (Accept / Decline / Delete).
+#
+# These endpoints power the Quotes-list bulk toolbar.  Each loops over
+# a client-supplied ``quote_ids`` list and returns an envelope that
+# distinguishes succeeded ids from skipped ones (with a machine
+# readable ``reason`` string so the UI can toast "N accepted, M
+# skipped (ineligible)" without reconciling individual error codes).
+#
+# Design decisions:
+#   * Role gate: ``require_admin_or_manager`` on all three endpoints
+#     per the Phase 4b brief.  This is laxer than the single DELETE
+#     ``/quotes/{qid}?hard=true`` which uses admin/super_admin only;
+#     the single soft-delete surface already allows managers via
+#     ``require_admin`` upstream and the bulk soft-delete here keeps
+#     that envelope.  The hard-delete orphan guard (no converted
+#     invoice) is still enforced per-row below so a manager can't
+#     escalate privileges to orphan an invoice.
+#   * Eligibility: mirrors the single-action endpoints EXACTLY so a
+#     refactor there automatically keeps the bulk endpoints honest.
+#     Each row is fetched once (``tenant_id`` scoped) and the shared
+#     per-row inline check decides succeeded vs skipped.
+#   * Tenant isolation: every ``find_one`` / ``update_one`` carries
+#     the caller's tenant filter.  A quote owned by another tenant
+#     surfaces as skipped with ``reason="not_found"`` — identical to
+#     what the single endpoints 404 on, just folded into the envelope.
+#   * The endpoints return 200 even when every row was skipped so
+#     the UI can present a uniform toast on partial / zero success.
+#     Only shape / role / scope failures 4xx out at the FastAPI layer.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class _QuotesBulkIn(BaseModel):
+    quote_ids: List[str]
+
+
+def _bulk_response(succeeded: List[str],
+                   skipped: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "succeeded": succeeded,
+        "skipped":   skipped,
+        "counts": {
+            "succeeded": len(succeeded),
+            "skipped":   len(skipped),
+            "total":     len(succeeded) + len(skipped),
+        },
+    }
+
+
+@router.post("/quotes/bulk-accept",
+              operation_id="quotes.bulkAccept")
+async def bulk_accept_quotes(
+    body: _QuotesBulkIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Bulk-accept quotes.  Each quote must be a ``doc_type="quote"``
+    row in the caller's tenant with no prior accepted / declined
+    decision and no converted invoice.  Ineligible rows are returned
+    in ``skipped`` with a reason string."""
+    from routers.estimate_viewer import _mark_accepted
+    succeeded: List[str] = []
+    skipped:   List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for qid in (body.quote_ids or []):
+        if not qid or qid in seen:
+            # Deduplicate client-side bugs (duplicate ids in a batch
+            # would otherwise fire two decision writes on the same row).
+            if qid and qid in seen:
+                skipped.append({"id": qid, "reason": "duplicate_id"})
+            continue
+        seen.add(qid)
+        doc = await db.quotes.find_one(
+            {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not doc:
+            skipped.append({"id": qid, "reason": "not_found"})
+            continue
+        if (doc.get("doc_type") or "").lower() != "quote":
+            skipped.append({"id": qid, "reason": "not_a_quote"})
+            continue
+        if (doc.get("decision") or "").lower() in ("accepted", "declined"):
+            skipped.append({"id": qid, "reason": "already_decided"})
+            continue
+        if (doc.get("status") or "").lower() == "declined":
+            skipped.append({"id": qid, "reason": "already_declined"})
+            continue
+        if doc.get("converted_invoice_id"):
+            skipped.append({"id": qid, "reason": "already_converted"})
+            continue
+        try:
+            await _mark_accepted(doc, tenant["id"], user.get("id"))
+            succeeded.append(qid)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "quotes.bulkAccept per-row failed id=%s: %s", qid, exc,
+            )
+            skipped.append({"id": qid, "reason": "error"})
+    return _bulk_response(succeeded, skipped)
+
+
+@router.post("/quotes/bulk-decline",
+              operation_id="quotes.bulkDecline")
+async def bulk_decline_quotes(
+    body: _QuotesBulkIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Bulk-decline quotes.  Each quote must be a ``doc_type="quote"``
+    row in the caller's tenant, not already declined, not converted
+    to an invoice.  Mirrors the per-row guards from
+    ``POST /quotes/{qid}/decline`` byte-for-byte."""
+    succeeded: List[str] = []
+    skipped:   List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    now_declined_at = datetime.now(timezone.utc).isoformat()
+    for qid in (body.quote_ids or []):
+        if not qid or qid in seen:
+            if qid and qid in seen:
+                skipped.append({"id": qid, "reason": "duplicate_id"})
+            continue
+        seen.add(qid)
+        doc = await db.quotes.find_one(
+            {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not doc:
+            skipped.append({"id": qid, "reason": "not_found"})
+            continue
+        if (doc.get("doc_type") or "").lower() != "quote":
+            skipped.append({"id": qid, "reason": "not_a_quote"})
+            continue
+        if (doc.get("status") or "").lower() == "declined":
+            skipped.append({"id": qid, "reason": "already_declined"})
+            continue
+        if doc.get("converted_invoice_id"):
+            skipped.append({"id": qid, "reason": "already_converted"})
+            continue
+        previous_status = (doc.get("status") or "draft").lower()
+        try:
+            await db.quotes.update_one(
+                {"id": qid, "tenant_id": tenant["id"]},
+                {"$set": {
+                    "status":          "declined",
+                    "previous_status": previous_status,
+                    "declined_at":     now_declined_at,
+                    "declined_by":     user.get("id"),
+                }},
+            )
+            # Best-effort audit — mirror the single-decline path.
+            try:
+                await db.audit_logs.insert_one({
+                    "id":              new_id(),
+                    "tenant_id":       tenant["id"],
+                    "event":           "quote.declined",
+                    "entity_kind":     "quote",
+                    "entity_id":       qid,
+                    "user_id":         user.get("id"),
+                    "previous_status": previous_status,
+                    "created_at":      now_declined_at,
+                    "source":          "bulk_decline",
+                })
+            except Exception as e:  # pragma: no cover
+                logger.warning(
+                    "quotes.bulkDecline audit_logs failed id=%s: %s",
+                    qid, e,
+                )
+            succeeded.append(qid)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "quotes.bulkDecline per-row failed id=%s: %s", qid, exc,
+            )
+            skipped.append({"id": qid, "reason": "error"})
+    return _bulk_response(succeeded, skipped)
+
+
+@router.post("/quotes/bulk-delete",
+              operation_id="quotes.bulkDelete")
+async def bulk_delete_quotes(
+    body: _QuotesBulkIn,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Bulk soft-delete quotes.  Mirrors the single-DELETE guards:
+    row must exist in-tenant, must NOT already be soft-deleted, must
+    NOT have a ``converted_invoice_id`` (that case would orphan the
+    downstream invoice — same guard the single hard-delete uses to
+    protect bookkeeping)."""
+    succeeded: List[str] = []
+    skipped:   List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for qid in (body.quote_ids or []):
+        if not qid or qid in seen:
+            if qid and qid in seen:
+                skipped.append({"id": qid, "reason": "duplicate_id"})
+            continue
+        seen.add(qid)
+        doc = await db.quotes.find_one(
+            {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not doc:
+            skipped.append({"id": qid, "reason": "not_found"})
+            continue
+        if doc.get("deleted_at"):
+            skipped.append({"id": qid, "reason": "already_deleted"})
+            continue
+        if doc.get("converted_invoice_id"):
+            skipped.append({"id": qid, "reason": "already_converted"})
+            continue
+        # Indirect orphan guard — same detection the single hard-delete
+        # uses to refuse deleting a quote whose auto_invoice pipeline
+        # already stamped a downstream invoice.
+        indirect = await _quote_converted_invoice_id(doc, tenant["id"])
+        if indirect:
+            skipped.append({"id": qid, "reason": "already_converted"})
+            continue
+        try:
+            result = await _perform_soft_delete_quote(
+                qid, user, tenant,
+                deletion_reason="bulk_delete",
+            )
+            if result.get("already_deleted"):
+                # Race — row flipped to deleted between fetch and update.
+                skipped.append({"id": qid, "reason": "already_deleted"})
+            else:
+                succeeded.append(qid)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "quotes.bulkDelete per-row failed id=%s: %s", qid, exc,
+            )
+            skipped.append({"id": qid, "reason": "error"})
+    return _bulk_response(succeeded, skipped)
