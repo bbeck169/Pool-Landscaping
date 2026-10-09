@@ -167,18 +167,38 @@ async def summary(start: str = Query(...), end: str = Query(...),
 async def today(user: dict = Depends(get_current_user)):
     _require_landscaping(user)
     today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    # Feb-2026 · Day-boundary rollover — mirrors the ``/mine-status``
+    # fix (line 197 docstring).  Scan ``yesterday → today`` so an
+    # unclosed shift that started before UTC midnight still surfaces
+    # as the current open punch.  Repro: a Phoenix (UTC-7) tech
+    # clocks in at 2 pm local = 21:00 UTC on day N; at 5 pm local
+    # UTC rolls to day N+1 and the pre-fix one-day window silently
+    # dropped the open punch so ``clocked_in`` flipped to ``False``
+    # and the UI rendered the tech as "auto-clocked-out" even
+    # though no OUT punch was ever written.
+    #
+    # Open-shift detection walks the 2-day stream in timestamp
+    # order (same state-machine the pre-fix walker used, just
+    # over a wider window).  The ``punches`` list + ``seconds``
+    # keep today-only semantics so the UI's "today timeline"
+    # affordance is unchanged byte-for-byte.
     rows = await db.timeclock_punches.find({
         "tenant_id": user["tenant_id"], "user_id": user["id"],
-        "timestamp": {"$gte": f"{today}T00:00:00+00:00",
+        "timestamp": {"$gte": f"{yesterday}T00:00:00+00:00",
                        "$lte": f"{today}T23:59:59+00:00"},
     }).sort("timestamp", 1).to_list(50)
     open_in = None
     for p in rows:
         if p["punch_type"] == "in": open_in = p
         elif p["punch_type"] == "out" and open_in: open_in = None
+    todays_rows = [
+        p for p in rows
+        if str(p.get("timestamp", "")).startswith(today)
+    ]
     return {
-        "punches": [{k: v for k, v in p.items() if k != "_id"} for p in rows],
-        "seconds": _sum_shifts(rows),
+        "punches": [{k: v for k, v in p.items() if k != "_id"} for p in todays_rows],
+        "seconds": _sum_shifts(todays_rows),
         "clocked_in": open_in is not None,
         "open_job_id": (open_in or {}).get("job_id") if open_in else None,
     }

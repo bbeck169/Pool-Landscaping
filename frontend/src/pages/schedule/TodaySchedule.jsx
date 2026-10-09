@@ -779,6 +779,8 @@ export default function TodaySchedule() {
       {data && data.items.length > 0 && viewMode === "list" && gridSubMode === "list" && (
         <ScheduleCardList jobs={visibleJobItems} tz={data.tz}
                           isTech={isTech}
+                          isAdminTier={["admin", "super_admin"].includes(
+                              (user?.role || "").toLowerCase())}
                           onOpen={(id) => navigate(`/jobs/${id}`)}
                           onClockIn={async (job) => {
                             // Try to grab GPS (best-effort); still clock-in without it.
@@ -1052,7 +1054,7 @@ function cardStatusTone(status) {
   return { bg: "#DBEAFE", fg: "#1E40AF", label: "Scheduled" };
 }
 
-function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
+function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClockIn }) {
   const [checked, setChecked] = useState(() => new Set());
   const [expanded, setExpanded] = useState(() => new Set());
   const toggle = (id) => {
@@ -1148,9 +1150,15 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                        shortcut" affordance below — directions
                        remain accessible via the address button so
                        admins don't lose that UX either. */}
-                  {(user?.role === "admin"
-                     || user?.role === "super_admin")
-                     && j.customer_id ? (
+                  {/* Phase CROSS-REF Feb-2026 · drive-by scope-fix —
+                      the ``user?.role`` reference here was declared
+                      only in the outer ``TodaySchedule`` component
+                      (line 78 ``const { user } = useAuth()``); this
+                      helper is a top-level function and therefore
+                      doesn't see that binding.  Prop-drilled
+                      ``isAdminTier`` carries the same signal in
+                      lexical scope + keeps the helper pure. */}
+                  {isAdminTier && j.customer_id ? (
                     <CustomerLink
                       customerId={j.customer_id}
                       name={j.customer_name || "—"}
