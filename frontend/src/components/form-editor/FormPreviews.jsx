@@ -14,29 +14,40 @@
 // 7C will wire the saved template into the real pages; this file
 // only renders a mock using the in-memory draft the editor owns.
 import React from "react";
+// Phase 7C · Feb-2026 — unify style mapping with the real-form
+// renderers.  Pre-7C this file had its own ``_styleOf`` that
+// duplicated the (bg_color, bg_alpha) → rgba composition.  The
+// shared ``styleToCss`` helper is now the single source of truth
+// so the editor preview can never drift from what the live form
+// will actually paint.
+import { styleToCss, PADDING_Y_MULTIPLIER_PX } from "@/lib/formStyle";
 
 
 // ─── helpers ──────────────────────────────────────────────────────
 
 function _styleOf(field) {
   const s = field?.style || {};
-  const bgCol = typeof s.bg_color === "string" ? s.bg_color : "#FFFFFF";
-  const txtCol = typeof s.text_color === "string" ? s.text_color : "#111827";
-  const brdCol = typeof s.border_color === "string" ? s.border_color : "#E5E7EB";
-  const alpha  = typeof s.bg_alpha === "number" ? s.bg_alpha : 1;
   const widthCols = Number(s.width_cols || 12);
   const paddingY  = Number(s.padding_y  || 2);
+  const base = styleToCss(s);
   return {
-    bgCol, txtCol, brdCol, alpha, widthCols, paddingY,
+    // Preserve the pre-7C local shape so the preview sub-components
+    // can keep reading ``bgCol``, ``alpha``, etc. for their swatch
+    // overlays.  All CSS values come from the shared helper.
+    bgCol:   typeof s.bg_color   === "string" ? s.bg_color   : "#FFFFFF",
+    txtCol:  typeof s.text_color === "string" ? s.text_color : "#111827",
+    brdCol:  typeof s.border_color === "string" ? s.border_color : "#E5E7EB",
+    alpha:   typeof s.bg_alpha   === "number" ? s.bg_alpha   : 1,
+    widthCols,
+    paddingY,
     css: {
-      background:    bgCol,
-      opacity:       alpha,
-      color:         txtCol,
-      borderColor:   brdCol,
-      paddingTop:    `${paddingY * 4}px`,
-      paddingBottom: `${paddingY * 4}px`,
+      background:    base.backgroundColor,
+      color:         base.color,
+      borderColor:   base.borderColor,
+      paddingTop:    base.paddingTop,
+      paddingBottom: base.paddingBottom,
     },
-    colSpan: `span ${widthCols} / span ${widthCols}`,
+    colSpan: base.gridColumn,
   };
 }
 

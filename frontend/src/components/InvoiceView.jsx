@@ -21,6 +21,14 @@ import InvoiceCreditApplied from "@/components/InvoiceCreditApplied";
 import InvoiceChargeSavedCardDialog from "@/components/invoices/InvoiceChargeSavedCardDialog";
 import "./InvoiceView.css";
 import "@/components/documents/docMobile.css";
+// Phase 7C · Feb-2026 — runtime template loader + style helper.
+// Billable/payment unlock on InvoiceView — the Cost/Rate / Qty/Hr /
+// Total columns now read bg/text/border/padding from the saved
+// ``invoice`` template style on ``line_items_table``.  Zero
+// regression contract: a tenant without a saved template gets
+// ``isEmpty: true`` and the legacy stylesheet wins.
+import { useFormTemplateRuntime } from "@/hooks/useFormTemplateRuntime";
+import { styleToCss } from "@/lib/formStyle";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
 // every doc surface renders the same asset the PDF pipeline uses.
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
@@ -72,6 +80,15 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
   );
   const [savedCards, setSavedCards] = useState([]);
   const [chargeOpen, setChargeOpen] = useState(false);
+
+  // Phase 7C · Feb-2026 — load the admin-saved ``invoice`` form
+  // template so the line-items table can honor the configured
+  // bg/text/border/padding on the Cost/Rate / Qty/Hr / % / Total
+  // columns.  ``isEmpty`` tenants fall through to the legacy
+  // stylesheet; no regression.
+  const _tpl = useFormTemplateRuntime("invoice");
+  const _liField = _tpl.fieldsById?.line_items_table || null;
+  const _liStyle = _liField ? styleToCss(_liField.style) : null;
   useEffect(() => {
     if (!invoiceId || !isAdminSurface) return;
     api.get(`/invoices/${invoiceId}/saved-cards`)
@@ -325,7 +342,12 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
         lines={(
           <table className="iv-lines" data-testid="invoice-line-items-table">
             <thead>
-              <tr>
+              <tr style={_liStyle ? {
+                backgroundColor: _liStyle.backgroundColor,
+                color:           _liStyle.color,
+                borderColor:     _liStyle.borderColor,
+              } : undefined}
+                  data-testid="invoice-line-items-thead">
                 <th>Description</th>
                 <th className="iv-num">Cost/Rate</th>
                 <th className="iv-num">Qty/Hr</th>
@@ -339,7 +361,12 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
                   <td colSpan={5} className="iv-empty">No line items.</td>
                 </tr>
               ) : line_items.map((li, i) => (
-                <tr key={i} data-testid={`invoice-line-item-row-${i}`}>
+                <tr key={i} data-testid={`invoice-line-item-row-${i}`}
+                    style={_liStyle ? {
+                      backgroundColor: _liStyle.backgroundColor,
+                      color:           _liStyle.color,
+                      borderColor:     _liStyle.borderColor,
+                    } : undefined}>
                   <td>{li.description}</td>
                   <td className="iv-num">{formatCurrency(li.cost_rate)}</td>
                   <td className="iv-num">{li.qty_hr}</td>

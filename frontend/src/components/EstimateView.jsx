@@ -30,6 +30,15 @@ import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
 import "./EstimateView.css";
 import "@/components/documents/docMobile.css";
+// Phase 7C · Feb-2026 — runtime template loader + style helper.
+// Billable/payment unlock lives here: the line-items table rows
+// now read bg/text/border/padding from the saved ``estimate``
+// template style on ``line_items_table`` field.  Pre-7C those
+// cells were white-by-stylesheet; the template now wins.  A tenant
+// without a saved template gets ``isEmpty: true`` and the inline
+// override is a no-op (legacy stylesheet wins) — zero regression.
+import { useFormTemplateRuntime } from "@/hooks/useFormTemplateRuntime";
+import { styleToCss } from "@/lib/formStyle";
 // Feb-2026 · Batch #4 · Logo ship — shared tenant logo helper so
 // every doc surface renders the same asset the PDF pipeline uses.
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
@@ -102,6 +111,16 @@ export default function EstimateView({
   // the group_key so clicking Decline / Restore on group A doesn't
   // freeze the button on group B while the network round-trips.
   const [busyGroupKey, setBusyGroupKey] = useState(null);
+
+  // Phase 7C · Feb-2026 — load the admin-saved ``estimate`` form
+  // template so the line-items table can honor the configured
+  // bg/text/border/padding on Price / Unit / Total columns.
+  // ``_tpl.isEmpty`` is true for tenants without a saved template
+  // — in that case ``_liStyle`` is null and the legacy stylesheet
+  // wins (zero-regression contract).
+  const _tpl = useFormTemplateRuntime("estimate");
+  const _liField = _tpl.fieldsById?.line_items_table || null;
+  const _liStyle = _liField ? styleToCss(_liField.style) : null;
 
   // Feb-2026 · Theme Refresh — pull the tenant's brand primary +
   // logo so the shared shell paints the header/footer bands. The
@@ -937,7 +956,12 @@ export default function EstimateView({
             <>
             <table className="iv-lines hidden sm:table" data-testid="estimate-line-items-table">
               <thead>
-                <tr>
+                <tr style={_liStyle ? {
+                  backgroundColor: _liStyle.backgroundColor,
+                  color:           _liStyle.color,
+                  borderColor:     _liStyle.borderColor,
+                } : undefined}
+                    data-testid="estimate-line-items-thead">
                   <th>Description</th>
                   {!as_customer ? <th className="iv-num">Calc</th> : null}
                   {!as_customer ? <th className="iv-num">Cost/Rate</th> : null}
@@ -959,9 +983,19 @@ export default function EstimateView({
                   <tr><td colSpan={11} className="iv-empty">No line items.</td></tr>
                 ) : line_items.map((li, i) => {
                   const isDeclined = (li.customer_status || "pending") === "declined";
+                  // Phase 7C · Feb-2026 — merge template line_items_table
+                  // style onto the row.  Template bg/text/border overrides
+                  // the legacy stylesheet; declined-row strikethrough +
+                  // opacity still composes on top.
+                  const _tplCellStyle = _liStyle ? {
+                    backgroundColor: _liStyle.backgroundColor,
+                    color:           _liStyle.color,
+                    borderColor:     _liStyle.borderColor,
+                  } : undefined;
                   const rowStyle = isDeclined
-                    ? { textDecoration: "line-through", opacity: 0.55 }
-                    : undefined;
+                    ? { ..._tplCellStyle,
+                        textDecoration: "line-through", opacity: 0.55 }
+                    : _tplCellStyle;
                   return (
                   <tr key={i} data-testid={`estimate-line-item-row-${i}`}
                        data-customer-status={li.customer_status || "pending"}>
@@ -1048,9 +1082,17 @@ export default function EstimateView({
                 <li className="ev-line-card ev-line-card-empty">No line items.</li>
               ) : line_items.map((li, i) => {
                 const isDeclined = (li.customer_status || "pending") === "declined";
+                // Phase 7C · Feb-2026 — mobile card parity with the
+                // desktop line_items_table template unlock.
+                const _tplCardStyle = _liStyle ? {
+                  backgroundColor: _liStyle.backgroundColor,
+                  color:           _liStyle.color,
+                  borderColor:     _liStyle.borderColor,
+                } : undefined;
                 const cardStyle = isDeclined
-                  ? { textDecoration: "line-through", opacity: 0.55 }
-                  : undefined;
+                  ? { ..._tplCardStyle,
+                      textDecoration: "line-through", opacity: 0.55 }
+                  : _tplCardStyle;
                 return (
                   <li key={i}
                       className="ev-line-card"

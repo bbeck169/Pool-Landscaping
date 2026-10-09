@@ -41,6 +41,16 @@ import {
 } from "@/components/checklist/PoolChecklistForm";
 import { compressImageIfNeeded } from "../../lib/imageCompress";
 
+// Phase 7C · Feb-2026 — runtime template loader.  When an admin
+// saves a reorder/restyle via the Phase 7B editor, the matching
+// section container picks up the new ``style`` on the next mount.
+// Falls back to the hardcoded Section defaults when no template is
+// saved (zero-regression contract — see useFormTemplateRuntime.js).
+import { useFormTemplateRuntime } from "@/hooks/useFormTemplateRuntime";
+import {
+  TemplateFieldProvider, useFieldStyle,
+} from "@/components/form-renderer/TemplateFieldContext";
+
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
 const CHEM_UNITS = ["lb", "oz", "gal", "tabs", "ppm", "L", "kg"];
@@ -187,6 +197,20 @@ export default function ServiceReport() {
   }, [autosave]);
 
   const markDirty = () => { dirtyRef.current = true; setDirty(true); };
+
+  // Phase 7C · Feb-2026 — resolve the Phase 7A form_type for this
+  // report.  Landscape reports map to ``landscape_service_report``;
+  // everything else (pool, generic, repair) uses
+  // ``pool_service_report`` since Phase 7A only seeded two SR
+  // form_types.  Hook must be called ABOVE the ``!report`` early
+  // return per Rules of Hooks — a null form_type returns the empty
+  // sentinel so the pre-load mount is still safe.
+  const _formType = !report
+    ? null
+    : (report.template === "landscape"
+        ? "landscape_service_report"
+        : "pool_service_report");
+  const _tpl = useFormTemplateRuntime(_formType);
 
   if (busy && !report) return (
     <div className="p-6" style={{ color: colors.muted }} data-testid="svc-report-loading">Loading report…</div>
@@ -428,6 +452,7 @@ export default function ServiceReport() {
   };
 
   return (
+    <TemplateFieldProvider fieldsById={_tpl.fieldsById}>
     <div className="max-w-4xl mx-auto p-4 md:p-6" data-testid="svc-report-page">
       {postSubmitToast && (
         <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
@@ -528,6 +553,7 @@ export default function ServiceReport() {
       {/* Photos */}
       <Section title="Photos" icon={<Camera size={16}/>}
                subtitle={`${photoCount} / ${PHOTO_CAP}`}
+               templateFieldId="photos"
                testId="svc-report-photos">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {(report.photos || []).map((p) => (
@@ -567,6 +593,7 @@ export default function ServiceReport() {
 
       {isPool && !isRepair && (
         <Section title="Chemistry Readings" icon={<FlaskConical size={16}/>}
+                 templateFieldId="chemistry_readings"
                  testId="svc-report-readings">
           <button
             type="button"
@@ -626,6 +653,7 @@ export default function ServiceReport() {
 
       {isPool && !isRepair && (
         <Section title="Chemicals Added" icon={<Beaker size={16}/>}
+                 templateFieldId="chemicals_added_section"
                  testId="svc-report-chems"
                  right={!locked && (
                    <button onClick={addChemical}
@@ -711,7 +739,9 @@ export default function ServiceReport() {
       {/* Checklist — hidden on repair mode per Feb-2026 spec */}
       {!isRepair && (
         <Section title="Checklist" icon={<ClipboardCheck size={16}/>}
-                 subtitle={`${uncheckedCount} unchecked`} testId="svc-report-checklist">
+                 subtitle={`${uncheckedCount} unchecked`}
+                 templateFieldId="checklist_section"
+                 testId="svc-report-checklist">
           <div className="space-y-2">
             {(report.checklist_items || []).map((c, i) => (
               <div key={c.id} className="p-3 rounded-lg"
@@ -792,6 +822,7 @@ export default function ServiceReport() {
 
       {isRepair && (
         <Section title="Internal Notes"
+                 templateFieldId="notes"
                  testId="id-repair-log-notes-internal-section">
           <div className="text-[11px] mb-2" style={{ color: colors.muted }}>
             Internal only. Visible to admin + tech in workstream.
@@ -814,6 +845,7 @@ export default function ServiceReport() {
 
       {isRepair && (
         <Section title="External Notes"
+                 templateFieldId="notes"
                  testId="id-repair-log-notes-external-section">
           <div className="text-[11px] mb-2" style={{ color: colors.muted }}>
             <b>Visible to the customer</b> in their portal service history.
@@ -835,7 +867,9 @@ export default function ServiceReport() {
 
       {/* Notes — legacy free-text block on standard service reports */}
       {!isRepair && (
-        <Section title="Notes" testId="svc-report-notes-section">
+        <Section title="Notes"
+                 templateFieldId="notes"
+                 testId="svc-report-notes-section">
         <textarea rows={4} value={report.notes || ""} disabled={locked}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Anything the customer or dispatcher should know…"
@@ -976,18 +1010,41 @@ export default function ServiceReport() {
         </div>
       )}
     </div>
+    </TemplateFieldProvider>
   );
 }
 
-function Section({ title, icon, subtitle, right, children, testId }) {
+function Section({ title, icon, subtitle, right, children, testId, templateFieldId }) {
+  // Phase 7C · Feb-2026 — pull the template style for this field_id
+  // from the ambient ``<TemplateFieldProvider>`` (no provider = null
+  // = fall through to hardcoded style, zero regression).  Template
+  // style wins when present so the admin's bg_color / bg_alpha /
+  // text_color / border_color / padding_y choices beat the legacy
+  // ``colors.surface + colors.border`` defaults.
+  const _tplStyle = useFieldStyle(templateFieldId || "");
+  const _hardcoded = {
+    backgroundColor: colors.surface,
+    border: `1px solid ${colors.border}`,
+  };
+  const _mergedStyle = _tplStyle
+    ? {
+        ..._hardcoded,
+        backgroundColor: _tplStyle.backgroundColor,
+        borderColor:     _tplStyle.borderColor,
+        color:           _tplStyle.color,
+        paddingTop:      _tplStyle.paddingTop,
+        paddingBottom:   _tplStyle.paddingBottom,
+      }
+    : _hardcoded;
   return (
     <div className="mb-5 rounded-2xl p-4"
-         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-         data-testid={testId}>
+         style={_mergedStyle}
+         data-testid={testId}
+         data-template-field-id={templateFieldId || undefined}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           {icon}
-          <h2 className="text-base font-bold" style={{ color: colors.onSurface }}>{title}</h2>
+          <h2 className="text-base font-bold" style={{ color: _tplStyle?.color || colors.onSurface }}>{title}</h2>
           {subtitle && <span className="text-xs" style={{ color: colors.muted }}>· {subtitle}</span>}
         </div>
         {right}
