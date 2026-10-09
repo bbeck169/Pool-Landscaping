@@ -13,7 +13,6 @@ import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // Phase 16C `<WeatherWidget5Day>` removed from tech home 2026-07 per
 // user request. File still exists at ``pages/aitools/`` — imported
 // by the admin Dashboard.
-import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
@@ -1256,36 +1255,31 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                 )}
 
                 {/* Gate code + notes preview (Phase 16C follow-up) */}
-                {(j.gate_code || notesFull || j.service_note) && (
+                {/* Phase 3 · Feb-2026 — the `ServiceNotePill` "Note"
+                    chip was removed from this row.  Pool + landscape
+                    notes now render INLINE inside the shared
+                    `JobNotesCallout` below alongside the customer
+                    note, so the full text reads directly on the card
+                    without a secondary tap. */}
+                {j.gate_code && (
                   <div className="mt-2 flex items-start gap-2 flex-wrap">
-                    {/* Feb-2026 Note-pill — specialty-specific instruction
-                        surfaced from customer.service_notes.{pool,landscape}
-                        based on this job's service_type. */}
-                    <ServiceNotePill
-                      note={j.service_note}
-                      serviceType={j.service_type}
-                      jobId={j.id}
-                    />
-                    {j.gate_code && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          try { navigator.clipboard.writeText(j.gate_code); } catch {}
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold cursor-copy"
-                        style={{ backgroundColor: "#FEF3C7", color: "#92400E",
-                                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                                 border: "1px solid #FDE68A" }}
-                        title="Click to copy"
-                        data-testid={`schedule-card-gate-${j.id}`}>
-                        <Key size={11}/> {j.gate_code}
-                      </button>
-                    )}
-                    {j.gate_code && (
-                      <span data-testid={`job-gate-code-${j.id}`} className="sr-only">
-                        {j.gate_code}
-                      </span>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        try { navigator.clipboard.writeText(j.gate_code); } catch {}
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold cursor-copy"
+                      style={{ backgroundColor: "#FEF3C7", color: "#92400E",
+                               fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                               border: "1px solid #FDE68A" }}
+                      title="Click to copy"
+                      data-chip="true"
+                      data-testid={`schedule-card-gate-${j.id}`}>
+                      <Key size={11}/> {j.gate_code}
+                    </button>
+                    <span data-testid={`job-gate-code-${j.id}`} className="sr-only">
+                      {j.gate_code}
+                    </span>
                   </div>
                 )}
                 {/* Feb-2026 · Schedule polish — amber-accented job notes.
@@ -1296,6 +1290,8 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                   jobId={j.id}
                   note={notesFull}
                   customerNote={j.customer_notes || j.account_notes}
+                  poolNote={j.service_notes_pool}
+                  landscapeNote={j.service_notes_landscape}
                 />
 
                 <div className="flex items-center justify-between mt-2">

@@ -30,7 +30,14 @@ export const K50_JOB_STATUS_BG = Object.freeze({
   open:        "#EAF7F0",  // light mint-green — "active, not yet started"
   scheduled:   "#EAF7F0",  // alias for ``open`` on the Schedule surface
   in_progress: "#FEF3C7",  // light yellow (Tailwind yellow-100)
-  completed:   "#FDECEC",  // soft pink
+  // Phase 3 · Feb-2026 — "Bold red" completed treatment (user
+  // request).  The soft-pink #FDECEC was indistinguishable from
+  // open jobs at a glance; dramatically bumped to Tailwind red-600
+  // with white text applied via the ``[data-k50-bg="#DC2626"]``
+  // cascade in ``index.css``.  Mobile parity ticket is separate
+  // (``mobile/src/lib/jobStatus.ts`` keeps #FDECEC until that
+  // ticket ships).
+  completed:   "#DC2626",  // Tailwind red-600 — dramatic completed signal
   cancelled:   "#FECACA",  // light red (Tailwind red-200) — deliberately
                            // redder than ``completed`` so day/week views
                            // separate the two at a glance

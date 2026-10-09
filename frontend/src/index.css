@@ -190,6 +190,45 @@ input.reorder-num-input {
     background-color: var(--tenant-schedule-tile-bg, #EAF7F0) !important;
 }
 
+/* Phase 3 · Feb-2026 — "Bold red" completed card cascade.
+ * K50 flipped the ``completed`` bucket from soft-pink #FDECEC to
+ * red-600 #DC2626.  Child text + icons on the card body use
+ * explicit color props (``colors.onSurface`` / ``onSurfaceSecondary``
+ * / ``muted`` / brand reds like the service-type label at
+ * ``#DC2626``) which would otherwise bleed into the red bg and
+ * read as illegible.  The cascade below forces white on everything
+ * EXCEPT elements that already carry their own chip background
+ * (gate code, VIP, crew badge, status pill, note callout) — those
+ * are tagged with ``[data-chip]="true"`` or sit inside the shared
+ * ``JobNotesCallout`` which has its own fully-opaque bg.  Scope
+ * ONLY applies when ``data-k50-bg="#DC2626"`` matches, so no
+ * non-completed card is affected. */
+[data-k50-bg="#DC2626"],
+[data-k50-bg="#DC2626"] * {
+    color: #FFFFFF !important;
+}
+/* Lucide icons use ``stroke="currentColor"`` by default, so the
+ * color: #FFFFFF cascade above already recolors them.  Service-type
+ * label uses an explicit ``color: #DC2626`` style which is defeated
+ * by ``!important`` above — intentional, so the service label
+ * reads white on red (unreadable red-on-red otherwise). */
+[data-k50-bg="#DC2626"] [data-chip="true"],
+[data-k50-bg="#DC2626"] [data-vip="true"],
+[data-k50-bg="#DC2626"] [data-k74-solid-navy-chip="true"],
+[data-k50-bg="#DC2626"] [data-note-surface="white"],
+[data-k50-bg="#DC2626"] [data-note-surface="white"] *,
+[data-k50-bg="#DC2626"] [data-testid^="schedule-card-status-"],
+[data-k50-bg="#DC2626"] [data-testid^="schedule-card-gate-"],
+[data-k50-bg="#DC2626"] [data-testid^="schedule-card-crew-badge-"],
+[data-k50-bg="#DC2626"] [data-testid^="job-vip-badge-"] {
+    /* Reset the white cascade for self-contained chips so their
+     * built-in color + bg combinations stay legible. */
+    color: initial !important;
+}
+[data-k50-bg="#DC2626"] [data-note-surface="white"] {
+    color: #111827 !important;
+}
+
 /* K75 · top-nav BAR background — reads tenant.menu.bg.
  * I1.5.c.fix · Feb-2026 — was missing entirely; the K75 active
  * chip rule below only covered the active-item chip, not the

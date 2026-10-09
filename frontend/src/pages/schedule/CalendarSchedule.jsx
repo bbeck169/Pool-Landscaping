@@ -63,7 +63,6 @@ import CouldNotServiceModal from "@/components/schedule/CouldNotServiceModal";
 import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
-import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import TechWeatherWidget from "@/components/Weather/WeatherWidget";
 import JobRainFlag from "@/components/Weather/JobRainFlag";
 // SO-A · Feb-2026 — MARCO Suggestions right-side drawer.
@@ -3111,17 +3110,12 @@ export function GridPanel({
                       </div>
                     );
                   })()}
-                  {/* Feb-2026 Note-pill — specialty-specific service note. */}
-                  {j.service_note ? (
-                    <div className="mt-1">
-                      <ServiceNotePill
-                        note={j.service_note}
-                        serviceType={j.service_type}
-                        jobId={j.id}
-                        compact
-                      />
-                    </div>
-                  ) : null}
+                  {/* Phase 3 · Feb-2026 — the `ServiceNotePill`
+                      "Note" chip was removed here. Pool + landscape
+                      notes now render INLINE inside the shared
+                      `JobNotesCallout` below alongside the customer
+                      note, so the full text reads directly on the
+                      card without a secondary tap. */}
                   {/* Feb-2026 · Schedule polish — amber-accented job
                       notes chip. Shared component with TodaySchedule +
                       mobile so techs see the same treatment everywhere.
@@ -3130,6 +3124,8 @@ export function GridPanel({
                     jobId={j.id}
                     note={j.notes}
                     customerNote={j.customer_notes || j.account_notes}
+                    poolNote={j.service_notes_pool}
+                    landscapeNote={j.service_notes_landscape}
                     truncated={j.notes_truncated}
                   />
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>

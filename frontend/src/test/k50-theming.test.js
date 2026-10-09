@@ -276,10 +276,15 @@ describe("K50 · Slice B — Schedule card status background", () => {
     // Contract locked in against the K50 brief.
     // K74.1 · Feb-2026 — ``open``/``scheduled`` lightened
     // ``#D6F5EE`` → ``#EAF7F0`` (mint-green family, ~10% lighter).
+    // Phase 3 · Feb-2026 — ``completed`` flipped from soft-pink
+    // ``#FDECEC`` to Tailwind red-600 ``#DC2626`` so a completed
+    // card is unmistakably distinct from an open one.  Mobile
+    // mirror (``mobile/src/lib/jobStatus.ts``) keeps #FDECEC until
+    // the mobile-parity ticket ships.
     expect(jobStatusColor("open")).toBe("#EAF7F0");
     expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
-    expect(jobStatusColor("completed")).toBe("#FDECEC");
+    expect(jobStatusColor("completed")).toBe("#DC2626");
     expect(jobStatusColor("cancelled")).toBe("#FECACA");
     expect(jobStatusColor("skipped")).toBe("#FED7AA");
   });
@@ -288,8 +293,8 @@ describe("K50 · Slice B — Schedule card status background", () => {
     // ``active`` → in_progress, ``closed``/``done`` → completed,
     // ``canceled`` (US) → cancelled (UK, canonical).
     expect(jobStatusColor("active")).toBe("#FEF3C7");
-    expect(jobStatusColor("closed")).toBe("#FDECEC");
-    expect(jobStatusColor("done")).toBe("#FDECEC");
+    expect(jobStatusColor("closed")).toBe("#DC2626");
+    expect(jobStatusColor("done")).toBe("#DC2626");
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
@@ -316,7 +321,7 @@ describe("K50 · Slice B — Schedule card status background", () => {
 
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
-    expect(jobStatusColor("COMPLETED")).toBe("#FDECEC");
+    expect(jobStatusColor("COMPLETED")).toBe("#DC2626");
   });
 
   it("returns null (never a default hex) for statuses outside the K50 map", () => {

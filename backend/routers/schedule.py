@@ -457,6 +457,18 @@ async def schedule_today(request: Request,
             "customer_notes": cust.get("notes") or None,
             "job_notes": job_notes_raw or None,
             "service_note": service_note,
+            # Phase 3 · Feb-2026 — surface the pool + landscape
+            # customer-level notes INDEPENDENTLY of the pre-resolved
+            # ``service_note`` above. Lets the schedule job card
+            # render Customer / Pool / Landscape notes as three
+            # separate inline blocks regardless of which service
+            # type the current job happens to be. ``service_note``
+            # is retained unchanged for backward compat with any
+            # consumer still reading the single-resolved field.
+            "service_notes_pool":
+                (cust.get("service_notes") or {}).get("pool") or None,
+            "service_notes_landscape":
+                (cust.get("service_notes") or {}).get("landscape") or None,
             # Feb-2026 · route-order read-path fix — expose the
             # admin-assigned ``route_index`` in the tech's day view
             # payload so the client can visually surface + trust the

@@ -1241,6 +1241,16 @@ async def list_jobs(
                     d["service_note"] = _resolve_service_note(
                         c, d.get("service_type") or d.get("job_type"), user,
                     )
+                    # Phase 3 · Feb-2026 — expose pool + landscape
+                    # customer-level notes under additive aliases so
+                    # the schedule job card can render Customer /
+                    # Pool / Landscape as three independent inline
+                    # blocks regardless of this job's service_type.
+                    # ``service_note`` above remains the single-
+                    # resolved legacy field.
+                    _sn = c.get("service_notes") or {}
+                    d["service_notes_pool"]      = _sn.get("pool") or None
+                    d["service_notes_landscape"] = _sn.get("landscape") or None
                     # Feb-2026 · Schedule map pins — expose the customer's
                     # geocoded coords under the ``location_*`` alias the
                     # web + mobile schedule maps consume. ``None`` when
@@ -1264,6 +1274,11 @@ async def list_jobs(
                     d["customer_gate_code"] = None
                     d["customer_notes"] = None
                     d["service_note"] = None
+                    # Phase 3 · Feb-2026 — mirror additive pool /
+                    # landscape fields on the miss branch so the FE
+                    # never has to defensively check for undefined.
+                    d["service_notes_pool"]      = None
+                    d["service_notes_landscape"] = None
                     d["location_lat"] = None
                     d["location_lng"] = None
     # Feb-2026 MP2 UI — enrich each job with the property label so
