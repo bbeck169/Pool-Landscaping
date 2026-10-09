@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, MoreHorizontal, X as XIcon } from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign, Clock, ShieldCheck, Paperclip, GitMerge, Ruler, FlaskConical, MoreHorizontal, X as XIcon, AlertCircle, Receipt, Wallet, MessageSquare } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -258,6 +258,152 @@ const JobHistoryRow = React.memo(
 );
 
 
+// Phase 27 · Feb-2026 — admin customer-profile dark-navy chassis
+// constants, mirrored verbatim from PortalHome Phase 23/24 tile
+// chassis so the two surfaces read as one visual family.  Chassis
+// bg = ``#03002e`` (deep navy), border = ``#1E293B`` (Tailwind
+// slate-800).  Red/green dynamic bg thresholds + hex values are
+// locked in Phase 24's companion test file
+// (``portal-home-tiles-hover-glow-dynamic-colors.test.jsx``) —
+// do NOT invent new values here.
+const CD_DARK_CARD_BG      = "#03002e";
+const CD_DARK_CARD_BORDER  = "#1E293B";
+const CD_DANGER_BG         = "#7F1D1D";          // red-900, Past-Due + Overdue>0
+const CD_SUCCESS_BG        = "#064E3B";          // emerald-900, Credit>0
+const CD_TILE_CLASSES      = "text-left rounded-2xl p-3 transition hover:brightness-95";
+const CD_ACTION_TILE_CLASSES =
+  "rounded-xl p-3 text-left transition hover:brightness-95 "
+  + "hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] "
+  + "transition-shadow duration-200 relative";
+
+
+function _fmtMoney(cents) {
+  const amount = Math.max(0, Number(cents || 0)) / 100;
+  return `$${amount.toLocaleString(undefined,
+    {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
+
+
+// Phase 27 · Feb-2026 — six-tile KPI grid rendered immediately
+// below the Phase-20 command-strip tabs row.  Fields consumed:
+//   balance_due_cents | past_due_cents | credit_cents
+//   overdue_count     | pending_estimates_count
+//   unread_messages_count
+// Null kpi (pre-load) renders tiles with "—" placeholders so the
+// grid lays out stable while the fetch resolves.
+function KPITileGrid({ kpi, testidPrefix = "cd" }) {
+  const balanceDueCents = Number(kpi?.balance_due_cents || 0);
+  const pastDueCents    = Number(kpi?.past_due_cents || 0);
+  const creditCents     = Number(kpi?.credit_cents || 0);
+  const overdueCount    = Number(kpi?.overdue_count || 0);
+  const pendingEstCount = Number(kpi?.pending_estimates_count || 0);
+  const unreadMsgCount  = Number(kpi?.unread_messages_count || 0);
+  const loaded = kpi !== null && kpi !== undefined;
+
+  const tiles = [
+    {k: "balance-due",  label: "Balance Due",       icon: Receipt,
+     value: loaded ? _fmtMoney(balanceDueCents) : "—",
+     bgColor: undefined},
+    {k: "past-due",     label: "Past Due",          icon: AlertCircle,
+     value: loaded ? _fmtMoney(pastDueCents) : "—",
+     bgColor: pastDueCents > 0 ? CD_DANGER_BG : undefined},
+    {k: "credit",       label: "Credit",            icon: Wallet,
+     value: loaded ? _fmtMoney(creditCents) : "—",
+     bgColor: creditCents > 0 ? CD_SUCCESS_BG : undefined},
+    {k: "overdue",      label: "Overdue",           icon: Clock,
+     value: loaded ? String(overdueCount) : "—",
+     bgColor: overdueCount > 0 ? CD_DANGER_BG : undefined},
+    {k: "pending-est",  label: "Pending Estimates", icon: FileText,
+     value: loaded ? String(pendingEstCount) : "—",
+     bgColor: undefined},
+    {k: "unread-msgs",  label: "Unread Messages",   icon: MessageSquare,
+     value: loaded ? String(unreadMsgCount) : "—",
+     bgColor: undefined},
+  ];
+
+  return (
+    <div
+      className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4"
+      data-testid={`${testidPrefix}-kpi-tile-grid`}
+    >
+      {tiles.map((t) => {
+        const Icon = t.icon;
+        const hasDynamicBg = Boolean(t.bgColor);
+        const labelColor = hasDynamicBg ? "#FFFFFF" : "#94A3B8";
+        const valueColor = hasDynamicBg ? "#FFFFFF" : "#F1F5F9";
+        return (
+          <div
+            key={t.k}
+            className={CD_TILE_CLASSES}
+            style={{
+              backgroundColor: CD_DARK_CARD_BG,
+              border: `1px solid ${CD_DARK_CARD_BORDER}`,
+              ...(t.bgColor ? {backgroundColor: t.bgColor} : {}),
+            }}
+            data-testid={`${testidPrefix}-kpi-tile-${t.k}`}
+            data-auto-bg={hasDynamicBg ? "true" : undefined}
+          >
+            <div className="flex items-center gap-1.5" style={{color: labelColor}}>
+              <Icon size={13} />
+              <span className="text-xs font-semibold uppercase tracking-wide">{t.label}</span>
+            </div>
+            <div
+              className="text-xl md:text-2xl font-bold mt-1 truncate"
+              style={{color: valueColor}}
+              data-testid={`${testidPrefix}-kpi-tile-${t.k}-value`}
+            >
+              {t.value}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// Phase 27 · Feb-2026 — Quick Actions tile grid.  Each tile is a
+// clickable button that calls ``setTab(k)`` to switch the admin
+// profile's tab-body — the SAME code path the Phase-20 preserved
+// ResponsiveTabs dropdown drives — so every destination +
+// deep-link param is byte-for-byte preserved.  Hover glow mirrors
+// Phase 24's ActionTile pattern exactly.
+function QuickActionTileGrid({ tabs, active, onPick, testidPrefix = "cd-quick-action" }) {
+  return (
+    <div
+      className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-4"
+      data-testid={`${testidPrefix}-grid`}
+    >
+      {tabs.map((t) => {
+        const Icon = t.icon;
+        const isActive = active === t.k;
+        return (
+          <button
+            key={t.k}
+            type="button"
+            onClick={() => onPick(t.k)}
+            className={CD_ACTION_TILE_CLASSES}
+            style={{
+              backgroundColor: isActive ? "#0a0940" : CD_DARK_CARD_BG,
+              border: `1px solid ${isActive ? "#4F46E5" : CD_DARK_CARD_BORDER}`,
+              color: "#F1F5F9",
+            }}
+            data-testid={`${testidPrefix}-${t.k}`}
+            data-active={isActive ? "true" : undefined}
+            aria-pressed={isActive ? "true" : "false"}
+          >
+            <div className="flex items-center gap-2">
+              <Icon size={16} style={{color: "#94A3B8"}} />
+              <span className="text-sm font-semibold">{t.label}</span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
   { k: "properties", label: "Properties", icon: Home },
@@ -372,6 +518,10 @@ export default function CustomerDetail() {
     [authUser?.role],
   );
   const [toast, setToast] = useState(null);
+  // Phase 27 · Feb-2026 — admin KPI tile grid state.  Lightweight
+  // best-effort fetch from ``GET /customers/{id}/kpi-summary`` —
+  // non-fatal when the call fails (grid still renders with zeros).
+  const [kpi, setKpi] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // HARD-DELETE · HD-B · Feb-2026 — "Move to Trash" flow uses the
   // HD-A endpoints in a shared modal. Coexists with the legacy
@@ -476,7 +626,7 @@ export default function CustomerDetail() {
       // customer with 900+ jobs no longer transports the full
       // history on first paint. See ``jobsHasMore`` + the
       // ``Load more`` button below.
-      const [c, myJobs, props, summary] = await Promise.all([
+      const [c, myJobs, props, summary, kpiSummary] = await Promise.all([
         api.get(`/customers/${id}?slim=1`),
         api.get(
           `/jobs?customer_id=${encodeURIComponent(id)}`
@@ -493,6 +643,12 @@ export default function CustomerDetail() {
         // call fails we fall back to zero-badges (the lazy per-tab
         // fetch still populates its own count on open).
         api.get(`/customers/${id}/summary`).catch(() => null),
+        // Phase 27 · Feb-2026 — six-field KPI tile grid data
+        // (balance_due_cents / past_due_cents / credit_cents /
+        // overdue_count / pending_estimates_count /
+        // unread_messages_count).  Non-fatal — tiles render with
+        // zeros on error.
+        api.get(`/customers/${id}/kpi-summary`).catch(() => null),
       ]);
       setCustomer(c);
       const firstPage = Array.isArray(myJobs) ? myJobs : [];
@@ -503,6 +659,7 @@ export default function CustomerDetail() {
       setJobsHasMore(firstPage.length >= _P37_JOBS_PAGE);
       setProperties(Array.isArray(props) ? props : []);
       setSummary(summary && typeof summary === "object" ? summary : null);
+      setKpi(kpiSummary && typeof kpiSummary === "object" ? kpiSummary : null);
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
@@ -680,6 +837,13 @@ export default function CustomerDetail() {
     return (
       <div
         className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
+        style={{
+          // Phase 27 · Feb-2026 — skeleton loader shares the admin
+          // customer-profile dark-navy page bg so the hand-off from
+          // skeleton → real content is seamless.
+          backgroundColor: CD_DARK_CARD_BG,
+          minHeight: "100vh",
+        }}
         data-testid="customer-detail-skeleton"
       >
         {/* Back-button row — matches the real "All customers"
@@ -794,7 +958,17 @@ export default function CustomerDetail() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customer-detail">
+    <div
+      className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customer-detail"
+      style={{
+        // Phase 27 · Feb-2026 — admin customer-profile dark-navy
+        // page bg, matching Portal Home's chassis (``#03002e``)
+        // so the KPI tile grid + Quick Actions tile grid rendered
+        // below the command strip visually anchor the page.
+        backgroundColor: CD_DARK_CARD_BG,
+        minHeight: "100vh",
+      }}
+    >
       {/* Feb-2026 · Customer profile name relocation — the
           PageHeader-rendered H1 used to sit here above the "All
           customers" back button.  Moved into the identity card
@@ -1151,6 +1325,37 @@ export default function CustomerDetail() {
               </div>
             </div>
           </div>
+
+          {/* Phase 27 · Feb-2026 — Dark-navy KPI tile grid.
+              Six tiles with the same chassis Portal Home uses
+              (``rounded-2xl p-3 transition hover:brightness-95``,
+              ``#03002e`` chassis bg).  Past Due flips to
+              ``#7F1D1D`` (red-900) when ``past_due_cents > 0``;
+              Credit flips to ``#064E3B`` (emerald-900) when
+              ``credit_cents > 0``; Overdue count flips red when
+              ``> 0``.  Chassis styles inlined per Phase 27
+              decision #3 — Phase 23/24 regression locks on
+              PortalHome.jsx are byte-for-byte preserved. */}
+          <KPITileGrid kpi={kpi} testidPrefix="cd" />
+
+          {/* Phase 27 · Feb-2026 — Quick Actions tile grid.
+              Primary nav surface replacing the role of the
+              ``cd-tabs-dropdown-shell`` ResponsiveTabs dropdown
+              above.  The dropdown stays in-DOM as a compact
+              fallback (and to preserve Phase 20 regression locks)
+              — the tile grid is the operator's primary nav.  Each
+              tile calls ``setTab(k)`` which drives the same tab-
+              body render path the dropdown drove, so every
+              handler + deep-link param is preserved byte-for-byte.
+              Hover glow pattern mirrors Phase 24
+              (``hover:shadow-[0_0_20px_rgba(255,255,255,0.6)]
+              transition-shadow duration-200``). */}
+          <QuickActionTileGrid
+            tabs={visibleTabs}
+            active={tab}
+            onPick={setTab}
+            testidPrefix="cd-quick-action"
+          />
           </>
         );
       })()}

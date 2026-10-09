@@ -2370,6 +2370,170 @@ async def get_customer_summary(cid: str,
     }
 
 
+@router.get("/customers/{cid}/kpi-summary")
+async def get_customer_kpi_summary(
+    cid: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 27 · Feb-2026 — admin KPI tile data for CustomerDetail.
+
+    Returns the six KPI tile values rendered atop the admin
+    customer profile::
+
+        {
+            "customer_id":              cid,
+            "balance_due_cents":        int,
+            "past_due_cents":           int,
+            "credit_cents":             int,
+            "overdue_count":            int,
+            "pending_estimates_count":  int,
+            "unread_messages_count":    int,
+        }
+
+    Admin-role gated.  Tenant-scoped.  Returns 404 on missing or
+    cross-tenant customer; 409 on super-admin peek of a soft-deleted
+    row (same semantics as ``/customers/{cid}/summary``).
+
+    Dollar-denominated balance figures returned in **cents** to
+    match the credits endpoint shape — the frontend formats them
+    for display and conditions the red/green tile backgrounds on
+    the integer-cents value (``> 0``).
+    """
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "insufficient_role_for_kpi_summary")
+
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    if cust.get("deleted_at"):
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "customer_soft_deleted",
+                          "message": "Customer is soft-deleted; restore first."},
+            )
+        raise HTTPException(404, "Customer not found")
+
+    import asyncio as _kpi_asyncio
+    from utils import not_deleted_filter as _kpi_nd
+
+    tid = tenant["id"]
+    nd = _kpi_nd()
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+
+    # ── Balance due + past due + overdue count — aggregated in
+    # one pass over open invoices.  Open = payment_status in the
+    # three unpaid buckets.  Past-due = open AND due_date before
+    # today (string-compare safe because dates are ISO).
+    _open_match = {
+        "tenant_id": tid, "customer_id": cid, "doc_type": "invoice",
+        "payment_status": {"$in": ["unpaid", "partial", "partially_paid"]},
+        **nd,
+    }
+
+    async def _agg_balance():
+        pipeline = [
+            {"$match": _open_match},
+            {"$project": {
+                "balance": {"$subtract": [
+                    {"$ifNull": ["$total", 0]},
+                    {"$ifNull": ["$amount_paid", 0]},
+                ]},
+                "is_past_due": {
+                    "$and": [
+                        {"$ne": [{"$ifNull": ["$due_date", None]}, None]},
+                        {"$lt": ["$due_date", today_iso]},
+                    ]},
+            }},
+            {"$group": {
+                "_id": None,
+                "balance_due": {"$sum": "$balance"},
+                "past_due": {
+                    "$sum": {"$cond": ["$is_past_due", "$balance", 0]}},
+                "overdue_count": {
+                    "$sum": {"$cond": ["$is_past_due", 1, 0]}},
+            }},
+        ]
+        cur = db.quotes.aggregate(pipeline)
+        rows = await cur.to_list(1)
+        return rows[0] if rows else {}
+
+    _pending_est_q = {
+        "tenant_id": tid, "customer_id": cid,
+        "doc_type": {"$in": ["quote", "estimate"]},
+        "status": {"$in": ["draft", "sent", "pending", "viewed"]},
+        **nd,
+    }
+    # Unread messages — inbound (customer→staff) that no admin has
+    # marked read yet.  ``db.messages.read_by_staff`` is set to
+    # True on the first admin open; absent/False counts as unread.
+    _unread_msg_q = {
+        "tenant_id": tid, "customer_id": cid,
+        "sender": "customer",
+        "$or": [
+            {"read_by_staff": {"$exists": False}},
+            {"read_by_staff": False},
+            {"read_by_staff": None},
+        ],
+    }
+
+    async def _credit_cents():
+        row = await db.customer_credits_balance.find_one(
+            {"tenant_id": tid, "customer_id": cid},
+            {"_id": 0, "balance_cents": 1, "balance": 1},
+        ) or {}
+        return int(
+            row.get("balance_cents")
+            or int(float(row.get("balance") or 0) * 100))
+
+    try:
+        agg, pending_est, unread_msg, credit_cents = await _kpi_asyncio.gather(
+            _agg_balance(),
+            db.quotes.count_documents(_pending_est_q),
+            db.messages.count_documents(_unread_msg_q),
+            _credit_cents(),
+            return_exceptions=True,
+        )
+    except Exception as _kpi_exc:                                    # noqa: BLE001
+        logger.warning(
+            "[customer_kpi_summary] gather failed cid=%s: %s",
+            cid, _kpi_exc,
+        )
+        agg, pending_est, unread_msg, credit_cents = {}, 0, 0, 0
+
+    def _coerce_int(v):
+        if isinstance(v, Exception) or v is None:
+            return 0
+        try:
+            return int(v)
+        except Exception:                                            # noqa: BLE001
+            return 0
+
+    def _dollars_to_cents(v):
+        if isinstance(v, Exception) or v is None:
+            return 0
+        try:
+            return int(round(float(v) * 100))
+        except Exception:                                            # noqa: BLE001
+            return 0
+
+    agg_dict = agg if isinstance(agg, dict) else {}
+    return {
+        "customer_id":             cid,
+        "balance_due_cents":       _dollars_to_cents(agg_dict.get("balance_due")),
+        "past_due_cents":          _dollars_to_cents(agg_dict.get("past_due")),
+        "credit_cents":            _coerce_int(credit_cents),
+        "overdue_count":           _coerce_int(agg_dict.get("overdue_count")),
+        "pending_estimates_count": _coerce_int(pending_est),
+        "unread_messages_count":   _coerce_int(unread_msg),
+    }
+
+
 # ─── P26 · Feb-2026 · Super_admin customer restore ──────────────────────
 
 @router.patch("/customers/{cid}/restore")
