@@ -16,6 +16,24 @@ Feb-2026 · PB × Profit-Reporting Phase 3 extensions:
   * Response envelope adds ``rows`` (canonical alias of ``breakdown``),
     ``currency``, and ``assumptions`` for downstream integrators.
     ``breakdown`` stays populated for PB1 back-compat.
+
+Feb-2026 · PROFIT-REPORT-EBIT-ALIGN:
+  * Added ``?revenue_basis=cash|accrual`` query param (default
+    ``cash`` to match the EBIT panel's default on the same page).
+    Prior to this phase the report queried ``status ∈ {paid,
+    partial}``; production invoices stamp ``status: "accepted"``
+    on full payment (see ``quotes.py:2148``) so the filter matched
+    zero docs and the Profit Report tiles rendered ``$0`` beside
+    the EBIT panel's correct ``$29,263``.  The new branch mirrors
+    ``services.finance.ebit._load_invoices`` byte-for-byte:
+      - cash:    ``payment_status = "paid"`` on ``paid_at``
+      - accrual: ``status ∈ {paid, partial, sent, overdue}`` on
+                   ``created_at``
+    Partial-invoice proration (``amount_paid/total``) applies ONLY
+    in accrual mode — cash mode restricts to fully-paid invoices
+    the same way EBIT cash does.  Partial detection now reads
+    ``payment_status`` (the actual payment-state field) instead
+    of the old mistakenly-read ``status`` field.
 """
 from __future__ import annotations
 
@@ -31,17 +49,40 @@ from utils import get_current_user
 
 router = APIRouter()
 
-_ELIGIBLE_STATUSES = {"paid", "partial"}
+# ─── Query shape constants ───────────────────────────────────────
+#
+# Feb-2026 · PROFIT-REPORT-EBIT-ALIGN — the two basis branches
+# below mirror ``services.finance.ebit._load_invoices`` so a
+# ``cash`` Profit Report shows the same universe of invoices as a
+# ``cash`` EBIT compute, and likewise for ``accrual``.  Owning the
+# constants here (rather than importing from the EBIT service)
+# keeps the two reports independently evolvable while making any
+# future divergence an obvious one-liner review.
+_CASH_PAYMENT_STATUS = "paid"
+_ACCRUAL_STATUSES = ("paid", "partial", "sent", "overdue")
+_SUPPORTED_REVENUE_BASES = ("cash", "accrual")
+_DEFAULT_REVENUE_BASIS = "cash"
+# Legacy name retained ONLY for the pricebook-health sibling query
+# (which still filters by ``payment_status`` + a trailing-window
+# ``created_at`` cutoff — see the health endpoint below).  Both
+# values are the payment-state field now (fixes the same mislabel
+# the main report had).
+_ELIGIBLE_PAYMENT_STATUSES = {"paid", "partial"}
 _MAX_BREAKDOWN = 500
 _MAX_CUSTOM_DAYS = 366
 _DEFAULT_CURRENCY = "USD"
 _ASSUMPTIONS = {
-    "partial_invoices": "prorated by amount_paid/total",
+    "partial_invoices": "prorated by amount_paid/total (accrual mode only)",
     "tax": "excluded (unit_price treated as pre-tax retail)",
     "null_snapshots": "bucketed as Uncategorized",
     "override_precedence": (
         "override > line-level > item-lookup for categories; "
         "override > snapshot for wholesale/labor"
+    ),
+    "revenue_basis": (
+        "cash: payment_status='paid' bucketed on paid_at. "
+        "accrual: status ∈ {paid,partial,sent,overdue} bucketed on "
+        "created_at. Mirrors EBIT's _load_invoices."
     ),
 }
 
@@ -62,6 +103,22 @@ def _require_admin(user: dict) -> None:
     role = (user or {}).get("role") or ""
     if role not in ("admin", "super_admin", "owner"):
         raise HTTPException(403, {"error": "forbidden"})
+
+
+def _validate_revenue_basis(raw: Optional[str]) -> str:
+    """Normalize + validate the ``revenue_basis`` query param.
+
+    Mirrors ``routers.ebit._validate_basis`` exactly so a caller
+    passing an invalid value gets the SAME 422 envelope shape on
+    both endpoints.  Default is ``cash`` to match the EBIT panel's
+    on-page default (user sees both panels side-by-side).
+    """
+    b = (raw or _DEFAULT_REVENUE_BASIS).lower().strip()
+    if b not in _SUPPORTED_REVENUE_BASES:
+        raise HTTPException(
+            422, {"error": "invalid_revenue_basis",
+                   "allowed": list(_SUPPORTED_REVENUE_BASES)})
+    return b
 
 
 def _resolve_range(
@@ -183,22 +240,40 @@ async def _compute(
     tenant_id: str,
     range_bounds: Dict[str, str],
     dimension: str,
+    revenue_basis: str = _DEFAULT_REVENUE_BASIS,
 ) -> Dict[str, Any]:
-    query = {
-        "tenant_id": tenant_id,
-        "doc_type": "invoice",
-        "status": {"$in": list(_ELIGIBLE_STATUSES)},
-        "created_at": {
-            "$gte": f"{range_bounds['from']}T00:00:00+00:00",
-            "$lte": _end_of_day(range_bounds["to"]),
-        },
-    }
+    # Feb-2026 · PROFIT-REPORT-EBIT-ALIGN — branch the invoice
+    # query shape by ``revenue_basis`` so Profit Report mirrors
+    # the EBIT panel's basis selector on the same page.  See
+    # module docstring for the full rationale (``status: paid``
+    # mislabel → silent $0 bug beside EBIT's correct value).
+    date_lo = f"{range_bounds['from']}T00:00:00+00:00"
+    date_hi = _end_of_day(range_bounds["to"])
+    if revenue_basis == "cash":
+        query = {
+            "tenant_id": tenant_id,
+            "doc_type": "invoice",
+            "payment_status": _CASH_PAYMENT_STATUS,
+            "paid_at": {"$gte": date_lo, "$lte": date_hi},
+        }
+    else:  # accrual — validated upstream, so only two branches
+        query = {
+            "tenant_id": tenant_id,
+            "doc_type": "invoice",
+            "status": {"$in": list(_ACCRUAL_STATUSES)},
+            "created_at": {"$gte": date_lo, "$lte": date_hi},
+        }
     invoices = await db.quotes.find(
         query,
         {"_id": 0, "id": 1, "line_items": 1, "created_at": 1,
+         "paid_at": 1,
          # Feb-2026 · Phase 3 — pull ``amount_paid`` + ``total`` so we
          # can prorate line-item revenue on ``partial`` invoices.
-         "amount_paid": 1, "total": 1, "status": 1},
+         # PROFIT-REPORT-EBIT-ALIGN — project ``payment_status`` for
+         # partial detection; the pre-fix code mistakenly used the
+         # ``status`` field and never matched the "partial" literal.
+         "amount_paid": 1, "total": 1,
+         "status": 1, "payment_status": 1},
     ).to_list(10000)
 
     if dimension == "service_category":
@@ -241,9 +316,13 @@ async def _compute(
         # Feb-2026 · Phase 3 — partial-invoice proration on revenue.
         # ``prorate`` is capped at 1.0 to guard against amount_paid
         # exceeding total (data integrity edge case).
+        # PROFIT-REPORT-EBIT-ALIGN — detect ``partial`` via the
+        # ``payment_status`` field (the pre-fix code read
+        # ``status`` which never carried that value in production,
+        # so partials never prorated and silently rounded away).
         prorate = 1.0
-        _status = str(inv.get("status") or "").lower()
-        if _status == "partial":
+        _payment_status = str(inv.get("payment_status") or "").lower()
+        if _payment_status == "partial":
             try:
                 _paid = float(inv.get("amount_paid") or 0)
                 _total = float(inv.get("total") or 0)
@@ -332,6 +411,10 @@ async def _compute(
         "to": range_bounds["to"],
         "group_by": dimension,
         "dimension": dimension,
+        # PROFIT-REPORT-EBIT-ALIGN — echo the resolved basis so the
+        # frontend can label the tiles accurately and so parity
+        # tests can assert the server honoured the request.
+        "revenue_basis": revenue_basis,
         "currency": _DEFAULT_CURRENCY,
         "totals": {
             "revenue": round(total_rev, 2),
@@ -357,6 +440,11 @@ async def profit_report(
                                   description="this_month|last_month|qtd|ytd|custom"),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    revenue_basis: Optional[str] = Query(
+        None,
+        description=("cash | accrual — mirrors the EBIT panel on the "
+                      "same page.  Default cash."),
+    ),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     _require_admin(user)
@@ -373,7 +461,8 @@ async def profit_report(
     if not effective_range:
         raise HTTPException(422, {"error": "missing_range"})
     range_bounds = _resolve_range(effective_range, from_, to)
-    return await _compute(tenant_id, range_bounds, effective_dim)
+    basis = _validate_revenue_basis(revenue_basis)
+    return await _compute(tenant_id, range_bounds, effective_dim, basis)
 
 
 @router.get("/reports/profit.csv")
@@ -383,6 +472,7 @@ async def profit_report_csv(
     range: Optional[str] = Query(None),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    revenue_basis: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
 ) -> Response:
     _require_admin(user)
@@ -396,7 +486,8 @@ async def profit_report_csv(
     if not effective_range:
         raise HTTPException(422, {"error": "missing_range"})
     range_bounds = _resolve_range(effective_range, from_, to)
-    data = await _compute(tenant_id, range_bounds, effective_dim)
+    basis = _validate_revenue_basis(revenue_basis)
+    data = await _compute(tenant_id, range_bounds, effective_dim, basis)
 
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -464,7 +555,13 @@ async def pricebook_health(
     query = {
         "tenant_id": tenant_id,
         "doc_type": "invoice",
-        "status": {"$in": list(_ELIGIBLE_STATUSES)},
+        # PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — same mislabel the
+        # main profit query had: ``status`` is the document
+        # workflow state (``accepted`` after full payment), not
+        # the payment-state field.  Health-tile coverage math is
+        # about "how many of my paid/partial invoices carry
+        # snapshots", so filter by ``payment_status`` here too.
+        "payment_status": {"$in": list(_ELIGIBLE_PAYMENT_STATUSES)},
         "created_at": {"$gte": start.isoformat()},
     }
     invoices = await db.quotes.find(

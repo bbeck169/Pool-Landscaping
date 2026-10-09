@@ -119,7 +119,17 @@ def seeded_report_fixture():
     }
     docs = [
         {"id": ids["inv_a"], "tenant_id": _TENANT_ID, "doc_type": "invoice",
-          "status": "paid", "amount_paid": 250, "customer_id": "test-c-a",
+          # PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — real production
+          # fully-paid invoices stamp ``status: "accepted"`` +
+          # ``payment_status: "paid"`` + ``paid_at`` (see
+          # ``quotes.py:2150``).  Prior fixture used the drifted
+          # ``status: "paid"`` shape which no longer matches the
+          # cash-default query filter.  The fix mirrors production
+          # exactly so these tests exercise the real schema.
+          "status": "accepted",
+          "payment_status": "paid",
+          "paid_at": iso,
+          "amount_paid": 250, "customer_id": "test-c-a",
           "customer_name": "Test A", "title": "PB1 inv A",
           "created_at": iso, "tax_rate": 0, "subtotal": 250, "tax": 0,
           "total": 250,
@@ -142,7 +152,12 @@ def seeded_report_fixture():
           # {paid, partial}. Fixture was originally seeded as ``sent``
           # under PB1 rules; switched to ``paid`` (with amount_paid ==
           # total) so the expected totals stay stable.
-          "status": "paid",
+          # PROFIT-REPORT-EBIT-ALIGN — follow the same production
+          # shape as inv_a (status=accepted + payment_status=paid +
+          # paid_at) so cash-default queries match.
+          "status": "accepted",
+          "payment_status": "paid",
+          "paid_at": iso,
           "amount_paid": 120,
           "customer_id": "test-c-b",
           "customer_name": "Test B", "title": "PB1 inv B",
@@ -233,8 +248,18 @@ def test_draft_and_cancelled_invoices_are_excluded(seeded_report_fixture):
     ).json()
     fixture_ids = seeded_report_fixture
     # Flip the draft → paid, re-query, then flip it back.
+    # PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — the cash-default query
+    # filters on ``payment_status: "paid"`` + ``paid_at`` (see
+    # ``profit_report._compute``).  To make the draft match that
+    # filter we flip BOTH fields alongside ``status: "accepted"``
+    # (mirrors ``quotes.py:2150`` payment flow).  Flip-back
+    # restores ``status: "draft"`` and unsets the payment-state
+    # fields so the invoice drops out of the cash query again.
+    _flip_ts = datetime.now(timezone.utc).isoformat()
     _sync.quotes.update_one({"id": fixture_ids["draft"]},
-                             {"$set": {"status": "paid"}})
+                             {"$set": {"status": "accepted",
+                                        "payment_status": "paid",
+                                        "paid_at": _flip_ts}})
     try:
         r_after = requests.get(
             f"{API}/reports/profit?dimension=income_category&range=ytd",
@@ -242,7 +267,9 @@ def test_draft_and_cancelled_invoices_are_excluded(seeded_report_fixture):
         ).json()
     finally:
         _sync.quotes.update_one({"id": fixture_ids["draft"]},
-                                 {"$set": {"status": "draft"}})
+                                 {"$set": {"status": "draft"},
+                                  "$unset": {"payment_status": "",
+                                              "paid_at": ""}})
     # Difference must equal the draft's revenue contribution (10 * 99.9).
     delta_rev = r_after["totals"]["revenue"] - r_before["totals"]["revenue"]
     assert round(delta_rev, 2) == round(10 * 99.9, 2)
@@ -450,7 +477,11 @@ def test_uncategorized_row_lists_contributing_item_ids():
     now = datetime.now(timezone.utc).isoformat()
     _sync.quotes.insert_one({
         "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
-        "status": "paid", "amount_paid": 90, "customer_id": "test-c-qol",
+        # PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — match production
+        # paid-invoice shape (status=accepted + payment_status=paid
+        # + paid_at).
+        "status": "accepted", "payment_status": "paid", "paid_at": now,
+        "amount_paid": 90, "customer_id": "test-c-qol",
         "customer_name": "QoL Test", "title": "QoL uncat check",
         "created_at": now, "tax_rate": 0, "subtotal": 90,
         "tax": 0, "total": 90,
@@ -519,7 +550,10 @@ def test_uncategorized_income_dimension_lists_ids():
     now = datetime.now(timezone.utc).isoformat()
     _sync.quotes.insert_one({
         "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
-        "status": "paid", "amount_paid": 60, "customer_id": "c",
+        # PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — match production
+        # paid-invoice shape.
+        "status": "accepted", "payment_status": "paid", "paid_at": now,
+        "amount_paid": 60, "customer_id": "c",
         "created_at": now, "tax_rate": 0, "subtotal": 60,
         "tax": 0, "total": 60,
         "line_items": [

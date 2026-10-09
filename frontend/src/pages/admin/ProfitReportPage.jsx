@@ -94,6 +94,13 @@ export default function ProfitReportPage() {
   const [customFrom, setCustomFrom] = useState(_initialFrom);
   const [customTo, setCustomTo] = useState(_initialTo);
   const [dimension, setDimension] = useState("service_category");
+  // PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — mirror the EBIT panel's
+  // revenue-basis selector on the SAME page.  Default ``cash`` so
+  // the Profit Report tiles align with the EBIT panel's default on
+  // first render — the original bug was precisely that the two
+  // panels showed divergent revenue numbers because the Profit
+  // Report filtered on the wrong field.
+  const [revenueBasis, setRevenueBasis] = useState("cash");
   const [sort, setSort] = useState({ col: "revenue", dir: "desc" });
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState(null);
@@ -107,6 +114,10 @@ export default function ProfitReportPage() {
     const params = new URLSearchParams();
     params.set("dimension", dimension);
     params.set("range", rangeKey);
+    // PROFIT-REPORT-EBIT-ALIGN — forward the selected basis so the
+    // backend picks the matching branch (cash → payment_status +
+    // paid_at, accrual → status + created_at).
+    params.set("revenue_basis", revenueBasis);
     if (rangeKey === "custom") {
       if (!customFrom || !customTo) return null;
       params.set("from", customFrom);
@@ -136,7 +147,7 @@ export default function ProfitReportPage() {
     if (rangeKey === "custom" && (!customFrom || !customTo)) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dimension, rangeKey, customFrom, customTo]);
+  }, [dimension, rangeKey, customFrom, customTo, revenueBasis]);
 
   // Feb-2026 · Phase 3 — pull snapshot coverage once on mount.
   useEffect(() => {
@@ -387,6 +398,46 @@ export default function ProfitReportPage() {
               aria-pressed={dimension === "income_category"}
             >
               Income Category
+            </button>
+          </div>
+
+          {/* PROFIT-REPORT-EBIT-ALIGN · Feb-2026 — revenue-basis
+              toggle.  Mirrors ``ebit-basis-toggle`` on the EBIT
+              panel immediately below so an admin can keep the
+              two panels aligned (default) or diverge them
+              intentionally.  Testids follow the ``profit-report-
+              basis-*`` prefix so cross-panel assertions can
+              target each independently. */}
+          <span className="text-xs uppercase font-bold ml-3"
+                 style={{ color: colors.muted }}>Basis:</span>
+          <div className="inline-flex rounded-lg overflow-hidden"
+                style={{ border: `1px solid ${colors.border}` }}
+                data-testid="profit-report-basis-toggle">
+            <button
+              type="button"
+              onClick={() => setRevenueBasis("cash")}
+              className="text-xs px-3 py-1 font-semibold"
+              style={revenueBasis === "cash"
+                ? { background: "#0891B2", color: "#fff" }
+                : { background: colors.surface, color: colors.muted }}
+              data-testid="profit-report-basis-cash"
+              aria-pressed={revenueBasis === "cash"}
+              title="Fully-paid invoices bucketed on paid_at"
+            >
+              Cash
+            </button>
+            <button
+              type="button"
+              onClick={() => setRevenueBasis("accrual")}
+              className="text-xs px-3 py-1 font-semibold"
+              style={revenueBasis === "accrual"
+                ? { background: "#0891B2", color: "#fff" }
+                : { background: colors.surface, color: colors.muted }}
+              data-testid="profit-report-basis-accrual"
+              aria-pressed={revenueBasis === "accrual"}
+              title="Paid + partial + sent + overdue invoices bucketed on created_at"
+            >
+              Accrual
             </button>
           </div>
 
