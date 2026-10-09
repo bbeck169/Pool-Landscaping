@@ -11,6 +11,7 @@ import { Clock, MapPin, MapPinOff, LogIn, LogOut, RefreshCw } from "lucide-react
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
+import AdminPunchEditsPanel from "@/components/timeclock/AdminPunchEditsPanel";
 
 const _ADMIN_ROLES = new Set(["admin", "super_admin", "owner", "manager"]);
 
@@ -533,6 +534,11 @@ export default function LandscapingTimeClock() {
           </ul>
         </div>
       ) : null}
+
+      <AdminPunchEditsPanel
+        viewer={_viewer}
+        teamMembers={adminSummary?.techs || []}
+      />
     </div>
   );
 }
