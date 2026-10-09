@@ -22,6 +22,8 @@ import { canonicalReadingKey } from "@/src/components/checklist/PoolChecklistFor
 import ReadingChipRow from "@/src/components/checklist/ReadingChipRow";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { useFormTemplateRuntime } from "@/src/hooks/useFormTemplateRuntime";
+import { TemplateFieldProvider, useTemplateField } from "@/src/components/form-renderer/TemplateFieldContext";
 
 // Feb-2026 · Required-reading keys — covers all canonical/alias forms.
 // Mirrors the Set in PoolChecklistForm.tsx.
@@ -240,6 +242,13 @@ export default function ServiceReportScreen() {
     ]);
   };
 
+  // Phase 7D · Form Template Runtime (web parity 77a0c83de). Hook sits
+  // above the early returns. isEmpty (no template / 403 for techs /
+  // network) → empty map → every SectionCard keeps its hardcoded style.
+  const tplFormType = !report ? null
+    : report.template === "landscape" ? "landscape_service_report" : "pool_service_report";
+  const tpl = useFormTemplateRuntime(tplFormType);
+
   if (busy && !report) return (
     <View style={styles.center}><ActivityIndicator size="large" color={colors.brand}/></View>
   );
@@ -255,6 +264,7 @@ export default function ServiceReportScreen() {
   return (
     <View style={styles.root}>
       <Header title="Service Report"/>
+      <TemplateFieldProvider fieldsById={tpl.fieldsById}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 200 }}>
         <View style={styles.hero}>
           <Text style={styles.heroLabel}>{report.template} template{locked ? " · LOCKED" : ""}</Text>
@@ -275,7 +285,7 @@ export default function ServiceReportScreen() {
         </View>
 
         {/* Photos */}
-        <SectionCard title="Photos" subtitle={`${photos.length} / ${PHOTO_CAP}`}
+        <SectionCard title="Photos" subtitle={`${photos.length} / ${PHOTO_CAP}`} templateFieldId="photos"
                      testID="svc-report-photos">
           <View style={styles.photoGrid}>
             {photos.map((p: any) => (
@@ -312,7 +322,7 @@ export default function ServiceReportScreen() {
 
         {/* Chemical Readings — pool only — unified canonical block (Feb-2026) */}
         {isPool && (
-          <SectionCard title="Chemical Readings" testID="svc-report-readings">
+          <SectionCard title="Chemical Readings" testID="svc-report-readings" templateFieldId="chemistry_readings">
             <View>
               {(report.chemical_readings || []).map((r: any, i: number) => {
                 const key = canonicalReadingKey(r);
@@ -381,7 +391,7 @@ export default function ServiceReportScreen() {
 
         {/* Chemicals Added — pool only */}
         {isPool && (
-          <SectionCard title="Chemicals Added" testID="svc-report-chems"
+          <SectionCard title="Chemicals Added" testID="svc-report-chems" templateFieldId="chemicals_added_section"
             subtitle={`${(report.chemicals_added || []).length} added`}>
             {(report.chemicals_added || []).map((c: any, i: number) => {
               const entry = (report.chemicals_catalog || []).find((k: any) => k.name === c.name);
@@ -477,7 +487,7 @@ export default function ServiceReportScreen() {
         )}
 
         {/* Checklist */}
-        <SectionCard title="Checklist" testID="svc-report-checklist">
+        <SectionCard title="Checklist" testID="svc-report-checklist" templateFieldId="checklist_section">
           {(report.checklist_items || []).map((c: any, i: number) => (
             <Pressable key={c.id}
                        style={[styles.checkRow, c.checked && styles.checkRowOn]}
@@ -491,7 +501,7 @@ export default function ServiceReportScreen() {
         </SectionCard>
 
         {/* Notes */}
-        <SectionCard title="Notes" testID="svc-report-notes">
+        <SectionCard title="Notes" testID="svc-report-notes" templateFieldId="notes">
           <AppTextInput
             multiline numberOfLines={4}
             editable={!locked}
@@ -504,6 +514,7 @@ export default function ServiceReportScreen() {
           />
         </SectionCard>
       </ScrollView>
+      </TemplateFieldProvider>
 
       {!locked && (
         <View style={styles.footer}>
@@ -551,11 +562,17 @@ export default function ServiceReportScreen() {
   );
 }
 
-function SectionCard({ title, subtitle, children, testID }: any) {
+function SectionCard({ title, subtitle, children, testID, templateFieldId }: any) {
+  // Template overrides bg / border / vertical padding / title colour
+  // only; radius, horizontal padding, spacing stay hardcoded (web parity).
+  const { style: tplStyle } = useTemplateField(templateFieldId);
+  const cardStyle = tplStyle
+    ? [styles.card, { backgroundColor: tplStyle.backgroundColor, borderColor: tplStyle.borderColor, paddingVertical: tplStyle.paddingVertical }]
+    : styles.card;
   return (
-    <View style={styles.card} testID={testID}>
+    <View style={cardStyle} testID={testID}>
       <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={[styles.cardTitle, tplStyle && { color: tplStyle.color }]}>{title}</Text>
         {subtitle && <Text style={styles.cardSub}>{subtitle}</Text>}
       </View>
       {children}

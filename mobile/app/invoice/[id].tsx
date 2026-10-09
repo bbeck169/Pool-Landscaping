@@ -26,6 +26,8 @@ import { StripeUnconfiguredNotice } from "@/src/lib/stripeConfig";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { ClickablePhone, ClickableAddress } from "@/src/components/interactive";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { useFormTemplateRuntime } from "@/src/hooks/useFormTemplateRuntime";
+import { styleToRNStyle } from "@/src/lib/formStyle";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
@@ -131,6 +133,15 @@ export default function InvoiceDetail() {
       }
     } catch {}
   };
+
+  // Phase 7D · Form Template Runtime — billable unlock (web parity 77a0c83de).
+  // Line-item cards honour the `line_items_table` field style; isEmpty
+  // (no template / 403 for techs+customers / network) → hardcoded styles.
+  const liTplRuntime = useFormTemplateRuntime("invoice");
+  const liTpl = liTplRuntime.fieldsById?.line_items_table
+    ? styleToRNStyle(liTplRuntime.fieldsById.line_items_table.style) : null;
+  const liCardTpl = liTpl ? { backgroundColor: liTpl.backgroundColor, borderColor: liTpl.borderColor } : null;
+  const liTextTpl = liTpl ? { color: liTpl.color } : null;
 
   if (loading) {
     return (
@@ -375,19 +386,19 @@ export default function InvoiceDetail() {
             line_items.map((li, i) => (
               <View
                 key={i}
-                style={[s.lineCard, li.is_late_fee && s.lineCardLateFee]}
+                style={[s.lineCard, liCardTpl, li.is_late_fee && s.lineCardLateFee]}
                 testID={`invoice-line-item-${i}`}
               >
-                <Text style={s.lineDesc}>{li.description}</Text>
+                <Text style={[s.lineDesc, liTextTpl]}>{li.description}</Text>
                 {li.is_late_fee && (
                   <View style={s.lateFeePill}>
                     <Text style={s.lateFeeText}>LATE FEE</Text>
                   </View>
                 )}
-                <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+                <Text style={[s.lineQty, liTextTpl]}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
                 <View style={s.lineCardSubtotalRow}>
-                  <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
-                  <Text style={s.lineTotal}>{fmt(li.total)}</Text>
+                  <Text style={[s.lineCardSubtotalLabel, liTextTpl]}>Subtotal</Text>
+                  <Text style={[s.lineTotal, liTextTpl]} testID={`invoice-line-item-total-${i}`}>{fmt(li.total)}</Text>
                 </View>
               </View>
             ))

@@ -35,6 +35,8 @@ import { InvoiceAttachments } from "@/src/components/files";
 import { useBusinessSettings } from "@/src/hooks/useBusinessSettings";
 import { ClickablePhone, ClickableAddress } from "@/src/components/interactive";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { useFormTemplateRuntime } from "@/src/hooks/useFormTemplateRuntime";
+import { styleToRNStyle } from "@/src/lib/formStyle";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import ConvertToInvoiceButton from "@/src/components/quotes/ConvertToInvoiceButton";
 
@@ -247,6 +249,15 @@ export default function EstimateViewScreen() {
   };
 
   // ── Loading / error states ─────────────────────────────────────
+  // Phase 7D · Form Template Runtime — billable unlock (web parity 77a0c83de).
+  // Line-item cards honour the `line_items_table` field style; isEmpty
+  // (no template / 403 for techs+customers / network) → hardcoded styles.
+  const liTplRuntime = useFormTemplateRuntime("estimate");
+  const liTpl = liTplRuntime.fieldsById?.line_items_table
+    ? styleToRNStyle(liTplRuntime.fieldsById.line_items_table.style) : null;
+  const liCardTpl = liTpl ? { backgroundColor: liTpl.backgroundColor, borderColor: liTpl.borderColor } : null;
+  const liTextTpl = liTpl ? { color: liTpl.color } : null;
+
   if (loading) {
     return (
       <View style={[s.center, { paddingTop: insets.top + 60 }]}>
@@ -458,21 +469,21 @@ export default function EstimateViewScreen() {
             line_items.map((li, i) => {
               const isDeclined = (li.customer_status || "pending") === "declined";
               return (
-                <View key={i} style={[s.lineCard, isDeclined && s.lineCardDeclined]} testID={`estimate-line-item-${i}`}>
+                <View key={i} style={[s.lineCard, liCardTpl, isDeclined && s.lineCardDeclined]} testID={`estimate-line-item-${i}`}>
                   <View style={s.lineCardHeader}>
-                    <Text style={[s.lineDesc, isDeclined && s.lineDeclinedText]}>{li.description}</Text>
+                    <Text style={[s.lineDesc, liTextTpl, isDeclined && s.lineDeclinedText]}>{li.description}</Text>
                     {isDeclined && (
                       <View style={s.declinedChip} testID={`estimate-line-item-declined-chip-${i}`}>
                         <Text style={s.declinedChipText}>Declined</Text>
                       </View>
                     )}
                   </View>
-                  <Text style={[s.lineDetail, isDeclined && s.lineDeclinedText]}>
+                  <Text style={[s.lineDetail, liTextTpl, isDeclined && s.lineDeclinedText]}>
                     {li.qty_hr || li.quantity || 0} qty × {li.visits || 1} visit{(li.visits || 1) > 1 ? "s" : ""}
                   </Text>
                   <View style={s.lineCardSubtotalRow}>
-                    <Text style={s.lineCardSubtotalLabel}>Subtotal</Text>
-                    <Text style={[s.lineTotal, isDeclined && s.lineDeclinedText]}>{fmt(li.total)}</Text>
+                    <Text style={[s.lineCardSubtotalLabel, liTextTpl]}>Subtotal</Text>
+                    <Text style={[s.lineTotal, liTextTpl, isDeclined && s.lineDeclinedText]} testID={`estimate-line-item-total-${i}`}>{fmt(li.total)}</Text>
                   </View>
                   {canLineDecline && (
                     isDeclined ? (
