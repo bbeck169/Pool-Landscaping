@@ -526,13 +526,52 @@ async def update_user(user_id: str, body: dict,
     if (target.get("role") or "").lower() == "super_admin":
         raise HTTPException(403, "super_admin accounts cannot be modified from the roster widget.")
 
-    allowed_fields = {"department", "role", "display_color_hex", "auto_clockin_enabled", "applicator_license_number"}
+    allowed_fields = {"department", "role", "display_color_hex", "auto_clockin_enabled", "applicator_license_number",
+                        # Phase 10 · Feb-2026 — technician pay rates.
+                        # Both fields are nullable Decimal strings on
+                        # the user doc. Admin / super_admin edits only
+                        # (``require_admin`` dependency already applied
+                        # above). Compute path (``services.labor_cost``)
+                        # treats null as zero so a tenant that only sets
+                        # ``hourly_rate`` for some techs still computes
+                        # a stable total. Stored as str so the Decimal
+                        # parse is lossless on round-trip.
+                        "hourly_rate", "per_pool_rate"}
     unknown = set(body.keys()) - allowed_fields
     if unknown:
         raise HTTPException(400, f"unsupported fields: {sorted(unknown)}")
 
     updates: dict = {}
     audit_changes: dict = {}
+
+    # ─── Phase 10 · pay rates (hourly_rate + per_pool_rate) ─────
+    # Decimal validation — accept int, float, numeric str, or null.
+    # Reject NaN/inf/negative. Null clears the field (compute treats
+    # as zero). Values stored as str so the Decimal parse on read is
+    # lossless. Audit entry records old/new for both.
+    def _parse_rate(label: str, raw):
+        if raw is None or raw == "":
+            return None
+        from decimal import Decimal, InvalidOperation
+        try:
+            d = Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            raise HTTPException(400, f"{label} must be a decimal number")
+        if not d.is_finite():
+            raise HTTPException(400, f"{label} must be a finite decimal")
+        if d < 0:
+            raise HTTPException(400, f"{label} must be non-negative")
+        # Normalise to 2-place string for stable storage.
+        from decimal import ROUND_HALF_UP
+        return str(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    for rate_key in ("hourly_rate", "per_pool_rate"):
+        if rate_key in body:
+            new_rate = _parse_rate(rate_key, body[rate_key])
+            old_rate = target.get(rate_key)
+            if new_rate != old_rate:
+                updates[rate_key] = new_rate
+                audit_changes[rate_key] = {"old": old_rate, "new": new_rate}
 
     # Feb-2026 · C1 · CA2 ruling — regulatory applicator license
     # number.  Admin-only edit (via this endpoint) so a rogue

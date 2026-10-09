@@ -90,7 +90,11 @@ describe("Phase 10 · TechnicianPayRatesModal", () => {
       />,
     );
     const hourly = screen.getByTestId("tech-pay-rate-hourly-input");
+    fireEvent.focus(hourly);
     fireEvent.change(hourly, { target: { value: "25.50" } });
+    // DecimalInput keeps the raw buffer verbatim while the input
+    // is focused — "25.50" must stay "25.50", not be truncated
+    // to "25.5" or snapped to an integer.
     expect(hourly.value).toBe("25.50");
   });
 
@@ -104,17 +108,21 @@ describe("Phase 10 · TechnicianPayRatesModal", () => {
         onError={() => {}}
       />,
     );
-    fireEvent.change(screen.getByTestId("tech-pay-rate-hourly-input"), {
-      target: { value: "25.50" },
-    });
-    fireEvent.change(screen.getByTestId("tech-pay-rate-per-pool-input"), {
-      target: { value: "10.00" },
-    });
+    const hourly = screen.getByTestId("tech-pay-rate-hourly-input");
+    const perPool = screen.getByTestId("tech-pay-rate-per-pool-input");
+    fireEvent.focus(hourly);
+    fireEvent.change(hourly, { target: { value: "25.50" } });
+    fireEvent.blur(hourly);
+    fireEvent.focus(perPool);
+    fireEvent.change(perPool, { target: { value: "10.00" } });
+    fireEvent.blur(perPool);
     fireEvent.click(screen.getByTestId("tech-pay-rates-save-btn"));
     await waitFor(() => expect(apiPatchImpl).toHaveBeenCalled());
 
     const [url, body] = apiPatchImpl.mock.calls[0];
     expect(url).toBe("/users/u-1");
+    // The modal normalises Number → toFixed(2) on send so money
+    // precision survives the DecimalInput's parsed-number commit.
     expect(body).toEqual({
       hourly_rate: "25.50",
       per_pool_rate: "10.00",
@@ -150,6 +158,13 @@ describe("Phase 10 · TechnicianPayRatesModal", () => {
         onError={() => {}}
       />,
     );
+    // DecimalInput re-syncs the string buffer from the parent's
+    // state via useEffect when the input isn't focused — so the
+    // initial raw rendering MATCHES whatever string we handed it,
+    // which for a non-focused hydrate is the parent's state. The
+    // modal seeds state from ``target.hourly_rate`` as a string
+    // via ``_rateToString``, so the DOM value matches "22.00"
+    // / "8.00" verbatim.
     expect(screen.getByTestId("tech-pay-rate-hourly-input").value).toBe("22.00");
     expect(screen.getByTestId("tech-pay-rate-per-pool-input").value).toBe("8.00");
   });

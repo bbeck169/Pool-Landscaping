@@ -13,6 +13,12 @@ import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, 
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 import EditItemModal from "@/components/pricebook/EditItemModal";
+// Phase 10 · Feb-2026 — technician pay-rates (hourly + per-pool-job)
+// edit modal. Opened from the TeamRoster kebab menu (admin /
+// super_admin only via ``canEditPay``). Persists through
+// ``PATCH /api/users/{id}`` which the Phase 10 team.py extension
+// now accepts ``hourly_rate`` + ``per_pool_rate`` on.
+import TechnicianPayRatesModal from "@/components/team/TechnicianPayRatesModal";
 // Task C · Feb-2026 — Pricebook rows now embed a click-to-edit
 // category combobox parameterized against ``PATCH /api/items/{id}``.
 // Same component the Recurring Jobs table uses (parameterized in
@@ -761,6 +767,11 @@ function TeamRoster() {
   // pending invitations). Distinct from the P23 soft-delete above.
   const [hardDeleteTarget, setHardDeleteTarget] = useState(null);
   const [hardDeleteBusy, setHardDeleteBusy] = useState(false);
+  // Phase 10 · Feb-2026 — technician pay-rates edit modal target.
+  // Same (parent-owned-target + child-dialog) pattern as the
+  // reset / delete / hard-delete dialogs above. Admin / super_admin
+  // only; the kebab item hides for every other role (``canEditPay``).
+  const [payEditTarget, setPayEditTarget] = useState(null);
 
   const myRole = (me?.role || "").toLowerCase();
   const isAdmin = myRole === "admin" || myRole === "super_admin";
@@ -958,6 +969,21 @@ function TeamRoster() {
                 : myRole === "admin" ? targetIsTech
                 : false);
               const canUndelete = isSuperAdmin && isDeleted;
+              // Phase 10 · Feb-2026 — pay-rates edit gate. Admin /
+              // super_admin can edit any TECH row's hourly +
+              // per-pool rates. Non-tech rows (admin / manager /
+              // customer) do NOT carry pay rates, so hiding the
+              // menu entry there keeps the kebab-visibility matrix
+              // tight (matches the existing ``canReset`` /
+              // ``canDelete`` guards which also require
+              // ``targetIsTech`` for admin callers + exclude self).
+              // Super_admin bypass still only applies to
+              // non-self, non-deleted TECH rows for the same
+              // reason — a super_admin editing their own pay
+              // rate here would be out-of-band from the real
+              // compensation flow.
+              const canEditPay = !isSelf && !isDeleted && targetIsTech && (
+                isSuperAdmin || myRole === "admin");
               // Phase P42 · Feb-2026 — hard-delete is a strict
               // superset of soft-delete: same admin gate + tech-
               // role gate + not-self, and only when the row has a
@@ -966,7 +992,7 @@ function TeamRoster() {
               // hard-deleted through this endpoint.
               const canHardDelete = canDelete && !!r.technician_id;
               const anyKebab = canReset || canDelete || canUndelete
-                || canHardDelete;
+                || canHardDelete || canEditPay;
               return (
                 <li
                   key={r.id}
@@ -1082,9 +1108,11 @@ function TeamRoster() {
                       canDelete={canDelete}
                       canUndelete={canUndelete}
                       canHardDelete={canHardDelete}
+                      canEditPay={canEditPay}
                       onReset={() => setResetTarget(r)}
                       onDelete={() => setDeleteTarget(r)}
                       onHardDelete={() => setHardDeleteTarget(r)}
+                      onEditPay={() => setPayEditTarget(r)}
                       onUndelete={async () => {
                         try {
                           await api.post(`/users/${r.id}/undelete`, {});
@@ -1219,6 +1247,23 @@ function TeamRoster() {
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* Phase 10 · Feb-2026 — technician pay-rates (hourly +
+          per-pool-job) edit modal. Opens on the Pay-Rates kebab
+          item (admin / super_admin only via ``canEditPay``).
+          Persisted via ``PATCH /api/users/{id}`` — see Phase 10
+          team.update_user allow-list widening. */}
+      <TechnicianPayRatesModal
+        target={payEditTarget}
+        onClose={() => setPayEditTarget(null)}
+        onSaved={(msg) => {
+          setPayEditTarget(null);
+          setToast({ tone: "success", message: msg });
+          refresh();
+        }}
+        onError={(msg) =>
+          setToast({ tone: "error", message: msg })}
+      />
     </Card>
   );
 }
@@ -1233,8 +1278,9 @@ function TeamRoster() {
  * is available — the roster mount decides visibility per-row.
  */
 function TeamRowKebab({ row, canReset, canDelete, canUndelete,
-                          canHardDelete,
-                          onReset, onDelete, onUndelete, onHardDelete }) {
+                          canHardDelete, canEditPay,
+                          onReset, onDelete, onUndelete, onHardDelete,
+                          onEditPay }) {
   const [open, setOpen] = useState(false);
   const btnRef = React.useRef(null);
   const menuRef = React.useRef(null);
@@ -1279,6 +1325,18 @@ function TeamRowKebab({ row, canReset, canDelete, canUndelete,
               data-testid={`team-row-reset-btn-${row.id}`}
             >
               <KeyRound size={13} /> Reset password
+            </button>
+          ) : null}
+          {canEditPay ? (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onEditPay(); }}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-black/5"
+              style={{ color: colors.onSurface }}
+              data-testid={`team-row-edit-pay-btn-${row.id}`}
+              title="Edit hourly + per-pool-job pay rates"
+            >
+              <DollarSign size={13} /> Edit pay rates
             </button>
           ) : null}
           {canDelete ? (

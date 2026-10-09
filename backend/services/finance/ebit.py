@@ -340,6 +340,36 @@ async def compute_ebit(
     wages_by_role = await _wages_by_role(
         db, tenant_id, range_from, range_to)
 
+    # Phase 10 · Feb-2026 — labor cost from technician pay rates.
+    # Pulls per-tech hours × hourly_rate + pool_jobs_completed ×
+    # per_pool_rate via the shared ``services.labor_cost`` helper
+    # (same source the ``/reports/labor-cost`` endpoint reads).
+    # Phase 10 ADDS the field to the response; Phase 11 will
+    # subtract it from the EBIT bottom line (and add recurring
+    # labor cost on top). Non-fatal — if the compute fails or no
+    # techs have rates set, labor_cost falls back to 0.0 so EBIT
+    # stays green.
+    labor_cost_amount: float = 0.0
+    labor_cost_breakdown: Dict[str, Any] = {
+        "by_tech": [],
+        "totals":  {"hours_worked": 0.0, "hourly_cost": 0.0,
+                    "pool_jobs_completed": 0, "per_pool_cost": 0.0,
+                    "total_labor_cost": 0.0},
+        "range":   {"start": range_from, "end": range_to},
+    }
+    try:
+        from services.labor_cost import compute_labor_cost
+        labor_cost_breakdown = await compute_labor_cost(
+            tenant_id, range_from, range_to, db=db)
+        labor_cost_amount = float(
+            (labor_cost_breakdown.get("totals") or {}).get(
+                "total_labor_cost") or 0.0)
+    except Exception as _labor_exc:                              # noqa: BLE001
+        # Keep EBIT green even if the Phase 10 labor compute throws.
+        # Record the exception on the breakdown so operators can
+        # grep it from the admin UI; the top-level number stays 0.
+        labor_cost_breakdown["error"] = str(_labor_exc)
+
     ebit = revenue - cogs - opex - depreciation
     return {
         "range_from": range_from,
@@ -350,6 +380,12 @@ async def compute_ebit(
         "opex": round(opex, 2),
         "depreciation": round(depreciation, 2),
         "ebit": round(ebit, 2),
+        # Phase 10 · Feb-2026 — labor cost from technician pay rates.
+        # Top-level number for easy consumption; detailed per-tech
+        # breakdown lives on ``breakdown.labor_cost_breakdown``.
+        # Phase 11 wires this into the EBIT bottom line + layers in
+        # recurring labor costs.
+        "labor_cost": round(labor_cost_amount, 2),
         "breakdown": {
             "invoice_count": len(invoices),
             "line_count": line_count,
@@ -364,6 +400,8 @@ async def compute_ebit(
                 for k, v in sorted(dep_by_cat.items(), key=lambda kv: -kv[1])
             ],
             "wages_by_role": wages_by_role,
+            # Phase 10 · Feb-2026 — full per-tech breakdown.
+            "labor_cost_breakdown": labor_cost_breakdown,
         },
     }
 

@@ -58,9 +58,23 @@ export default function TechnicianPayRatesModal({
     try {
       // Null-coalesce — an empty input clears the field on the
       // server; the compute path treats null as zero.
+      //
+      // DecimalInput's ``onChange`` fires with a parsed Number
+      // (not the raw string). Format back to 2-place string on
+      // send so the wire payload matches what the user typed —
+      // "25.50" stays "25.50", not "25.5". The server also
+      // quantises to 2 places on write, but formatting here keeps
+      // the wire-level contract tight (and gives the test suite a
+      // stable string to assert on).
+      const _fmt = (v) => {
+        if (v === "" || v == null) return null;
+        const n = typeof v === "number" ? v : Number.parseFloat(v);
+        if (!Number.isFinite(n)) return null;
+        return n.toFixed(2);
+      };
       const payload = {
-        hourly_rate:   (hourly === "" || hourly == null) ? null : String(hourly),
-        per_pool_rate: (perPool === "" || perPool == null) ? null : String(perPool),
+        hourly_rate:   _fmt(hourly),
+        per_pool_rate: _fmt(perPool),
       };
       await api.patch(`/users/${target.id}`, payload);
       onSaved?.(`Pay rates saved for ${target.name || target.email}`);

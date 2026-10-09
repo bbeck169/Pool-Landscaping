@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, notify_customer
+from utils import require_admin_or_manager
 # Feb-2026 · P3 — reuse the 4-rung tech-name cascade so exported
 # rows carry the CURRENT display name, not the stale snapshot that
 # job docs cache at write time.
@@ -1459,3 +1460,56 @@ async def schedule_shock_algae_risk(customer_id: str,
                    "scheduled_job_id": job["id"]}},
     )
     return {"ok": True, "job_id": job["id"], "resolved_at": now}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 10 · Feb-2026 — Labor cost report.
+#
+# Thin wrapper around ``services.labor_cost.compute_labor_cost``.
+# Separate from the EBIT report so the Ops / Finance team can
+# surface the per-tech breakdown independently (and so Phase 11
+# can inject recurring labor costs into EBIT without changing
+# this endpoint's response shape).
+#
+# Role gate:
+#   * admin / super_admin / owner → full read (write-only roles are
+#     out of scope here — this is a read-only report).
+#   * manager                    → read-only parity (manager
+#     equivalents already have read access to EBIT per Phase 53c).
+#   * technician / customer      → 403.
+#
+# Response shape: see ``services.labor_cost.compute_labor_cost``.
+# ═══════════════════════════════════════════════════════════════════
+_LABOR_COST_VIEWER_ROLES = frozenset({
+    "admin", "super_admin", "owner", "manager",
+})
+
+
+@router.get("/reports/labor-cost")
+async def get_labor_cost_report(
+    start: str = Query(..., description=(
+        "Inclusive window start, ISO date (``YYYY-MM-DD``). "
+        "Matches the EBIT convention — a job on this exact day is "
+        "included if its ``scheduled_date`` equals ``start``.")),
+    end: str = Query(..., description=(
+        "Inclusive window end, ISO date (``YYYY-MM-DD``). "
+        "Matches the EBIT convention — a job on this exact day is "
+        "included if its ``scheduled_date`` equals ``end``.")),
+    tech_id: Optional[str] = Query(
+        None,
+        description=(
+            "When set, narrows the report to a single technician's "
+            "``users.id`` (or equivalent ``technician_id``)."
+        ),
+    ),
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    role = ((user or {}).get("role") or "").lower()
+    if role not in _LABOR_COST_VIEWER_ROLES:
+        raise HTTPException(status_code=403, detail="forbidden")
+    from services.labor_cost import compute_labor_cost
+    return await compute_labor_cost(
+        tenant["id"], start, end,
+        tech_filter=(tech_id or None),
+    )
