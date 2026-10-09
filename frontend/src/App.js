@@ -421,7 +421,7 @@ const CheckinsList = React.lazy(() => import(/* webpackChunkName: "p-misc-gapclo
 const CommunicationThread = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.CommunicationThread })));
 const TechnicianProfile = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.TechnicianProfile })));
 const FormsList = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.FormsList })));
-const FormEditor = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.FormEditor })));
+const LegacyPhase14FormEditor = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.FormEditor })));
 const PublicForm = React.lazy(() => import(/* webpackChunkName: "p-phase14-phase14pages" */ "@/pages/phase14/Phase14Pages").then(m => ({ default: m.PublicForm })));
 import { PermissionsProvider } from "@/hooks/usePermissions";
 const LandscapeAI = React.lazy(() => import(/* webpackChunkName: "p-aitools-aitoolspages" */ "@/pages/aitools/AiToolsPages").then(m => ({ default: m.LandscapeAI })));
@@ -1458,7 +1458,7 @@ export default function App() {
             <Route path="communication/:id" element={<CommunicationThread />} />
             <Route path="technician/:id" element={<TechnicianProfile />} />
             <Route path="forms" element={<AdminOnly><FormsList /></AdminOnly>} />
-            <Route path="forms/:id" element={<AdminOnly><FormEditor /></AdminOnly>} />
+            <Route path="forms/:id" element={<AdminOnly><LegacyPhase14FormEditor /></AdminOnly>} />
 
             {/* Phase 10 — D2D Sales (open to admin + technician) */}
             <Route path="d2d" element={<D2dDashboard />} />
