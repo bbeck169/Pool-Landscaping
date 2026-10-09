@@ -213,6 +213,17 @@ async def ebit_trend(
             "cogs":    live.get("cogs", 0),
             "opex":    live.get("opex", 0),
             "depreciation": live.get("depreciation", 0),
+            # Phase 16 · Feb-2026 — surface the Phase 10 / Phase 11
+            # labor slices per bucket so the trend identity
+            # ``ebit == revenue - cogs - opex - depreciation
+            #            - labor_cost_total`` is reconstructible
+            # from the payload. Arithmetic was already correct
+            # inside compute_ebit (Phase 11 subtraction baked in);
+            # this is a field-exposure fix only. Default to 0 for
+            # pre-Phase-11 compute_ebit returns via ``.get(..., 0)``.
+            "labor_cost": live.get("labor_cost", 0),
+            "recurring_labor_cost": live.get("recurring_labor_cost", 0),
+            "labor_cost_total": live.get("labor_cost_total", 0),
             "ebit":    live.get("ebit", 0),
         })
     return {"months": months, "revenue_basis": basis, "series": out}

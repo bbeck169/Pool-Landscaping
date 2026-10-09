@@ -208,24 +208,20 @@ def test_trend_series_oldest_to_newest():
 
 
 def test_trend_ebit_identity_holds_per_bucket():
-    # Phase 15 · Feb-2026 — DEFERRED. Phase 11 subtracts aggregated
-    # labor_cost from the ``ebit`` scalar but the ``/ebit/trend``
-    # endpoint does NOT yet surface a per-bucket
-    # ``labor_cost_total`` field. Without the field there is no
-    # way to reconstruct the pre-labor identity from the trend
-    # payload — the bucket ``ebit`` can be arbitrarily negative
-    # when labor exists but revenue/cogs/opex/dep do not.
+    # Phase 16 · Feb-2026 — RESTORED. Phase 11 subtracted labor_cost
+    # from compute_ebit but the trend endpoint did not surface the
+    # labor slices per bucket. Phase 16 added ``labor_cost``,
+    # ``recurring_labor_cost``, and ``labor_cost_total`` fields to
+    # each trend bucket, so the identity is now reconstructible
+    # from the payload:
     #
-    # Flagging for a follow-up ticket on the ``/ebit/trend``
-    # response shape (surface the labor subtotal + rate the
-    # identity with it). Until then skip gracefully instead of
-    # pinning a broken contract.
-    pytest.skip(
-        "trend endpoint does not surface labor_cost_total yet; "
-        "identity cannot be reconstructed from the payload. "
-        "Follow-up ticket: expose labor_cost_total on trend "
-        "buckets, then restore this ratchet.",
-    )
+    #     ebit == revenue - cogs - opex - depreciation
+    #              - labor_cost_total
+    #
+    # Older trend payloads that pre-date Phase 16 default the field
+    # to 0 via ``.get(..., 0)`` on the server side; this ratchet
+    # still passes because an absent field means no labor to
+    # subtract.
     r = _trend(USERS["admin"], months=6)
     for p in r.json()["series"]:
         labor = float(p.get("labor_cost_total") or 0)
