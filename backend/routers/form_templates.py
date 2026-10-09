@@ -67,7 +67,13 @@ HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 #   5. Job checklist (generic variant)  → ``job_checklist_generic``
 #   6. Estimate                         → ``estimate``
 #   7. Invoice                          → ``invoice``
-#   8. CAD editor overlay               → ``cad_overlay``
+#
+# Phase 14A · Feb-2026 — ``cad_overlay`` DROPPED. The CAD canvas
+# engine is a shape-tool renderer, not a flat form consumer, and
+# re-plumbing it as a form_template surface was never completed.
+# The enum, seed, preview, and editor picker have all been removed.
+# Legacy ``cad_overlay`` template docs (if any were saved in dev)
+# are left orphaned in the collection — they are no longer loaded.
 #
 # The three ``job_checklist_*`` variants mirror the three in-code
 # defaults (``POOL_CHECKLIST_DEFAULT`` / ``LANDSCAPE_CHECKLIST_DEFAULT``
@@ -86,7 +92,6 @@ FORM_TYPES = (
     "job_checklist_generic",
     "estimate",
     "invoice",
-    "cad_overlay",
 )
 
 
@@ -206,16 +211,10 @@ _INVOICE_FIELDS: List[tuple] = [
     ("payment_status",   "Payment Status",       "readonly_text",    12),
 ]
 
-# CAD editor overlay — PHASE 7A PLACEHOLDER SEED.
-#
-# The CAD editor at ``frontend/src/pages/.../cad-editor*`` is a canvas
-# tool (shapes, icons, map backdrops, vertex drag, scale bar) and does
-# NOT render a flat field list today — there is no "form" to reorder
-# or restyle in the Phase 7A sense.  We seed a minimal placeholder so
-# the enum is complete and GET always returns a shape.  Phase 7B/7C
-# will either (a) wire these as the real editable overlay-settings
-# strip, or (b) drop the ``cad_overlay`` form_type if the canvas path
-# never grows a form surface.  See brief for the agreed placeholder.
+# CAD overlay — Phase 14A · Feb-2026 — DROPPED (see FORM_TYPES
+# comment above). The seed field list is retained ONLY as a code
+# archive for the git log; it is intentionally not referenced from
+# ``_SEED_MAP``. Delete this block when confident no reader exists.
 _CAD_OVERLAY_FIELDS: List[tuple] = [
     ("overlay_bg",     "Overlay Background",  "cad_overlay_bg", 12),
     ("grid_opacity",   "Grid Opacity",        "slider",          6),
@@ -231,7 +230,6 @@ _SEED_MAP: Dict[str, List[tuple]] = {
     "job_checklist_generic":    _GENERIC_CHECKLIST_FIELDS,
     "estimate":                 _ESTIMATE_FIELDS,
     "invoice":                  _INVOICE_FIELDS,
-    "cad_overlay":              _CAD_OVERLAY_FIELDS,
 }
 
 # Fields seeded with ``locked_reorder=True``.  Default False for

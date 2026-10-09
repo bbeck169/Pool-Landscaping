@@ -88,4 +88,77 @@ export function useFormTemplateOrder() {
 }
 
 
+/**
+ * Phase 14A · Feb-2026 — Template-ordered section renderer.
+ *
+ * Wraps a list of React children whose top-level props carry a
+ * ``templateFieldId``. Reorders them per the active
+ * ``useFormTemplateOrder()`` lookup.
+ *
+ * Zero-regression contract:
+ *   * No active provider (or empty template) → children render in
+ *     their original source order (byte-for-byte legacy layout).
+ *   * Children without a ``templateFieldId`` prop are passed
+ *     through at their source position (header blocks, bottom
+ *     submit buttons, etc. — any mix of ordered + unordered
+ *     children is handled).
+ *   * Template field_ids with no matching child are silently
+ *     skipped (template references a field the current page
+ *     doesn't render — e.g. ``signature`` on a landscape report
+ *     that doesn't ship one yet).
+ *   * Children present in the page but absent from the template
+ *     are appended at the end of the ordered run so no renderable
+ *     section vanishes silently.
+ */
+export function TemplateOrderedSections({ children }) {
+  const order = useFormTemplateOrder();
+  const flat = React.Children.toArray(children)
+    .filter((c) => c !== false && c != null && c !== "");
+  if (!order || order.length === 0) {
+    return <>{flat}</>;
+  }
+  // Partition into (ordered, passthrough). Passthroughs render at
+  // their original index; ordered children get repositioned.
+  const byFieldId = new Map();
+  const passthroughPositions = [];
+  flat.forEach((child, idx) => {
+    const fid = child?.props?.templateFieldId;
+    if (fid && !byFieldId.has(fid)) {
+      byFieldId.set(fid, child);
+    } else {
+      passthroughPositions.push({ child, idx });
+    }
+  });
+  const output = [];
+  for (const fid of order) {
+    const c = byFieldId.get(fid);
+    if (c) {
+      output.push(c);
+      byFieldId.delete(fid);
+    }
+  }
+  // Append any renderable sections the template didn't mention so
+  // the page never silently loses content.
+  for (const [, c] of byFieldId.entries()) {
+    output.push(c);
+  }
+  // Re-insert passthroughs in approximately their source position.
+  // Simple strategy: anything originally before the first ordered
+  // child stays at the top; everything else goes at the bottom.
+  const firstOrderedIdx = flat.findIndex(
+    (c) => c?.props?.templateFieldId,
+  );
+  const before = [];
+  const after = [];
+  for (const { child, idx } of passthroughPositions) {
+    if (firstOrderedIdx === -1 || idx < firstOrderedIdx) {
+      before.push(child);
+    } else {
+      after.push(child);
+    }
+  }
+  return <>{before}{output}{after}</>;
+}
+
+
 export default TemplateFieldProvider;

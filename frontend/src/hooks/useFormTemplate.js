@@ -22,7 +22,6 @@ export const FORM_TYPES = [
   "job_checklist_generic",
   "estimate",
   "invoice",
-  "cad_overlay",
 ];
 
 
@@ -34,7 +33,6 @@ export const FORM_TYPE_LABELS = {
   job_checklist_generic:    "Job Checklist · Generic",
   estimate:                 "Estimate",
   invoice:                  "Invoice",
-  cad_overlay:              "CAD Overlay",
 };
 
 

@@ -1,9 +1,12 @@
 // Phase 7B · Feb-2026 — Form Template preview mocks.
 //
-// Three preview variants exported from one file (scope ceiling):
+// Two preview variants exported from one file (scope ceiling):
 //   * ServiceReportPreview     — pool/landscape SR + job_checklist_*
 //   * InvoiceEstimatePreview   — estimate + invoice
-//   * CadOverlayPreview        — cad_overlay (SVG grid mock)
+//
+// Phase 14A · Feb-2026 — ``CadOverlayPreview`` DROPPED along with
+// the ``cad_overlay`` form_type (see backend
+// ``routers/form_templates.py`` header for the decision log).
 //
 // CRITICAL (brief §5): the estimate / invoice ``line_items_table``
 // MUST honor the editor's styles.  Pre-Phase-7A those columns were
@@ -198,58 +201,6 @@ export function InvoiceEstimatePreview({ fields, formType }) {
 }
 
 
-// ─── CAD Overlay preview ──────────────────────────────────────────
-//
-// The real CAD editor is a canvas tool — this preview is a STATIC
-// SVG grid mock, flagged in the brief.  Shows the configured bg +
-// grid opacity + snap-grid cell size so an admin can preview how
-// their overlay changes feel without hooking the real canvas.
-export function CadOverlayPreview({ fields }) {
-  const bg = fields.find((f) => f.field_id === "overlay_bg");
-  const op = fields.find((f) => f.field_id === "grid_opacity");
-  const sz = fields.find((f) => f.field_id === "snap_grid_size");
-  const bgStyle = _styleOf(bg || {});
-  const gridOpacity = Math.max(0, Math.min(1,
-    (Number(op?.style?.bg_alpha) || 0.5)));
-  // ``snap_grid_size`` is a numeric field without a real stored value
-  // here — Phase 7B uses ``width_cols`` as the proxy for the mock
-  // cell size (admins get a visual sanity check).
-  const cell = Math.max(4, Math.min(32,
-    Number(sz?.style?.width_cols || 8) * 2));
-
-  const lines = [];
-  for (let x = 0; x <= 160; x += cell) {
-    lines.push(
-      <line key={`v-${x}`} x1={x} y1={0} x2={x} y2={96}
-            stroke="#0284C7" strokeOpacity={gridOpacity} strokeWidth={0.5} />,
-    );
-  }
-  for (let y = 0; y <= 96; y += cell) {
-    lines.push(
-      <line key={`h-${y}`} x1={0} y1={y} x2={160} y2={y}
-            stroke="#0284C7" strokeOpacity={gridOpacity} strokeWidth={0.5} />,
-    );
-  }
-
-  return (
-    <div
-      className="rounded border overflow-hidden"
-      style={{ background: bgStyle.bgCol, borderColor: bgStyle.brdCol }}
-      data-testid="preview-cad-overlay"
-    >
-      <svg viewBox="0 0 160 96" width="100%" height="200"
-           data-testid="preview-cad-overlay-svg">
-        <rect width="160" height="96" fill={bgStyle.bgCol}
-              fillOpacity={bgStyle.alpha} />
-        {lines}
-      </svg>
-      <div className="text-[10px] px-2 py-1 text-slate-500">
-        Phase 7A placeholder — real CAD canvas hooked in Phase 7B+C.
-        <span data-testid="preview-cad-grid-opacity"
-              className="ml-1">opacity={gridOpacity.toFixed(2)}</span>
-        <span data-testid="preview-cad-cell-size"
-              className="ml-1">cell={cell}px</span>
-      </div>
-    </div>
-  );
-}
+// Phase 14A · Feb-2026 — ``CadOverlayPreview`` was removed along
+// with the ``cad_overlay`` form_type decommission. See
+// ``backend/routers/form_templates.py`` header for the rationale.

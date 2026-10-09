@@ -115,6 +115,9 @@ describe("Case 2 · form_type picker enumerates all 8 types", () => {
   it("exports every type returned by the Phase 7A API", async () => {
     const { FORM_TYPES, FORM_TYPE_LABELS } =
       await import("@/hooks/useFormTemplate");
+    // Phase 14A · Feb-2026 — ``cad_overlay`` dropped. The CAD
+    // canvas tool was never wired to the form_template consumer
+    // pattern; see ``backend/routers/form_templates.py`` header.
     expect(FORM_TYPES).toEqual([
       "pool_service_report",
       "landscape_service_report",
@@ -123,8 +126,9 @@ describe("Case 2 · form_type picker enumerates all 8 types", () => {
       "job_checklist_generic",
       "estimate",
       "invoice",
-      "cad_overlay",
     ]);
+    expect(FORM_TYPES).not.toContain("cad_overlay");
+    expect(FORM_TYPE_LABELS.cad_overlay).toBeUndefined();
     for (const ft of FORM_TYPES) {
       expect(FORM_TYPE_LABELS[ft]).toBeTruthy();
     }
@@ -427,36 +431,21 @@ describe("Case 11 · estimate/invoice line_items table honors style", () => {
 
 
 // ══════════════════════════════════════════════════════════════════
-//  Case 12  —  CAD overlay preview respects configured grid opacity
+//  Case 12  —  CAD overlay preview — REMOVED in Phase 14A.
+//
+//  The ``cad_overlay`` form_type was dropped; see
+//  ``backend/routers/form_templates.py`` header for the decision
+//  log. The former ``CadOverlayPreview`` export is gone; a dedicated
+//  pytest (``test_form_templates_cad_dropped.py``) ratchets that
+//  ``cad_overlay`` can no longer be fetched from the backend.
 // ══════════════════════════════════════════════════════════════════
 
-describe("Case 12 · CAD overlay preview respects grid opacity", () => {
-  it("renders an SVG grid whose stroke-opacity matches the configured alpha",
+describe("Case 12 · cad_overlay form_type is removed", () => {
+  it("CadOverlayPreview is no longer exported from FormPreviews",
     async () => {
-      const { CadOverlayPreview } = await import(
+      const mod = await import(
         "@/components/form-editor/FormPreviews");
-      const fields = [
-        { field_id: "overlay_bg", label: "Bg",
-          field_type: "cad_overlay_bg", order: 0,
-          locked_reorder: false,
-          style: { ..._DEFAULT_STYLE, bg_color: "#F8FAFC" } },
-        { field_id: "grid_opacity", label: "Opacity",
-          field_type: "slider", order: 1,
-          locked_reorder: false,
-          style: { ..._DEFAULT_STYLE, bg_alpha: 0.3 } },
-        { field_id: "snap_grid_size", label: "Cell",
-          field_type: "number", order: 2,
-          locked_reorder: false,
-          style: { ..._DEFAULT_STYLE, width_cols: 8 } },
-      ];
-      render(<CadOverlayPreview fields={fields} />);
-      expect(screen.getByTestId("preview-cad-overlay-svg")).toBeTruthy();
-      const opEl = screen.getByTestId("preview-cad-grid-opacity");
-      expect(opEl.textContent.replace(/\s/g, ""))
-        .toBe("opacity=0.30");
-      const cellEl = screen.getByTestId("preview-cad-cell-size");
-      // width_cols=8 → cell=16px per our visual mapping.
-      expect(cellEl.textContent.replace(/\s/g, "")).toBe("cell=16px");
+      expect(mod.CadOverlayPreview).toBeUndefined();
     });
 });
 

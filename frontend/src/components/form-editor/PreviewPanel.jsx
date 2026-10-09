@@ -3,11 +3,15 @@
 // Routes the current ``formType`` to the matching preview mock
 // defined in ``FormPreviews.jsx``.  Zero knowledge of the drag or
 // style editing surfaces — just reads ``fields`` and renders.
+//
+// Phase 14A · Feb-2026 — ``cad_overlay`` DROPPED. The
+// ``CadOverlayPreview`` import + branch were removed when the
+// form_type was decommissioned (see
+// ``backend/routers/form_templates.py`` header for the rationale).
 import React from "react";
 import {
   ServiceReportPreview,
   InvoiceEstimatePreview,
-  CadOverlayPreview,
 } from "./FormPreviews";
 import { colors } from "@/theme";
 
@@ -18,8 +22,6 @@ export default function PreviewPanel({ formType, fields }) {
   let body = null;
   if (formType === "estimate" || formType === "invoice") {
     body = <InvoiceEstimatePreview fields={safeFields} formType={formType} />;
-  } else if (formType === "cad_overlay") {
-    body = <CadOverlayPreview fields={safeFields} />;
   } else {
     // pool / landscape service reports + the three job_checklist_*
     // variants all render as a lightweight form-card mock.

@@ -48,7 +48,7 @@ import { compressImageIfNeeded } from "../../lib/imageCompress";
 // saved (zero-regression contract — see useFormTemplateRuntime.js).
 import { useFormTemplateRuntime } from "@/hooks/useFormTemplateRuntime";
 import {
-  TemplateFieldProvider, useFieldStyle,
+  TemplateFieldProvider, useFieldStyle, TemplateOrderedSections,
 } from "@/components/form-renderer/TemplateFieldContext";
 
 const AUTOSAVE_MS = 5000;
@@ -550,6 +550,13 @@ export default function ServiceReport() {
         </div>
       </div>
 
+      {/* Phase 14A · Feb-2026 — Template-ordered section group. If
+          the admin reordered fields in the Phase 7B editor, the
+          sections below render in that order. When no template is
+          saved (useFormTemplateRuntime returns isEmpty), the
+          wrapper is a no-op pass-through — legacy JSX order
+          preserved byte-for-byte. */}
+      <TemplateOrderedSections>
       {/* Photos */}
       <Section title="Photos" icon={<Camera size={16}/>}
                subtitle={`${photoCount} / ${PHOTO_CAP}`}
@@ -878,6 +885,7 @@ export default function ServiceReport() {
                   data-testid="svc-report-notes"/>
       </Section>
       )}
+      </TemplateOrderedSections>
 
       {!locked && (
         <div className="sticky bottom-0 left-0 right-0 mt-6 py-3 flex justify-end gap-2"
