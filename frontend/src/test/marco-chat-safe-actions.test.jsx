@@ -104,7 +104,8 @@ afterEach(() => {
 // (a) wake-word hook: match + dispatch
 // ══════════════════════════════════════════════════════════════════
 describe("useWebWakeWord", () => {
-  it("(a) dispatches ai-dock:open-marco when 'hey marco' is heard",
+  it("(a) dispatches ai-dock:open-marco when 'hey marco' is heard "
+     + "AFTER an explicit arm() (Phase 8 refit)",
       async () => {
     const { default: useWebWakeWord } = await import(
       "../hooks/useWebWakeWord.js");
@@ -112,11 +113,21 @@ describe("useWebWakeWord", () => {
     const handler = (ev) => seen.push(ev.detail);
     window.addEventListener("ai-dock:open-marco", handler);
 
+    let latest = null;
     function _Harness() {
       const state = useWebWakeWord();
-      return <div data-testid="state">{JSON.stringify(state)}</div>;
+      latest = state;
+      return <div data-testid="state">
+        {JSON.stringify({ a: state.isArmed, s: state.supported })}
+      </div>;
     }
     render(<_Harness/>);
+
+    // Phase 8 — hook is IDLE on mount.  No recognition instance
+    // exists until the caller flips arm().
+    expect(_lastRecognition).toBeFalsy();
+
+    await act(async () => { latest.arm(); });
     await waitFor(() => expect(_lastRecognition).toBeTruthy());
 
     await act(async () => {

@@ -37,11 +37,12 @@ import PortalThemeShell from "@/components/portal/PortalThemeShell";
 import AIDock from "@/components/AIDock/AIDock";
 // Feb-2026 · MARCO-AI-CHAT Phase B — wake-word hooks for the three
 // admin-adjacent roles (admin / super_admin / manager / owner).
-// Both hooks are mounted globally via <MarcoWakeMount/> below so
-// "Hey Marco" (spoken via SpeechRecognition OR typed anywhere in
-// the admin UI) opens the AIDock drawer and auto-selects MARCO.
-import useWebWakeWord from "@/hooks/useWebWakeWord";
+// Phase 8 refit: the mic listener is now ARM-ON-CLICK — the hook
+// is hosted inside ``<MarcoMicProvider>`` which exposes a mic
+// toggle button via ``<MicToggleButton>`` rendered in the header.
+// Typed-wake-phrase remains always-on (keyboard-only, no mic).
 import useTypedWakePhrase from "@/hooks/useTypedWakePhrase";
+import { MarcoMicProvider } from "@/components/marco/MarcoMicController";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import TosGate from "@/components/legal/TosGate";
 // Feb-2026 · Slice 2C — Customer portal per-service ToS gate. Sits
@@ -409,6 +410,7 @@ function AppLayout() {
   };
 
   return (
+    <MarcoMicProvider user={user}>
     <div
       className="min-h-screen flex flex-col md:flex-row"
       style={{ fontFamily: font.family, backgroundColor: colors.surfaceSecondary }}
@@ -915,21 +917,23 @@ function AppLayout() {
         </nav>
       </main>
     </div>
+    </MarcoMicProvider>
   );
 }
 
 export default ProtectedShell;
 
 // ──────────────────────────────────────────────────────────────────
-// Feb-2026 · MARCO-AI-CHAT Phase B — wake-word mount.
+// Feb-2026 · MARCO-AI-CHAT Phase B · Phase 8 refit.
 //
-// Hosts the ``useWebWakeWord`` + ``useTypedWakePhrase`` hooks
-// behind an admin+ role gate so technicians / customers / portal
-// users never have a global keystroke listener or a mic prompt
-// attached.  Renders ``null`` — the hooks dispatch the
-// ``ai-dock:open-marco`` CustomEvent on the window, which the
-// AIDock component listens for and uses to open the drawer and
-// auto-select MARCO.
+// Pre-Phase-8 MarcoWakeMount mounted ``useWebWakeWord`` + the typed
+// fallback and relied on auto-start.  Phase 8 pulls the mic listener
+// out of this component — it now lives inside
+// ``<MarcoMicProvider>`` which is wrapped around the whole app
+// below and exposes an ARM-ON-CLICK ``<MicToggleButton>`` rendered
+// in the header.  The TYPED wake phrase remains always-on because
+// it listens to keystrokes, not the mic, and has no audible or
+// permission footprint.
 // ──────────────────────────────────────────────────────────────────
 const _MARCO_WAKE_ROLES = new Set(
   ["admin", "super_admin", "manager", "owner"]
@@ -938,7 +942,6 @@ const _MARCO_WAKE_ROLES = new Set(
 function MarcoWakeMount({ user }) {
   const role = (user?.role || "").toLowerCase();
   const canUseMarco = _MARCO_WAKE_ROLES.has(role);
-  useWebWakeWord({ enabled: canUseMarco });
   useTypedWakePhrase({ enabled: canUseMarco });
   return null;
 }

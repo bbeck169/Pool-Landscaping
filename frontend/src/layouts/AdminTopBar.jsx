@@ -79,6 +79,12 @@ import { Settings as SettingsIcon } from "lucide-react";
 // single-tenant users). Sits next to the "your world" controls
 // on the wide-branch cluster.
 import TenantSwitcher from "@/components/topbar/TenantSwitcher";
+// Phase 8 · Feb-2026 — Marco wake-word arm-on-click toggle.  Mounted
+// on the right cluster so admin / super_admin / manager / owner can
+// explicitly arm the mic (no auto-start).  The button self-gates on
+// role + SpeechRecognition support and returns null everywhere
+// Marco wake isn't available, so we don't widen the role surface.
+import { MicToggleButton } from "@/components/marco/MarcoMicController";
 // Phase A1 · Feb-2026 — Proactive Intelligence alert bell. The
 // component itself is self-gated to admin/super_admin (fail-closed
 // on loading auth state); ``AdminBellSlot`` below adds a second
@@ -544,6 +550,9 @@ export default function AdminTopBar() {
                   ``hooks/usePermissions.jsx``) so it's a no-op
                   mount for manager / technician. */}
               <RolePreviewSwitcher />
+              {/* Phase 8 · Feb-2026 — Marco wake-word toggle (mobile
+                  mirror of the wide-branch mount). */}
+              <MicToggleButton />
               {/* Feb-2026 · AdminTopBar bell cleanup — the parallel
                   ``AdminBellSlot`` (Proactive Intelligence AlertBell)
                   was pulled from the right cluster. The single
@@ -583,6 +592,8 @@ export default function AdminTopBar() {
                   Auto-hidden when the user has <2 memberships,
                   so single-tenant users never see this control. */}
               <TenantSwitcher />
+              {/* Phase 8 · Feb-2026 — Marco wake-word toggle. */}
+              <MicToggleButton />
               {/* Feb-2026 · AdminTopBar bell cleanup — see narrow
                   branch above for the full rationale. Mirror the
                   same cleanup on the wide branch: ``AdminBellSlot``
