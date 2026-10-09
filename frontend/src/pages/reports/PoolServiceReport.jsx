@@ -24,6 +24,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Waves, Download, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 
 function mondayOf(dateStr) {
@@ -112,6 +113,13 @@ function SectionEmpty({ label, testid }) {
 }
 
 export default function PoolServiceReport() {
+  // Null-safe destructure — ``useAuth`` returns null when the
+  // component renders without an ``AuthProvider`` wrapper (unit
+  // tests that don't need to exercise role gating). Production
+  // always has the provider, so this never degrades real UX.
+  const auth = useAuth() || {};
+  const role = auth.user?.role || "";
+  const isAdmin = role === "admin" || role === "super_admin";
   const [week, setWeek] = useState(() => mondayOf(todayIso()));
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -171,6 +179,22 @@ export default function PoolServiceReport() {
   const totalRepairs = summary.repair_visits || 0;
   const totalOther = summary.other_visits || 0;
   const totalAll = totalMaintenance + totalRepairs + totalOther;
+  // Feb-2026 · Inclusive-count fix — primary "Completed Jobs" count
+  // reads the backend-authoritative ``total_completed_all`` so the
+  // header number never silently diverges from the chip breakdown.
+  // Falls back to the summed chips when an older backend response
+  // omits the new field (defensive during rollout).
+  const totalCompletedAll =
+    typeof data?.total_completed_all === "number"
+      ? data.total_completed_all
+      : totalAll;
+  // ``dropped_count`` is populated by the new backend field. Older
+  // payloads treat it as 0 (nothing dropped) so the info line only
+  // renders when the current backend is deployed AND something was
+  // actually dropped.
+  const droppedCount = typeof data?.dropped_count === "number"
+    ? data.dropped_count
+    : 0;
 
   const downloadCsv = () => {
     // Union of maintenance + repairs, deduped by technician_id so a
@@ -265,6 +289,47 @@ export default function PoolServiceReport() {
         </div>
       ) : (
         <>
+          {/* Feb-2026 · Inclusive-count fix — primary "Completed Jobs"
+              count sits above the breakdown chips so admins see the
+              authoritative total first.  Reads ``total_completed_all``
+              which includes service + repair + other completed pool
+              jobs (the legacy ``total_completed`` chip below still
+              reflects service-only for backward compat). */}
+          <div
+            className="rounded-2xl mb-3 px-4 py-4 flex flex-wrap items-baseline gap-x-4 gap-y-1"
+            style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+            data-testid="pool-report-completed-primary"
+          >
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-semibold uppercase" style={{ color: colors.muted }}>
+                Completed Jobs
+              </span>
+              <span
+                className="text-3xl font-bold tabular-nums"
+                style={{ color: colors.onSurface }}
+                data-testid="pool-report-completed-all"
+              >
+                {totalCompletedAll}
+              </span>
+            </div>
+            <span className="text-xs" style={{ color: colors.muted }}>
+              Service, repair and other completed visits combined.
+            </span>
+            {isAdmin && droppedCount > 0 && (
+              <span
+                className="text-xs ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md font-semibold"
+                style={{
+                  background: "#FEF3C7", color: "#92400E",
+                  border: "1px solid #FDE68A",
+                }}
+                data-testid="pool-report-dropped-count"
+                title="Pool jobs in this window with a status outside completed/skipped (e.g. scheduled, in_progress). Not counted in any bucket."
+              >
+                {droppedCount} job{droppedCount === 1 ? "" : "s"} dropped (non-terminal status)
+              </span>
+            )}
+          </div>
+
           {/* Summary strip — counts + total.  ``Other`` chip hidden
               when zero per brief §"Empty states". */}
           <div

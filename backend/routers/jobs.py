@@ -5696,6 +5696,12 @@ async def compute_pool_service(tenant_id: str,
     # rows drift into the report.
     _unknown_wc_period = 0
     _completed_pool_period = 0
+    # Feb-2026 · Inclusive-count addition — track pool jobs whose
+    # status falls OUTSIDE the completed/skipped buckets (e.g.
+    # ``scheduled``, ``in_progress``, ``pending``) so the admin can
+    # see how many jobs the report is quietly excluding.  Does NOT
+    # feed any legacy counter — exposed only via ``dropped_count``.
+    _dropped_period = 0
     for j in jobs:
         tid = j.get("technician_id")
         # Feb 2026 · Effective-ID rescue for name-only jobs.
@@ -5722,6 +5728,13 @@ async def compute_pool_service(tenant_id: str,
         elif status in SKIPPED_STATUSES:
             bucket_key = "skipped"
         else:
+            # Feb-2026 · Inclusive-count addition — pool jobs with a
+            # non-terminal status (``scheduled``, ``in_progress``,
+            # ``pending``, …) are tracked but never counted as
+            # completed.  Surfaced via ``dropped_count`` so admins
+            # can distinguish "nothing happened" from "we dropped
+            # 7 jobs with abnormal statuses".
+            _dropped_period += 1
             continue
         if not tid:
             unassigned[bucket_key] += 1
@@ -5761,6 +5774,15 @@ async def compute_pool_service(tenant_id: str,
             # ``pools_serviced`` so old FE consumers read the
             # service-only count (repairs no longer inflate it).
             "completed":         a["pools_serviced"],
+            # Feb-2026 · Inclusive-count addition — ``completed_all``
+            # is the sum of every completed pool job for this tech
+            # regardless of ``work_class``.  Introduced alongside
+            # the top-level ``total_completed_all`` so admins can
+            # see every job a tech finished without inflating the
+            # legacy service-only metric.
+            "completed_all":     (a["pools_serviced"]
+                                   + a["repairs_completed"]
+                                   + a["other"]),
         })
     # Surface the "Unassigned" bucket at the tail so it doesn't
     # crowd the top of the report but is still visible.
@@ -5775,6 +5797,9 @@ async def compute_pool_service(tenant_id: str,
             "other":             unassigned["other"],
             "skipped":           unassigned["skipped"],
             "completed":         unassigned["pools_serviced"],
+            "completed_all":     (unassigned["pools_serviced"]
+                                   + unassigned["repairs_completed"]
+                                   + unassigned["other"]),
         })
     rows.sort(key=lambda r: (r["technician_id"] is None,
                               -r["pools_serviced"],
@@ -5805,6 +5830,20 @@ async def compute_pool_service(tenant_id: str,
         "total_completed": total_pools_serviced,
         "total_skipped":   total_skipped,
         "rows": rows,
+
+        # ─── Feb-2026 · Inclusive-count additions ─────────────────
+        # ``total_completed_all`` is the SUM of every completed pool
+        # job (service + repair + other).  It does NOT replace the
+        # legacy ``total_completed`` — admins can read either value
+        # without the metric drift that caused the undercount bug.
+        # ``dropped_count`` is the number of pool jobs in the window
+        # whose status fell outside the completed / skipped buckets
+        # (e.g. ``scheduled``, ``in_progress``, ``pending``) and
+        # that the report therefore does not count anywhere.
+        "total_completed_all": (total_pools_serviced
+                                 + total_repairs_completed
+                                 + total_other),
+        "dropped_count": _dropped_period,
 
         # ─── Brief-compatible additions ──────────────────────────
         "period": {"start": week_start, "end": week_end},
