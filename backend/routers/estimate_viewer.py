@@ -1678,16 +1678,32 @@ async def estimate_pdf(qid: str,
             ]
             rows.append(base)
     lt = Table(rows, colWidths=colw)
+    # Phase 14B · Feb-2026 — thread Phase 7A form_template styles
+    # into the estimate line_items_table so admin style edits
+    # propagate to the printed PDF. Zero-regression: helper
+    # returns ``None`` when no template exists → fallback to the
+    # pre-14B hex literals verbatim.
+    from services.documents.pdf_template_styles import (
+        load_pdf_template_styles, hex_or_default,
+    )
+    _tpl_styles = await load_pdf_template_styles(
+        tenant_id=tenant.get("id"), form_type="estimate",
+    )
+    _li_style = (_tpl_styles or {}).get("line_items_table") or {}
+    _li_bg = hex_or_default(_li_style.get("bg_color"), "#F3F4F6")
+    _li_border = hex_or_default(_li_style.get("border_color"), "#E5E7EB")
+    _li_pad = _li_style.get("padding_y")
+    _li_pad = int(_li_pad) if isinstance(_li_pad, (int, float)) else 4
     lt.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
-        ("BACKGROUND", (0, 0), (-1, 0), rlcolors.HexColor("#F3F4F6")),
+        ("BACKGROUND", (0, 0), (-1, 0), rlcolors.HexColor(_li_bg)),
         ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.25, rlcolors.HexColor("#E5E7EB")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.25, rlcolors.HexColor(_li_border)),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), _li_pad),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), _li_pad),
     ]))
     story.append(lt)
     story.append(Spacer(1, 14))
