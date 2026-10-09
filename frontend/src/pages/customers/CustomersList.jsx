@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send, Mail, MapPinned } from "lucide-react";
+import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star, Send, MapPinned } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -1543,32 +1543,23 @@ export default function CustomersList() {
             <Button onClick={() => navigate("/customers/new")} testid="customers-new-button">
               <Plus size={16} /> New Customer
             </Button>
-            {/* Feb-2026 · Bulk Portal Invite from customers top-menu.
-                Reuses the pre-existing Phase H1 modal
-                (test-id "h1-modal-portal-invite") rather than
-                extracting a common shell — that modal is a mature
-                superset of the ChaseStalledInvitesModal (adds the
-                already-activated pre-warning, filter-state pill,
-                and failure-details side-panel). See
-                /app/memory/FEATURE_BULK_PORTAL_INVITE_CUSTOMERS_LIST.md.
-                Gate is ``isAdmin`` (admin + super_admin only) —
-                tighter than the read gate on the list. */}
-            {isAdmin ? (
-              <Button
-                variant="ghost"
-                onClick={() => setH1ConfirmOpen(true)}
-                disabled={selected.size === 0}
-                testid="customers-toolbar-portal-invite-btn"
-                title={
-                  selected.size === 0
-                    ? "Select one or more customers to invite"
-                    : `Send portal invite to ${selected.size} selected customer${selected.size === 1 ? "" : "s"}`
-                }
-              >
-                <Mail size={16} /> Portal Invite
-                {selected.size > 0 ? ` (${selected.size})` : ""}
-              </Button>
-            ) : null}
+            {/* Phase 9b · Feb-2026 — the top-cluster "Portal Invite"
+                button (test-id ``customers-toolbar-portal-invite-btn``)
+                was REMOVED per user approval. The two SURVIVING
+                invite surfaces are:
+                  * ``customers-filter-bulk-portal-invite-btn``
+                    (filter row, filter-driven flow — uses
+                    ``openBulkPortalInviteFromFilter`` +
+                    ``BulkPortalInviteConfirm`` modal)
+                  * ``bulk-portal-invite`` (selection toolbar,
+                    selection-driven flow — opens the inline H1
+                    modal via ``setH1ConfirmOpen`` +
+                    ``doBulkPortalInvite``)
+                The H1 modal state (``h1ConfirmOpen``,
+                ``doBulkPortalInvite``) is DELIBERATELY kept — it's
+                still used by the ``bulk-portal-invite`` button in
+                the selection toolbar below. See the Phase 9b spec
+                file for the removal rationale. */}
             {/* Feb-2026 · Phase — Customer geocoding on save +
                 one-time backfill. Admin+/super_admin-only trigger
                 for POST /api/admin/customers/backfill-geocoding.

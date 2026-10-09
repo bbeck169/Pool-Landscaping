@@ -1,24 +1,26 @@
 /**
  * Feb-2026 · Portal onboarding health tile — behaviour tests.
  *
- * Contracts asserted:
+ * Phase 9b · Feb-2026 — the tile now renders THREE cards (down
+ * from four). Invited + Chase were removed. Each card is a
+ * TOGGLE whose active state is derived from the URL and whose
+ * click handler preserves every OTHER URL filter the user has
+ * applied.
+ *
+ * This suite pins the surviving contracts:
  *   1. Loading skeleton renders while the fetch is in flight.
- *   2. All four cohort cards render with counts + delta arrows.
- *   3. Feb-2026 · Onboarding-tile clickable ship — every one of
- *      the four cohort cards navigates to the correct filtered
- *      URL on both click AND Enter/Space keyboard activation:
- *        Invited        → /customers?portal_invited=any
- *        Activated      → /customers?portal_activated=1
- *        Signed in      → /customers?first_access=any
- *        Cards on file  → /customers?has_payment_method=true
- *                           &is_active=true                  (P53
- *                           tail — replaced Never logged in)
+ *   2. Three cohort cards render with counts + delta arrows.
+ *   3. Each card toggles the correct URL param on click AND on
+ *      Enter / Space keyboard activation.
  *   4. Fetch failure surfaces toast.error and the tile does NOT
- *      render (skeleton removed, error state hidden — the tile is
- *      non-fatal).
+ *      render (skeleton removed, error state hidden — the tile
+ *      is non-fatal).
+ *   5. REGRESSION — Invited testids + Chase button testid stay
+ *      removed from the DOM. If a future refactor accidentally
+ *      re-introduces them, CI trips here.
  */
 import React from "react";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -46,15 +48,15 @@ function _payload(overrides = {}) {
     as_of: "2026-02-10T10:00:00+00:00",
     window_days: 30,
     cohorts: {
+      // Phase 9b — ``invited`` + ``never_logged_in`` blocks are
+      // DELIBERATELY retained in the server payload so the backend
+      // response contract stays stable. The tile UI must ignore
+      // them (regression test below asserts the retired cohort-
+      // card testids never render).
       invited:                  { count: 42, delta_30d: null },
       activated:                { count: 30, delta_30d: 4 },
       signed_in:                { count: 18, delta_30d: 3 },
-      // P53 tail (Feb-2026) — DELIBERATELY RETAINED in the response
-      // even though the tile UI no longer renders a card for it.
-      // The Chase button under Invited reads this count for its
-      // ``min(invited, never)`` disabled-state binding.
       never_logged_in:          { count: 12, delta_30d: null },
-      // P53 tail (Feb-2026) — 4th tile is now Cards on file.
       active_with_card_on_file: { count: 25, delta_30d: null },
       ...(overrides.cohorts || {}),
     },
@@ -64,7 +66,7 @@ function _payload(overrides = {}) {
 }
 
 
-describe("PortalOnboardingHealthTile", () => {
+describe("PortalOnboardingHealthTile (Phase 9b · 3-card shape)", () => {
   beforeEach(() => {
     apiGetImpl = vi.fn();
     navigateMock.mockReset();
@@ -87,7 +89,7 @@ describe("PortalOnboardingHealthTile", () => {
     ).toBeNull();
   });
 
-  it("renders 4 cohort cards with counts + delta arrows", async () => {
+  it("renders 3 cohort cards with counts + delta arrows", async () => {
     apiGetImpl.mockResolvedValue(_payload());
     render(
       <MemoryRouter>
@@ -97,18 +99,11 @@ describe("PortalOnboardingHealthTile", () => {
     await waitFor(() =>
       expect(screen.getByTestId("onboarding-health-tile")).toBeTruthy(),
     );
-    expect(screen.getByTestId("onboarding-cohort-invited")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-activated")).toBeTruthy();
     expect(screen.getByTestId("onboarding-cohort-signed-in")).toBeTruthy();
-    // P53 tail (Feb-2026) — 4th card testid is now the P53-brief
-    // verbatim anchor (portal-onboarding-*) rather than the
-    // ``onboarding-cohort-*`` pattern of cards 1-3.
     expect(
       screen.getByTestId("portal-onboarding-cards-on-file-tile"),
     ).toBeTruthy();
-    expect(
-      screen.getByTestId("onboarding-cohort-invited").textContent,
-    ).toContain("42");
     expect(
       screen.getByTestId("onboarding-cohort-activated").textContent,
     ).toContain("30");
@@ -120,17 +115,11 @@ describe("PortalOnboardingHealthTile", () => {
         .textContent,
     ).toContain("25");
     expect(
-      screen.getByTestId("onboarding-cohort-invited-delta"),
-    ).toBeTruthy();
-    expect(
       screen.getByTestId("onboarding-cohort-activated-delta").textContent,
     ).toContain("4");
     expect(
       screen.getByTestId("onboarding-cohort-signed-in-delta").textContent,
     ).toContain("3");
-    expect(
-      screen.getByTestId("onboarding-cohort-invited-delta").textContent,
-    ).toContain("vs last 30d");
     expect(
       screen.getByTestId("portal-onboarding-cards-on-file-tile-delta")
         .textContent,
@@ -140,33 +129,7 @@ describe("PortalOnboardingHealthTile", () => {
     );
   });
 
-  // Table-driven test — one assertion per cohort card, one for
-  // click, one for Enter, one for Space. Matches the change-1 spec.
-  const _COHORT_CASES = [
-    { testid: "onboarding-tile-invited-cta",       href: "/customers?portal_invited=any" },
-    { testid: "onboarding-tile-activated-cta",     href: "/customers?portal_activated=1" },
-    { testid: "onboarding-tile-signed-in-cta",     href: "/customers?first_access=any" },
-    // P53 tail (Feb-2026) — 4th CTA points at the compound
-    // customers-list filter that matches the backend
-    // ``active_with_card_on_file`` predicate row-for-row.
-    { testid: "onboarding-tile-cards-on-file-cta", href: "/customers?has_payment_method=true&is_active=true" },
-  ];
-
-  for (const c of _COHORT_CASES) {
-    it(`${c.testid} click navigates to ${c.href}`, async () => {
-      apiGetImpl.mockResolvedValue(_payload());
-      render(
-        <MemoryRouter>
-          <PortalOnboardingHealthTile />
-        </MemoryRouter>,
-      );
-      const cta = await screen.findByTestId(c.testid);
-      fireEvent.click(cta);
-      expect(navigateMock).toHaveBeenCalledWith(c.href);
-    });
-  }
-
-  it("all four cohort cards support Enter/Space keyboard activation", async () => {
+  it("REGRESSION · retired Invited + Chase testids are absent from the DOM", async () => {
     apiGetImpl.mockResolvedValue(_payload());
     render(
       <MemoryRouter>
@@ -176,24 +139,65 @@ describe("PortalOnboardingHealthTile", () => {
     await waitFor(() =>
       expect(screen.getByTestId("onboarding-health-tile")).toBeTruthy(),
     );
+    // Phase 9b removal locks — these three testids must NEVER
+    // return. If a refactor accidentally re-wires the Invited
+    // card or Chase button, CI trips here before preview.
+    expect(screen.queryByTestId("onboarding-cohort-invited")).toBeNull();
+    expect(screen.queryByTestId("onboarding-tile-invited-cta")).toBeNull();
+    expect(
+      screen.queryByTestId("onboarding-tile-invited-chase-cta"),
+    ).toBeNull();
+  });
+
+  // Phase 9b · toggle semantics — click an inactive card ⇒ activate
+  // its filter. The exact URL assertion is covered more thoroughly
+  // in ``customers-tile-filters.test.jsx`` (the 11-case Phase 9b
+  // spec); here we just prove each CTA wires through to navigate.
+  const _COHORT_CASES = [
+    { testid: "onboarding-tile-activated-cta",     expect: "portal_activated=1" },
+    { testid: "onboarding-tile-signed-in-cta",     expect: "first_access=any" },
+    { testid: "onboarding-tile-cards-on-file-cta", expect: "has_payment_method=true" },
+  ];
+
+  for (const c of _COHORT_CASES) {
+    it(`${c.testid} click navigates with ${c.expect}`, async () => {
+      apiGetImpl.mockResolvedValue(_payload());
+      render(
+        <MemoryRouter initialEntries={["/customers"]}>
+          <PortalOnboardingHealthTile />
+        </MemoryRouter>,
+      );
+      const cta = await screen.findByTestId(c.testid);
+      fireEvent.click(cta);
+      expect(navigateMock).toHaveBeenCalled();
+      const navigatedTo = navigateMock.mock.calls[0][0];
+      expect(navigatedTo).toContain(c.expect);
+    });
+  }
+
+  it("all three cohort cards support Enter/Space keyboard activation", async () => {
+    apiGetImpl.mockResolvedValue(_payload());
+    render(
+      <MemoryRouter initialEntries={["/customers"]}>
+        <PortalOnboardingHealthTile />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("onboarding-health-tile")).toBeTruthy(),
+    );
     for (const c of _COHORT_CASES) {
       navigateMock.mockReset();
-      // The outer <div> with role="button" is the block card; the
-      // ``data-cta-testid`` attribute makes each cohort card
-      // discoverable in the DOM.
       const card = document.querySelector(
         `[data-cta-testid="${c.testid}"]`,
       );
       expect(card).toBeTruthy();
       expect(card.getAttribute("role")).toBe("button");
       expect(card.getAttribute("tabindex")).toBe("0");
-      // Enter key
       fireEvent.keyDown(card, { key: "Enter" });
-      expect(navigateMock).toHaveBeenCalledWith(c.href);
+      expect(navigateMock).toHaveBeenCalled();
       navigateMock.mockReset();
-      // Space key
       fireEvent.keyDown(card, { key: " " });
-      expect(navigateMock).toHaveBeenCalledWith(c.href);
+      expect(navigateMock).toHaveBeenCalled();
     }
   });
 

@@ -1,137 +1,133 @@
 /**
  * Feb-2026 · Portal onboarding health tile.
  *
- * Compact 4-card admin snapshot of the customer portal funnel:
- *   invited → activated → signed_in  (+ the "never" cohort the
- *   ops team chases). Reads
- *   ``GET /api/reports/portal-onboarding-health`` (60s cache on
- *   the server, admin-gated).
+ * Compact admin snapshot of the customer portal funnel. After
+ * Phase 9b the tile renders THREE cohort cards (down from four):
+ *   activated → signed_in → active_with_card_on_file
  *
- * Placement: rendered on the customers-list header (admin-only)
- * so the tile is contextual to the workflow it drives — each
- * cohort card deep-links to the customers list filtered to just
- * that cohort using the same predicate the tile counts against
- * (chip / list / tile stay numerically consistent).
+ * The former "Invited" card + its "Chase stalled invites" button
+ * were removed in Phase 9b. The server still returns an
+ * ``invited`` cohort block (and the paired ``never_logged_in``
+ * block that fed the Chase disabled-state) — the tile just no
+ * longer consumes them. The ``ChaseStalledInvitesModal`` component
+ * file still ships on disk but is no longer imported from here;
+ * a follow-up phase will decide its fate.
  *
- * Feb-2026 · Onboarding-tile clickable + Chase-move ship
- *   * All 4 cards are now clickable (Enter/Space + click). Deep-
- *     link map (P53 tail · Feb-2026 — 4th card swap):
+ * Phase 9b · Clickable-toggle semantics
+ *   * Each card is a toggle. Clicking an INACTIVE card activates
+ *     its filter on the customers list. Clicking the ACTIVE card
+ *     clears the filter. Clicking a different card SWAPS the
+ *     filter (previous card deselects — only one tile active at
+ *     a time; URL-level mutex guard).
+ *   * Active state is derived from the current URL so refresh and
+ *     deep-link sharing survive without extra state. The three
+ *     backend-field URL conventions are preserved verbatim from
+ *     the pre-Phase-9b deep-link map (user explicitly approved
+ *     "mirror existing" so legacy bookmarks keep working):
  *
- *       Card             → URL
- *       Invited          → /customers?portal_invited=any
- *       Activated        → /customers?portal_activated=1
- *       Signed in        → /customers?first_access=any
- *       Cards on file    → /customers?has_payment_method=true
- *                            &is_active=true                 (NEW)
+ *       Card             → Active-state URL match
+ *       Activated        → ?portal_activated=1 | true
+ *       Signed in        → ?first_access=any
+ *       Cards on file    → ?has_payment_method=true | 1
  *
- *   * The "Chase" button lives under the INVITED card now
- *     (previously under Never). Semantically the chase audience
- *     is invited-but-never-signed-in, so the affordance surfaces
- *     next to the invite concept. Button test-id renamed:
+ *   * Activating a tile STACKS with other filters: search, tag
+ *     chips, status tabs, missing-contact chips. The toggle only
+ *     touches the tile-specific URL params (and the three tile
+ *     params are mutually exclusive — activating one deletes the
+ *     other two).
+ *   * The Cards-on-file CTA additionally forces ``is_active=true``
+ *     on activate so the list cohort matches the backend count
+ *     predicate (``active AND NOT muted AND
+ *     saved_payment_methods_count > 0``). On DEactivate the shared
+ *     ``is_active`` param is left in place — it belongs to the
+ *     status tab, not to this tile.
  *
- *         onboarding-tile-never-chase-cta  →
- *         onboarding-tile-invited-chase-cta
- *
- *     The old test-id has been retired — see the migration memo
- *     ``FEATURE_ONBOARDING_TILE_CLICKABLE_AND_CHASE_MOVE.md``.
- *
- * P53 tail · Feb-2026 — Customer stats tile swap
- *   * The "Never logged in" card was swapped for a "Cards on
- *     file" card. Rationale: the "Never" number was a lagging
- *     onboarding negative that most admins glanced past; the
- *     "Cards on file" number is a leading revenue-quality
- *     positive that surfaces the % of the active book we can
- *     bill instantly. Same shape, same 4-card layout.
- *   * The backend ``never_logged_in`` count is DELIBERATELY
- *     RETAINED in the ``/reports/portal-onboarding-health``
- *     response (see the paired comment in
- *     ``routers/profit_report.py``). The Chase button under
- *     Invited reads ``data.cohorts.never_logged_in.count`` for
- *     its ``chaseAudienceUpperBound = min(invited, never)``
- *     disabled-state calculation. Removing the count would
- *     silently break the Chase button's enabled state.
- *   * New card testid: ``portal-onboarding-cards-on-file-tile``
- *     (verbatim from the P53 tail brief — intentionally NOT
- *     ``onboarding-cohort-cards-on-file`` because the tile is
- *     surfaced in customer-stats coverage grids where the
- *     ``portal-onboarding-`` prefix is the canonical anchor).
- *
- * Test-ids:
+ * Test-ids (unchanged — removal does not touch surviving testids):
  *   * ``onboarding-health-tile``
- *   * ``onboarding-cohort-invited`` / ``-activated`` /
- *     ``-signed-in``  (per-card blocks for the first 3 cards)
- *   * ``portal-onboarding-cards-on-file-tile`` (4th card block —
- *     P53 tail swap)
- *   * ``onboarding-cohort-*-delta``  (per-card delta arrow)
- *   * ``onboarding-tile-invited-cta`` / ``-activated-cta`` /
- *     ``-signed-in-cta`` / ``-cards-on-file-cta``  (per-card
- *     deep-link)
+ *   * ``onboarding-cohort-activated`` / ``-signed-in``  (cards 1 & 2)
+ *   * ``portal-onboarding-cards-on-file-tile`` (card 3)
+ *   * ``onboarding-cohort-*-delta`` / ``portal-onboarding-cards-on-file-tile-delta``
+ *   * ``onboarding-tile-activated-cta`` / ``-signed-in-cta`` /
+ *     ``-cards-on-file-cta``
+ *
+ * RETIRED (Phase 9b) — these testids must NEVER re-appear in this
+ * component (regression guards in the Phase 9b test suite assert
+ * their absence):
+ *   * ``onboarding-cohort-invited`` / ``-invited-delta``
+ *   * ``onboarding-tile-invited-cta``
  *   * ``onboarding-tile-invited-chase-cta`` (Chase button)
  */
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
-import ChaseStalledInvitesModal from "@/components/customers/ChaseStalledInvitesModal";
 
 
+// ───────────────────────────────────────────────────────────────
+// Phase 9b · Feb-2026 — URL ⇄ tile mapping.
+//
+// Keys MUST match the backend cohort block names so
+// ``data.cohorts[c.key]`` resolves without a translation layer.
+// The ``urlParam`` tuple is the single source of truth for both
+// (a) deriving active state from the current URL and (b) toggling
+// a tile on/off. Keep in lockstep with the backend predicate map
+// documented in ``routers/profit_report.py``.
+// ───────────────────────────────────────────────────────────────
 const COHORT_ORDER = [
   {
-    key: "invited", label: "Invited",
-    testid: "onboarding-cohort-invited",
-    ctaHref: "/customers?portal_invited=any",
-    ctaTestid: "onboarding-tile-invited-cta",
-  },
-  {
-    key: "activated", label: "Activated",
+    key: "activated",
+    label: "Activated",
     testid: "onboarding-cohort-activated",
-    ctaHref: "/customers?portal_activated=1",
     ctaTestid: "onboarding-tile-activated-cta",
+    // ``?portal_activated=1`` is the canonical URL shorthand the
+    // customers list hydrator accepts (see CustomersList.jsx
+    // L376-L378 — ``1 | true`` ⇒ activated).
+    urlParam: { key: "portal_activated", value: "1" },
+    urlMatch: (sp) => {
+      const v = sp.get("portal_activated");
+      return v === "1" || v === "true";
+    },
   },
   {
-    key: "signed_in", label: "Signed in",
+    key: "signed_in",
+    label: "Signed in",
     testid: "onboarding-cohort-signed-in",
-    ctaHref: "/customers?first_access=any",
     ctaTestid: "onboarding-tile-signed-in-cta",
+    urlParam: { key: "first_access", value: "any" },
+    urlMatch: (sp) => sp.get("first_access") === "any",
   },
   {
     key: "active_with_card_on_file",
     label: "Cards on file",
-    // P53 tail (Feb-2026) — user-approved copy. Subtitle is
-    // rendered under the label; only this card carries one
-    // (rest of the cohort cards deliberately keep the pre-P53
-    // one-line-label rhythm).
     subtitle: "Active customers with a saved payment method",
-    // Verbatim from the P53 tail brief. The tile testid pattern
-    // for cards 1-3 is ``onboarding-cohort-*``; the P53 tail
-    // approval used a different anchor (``portal-onboarding-*``)
-    // because this card is surfaced in customer-stats coverage
-    // grids where ``portal-onboarding-`` is the canonical
-    // prefix. Keep this testid EXACT — QA/product docs already
-    // reference it.
+    // Phase 9b · Feb-2026 — testid retained verbatim from the P53
+    // tail swap (``portal-onboarding-cards-on-file-tile``). QA /
+    // product docs already reference it; keep EXACT.
     testid: "portal-onboarding-cards-on-file-tile",
-    // Tile ↔ list parity — the CTA has to land on the SAME
-    // subset the tile counted. Backend predicate:
-    //   (is_active OR absent) AND NOT is_muted AND
-    //   saved_payment_methods_count > 0
-    // ``?is_active=true`` on the customers list already
-    // implicitly enforces ``_NOT_MUTED`` (see customers.py L995),
-    // and ``?has_payment_method=true`` reads the same denorm
-    // (``saved_payment_methods_count > 0``). So this compound
-    // URL selects exactly the tile's counted rows.
-    ctaHref: "/customers?has_payment_method=true&is_active=true",
     ctaTestid: "onboarding-tile-cards-on-file-cta",
+    urlParam: { key: "has_payment_method", value: "true" },
+    // On activate we ALSO force ``is_active=true`` so the list
+    // cohort matches the backend count's predicate (active + NOT
+    // muted + card on file). On DEactivate we leave ``is_active``
+    // alone — that param belongs to the status tab, not to us.
+    extraActivateParam: { key: "is_active", value: "true" },
+    urlMatch: (sp) => {
+      const v = sp.get("has_payment_method");
+      return v === "true" || v === "1";
+    },
   },
 ];
+// All tile params that must be stripped when a tile toggles (mutex
+// guard). Includes the retired ``portal_invited`` key as defense-
+// in-depth so a bookmark URL from before Phase 9b lands on a clean
+// list rather than leaking a stale filter.
+const _TILE_PARAM_KEYS = ["portal_activated", "first_access", "has_payment_method", "portal_invited"];
 
 
 function DeltaArrow({ delta, testid }) {
   const muted = colors.muted;
-  // ``null`` is a documented state (see backend assumptions) —
-  // render a dimmed dash so ops sees the "no delta available"
-  // signal instead of a scary empty space.
   if (delta === null || delta === undefined) {
     return (
       <span
@@ -160,34 +156,45 @@ function DeltaArrow({ delta, testid }) {
 }
 
 
-function CohortCard({ label, subtitle, testid, count, delta, ctaHref, ctaTestid }) {
-  const navigate = useNavigate();
-  const clickable = Boolean(ctaHref);
+function CohortCard({ label, subtitle, testid, count, delta, ctaTestid, isActive, onToggle }) {
   const body = (
     <div
       data-testid={testid}
-      className="rounded-lg p-4 flex-1 min-w-0"
+      className="rounded-lg p-4 flex-1 min-w-0 outline-none"
       style={{
         backgroundColor: colors.surface,
-        border: `1px solid ${colors.border}`,
-        cursor: clickable ? "pointer" : "default",
-        transition: "background-color 120ms ease-out, border-color 120ms ease-out",
+        // Phase 9b active-state visual — 2px brand border + inner
+        // ring box-shadow (keeps card dimensions stable on toggle
+        // because the base border is 1px → delta is 1px, absorbed
+        // by the ring shadow). Mirrors the P52 cohort-tab active
+        // glow idiom (boxShadow accent) but tuned for a solid
+        // bordered card rather than a pill tab.
+        border: isActive
+          ? `2px solid ${colors.brandPrimary}`
+          : `1px solid ${colors.border}`,
+        boxShadow: isActive
+          ? `0 0 0 2px ${colors.brandPrimary}26, 0 1px 3px rgba(0,0,0,0.06)`
+          : "none",
+        cursor: "pointer",
+        transition: "background-color 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out",
       }}
-      onClick={clickable ? () => navigate(ctaHref) : undefined}
-      onKeyDown={
-        clickable
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                navigate(ctaHref);
-              }
-            }
-          : undefined
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isActive}
+      aria-label={
+        isActive
+          ? `Clear ${label} filter`
+          : `Filter customers to ${label}`
       }
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      aria-label={clickable ? `View ${label} customers` : undefined}
-      {...(clickable ? { "data-cta-testid": ctaTestid } : {})}
+      data-cta-testid={ctaTestid}
+      data-active={isActive ? "true" : "false"}
     >
       <div
         className="text-[11px] font-semibold uppercase tracking-wide"
@@ -196,9 +203,6 @@ function CohortCard({ label, subtitle, testid, count, delta, ctaHref, ctaTestid 
         {label}
       </div>
       {subtitle ? (
-        // P53 tail (Feb-2026) — subtitle line, only rendered when the
-        // cohort config sets one. Kept inline with the label rhythm
-        // (11px vs 3xl count) so the number stays the visual anchor.
         <div
           data-testid={`${testid}-subtitle`}
           className="text-[11px] leading-tight mt-0.5"
@@ -208,8 +212,14 @@ function CohortCard({ label, subtitle, testid, count, delta, ctaHref, ctaTestid 
         </div>
       ) : null}
       <div
-        className="text-3xl font-bold my-1 tabular-nums"
-        style={{ color: colors.onSurface }}
+        className="text-3xl my-1 tabular-nums"
+        style={{
+          // Phase 9b — active state bumps the count weight (600 →
+          // 800) and tints it with the brand accent so the active
+          // tile reads as unmistakably selected even at a glance.
+          color: isActive ? colors.brandPrimary : colors.onSurface,
+          fontWeight: isActive ? 800 : 700,
+        }}
       >
         {typeof count === "number" ? count.toLocaleString() : "—"}
       </div>
@@ -219,23 +229,21 @@ function CohortCard({ label, subtitle, testid, count, delta, ctaHref, ctaTestid 
       />
     </div>
   );
-  // Every clickable card also exposes a hidden CTA test-id anchor
-  // so tests can drive the click without depending on the outer
-  // div's role attribute (some testing harnesses skip role=button
-  // on non-<button> nodes).
-  if (clickable) {
-    return (
-      <div style={{ display: "contents" }}>
-        {body}
-        <span
-          data-testid={ctaTestid}
-          style={{ display: "none" }}
-          onClick={() => navigate(ctaHref)}
-        />
-      </div>
-    );
-  }
-  return body;
+  // Hidden CTA anchor sibling — gives tests + external callers a
+  // stable testid handle that doesn't depend on the outer div's
+  // role=button attribute. Click handler delegates to the same
+  // toggle so manual CTA activations stay consistent with the
+  // visible card click path.
+  return (
+    <div style={{ display: "contents" }}>
+      {body}
+      <span
+        data-testid={ctaTestid}
+        style={{ display: "none" }}
+        onClick={onToggle}
+      />
+    </div>
+  );
 }
 
 
@@ -269,16 +277,9 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [chaseOpen, setChaseOpen] = useState(false);
-  // Feb-2026 · Chase Stalled Invites — bump on send so the tile
-  // refetches its cohort counts after the batch resolves. The
-  // server has a 60s cache so consecutive bumps within the window
-  // return the same numbers, which is intentional.
-  //
-  // Feb-2026 · Bulk-Portal-Invite-from-CustomersList ship — the
-  // ``externalRefetchToken`` prop plumbs the SAME refetch signal
-  // from the parent CustomersList toolbar button.
-  const [refetchTick, setRefetchTick] = useState(0);
+  const [refetchTick] = useState(0);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     let cancelled = false;
@@ -304,6 +305,42 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
     return () => { cancelled = true; };
   }, [refetchTick, externalRefetchToken]);
 
+  // Phase 9b — compute active tile from current URL. Null when no
+  // tile is active. Precedence matches the config declaration
+  // order (``signed_in`` loses to earlier entries only if BOTH are
+  // set simultaneously, which the toggle code prevents).
+  const activeTileKey = useMemo(() => {
+    for (const c of COHORT_ORDER) {
+      if (c.urlMatch(searchParams)) return c.key;
+    }
+    return null;
+  }, [searchParams]);
+
+  const handleToggle = (clickedKey) => {
+    const next = new URLSearchParams(searchParams);
+    // Mutex strip — always clear every tile param, even when the
+    // click is a swap (new tile wins → old params go).
+    for (const k of _TILE_PARAM_KEYS) next.delete(k);
+
+    if (clickedKey !== activeTileKey) {
+      // Toggle ON — set this tile's canonical URL param (+ any
+      // extra activation params, like Cards-on-file's cohort nudge).
+      const cfg = COHORT_ORDER.find((c) => c.key === clickedKey);
+      if (cfg) {
+        next.set(cfg.urlParam.key, cfg.urlParam.value);
+        if (cfg.extraActivateParam) {
+          next.set(cfg.extraActivateParam.key, cfg.extraActivateParam.value);
+        }
+      }
+    }
+    // Toggle OFF path takes the already-stripped params as-is.
+    // ``is_active`` is DELIBERATELY left intact on deactivate — it
+    // belongs to the status tab, not to the Cards-on-file tile.
+
+    const qs = next.toString();
+    navigate(qs ? `/customers?${qs}` : "/customers");
+  };
+
   if (loading) {
     return <TileSkeleton />;
   }
@@ -311,79 +348,36 @@ export default function PortalOnboardingHealthTile({ externalRefetchToken }) {
     return null;
   }
 
-  // Feb-2026 · Chase-move ship — the button is enabled based on
-  // the SIZE of the chase audience, not the raw Invited count.
-  // Audience = invited-and-never-signed-in ≈ min(invited, never)
-  // as an upper-bound approximation; the modal fetches the real
-  // list on open so the exact count settles there.
-  //
-  // P53 tail (Feb-2026) — the "Never logged in" TILE was swapped
-  // for "Cards on file", but the underlying ``never_logged_in``
-  // cohort count is still consumed here. Backend deliberately
-  // keeps returning ``cohorts.never_logged_in.count`` for exactly
-  // this Chase-button binding — removing this line would silently
-  // break the button's ``disabled`` state.
-  const invitedCount = data.cohorts?.invited?.count ?? 0;
-  const neverCount   = data.cohorts?.never_logged_in?.count ?? 0;
-  const chaseAudienceUpperBound = Math.min(invitedCount, neverCount);
-
   return (
-    <>
-      <div
-        data-testid="onboarding-health-tile"
-        className="rounded-xl p-3 mb-3 flex flex-col sm:flex-row gap-2"
-        style={{
-          backgroundColor: colors.background,
-          border: `1px solid ${colors.border}`,
-        }}
-      >
-        {COHORT_ORDER.map((c) => {
-          const block = data.cohorts[c.key] || {};
-          const isInvited = c.key === "invited";
-          return (
-            <div
-              key={c.key}
-              className="flex-1 min-w-0 flex flex-col gap-2"
-            >
-              <CohortCard
-                label={c.label}
-                subtitle={c.subtitle}
-                testid={c.testid}
-                count={block.count}
-                delta={block.delta_30d}
-                ctaHref={c.ctaHref}
-                ctaTestid={c.ctaTestid}
-              />
-              {isInvited ? (
-                <button
-                  type="button"
-                  onClick={() => setChaseOpen(true)}
-                  disabled={chaseAudienceUpperBound === 0}
-                  data-testid="onboarding-tile-invited-chase-cta"
-                  className="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-xs font-semibold hover:brightness-95 disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: colors.brand,
-                    color: "#fff",
-                  }}
-                  aria-label="Chase stalled portal invites"
-                  title={
-                    chaseAudienceUpperBound === 0
-                      ? "No stalled invites to chase"
-                      : `Chase up to ${chaseAudienceUpperBound} stalled invite${chaseAudienceUpperBound === 1 ? "" : "s"}`
-                  }
-                >
-                  Chase
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      <ChaseStalledInvitesModal
-        open={chaseOpen}
-        onClose={() => setChaseOpen(false)}
-        onSent={() => setRefetchTick((t) => t + 1)}
-      />
-    </>
+    <div
+      data-testid="onboarding-health-tile"
+      className="rounded-xl p-3 mb-3 flex flex-col sm:flex-row gap-2"
+      style={{
+        backgroundColor: colors.background,
+        border: `1px solid ${colors.border}`,
+      }}
+    >
+      {COHORT_ORDER.map((c) => {
+        const block = data.cohorts[c.key] || {};
+        const isActive = activeTileKey === c.key;
+        return (
+          <div
+            key={c.key}
+            className="flex-1 min-w-0 flex flex-col gap-2"
+          >
+            <CohortCard
+              label={c.label}
+              subtitle={c.subtitle}
+              testid={c.testid}
+              count={block.count}
+              delta={block.delta_30d}
+              ctaTestid={c.ctaTestid}
+              isActive={isActive}
+              onToggle={() => handleToggle(c.key)}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
