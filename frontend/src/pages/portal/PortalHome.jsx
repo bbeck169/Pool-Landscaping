@@ -314,6 +314,7 @@ export default function PortalHome() {
             icon={AlertCircle}
             value={summary ? money(summary.past_due) : "—"}
             alert={(summary?.past_due || 0) > 0}
+            bgColor={(summary?.past_due || 0) > 0 ? "#7F1D1D" : undefined}
             tooltip={
               summary
                 ? `${summary.breakdown?.past_due_invoice_count || 0} past-due invoice(s) totaling ${money(summary.past_due)}`
@@ -329,6 +330,14 @@ export default function PortalHome() {
               creditBalanceDollars !== null
                 ? money(creditBalanceDollars)
                 : (summary ? money(summary.credit) : "—")
+            }
+            bgColor={
+              (() => {
+                const live = creditBalanceDollars !== null
+                  ? creditBalanceDollars
+                  : summary?.credit;
+                return (live || 0) > 0 ? "#064E3B" : undefined;
+              })()
             }
             tooltip={
               (() => {
@@ -763,10 +772,17 @@ function AlertTile({ label, value, tone, onClick, testid }) {
 }
 
 function ActionTile({ icon: Icon, label, tone, onClick, testid, badge }) {
+  // Phase 24 · Feb-2026 — Quick Action tiles pick up a soft
+  // white halo on hover (``hover:shadow-[0_0_20px_rgba(255,255,255,0.6)]``)
+  // layered on top of the existing ``hover:brightness-95`` chassis.
+  // ``transition-shadow duration-200`` smooths the glow so the
+  // affordance does not pop in abruptly.  The stat Tile chassis
+  // (Balance Due / Past Due / Credit) deliberately does NOT get
+  // this glow — see ``Tile`` below.
   return (
     <button
       onClick={onClick}
-      className="rounded-xl p-4 text-left transition hover:brightness-95 relative"
+      className="rounded-xl p-4 text-left transition hover:brightness-95 hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] transition-shadow duration-200 relative"
       style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
       data-testid={testid}
     >
@@ -788,9 +804,24 @@ function ActionTile({ icon: Icon, label, tone, onClick, testid, badge }) {
 // Feb-2026 · Slice 3B · Portal account tile.  Compact, single-row-of-4
 // on md+, 2×2 on mobile.  ``alert=true`` swaps the border + label
 // colour red (used by Past Due when > 0).
-function Tile({ label, value, sub, icon: Icon, _tone, alert, tooltip, onClick, testid, testidLive }) {
+function Tile({ label, value, sub, icon: Icon, _tone, alert, tooltip, onClick, testid, testidLive, bgColor }) {
   const borderColor = alert ? colors.error : colors.border;
-  const labelColor = alert ? colors.error : colors.muted;
+  // Phase 24 · Feb-2026 — when a dynamic ``bgColor`` is applied
+  // (dark red ``#7F1D1D`` for Past Due>0, dark green ``#064E3B``
+  // for Credit>0), label + value text flip to pure white so
+  // contrast stays readable on the coloured chassis regardless
+  // of the pre-existing ``alert`` flag.  Phase 23's chassis
+  // contract (className + ``backgroundColor: colors.surface``
+  // literal + ``border: 1px solid ${borderColor}`` literal)
+  // remains untouched; ``bgColor`` is applied via a spread
+  // override so the Phase-23 regression regex still matches.
+  const hasDynamicBg = Boolean(bgColor);
+  const labelColor = hasDynamicBg
+    ? "#FFFFFF"
+    : (alert ? colors.error : colors.muted);
+  const valueColor = hasDynamicBg
+    ? "#FFFFFF"
+    : (alert ? colors.error : colors.onSurface);
   return (
     <button
       onClick={onClick}
@@ -799,6 +830,7 @@ function Tile({ label, value, sub, icon: Icon, _tone, alert, tooltip, onClick, t
       style={{
         backgroundColor: colors.surface,
         border: `1px solid ${borderColor}`,
+        ...(bgColor ? { backgroundColor: bgColor } : {}),
       }}
       data-testid={testid}
     >
@@ -808,7 +840,7 @@ function Tile({ label, value, sub, icon: Icon, _tone, alert, tooltip, onClick, t
       </div>
       <div
         className="text-xl md:text-2xl font-bold mt-1 truncate"
-        style={{ color: alert ? colors.error : colors.onSurface }}
+        style={{ color: valueColor }}
         data-testid={testidLive || undefined}
       >
         {value}
