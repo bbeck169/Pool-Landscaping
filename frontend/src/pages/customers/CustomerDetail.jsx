@@ -334,6 +334,12 @@ export default function CustomerDetail() {
   const _P37_JOBS_PAGE = 50;
   const [jobsLoadingMore, setJobsLoadingMore] = useState(false);
   const [jobsHasMore, setJobsHasMore] = useState(false);
+  // Phase 9d · Feb-2026 — lightweight counts snapshot fetched
+  // alongside the slim profile load. Shape documented at
+  // ``GET /api/customers/{cid}/summary``. Null until first load
+  // resolves (and remains null if the fetch errors — tab badges
+  // just render without a count in that case).
+  const [summary, setSummary] = useState(null);
   // Feb-2026 · Customer profile — primary-property address line under
   // the name (see the header render). Fetched alongside customer +
   // jobs so the address can appear in the first paint.
@@ -470,8 +476,8 @@ export default function CustomerDetail() {
       // customer with 900+ jobs no longer transports the full
       // history on first paint. See ``jobsHasMore`` + the
       // ``Load more`` button below.
-      const [c, myJobs, props] = await Promise.all([
-        api.get(`/customers/${id}`),
+      const [c, myJobs, props, summary] = await Promise.all([
+        api.get(`/customers/${id}?slim=1`),
         api.get(
           `/jobs?customer_id=${encodeURIComponent(id)}`
           + `&limit=${_P37_JOBS_PAGE}&offset=0`
@@ -482,6 +488,11 @@ export default function CustomerDetail() {
         // if the call fails we still render the rest of the page and
         // just show "No address on file".
         api.get(`/customers/${id}/properties`).catch(() => []),
+        // Phase 9d · Feb-2026 — lightweight counts snapshot for
+        // tab-badges / overview summary panels. Non-fatal — if the
+        // call fails we fall back to zero-badges (the lazy per-tab
+        // fetch still populates its own count on open).
+        api.get(`/customers/${id}/summary`).catch(() => null),
       ]);
       setCustomer(c);
       const firstPage = Array.isArray(myJobs) ? myJobs : [];
@@ -491,6 +502,7 @@ export default function CustomerDetail() {
       // case + flips ``jobsHasMore`` to false when we hit the tail.
       setJobsHasMore(firstPage.length >= _P37_JOBS_PAGE);
       setProperties(Array.isArray(props) ? props : []);
+      setSummary(summary && typeof summary === "object" ? summary : null);
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }

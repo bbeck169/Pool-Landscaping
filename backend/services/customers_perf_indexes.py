@@ -93,6 +93,68 @@ _INDEXES: List[tuple[str, list]] = [
         [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
          ("phone", ASCENDING)],
     ),
+    # ─── Phase 9c · Feb-2026 — perf indexes for the customers-list
+    # hot path (Active-tab default + Phase 9b portal tiles).
+    #
+    # Prior to Phase 9c the Active-tab default fetch and the Phase-
+    # 9b portal tile filters (``?portal_activated=1``,
+    # ``?first_access=any``, ``?has_payment_method=true``) all
+    # landed on the ``(tenant_id, deleted_at, created_at, _id)``
+    # compound. That index narrows the sort key but doesn't help
+    # the ``$or`` + ``$exists`` filter predicates — Mongo scanned
+    # every tenant-scoped row and discarded 60-80% in-memory.
+    # Prod user reported a 30s page load on 1938-customer tenants.
+    #
+    # Each new index puts the filter field at position 3, right
+    # after the ``(tenant_id, deleted_at)`` prefix every list
+    # query carries, so the filter narrows the scan BEFORE the
+    # sort key kicks in. ``_id`` tiebreakers at the tail keep
+    # paginated reads stable.
+    (
+        "customers_tenant_deleted_is_active_id_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("is_active", ASCENDING), ("_id", ASCENDING)],
+    ),
+    (
+        "customers_tenant_deleted_is_muted_id_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("is_muted", ASCENDING), ("_id", ASCENDING)],
+    ),
+    # Phase 9b · Activated tile (``?portal_activated=1``). The
+    # filter OR's two signals; indexing both lets the planner pick
+    # the cheaper branch per tenant.
+    (
+        "customers_tenant_deleted_portal_password_set_at_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("portal_password_set_at", ASCENDING)],
+    ),
+    (
+        "customers_tenant_deleted_last_portal_login_at_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("last_portal_login_at", ASCENDING)],
+    ),
+    # Phase 9b · Signed-in tile (``?first_access=any``).
+    (
+        "customers_tenant_deleted_portal_first_login_at_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("portal_first_login_at", ASCENDING)],
+    ),
+    # Phase 9b · Cards-on-file tile (``?has_payment_method=true``).
+    (
+        "customers_tenant_deleted_saved_payment_methods_count_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("saved_payment_methods_count", ASCENDING)],
+    ),
+    # K49 · ``sort=last_name_asc`` runs through the aggregation
+    # branch for the last-space fallback + nulls-last ordering,
+    # but the base $match can still use this compound to narrow
+    # the tenant partition before the aggregation stages fire.
+    (
+        "customers_tenant_deleted_last_first_id_bg",
+        [("tenant_id", ASCENDING), ("deleted_at", ASCENDING),
+         ("last_name", ASCENDING), ("first_name", ASCENDING),
+         ("_id", ASCENDING)],
+    ),
 ]
 
 

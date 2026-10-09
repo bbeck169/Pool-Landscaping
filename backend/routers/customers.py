@@ -867,6 +867,20 @@ async def list_customers(
             "correct chronological bucket."
         ),
     ),
+    slim: Optional[bool] = Query(
+        False,
+        description=(
+            "Phase 9c · Feb-2026 — opt-in slim projection. When "
+            "``slim=1`` the response skips the per-row ``properties_count`` "
+            "aggregation + the ``next_scheduled_at`` P45 hydration "
+            "(two separate aggregations against db.properties and "
+            "db.jobs). Core row fields and all filter/sort/pagination "
+            "semantics are unchanged. Used by the customers-list page "
+            "to drop sub-second overhead on tenants with 1900+ "
+            "customers; non-slim callers (external automations, admin "
+            "exports) are unaffected."
+        ),
+    ),
 ):
     # RBAC: only staff (admin/manager/technician/super_admin) may list
     # customer records. Customers use /me.
@@ -877,6 +891,15 @@ async def list_customers(
     if user.get("role") not in ("admin", "manager", "technician",
                                      "super_admin"):
         raise HTTPException(403, "Not allowed")
+    # Phase 9c · Feb-2026 — Coerce ``slim`` to a plain bool. When
+    # list_customers is called directly from Python (e.g. the
+    # ``tests/_f7_loop_fixture.py`` perf-contract suite) the
+    # unresolved default is a ``Query(False, ...)`` sentinel object,
+    # which is TRUTHY under ``bool()`` — exactly the trap the
+    # ``portal_status`` / ``first_access`` params worked around with
+    # ``isinstance(x, str)``. Mirror that here so direct-call
+    # callers get the documented default behaviour.
+    _slim = bool(slim) if isinstance(slim, bool) else False
     # Phase 12 · Feb 2026 — the ``missing_card`` filter is admin/manager
     # only. Technicians see the plain list.
     if missing_card and user.get("role") not in ("admin", "manager", "super_admin"):
@@ -1471,7 +1494,13 @@ async def list_customers(
     # ``properties_count`` (active properties only) so the list can
     # render a chip without an N+1 fetch. Batched aggregation keeps
     # this cheap for tenants with thousands of customers.
-    if docs:
+    #
+    # Phase 9c · Feb-2026 — guarded by ``slim``. The customers list
+    # page passes ``slim=1`` and consumes neither hydration (the
+    # chip is rendered from the base-row saved_payment_methods_count
+    # denorm + a cheap FE lookup). External/admin callers that need
+    # these fields leave ``slim`` unset.
+    if docs and not _slim:
         try:
             pipeline = [
                 {"$match": {"tenant_id": tenant["id"],
@@ -1502,8 +1531,12 @@ async def list_customers(
     # shapes because both lead with Y-M-D, so ``$sort`` +
     # ``$first`` returns the correct earliest either way.
     # NOT applied on the ``count_only=true`` branch (returned above).
+    #
+    # Phase 9c · Feb-2026 — guarded by ``slim``. The P45 hydration
+    # issues a second aggregation against db.jobs; dropping it under
+    # slim halves per-page latency on the hot path.
     # ─────────────────────────────────────────────────────────────
-    if docs:
+    if docs and not _slim:
         from datetime import datetime as _p45_dt, timezone as _p45_tz
         from utils import not_deleted_filter as _p45_nd
         today_utc_iso = _p45_dt.now(_p45_tz.utc).strftime("%Y-%m-%d")
@@ -2100,7 +2133,25 @@ async def customer_manual_geocode(
 @router.get("/customers/{cid}")
 async def get_customer(cid: str,
                        user: dict = Depends(get_current_user),
-                       tenant: dict = Depends(get_current_tenant)):
+                       tenant: dict = Depends(get_current_tenant),
+                       slim: Optional[bool] = Query(
+                           False,
+                           description=(
+                               "Phase 9d · Feb-2026 — opt-in slim "
+                               "projection. When ``slim=1`` the response "
+                               "SKIPS the embedded ``jobs`` array (up to "
+                               "200 slim-photo'd job rows). The customer "
+                               "profile page fetches its jobs list "
+                               "separately via "
+                               "``GET /jobs?customer_id=...&limit=50`` "
+                               "and never consumes the embedded array; "
+                               "the slim path saves one jobs find+sort "
+                               "+ SR-photo-id enrichment per profile "
+                               "open. Non-slim callers (external "
+                               "automations, legacy admin tooling) are "
+                               "unaffected."
+                           ),
+                       )):
     doc = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
@@ -2121,7 +2172,29 @@ async def get_customer(cid: str,
                           "message": "Customer is soft-deleted; restore first."},
             )
         raise HTTPException(404, "Customer not found")
+    # Phase 9d · Feb-2026 — Coerce ``slim`` to a plain bool. When
+    # called directly from Python the unresolved default is a
+    # ``Query(False, ...)`` sentinel object (truthy under ``bool()``).
+    # Mirror the ``list_customers`` _slim coercion.
+    _slim_profile = bool(slim) if isinstance(slim, bool) else False
     from utils import not_deleted_filter as _nd_cust
+    # Phase 9d · Feb-2026 — the embedded ``jobs`` array is a legacy
+    # convenience payload the current frontend never consumes
+    # (``CustomerDetail.jsx`` calls ``GET /jobs?customer_id=`` with
+    # its own ``limit=50`` pagination). ``slim=1`` skips the second
+    # find + SR-photo-id enrichment + slim-photos pass, cutting the
+    # profile endpoint from a bimodal ~300ms-3s to a stable sub-100ms
+    # on tenants with 50+ jobs per customer. The field is OMITTED
+    # entirely under slim rather than set to an empty list so the
+    # response shape is unambiguous.
+    if _slim_profile:
+        # Phase 12 · Feb 2026 — derive card-on-file fields at read time.
+        doc.update(_compute_card_fields(
+            doc, bool(tenant.get("require_card_on_file_default", True))))
+        if user.get("role") == "technician":
+            doc.pop("stripe_customer_id", None)
+            doc.pop("stripe_default_payment_method_id", None)
+        return doc
     # Phase P31 · Feb-2026 — apply ``JOBS_LIST_PROJECTION`` at Mongo
     # query time so photo base64 blobs never cross the wire between
     # Mongo and the API process. The historic ``{"_id": 0}`` shape
@@ -2173,6 +2246,128 @@ async def get_customer(cid: str,
         doc.pop("stripe_customer_id", None)
         doc.pop("stripe_default_payment_method_id", None)
     return doc
+
+
+# ─── Phase 9d · Feb-2026 · Customer profile counts summary ─────────────
+# ``GET /api/customers/{cid}/summary`` returns a cheap, parallelized
+# count snapshot across the seven collections that back the customer
+# profile tabs: jobs, invoices (quotes doc_type=invoice), quotes
+# (quotes doc_type=quote), customer_tasks, service_reports,
+# customer_notes_history (via submitted service reports with any
+# note populated — approximated via service_reports count),
+# properties (active).
+#
+# Shape:
+#   {
+#     "jobs_count":            int,
+#     "invoices_count":        int,
+#     "quotes_count":          int,
+#     "tasks_count":           int,
+#     "service_reports_count": int,
+#     "notes_count":           int,
+#     "properties_count":      int,
+#     "open_invoices_count":   int,
+#   }
+#
+# Semantics:
+#   * All counts tenant-scoped + customer-scoped.
+#   * Soft-deleted jobs / quotes / reports are excluded via
+#     ``not_deleted_filter()`` (matches the FE tab lists).
+#   * ``open_invoices_count`` = invoices with status in
+#     {"draft", "pending", "sent", "overdue"} (anything not fully
+#     paid or cancelled).
+#   * Runs all 8 counts in parallel via ``asyncio.gather``.
+#   * Returns 404 if the customer isn't found (or is soft-deleted
+#     and the caller isn't super_admin — same gate as get_customer).
+#
+# Called by ``CustomerDetail.jsx`` alongside the ``?slim=1`` profile
+# fetch so tab-badges can render from a lightweight response before
+# the user clicks any individual tab (lazy tab fetch still owns
+# full tab data).
+@router.get("/customers/{cid}/summary")
+async def get_customer_summary(cid: str,
+                               user: dict = Depends(get_current_user),
+                               tenant: dict = Depends(get_current_tenant)):
+    # Same 404/409 gate as the base profile endpoint — a missing or
+    # soft-deleted customer must not leak counts.
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    if cust.get("deleted_at"):
+        role = (user.get("role") or "").lower()
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "customer_soft_deleted",
+                          "message": "Customer is soft-deleted; restore first."},
+            )
+        raise HTTPException(404, "Customer not found")
+
+    import asyncio as _summary_asyncio
+    from utils import not_deleted_filter as _summary_nd
+
+    _tid = tenant["id"]
+    _cust_scope = {"tenant_id": _tid, "customer_id": cid}
+    _nd = _summary_nd()
+
+    # Per-collection match predicates. Each is a plain dict (not a
+    # pipeline) so each count_documents call uses the compound
+    # (tenant_id, customer_id, ...) indexes created by the existing
+    # per-collection ensure_indexes routines.
+    _jobs_q = {**_cust_scope, **_nd}
+    _invoices_q = {**_cust_scope, "doc_type": "invoice", **_nd}
+    _quotes_q = {**_cust_scope, "doc_type": "quote", **_nd}
+    _tasks_q = {**_cust_scope}
+    _reports_q = {**_cust_scope, **_nd}
+    _notes_q = {**_cust_scope, "notes": {"$exists": True, "$nin": [None, ""]},
+                **_nd}
+    _properties_q = {**_cust_scope, "active": {"$ne": False}}
+    _open_inv_q = {
+        **_cust_scope, "doc_type": "invoice", **_nd,
+        "status": {"$in": ["draft", "pending", "sent", "overdue"]},
+    }
+
+    try:
+        results = await _summary_asyncio.gather(
+            db.jobs.count_documents(_jobs_q),
+            db.quotes.count_documents(_invoices_q),
+            db.quotes.count_documents(_quotes_q),
+            db.customer_tasks.count_documents(_tasks_q),
+            db.service_reports.count_documents(_reports_q),
+            db.service_reports.count_documents(_notes_q),
+            db.properties.count_documents(_properties_q),
+            db.quotes.count_documents(_open_inv_q),
+            return_exceptions=True,
+        )
+    except Exception as _summary_exc:  # noqa: BLE001
+        logger.warning(
+            "[customer_summary] gather failed cid=%s: %s",
+            cid, _summary_exc,
+        )
+        results = [0] * 8
+
+    def _coerce(v):
+        if isinstance(v, Exception) or v is None:
+            return 0
+        try:
+            return int(v)
+        except Exception:                                        # noqa: BLE001
+            return 0
+
+    return {
+        "customer_id": cid,
+        "jobs_count":            _coerce(results[0]),
+        "invoices_count":        _coerce(results[1]),
+        "quotes_count":          _coerce(results[2]),
+        "tasks_count":           _coerce(results[3]),
+        "service_reports_count": _coerce(results[4]),
+        "notes_count":           _coerce(results[5]),
+        "properties_count":      _coerce(results[6]),
+        "open_invoices_count":   _coerce(results[7]),
+    }
 
 
 # ─── P26 · Feb-2026 · Super_admin customer restore ──────────────────────

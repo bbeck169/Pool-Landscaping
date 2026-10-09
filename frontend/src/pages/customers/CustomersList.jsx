@@ -215,7 +215,11 @@ export default function CustomersList() {
   // so a direct-link with ``?page=3&size=50`` loads correctly. The
   // response envelope still drives ``total`` and ``totalPages``.
   const _K62_PAGE_SIZE_OPTIONS = [25, 50, 100];
-  const _K62_DEFAULT_PAGE_SIZE = 25;
+  // Phase 9cd · Feb-2026 — default page_size bumped from 25 → 50.
+  // Pager UX unchanged; 50/page is a better balance between
+  // per-page server work (one count + 50 rows) and the number of
+  // page clicks for a 1900+-customer tenant.
+  const _K62_DEFAULT_PAGE_SIZE = 50;
   const _K62_LS_KEY = "customers.pageSize";
   const [pageSize, setPageSize] = useState(() => {
     // Priority 1 — explicit ``?size=N`` URL param (deep-link honour).
@@ -638,6 +642,12 @@ export default function CustomersList() {
     // this line is defensive but strictly clarifies intent on the
     // wire log.
     if (sortBy) params.set("sort", sortBy);
+    // Phase 9c · Feb-2026 — opt into the slim list response.
+    // Skips per-row ``properties_count`` + P45 ``next_scheduled_at``
+    // hydration (two extra aggregations) that the current list UI
+    // doesn't render on the hot path. The pager + counts envelope
+    // + Phase 9b portal-tile filters are all unaffected.
+    params.set("slim", "1");
     try {
       const data = await api.get(`/customers?${params.toString()}`);
       // Envelope-shaped when page/page_size present (Strategy B).
