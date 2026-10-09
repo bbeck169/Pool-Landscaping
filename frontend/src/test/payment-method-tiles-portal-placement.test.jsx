@@ -30,8 +30,19 @@ vi.mock("@/api", () => ({
   },
   TOKEN_KEY: "token",
 }));
-vi.mock("@/theme", () => ({
-  colors: {
+// Feb-2026 · ``PortalPages.jsx`` imports ``portalColors`` and
+// ``gradients`` alongside ``money``. The pre-9b mock only exposed
+// ``colors`` + ``money`` → Vitest raised ``No "portalColors"
+// export is defined on the "@/theme" mock``. The theme split
+// shipped with the pilot-page portalColors palette; the mock
+// mirrors both surfaces so admin-variant AND portal-variant
+// consumers resolve under the same ``vi.mock`` registration.
+//
+// NB: vi.mock is hoisted — the stub object must be declared
+// INSIDE the factory so it isn't a TDZ reference at mock-eval
+// time.
+vi.mock("@/theme", () => {
+  const stub = {
     surface: "#fff", surfaceSecondary: "#fafafa", border: "#eee",
     borderStrong: "#ddd", onSurface: "#000", muted: "#666",
     error: "#DC2626", onError: "#fff",
@@ -39,10 +50,20 @@ vi.mock("@/theme", () => ({
     landscape: { 50: "#F0FDF4", 100: "#DCFCE7", 300: "#86EFAC",
                     500: "#22C55E", 600: "#16A34A", 700: "#15803D" },
     brand: "#0284C7",
+    brandPrimary: "#0284C7",
+    onBrandPrimary: "#fff",
     onSurfaceSecondary: "#333",
-  },
-  money: (n) => `$${(Number(n) / 100).toFixed(2)}`,
-}));
+  };
+  return {
+    colors: stub,
+    portalColors: stub,
+    gradients: {
+      primary: "linear-gradient(90deg, #1B1F5C 0%, #16A34A 100%)",
+      secondary: "linear-gradient(90deg, #0284C7 0%, #22C55E 100%)",
+    },
+    money: (n) => `$${(Number(n) / 100).toFixed(2)}`,
+  };
+});
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { customer_id: "cust_portal_1",
                                  role: "customer" } }),
