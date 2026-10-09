@@ -58,8 +58,12 @@ function _fmtDuration(ci, co) {
 
 
 export default function AdminPunchEditsPanel({ viewer, teamMembers }) {
+  // ── All hooks declared FIRST, before any conditional return. The
+  //    role gate lives on the JSX output at the bottom of this
+  //    component so React's Rules-of-Hooks ordering invariant holds
+  //    across every render regardless of ``viewer.role``.
   const role = String(viewer?.role || "").toLowerCase();
-  if (!_ADMIN_ROLES.has(role)) return null;
+  const isAdmin = _ADMIN_ROLES.has(role);
 
   const [targetUserId, setTargetUserId] = useState(
     teamMembers?.[0]?.user_id || "",
@@ -76,6 +80,7 @@ export default function AdminPunchEditsPanel({ viewer, teamMembers }) {
   const [modal, setModal] = useState(null); // {mode: 'create'|'edit', row?: {...}}
 
   const load = useCallback(async () => {
+    if (!isAdmin) return;         // gate inside the hook body — safe
     if (!targetUserId) {
       setItems([]);
       return;
@@ -99,7 +104,7 @@ export default function AdminPunchEditsPanel({ viewer, teamMembers }) {
     } finally {
       setBusy(false);
     }
-  }, [targetUserId, range.start, range.end, includeDeleted]);
+  }, [isAdmin, targetUserId, range.start, range.end, includeDeleted]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -158,6 +163,10 @@ export default function AdminPunchEditsPanel({ viewer, teamMembers }) {
     })),
     [teamMembers],
   );
+
+  // Role gate on render output only — all hooks above have already
+  // run on every render, preserving the Rules-of-Hooks ordering.
+  if (!isAdmin) return null;
 
   return (
     <div
