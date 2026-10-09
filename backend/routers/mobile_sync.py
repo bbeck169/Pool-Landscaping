@@ -475,6 +475,7 @@ async def _handle_job_arrive(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
         await auto_start_timer_on_arrival(
             job_id=op.entity_id, tenant_id=tenant_id,
             tech_id=job.get("technician_id"),
+            crew_id=job.get("crew_id"),
             customer_id=job.get("customer_id"),
             started_at=_timer_started_at,
         )

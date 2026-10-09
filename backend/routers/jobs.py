@@ -5088,6 +5088,7 @@ async def job_arrive(jid: str, body: JobArriveIn,
         await auto_start_timer_on_arrival(
             job_id=jid, tenant_id=tenant["id"],
             tech_id=job.get("technician_id"),
+            crew_id=job.get("crew_id"),
             customer_id=job.get("customer_id"),
             started_at=started,
         )

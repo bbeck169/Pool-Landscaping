@@ -166,39 +166,64 @@ async def close_open_timers_for_job(
 # Feb-2026 · Job Timers dashboard phase — GPS-arrival auto-start.
 # Called from ``routers/jobs.py::job_arrive`` after a successful
 # arrival gate flip. Idempotent: an open row for the same
-# ``(tenant_id, job_id, tech_id)`` triple is left untouched so
-# multiple ``/arrive`` events (mobile queue replay, out-of-band
-# retries) never spawn duplicate timers.
+# ``(tenant_id, job_id, tech_id, crew_id)`` quadruple is left
+# untouched so multiple ``/arrive`` events (mobile queue replay,
+# out-of-band retries) never spawn duplicate timers.
+#
+# Phase 6 · Feb-2026 — ``crew_id`` support.  Pre-Phase-6 callers
+# passed only ``tech_id`` so crew-only jobs (``crew_id`` set,
+# ``technician_id`` null) produced a timer row with BOTH
+# attribution fields unset — effectively orphan rows that the
+# ``/job-timers/aggregates`` grouping ignored.  The observed
+# symptom was "timers only fire for landscape maintenance" because
+# landscape jobs in the operator's dataset tended to be solo-tech
+# assigned while pool / repair jobs were crew-assigned.  Carrying
+# ``crew_id`` + resolving ``entity_type`` from whichever id is
+# present fixes the attribution so every service_type + every
+# assignee type (tech, crew_lead, crew_member) gets a proper row.
 async def auto_start_timer_on_arrival(
     *, job_id: str, tenant_id: str,
     tech_id: Optional[str] = None,
+    crew_id: Optional[str] = None,
     started_at: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> Optional[str]:
     """Upsert an open timer row keyed on
-    ``(tenant_id, job_id, tech_id or "-")``. Returns the row id
+    ``(tenant_id, job_id, tech_id, crew_id)``. Returns the row id
     (existing or freshly-inserted). Never raises — the caller is
     the GPS-arrival hot-path which MUST NOT fail on a bookkeeping
-    error."""
+    error.
+
+    Resolution rule:
+      * ``tech_id`` present → ``entity_type="tech"``.
+      * else ``crew_id`` present → ``entity_type="crew"``.
+      * else → ``entity_type="tech"`` with both ids null (legacy
+        shape — the record is still inserted so the ops dashboard
+        sees the arrival happened; the dashboard filter
+        ``{"tech_id": {"$ne": null}}`` or similar can elide these
+        rows if desired).
+    """
     try:
-        # Idempotency probe: any open row for this (job, tech)?
+        # Idempotency probe: any open row for this (job, tech, crew)?
         existing = await db.job_timers.find_one(
             {"tenant_id": tenant_id, "job_id": job_id,
-              "tech_id": tech_id, "ended_at": None},
+              "tech_id": tech_id, "crew_id": crew_id,
+              "ended_at": None},
             {"_id": 0, "id": 1},
         )
         if existing:
             return existing["id"]
         now = _now_iso()
         starts = started_at or now
+        entity_type = "tech" if tech_id else ("crew" if crew_id else "tech")
         doc = {
             "id": str(uuid.uuid4()),
             "tenant_id": tenant_id,
             "job_id": job_id,
             "customer_id": customer_id,
-            "entity_type": "tech",
+            "entity_type": entity_type,
             "tech_id": tech_id,
-            "crew_id": None,
+            "crew_id": crew_id,
             "started_at": starts,
             "ended_at": None,
             "duration_seconds": None,
@@ -216,8 +241,9 @@ async def auto_start_timer_on_arrival(
             "actor_user_id": None,
             "at": now,
             "payload": {"source": "gps_arrival",
-                          "entity_type": "tech",
-                          "tech_id": tech_id},
+                          "entity_type": entity_type,
+                          "tech_id": tech_id,
+                          "crew_id": crew_id},
         })
         return doc["id"]
     except Exception as exc:                                     # noqa: BLE001

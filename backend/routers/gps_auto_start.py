@@ -31,7 +31,13 @@ from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso
 
 
-DEFAULT_ARRIVAL_RADIUS_M = 75
+# Phase 6 · Feb-2026 — radius default bumped from 75m → 150m per
+# the Job Timer bugs-batch brief. Operators reported out-of-radius
+# false negatives on sprawling pool/landscape properties where the
+# geocoded site center and the tech's parked-truck GPS fix are
+# routinely 90–120m apart. Default stays tenant-overridable via
+# ``arrival_radius_meters``.
+DEFAULT_ARRIVAL_RADIUS_M = 150
 
 router = APIRouter(tags=["gps-auto-start"])
 
