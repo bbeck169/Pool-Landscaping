@@ -38,6 +38,20 @@ import Lightbox from "@/components/portal/Lightbox";
 // by falling back to a text-only header, no ``<BrandLogo />`` sub-
 // component required).
 import { useTenantBrand } from "@/hooks/useTenantBrand";
+// Phase 14B · Feb-2026 — Portal detail wire-up for form_template
+// styles + checklist item order. Zero-regression contract:
+// useFormTemplateRuntime returns the empty sentinel when no
+// template is saved, and both consumers (useFieldStyle +
+// orderChecklistByTemplate) short-circuit on empty input so the
+// hardcoded layout renders byte-for-byte.
+import { useFormTemplateRuntime }
+  from "@/hooks/useFormTemplateRuntime";
+import {
+  TemplateFieldProvider, useFieldStyle,
+} from "@/components/form-renderer/TemplateFieldContext";
+import {
+  orderChecklistByTemplate,
+} from "@/lib/checklistOrder";
 // Feb-2026 hotfix — client-side band derivation.  Mirrors backend
 // ``services/chemistry_bands.py`` exactly so a portal load with a
 // stale server payload (no ``label`` attached) still classifies the
@@ -466,7 +480,7 @@ export function PortalServiceReportDetail() {
       );
   }, [id]);
 
-  // ── Phase P49 · Feb-2026 · brand logo for the header card ────
+  // Phase P49 · Feb-2026 · brand logo for the header card ────
   // Reads the tenant's uploaded logo (falls back to null when the
   // tenant hasn't uploaded one — render branch below handles that
   // by omitting the img element entirely and keeping the header
@@ -480,6 +494,26 @@ export function PortalServiceReportDetail() {
   // page with "Rendered fewer hooks than expected" on the first
   // ``err`` or ``!sr`` render.
   const { logo_url: brandLogoUrl, name: brandName } = useTenantBrand();
+
+  // Phase 14B · Feb-2026 — Portal detail wire-up for the Phase 7A
+  // form_template.  Hooks live ABOVE every early return so the
+  // hook order stays stable across loading / error / loaded render
+  // paths (Rules-of-Hooks).  ``kind`` is computed null-safely from
+  // ``sr`` so the two useFormTemplateRuntime calls fire with a
+  // stable string on every render; the hook handles the ``_EMPTY``
+  // sentinel internally.  Option A per the hotfix brief: one hook
+  // call per form_type, dynamic argument driven by sr.template.
+  const _kindForTpl = sr ? reportKind(sr) : "pool";
+  const _srFormType = _kindForTpl === "landscape"
+    ? "landscape_service_report"
+    : "pool_service_report";
+  const _srTpl = useFormTemplateRuntime(_srFormType);
+  const _chkFormType = _kindForTpl === "landscape"
+    ? "job_checklist_landscape"
+    : (_kindForTpl === "generic"
+        ? "job_checklist_generic"
+        : "job_checklist_pool");
+  const _chkTpl = useFormTemplateRuntime(_chkFormType);
 
   if (err) {
     return (
@@ -518,6 +552,10 @@ export function PortalServiceReportDetail() {
   const KindIcon = kind === "landscape" ? Leaf : Waves;
   const iconTone = kind === "landscape" ? colors.success : colors.brand;
 
+  // (Phase 14B · Feb-2026 — useFormTemplateRuntime calls moved
+  // above the early returns to satisfy Rules-of-Hooks. See the
+  // ``_srTpl`` / ``_chkTpl`` block near ``useTenantBrand`` above.)
+
   const readings = Array.isArray(sr.chemical_readings)
     ? sr.chemical_readings.filter(
         (r) => r && (r.label || r.value !== null && r.value !== undefined && r.value !== "")
@@ -527,7 +565,8 @@ export function PortalServiceReportDetail() {
     ? sr.chemicals_added.filter((c) => c && (c.name || c.chemical))
     : [];
   const checklistItems = Array.isArray(sr.checklist_items)
-    ? sr.checklist_items
+    ? orderChecklistByTemplate(sr.checklist_items,
+                                 _chkTpl?.fieldsOrdered)
     : [];
   // Backend already stripped internal/issue-tagged photos on this endpoint.
   const photos = Array.isArray(sr.photos) ? sr.photos : [];
@@ -592,6 +631,7 @@ export function PortalServiceReportDetail() {
                          || "Pool");
 
   return (
+    <TemplateFieldProvider fieldsById={_srTpl?.fieldsById}>
     <div
       className="bg-slate-50 min-h-screen"
       data-testid="portal-service-report-detail-root"
@@ -1119,6 +1159,7 @@ export function PortalServiceReportDetail() {
               : "Service checklist"
           }
           testid="portal-service-report-checklist"
+          templateFieldId="checklist_section"
         >
           <ul className="space-y-1.5">
             {checklistItems.map((it, i) => {
@@ -1164,6 +1205,7 @@ export function PortalServiceReportDetail() {
           icon={FileText}
           title="Notes from your tech"
           testid="portal-service-report-customer-notes"
+          templateFieldId="notes"
         >
           <p
             className="text-sm whitespace-pre-wrap"
@@ -1316,19 +1358,25 @@ export function PortalServiceReportDetail() {
       ) : null}
     </div>
     </div>
+    </TemplateFieldProvider>
   );
 }
 
 // ─── shared section shell ───────────────────────────────────────────────
-function Section({ icon: Icon, title, testid, children }) {
+function Section({ icon: Icon, title, testid, children, templateFieldId }) {
+  const _tplStyle = useFieldStyle(templateFieldId);
   return (
     <div
       className="rounded-2xl p-5 mb-4 shadow-sm"
       style={{
-        backgroundColor: colors.surface,
-        border: `1px solid ${colors.border}`,
+        backgroundColor: _tplStyle?.backgroundColor || colors.surface,
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: _tplStyle?.borderColor || colors.border,
+        color: _tplStyle?.color,
       }}
       data-testid={testid}
+      data-template-field-id={templateFieldId || undefined}
     >
       <div className="flex items-center gap-2 mb-3">
         {Icon ? (
