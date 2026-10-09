@@ -21,10 +21,33 @@ import { MemoryRouter } from "react-router-dom";
 // ── Mocks ──
 // api.get is called several times on mount — for tab counts, tags,
 // rows, and by tag filter. api.post handles /customers/bulk-delete.
+//
+// Feb-2026 CUS-perf v3 — the single-source-of-truth counts endpoint
+// migrated from legacy ``?count_only=true`` fanout to the
+// consolidated ``/customers/counts`` object envelope. Mock mirrors
+// the live shape so ``_matchingTotal`` (= counts.active for the
+// default Active tab) hydrates with 1247 and the
+// ``SelectAllMatchingLink`` affordance renders.
 let _postResolver;
 const mockGet = vi.fn((path) => {
   if (path.startsWith("/customer-tags")) return Promise.resolve({ items: [] });
+  if (path.startsWith("/customers/counts")) {
+    return Promise.resolve({
+      active: 1247,
+      inactive: 0,
+      muted: 0,
+      waitlist: 0,
+      all: 1247,
+      missing_address: 0,
+      portal_activated: 0,
+      portal_not_activated: 0,
+      no_payment_method: 0,
+      never_logged_in: 0,
+    });
+  }
   if (path.includes("count_only=true")) {
+    // Pre-CUS-perf-v3 compat — kept for any residual legacy call
+    // sites so this mock continues to no-op cleanly.
     if (path.includes("is_active=true")) return Promise.resolve({ count: 1247 });
     return Promise.resolve({ count: 0 });
   }
