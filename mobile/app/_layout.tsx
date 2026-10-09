@@ -28,9 +28,8 @@ import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTempla
 import { SyncManagerProvider } from "@/src/services/SyncManager";
 // FLEET-B · Hook that initializes foreground GPS emission for fleet techs.
 import { useFleetEmitter } from "@/src/hooks/useFleetEmitter";
-// TB-1 · Wake-word listener for "Hey MARCO".
-import { useMarcoWakeWord } from "@/src/hooks/useMarcoWakeWord";
-import { aiDockEvents } from "@/src/events/aiDockEvents";
+// TB-1 / Phase 8M · "Hey MARCO" wake-word — arm-on-click controller.
+import { MarcoMicProvider } from "@/src/components/marco/MarcoMicController";
 // OTA auto-update listener — background check + subtle "update ready" toast.
 import { useOtaUpdateListener } from "@/src/hooks/useOtaUpdateListener";
 // Phase O2 · Offline sync foundation — boot the sync infra.
@@ -85,9 +84,9 @@ export default function RootLayout() {
   // FLEET-B · Start the foreground GPS emitter for fleet-enrolled techs.
   useFleetEmitter();
 
-  // TB-1 · Start the "Hey MARCO" wake-word listener for techs.
-  // MARCO-AI-CHAT Phase B — on non-job screens, wake-word opens AI dock.
-  useMarcoWakeWord(() => aiDockEvents.emitOpen());
+  // TB-1 · "Hey MARCO" wake-word — Phase 8M: no auto-start. The
+  // listener is hosted by <MarcoMicProvider> below and only runs while
+  // the user has armed it via the header mic button.
 
   // Phase O2 · Offline sync foundation — init SQLite schema + net bus + auto-flush.
   // Phase O3 · Wire photo auto-upload on reconnect.
@@ -175,6 +174,7 @@ export default function RootLayout() {
               <SyncManagerProvider>
                 <StripeConfigProvider>
                   <ToastProvider>
+                  <MarcoMicProvider>
                   <OfflineBanner />
                   <StoragePressureBanner />
                   <ImpersonationBanner />
@@ -183,6 +183,7 @@ export default function RootLayout() {
                   <ConfirmModalHost />
                   <ConflictSheet />
                   <SyncToast />
+                  </MarcoMicProvider>
                   </ToastProvider>
                 </StripeConfigProvider>
               </SyncManagerProvider>

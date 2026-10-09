@@ -1,15 +1,23 @@
 /**
- * TB-1 · useMarcoWakeWord hook
+ * TB-1 · useMarcoWakeWord hook — Phase 8M ARM-ON-CLICK refit.
  *
- * Starts the wake-word listener when the user is a tech and
- * wakeWordEnabled + voiceResponseEnabled are both true.
+ * Mobile parity with web ``useWebWakeWord`` (Phase 8):
+ *   * Does NOT start on mount.  The listener only runs while
+ *     ``isArmed === true``, driven by ``arm()`` / ``disarm()`` /
+ *     ``toggle()`` (owned by MarcoMicProvider + MicToggleButton).
+ *   * Uses the existing speech primitive (expo-speech-recognition via
+ *     ``wakeWordService``) — no new native dependencies.
+ *   * ``onPhraseDetected`` fires on every accepted wake event so the
+ *     controller can reset its 10-min idle-disarm timer.
+ *   * ZERO audible feedback on arm / disarm / detect — no beeps, no
+ *     sounds.  (Marco's spoken *answer* on job screens is the existing
+ *     voice-command pipeline and is gated by voiceResponseEnabled.)
  *
- * On wake detection, triggers the existing MARCO voice pipeline
- * (record → transcribe → execute → TTS).
- *
- * Mount this in the root layout alongside useFleetEmitter.
+ * Routing on detection (unchanged):
+ *   * job / service-report screens → record → transcribe → execute → TTS.
+ *   * any other screen → open the AI chat dock.
  */
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { useSegments } from "expo-router";
 import {
   useAudioRecorder,
@@ -20,138 +28,130 @@ import {
 } from "expo-audio";
 import * as ExpoSpeech from "expo-speech";
 
-import { useAuth } from "@/src/auth";
-import {
-  getWakeWordEnabled,
-  getVoiceResponseEnabled,
-} from "@/src/services/marco/voicePreferences";
+import { getVoiceResponseEnabled } from "@/src/services/marco/voicePreferences";
 import {
   startWakeWord,
   stopWakeWord,
-  isWakeWordRunning,
+  getWakeWordStatus,
+  isWakeWordSupported,
 } from "@/src/services/marco/wakeWordService";
 import {
   transcribeAudio,
   executeMarco,
 } from "@/src/services/marco/executeMarco";
 
-/* ── TTS ─────────────────────────────────────────────────────────── */
 const _Speech: any = ExpoSpeech;
 
 const RECORD_DURATION_MS = 8000; // Max 8s recording after wake
 
-export function useMarcoWakeWord(onOpenDock?: () => void) {
-  const { user } = useAuth();
-  const startedRef = useRef(false);
-  const segments = useSegments();
+export type MarcoWakeWordState = {
+  supported: boolean;
+  permitted: boolean | null;
+  listening: boolean;
+  isArmed: boolean;
+  arm: () => Promise<void>;
+  disarm: () => void;
+  toggle: () => void;
+};
 
-  // We need a recorder for the wake-triggered flow
+export function useMarcoWakeWord(
+  onOpenDock?: () => void,
+  opts?: { onPhraseDetected?: () => void },
+): MarcoWakeWordState {
+  const segments = useSegments();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  // MARCO-AI-CHAT Phase B — determine if we're on a voice-command screen
-  // (job/service) or a general screen where wake-word should open the dock.
+  const [supported] = useState<boolean>(() => isWakeWordSupported());
+  const [permitted, setPermitted] = useState<boolean | null>(null);
+  const [listening, setListening] = useState(false);
+  const [isArmed, setIsArmed] = useState(false);
+  const armedRef = useRef(false);
+
+  const onDetectedRef = useRef(opts?.onPhraseDetected);
+  onDetectedRef.current = opts?.onPhraseDetected;
+
   const isVoiceCommandScreen = useMemo(() => {
     const path = segments.join("/");
     return path.includes("job/") || path.includes("service-report/");
   }, [segments]);
 
   const handleWakeDetected = useCallback(async () => {
-    // Option A: on a job/service screen, fire the voice-command pipeline.
-    // On any other screen, open the AI chat dock.
+    try { onDetectedRef.current?.(); } catch { /* caller errors must not kill mic */ }
     if (!isVoiceCommandScreen && onOpenDock) {
       onOpenDock();
       return;
     }
-    // Wake-word detected — start the MARCO voice pipeline
     try {
-      // 1. Check mic permission
       const perms = await getRecordingPermissionsAsync();
       if (!perms.granted) {
         const req = await requestRecordingPermissionsAsync();
         if (!req.granted) return;
       }
-
-      // 2. Record for a fixed duration
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
-
-      // 3. Stop after RECORD_DURATION_MS
       await new Promise((r) => setTimeout(r, RECORD_DURATION_MS));
       await recorder.stop();
-
       const uri = recorder.uri;
       if (!uri) return;
-
-      // 4. Transcribe
       const transcription = await transcribeAudio(uri);
       if (!transcription.transcript?.trim()) return;
-
-      // 5. Execute — we don't have a specific screen/entity context
-      // from wake-word, so use "job_detail" with empty entity
-      // The backend handles missing entity_id gracefully
       const result = await executeMarco(transcription.transcript, "job_detail", "");
-
-      // 6. Speak the response
       const speakText = result.speak || result.message;
-      if (speakText && _Speech) {
-        const ttsEnabled = await getVoiceResponseEnabled();
-        if (ttsEnabled) {
-          _Speech.speak(speakText, {
-            rate: 0.95,
-            pitch: 1.0,
-            language: "en-US",
-          });
-        }
+      if (speakText && _Speech && (await getVoiceResponseEnabled())) {
+        _Speech.speak(speakText, { rate: 0.95, pitch: 1.0, language: "en-US" });
       }
     } catch {
       // Swallow — wake-word pipeline errors shouldn't crash the app
     }
   }, [recorder, isVoiceCommandScreen, onOpenDock]);
 
-  // Latest-ref: the wake service registers its callback once, so hand it a
-  // stable wrapper that always calls the current (route-aware) handler.
+  // Latest-ref: the service registers its callback once per start.
   const handleWakeRef = useRef(handleWakeDetected);
   handleWakeRef.current = handleWakeDetected;
-  const onWake = useCallback(() => handleWakeRef.current(), []);
+  const onWake = useCallback(() => { handleWakeRef.current(); }, []);
 
-  useEffect(() => {
-    if (!user) {
-      if (startedRef.current) {
-        stopWakeWord();
-        startedRef.current = false;
-      }
+  const disarm = useCallback(() => {
+    armedRef.current = false;
+    setIsArmed(false);
+    setListening(false);
+    stopWakeWord();
+  }, []);
+
+  const arm = useCallback(async () => {
+    if (armedRef.current || !isWakeWordSupported()) return;
+    armedRef.current = true;
+    setIsArmed(true);
+    // The explicit click IS the opt-in — skip the stored-preference gate.
+    const ok = await startWakeWord(onWake, { requirePrefs: false });
+    if (!armedRef.current) {
+      // Disarmed while start was in flight — release the mic.
+      stopWakeWord();
       return;
     }
-
-    const role = (user.role || "") as string;
-    const isTech = role === "technician" || role === "tech";
-
-    if (!isTech) {
-      if (startedRef.current) {
-        stopWakeWord();
-        startedRef.current = false;
-      }
+    if (!ok) {
+      armedRef.current = false;
+      setIsArmed(false);
+      setListening(false);
+      if (getWakeWordStatus() === "unavailable") setPermitted(false);
       return;
     }
+    setPermitted(true);
+    setListening(true);
+  }, [onWake]);
 
-    const init = async () => {
-      const [wakeEnabled, ttsEnabled] = await Promise.all([
-        getWakeWordEnabled(),
-        getVoiceResponseEnabled(),
-      ]);
-      if (!wakeEnabled || !ttsEnabled) return;
+  const toggle = useCallback(() => {
+    if (armedRef.current) disarm();
+    else arm();
+  }, [arm, disarm]);
 
-      if (!isWakeWordRunning()) {
-        const ok = await startWakeWord(onWake);
-        if (ok) startedRef.current = true;
-      }
-    };
+  // Unmount → release the mic if still armed.
+  useEffect(() => () => {
+    if (armedRef.current) {
+      armedRef.current = false;
+      stopWakeWord();
+    }
+  }, []);
 
-    init().catch(() => {});
-
-    return () => {
-      // Don't stop on unmount since this is root-level
-    };
-  }, [user, onWake]);
+  return { supported, permitted, listening, isArmed, arm, disarm, toggle };
 }

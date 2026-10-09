@@ -13,6 +13,7 @@ import Breadcrumbs from "@/src/components/nav/Breadcrumbs";
 import BrandLogo from "@/src/components/BrandLogo";
 import { useBreadcrumbs } from "@/src/hooks/useBreadcrumbs";
 import { openGlobalMenu } from "@/src/components/tools/GlobalMenu";
+import { MicToggleButton } from "@/src/components/marco/MicToggleButton";
 
 export function OfflineBanner({ testID }: { testID?: string }) {
   return (
@@ -129,6 +130,7 @@ export function Header({
           </View>
         </View>
         <View style={styles.headerRightCluster}>
+          <MicToggleButton />
           <SettingsSprocket />
           {right}
           <HamburgerButton />

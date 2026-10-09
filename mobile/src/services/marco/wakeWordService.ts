@@ -67,12 +67,23 @@ function _setStatus(s: WakeWordStatus) {
   });
 }
 
+/** Phase 8M · true when the speech primitive is present in this build. */
+export function isWakeWordSupported(): boolean {
+  return !!_speech;
+}
+
 /**
  * Start the wake-word listener.
  * @param onWakeDetected — callback fired when "Hey MARCO" is detected
+ * @param opts.requirePrefs — default true (legacy auto-start gate on
+ *   wakeWordEnabled + voiceResponseEnabled).  Phase 8M arm-on-click
+ *   passes false: the explicit mic-button tap is the opt-in.
  * @returns true if started, false if can't start
  */
-export async function startWakeWord(onWakeDetected: WakeCallback): Promise<boolean> {
+export async function startWakeWord(
+  onWakeDetected: WakeCallback,
+  opts?: { requirePrefs?: boolean },
+): Promise<boolean> {
   if (_running) return true;
 
   // Check prerequisites
@@ -81,14 +92,15 @@ export async function startWakeWord(onWakeDetected: WakeCallback): Promise<boole
     return false;
   }
 
-  const [wakeEnabled, ttsEnabled] = await Promise.all([
-    getWakeWordEnabled(),
-    getVoiceResponseEnabled(),
-  ]);
-
-  if (!wakeEnabled || !ttsEnabled) {
-    _setStatus("disabled");
-    return false;
+  if (opts?.requirePrefs !== false) {
+    const [wakeEnabled, ttsEnabled] = await Promise.all([
+      getWakeWordEnabled(),
+      getVoiceResponseEnabled(),
+    ]);
+    if (!wakeEnabled || !ttsEnabled) {
+      _setStatus("disabled");
+      return false;
+    }
   }
 
   // Request speech recognition permissions

@@ -24,6 +24,8 @@ jest.mock("@/src/services/marco/wakeWordService", () => ({
   startWakeWord: jest.fn(async (cb: any) => { if (!mockOnWake) mockOnWake = cb; return true; }),
   stopWakeWord: jest.fn(),
   isWakeWordRunning: () => !!mockOnWake,
+  isWakeWordSupported: () => true,
+  getWakeWordStatus: () => "listening",
 }));
 const mockTranscribe = jest.fn();
 jest.mock("@/src/services/marco/executeMarco", () => ({ transcribeAudio: (...a: any[]) => mockTranscribe(...a), executeMarco: jest.fn() }));
@@ -47,6 +49,8 @@ async function startHook(segs: string[]) {
   mockSegments = segs;
   const onOpenDock = jest.fn();
   const hook = renderHook(() => useMarcoWakeWord(onOpenDock));
+  // Phase 8M · arm-on-click — the listener no longer auto-starts.
+  await act(async () => { await hook.result.current.arm(); });
   await waitFor(() => expect(mockOnWake).not.toBeNull());
   return { onOpenDock, hook };
 }
