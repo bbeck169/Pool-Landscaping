@@ -23,7 +23,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Platform,
+  View, Text, StyleSheet, ScrollView, Pressable, Platform, Linking,
   ActivityIndicator, Alert, Modal, FlatList } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
@@ -73,8 +73,8 @@ import NavigateMapsButton from "@/src/components/schedule/NavigateMapsButton";
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import OnMyWayButton from "@/src/components/schedule/OnMyWayButton";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
-import NavigateJobButton from "@/src/components/schedule/NavigateJobButton";
 import NavigateRouteButton from "@/src/components/schedule/NavigateRouteButton";
+import { openNativeNavTo, resolveJobCoords } from "@/src/utils/nativeNav";
 import CrewFilterBar from "@/src/components/schedule/CrewFilterBar";
 // K36 · Schedule map is now lazy-mounted — react-native-maps only
 // registers its native module when the tech toggles to the Map sub-view,
@@ -1573,10 +1573,25 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             (e.g. "MR") before the customer name was removed —
             the schedule day view is already tech-scoped in the
             header, so the per-card avatar was redundant clutter. */}
-        {/* ITEM 3 — Customer name + NavigateJobButton + VIP pill on same row */}
+        {/* ITEM 3 — Customer name + VIP pill; tapping name opens native map */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+<<<<<<< Updated upstream
           <Text style={[gStyles.cust, { flexShrink: 1 }, fg]} numberOfLines={1}>{formatCustomerName(job)}</Text>
           <NavigateJobButton job={job} />
+=======
+          <Pressable
+            onPress={() => {
+              const c = resolveJobCoords(job);
+              if (c) openNativeNavTo(c.lat, c.lng, formatCustomerName(job));
+              else if (job.address) Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`);
+            }}
+            hitSlop={8}
+            accessibilityLabel={`Open directions to ${formatCustomerName(job)}`}
+            testID={`job-card-name-nav-${job.id}`}
+          >
+            <Text style={[gStyles.cust, { flexShrink: 1 }]} numberOfLines={1}>{formatCustomerName(job)}</Text>
+          </Pressable>
+>>>>>>> Stashed changes
           {job.customer_is_vip ? (
             <View style={gStyles.vipBadgeInline} testID={`job-vip-badge-${job.id}`}>
               <Ionicons name="star" size={9} color="#92400E" />
@@ -1597,6 +1612,21 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             </View>
           ) : null}
         </View>
+        {/* Address — directly below customer name, tapping opens native map */}
+        {job.address ? (
+          <Pressable
+            onPress={() => {
+              const c = resolveJobCoords(job);
+              if (c) openNativeNavTo(c.lat, c.lng, formatCustomerName(job));
+              else Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`);
+            }}
+            hitSlop={6}
+            accessibilityLabel={`Open directions to ${job.address}`}
+            testID={`job-card-addr-nav-${job.id}`}
+          >
+            <Text style={gStyles.addr} numberOfLines={1} ellipsizeMode="tail" testID={`job-card-addr-${job.id}`}>{job.address}</Text>
+          </Pressable>
+        ) : null}
         {job.property_label ? (
           <View
             style={{
@@ -1660,9 +1690,12 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           landscapeNote={job.service_notes_landscape}
           truncated={job.notes_truncated}
         />
+<<<<<<< Updated upstream
         {job.address ? (
           <AddressLink address={job.address} showIcon={false} style={onRed ? { ...gStyles.addr, color: K50_ON_BOLD_RED_FG } : gStyles.addr} testID={`job-card-addr-${job.id}`} />
         ) : null}
+=======
+>>>>>>> Stashed changes
         {/* Phase 1 Offline Read — "Cached ✓" pill */}
         {cachedForOffline ? (
           <View style={gStyles.cachedPill} testID={`job-cached-pill-${job.id}`}>
@@ -2172,7 +2205,7 @@ const gStyles = StyleSheet.create({
     fontFamily: font.bold, fontSize: 10, letterSpacing: 0.5,
   },
   cust: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
-  addr: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, marginTop: 1 },
+  addr: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginTop: 1 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   metaText: { fontFamily: font.medium, fontSize: fontSize.xs, color: colors.muted },
   statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill },

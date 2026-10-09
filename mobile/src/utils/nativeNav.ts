@@ -81,6 +81,33 @@ export function _buildUniversalNavUrl(
  *          universal HTTPS fallback was used, `false` when the
  *          inputs were invalid (nothing opened).
  */
+
+/**
+ * Resolve a job object's destination coordinates for native navigation.
+ *
+ * Coord priority (finite, non-(0,0)):
+ *   1. ``job.latitude`` / ``job.longitude`` (canonical)
+ *   2. ``job.location_lat`` / ``job.location_lng`` (legacy)
+ *
+ * Returns ``null`` when no usable coordinates are available.
+ */
+export function resolveJobCoords(
+  job: any,
+): { lat: number; lng: number } | null {
+  const pairs: [unknown, unknown][] = [
+    [job?.latitude, job?.longitude],
+    [job?.location_lat, job?.location_lng],
+  ];
+  for (const [rawLat, rawLng] of pairs) {
+    const lat = Number(rawLat);
+    const lng = Number(rawLng);
+    if (_isFinite(lat) && _isFinite(lng) && !(lat === 0 && lng === 0)) {
+      return { lat, lng };
+    }
+  }
+  return null;
+}
+
 export async function openNativeNavTo(
   lat: number,
   lng: number,
