@@ -14,6 +14,7 @@ import BrandLogo from "@/src/components/BrandLogo";
 import { useBreadcrumbs } from "@/src/hooks/useBreadcrumbs";
 import { openGlobalMenu } from "@/src/components/tools/GlobalMenu";
 import { MicToggleButton } from "@/src/components/marco/MicToggleButton";
+import { DARK_BG, DARK_BORDER, DARK_TEXT, DARK_TEXT_MUTED } from "@/src/lib/customerDarkTokens";
 
 export function OfflineBanner({ testID }: { testID?: string }) {
   return (
@@ -52,7 +53,10 @@ export function NotificationBell() {
   );
 }
 
-function SettingsSprocket() {
+// Phase 25b · B3 — opt-in dark chrome (customer profile only). Default false.
+const darkBtn = { backgroundColor: DARK_BG, borderColor: DARK_BORDER } as const;
+
+function SettingsSprocket({ dark = false }: { dark?: boolean }) {
   const { user } = useAuth();
   const router = useRouter();
   const role = String((user as any)?.role || "");
@@ -60,18 +64,18 @@ function SettingsSprocket() {
   return (
     <Pressable
       onPress={() => router.push("/settings")}
-      style={styles.sprocketBtn}
+      style={[styles.sprocketBtn, dark && darkBtn]}
       hitSlop={8}
       testID="header-settings-sprocket"
       accessibilityLabel="Settings"
       accessibilityRole="button"
     >
-      <Ionicons name="settings-outline" size={20} color={colors.onSurface} />
+      <Ionicons name="settings-outline" size={20} color={dark ? DARK_TEXT : colors.onSurface} />
     </Pressable>
   );
 }
 
-function HamburgerButton() {
+function HamburgerButton({ dark = false }: { dark?: boolean }) {
   const { user } = useAuth();
   const role = String((user as any)?.role || "");
   const allowed = role === "admin" || role === "super_admin" || role === "technician";
@@ -79,13 +83,13 @@ function HamburgerButton() {
   return (
     <Pressable
       onPress={openGlobalMenu}
-      style={styles.hamburgerBtn}
+      style={[styles.hamburgerBtn, dark && darkBtn]}
       hitSlop={10}
       testID="mobile-menu-trigger"
       accessibilityLabel="Open menu"
       accessibilityRole="button"
     >
-      <Ionicons name="menu-outline" size={24} color={colors.onSurface} />
+      <Ionicons name="menu-outline" size={24} color={dark ? DARK_TEXT : colors.onSurface} />
     </Pressable>
   );
 }
@@ -97,6 +101,7 @@ export function Header({
   back,
   left,
   breadcrumbLabel,
+  dark = false,
 }: {
   title: string;
   subtitle?: string;
@@ -104,26 +109,31 @@ export function Header({
   back?: boolean;
   left?: React.ReactNode;
   breadcrumbLabel?: string;
+  /** Phase 25b · B3 — opt-in dark navy chrome. Other callers unaffected. */
+  dark?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const crumbs = useBreadcrumbs(breadcrumbLabel || title);
   return (
-    <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
+    <View
+      style={[styles.header, { paddingTop: insets.top + spacing.sm }, dark && { backgroundColor: DARK_BG, borderBottomColor: DARK_BORDER }]}
+      testID={dark ? "header-dark" : undefined}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerLeftCluster}>
           {back ? (
             <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} testID="header-back">
-              <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+              <Ionicons name="chevron-back" size={24} color={dark ? DARK_TEXT : colors.onSurface} />
             </Pressable>
           ) : null}
           {left ? left : !back ? <BrandLogo size="sm" variant="icon" /> : null}
           <View style={{ flex: 1, minWidth: 0, flexShrink: 1, marginLeft: !back && !left ? spacing.sm : 0 }}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Text style={[styles.headerTitle, dark && { color: DARK_TEXT }]} numberOfLines={1}>
               {title}
             </Text>
             {subtitle ? (
-              <Text style={styles.headerSub} numberOfLines={1} ellipsizeMode="tail">
+              <Text style={[styles.headerSub, dark && { color: DARK_TEXT_MUTED }]} numberOfLines={1} ellipsizeMode="tail">
                 {subtitle}
               </Text>
             ) : null}
@@ -131,9 +141,9 @@ export function Header({
         </View>
         <View style={styles.headerRightCluster}>
           <MicToggleButton />
-          <SettingsSprocket />
+          <SettingsSprocket dark={dark} />
           {right}
-          <HamburgerButton />
+          <HamburgerButton dark={dark} />
         </View>
       </View>
       {crumbs.length > 0 && <Breadcrumbs items={crumbs} />}

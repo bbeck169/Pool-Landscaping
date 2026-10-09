@@ -211,15 +211,15 @@ export default function CustomerDetail() {
     const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
     const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline";
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background }} testID="customer-detail-error">
-        <Header title="Customer" back />
+      <View style={{ flex: 1, backgroundColor: DARK_BG }} testID="customer-detail-error">
+        <Header title="Customer" back dark />
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
-          <Ionicons name={icon as any} size={48} color={colors.muted} />
-          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: spacing.md, textAlign: "center" }} testID="customer-detail-error-title">
+          <Ionicons name={icon as any} size={48} color={DARK_TEXT_MUTED} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: DARK_TEXT, marginTop: spacing.md, textAlign: "center" }} testID="customer-detail-error-title">
             {mapped?.title || loadError}
           </Text>
           {mapped && mapped.message !== mapped.title && (
-            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.sm, textAlign: "center" }} testID="customer-detail-error-message">
+            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: DARK_TEXT_MUTED, marginTop: spacing.sm, textAlign: "center" }} testID="customer-detail-error-message">
               {mapped.message}
             </Text>
           )}
@@ -228,7 +228,7 @@ export default function CustomerDetail() {
             onPress={load}
             testID="customer-detail-retry-btn"
           >
-            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" }}>Retry</Text>
+            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: DARK_TEXT }}>Retry</Text>
           </Pressable>
         </View>
       </View>
@@ -400,6 +400,7 @@ export default function CustomerDetail() {
       <Header
         title={c.name}
         back
+        dark
         right={
           <Pressable onPress={() => router.push(`/customer/new?id=${id}`)} testID="edit-customer-button" hitSlop={8}>
             <Ionicons name="create-outline" size={24} color={colors.brand} />
@@ -892,15 +893,15 @@ export default function CustomerDetail() {
                 marginBottom: spacing.sm,
                 padding: spacing.md,
                 borderRadius: radius.md,
-                backgroundColor: colors.surface,
+                backgroundColor: DARK_BG,
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: DARK_BORDER,
               }}
               testID={`mobile-property-${p.id}`}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                 <Ionicons name="home-outline" size={16} color={colors.brand} />
-                <Text style={{ fontFamily: font.bold, color: colors.onSurface, fontSize: fontSize.md }}>
+                <Text style={{ fontFamily: font.bold, color: DARK_TEXT, fontSize: fontSize.md }}>
                   {p.label}
                 </Text>
                 {p.sort_order === 0 ? (
@@ -916,17 +917,17 @@ export default function CustomerDetail() {
                   </View>
                 ) : null}
               </View>
-              <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.sm }}>
+              <Text style={{ marginTop: 4, color: DARK_TEXT_MUTED, fontSize: fontSize.sm }}>
                 {[p.address?.line1, p.address?.city, p.address?.state, p.address?.postal_code]
                   .filter(Boolean).join(", ")}
               </Text>
               {(p.service_types || []).length ? (
-                <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
+                <Text style={{ marginTop: 4, color: DARK_TEXT_MUTED, fontSize: fontSize.xs }}>
                   {(p.service_types || []).join(" · ")}
                 </Text>
               ) : null}
               {p.pool_size_gallons ? (
-                <Text style={{ marginTop: 2, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
+                <Text style={{ marginTop: 2, color: DARK_TEXT_MUTED, fontSize: fontSize.xs }}>
                   Pool: {p.pool_size_gallons.toLocaleString()} gal
                 </Text>
               ) : null}
