@@ -9,9 +9,8 @@
  * were removed in Phase 9b. The server still returns an
  * ``invited`` cohort block (and the paired ``never_logged_in``
  * block that fed the Chase disabled-state) — the tile just no
- * longer consumes them. The ``ChaseStalledInvitesModal`` component
- * file still ships on disk but is no longer imported from here;
- * a follow-up phase will decide its fate.
+ * longer consumes them. The former ``ChaseStalledInvitesModal``
+ * component was deleted in Phase 15 (dead-code cleanup).
  *
  * Phase 9b · Clickable-toggle semantics
  *   * Each card is a toggle. Clicking an INACTIVE card activates
