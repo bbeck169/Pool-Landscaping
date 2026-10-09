@@ -51,7 +51,7 @@ jest.mock("@/src/components/widgets", () => {
 });
 jest.mock("@/src/components/ui/AppTextInput", () => {
   const { TextInput } = require("react-native");
-  return (p: any) => <TextInput {...p} />;
+  return function MockAppTextInput(p: any) { return <TextInput {...p} />; };
 });
 jest.mock("@/src/components/customer", () => ({ PhoneLink: () => null, AddressLink: () => null }));
 jest.mock("@/src/utils/formatCustomerName", () => ({ formatCustomerName: (r: any) => r?.name || "Customer" }));
