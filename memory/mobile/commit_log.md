@@ -91,3 +91,16 @@
 - **Dependencies installed**: None
 - **Known issues**: None — 28 new tests + 25 Phase 1/2 regression tests all green, lint clean
 - **Toggle fix**: N/A for mobile — detail screen has no editable line-items toggle (view-only)
+
+## Iteration 112 — Phase 8M: Hey Marco wake-word arm-on-click (mobile parity)
+- **Commit**: 52fc01fe0240d54d8c4e3906b9b354ec283383cc
+- **Date**: 2026-10-09
+- **Changes**:
+  - `useMarcoWakeWord` rewritten: no auto-start; returns `{supported, permitted, listening, isArmed, arm, disarm, toggle}`; `onPhraseDetected` opt; unmount releases mic
+  - `wakeWordService`: added `isWakeWordSupported()`; `startWakeWord(cb, {requirePrefs})` (default true = legacy behavior)
+  - NEW `MarcoMicController.tsx` (MarcoMicProvider: role gate admin/super_admin/manager/owner, 10-min idle auto-disarm, AppState background/inactive disarm, silent disarm on role loss, toasts) + `MicToggleButton.tsx` (pulse ring when armed) + `marcoMicContext.ts`
+  - Mounted provider in `app/_layout.tsx` (inside ToastProvider); button in shared `Header` right cluster (widgets.tsx)
+  - No audio feedback anywhere in arm/disarm/detect
+- **Files modified**: mobile/src/hooks/useMarcoWakeWord.ts, mobile/src/services/marco/wakeWordService.ts, mobile/src/components/marco/{MarcoMicController,MicToggleButton}.tsx, mobile/src/components/marco/marcoMicContext.ts, mobile/app/_layout.tsx, mobile/src/components/widgets.tsx, mobile/__tests__/marco-wake-word-arm.test.tsx (NEW, 15 tests), mobile/__tests__/marco-mobile-chat.test.tsx
+- **Web files referenced**: frontend/src/components/marco/MarcoMicController.jsx, frontend/src/hooks/useWebWakeWord.js
+- **Dependencies installed**: None

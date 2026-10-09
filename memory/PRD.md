@@ -79,3 +79,8 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - **Env note:** the preview DB had no system definitions. They were loaded with the documented Phase 1 seed command
   `python3 backend/templates_seed/seed_templates.py --commit` (data only, no code changed).
 - **Tests:** `mobile/__tests__/templates-{offline-drafts,fields,draft-hook,api}.test.*` (45 tests).
+
+## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
+- Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.
+- Auto-disarm: 10 min idle (reset on each detection), app background/inactive, role loss. Toasts on transitions; zero audible feedback.
+- Role gate: admin/super_admin/manager/owner + expo-speech-recognition availability. No new native deps.
