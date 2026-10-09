@@ -24,6 +24,17 @@ import { PersonaAvatar } from "@/src/components/personas/PersonaAvatar";
 // Phase K24 — payment-method prompt modal on portal home.
 import PaymentMethodPromptModal from "@/src/components/portal/PaymentMethodPromptModal";
 
+// Phase 25 · web parity 3a738ff11 (Phase 24) — dynamic stat-tile bgs.
+// Past Due > 0 → dark red, Credit > 0 → dark green; label + value flip
+// to white for contrast. Zero / null keeps the default tile chassis.
+const PAST_DUE_BG = "#7F1D1D";
+const CREDIT_BG = "#064E3B";
+// Phase 25 · web parity e2a0d8a2e (Phase 23) — section accents on the
+// shared stat-tile chassis: Concierge = brand blue, Referral = success
+// green, Business card = navy variant (web PORTAL_HERO_ACCENT).
+const NAVY_ACCENT_BG = "#1E3A8A";
+const NAVY_ACCENT_FG = "#DBEAFE";
+
 const TOUR_KEY = "portal_tour_v2_done";
 const TOUR_STEPS: TourStep[] = [
   { targetTestID: "portal-cta-call", title: "Call Us Anytime", body: "Tap here to instantly dial our office.", icon: "call" },
@@ -225,22 +236,22 @@ export default function PortalHome() {
 
           {/* 2b. Stat Circles Row — Balance Due, Past Due, Credit */}
           <View style={s.statsRow} testID="portal-stat-circles">
-            <View style={s.statCircle}>
+            <View style={s.statCircle} testID="portal-stat-balance-tile">
               <Text style={s.statValue} testID="portal-stat-balance">{money(data.outstanding || 0)}</Text>
               <Text style={s.statLabel}>Balance Due</Text>
             </View>
-            <View style={[s.statCircle, (data.past_due || 0) > 0 && s.statCircleWarn]}>
-              <Text style={[s.statValue, (data.past_due || 0) > 0 && { color: colors.error }]} testID="portal-stat-past-due">
-                {money(data.past_due || 0)}
-              </Text>
-              <Text style={s.statLabel}>Past Due</Text>
-            </View>
-            <View style={[s.statCircle, creditBalance > 0 && s.statCircleCredit]}>
-              <Text style={[s.statValue, creditBalance > 0 && { color: "#166534" }]} testID="portal-stat-credit">
-                {money(creditBalance)}
-              </Text>
-              <Text style={s.statLabel}>Credit</Text>
-            </View>
+            <StatTile
+              label="Past Due"
+              value={money(data.past_due || 0)}
+              bgColor={(data.past_due || 0) > 0 ? PAST_DUE_BG : undefined}
+              testID="portal-stat-past-due"
+            />
+            <StatTile
+              label="Credit"
+              value={money(creditBalance)}
+              bgColor={creditBalance > 0 ? CREDIT_BG : undefined}
+              testID="portal-stat-credit"
+            />
           </View>
 
           {/* Phase 30.2 · Feb-2026 — the previous compact "Next
@@ -321,15 +332,12 @@ export default function PortalHome() {
             {QA_SECTIONS.map((sec) => {
               const badge = badgeFor(sec.key);
               return (
-                <Pressable key={sec.key} style={s.card} onPress={() => router.push(sec.route as any)} testID={`portal-card-${sec.key}`}>
-                  {badge > 0 ? (
-                    <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
-                  ) : null}
-                  <View style={s.cardIcon}>
-                    <Ionicons name={sec.icon} size={22} color={colors.brand} />
-                  </View>
-                  <Text style={s.cardLabel}>{sec.label}</Text>
-                </Pressable>
+                <QuickActionTile
+                  key={sec.key}
+                  sec={sec}
+                  badge={badge}
+                  onPress={() => router.push(sec.route as any)}
+                />
               );
             })}
           </View>
@@ -357,17 +365,12 @@ export default function PortalHome() {
             </Pressable>
           ) : null}
 
-          {/* 6. Ask a Concierge — teal→emerald gradient */}
+          {/* 6. Ask a Concierge — Phase 25 (web Phase 23): stat-tile
+              chassis + BLUE (brand) accent. Replaces teal→emerald gradient. */}
           {Array.isArray(aiEmployees) && aiEmployees.length > 0 ? (
-            <LinearGradient
-              colors={["#0891B2", "#0EA5E9", "#10B981"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={s.conciergeWrap}
-              testID="portal-ai-section"
-            >
+            <View style={s.conciergeWrap} testID="portal-ai-section">
               <View style={s.conciergeHeader}>
-                <Ionicons name="sparkles" size={20} color="#fff" />
+                <Ionicons name="sparkles" size={20} color={colors.brand} testID="portal-ai-section-accent" />
                 <Text style={s.conciergeTitle}>ASK A CONCIERGE</Text>
               </View>
               <Text style={s.conciergeSubtitle}>
@@ -401,21 +404,16 @@ export default function PortalHome() {
                       {emp.role || emp.description || emp.tagline || ""}
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
                 </Pressable>
               ))}
-            </LinearGradient>
+            </View>
           ) : null}
 
-          {/* 7. Refer a Friend — purple→magenta gradient */}
-          <LinearGradient
-            colors={["#7C3AED", "#A855F7", "#EC4899"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={s.referralWrap}
-            testID="portal-referral-section"
-          >
-            <Ionicons name="gift" size={28} color="#fff" />
+          {/* 7. Refer a Friend — Phase 25 (web Phase 23): stat-tile
+              chassis + GREEN (success) accent. Replaces purple→magenta. */}
+          <View style={s.referralWrap} testID="portal-referral-section">
+            <Ionicons name="gift" size={28} color={colors.success} testID="portal-referral-section-accent" />
             <Text style={s.referralTitle}>Refer a Friend — earn $55 credit</Text>
             <Text style={s.referralBody}>
               You&apos;ll get $55 in credit after their first paid month.
@@ -427,7 +425,7 @@ export default function PortalHome() {
             >
               <Text style={s.referralBtnText}>Send Referral</Text>
             </Pressable>
-          </LinearGradient>
+          </View>
 
           {/* 8. Business Card */}
           <Pressable
@@ -435,8 +433,8 @@ export default function PortalHome() {
             onPress={() => router.push("/card" as any)}
             testID="portal-card-business"
           >
-            <View style={s.bizCardIcon}>
-              <Ionicons name="id-card-outline" size={22} color={colors.brand} />
+            <View style={s.bizCardIcon} testID="portal-card-business-accent">
+              <Ionicons name="id-card-outline" size={22} color={NAVY_ACCENT_FG} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={s.bizCardLabel}>Business Card</Text>
@@ -459,6 +457,47 @@ export default function PortalHome() {
       {/* K24 — payment method prompt (once per session) */}
       <PaymentMethodPromptModal />
     </View>
+  );
+}
+
+// Phase 25 · Past Due / Credit tile with Phase-24 dynamic bg.
+function StatTile({ label, value, bgColor, testID }: {
+  label: string; value: string; bgColor?: string; testID: string;
+}) {
+  const dyn = Boolean(bgColor);
+  return (
+    <View
+      style={[s.statCircle, dyn && { backgroundColor: bgColor, borderColor: bgColor }]}
+      testID={`${testID}-tile`}
+    >
+      <Text style={[s.statValue, dyn && s.statTextOnDynamic]} testID={testID}>{value}</Text>
+      <Text style={[s.statLabel, dyn && s.statTextOnDynamic]} testID={`${testID}-label`}>{label}</Text>
+    </View>
+  );
+}
+
+// Phase 25 · Quick Action tile — press glow tracked via onPressIn /
+// onPressOut (mobile analogue of web's hover:shadow halo).
+function QuickActionTile({ sec, badge, onPress }: { sec: any; badge: number; onPress: () => void }) {
+  const [pressed, setPressed] = useState(false);
+  return (
+    <Pressable
+      style={[s.card, pressed && s.cardPressed]}
+      onPress={onPress}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      testID={`portal-card-${sec.key}`}
+      accessibilityRole="button"
+      accessibilityLabel={sec.label}
+    >
+      {badge > 0 ? (
+        <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
+      ) : null}
+      <View style={s.cardIcon}>
+        <Ionicons name={sec.icon} size={22} color={colors.brand} />
+      </View>
+      <Text style={s.cardLabel}>{sec.label}</Text>
+    </Pressable>
   );
 }
 
@@ -523,8 +562,8 @@ const s = StyleSheet.create({
     backgroundColor: colors.surface, borderRadius: radius.lg,
     paddingVertical: 14, borderWidth: 1, borderColor: colors.border,
   },
-  statCircleWarn: { borderColor: colors.error, backgroundColor: "#FEF2F2" },
-  statCircleCredit: { borderColor: "#22C55E", backgroundColor: "#F0FDF4" },
+  // Phase 25 — text on a dynamic (red / green) tile bg.
+  statTextOnDynamic: { color: "#FFFFFF" },
   statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
   statLabel: { fontFamily: font.medium, fontSize: 11, color: colors.muted, marginTop: 2 },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
@@ -556,6 +595,15 @@ const s = StyleSheet.create({
   cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   cardBadge: { position: "absolute", top: spacing.md, right: spacing.md, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
   cardBadgeText: { color: "#fff", fontFamily: font.bold, fontSize: fontSize.sm },
+  // Phase 25 · web Phase 24 hover glow → mobile press glow (onPressIn).
+  // Soft white halo + brightness-95 analogue so the press reads on the
+  // light chassis too. Android draws the halo via elevation (API 28+
+  // honours shadowColor).
+  cardPressed: {
+    backgroundColor: colors.surfaceSecondary,
+    shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
+    shadowOffset: { width: 0, height: 0 }, elevation: 8,
+  },
 
   // Last Visit
   lastVisitCard: {
@@ -628,21 +676,21 @@ const s = StyleSheet.create({
   lastVisitDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
 
   // Ask a Concierge
+  // Phase 25 — shared stat-tile chassis (surface + border + radius.lg).
   conciergeWrap: {
-    borderRadius: 24, padding: 18, marginBottom: spacing.lg,
-    shadowColor: "#000", shadowOpacity: 0.15,
-    shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 6,
+    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1,
+    borderColor: colors.border, padding: 18, marginBottom: spacing.lg,
   },
   conciergeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
-  conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", textTransform: "uppercase", letterSpacing: 1 },
-  conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.92)", marginBottom: spacing.md, lineHeight: 20 },
+  conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, textTransform: "uppercase", letterSpacing: 1 },
+  conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.md, lineHeight: 20 },
   conciergeCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: "rgba(255,255,255,0.16)", borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.28)", borderRadius: radius.lg,
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1,
+    borderColor: colors.border, borderRadius: radius.lg,
     padding: spacing.md, marginTop: spacing.sm,
   },
-  conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   // Phase 30.1 · specialty subtitle style. White on the teal→emerald
   // gradient at 85% alpha for legibility without competing with the
   // persona name.
@@ -650,26 +698,26 @@ const s = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12,
     lineHeight: 16,
-    color: "rgba(255,255,255,0.85)",
+    color: colors.muted,
     marginTop: 2,
   },
   conciergeEmoji: { fontSize: 22 },
-  conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
-  conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: "rgba(255,255,255,0.85)", marginTop: 2, lineHeight: 16 },
+  conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2, lineHeight: 16 },
 
   // Refer a Friend
   referralWrap: {
-    borderRadius: 24, padding: 20, marginBottom: spacing.lg,
-    shadowColor: "#000", shadowOpacity: 0.15,
-    shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 6,
+    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1,
+    borderColor: colors.border, padding: 20, marginBottom: spacing.lg,
     alignItems: "center",
   },
-  referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: "#fff", marginTop: spacing.sm, textAlign: "center" },
-  referralBody: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.92)", marginTop: spacing.xs, textAlign: "center", lineHeight: 20 },
+  referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginTop: spacing.sm, textAlign: "center" },
+  referralBody: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginTop: spacing.xs, textAlign: "center", lineHeight: 20 },
   referralBtn: {
-    backgroundColor: "#fff", borderRadius: radius.pill, paddingHorizontal: 28, paddingVertical: 12, marginTop: spacing.md,
+    backgroundColor: colors.success, borderRadius: radius.pill, paddingHorizontal: 28, paddingVertical: 12, marginTop: spacing.md,
+    minHeight: 44, justifyContent: "center",
   },
-  referralBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#7C3AED" },
+  referralBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#FFFFFF" },
 
   // Business Card
   bizCard: {
@@ -677,7 +725,7 @@ const s = StyleSheet.create({
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
     borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md,
   },
-  bizCardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  bizCardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: NAVY_ACCENT_BG, alignItems: "center", justifyContent: "center" },
   bizCardLabel: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   bizCardSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
 });
