@@ -29,7 +29,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Percent, PiggyBank, Package, Wrench, DollarSign, Loader2, History,
-  Save, FileDown, Printer, Sparkles, X, ChevronRight,
+  Save, FileDown, Printer, Sparkles, X, ChevronRight, ChevronDown,
+  Users,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -75,7 +76,14 @@ function toEffective(live, adjustments, overrides) {
     const ovr = overrides?.[k];
     out[k] = (ovr === null || ovr === undefined) ? base + adj : Number(ovr);
   }
-  out.ebit = out.revenue - out.cogs - out.opex - out.depreciation;
+  // Phase 13 · Feb-2026 — carry labor_cost_total through so the
+  // dedicated LABOR row + the bottom-line arithmetic can read it
+  // without hitting ``live`` directly. Defaults to 0 when the
+  // backend response pre-dates Phase 11 (existing panel tests mock
+  // live payloads without the labor_cost_total field).
+  out.labor_cost_total = Number(live?.labor_cost_total || 0);
+  out.ebit = out.revenue - out.cogs - out.opex - out.depreciation
+              - out.labor_cost_total;
   return out;
 }
 function blankAdjustments() {
@@ -268,6 +276,114 @@ function EbitVersionsModal({ open, onClose, snapshots, onLoad }) {
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 13 · Feb-2026 — LABOR row + expand/breakdown toggle.
+//
+// Reads the Phase 10 (``labor_cost``) + Phase 11
+// (``recurring_labor_cost``) slices from the compute response plus
+// the nested ``breakdown.labor_cost_breakdown`` /
+// ``breakdown.recurring_labor_breakdown`` detail. Display-only; the
+// values are NOT editable from the panel (the data layer stays the
+// source of truth per the Phase 10/11 contracts).
+// ═══════════════════════════════════════════════════════════════════
+function EbitLaborRow({ live }) {
+  const [open, setOpen] = useState(false);
+  const total = Number(live?.labor_cost_total || 0);
+  const hourly = Number(live?.labor_cost || 0);
+  const recurring = Number(live?.recurring_labor_cost || 0);
+  const byEntry = (live?.breakdown?.recurring_labor_breakdown?.by_entry
+                    || []);
+  return (
+    <div
+      className="rounded-xl p-3"
+      style={{ background: colors.surface,
+                border: `1px solid ${colors.border}` }}
+      data-testid="ebit-row-labor"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2"
+        aria-expanded={open}
+        data-testid="ebit-row-labor-toggle"
+      >
+        <div className="flex items-center gap-2">
+          <Users size={16} color="#DB2777" />
+          <span className="text-xs uppercase font-bold tracking-wide"
+                 style={{ color: colors.muted }}>
+            Labor
+          </span>
+          {open
+            ? <ChevronDown size={14} style={{ color: colors.muted }} />
+            : <ChevronRight size={14} style={{ color: colors.muted }} />}
+        </div>
+        <div className="text-xl font-black tabular-nums"
+              style={{ color: colors.onSurface }}
+              data-testid="ebit-row-labor-total">
+          {money(total)}
+        </div>
+      </button>
+      {open ? (
+        <div className="mt-3 pt-3 space-y-2"
+              style={{ borderTop: `1px dashed ${colors.border}` }}
+              data-testid="ebit-row-labor-breakdown">
+          <div
+            className="flex items-center justify-between text-sm"
+            data-testid="ebit-row-labor-hourly"
+          >
+            <span style={{ color: colors.muted }}>
+              Hourly + per-pool
+            </span>
+            <span className="font-semibold tabular-nums"
+                   style={{ color: colors.onSurface }}
+                   data-testid="ebit-row-labor-hourly-value">
+              {money(hourly)}
+            </span>
+          </div>
+          <div
+            className="flex items-center justify-between text-sm"
+            data-testid="ebit-row-labor-recurring"
+          >
+            <span style={{ color: colors.muted }}>
+              Recurring
+            </span>
+            <span className="font-semibold tabular-nums"
+                   style={{ color: colors.onSurface }}
+                   data-testid="ebit-row-labor-recurring-value">
+              {money(recurring)}
+            </span>
+          </div>
+          {byEntry.length > 0 ? (
+            <ul className="pt-2 space-y-1"
+                 style={{ borderTop: `1px dashed ${colors.border}` }}
+                 data-testid="ebit-row-labor-by-entry">
+              {byEntry.map((entry, idx) => (
+                <li
+                  key={entry.id || entry.label || idx}
+                  className="flex items-center justify-between text-xs"
+                  data-testid={`ebit-row-labor-entry-${idx}`}
+                >
+                  <span style={{ color: colors.muted }}>
+                    {entry.label || "(unnamed)"}
+                  </span>
+                  <span className="tabular-nums"
+                         style={{ color: colors.onSurface }}>
+                    {money(Number(entry.cost_in_window
+                                    || entry.cost
+                                    || entry.monthly_amount
+                                    || 0))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
 // ═══════════════════════════════════════════════════════════════════
 // Top-level EBIT panel.
@@ -624,6 +740,8 @@ export default function EbitPanel() {
               />
             ))}
           </div>
+
+          <EbitLaborRow live={live} />
 
           <div className="flex items-center justify-between rounded-xl p-4"
                 style={{ background: "#0F172A", color: "#FFFFFF" }}
