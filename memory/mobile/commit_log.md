@@ -104,3 +104,16 @@
 - **Files modified**: mobile/src/hooks/useMarcoWakeWord.ts, mobile/src/services/marco/wakeWordService.ts, mobile/src/components/marco/{MarcoMicController,MicToggleButton}.tsx, mobile/src/components/marco/marcoMicContext.ts, mobile/app/_layout.tsx, mobile/src/components/widgets.tsx, mobile/__tests__/marco-wake-word-arm.test.tsx (NEW, 15 tests), mobile/__tests__/marco-mobile-chat.test.tsx
 - **Web files referenced**: frontend/src/components/marco/MarcoMicController.jsx, frontend/src/hooks/useWebWakeWord.js
 - **Dependencies installed**: None
+
+## Iteration 113 — Phase 9-M: Crews audit + Customers tiles + list/profile perf
+- **Commit**: 10e050e480814a0db6f18fee87f618a7d7423969
+- **Date**: 2026-10-09
+- **Changes**:
+  - Crews: mobile `app/crews.tsx` is a ComingSoonPage re-export; no crew writes anywhere in mobile → stale-closure fix is a NO-OP (source-grep regression lock added)
+  - PortalOnboardingHealthTile → 3 cards (Activated / Signed in / Cards on file), Invited + Chase + Never-logged-in cards removed; toggle via `activeKey`/`onToggle`; helpers `tileKeyFromParams` / `tileParamsFor`
+  - Customers list: tile state in route params (`router.setParams`, `useLocalSearchParams`) → portal_activated=1 / first_access=any / has_payment_method=true(+is_active=true); `portalInvitedFilter` removed; `slim=1`; page_size 100 → 50 (existing onEndReached infinite scroll)
+  - Customer profile: `?slim=1` + parallel `/customers/{id}/summary`; Job History → `CustomerJobsSection` (collapsible, summary badge, lazy `/jobs?customer_id=&limit=50&offset=0&sort=scheduled_date_desc`, Load more, 5-min TTL via new `useCustomerTabCache`)
+- **Files modified**: see `git log -1 --name-only 10e050e48` (11 files)
+- **Web files referenced**: frontend/src/pages/ops/OpsHub.jsx, frontend/src/components/customers/PortalOnboardingHealthTile.jsx, frontend/src/pages/customers/CustomersList.jsx, frontend/src/pages/customers/CustomerDetail.jsx, frontend/src/hooks/useCustomerTabCache.js
+- **Dependencies installed**: None
+- **Tests**: full suite 43 failed suites / 51 failed tests = identical to baseline (set-diff empty)
