@@ -2,8 +2,9 @@
  * Revenue date-range filter · Feb-2026.
  *
  * Presets: Today · Tomorrow · This Week · Next Week · This Month ·
- * Custom Range.  Persists the last selection in localStorage so both
- * revenue tiles remember the range across page loads.
+ * Last Month · Custom Range.  Persists the last selection in
+ * localStorage so both revenue tiles remember the range across
+ * page loads.
  *
  * Phase P15 · Feb-2026 — the Today + Tomorrow presets now compute
  * their date in the tenant's local timezone (via
@@ -36,6 +37,7 @@ const PRESETS = [
   { key: "this_week",   label: "This Week" },
   { key: "next_week",   label: "Next Week" },
   { key: "this_month",  label: "This Month" },
+  { key: "last_month",  label: "Last Month" },
   { key: "custom",      label: "Custom Range" },
 ];
 
@@ -106,6 +108,22 @@ export function rangeFromPreset(preset, custom, opts) {
     case "custom": {
       return { start: custom?.start || _isoDate(now),
                 end: custom?.end || _isoDate(now) };
+    }
+    case "last_month": {
+      // Feb-2026 · "Last Month" = the previous calendar month in
+      // browser-local time, symmetric with "This Month" above.
+      // ``new Date(y, -1, 1)`` → Dec 1 of the previous year, so the
+      // year-rollover case (now = January) is handled by JavaScript
+      // Date's month-overflow normalization — no explicit branch
+      // required.  ``new Date(y, m, 0)`` picks "day 0 of month m",
+      // which Date normalizes to the LAST day of month ``m-1``, so
+      // passing ``now.getMonth()`` yields the final day of the
+      // previous month.  Month-granularity + browser-local matches
+      // the existing This Month convention; the P15 tz lift for
+      // month presets stays deferred.
+      const s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const e = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: _isoDate(s), end: _isoDate(e) };
     }
     case "this_month":
     default: {
