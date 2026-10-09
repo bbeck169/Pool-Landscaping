@@ -528,6 +528,11 @@ api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)
 api_router.include_router(_feb2026_job_timers.router)
+# Phase 7A · Feb-2026 — Form Templates scaffold (drag-and-drop editor
+# data model + CRUD).  See ``routers/form_templates.py``.  Phase 7B
+# ships the editor UI, Phase 7C wires the runtime renderers.
+from routers import form_templates as _p7a_form_templates  # noqa: E402
+api_router.include_router(_p7a_form_templates.router)
 # Feb-2026 · Chemical Cost Report — /api/reports/chemical-costs.
 from routers import chemical_cost_report as _feb2026_chem_costs  # noqa: E402
 api_router.include_router(_feb2026_chem_costs.router)
