@@ -29,6 +29,8 @@ import { Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+// Phase 19 · web parity 04f1f3749 (Phase 10) — technician pay rates.
+import TechnicianPayRatesModal from "@/src/components/team/TechnicianPayRatesModal";
 
 const TECH_ROLES = ["pool_tech", "landscape_tech", "technician"];
 
@@ -71,10 +73,15 @@ export default function Team() {
   // the dept-picker sheet can open independently from the action
   // sheet without losing the row context on the parent tap.
   const [deptTarget, setDeptTarget] = useState<any>(null);
+  // Phase 19 — pay-rates edit target (same parent-owned-target pattern).
+  const [payTarget, setPayTarget] = useState<any>(null);
 
   const myRole = (user?.role || "").toLowerCase();
   const isSuperAdmin = myRole === "super_admin";
   const isAdmin = myRole === "admin" || isSuperAdmin;
+  // Phase 19 — pay-rate editors: admin / super_admin / owner (the
+  // backend's require_admin set for PATCH /users/{id} rate fields).
+  const isPayEditor = isAdmin || myRole === "owner";
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +119,11 @@ export default function Team() {
   };
 
   const canUndeleteRow = (row: any) => isSuperAdmin && !!row.deleted_at;
+
+  // Phase 19 · web ``canEditPay`` — non-self, non-deleted TECH rows only.
+  const canEditPayRow = (row: any) =>
+    isPayEditor && row.id !== user?.id && !row.deleted_at
+    && TECH_ROLES.includes((row.role || "").toLowerCase());
 
   // Feb-2026 · Multi-category tech assignment — admins can edit
   // dept for any non-deleted tech-role row (admin/owner/office
@@ -166,7 +178,8 @@ export default function Team() {
     const cDelete = canDeleteRow(item);
     const cUndelete = canUndeleteRow(item);
     const cEditDept = canEditDeptRow(item);
-    const anyKebab = cReset || cDelete || cUndelete || cEditDept;
+    const cEditPay = canEditPayRow(item);
+    const anyKebab = cReset || cDelete || cUndelete || cEditDept || cEditPay;
     const role = (item.role || "unknown").toLowerCase();
     const isItemAdmin = role === "admin" || role === "super_admin";
 
@@ -293,6 +306,7 @@ export default function Team() {
         canDelete={actionTarget ? canDeleteRow(actionTarget) : false}
         canUndelete={actionTarget ? canUndeleteRow(actionTarget) : false}
         canEditDept={actionTarget ? canEditDeptRow(actionTarget) : false}
+        canEditPay={actionTarget ? canEditPayRow(actionTarget) : false}
         currentDeptLabel={
           actionTarget
             ? (DEPT_LABEL[actionTarget.department || "null"] || "Unassigned")
@@ -303,6 +317,15 @@ export default function Team() {
         onDelete={(t) => { setActionTarget(null); setDeleteTarget(t); }}
         onUndelete={(t) => { setActionTarget(null); doUndelete(t); }}
         onEditDept={(t) => { setActionTarget(null); setDeptTarget(t); }}
+        onEditPay={(t) => { setActionTarget(null); setPayTarget(t); }}
+      />
+
+      {/* Phase 19 — technician pay rates */}
+      <TechnicianPayRatesModal
+        target={payTarget}
+        onClose={() => setPayTarget(null)}
+        onSaved={(msg) => { setPayTarget(null); showToast(msg, "success"); load(); }}
+        onError={(msg) => showToast(msg, "error")}
       />
 
       {/* Feb-2026 · Multi-category tech assignment — dept picker */}
@@ -335,13 +358,13 @@ export default function Team() {
 
 /* ---------- Action Sheet Modal (kebab replacement) ---------- */
 function ActionSheetModal({
-  target, canReset, canDelete, canUndelete, canEditDept, currentDeptLabel,
-  onClose, onReset, onDelete, onUndelete, onEditDept,
+  target, canReset, canDelete, canUndelete, canEditDept, canEditPay, currentDeptLabel,
+  onClose, onReset, onDelete, onUndelete, onEditDept, onEditPay,
 }: {
   target: any; canReset: boolean; canDelete: boolean; canUndelete: boolean;
-  canEditDept: boolean; currentDeptLabel: string;
+  canEditDept: boolean; canEditPay: boolean; currentDeptLabel: string;
   onClose: () => void; onReset: (t: any) => void; onDelete: (t: any) => void;
-  onUndelete: (t: any) => void; onEditDept: (t: any) => void;
+  onUndelete: (t: any) => void; onEditDept: (t: any) => void; onEditPay: (t: any) => void;
 }) {
   if (!target) return null;
   return (
@@ -361,6 +384,12 @@ function ActionSheetModal({
                 <Text style={m.sheetLabel}>Set department</Text>
                 <Text style={m.sheetSubLabel}>Current: {currentDeptLabel}</Text>
               </View>
+            </Pressable>
+          )}
+          {canEditPay && (
+            <Pressable style={m.sheetItem} onPress={() => onEditPay(target)} testID={`team-row-edit-pay-btn-${target.id}`}>
+              <Ionicons name="cash-outline" size={18} color={colors.onSurface} />
+              <Text style={m.sheetLabel}>Edit pay rates</Text>
             </Pressable>
           )}
           {canReset && (
