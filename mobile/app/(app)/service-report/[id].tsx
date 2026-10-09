@@ -23,7 +23,9 @@ import ReadingChipRow from "@/src/components/checklist/ReadingChipRow";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { useFormTemplateRuntime } from "@/src/hooks/useFormTemplateRuntime";
-import { TemplateFieldProvider, useTemplateField } from "@/src/components/form-renderer/TemplateFieldContext";
+import {
+  TemplateFieldProvider, useTemplateField, TemplateOrderedSections,
+} from "@/src/components/form-renderer/TemplateFieldContext";
 
 // Feb-2026 · Required-reading keys — covers all canonical/alias forms.
 // Mirrors the Set in PoolChecklistForm.tsx.
@@ -284,6 +286,10 @@ export default function ServiceReportScreen() {
           </Text>
         </View>
 
+        {/* Phase 19 · web parity d60c85630 (Phase 14A) — sections render in
+            the template's ``fieldsOrdered`` sequence. isEmpty → no-op
+            pass-through, hardcoded order preserved. */}
+        <TemplateOrderedSections>
         {/* Photos */}
         <SectionCard title="Photos" subtitle={`${photos.length} / ${PHOTO_CAP}`} templateFieldId="photos"
                      testID="svc-report-photos">
@@ -513,6 +519,7 @@ export default function ServiceReportScreen() {
             testID="svc-report-notes-input"
           />
         </SectionCard>
+        </TemplateOrderedSections>
       </ScrollView>
       </TemplateFieldProvider>
 
