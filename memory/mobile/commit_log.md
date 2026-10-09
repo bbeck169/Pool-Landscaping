@@ -117,3 +117,14 @@
 - **Web files referenced**: frontend/src/pages/ops/OpsHub.jsx, frontend/src/components/customers/PortalOnboardingHealthTile.jsx, frontend/src/pages/customers/CustomersList.jsx, frontend/src/pages/customers/CustomerDetail.jsx, frontend/src/hooks/useCustomerTabCache.js
 - **Dependencies installed**: None
 - **Tests**: full suite 43 failed suites / 51 failed tests = identical to baseline (set-diff empty)
+
+## Iteration 114 — Phase 19: final mobile parity batch (4 deferred follow-ups)
+- **Commits**:
+  - F1 `3471057b4bd8d614c223a1c1127f0b7b53df73a0` — technician pay-rates edit sheet (team.tsx kebab + TechnicianPayRatesModal.tsx + phase19-pay-rates test)
+  - F2 `b892afe1099a1b237d5f8b95446f74b38648a6c7` — phase35-customers-pagination repair (inputColors mock, router params, page_size 50)
+  - F3 `a61203503d846b054d715b0a40dbd57671232c6a` — TemplateOrderedSections + ServiceReport wrap + phase19-template-reorder test
+  - F4 `f89aad77cf95c0678bb64993c07b4500a8583e18` — portal readability regression lock (shell NOT needed on mobile)
+- **Date**: 2026-10-09
+- **Web files referenced**: frontend/src/components/team/TechnicianPayRatesModal.jsx, frontend/src/pages/ops/OpsHub.jsx, frontend/src/components/form-renderer/TemplateFieldContext.jsx, frontend/src/pages/tech/ServiceReport.jsx, frontend/src/components/portal/PortalPageShell.jsx
+- **Dependencies installed**: None
+- **Tests**: full suite 42 failed suites / 48 failed tests vs true baseline 43/51 — zero new failures; phase35 fixed.

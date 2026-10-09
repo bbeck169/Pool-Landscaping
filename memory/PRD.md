@@ -84,3 +84,10 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.
 - Auto-disarm: 10 min idle (reset on each detection), app background/inactive, role loss. Toasts on transitions; zero audible feedback.
 - Role gate: admin/super_admin/manager/owner + expo-speech-recognition availability. No new native deps.
+
+## 7. Phase 19 — Final mobile parity batch · shipped 2026-10-09
+- F1 Team kebab "Edit pay rates" (admin/super_admin/owner, tech rows) → PATCH /users/{id} {hourly_rate, per_pool_rate} 2dp strings. Commit 3471057b4.
+- F2 phase35 pagination test repaired (theme mock `inputColors`, page_size 50). Commit b892afe10.
+- F3 ServiceReport sections follow template `fieldsOrdered` via TemplateOrderedSections; isEmpty → hardcoded order. Commit a61203503.
+- F4 Portal page shell: not needed on mobile (portal renders on light surfaces); regression-lock test. Commit f89aad77c.
+- All deferred mobile follow-ups from Phases 9–18 are now closed.
