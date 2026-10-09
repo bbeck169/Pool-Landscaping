@@ -2,7 +2,8 @@
  * Feb-2026 · P35 — mobile Customers list infinite-scroll pagination.
  *
  * Coverage:
- *   1. Initial mount fetches page=1 with page_size=100.
+ *   1. Initial mount fetches page=1 with page_size=50
+ *      (Phase 9-M · 10e050e48 — default 100 → 50, web parity b5c09c9dc).
  *   2. FlatList onEndReached triggers the next-page fetch (page=2).
  *   3. Once we've loaded the last page (page === total_pages),
  *      onEndReached becomes a no-op (no extra fetch fires).
@@ -28,7 +29,9 @@ jest.mock("@/src/auth", () => ({
 }));
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn(), setParams: jest.fn() }),
+  // Phase 9-M — customers list reads onboarding-tile filters from route params.
+  useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: any) => {
     const { useEffect } = require("react");
     useEffect(() => { cb(); }, []);
@@ -48,6 +51,10 @@ jest.mock("@/src/theme", () => ({
   radius: { sm: 4, md: 8, lg: 12, xl: 16 },
   font: { regular: "System", medium: "System", bold: "System" },
   fontSize: { xs: 10, sm: 12, md: 14, lg: 16, xl: 20 },
+  // Phase 19 — Phase T1 sitewide input theme. AppTextInput reads
+  // ``inputColors.bg`` / ``.text`` / ``.placeholder`` at module scope;
+  // without this binding the mock crashed every case at import time.
+  inputColors: { bg: "#FFFFFF", text: "#000080", placeholder: "rgba(0,0,128,0.55)" },
 }));
 
 jest.mock("@/src/components/ui", () => {
@@ -92,7 +99,7 @@ jest.mock("@/src/components/bulk-select/BulkSelectToolkit", () => {
 
 
 // Envelope helper.
-function _envelope(page: number, total = 250, page_size = 100) {
+function _envelope(page: number, total = 250, page_size = 50) {
   const total_pages = Math.ceil(total / page_size);
   const from = (page - 1) * page_size + 1;
   const to = Math.min(page * page_size, total);
@@ -110,7 +117,7 @@ beforeEach(() => {
 
 
 describe("Mobile Customers · P35 infinite-scroll pagination", () => {
-  it("initial mount fetches page=1 & page_size=100", async () => {
+  it("initial mount fetches page=1 & page_size=50", async () => {
     mockApiGet.mockImplementation((path: string) => {
       if (path.startsWith("/customers?")) return Promise.resolve(_envelope(1));
       return Promise.resolve({});
@@ -125,7 +132,7 @@ describe("Mobile Customers · P35 infinite-scroll pagination", () => {
         calls.some((p: any) => typeof p === "string"
           && p.startsWith("/customers?")
           && p.includes("page=1")
-          && p.includes("page_size=100")),
+          && p.includes("page_size=50")),
       ).toBe(true);
     });
   });
@@ -163,7 +170,7 @@ describe("Mobile Customers · P35 infinite-scroll pagination", () => {
         calls.some((p: any) => typeof p === "string"
           && p.startsWith("/customers?")
           && p.includes("page=2")
-          && p.includes("page_size=100")),
+          && p.includes("page_size=50")),
       ).toBe(true);
     });
   });
