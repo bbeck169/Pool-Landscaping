@@ -237,3 +237,5 @@ node_modules/.vite/
 # files under ``frontend/build/`` via ``git rm -r --cached`` so the
 # ignore rule can actually take effect.
 frontend/build/
+frontend/node_modules/.cache/default-development/4.pack_
+frontend/node_modules/.cache/default-development/16.pack_

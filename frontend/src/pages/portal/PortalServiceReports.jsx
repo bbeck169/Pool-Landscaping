@@ -62,6 +62,11 @@ import { bandForReading, DISPLAY_LABELS } from "@/utils/chemistryBands";
 // admin dispatch, portal). Re-using instead of forking prevents
 // "Spa" vs "SPA" vs "spa" drift between surfaces.
 import { BODY_TYPE_LABELS, BODY_TYPE_TINTS } from "@/lib/waterBodies";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 import {
   PageHeader,
   Skeleton,
@@ -313,6 +318,7 @@ export function PortalServiceReports() {
                       const iconTone =
                         kind === "landscape" ? colors.success : colors.brand;
                       return (
+                        <PortalPageShell>
                         <li
                           key={r.id}
                           onClick={() => navigate(`/portal/service-reports/${r.id}`)}
@@ -411,6 +417,7 @@ export function PortalServiceReports() {
                 </div>
                           <StatusPill status="completed" />
                         </li>
+                        </PortalPageShell>
                       );
                     })}
                   </ul>
@@ -1415,6 +1422,7 @@ const CHEM_BAND_STYLES = {
 function ChemChip({ band, testid }) {
   const style = CHEM_BAND_STYLES[band] || CHEM_BAND_STYLES.average;
   return (
+    <PortalPageShell>
     <span
       className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0 ${style.className}`}
       data-testid={testid}
@@ -1423,5 +1431,6 @@ function ChemChip({ band, testid }) {
     >
       {style.label}
     </span>
+    </PortalPageShell>
   );
 }

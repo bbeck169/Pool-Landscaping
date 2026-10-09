@@ -41,6 +41,11 @@ import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
 import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps every
+// export in this file so the sub-page content renders inside the
+// Phase 3d-portal white dashboard card on the deep-navy page
+// background (same chrome as PortalHome).
+import PortalPageShell from "@/components/portal/PortalPageShell";
 
 // ──────────────── /portal/services ────────────────
 export function PortalServices() {
@@ -66,6 +71,7 @@ export function PortalServices() {
   const list = tab === "upcoming" ? upcoming : past;
 
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-services">
       <PageHeader title="My Services" subtitle="Upcoming visits and history." />
       <div className="flex gap-2 mb-4">
@@ -113,6 +119,7 @@ export function PortalServices() {
          ))}
        </ul>}
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -129,6 +136,7 @@ export function PortalServiceDetail() {
     title: j.title ? `${j.title} · ${i + 1}` : `Photo ${i + 1}`,
   }));
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-svc-detail">
       <button onClick={() => navigate("/portal/services")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
         <ArrowLeft size={14} /> My services
@@ -191,6 +199,7 @@ export function PortalServiceDetail() {
         testidPrefix="portal-service-detail-lightbox"
       />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -206,6 +215,7 @@ export function PortalInvoices() {
     0
   );
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
       <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
       <div className="rounded-2xl p-5 mb-4" style={{ background: gradients.navyToGreen.css, color: "#fff" }}>
@@ -235,6 +245,7 @@ export function PortalInvoices() {
          })}
        </ul>}
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -281,6 +292,7 @@ export function PortalInvoiceDetail() {
     : 0;
 
   return (
+    <PortalPageShell>
     <div
       className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
       data-testid="portal-inv-detail"
@@ -339,6 +351,7 @@ export function PortalInvoiceDetail() {
       ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -348,6 +361,7 @@ export function PortalEstimates() {
   const [rows, setRows] = useState(null);
   useEffect(() => { api.get("/quotes?doc_type=quote").then(setRows).catch(() => setRows([])); }, []);
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-estimates" data-tour-id="estimates-list">
       <PageHeader title="Estimates" subtitle="Approve or decline proposals." />
       {rows === null ? <Skeleton style={{ height: 180 }} /> :
@@ -367,6 +381,7 @@ export function PortalEstimates() {
          ))}
        </ul>}
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -394,6 +409,7 @@ export function PortalEstimateDetail() {
     window.__phaseA_portal_estimates_id_warned = true;
   }
   return (
+    <PortalPageShell>
     <div
       className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
       data-testid="portal-est-detail"
@@ -406,6 +422,7 @@ export function PortalEstimateDetail() {
       />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -443,6 +460,7 @@ export function PortalPayments() {
       .catch(() => setPm(null));
   }, []);
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-payments">
       <PageHeader title="Payments" subtitle="History + saved card." />
       <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
@@ -482,6 +500,7 @@ export function PortalPayments() {
          ))}
        </ul>}
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -500,6 +519,7 @@ export function PortalPaymentMethod() {
   // pass the JWT-scoped ``user.customer_id`` and rely on the same
   // TypedConfirmModal-gated delete flow the admin variant uses.
   return (
+    <PortalPageShell>
     <div
       className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
       data-testid="portal-pm"
@@ -521,6 +541,7 @@ export function PortalPaymentMethod() {
         variant="portal"
       />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -530,6 +551,7 @@ export function PortalDocuments() {
   const [rows, setRows] = useState(null);
   useEffect(() => { api.get("/me/documents").then(setRows).catch(() => setRows([])); }, []);
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-docs">
       <PageHeader title="Documents" subtitle="Contracts, receipts, warranties." />
       {rows === null ? <Skeleton style={{ height: 180 }} /> :
@@ -547,6 +569,7 @@ export function PortalDocuments() {
          ))}
        </ul>}
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -593,6 +616,7 @@ export function PortalMessages() {
   };
 
   return (
+    <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-messages" data-tour-id="communications-list">
       <PageHeader title="Messages" subtitle="Talk to your service team." />
       <div className="rounded-2xl overflow-hidden mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, minHeight: 320 }}>
@@ -643,6 +667,7 @@ export function PortalMessages() {
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -823,6 +848,7 @@ export function PortalProfile() {
   };
 
   return (
+    <PortalPageShell>
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-profile">
       <PageHeader title="Profile" subtitle="Keep your contact info up to date so your service team can reach you." />
       <form onSubmit={save} className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }} data-testid="portal-profile-form">
@@ -920,6 +946,7 @@ export function PortalProfile() {
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -968,6 +995,7 @@ export function PortalRequestService() {
     finally { setBusy(false); }
   };
   return (
+    <PortalPageShell>
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-request" data-tour-id="request-service-form">
       <PageHeader title="Request Service" subtitle="Tell us what you need." />
       <form onSubmit={submit} className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
@@ -1015,6 +1043,7 @@ export function PortalRequestService() {
       ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
+      </PortalPageShell>
   );
 }
 
@@ -1152,6 +1181,7 @@ export function PortalPaymentComplete() {
   };
 
   return (
+    <PortalPageShell>
     <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-10 text-center" data-testid="portal-pay-complete">
       {status === "checking" ? (
         <div data-testid="pc-checking">
@@ -1296,5 +1326,6 @@ export function PortalPaymentComplete() {
         </div>
       )}
     </div>
+      </PortalPageShell>
   );
 }
