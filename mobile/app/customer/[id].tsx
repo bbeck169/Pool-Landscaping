@@ -9,7 +9,7 @@ import { useAuth } from "@/src/auth";
 import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
-import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
+import { PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
 import CustomerEquipmentUnits from "@/src/components/customers/CustomerEquipmentUnits";
@@ -31,6 +31,8 @@ import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal"
 import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
 import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import CustomerJobsSection from "@/src/components/customers/CustomerJobsSection";
+// Phase 25 · web parity 0a176aeeb (Phase 22) — immediate skeleton shell.
+import CustomerProfileSkeleton from "@/src/components/customers/CustomerProfileSkeleton";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
@@ -147,7 +149,8 @@ export default function CustomerDetail() {
     }
   };
 
-  if (loading) return <Loading testID="customer-detail-loading" />;
+  // Phase 25 — skeleton shell instead of a bare spinner (no blank frame).
+  if (loading) return <CustomerProfileSkeleton />;
   if (!c && loadError) {
     const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
     const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline";
@@ -175,7 +178,8 @@ export default function CustomerDetail() {
       </View>
     );
   }
-  if (!c) return null;
+  // Phase 25 — never a blank page: fall back to the skeleton shell.
+  if (!c) return <CustomerProfileSkeleton />;
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isAdminOrTech = isAdmin || user?.role === "technician";
