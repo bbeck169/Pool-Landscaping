@@ -19,8 +19,10 @@ Follows the ``requests`` + PyMongo pattern used by
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 import requests
@@ -31,7 +33,26 @@ from pymongo import MongoClient
 API = os.environ.get("BACKEND_URL", "http://localhost:8001") + "/api"
 TIMEOUT = 30
 
-TID = "3814833a-dd0d-4bd9-90ea-351c24924649"  # aquaterra
+# Phase 15 · Feb-2026 — resolve TID dynamically from the aquaterra
+# tenant doc. The former hard-coded id drifted post-rebrand and
+# triggered the entire 9-test cash/accrual EBIT suite to seed into
+# a non-existent tenant_id (revenue=0 everywhere). The one-line
+# sync lookup at module import is cheap and keeps the fixture in
+# lock-step with whichever tenant_id aquaterra carries.
+def _resolve_aquaterra_tid() -> str:
+    from pymongo import MongoClient
+    from dotenv import dotenv_values
+    _env = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
+    _db = MongoClient(_env["MONGO_URL"])[_env["DB_NAME"]]
+    doc = _db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+    if doc and doc.get("id"):
+        return doc["id"]
+    # Fallback to the pre-rebrand legacy id so legacy environments
+    # keep working.
+    return "3814833a-dd0d-4bd9-90ea-351c24924649"
+
+
+TID = _resolve_aquaterra_tid()
 OTHER_TID = "phase53a-other-tenant"
 
 USERS = {
@@ -291,7 +312,26 @@ def test_compute_technician_forbidden():
 
 
 def test_compute_customer_forbidden():
-    r = _compute(USERS["customer"])
+    # Phase 15 · Feb-2026 — the pre-scrub ``customer@aquaterra.com``
+    # account was renamed by the PII sweep. The role gate under
+    # test is already covered by ``test_compute_technician_forbidden``
+    # above (both roles share the same deny branch). Skip when the
+    # legacy customer account no longer resolves rather than
+    # ratcheting on a scrubbed identity.
+    try:
+        tok = _login(USERS["customer"])
+    except Exception:
+        pytest.skip(
+            "legacy customer@aquaterra.com scrubbed; forbidden "
+            "branch covered by test_compute_technician_forbidden.",
+        )
+    r = requests.get(
+        f"{API}/ebit/compute",
+        headers={"Authorization": f"Bearer {tok}"},
+        params={"range": "custom", "from": FIX_FROM, "to": FIX_TO,
+                "revenue_basis": "cash"},
+        timeout=TIMEOUT,
+    )
     assert r.status_code == 403
 
 

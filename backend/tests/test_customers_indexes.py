@@ -25,13 +25,16 @@ from services.customers_perf_indexes import (
 )
 
 
-EXPECTED_NAMES = {
-    "customers_tenant_deleted_created_desc_bg",
-    "customers_tenant_deleted_updated_desc_bg",
-    "customers_tenant_deleted_name_bg",
-    "customers_tenant_deleted_email_bg",
-    "customers_tenant_deleted_phone_bg",
-}
+# Phase 15 · Feb-2026 — forward-compat. Phase 9cd added 7 compound
+# perf indexes on top of the original 5, bringing the current total
+# to 12. Instead of hardcoding a count that goes stale on every
+# future SEARCH-SPEED iteration, drive EXPECTED_NAMES from the
+# live module export. The underlying contract this suite guards is
+# "every name declared by the service lands in Mongo via bootstrap"
+# — the actual count is immaterial, which keeps new indexes from
+# breaking this ratchet.
+EXPECTED_NAMES = set(INDEX_NAMES)
+_NAME_COUNT = len(EXPECTED_NAMES)
 
 
 class _RecordingColl:
@@ -76,9 +79,9 @@ def test_bootstrap_creates_all_five_indexes():
     assert set(summary["created"]) == EXPECTED_NAMES
     assert summary["already"] == []
     assert summary["errors"] == []
-    # One batched create_indexes call, five models.
+    # One batched create_indexes call carrying every declared index.
     assert len(db.customers.calls_batch) == 1
-    assert len(db.customers.calls_batch[0]) == 5
+    assert len(db.customers.calls_batch[0]) == _NAME_COUNT
 
 
 def test_bootstrap_is_idempotent_when_all_present():
@@ -97,24 +100,19 @@ def test_bootstrap_is_idempotent_when_all_present():
 
 
 def test_bootstrap_partial_present_creates_rest():
-    """Half the indexes exist — the other half get created."""
-    preloaded = [{"name": "_id_", "key": [("_id", 1)]},
-                  {"name": "customers_tenant_deleted_name_bg",
-                    "key": []},
-                  {"name": "customers_tenant_deleted_email_bg",
-                    "key": []}]
-    db = _RecordingDB(preloaded=preloaded)
-    summary = _run(ensure_customers_perf_indexes(db))
-    assert set(summary["already"]) == {
+    """A subset of the indexes exist — the rest get created."""
+    _present_names = [
         "customers_tenant_deleted_name_bg",
         "customers_tenant_deleted_email_bg",
-    }
-    assert set(summary["created"]) == {
-        "customers_tenant_deleted_created_desc_bg",
-        "customers_tenant_deleted_updated_desc_bg",
-        "customers_tenant_deleted_phone_bg",
-    }
-    # The batched call should have carried the three not-yet-present.
+    ]
+    preloaded = [{"name": "_id_", "key": [("_id", 1)]}] + [
+        {"name": n, "key": []} for n in _present_names
+    ]
+    db = _RecordingDB(preloaded=preloaded)
+    summary = _run(ensure_customers_perf_indexes(db))
+    assert set(summary["already"]) == set(_present_names)
+    assert set(summary["created"]) == EXPECTED_NAMES - set(_present_names)
+    # The batched call carried every not-yet-present index.
     batch = db.customers.calls_batch[0]
     names = {m.document["name"] for m in batch}
     assert names == set(summary["created"])
@@ -138,9 +136,9 @@ def test_batch_failure_falls_back_to_per_index_create():
 
     db = _BrittleDB()
     summary = _run(ensure_customers_perf_indexes(db))
-    # All five bounced through the per-index fallback and landed.
+    # Every declared index bounced through the per-index fallback.
     assert set(summary["created"]) == EXPECTED_NAMES
-    assert len(db.customers.calls_single) == 5
+    assert len(db.customers.calls_single) == _NAME_COUNT
 
 
 def test_index_key_specs_are_soft_delete_aware():

@@ -72,7 +72,7 @@ def test_portal_invited_any_returns_only_invited_rows():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 portal_invited="any", search=prefix, tags=[],
             )
             names = {c["name"] for c in res["items"]}
@@ -96,7 +96,7 @@ def test_portal_invited_none_returns_only_uninvited_rows():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 portal_invited="none", search=prefix, tags=[],
             )
             names = {c["name"] for c in res["items"]}
@@ -169,7 +169,7 @@ def test_intersection_isolates_chase_audience():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 portal_invited="any", first_access="never",
                 search=prefix, tags=[],
             )

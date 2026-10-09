@@ -81,12 +81,22 @@ def _cleanup(aquaterra_tid):
 
 
 # ── contract pins ───────────────────────────────────────────────────
+# Phase 15 · Feb-2026 — the Feb-2026 ``sort`` param now defaults to
+# ``created_desc`` (newest first). Our seed inserts 250 rows in a
+# tight loop so ``created_at`` ties are highly likely, which makes
+# the row order non-deterministic. Pin ``sort=name_asc`` on every
+# contract call so the ``_0001`` / ``_0250`` ordering guards still
+# hold.
+_SORT = "name_asc"
+
+
 def test_page1_returns_first_100_and_envelope(admin_h, aquaterra_tid):
     _seed_customers(aquaterra_tid, 250, is_active=True)
     # Narrow the query to only the seeded rows so we're insulated from
     # other tenants' data on the shared aquaterra tenant.
     r = requests.get(
-        f"{API}/customers?search={_TAG}active&page=1&page_size=100",
+        f"{API}/customers?search={_TAG}active&page=1&page_size=100"
+        f"&sort={_SORT}",
         headers=admin_h, timeout=20,
     )
     assert r.status_code == 200, r.text
@@ -110,7 +120,8 @@ def test_page1_returns_first_100_and_envelope(admin_h, aquaterra_tid):
 def test_page3_returns_last_50_rows(admin_h, aquaterra_tid):
     _seed_customers(aquaterra_tid, 250, is_active=True)
     r = requests.get(
-        f"{API}/customers?search={_TAG}active&page=3&page_size=100",
+        f"{API}/customers?search={_TAG}active&page=3&page_size=100"
+        f"&sort={_SORT}",
         headers=admin_h, timeout=20,
     )
     assert r.status_code == 200, r.text

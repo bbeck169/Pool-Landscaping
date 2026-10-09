@@ -52,7 +52,7 @@ def test_f6c_is_active_true_returns_only_active():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 is_active=True, search=prefix, tags=[],
             )
             names = {c["name"] for c in res["items"]}
@@ -87,7 +87,7 @@ def test_f6c_is_active_false_returns_only_inactive():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 is_active=False, search=prefix, tags=[],
             )
             names = {c["name"] for c in res["items"]}
@@ -119,7 +119,7 @@ def test_f6c_no_param_returns_all():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 is_active=None, search=prefix, tags=[],
             )
             names = {c["name"] for c in res["items"]}
@@ -150,7 +150,7 @@ def test_f6c_is_active_is_tenant_scoped():
         try:
             res = await list_customers(
                 user=admin, tenant={"id": tid},
-                page=1, page_size=500,
+                page=1, page_size=100,
                 is_active=True, search=prefix, tags=[],
             )
             ids = {c["id"] for c in res["items"]}

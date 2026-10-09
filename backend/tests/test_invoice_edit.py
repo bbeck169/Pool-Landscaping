@@ -47,11 +47,22 @@ def _login(email: str) -> str:
 
 
 def _admin_token() -> str:
-    return _login("manager@aquaterra.com")
+    # Phase 15 · Feb-2026 — was ``manager@aquaterra.com``; the
+    # invoice-edit endpoints tightened to ``admin`` role in a
+    # subsequent phase so every manager-token request now returns
+    # 403 ``admin_only``. Swap to the aquaterra admin seed account.
+    return _login("admin@aquaterra.com")
 
 
 def _customer_token() -> str:
-    return _login("customer@aquaterra.com")
+    # Phase 15 · Feb-2026 — the pre-scrub ``customer@aquaterra.com``
+    # account was renamed by the PII sweep. For the 403 /
+    # audit-visibility checks the only thing that matters is the
+    # token's role is NOT admin — the aquaterra ``landscaper@``
+    # technician seed is stable and already used by other backend
+    # tests, so swap in that identity. Returns a tech token (same
+    # ``not admin`` outcome as a customer token).
+    return _login("landscaper@aquaterra.com")
 
 
 # Module-level caches — login is slow (bcrypt) and every test would
@@ -110,7 +121,12 @@ def _seed_invoice(status: str = "draft",
         "title": title,
         "doc_type": "invoice",
         "line_items": line_items or [
-            {"description": "TEST_service", "quantity": 1, "unit_price": 100.0}
+            # Phase 15 · Feb-2026 — new backend validator rejects
+            # income line items missing a ``category``. Add the
+            # default-income category so the admin PATCH flow still
+            # reaches the audit-write code path we're asserting on.
+            {"description": "TEST_service", "quantity": 1,
+              "unit_price": 100.0, "category": "Service Revenue"}
         ],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -144,7 +160,7 @@ def test_admin_can_edit_draft_invoice_line_items():
         r = _patch(inv_id, {
             "line_items": [
                 {"description": "TEST_service_edited", "quantity": 2,
-                  "unit_price": 60.0},
+                  "unit_price": 60.0, "category": "Service Revenue"},
             ],
             "reason": "TEST_pricing_change",
         }, tok)
@@ -313,7 +329,7 @@ def test_edit_creates_audit_entry_with_correct_diff():
         assert cf["tax_rate"]["old"] == 0.0
         assert cf["tax_rate"]["new"] == 8.25
         assert cf["notes"]["new"] == "TEST_new_notes"
-        assert audit["edited_by_user_email"] == "manager@aquaterra.com"
+        assert audit["edited_by_user_email"] == "admin@aquaterra.com"
         assert audit["edited_by_role"] in ("admin", "super_admin")
         assert audit["reason"] == "TEST_audit_check"
     finally:
@@ -359,7 +375,7 @@ def test_line_item_change_triggers_lumino_link_regeneration():
         r = _patch(inv_id, {
             "line_items": [
                 {"description": "TEST_new_item", "quantity": 3,
-                  "unit_price": 40.0},
+                  "unit_price": 40.0, "category": "Service Revenue"},
             ],
         }, tok)
         assert r.status_code == 200, r.text

@@ -66,8 +66,22 @@ def tok() -> str:
 # super@aquaterra.com account's active tenant has drifted since this
 # test was first written), so we resolve dynamically rather than
 # trusting the constant.
+@pytest.fixture(scope="module")
+def _active_tid(sync_db):
+    """Phase 15 · Feb-2026 — resolve the super_admin's LIVE tenant_id
+    dynamically. The pre-rebrand ``AQUATERRA_TID`` constant has
+    drifted (the aquaterra tenant was re-id'd during the rebrand),
+    so hard-coding it causes false negatives on every refreshed
+    environment. Fall back to the constant only when the super user
+    has no tenant assignment (shouldn't happen in practice)."""
+    super_user = sync_db.users.find_one(
+        {"email": SUPER["email"]}, {"_id": 0, "tenant_id": 1},
+    ) or {}
+    return super_user.get("tenant_id") or AQUATERRA_TID
+
+
 @pytest.fixture(scope="module", autouse=True)
-def _seed_scrubbed_members(sync_db):
+def _seed_scrubbed_members(sync_db, _active_tid):
     super_user = sync_db.users.find_one(
         {"email": SUPER["email"]}, {"_id": 0, "tenant_id": 1},
     ) or {}
@@ -97,7 +111,7 @@ def _h(t: str) -> dict:
     return {"Authorization": f"Bearer {t}", "Content-Type": "application/json"}
 
 
-def test_create_crew_with_members_round_trips(tok, sync_db):
+def test_create_crew_with_members_round_trips(tok, sync_db, _active_tid):
     r = requests.post(
         f"{API}/crews",
         headers=_h(tok),
@@ -108,10 +122,13 @@ def test_create_crew_with_members_round_trips(tok, sync_db):
     assert r.status_code == 200, r.text
     cid = r.json()["id"]
     try:
-        # tenant_id written on insert (prior P0 fix)
+        # tenant_id written on insert (prior P0 fix).  Phase 15 ·
+        # Feb-2026 — compare against the super_admin's LIVE tenant_id
+        # (resolved by the ``_active_tid`` fixture) rather than the
+        # pre-rebrand ``AQUATERRA_TID`` constant.
         row = sync_db.crews.find_one({"id": cid})
         assert row is not None
-        assert row.get("tenant_id") == AQUATERRA_TID
+        assert row.get("tenant_id") == _active_tid
         assert row.get("tech_ids") == [TECH1]
 
         listed = requests.get(f"{API}/crews", headers=_h(tok), timeout=30).json()
@@ -168,7 +185,12 @@ def test_patch_empty_array_clears_members(tok, sync_db):
 def test_color_field_round_trips(tok, sync_db):
     """The color-picker enhancement rides on the existing ``color``
     field in ``CrewIn``. Regression guard that the field persists
-    end-to-end (create + patch)."""
+    end-to-end (create + patch). Phase 15 · Feb-2026 — the PATCH
+    color was ``#16A34A`` which is OFF-palette post the Jan-2026
+    palette consolidation (approved palette starts with ``#3B82F6``,
+    ``#EF4444``, ``#10B981`` …). Swapped to the closest approved
+    green ``#10B981`` so the ratchet validates the SAME contract
+    (round-trip persistence) without tripping the palette guard."""
     r = requests.post(
         f"{API}/crews", headers=_h(tok),
         json={"name": f"regr-{uuid4().hex[:6]}", "color": "#7C3AED",
@@ -178,9 +200,9 @@ def test_color_field_round_trips(tok, sync_db):
     try:
         assert r.json().get("color") == "#7C3AED"
         r = requests.patch(f"{API}/crews/{cid}", headers=_h(tok),
-                            json={"color": "#16A34A"}, timeout=30)
-        assert r.json().get("color") == "#16A34A"
+                            json={"color": "#10B981"}, timeout=30)
+        assert r.json().get("color") == "#10B981"
         row = sync_db.crews.find_one({"id": cid})
-        assert row.get("color") == "#16A34A"
+        assert row.get("color") == "#10B981"
     finally:
         requests.delete(f"{API}/crews/{cid}", headers=_h(tok), timeout=30)
