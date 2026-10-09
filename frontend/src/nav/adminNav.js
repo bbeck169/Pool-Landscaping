@@ -316,6 +316,11 @@ export const ADMIN_NAV_V2 = [
     // QuoteIQ Q1-UI · Feb 2026
     { to: "/admin/ai-credits", label: "AI Credits",     icon: Sparkles,   feature: "settings", subsection: "Settings" },
     { to: "/admin/chemicals",  label: "Chemical Products", icon: FlaskConical, feature: "settings", subsection: "Settings" },
+    // Phase 7B · Feb-2026 — Form Template editor (service reports,
+    // checklists, estimate/invoice, CAD overlay).  Admin-only per
+    // backend ``require_admin``-parity role gate; owner is admitted
+    // via ``<AdminOnly>`` wrapper.
+    { to: "/admin/form-editor", label: "Form Editor", icon: FileEdit, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     // Feb-2026 · Item 6 — Business Card editor (company-only vCard).
     { to: "/settings/business-card", label: "Business Card", icon: IdCard, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     // Feb-2026 · Phase 20 P3 — Website SEO analyzer.

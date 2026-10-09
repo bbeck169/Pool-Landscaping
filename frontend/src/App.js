@@ -67,6 +67,11 @@ const ChemicalApplicationDetail = React.lazy(() => import(/* webpackChunkName: "
 const ReflowHistoryPage = React.lazy(() => import(/* webpackChunkName: "p-admin-reflowhistorypage" */ "@/pages/admin/ReflowHistoryPage"));
 // Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD.
 const AdminChargeTemplatesPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminchargetemplatespage" */ "@/pages/admin/AdminChargeTemplatesPage"));
+// Phase 7B · Feb-2026 — Form Template editor (drag-and-drop + style
+// per field).  Reads/writes the Phase 7A ``/api/form-templates/*``
+// endpoints.  AdminOnly at the route-level; backend additionally
+// enforces admin / super_admin / owner on every mutating call.
+const FormEditor = React.lazy(() => import(/* webpackChunkName: "p-admin-formeditor" */ "@/pages/admin/FormEditor"));
 // Phase F3 · Feb-2026 — Soshie moderation queue.
 const SoshieModerationQueuePage = React.lazy(() => import(/* webpackChunkName: "p-admin-soshiemoderationqueue" */ "@/pages/admin/SoshieModerationQueue"));
 // Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
@@ -959,6 +964,8 @@ export default function App() {
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
             {/* Phase F2 · Feb-2026 — Charge Template Bundles admin CRUD. */}
             <Route path="admin/charge-templates" element={<AdminOnly><AdminChargeTemplatesPage /></AdminOnly>} />
+            {/* Phase 7B · Feb-2026 — Form Template editor. */}
+            <Route path="admin/form-editor" element={<AdminOnly><FormEditor /></AdminOnly>} />
             {/* Phase F3 · Feb-2026 — Soshie moderation queue. */}
             <Route path="admin/soshie/moderation" element={<AdminOnly><SoshieModerationQueuePage /></AdminOnly>} />
             {/* Task RR/SS Phase 2 · Feb 2026 */}
