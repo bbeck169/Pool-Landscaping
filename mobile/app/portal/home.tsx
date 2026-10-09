@@ -34,6 +34,20 @@ const CREDIT_BG = "#064E3B";
 // green, Business card = navy variant (web PORTAL_HERO_ACCENT).
 const NAVY_ACCENT_BG = "#1E3A8A";
 const NAVY_ACCENT_FG = "#DBEAFE";
+// Phase 25 (re-issue) · web parity e2a0d8a2e (Phase 23) — dark navy
+// portal-home chassis, hex values verbatim from web. Page + tiles share
+// #03002e; tiles separate via the #1E293B hairline + rounded-xl (12).
+const PORTAL_DARK_BG = "#03002e";
+const PORTAL_DARK_BORDER = "#1E293B";
+const PORTAL_TILE_RADIUS = 12;
+const PORTAL_TEXT = "#FFFFFF";
+const PORTAL_TEXT_MUTED = "rgba(255,255,255,0.7)";
+// Phase 24 glow → static soft white halo on every KPI tile (no hover on
+// touch). iOS reads shadow*, Android draws via elevation.
+const KPI_GLOW = {
+  shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
+  shadowOffset: { width: 0, height: 0 }, elevation: 8,
+} as const;
 
 const TOUR_KEY = "portal_tour_v2_done";
 const TOUR_STEPS: TourStep[] = [
@@ -147,7 +161,7 @@ export default function PortalHome() {
   };
 
   return (
-    <View style={s.root}>
+    <View style={s.root} testID="portal-home-root">
       <Header
         title="My Account"
         subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
@@ -316,11 +330,11 @@ export default function PortalHome() {
                     {data.next_service.address || "No address"}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+                <Ionicons name="chevron-forward" size={18} color={PORTAL_TEXT_MUTED} />
               </Pressable>
             ) : (
               <View style={s.nextServiceDayEmpty} testID="portal-next-service-day-empty">
-                <Ionicons name="calendar-clear-outline" size={28} color={colors.muted} />
+                <Ionicons name="calendar-clear-outline" size={28} color={PORTAL_TEXT_MUTED} />
                 <Text style={s.nextServiceDayEmptyText}>No upcoming service scheduled</Text>
               </View>
             )}
@@ -361,7 +375,7 @@ export default function PortalHome() {
                   {(data.last_visit.date || data.last_visit.scheduled_date || "").slice(0, 10)}
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+              <Ionicons name="chevron-forward" size={18} color={PORTAL_TEXT_MUTED} />
             </Pressable>
           ) : null}
 
@@ -404,7 +418,7 @@ export default function PortalHome() {
                       {emp.role || emp.description || emp.tagline || ""}
                     </Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                  <Ionicons name="chevron-forward" size={16} color={PORTAL_TEXT_MUTED} />
                 </Pressable>
               ))}
             </View>
@@ -440,7 +454,7 @@ export default function PortalHome() {
               <Text style={s.bizCardLabel}>Business Card</Text>
               <Text style={s.bizCardSub}>Contact info, QR code & more</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            <Ionicons name="chevron-forward" size={18} color={PORTAL_TEXT_MUTED} />
           </Pressable>
         </ScrollView>
       )}
@@ -522,7 +536,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
-  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  root: { flex: 1, backgroundColor: PORTAL_DARK_BG },
 
   // CTA Row
   ctaRow: { gap: 12, marginBottom: spacing.lg },
@@ -559,13 +573,14 @@ const s = StyleSheet.create({
   statsRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg },
   statCircle: {
     flex: 1, alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.surface, borderRadius: radius.lg,
-    paddingVertical: 14, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS,
+    paddingVertical: 14, borderWidth: 1, borderColor: PORTAL_DARK_BORDER,
+    ...KPI_GLOW,
   },
   // Phase 25 — text on a dynamic (red / green) tile bg.
   statTextOnDynamic: { color: "#FFFFFF" },
-  statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
-  statLabel: { fontFamily: font.medium, fontSize: 11, color: colors.muted, marginTop: 2 },
+  statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT },
+  statLabel: { fontFamily: font.medium, fontSize: 11, color: PORTAL_TEXT_MUTED, marginTop: 2 },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
   heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },
   heroValue: { fontFamily: font.bold, fontSize: 34, color: "#fff", marginTop: 2 },
@@ -576,23 +591,23 @@ const s = StyleSheet.create({
   // Next Service
   nextCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
   },
   nextIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  nextLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
-  nextTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
-  nextMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+  nextLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED },
+  nextTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: PORTAL_TEXT },
+  nextMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 1 },
 
   // Quick Actions Grid
-  gridTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginBottom: spacing.md },
+  gridTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT, marginBottom: spacing.md },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginBottom: spacing.lg },
   card: {
-    width: "47.5%", flexGrow: 1, backgroundColor: colors.surface,
-    borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border,
+    width: "47.5%", flexGrow: 1, backgroundColor: PORTAL_DARK_BG,
+    borderRadius: PORTAL_TILE_RADIUS, padding: spacing.lg, borderWidth: 1, borderColor: PORTAL_DARK_BORDER,
   },
   cardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
-  cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: PORTAL_TEXT },
   cardBadge: { position: "absolute", top: spacing.md, right: spacing.md, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
   cardBadgeText: { color: "#fff", fontFamily: font.bold, fontSize: fontSize.sm },
   // Phase 25 · web Phase 24 hover glow → mobile press glow (onPressIn).
@@ -600,7 +615,6 @@ const s = StyleSheet.create({
   // light chassis too. Android draws the halo via elevation (API 28+
   // honours shadowColor).
   cardPressed: {
-    backgroundColor: colors.surfaceSecondary,
     shadowColor: "#FFFFFF", shadowOpacity: 0.6, shadowRadius: 20,
     shadowOffset: { width: 0, height: 0 }, elevation: 8,
   },
@@ -608,21 +622,21 @@ const s = StyleSheet.create({
   // Last Visit
   lastVisitCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
   },
 
   // Next Service Day
   nextServiceDayCard: {
-    backgroundColor: colors.surface, borderRadius: radius.lg,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS,
+    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.lg,
     overflow: "hidden",
   },
   nextServiceDayHeader: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderBottomWidth: 1, borderBottomColor: colors.divider,
-    backgroundColor: "#F0F9FF",
+    borderBottomWidth: 1, borderBottomColor: PORTAL_DARK_BORDER,
+    backgroundColor: PORTAL_DARK_BG,
   },
   nextServiceDayIcon: {
     width: 36, height: 36, borderRadius: 18,
@@ -630,7 +644,7 @@ const s = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   nextServiceDayTitle: {
-    fontFamily: font.bold, fontSize: fontSize.base, color: "#0369A1",
+    fontFamily: font.bold, fontSize: fontSize.base, color: PORTAL_TEXT,
     letterSpacing: 0.3,
   },
   nextServiceDayBody: {
@@ -654,40 +668,40 @@ const s = StyleSheet.create({
     textTransform: "uppercase", marginTop: 1,
   },
   nextServiceDayName: {
-    fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface,
+    fontFamily: font.semibold, fontSize: fontSize.lg, color: PORTAL_TEXT,
   },
   nextServiceDayMeta: {
-    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2,
+    fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 2,
   },
   nextServiceDayAddr: {
-    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, marginTop: 1,
+    fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 1,
   },
   nextServiceDayEmpty: {
     alignItems: "center", justifyContent: "center",
     paddingVertical: spacing.xl, gap: spacing.sm,
   },
   nextServiceDayEmptyText: {
-    fontFamily: font.medium, fontSize: fontSize.base, color: colors.muted,
+    fontFamily: font.medium, fontSize: fontSize.base, color: PORTAL_TEXT_MUTED,
     textAlign: "center",
   },
   lastVisitIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  lastVisitLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
-  lastVisitTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
-  lastVisitDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+  lastVisitLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED },
+  lastVisitTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: PORTAL_TEXT },
+  lastVisitDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 1 },
 
   // Ask a Concierge
-  // Phase 25 — shared stat-tile chassis (surface + border + radius.lg).
+  // Phase 25 — shared dark stat-tile chassis (#03002e + #1E293B + 12).
   conciergeWrap: {
-    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1,
-    borderColor: colors.border, padding: 18, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
+    borderColor: PORTAL_DARK_BORDER, padding: 18, marginBottom: spacing.lg,
   },
   conciergeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
-  conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, textTransform: "uppercase", letterSpacing: 1 },
-  conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.md, lineHeight: 20 },
+  conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: PORTAL_TEXT, textTransform: "uppercase", letterSpacing: 1 },
+  conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: PORTAL_TEXT_MUTED, marginBottom: spacing.md, lineHeight: 20 },
   conciergeCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: colors.surfaceSecondary, borderWidth: 1,
-    borderColor: colors.border, borderRadius: radius.lg,
+    backgroundColor: PORTAL_DARK_BG, borderWidth: 1,
+    borderColor: PORTAL_DARK_BORDER, borderRadius: PORTAL_TILE_RADIUS,
     padding: spacing.md, marginTop: spacing.sm,
   },
   conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
@@ -698,21 +712,21 @@ const s = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12,
     lineHeight: 16,
-    color: colors.muted,
+    color: PORTAL_TEXT_MUTED,
     marginTop: 2,
   },
   conciergeEmoji: { fontSize: 22 },
-  conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
-  conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2, lineHeight: 16 },
+  conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: PORTAL_TEXT },
+  conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 2, lineHeight: 16 },
 
   // Refer a Friend
   referralWrap: {
-    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1,
-    borderColor: colors.border, padding: 20, marginBottom: spacing.lg,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, borderWidth: 1,
+    borderColor: PORTAL_DARK_BORDER, padding: 20, marginBottom: spacing.lg,
     alignItems: "center",
   },
-  referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginTop: spacing.sm, textAlign: "center" },
-  referralBody: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginTop: spacing.xs, textAlign: "center", lineHeight: 20 },
+  referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: PORTAL_TEXT, marginTop: spacing.sm, textAlign: "center" },
+  referralBody: { fontFamily: font.regular, fontSize: fontSize.base, color: PORTAL_TEXT_MUTED, marginTop: spacing.xs, textAlign: "center", lineHeight: 20 },
   referralBtn: {
     backgroundColor: colors.success, borderRadius: radius.pill, paddingHorizontal: 28, paddingVertical: 12, marginTop: spacing.md,
     minHeight: 44, justifyContent: "center",
@@ -722,10 +736,10 @@ const s = StyleSheet.create({
   // Business Card
   bizCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
-    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
-    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md,
+    backgroundColor: PORTAL_DARK_BG, borderRadius: PORTAL_TILE_RADIUS, padding: spacing.md,
+    borderWidth: 1, borderColor: PORTAL_DARK_BORDER, marginBottom: spacing.md,
   },
   bizCardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: NAVY_ACCENT_BG, alignItems: "center", justifyContent: "center" },
-  bizCardLabel: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
-  bizCardSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+  bizCardLabel: { fontFamily: font.semibold, fontSize: fontSize.lg, color: PORTAL_TEXT },
+  bizCardSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: PORTAL_TEXT_MUTED, marginTop: 1 },
 });

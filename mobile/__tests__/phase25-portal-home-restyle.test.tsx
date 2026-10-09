@@ -2,19 +2,25 @@
  * Phase 25 · Portal home — dark-card restyle + dynamic tile colors
  * (mobile parity with web e2a0d8a2e · Phase 23 and 3a738ff11 · Phase 24).
  *
- *   3. Concierge / Referral / Business-card sections share the stat-tile
- *      chassis (surface bg + 1px border + radius.lg)
+ *   3. Page bg #03002e; Concierge / Referral / Business-card sections and
+ *      the KPI stat tiles share the dark chassis (#03002e + 1px #1E293B +
+ *      radius 12 ≈ web rounded-xl)
  *   4. Each section carries a distinct accent (blue / green / navy)
  *   5. Past Due tile → #7F1D1D when > 0, default chassis when 0 / null
  *   6. Credit tile → #064E3B when > 0, default chassis when 0
- *   7. Quick Action tiles glow on press (onPressIn) and clear on release
+ *   7. KPI tiles carry a STATIC soft white glow; Quick Action tiles glow
+ *      on press (onPressIn) and clear on release
  *   8. Text flips to white on dynamic bgs
  */
 import React from "react";
 import { StyleSheet } from "react-native";
 import { render, fireEvent, waitFor } from "@testing-library/react-native";
 
-import { colors, radius } from "@/src/theme";
+import { colors } from "@/src/theme";
+
+// Locked web hex values (Phase 23 / 24) — verbatim.
+const PORTAL_DARK = "#03002e";
+const PORTAL_BORDER = "#1E293B";
 
 let mockDashboard: any = {};
 let mockCreditCents = 0;
@@ -64,20 +70,33 @@ async function mount(dash: any = {}, creditCents = 0) {
   return r;
 }
 
-describe("Phase 25 · portal home sections share the stat-tile chassis", () => {
-  it("3. Concierge, Referral and Business card match the Balance tile chassis", async () => {
+describe("Phase 25 · portal home dark chassis (web Phase 23)", () => {
+  it("3a. page background is dark navy #03002e", async () => {
+    const r = await mount();
+    expect(flat(r.getByTestId("portal-home-root")).backgroundColor).toBe(PORTAL_DARK);
+  });
+
+  it("3. KPI tiles + Concierge / Referral / Business card share the dark chassis", async () => {
     const r = await mount();
     await waitFor(() => r.getByTestId("portal-ai-section"));
-    const tile = flat(r.getByTestId("portal-stat-balance-tile"));
-    expect(tile.backgroundColor).toBe(colors.surface);
-    expect(tile.borderColor).toBe(colors.border);
-    for (const id of ["portal-ai-section", "portal-referral-section", "portal-card-business"]) {
+    for (const id of ["portal-stat-balance-tile", "portal-stat-past-due-tile", "portal-stat-credit-tile",
+      "portal-ai-section", "portal-referral-section", "portal-card-business"]) {
       const st = flat(r.getByTestId(id));
-      expect([id, st.backgroundColor]).toEqual([id, colors.surface]);
-      expect([id, st.borderColor]).toEqual([id, colors.border]);
+      expect([id, st.backgroundColor]).toEqual([id, PORTAL_DARK]);
+      expect([id, st.borderColor]).toEqual([id, PORTAL_BORDER]);
       expect([id, st.borderWidth]).toEqual([id, 1]);
-      expect([id, st.borderRadius]).toEqual([id, radius.lg]);
+      expect([id, st.borderRadius]).toEqual([id, 12]);
     }
+  });
+
+  it("3b. Quick Action tiles are rounded dark tiles too; text is light on navy", async () => {
+    const r = await mount();
+    const qa = r.getAllByTestId(/^portal-card-(?!business)/)[0];
+    const st = flat(qa);
+    expect(st.backgroundColor).toBe(PORTAL_DARK);
+    expect(st.borderColor).toBe(PORTAL_BORDER);
+    expect(st.borderRadius).toBe(12);
+    expect(flat(r.getByTestId("portal-stat-balance")).color).toBe("#FFFFFF");
   });
 
   it("4. distinct accents: Concierge blue, Referral green, Business card navy", async () => {
@@ -103,10 +122,10 @@ describe("Phase 25 · dynamic stat-tile colors + contrast", () => {
     expect(flat(r.getByTestId("portal-stat-past-due-label")).color).toBe("#FFFFFF");
   });
 
-  it.each([0, null])("5. Past Due = %p → default chassis, default text", async (v) => {
+  it.each([0, null])("5. Past Due = %p → default navy chassis", async (v) => {
     const r = await mount({ past_due: v });
-    expect(flat(r.getByTestId("portal-stat-past-due-tile")).backgroundColor).toBe(colors.surface);
-    expect(flat(r.getByTestId("portal-stat-past-due")).color).toBe(colors.onSurface);
+    expect(flat(r.getByTestId("portal-stat-past-due-tile")).backgroundColor).toBe(PORTAL_DARK);
+    expect(flat(r.getByTestId("portal-stat-past-due-tile")).borderColor).toBe(PORTAL_BORDER);
   });
 
   it("6/8. Credit > 0 → #064E3B with white text", async () => {
@@ -116,19 +135,29 @@ describe("Phase 25 · dynamic stat-tile colors + contrast", () => {
     expect(flat(r.getByTestId("portal-stat-credit-label")).color).toBe("#FFFFFF");
   });
 
-  it("6. Credit = 0 → default chassis", async () => {
+  it("6. Credit = 0 → default navy chassis", async () => {
     const r = await mount({}, 0);
-    expect(flat(r.getByTestId("portal-stat-credit-tile")).backgroundColor).toBe(colors.surface);
-    expect(flat(r.getByTestId("portal-stat-credit")).color).toBe(colors.onSurface);
+    expect(flat(r.getByTestId("portal-stat-credit-tile")).backgroundColor).toBe(PORTAL_DARK);
+    expect(flat(r.getByTestId("portal-stat-credit-tile")).borderColor).toBe(PORTAL_BORDER);
   });
 
   it("Balance Due tile chassis is untouched by dynamic colors", async () => {
     const r = await mount({ past_due: 99 }, 100);
-    expect(flat(r.getByTestId("portal-stat-balance-tile")).backgroundColor).toBe(colors.surface);
+    expect(flat(r.getByTestId("portal-stat-balance-tile")).backgroundColor).toBe(PORTAL_DARK);
   });
 });
 
-describe("Phase 25 · Quick Action press glow", () => {
+describe("Phase 25 · glow (web Phase 24 hover → mobile)", () => {
+  it.each([[0, 0], [45, 5500]])("7a. every KPI tile carries the static soft white glow (past_due=%p, credit=%p)", async (pd, cr) => {
+    const r = await mount({ past_due: pd }, cr);
+    if (cr) await waitFor(() => expect(flat(r.getByTestId("portal-stat-credit-tile")).backgroundColor).toBe("#064E3B"));
+    for (const id of ["portal-stat-balance-tile", "portal-stat-past-due-tile", "portal-stat-credit-tile"]) {
+      const st = flat(r.getByTestId(id));
+      expect([id, st.shadowColor, st.shadowOpacity, st.shadowRadius, st.elevation])
+        .toEqual([id, "#FFFFFF", 0.6, 20, 8]);
+    }
+  });
+
   it("7. pressIn applies the white halo, pressOut clears it", async () => {
     const r = await mount();
     const tiles = r.getAllByTestId(/^portal-card-(?!business)/);
@@ -144,7 +173,7 @@ describe("Phase 25 · Quick Action press glow", () => {
     expect(flat(r.getByTestId(t.props.testID)).shadowColor).toBeUndefined();
   });
 
-  it("stat tiles do NOT get the press glow (web parity: glow is Quick Actions only)", async () => {
+  it("KPI glow is static (no press handlers on stat tiles)", async () => {
     const r = await mount({ past_due: 10 });
     expect(r.getByTestId("portal-stat-past-due-tile").props.onPressIn).toBeUndefined();
   });
