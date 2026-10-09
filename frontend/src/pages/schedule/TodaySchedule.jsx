@@ -15,6 +15,9 @@ import { BulkReorderModal } from "@/pages/schedule/NumberedReorder";
 // by the admin Dashboard.
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
+// Phase 3b · Feb-2026 — Navigate (Google Maps) button sibling to
+// On-my-way on the per-card tech action row.
+import NavigateMapsButton from "@/components/schedule/NavigateMapsButton";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 // Phase 27 · Feb-2026 — Global avatar swap for dense layouts.
 // Compact tech avatar rendered next to the customer line so
@@ -1338,6 +1341,11 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                       data-testid={`schedule-card-open-report-${j.id}`}>
                       Open Report
                     </button>
+                    {/* Phase 3b · Feb-2026 — Navigate (Google Maps)
+                        goes LAST in the row per the ticket brief.
+                        Component self-disables when neither
+                        ``service_address`` nor ``address`` resolve. */}
+                    <NavigateMapsButton job={j} />
                   </div>
                 )}
               </div>

@@ -64,6 +64,9 @@ import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
 import TechWeatherWidget from "@/components/Weather/WeatherWidget";
+// Phase 3b · Feb-2026 — Navigate (Google Maps) button sibling to
+// On-my-way + Could-not-service on the per-card action row.
+import NavigateMapsButton from "@/components/schedule/NavigateMapsButton";
 import JobRainFlag from "@/components/Weather/JobRainFlag";
 // SO-A · Feb-2026 — MARCO Suggestions right-side drawer.
 import { MarcoSuggestionsPanel } from
@@ -3171,6 +3174,13 @@ export function GridPanel({
                       >
                         Could not service
                       </button>
+                      {/* Phase 3b · Feb-2026 — Navigate (Google Maps)
+                          goes LAST in the row per the ticket brief.
+                          Pill matches the Could-not-service sibling
+                          padding/radius for a visually coherent row.
+                          Component self-disables when neither
+                          ``service_address`` nor ``address`` resolve. */}
+                      <NavigateMapsButton job={j} />
                     </div>
                   )}
                 </div>
