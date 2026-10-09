@@ -57,25 +57,25 @@ export default function ReferralSection() {
   if (thanks) {
     return (
       <div
-        className="rounded-2xl p-6 my-4 text-center"
+        className="rounded-2xl mb-4 p-6 transition hover:brightness-95 text-center shadow-lg"
         style={{
-          background: "linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)",
-          border: `1px solid #86EFAC`,
+          backgroundColor: colors.surface,
+          border: `1px solid ${colors.border}`,
         }}
         data-testid="portal-referral-thankyou"
       >
-        <Sparkles size={28} className="mx-auto mb-2" color="#16A34A" />
-        <div className="text-lg font-bold" style={{ color: "#14532D" }}>
+        <Sparkles size={28} className="mx-auto mb-2" color={colors.success} />
+        <div className="text-lg font-bold" style={{ color: colors.onSurface }}>
           Thanks! {thanks.message}
         </div>
-        <div className="text-sm mt-1" style={{ color: "#166534" }}>
+        <div className="text-sm mt-1" style={{ color: colors.muted }}>
           If they become a customer we'll let you know.
         </div>
         <button
           type="button"
           onClick={() => setThanks(null)}
           className="mt-4 text-sm font-semibold underline"
-          style={{ color: "#166534", background: "transparent", border: 0, cursor: "pointer" }}
+          style={{ color: colors.success, background: "transparent", border: 0, cursor: "pointer" }}
           data-testid="portal-referral-refer-another"
         >
           Refer someone else
@@ -86,35 +86,40 @@ export default function ReferralSection() {
 
   return (
     <div
-      className="rounded-3xl p-6 my-4 shadow-lg"
+      className="rounded-2xl mb-4 p-6 transition hover:brightness-95 shadow-lg"
       style={{
-        /* Phase 34 · Feb 2026 · Refer highlight — brand-purple → pink
-           gradient, distinct from the Ask-Concierge teal→blue gradient
-           so the two hero-ish blocks are visually differentiated.
-           White text on the gradient gives WCAG AA contrast against
-           the darkest stop (#7C3AED at 4.8:1 for 16px+ bold; the
-           lighter #EC4899 stop covers <20% of body area). */
-        background: "linear-gradient(135deg, #7C3AED 0%, #A855F7 55%, #EC4899 100%)",
-        border: "1px solid rgba(255,255,255,0.10)",
-        color: "#FFFFFF",
+        /* Phase 23 · Feb-2026 — Refer-a-Friend RESTYLED to the
+           Balance-tile dark chassis. The pre-Phase-23 purple→pink
+           gradient was swapped for the same deep-navy + slate-
+           border + rounded-2xl + hover-brighten chrome used by
+           Balance Due / Past Due / Credit so the three attention-
+           blocks on PortalHome share one visual language.
+           Distinct GREEN accent (``colors.success``) keeps the
+           referral block recognisable against the Ask-Concierge
+           (blue) and NFC-card (navy variant) blocks. Form input
+           chrome (white bg) stays unchanged — regression-locked
+           by ``ReferralSection.whiteInputs.test.jsx``. */
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+        color: colors.onSurface,
       }}
       data-testid="portal-referral-section"
       data-tour-id="referrals-panel"
     >
       <div className="flex items-center gap-2 mb-1">
-        <UserPlus size={20} color="#FFFFFF" />
-        <h3 className="text-xl font-black" style={{ color: "#FFFFFF" }}>
-          Refer a Friend — earn $55 credit
+        <UserPlus size={20} color={colors.success} />
+        <h3 className="text-xl font-black" style={{ color: colors.onSurface }}>
+          Refer a Friend — earn <span style={{ color: colors.success }}>$55 credit</span>
         </h3>
       </div>
-      <p className="text-sm mb-4" style={{ color: "rgba(255,255,255,0.92)" }}>
+      <p className="text-sm mb-4" style={{ color: colors.muted }}>
         Know someone who could use pool or landscape care? Send us their info
         and we'll reach out. You'll get $55 in credit after their first paid month.
       </p>
 
       <form onSubmit={submit} className="space-y-3">
         <div>
-          <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+          <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
             Friend's name
           </label>
           <input
@@ -133,7 +138,7 @@ export default function ReferralSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+            <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
               Phone
             </label>
             <input
@@ -151,7 +156,7 @@ export default function ReferralSection() {
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+            <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
               Email
             </label>
             <input
@@ -171,7 +176,7 @@ export default function ReferralSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+            <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
               Address / City (optional)
             </label>
             <input
@@ -188,7 +193,7 @@ export default function ReferralSection() {
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+            <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
               Interested in
             </label>
             <select
@@ -213,7 +218,7 @@ export default function ReferralSection() {
           </div>
         </div>
         <div>
-          <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
+          <label className="text-[11px] font-bold uppercase" style={{ color: colors.onSurface }}>
             Anything else we should know?
           </label>
           <textarea
@@ -243,7 +248,7 @@ export default function ReferralSection() {
           type="submit"
           disabled={submitting}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-white shadow-sm hover:brightness-95 disabled:opacity-60"
-          style={{ background: colors.brand, minHeight: 40 }}
+          style={{ background: colors.success, minHeight: 40 }}
           data-testid="portal-referral-submit-btn"
         >
           {submitting ? (

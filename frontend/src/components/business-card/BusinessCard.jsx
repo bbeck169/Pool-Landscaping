@@ -88,6 +88,31 @@ export default function BusinessCard({ variant = "full" }) {
 
   const gradient = `linear-gradient(135deg, ${card.gradient_from || "#0EA5E9"} 0%, ${card.gradient_to || "#16A34A"} 100%)`;
   const compact = variant === "compact";
+  // Phase 23 · Feb-2026 — on the portal surface (compact variant)
+  // the hero adopts the Balance-tile dark chassis instead of the
+  // branded gradient so the NFC-Ready card reads as part of the
+  // same visual language as Balance Due / Past Due / Credit.
+  // Admin / tech-page previews (``variant="full"``) keep the
+  // branded gradient — regression lock on BusinessCardSettings
+  // preview + tech card.
+  //
+  // Palette values are hardcoded here (rather than imported from
+  // ``portalColors``) because BusinessCard is a shared component
+  // and gating the import conditionally would leak the portal
+  // theme into the admin/tech contexts. These three values are
+  // the same ones that resolve from ``portalColors.surface`` /
+  // ``portalColors.border`` / ``portalColors.brandTertiary`` so
+  // visual parity with Balance tiles holds pixel-for-pixel on
+  // the portal surface.
+  const PORTAL_HERO_BG = "#03002e";       // = portalColors.surface
+  const PORTAL_HERO_BORDER = "#1E293B";   // = portalColors.border
+  const PORTAL_HERO_ACCENT = "#1E3A8A";   // = portalColors.brandTertiary — muted navy variant per Phase 23 brief
+  const heroStyle = compact
+    ? {
+        backgroundColor: PORTAL_HERO_BG,
+        borderBottom: `1px solid ${PORTAL_HERO_BORDER}`,
+      }
+    : { background: gradient };
 
   return (
     <div
@@ -95,16 +120,27 @@ export default function BusinessCard({ variant = "full" }) {
       style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
       data-testid="business-card"
     >
-      {/* Gradient hero */}
+      {/* Gradient hero (full variant) · Dark chassis (compact
+          portal variant, Phase 23) */}
       <div
         className="px-5 py-5 text-white"
-        style={{ background: gradient }}
+        style={heroStyle}
         data-testid="business-card-hero"
       >
         <div className="flex items-center gap-2 mb-3">
           <span
             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider"
-            style={{ backgroundColor: "rgba(255,255,255,0.22)", color: "#fff" }}
+            style={
+              compact
+                ? {
+                    backgroundColor: PORTAL_HERO_ACCENT,
+                    color: "#DBEAFE",
+                  }
+                : {
+                    backgroundColor: "rgba(255,255,255,0.22)",
+                    color: "#fff",
+                  }
+            }
             data-testid="business-card-nfc-badge"
           >
             <Tag size={9} /> NFC-ready

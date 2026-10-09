@@ -498,32 +498,37 @@ export default function PortalHome() {
       ) : null}
       </div>{/* /portal-dashboard-card */}
 
-      {/* Phase 34 · Feb 2026 · Ask-Concierge highlight — teal→blue
-          gradient, distinct from the Refer-a-Friend purple→pink card
-          so the two blocks read as separate hero-ish moments. White
-          text on the gradient meets WCAG AA for 14px bold+. */}
+      {/* Phase 23 · Feb-2026 — Ask Concierge RESTYLED to the
+          Balance-tile dark chassis. The pre-Phase-23 teal→blue→
+          emerald gradient was swapped for the same deep-navy +
+          slate-border + rounded-2xl + hover-brighten chrome used
+          by Balance Due / Past Due / Credit so the three
+          attention-blocks on PortalHome share one visual
+          language. Distinct BLUE accent (``colors.brand``) keeps
+          the section recognisable against the Refer-a-Friend
+          (green) and NFC-card (navy variant) blocks. */}
       {aiEmployees.length > 0 ? (
         <div
-          className="mt-5 mb-4 rounded-3xl p-5 shadow-lg"
+          className="mt-5 mb-4 rounded-2xl p-5 transition hover:brightness-95 shadow-lg"
           style={{
-            background: "linear-gradient(135deg, #0891B2 0%, #0EA5E9 50%, #10B981 100%)",
-            border: "1px solid rgba(255,255,255,0.10)",
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
           }}
           data-testid="portal-ai-section"
           data-tour-id="portal-ai-section"
         >
           <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={20} style={{ color: "#FFFFFF" }} />
+            <Sparkles size={20} style={{ color: colors.brand }} />
             <h2
               className="text-lg font-black uppercase tracking-wide"
-              style={{ color: "#FFFFFF" }}
+              style={{ color: colors.onSurface }}
             >
               Ask a Concierge
             </h2>
           </div>
           <p
             className="text-sm mb-4"
-            style={{ color: "rgba(255,255,255,0.92)" }}
+            style={{ color: colors.muted }}
           >
             Chat with one of our AI concierges — no wait, answers in seconds.
           </p>
@@ -534,9 +539,8 @@ export default function PortalHome() {
                 onClick={() => setAiChat({ employee: emp })}
                 className="text-left rounded-2xl p-4 transition hover:brightness-110 flex items-start gap-3"
                 style={{
-                  backgroundColor: "rgba(255,255,255,0.16)",
-                  border: "1px solid rgba(255,255,255,0.28)",
-                  backdropFilter: "blur(6px)",
+                  backgroundColor: colors.surfaceSecondary,
+                  border: `1px solid ${colors.border}`,
                 }}
                 data-testid={`portal-ai-${emp.key}-card`}
               >
@@ -563,13 +567,13 @@ export default function PortalHome() {
                 <div className="min-w-0">
                   <div
                     className="text-sm font-bold truncate"
-                    style={{ color: "#FFFFFF" }}
+                    style={{ color: colors.onSurface }}
                   >
                     {emp.name}
                   </div>
                   <div
                     className="text-xs mt-0.5 truncate"
-                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    style={{ color: colors.muted }}
                   >
                     {emp.key === "billy"
                       ? "Ask about your balance, invoices, and payment history."
