@@ -33,6 +33,23 @@ import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
 import CustomerJobsSection from "@/src/components/customers/CustomerJobsSection";
 // Phase 25 · web parity 0a176aeeb (Phase 22) — immediate skeleton shell.
 import CustomerProfileSkeleton from "@/src/components/customers/CustomerProfileSkeleton";
+// Phase 25b · web parity 66328fc7d (Phase 27) — dark chassis + KPI tiles + Quick Actions.
+import {
+  KPITileGrid, QuickActionTileGrid, LightPanel, type KpiSummary,
+} from "@/src/components/customers/CustomerDarkProfileParts";
+import {
+  DARK_BG, DARK_BORDER, DARK_TILE_RADIUS, DARK_TEXT, DARK_TEXT_MUTED,
+} from "@/src/lib/customerDarkTokens";
+
+// Quick Action tiles → the section each would open (mobile: scroll target).
+const QUICK_ACTIONS = [
+  { k: "jobs", label: "Jobs", icon: "briefcase-outline" },
+  { k: "tasks", label: "Tasks", icon: "checkbox-outline" },
+  { k: "notes", label: "Service Notes", icon: "document-text-outline" },
+  { k: "timeline", label: "Messages", icon: "chatbubbles-outline" },
+  { k: "equipment", label: "Equipment", icon: "construct-outline" },
+  { k: "payments", label: "Payments", icon: "card-outline" },
+];
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
@@ -79,6 +96,15 @@ export default function CustomerDetail() {
   // ``GET /customers/{id}/summary``. Null until resolved (or on error —
   // section badges just render without a count).
   const [summary, setSummary] = useState<any>(null);
+  // Phase 25b — KPI snapshot from ``GET /customers/{id}/kpi-summary``.
+  const [kpi, setKpi] = useState<KpiSummary>(null);
+  const scrollRef = React.useRef<ScrollView>(null);
+  const sectionY = React.useRef<Record<string, number>>({});
+  const onAnchor = useCallback((k: string, y: number) => { sectionY.current[k] = y; }, []);
+  const jumpTo = useCallback((k: string) => {
+    const y = sectionY.current[k];
+    if (typeof y === "number") scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
+  }, []);
 
   const loadCredits = useCallback(async () => {
     try {
@@ -94,6 +120,10 @@ export default function CustomerDetail() {
     api.get(`/customers/${id}/summary`)
       .then((r: any) => setSummary(r && typeof r === "object" ? r : null))
       .catch(() => setSummary(null));
+    // Phase 25b — KPI tiles fetch in parallel (non-fatal; tiles show zeros).
+    api.get(`/customers/${id}/kpi-summary`)
+      .then((r: any) => setKpi(r && typeof r === "object" ? r : null))
+      .catch(() => setKpi(null));
     try {
       // Phase 9-M — ``slim=1`` drops the embedded ``jobs`` array; Job
       // History is lazy-loaded by <CustomerJobsSection>.
@@ -350,7 +380,7 @@ export default function CustomerDetail() {
           </Pressable>
         }
       />
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
         {/* Phase 25 · web parity 6bf5306cf (Phase 20) — unified action row
             lifted ABOVE the section stack (mobile has no tabs row; the
             stacked sections below are its analogue). Delete + View-as-
@@ -392,6 +422,11 @@ export default function CustomerDetail() {
             </TouchableOpacity>
           ) : null}
         </View>
+
+        {/* Phase 25b · web Phase 27 — 6 KPI tiles (locked order) + Quick
+            Action tiles, both ABOVE the section stack. */}
+        <KPITileGrid kpi={kpi} />
+        <QuickActionTileGrid actions={QUICK_ACTIONS} onPick={jumpTo} />
         {c.customer_since ? (
           <Text
             testID="mobile-customer-since-label"
@@ -466,11 +501,13 @@ export default function CustomerDetail() {
         ) : null}
         {/* Multi-Contact Phase 1 · Automations mute toggle + banner.
             Distinct from MuteControlSheet above which handles is_muted. */}
-        <AutomationsMuteSection
-          customer={c}
-          isAdmin={isAdmin}
-          onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
-        />
+        <LightPanel>
+          <AutomationsMuteSection
+            customer={c}
+            isAdmin={isAdmin}
+            onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
+          />
+        </LightPanel>
         <View style={styles.card}>
           {primaryPhone ? (
             <View style={styles.contactRow}>
@@ -513,14 +550,18 @@ export default function CustomerDetail() {
 
         {/* Multi-Contact Phase 1 — admin gets editable editor; non-admin gets read-only */}
         {isAdmin ? (
-          <CustomerMultiContactEditor
-            customerId={id as string}
-            initialEmails={c.emails}
-            initialMobiles={c.mobiles}
-            onSaved={load}
-          />
+          <LightPanel>
+            <CustomerMultiContactEditor
+              customerId={id as string}
+              initialEmails={c.emails}
+              initialMobiles={c.mobiles}
+              onSaved={load}
+            />
+          </LightPanel>
         ) : (
-          <MultiContact mobiles={c.mobiles} emails={c.emails} />
+          <LightPanel>
+            <MultiContact mobiles={c.mobiles} emails={c.emails} />
+          </LightPanel>
         )}
 
 
@@ -581,12 +622,18 @@ export default function CustomerDetail() {
         {/* Phase J2 / I5 — Payment Method Tiles (green on-file, red empty).
             Placed between header/contact info and the card-required toggle. */}
         {isAdmin ? (
-          <View style={{ marginTop: spacing.md }} testID="customer-payment-tiles-slot">
-            <PaymentMethodTiles
-              customerId={id as string}
-              variant="admin"
-              onChange={load}
-            />
+          <View
+            style={{ marginTop: spacing.md }}
+            testID="customer-payment-tiles-slot"
+            onLayout={(e) => onAnchor("payments", e.nativeEvent.layout.y)}
+          >
+            <LightPanel>
+              <PaymentMethodTiles
+                customerId={id as string}
+                variant="admin"
+                onChange={load}
+              />
+            </LightPanel>
           </View>
         ) : null}
 
@@ -630,7 +677,9 @@ export default function CustomerDetail() {
         {/* B4 — Subscriptions CRUD */}
         {isAdmin ? (
           <View style={{ marginTop: spacing.xl }}>
-            <SubscriptionsSection customerId={id} canWrite={isAdmin} />
+            <LightPanel>
+              <SubscriptionsSection customerId={id} canWrite={isAdmin} />
+            </LightPanel>
           </View>
         ) : null}
 
@@ -750,14 +799,16 @@ export default function CustomerDetail() {
 
         {/* Dispatch B · Portal Access Panel — admin-only */}
         {isAdmin ? (
-          <PortalAccessPanel
-            customerId={id as string}
-            customerEmail={c?.email}
-            customerName={c?.name}
-            hasLogin={c?.has_login}
-            userRole={user?.role}
-            onRefresh={load}
-          />
+          <LightPanel>
+            <PortalAccessPanel
+              customerId={id as string}
+              customerEmail={c?.email}
+              customerName={c?.name}
+              hasLogin={c?.has_login}
+              userRole={user?.role}
+              onRefresh={load}
+            />
+          </LightPanel>
         ) : null}
 
         {c.notes ? (
@@ -851,13 +902,17 @@ export default function CustomerDetail() {
 
         {/* Phase 56.11-mobile — Equipment photo library section (legacy). */}
         <Text style={styles.sectionTitle}>Equipment Photos</Text>
-        <CustomerEquipmentLibrary customerId={id as string} />
+        <LightPanel anchor="equipment" onAnchor={onAnchor}>
+          <CustomerEquipmentLibrary customerId={id as string} />
+        </LightPanel>
 
         {/* Equipment Units — structured equipment library (brand/model/serial + S3 photos). */}
         {isAdminOrTech ? (
           <>
             <Text style={styles.sectionTitle}>Equipment Library</Text>
-            <CustomerEquipmentUnits customerId={id as string} />
+            <LightPanel>
+              <CustomerEquipmentUnits customerId={id as string} />
+            </LightPanel>
           </>
         ) : null}
 
@@ -865,48 +920,62 @@ export default function CustomerDetail() {
         {isAdminOrTech ? (
           <>
             <Text style={styles.sectionTitle}>Warranties</Text>
-            <CustomerWarrantiesSection customerId={id as string} />
+            <LightPanel>
+              <CustomerWarrantiesSection customerId={id as string} />
+            </LightPanel>
           </>
         ) : null}
 
         {/* Task 1 · Feb-2026 — Customer Tags section. Chip render +
             tap-to-add bottom sheet + inline "Create new: <query>". */}
-        <CustomerTagsSection
-          customerId={id as string}
-          value={c.tags || []}
-          onChange={(nextTags) => setC((prev: any) => (prev ? { ...prev, tags: nextTags } : prev))}
-        />
+        <LightPanel>
+          <CustomerTagsSection
+            customerId={id as string}
+            value={c.tags || []}
+            onChange={(nextTags) => setC((prev: any) => (prev ? { ...prev, tags: nextTags } : prev))}
+          />
+        </LightPanel>
 
         {/* Task 1 · Feb-2026 — Outbound-comms Demo whitelist toggle
             with hard-confirm modal. Same contract as web. */}
         <View style={{ marginHorizontal: 16, marginBottom: 12,
                         flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Text style={{ fontSize: 12, color: "#71717A" }}>Comms:</Text>
-          <DemoAccountToggle
-            recordType="customer"
-            recordId={id as string}
-            isDemo={!!c.is_demo_account}
-            recordLabel={c.name || "this customer"}
-            onChange={(next) => setC((prev: any) => (prev ? { ...prev, is_demo_account: next } : prev))}
-          />
+          <LightPanel>
+            <DemoAccountToggle
+              recordType="customer"
+              recordId={id as string}
+              isDemo={!!c.is_demo_account}
+              recordLabel={c.name || "this customer"}
+              onChange={(next) => setC((prev: any) => (prev ? { ...prev, is_demo_account: next } : prev))}
+            />
+          </LightPanel>
         </View>
 
         {/* A5. Tasks tab */}
-        <CustomerTasks customerId={id as string} />
+        <LightPanel anchor="tasks" onAnchor={onAnchor}>
+          <CustomerTasks customerId={id as string} />
+        </LightPanel>
 
         {/* A8. Service notes */}
-        <ServiceNotes customerId={id as string} />
+        <LightPanel anchor="notes" onAnchor={onAnchor}>
+          <ServiceNotes customerId={id as string} />
+        </LightPanel>
 
         {/* Phase 9-M — lazy Job History (summary badge + 5-min TTL cache). */}
-        <CustomerJobsSection
-          customerId={id as string}
-          count={summary?.jobs_count}
-          fallbackJobs={c.jobs}
-        />
+        <LightPanel anchor="jobs" onAnchor={onAnchor}>
+          <CustomerJobsSection
+            customerId={id as string}
+            count={summary?.jobs_count}
+            fallbackJobs={c.jobs}
+          />
+        </LightPanel>
 
         {/* Phase J2 / I7 — Communication Timeline. Always visible (not tab-gated). */}
         <Text style={styles.sectionTitle}>Communication Timeline</Text>
-        <CommunicationTimeline customerId={id as string} variant="admin" />
+        <LightPanel anchor="timeline" onAnchor={onAnchor}>
+          <CommunicationTimeline customerId={id as string} variant="admin" />
+        </LightPanel>
       </ScrollView>
 
       <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="View as customer" testID="impersonate-confirm-sheet">
@@ -1000,16 +1069,16 @@ function ContactRow({ icon, value, onPress }: { icon: any; value?: string; onPre
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
-  contactRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
+  root: { flex: 1, backgroundColor: DARK_BG },
+  card: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER, overflow: "hidden" },
+  contactRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: DARK_BORDER },
   contactIcon: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  contactValue: { flex: 1, fontFamily: font.medium, fontSize: fontSize.base, color: colors.onSurface },
-  notesBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
-  notesLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginBottom: 4 },
-  notes: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurfaceSecondary, lineHeight: 20 },
-  sectionTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginTop: spacing.xl, marginBottom: spacing.md },
-  empty: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
+  contactValue: { flex: 1, fontFamily: font.medium, fontSize: fontSize.base, color: DARK_TEXT },
+  notesBox: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.lg, borderWidth: 1, borderColor: DARK_BORDER, marginTop: spacing.md },
+  notesLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: DARK_TEXT, marginBottom: 4 },
+  notes: { fontFamily: font.regular, fontSize: fontSize.base, color: DARK_TEXT_MUTED, lineHeight: 20 },
+  sectionTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: DARK_TEXT, marginTop: spacing.xl, marginBottom: spacing.md },
+  empty: { fontFamily: font.regular, fontSize: fontSize.base, color: DARK_TEXT_MUTED },
   loginBadge: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
   loginBadgeText: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.success, flex: 1 },
   createLoginBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
@@ -1025,14 +1094,14 @@ const styles = StyleSheet.create({
   docHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xl, marginBottom: spacing.md },
   shareBtn: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
   shareText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
-  docRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
-  docName: { flex: 1, fontFamily: font.medium, fontSize: fontSize.base, color: colors.onSurface },
+  docRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.md, borderWidth: 1, borderColor: DARK_BORDER, marginBottom: spacing.sm },
+  docName: { flex: 1, fontFamily: font.medium, fontSize: fontSize.base, color: DARK_TEXT },
   impersonateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: "#EA580C", borderRadius: radius.md, height: 48, marginTop: spacing.md },
   impersonateText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
-  pmCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
+  pmCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.md, borderWidth: 1, borderColor: DARK_BORDER, marginTop: spacing.md },
   pmIcon: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  pmLabel: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  pmValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 1 },
+  pmLabel: { fontFamily: font.regular, fontSize: fontSize.sm, color: DARK_TEXT_MUTED },
+  pmValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: DARK_TEXT, marginTop: 1 },
   pmRequest: { backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
   pmRequestText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   sendLinkRow: {
@@ -1049,26 +1118,26 @@ const styles = StyleSheet.create({
     color: colors.brand,
     textDecorationLine: "underline",
   },
-  cardRequiredCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  cardRequiredCard: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.md, borderWidth: 1, borderColor: DARK_BORDER, marginTop: spacing.sm },
   resetDefaultBtn: { marginTop: 6 },
   resetDefaultText: { fontFamily: font.medium, fontSize: 11, color: colors.brand, textDecorationLine: "underline" },
   creditsBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, borderWidth: 1, borderColor: "#BBF7D0" },
   creditsText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#166534" },
   // Credits section styles (Phase 13B)
-  creditsSection: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.md, borderWidth: 1, borderColor: colors.border },
+  creditsSection: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.lg, marginTop: spacing.md, borderWidth: 1, borderColor: DARK_BORDER },
   creditsSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  creditsLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, letterSpacing: 1, textTransform: "uppercase" },
+  creditsLabel: { fontFamily: font.bold, fontSize: 10, color: DARK_TEXT_MUTED, letterSpacing: 1, textTransform: "uppercase" },
   creditsAmount: { fontFamily: font.bold, fontSize: 28, color: "#166534", marginTop: 2 },
   adjustBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brand },
   adjustBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   ledgerList: { marginTop: spacing.md, gap: 1 },
-  ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
-  ledgerSource: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface, textTransform: "capitalize" },
-  ledgerNote: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginTop: 1 },
-  ledgerActor: { fontFamily: font.regular, fontSize: 10, color: colors.muted, fontStyle: "italic" },
+  ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: DARK_BORDER },
+  ledgerSource: { fontFamily: font.semibold, fontSize: fontSize.sm, color: DARK_TEXT, textTransform: "capitalize" },
+  ledgerNote: { fontFamily: font.regular, fontSize: 11, color: DARK_TEXT_MUTED, marginTop: 1 },
+  ledgerActor: { fontFamily: font.regular, fontSize: 10, color: DARK_TEXT_MUTED, fontStyle: "italic" },
   ledgerDelta: { fontFamily: font.bold, fontSize: fontSize.base },
-  ledgerDate: { fontFamily: font.regular, fontSize: 10, color: colors.muted, marginTop: 1 },
-  ledgerEmpty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.sm },
+  ledgerDate: { fontFamily: font.regular, fontSize: 10, color: DARK_TEXT_MUTED, marginTop: 1 },
+  ledgerEmpty: { fontFamily: font.regular, fontSize: fontSize.sm, color: DARK_TEXT_MUTED, marginTop: spacing.sm },
   loadMoreText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand, textAlign: "center", paddingTop: 8 },
   // Adjust modal
   adjOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
@@ -1160,6 +1229,6 @@ const s2 = StyleSheet.create({
     borderRadius: radius.md, flexDirection: "row", alignItems: "center",
     justifyContent: "center", gap: 6,
   },
-  actionBtnNeutral: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  actionBtnNeutral: { backgroundColor: DARK_BG, borderWidth: 1, borderColor: DARK_BORDER },
   actionBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm },
 });

@@ -19,10 +19,14 @@ import React, { useEffect, useRef } from "react";
 import { Animated, ScrollView, StyleSheet, View } from "react-native";
 
 import { Header } from "@/src/components/widgets";
-import { colors, spacing, radius } from "@/src/theme";
+import { spacing, radius } from "@/src/theme";
+// Phase 25b · web parity 66328fc7d (Phase 27) — skeleton flips to the
+// dark navy chassis; structure / timing / testIDs unchanged.
+import { DARK_BG, DARK_BORDER, DARK_TILE_RADIUS } from "@/src/lib/customerDarkTokens";
 
 export const SKELETON_SECTIONS = ["jobs", "documents", "timeline"] as const;
 export const ACTION_SLOTS = ["edit", "call", "impersonate", "delete"] as const;
+export const KPI_SLOTS = ["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"] as const;
 
 function Bar({ w, h = 12, round = false, testID, style }: {
   w: number | `${number}%`; h?: number; round?: boolean; testID?: string; style?: any;
@@ -68,6 +72,14 @@ export default function CustomerProfileSkeleton() {
             </View>
           </View>
           <View testID="cd-skeleton-tile-area">
+            <View style={s.kpiGrid} testID="cd-skeleton-kpi-grid">
+              {KPI_SLOTS.map((k) => (
+                <View key={k} style={s.kpiTile} testID={`cd-skeleton-kpi-${k}`}>
+                  <Bar w="70%" h={10} />
+                  <Bar w="50%" h={16} />
+                </View>
+              ))}
+            </View>
             <View style={s.pillRow} testID="cd-skeleton-status-strip">
               <Bar w={96} h={28} round />
               <Bar w={120} h={28} round />
@@ -95,18 +107,23 @@ export default function CustomerProfileSkeleton() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  root: { flex: 1, backgroundColor: DARK_BG },
   content: { padding: spacing.lg },
-  bar: { backgroundColor: colors.divider },
+  bar: { backgroundColor: DARK_BORDER },
   card: {
-    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1,
-    borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.md,
+    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1,
+    borderColor: DARK_BORDER, padding: spacing.lg, marginBottom: spacing.md,
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   actionSlot: {
     flexGrow: 1, flexBasis: "45%", minHeight: 44, borderRadius: radius.md,
-    backgroundColor: colors.divider,
+    backgroundColor: DARK_BORDER,
+  },
+  kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  kpiTile: {
+    flexGrow: 1, flexBasis: "30%", minHeight: 76, padding: spacing.md, gap: spacing.sm,
+    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
   },
   pillRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
   sectionRow: {

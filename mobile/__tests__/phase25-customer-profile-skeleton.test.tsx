@@ -11,7 +11,7 @@
  *   + no bare spinner / blank frame
  */
 import React from "react";
-import { Animated, Linking } from "react-native";
+import { Animated, Linking, StyleSheet } from "react-native";
 import { render, waitFor, act } from "@testing-library/react-native";
 
 let resolveProfile: (v: any) => void = () => {};
@@ -78,7 +78,7 @@ jest.mock("@/src/components/subscriptions/SubscriptionsSection", () => ({ __esMo
 jest.mock("@/src/components/customers/PortalAccessPanel", () => ({ __esModule: true, default: () => null }));
 
 import CustomerDetail from "@/app/customer/[id]";
-import CustomerProfileSkeleton, { SKELETON_SECTIONS, ACTION_SLOTS } from "@/src/components/customers/CustomerProfileSkeleton";
+import CustomerProfileSkeleton, { SKELETON_SECTIONS, ACTION_SLOTS, KPI_SLOTS } from "@/src/components/customers/CustomerProfileSkeleton";
 
 const CUSTOMER = {
   id: "cust-1", name: "Jane Test", email: "j@t.com", is_active: true, tags: [],
@@ -200,5 +200,28 @@ describe("Phase 25 · Phase 20 · action row above the section stack", () => {
     expect(r.queryByTestId("customer-delete-modal-open")).toBeNull();
     fireEvent.press(r.getByTestId("customer-delete-button"));
     expect(r.getByTestId("customer-delete-modal-open")).toBeTruthy();
+  });
+});
+
+describe("Phase 25b · skeleton is DARK (web Phase 27 chassis); structure + testIDs unchanged", () => {
+  const flat = (el: any) => StyleSheet.flatten(el.props.style) || {};
+  it("root + cards on #03002e with #1E293B borders; pulse bars on #1E293B", () => {
+    const r = render(<CustomerProfileSkeleton />);
+    expect(flat(r.getByTestId("customer-detail-skeleton")).backgroundColor).toBe("#03002e");
+    for (const id of ["cd-skeleton-header-card", "cd-skeleton-contact-card"]) {
+      const st = flat(r.getByTestId(id));
+      expect([id, st.backgroundColor, st.borderColor, st.borderRadius]).toEqual([id, "#03002e", "#1E293B", 12]);
+    }
+    expect(flat(r.getByTestId("cd-skeleton-avatar")).backgroundColor).toBe("#1E293B");
+    expect(flat(r.getByTestId("cd-skeleton-action-edit")).backgroundColor).toBe("#1E293B");
+  });
+
+  it("tile area reserves the 6 KPI tiles in locked order", () => {
+    const r = render(<CustomerProfileSkeleton />);
+    const area = testIdsInOrder(r.getByTestId("cd-skeleton-tile-area"));
+    const kpis = area.filter((i) => i.startsWith("cd-skeleton-kpi-") && i !== "cd-skeleton-kpi-grid");
+    expect(kpis).toEqual(KPI_SLOTS.map((k) => `cd-skeleton-kpi-${k}`));
+    expect(KPI_SLOTS).toEqual(["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"]);
+    KPI_SLOTS.forEach((k) => expect(flat(r.getByTestId(`cd-skeleton-kpi-${k}`)).borderColor).toBe("#1E293B"));
   });
 });
