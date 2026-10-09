@@ -212,10 +212,19 @@ function ArchiveWarnDialog({
                                   color: "#78350F",
                                   border: "1px solid #FCD34D" }}
                         data-testid="category-refs-warn-banner">
-                  Archiving will surface an{" "}
-                  <span className="font-semibold">&ldquo;Archived category&rdquo;</span>
-                  {" "}badge on affected historical line items. Existing
-                  data is preserved — this is a soft-delete.
+                  {/* Phase 26b · Feb-2026 — archive now fans out +
+                       nulls the ref on every affected line item +
+                       stamps ``category_auto_mapped: true`` so the
+                       editor surfaces an amber chip until the
+                       operator manually re-picks a category. */}
+                  <span className="font-semibold">
+                    {(refs?.pricebook_item_count || 0) + (refs?.line_item_count || 0)}
+                  </span>{" "}
+                  reference{(refs?.pricebook_item_count || 0) + (refs?.line_item_count || 0) === 1 ? "" : "s"}
+                  {" "}will be moved to Uncategorized. The invoice
+                  / estimate editor will flag each affected line
+                  so a teammate can re-pick a replacement
+                  category. Historical totals + tax are preserved.
                 </div>
               ) : (
                 <div className="text-xs" style={{ color: colors.muted }}>

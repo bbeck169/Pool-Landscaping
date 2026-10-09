@@ -337,20 +337,61 @@ async def update_category(
 async def archive_category(cid: str,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
+    """Phase 26b · Feb-2026 — soft-delete + fan-out.
+
+    Flips ``is_archived: True`` on the service category then calls
+    ``services.category_deactivation.fan_out_archive`` to null the
+    archived FK on every tenant pricebook item (``db.items``) and
+    every quote/invoice line item (``db.quotes.line_items[]``) that
+    referenced it + stamp ``category_auto_mapped: true`` +
+    ``original_category_id`` + ``original_category_name`` on each.
+
+    Mirrors ``income_categories.archive_category``.  Rollback on
+    fan-out failure flips ``is_archived`` back to ``False``.
+    """
     _require_admin(user)
-    r = await db.service_categories.update_one(
-        {"id": cid, "tenant_id": tenant["id"]},
+    tenant_id = tenant["id"]
+    cat = await db.service_categories.find_one(
+        {"id": cid, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1, "is_archived": 1},
+    )
+    if not cat:
+        raise HTTPException(404, "not_found")
+    cat_name = cat.get("name") or ""
+    await db.service_categories.update_one(
+        {"id": cid, "tenant_id": tenant_id},
         {"$set": {"is_archived": True, "updated_at": _now()}},
     )
-    if r.matched_count == 0:
-        raise HTTPException(404, "not_found")
-    return {"ok": True, "id": cid, "is_archived": True}
+    try:
+        from services.category_deactivation import fan_out_archive
+        stats = await fan_out_archive(
+            axis="service", tenant_id=tenant_id,
+            cat_id=cid, cat_name=cat_name,
+        )
+    except Exception as exc:                                        # noqa: BLE001
+        from services.category_deactivation import rollback_archive
+        await rollback_archive(
+            axis="service", tenant_id=tenant_id, cat_id=cid)
+        logger.exception(
+            "[service_categories.archive] fan-out failed, rolled back")
+        raise HTTPException(
+            500, {"error": "fan_out_failed", "detail": str(exc)[:200]},
+        ) from exc
+    return {"ok": True, "id": cid, "is_archived": True, "fan_out": stats}
 
 
 @router.post("/service-categories/{cid}/restore")
 async def restore_category(cid: str,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
+    """Flip ``is_archived`` back to ``False``.
+
+    Phase 26b · Feb-2026 — restore does NOT re-hydrate the line
+    items null'd on archive.  Those rows retain their
+    ``category_auto_mapped: true`` + ``original_category_*`` stamps
+    and continue to surface in the uncategorized banner + editor
+    amber chip until the operator manually re-picks a category.
+    """
     _require_admin(user)
     r = await db.service_categories.update_one(
         {"id": cid, "tenant_id": tenant["id"]},

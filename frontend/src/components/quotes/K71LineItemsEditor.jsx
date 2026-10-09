@@ -580,7 +580,7 @@ function EditableRow({ line, index, onSave, onCancel }) {
   );
 }
 
-function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete }) {
+function ReadRow({ line, index, canEdit, deleteDisabled, stale, autoMapped, onEdit, onDelete }) {
   const q = Number(line.quantity || 0);
   const u = Number(line.unit_price || 0);
   const legacy = isLegacyLine(line);
@@ -589,15 +589,20 @@ function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete
       style={{ borderBottom: `1px solid ${colors.divider}`,
                 backgroundColor: line.is_late_fee
                   ? "#FFF7ED"
-                  : stale ? "#FEF2F2" : undefined }}
+                  : stale
+                    ? "#FEF2F2"
+                    : autoMapped ? "#FFFBEB" : undefined }}
       data-testid={`k71-row-${index}`}
       aria-invalid={stale ? "true" : undefined}
       data-stale={stale ? "true" : undefined}
+      data-auto-mapped={autoMapped ? "true" : undefined}
     >
       <td className="px-2 py-2" style={{ color: colors.onSurface,
                                           borderLeft: stale
                                             ? "3px solid #DC2626"
-                                            : undefined }}>
+                                            : autoMapped
+                                              ? "3px solid #F59E0B"
+                                              : undefined }}>
         <div className="flex items-center gap-2">
           {/* QF-1 · Feb-2026 — primary bold = item_name if set,
                fallback to description for legacy rows that never
@@ -625,6 +630,27 @@ function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete
               data-testid={`k71-stale-badge-${index}`}
             >
               <AlertCircle size={10} /> Inactive category
+            </span>
+          ) : null}
+          {autoMapped ? (
+            /* Phase 26b · Feb-2026 — amber auto-map chip surfaces
+                a non-blocking nudge when the archive-time fan-out
+                null'd the category refs on this line.  Hover
+                tooltip exposes the ``original_category_name`` so
+                the operator knows WHICH category was deactivated.
+                Save remains unblocked — the K71 validator soft-
+                passes ``category_auto_mapped: true`` rows. */
+            <span
+              className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide flex items-center gap-1"
+              style={{ backgroundColor: "#FEF3C7", color: "#78350F",
+                        border: "1px solid #FCD34D" }}
+              title={line.original_category_name
+                ? `Category "${line.original_category_name}" was deactivated — please pick a new category.`
+                : "Previous category was deactivated — please pick a new category."}
+              data-testid={`k71-auto-mapped-badge-${index}`}
+              data-original-category-name={line.original_category_name || ""}
+            >
+              <AlertCircle size={10} /> Needs re-pick
             </span>
           ) : null}
         </div>
@@ -694,7 +720,7 @@ function ReadRow({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete
   );
 }
 
-function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDelete }) {
+function MobileCard({ line, index, canEdit, deleteDisabled, stale, autoMapped, onEdit, onDelete }) {
   const q = Number(line.quantity || 0);
   const u = Number(line.unit_price || 0);
   const legacy = isLegacyLine(line);
@@ -702,14 +728,19 @@ function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDel
     <li
       className="rounded-xl border p-3 flex flex-col gap-2"
       style={{
-        borderColor: stale ? "#DC2626" : colors.divider,
+        borderColor: stale
+          ? "#DC2626"
+          : autoMapped ? "#F59E0B" : colors.divider,
         background: line.is_late_fee
           ? "#FFF7ED"
-          : stale ? "#FEF2F2" : colors.surface,
+          : stale
+            ? "#FEF2F2"
+            : autoMapped ? "#FFFBEB" : colors.surface,
       }}
       data-testid={`k71-card-${index}`}
       aria-invalid={stale ? "true" : undefined}
       data-stale={stale ? "true" : undefined}
+      data-auto-mapped={autoMapped ? "true" : undefined}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -740,6 +771,22 @@ function MobileCard({ line, index, canEdit, deleteDisabled, stale, onEdit, onDel
                 data-testid={`k71-stale-badge-mobile-${index}`}
               >
                 <AlertCircle size={10} /> Inactive
+              </span>
+            ) : null}
+            {autoMapped ? (
+              /* Phase 26b · Feb-2026 — mobile mirror of the amber
+                  auto-map chip rendered by ``ReadRow``. */
+              <span
+                className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide flex items-center gap-1"
+                style={{ backgroundColor: "#FEF3C7", color: "#78350F",
+                          border: "1px solid #FCD34D" }}
+                title={line.original_category_name
+                  ? `Category "${line.original_category_name}" was deactivated — please pick a new category.`
+                  : "Previous category was deactivated — please pick a new category."}
+                data-testid={`k71-auto-mapped-badge-mobile-${index}`}
+                data-original-category-name={line.original_category_name || ""}
+              >
+                <AlertCircle size={10} /> Needs re-pick
               </span>
             ) : null}
           </div>
@@ -1060,6 +1107,20 @@ export default function K71LineItemsEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, activeIdsReady, activeIds.income, activeIds.service]);
 
+  // Phase 26b · Feb-2026 — row-level derivation of the auto-map
+  // flag landed by the archive-time fan-out + save-time soft-pass
+  // in the K71 validator.  Non-blocking: an auto-mapped row is NOT
+  // added to ``invalidCount`` and the save button stays enabled.
+  // Separate from ``staleIndices`` because an auto-mapped row has
+  // ALREADY been null'd — there's no stale cat-id left to flag red.
+  const autoMappedIndices = useMemo(() => {
+    const out = new Set();
+    items.forEach((li, i) => {
+      if (li && li.category_auto_mapped === true) out.add(i);
+    });
+    return out;
+  }, [items]);
+
   const invalidCount = gaps.length + staleIndices.size;
   const hasInvalidRows = invalidCount > 0;
 
@@ -1136,6 +1197,7 @@ export default function K71LineItemsEditor({
                 canEdit={canEdit && editIndex === null}
                 deleteDisabled={pendingDelete !== null}
                 stale={staleIndices.has(i)}
+                autoMapped={autoMappedIndices.has(i)}
                 onEdit={setEditIndex}
                 onDelete={handleDelete}
               />
@@ -1164,6 +1226,7 @@ export default function K71LineItemsEditor({
               canEdit={canEdit}
               deleteDisabled={pendingDelete !== null}
               stale={staleIndices.has(i)}
+              autoMapped={autoMappedIndices.has(i)}
               onEdit={setEditIndex}
               onDelete={handleDelete}
             />

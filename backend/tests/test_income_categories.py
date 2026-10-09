@@ -356,6 +356,19 @@ def test_edit_invoice_forces_category_on_touched_lines():
 
 # ─────────────── 10. Archived category rejected ────────────────
 def test_archived_category_not_selectable_on_new_invoice():
+    """Phase 26b · Feb-2026 — contract flipped: archive now
+    auto-maps instead of blocking save.
+
+    Before Phase 26b: POST /quotes with a line pointing at an
+    archived income category returned HTTP 400 ``category_invalid``.
+
+    After Phase 26b: the K71 + legacy validators soft-pass archived
+    refs — the save succeeds HTTP 200, the ``category`` on the line
+    is null'd, and the line is stamped with
+    ``category_auto_mapped: true`` + ``original_category_id`` +
+    ``original_category_name`` so the editor renders an amber
+    "Needs re-pick" chip until the operator manually re-assigns.
+    """
     tid = _seed_isolated_tenant()
     uid, email, tok = _seed_admin_for(tid)
     cid = _seed_customer(tid)
@@ -363,6 +376,7 @@ def test_archived_category_not_selectable_on_new_invoice():
         r = requests.get(f"{API}/income-categories",
                           headers={"Authorization": f"Bearer {tok}"}, timeout=15).json()
         other_id = next(c["id"] for c in r["items"] if c["name"] == "Other")
+        other_name = next(c["name"] for c in r["items"] if c["id"] == other_id)
         # Archive Other.
         requests.post(f"{API}/income-categories/{other_id}/archive",
                        headers={"Authorization": f"Bearer {tok}"}, timeout=15)
@@ -377,8 +391,14 @@ def test_archived_category_not_selectable_on_new_invoice():
         }
         r = requests.post(f"{API}/quotes", json=payload,
                            headers={"Authorization": f"Bearer {tok}"}, timeout=15)
-        assert r.status_code == 400, r.text
-        assert r.json()["detail"]["error"] == "category_invalid"
+        # Phase 26b soft-pass → 200 OK, no block.
+        assert r.status_code == 200, r.text
+        body = r.json()
+        line = body["line_items"][0]
+        assert line["category"] == ""
+        assert line["category_auto_mapped"] is True
+        assert line["original_category_id"] == other_id
+        assert line["original_category_name"] == other_name
     finally:
         _db.users.delete_one({"id": uid})
         _CACHE.pop(f"tok:{email}", None)

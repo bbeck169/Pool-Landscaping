@@ -166,8 +166,28 @@ async def validate_line_item_categories(
     valid_ids = {c["id"] for c in active}
     valid_names = {(c["name"] or "").strip().lower() for c in active}
     available = [c["name"] for c in active]
+    # Phase 26b · Feb-2026 — also fetch archived rows so refs to a
+    # just-archived category soft-pass (null-out + auto-stamp)
+    # instead of erroring.  Mirrors the archive-time fan-out shape.
+    archived = await db.income_categories.find(
+        {"tenant_id": tenant_id, "is_archived": True},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    archived_by_id = {c["id"]: c for c in archived}
+    archived_by_name = {(c["name"] or "").strip().lower(): c for c in archived}
+    from services.category_deactivation import (
+        soft_pass_archived_ref_in_line_item,
+    )
 
     for idx, li in enumerate(line_items or []):
+        # Phase 26b · Feb-2026 — an auto-mapped row (either stamped
+        # by the archive-time fan-out or by a prior save-time soft-
+        # pass) is allowed to have an empty ``category`` on save —
+        # treat it as a legacy grandfathered row.  Operator sees an
+        # amber chip in the editor nudging them to re-pick.
+        if li.get("category_auto_mapped") is True and not (
+            li.get("category") or "").strip():
+            continue
         cat = (li.get("category") or "").strip() if isinstance(
             li.get("category"), str) else li.get("category")
         if not cat:
@@ -188,6 +208,16 @@ async def validate_line_item_categories(
             )
         cat_str = str(cat).strip()
         if cat_str in valid_ids or cat_str.lower() in valid_names:
+            continue
+        # Phase 26b · Feb-2026 — soft-pass archived refs instead of
+        # erroring.  Mutates the line in-place; downstream write
+        # path lands the null-out + auto-stamp alongside the rest
+        # of the operator's edit.
+        archived_cat = archived_by_id.get(cat_str) or \
+            archived_by_name.get(cat_str.lower())
+        if archived_cat:
+            soft_pass_archived_ref_in_line_item(
+                li=li, archived_cat=archived_cat, axis="income")
             continue
         raise HTTPException(
             status_code=400,
@@ -255,6 +285,27 @@ async def validate_line_item_k71_categories(
     svc_names = {(c.get("name") or "").strip().lower() for c in svc_cats}
     svc_available = [c["name"] for c in svc_cats]
 
+    # Phase 26b · Feb-2026 — archived rows lookup for soft-pass.
+    # Lines pointing at a just-archived category get null'd +
+    # auto-stamped instead of raising HTTP 400.
+    inc_archived = await db.income_categories.find(
+        {"tenant_id": tenant_id, "is_archived": True},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    inc_archived_by_id = {c["id"]: c for c in inc_archived}
+    inc_archived_by_name = {
+        (c.get("name") or "").strip().lower(): c for c in inc_archived}
+    svc_archived = await db.service_categories.find(
+        {"tenant_id": tenant_id, "is_archived": True},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(500)
+    svc_archived_by_id = {c["id"]: c for c in svc_archived}
+    svc_archived_by_name = {
+        (c.get("name") or "").strip().lower(): c for c in svc_archived}
+    from services.category_deactivation import (
+        soft_pass_archived_ref_in_line_item,
+    )
+
     for idx, li in enumerate(line_items or []):
         # Phase K71 · Feb-2026 — K71-touched detection is str-typed
         # rather than presence-based. Pydantic's ``LineItem`` model
@@ -278,6 +329,13 @@ async def validate_line_item_k71_categories(
         svc_val = svc_raw.strip() if isinstance(svc_raw, str) else ""
         inc_val = inc_raw.strip() if isinstance(inc_raw, str) else ""
 
+        # Phase 26b · Feb-2026 — auto-mapped rows (stamped by the
+        # archive-time fan-out or a prior save-time soft-pass) are
+        # allowed to have empty K71 fields on save.  Operator sees
+        # an amber chip in the editor nudging them to re-pick.
+        if li.get("category_auto_mapped") is True and not svc_val and not inc_val:
+            continue
+
         if not svc_val:
             raise HTTPException(
                 status_code=400,
@@ -297,26 +355,39 @@ async def validate_line_item_k71_categories(
                 },
             )
         if svc_val not in svc_ids and svc_val.lower() not in svc_names:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "service_category_invalid",
-                    "error_code": "k71_service_category_invalid",
-                    "code": "invalid_line_item_category",
-                    "field": f"line_items[{idx}].service_category_id",
-                    "line_index": idx,
-                    "attempted": svc_val,
-                    "invalid_value": svc_val,
-                    "message": (
-                        f"{_line_item_row_ref(idx, li)} — references "
-                        f"an inactive or unknown service category: "
-                        f"{svc_val!r}."
-                    ),
-                    "available_categories": svc_available,
-                },
-            )
+            # Phase 26b · Feb-2026 — soft-pass archived svc refs.
+            svc_archived_row = svc_archived_by_id.get(svc_val) or \
+                svc_archived_by_name.get(svc_val.lower())
+            if svc_archived_row:
+                soft_pass_archived_ref_in_line_item(
+                    li=li, archived_cat=svc_archived_row, axis="service")
+                svc_val = ""   # downstream inc check still runs
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "service_category_invalid",
+                        "error_code": "k71_service_category_invalid",
+                        "code": "invalid_line_item_category",
+                        "field": f"line_items[{idx}].service_category_id",
+                        "line_index": idx,
+                        "attempted": svc_val,
+                        "invalid_value": svc_val,
+                        "message": (
+                            f"{_line_item_row_ref(idx, li)} — references "
+                            f"an inactive or unknown service category: "
+                            f"{svc_val!r}."
+                        ),
+                        "available_categories": svc_available,
+                    },
+                )
 
         if not inc_val:
+            # Phase 26b · Feb-2026 — if svc soft-passed above (now
+            # empty) and inc is also empty, we're an auto-mapped
+            # row post-soft-pass and should allow through.
+            if li.get("category_auto_mapped") is True:
+                continue
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -335,6 +406,13 @@ async def validate_line_item_k71_categories(
                 },
             )
         if inc_val not in inc_ids and inc_val.lower() not in inc_names:
+            # Phase 26b · Feb-2026 — soft-pass archived inc refs.
+            inc_archived_row = inc_archived_by_id.get(inc_val) or \
+                inc_archived_by_name.get(inc_val.lower())
+            if inc_archived_row:
+                soft_pass_archived_ref_in_line_item(
+                    li=li, archived_cat=inc_archived_row, axis="income")
+                continue
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -559,14 +637,52 @@ async def archive_category(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
+    """Phase 26b · Feb-2026 — soft-delete + fan-out.
+
+    1. Flips ``is_archived: True`` on the category.
+    2. Fans out across tenant line items (``db.quotes.line_items[]``)
+       + pricebook items (``db.items``) to NULL the archived ref +
+       stamp ``category_auto_mapped: true`` + ``original_category_id``
+       + ``original_category_name`` on each affected row.
+    3. On fan-out failure, calls ``rollback_archive`` to flip
+       ``is_archived`` back to ``False`` so the system stays in a
+       consistent "not archived + line items untouched" state.
+
+    Restore semantics:  ``POST /income-categories/{id}/restore``
+    does NOT re-hydrate the null'd refs — the operator must affirm-
+    atively re-pick a category via the inline editor.  Documented
+    on ``restore_category`` below.
+    """
     _require_admin(user)
-    r = await db.income_categories.update_one(
-        {"id": cid, "tenant_id": tenant["id"]},
+    tenant_id = tenant["id"]
+    cat = await db.income_categories.find_one(
+        {"id": cid, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1, "is_archived": 1},
+    )
+    if not cat:
+        raise HTTPException(404, "category_not_found")
+    cat_name = cat.get("name") or ""
+    await db.income_categories.update_one(
+        {"id": cid, "tenant_id": tenant_id},
         {"$set": {"is_archived": True, "updated_at": _now()}},
     )
-    if r.matched_count == 0:
-        raise HTTPException(404, "category_not_found")
-    return {"ok": True, "id": cid, "is_archived": True}
+    # Fan-out — on failure, compensate by un-archiving.
+    try:
+        from services.category_deactivation import fan_out_archive
+        stats = await fan_out_archive(
+            axis="income", tenant_id=tenant_id,
+            cat_id=cid, cat_name=cat_name,
+        )
+    except Exception as exc:                                        # noqa: BLE001
+        from services.category_deactivation import rollback_archive
+        await rollback_archive(
+            axis="income", tenant_id=tenant_id, cat_id=cid)
+        logger.exception(
+            "[income_categories.archive] fan-out failed, rolled back")
+        raise HTTPException(
+            500, {"error": "fan_out_failed", "detail": str(exc)[:200]},
+        ) from exc
+    return {"ok": True, "id": cid, "is_archived": True, "fan_out": stats}
 
 
 @router.post("/income-categories/{cid}/restore")
@@ -575,6 +691,14 @@ async def restore_category(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
+    """Flip ``is_archived`` back to ``False``.
+
+    Phase 26b · Feb-2026 — restore does NOT re-hydrate the line
+    items we null'd on archive.  Those rows retain their
+    ``category_auto_mapped: true`` + ``original_category_*`` stamps
+    and continue to surface in the uncategorized banner + editor
+    amber chip until the operator manually re-picks a category.
+    """
     _require_admin(user)
     r = await db.income_categories.update_one(
         {"id": cid, "tenant_id": tenant["id"]},
