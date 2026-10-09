@@ -101,9 +101,35 @@ export default function CustomerDetail() {
   const scrollRef = React.useRef<ScrollView>(null);
   const sectionY = React.useRef<Record<string, number>>({});
   const onAnchor = useCallback((k: string, y: number) => { sectionY.current[k] = y; }, []);
+  // Tap-time measurement: onLayout ``y`` goes stale on web (RNW only
+  // re-fires on resize) once sections above finish loading, so measure
+  // panel vs viewport page-Y + current offset; stored y is the fallback.
+  const viewportRef = React.useRef<View>(null);
+  const scrollYRef = React.useRef(0);
+  const sectionNode = React.useRef<Record<string, any>>({});
+  const onNode = useCallback((k: string, n: any) => { sectionNode.current[k] = n; }, []);
   const jumpTo = useCallback((k: string) => {
-    const y = sectionY.current[k];
-    if (typeof y === "number") scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
+    let done = false;
+    const go = (y: number) => {
+      if (done) return;
+      done = true;
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
+    };
+    const node = sectionNode.current[k];
+    const vp: any = viewportRef.current;
+    if (node?.measure && vp?.measure) {
+      try {
+        node.measure((_x: number, _y: number, _w: number, _h: number, _px: number, py: number) => {
+          vp.measure((_a: number, _b: number, _c: number, _d: number, _e: number, vpy: number) => {
+            if (Number.isFinite(py) && Number.isFinite(vpy)) go(scrollYRef.current + (py - vpy));
+          });
+        });
+      } catch { /* fall through to stored y */ }
+    }
+    setTimeout(() => {
+      const y = sectionY.current[k];
+      if (typeof y === "number") go(y);
+    }, 120);
   }, []);
 
   const loadCredits = useCallback(async () => {
@@ -380,7 +406,13 @@ export default function CustomerDetail() {
           </Pressable>
         }
       />
-      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
+      <View ref={viewportRef} style={{ flex: 1 }} collapsable={false}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
+        onScroll={(e) => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+        scrollEventThrottle={16}
+      >
         {/* Phase 25 · web parity 6bf5306cf (Phase 20) — unified action row
             lifted ABOVE the section stack (mobile has no tabs row; the
             stacked sections below are its analogue). Delete + View-as-
@@ -625,6 +657,8 @@ export default function CustomerDetail() {
           <View
             style={{ marginTop: spacing.md }}
             testID="customer-payment-tiles-slot"
+            ref={(n) => onNode("payments", n)}
+            collapsable={false}
             onLayout={(e) => onAnchor("payments", e.nativeEvent.layout.y)}
           >
             <LightPanel>
@@ -902,7 +936,7 @@ export default function CustomerDetail() {
 
         {/* Phase 56.11-mobile — Equipment photo library section (legacy). */}
         <Text style={styles.sectionTitle}>Equipment Photos</Text>
-        <LightPanel anchor="equipment" onAnchor={onAnchor}>
+        <LightPanel anchor="equipment" onAnchor={onAnchor} onNode={onNode}>
           <CustomerEquipmentLibrary customerId={id as string} />
         </LightPanel>
 
@@ -953,17 +987,17 @@ export default function CustomerDetail() {
         </View>
 
         {/* A5. Tasks tab */}
-        <LightPanel anchor="tasks" onAnchor={onAnchor}>
+        <LightPanel anchor="tasks" onAnchor={onAnchor} onNode={onNode}>
           <CustomerTasks customerId={id as string} />
         </LightPanel>
 
         {/* A8. Service notes */}
-        <LightPanel anchor="notes" onAnchor={onAnchor}>
+        <LightPanel anchor="notes" onAnchor={onAnchor} onNode={onNode}>
           <ServiceNotes customerId={id as string} />
         </LightPanel>
 
         {/* Phase 9-M — lazy Job History (summary badge + 5-min TTL cache). */}
-        <LightPanel anchor="jobs" onAnchor={onAnchor}>
+        <LightPanel anchor="jobs" onAnchor={onAnchor} onNode={onNode}>
           <CustomerJobsSection
             customerId={id as string}
             count={summary?.jobs_count}
@@ -973,10 +1007,11 @@ export default function CustomerDetail() {
 
         {/* Phase J2 / I7 — Communication Timeline. Always visible (not tab-gated). */}
         <Text style={styles.sectionTitle}>Communication Timeline</Text>
-        <LightPanel anchor="timeline" onAnchor={onAnchor}>
+        <LightPanel anchor="timeline" onAnchor={onAnchor} onNode={onNode}>
           <CommunicationTimeline customerId={id as string} variant="admin" />
         </LightPanel>
       </ScrollView>
+      </View>
 
       <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="View as customer" testID="impersonate-confirm-sheet">
         <Text style={styles.sheetHint}>

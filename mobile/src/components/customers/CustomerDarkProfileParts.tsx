@@ -83,14 +83,21 @@ export function QuickActionTileGrid({ actions, onPick }: { actions: QuickAction[
   );
 }
 
-export function LightPanel({ children, anchor, onAnchor }: {
+export function LightPanel({ children, anchor, onAnchor, onNode }: {
   children: React.ReactNode; anchor?: string; onAnchor?: (k: string, y: number) => void;
+  onNode?: (k: string, node: any) => void;
 }) {
   const onLayout = anchor && onAnchor
     ? (e: LayoutChangeEvent) => onAnchor(anchor, e.nativeEvent.layout.y)
     : undefined;
   return (
-    <View style={s.panel} onLayout={onLayout} testID={anchor ? `cd-section-${anchor}` : undefined}>
+    <View
+      style={s.panel}
+      onLayout={onLayout}
+      ref={anchor && onNode ? (n) => onNode(anchor, n) : undefined}
+      collapsable={false}
+      testID={anchor ? `cd-section-${anchor}` : undefined}
+    >
       {children}
     </View>
   );

@@ -181,7 +181,7 @@ describe("Phase 25b · Quick Actions + Phase 20 preserved", () => {
     }
   });
 
-  it("each Quick Action tile scrolls to its section anchor", async () => {
+  it("each Quick Action tile scrolls to its section anchor (exactly once)", async () => {
     const r = await mount({});
     const sv: any = r.UNSAFE_getByType(ScrollView).instance;
     const ys: Record<string, number> = { jobs: 1400, tasks: 900, notes: 1100, timeline: 1700, equipment: 600 };
@@ -192,7 +192,9 @@ describe("Phase 25b · Quick Actions + Phase 20 preserved", () => {
     for (const [k, y] of Object.entries({ ...ys, payments: 300 })) {
       sv.scrollTo.mockClear();
       fireEvent.press(r.getByTestId(`cd-quick-action-${k}`));
-      expect([k, sv.scrollTo.mock.calls[0]?.[0]]).toEqual([k, { y: y - 12, animated: true }]);
+      // jest host ``measure`` mocks never call back → stored-y fallback (120ms).
+      await act(async () => { await new Promise((res) => setTimeout(res, 160)); });
+      expect([k, sv.scrollTo.mock.calls.length, sv.scrollTo.mock.calls[0]?.[0]]).toEqual([k, 1, { y: y - 12, animated: true }]);
     }
   });
 });
