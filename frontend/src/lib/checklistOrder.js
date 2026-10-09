@@ -6,28 +6,28 @@
 // ``job_checklist_pool`` / ``job_checklist_landscape`` /
 // ``job_checklist_generic``.
 //
-// Mapping convention — CROSS-COLLECTION ID MISMATCH
-// -------------------------------------------------
-// Service report checklist items are stored as a flat list of
-// labels (``POOL_CHECKLIST_DEFAULT`` at
-// ``backend/routers/service_reports.py``) with no stable
-// ``field_id``.  Form_template field_ids are of the shape
-// ``chk_<slug>`` (manually assigned during the Phase 7A seed).
-// Because the two collections don't share a stable identifier,
-// Option A (template-order lookup) matches items by LABEL
-// (case-insensitive, trimmed, exact string compare).
+// Phase 17 · Feb-2026 — Cross-collection field_id convention.
+// Checklist items in ``industry_checklist_templates`` and
+// ``tenant_checklist_overrides`` are now stamped with a stable
+// ``field_id`` by the Phase 17 migration + write-path upsert.
+// This helper now matches on ``field_id`` FIRST and falls back
+// to label-match for backwards compatibility with:
 //
-// Future-proofing: a cross-collection seed migration that stamps
-// a stable ``field_id`` onto each checklist item is noted as a
-// follow-up in /app/memory/known_issues.md; once shipped, this
-// helper can swap the label-match for an id-match without
-// changing its public API.
+//   * Pre-migration tenants (field_id absent)
+//   * Items coming from the Phase 7A form_templates seed whose
+//     field_ids are hand-curated keywords (e.g. ``chk_skim_
+//     surface``) rather than mechanical slugs; the migrated
+//     service_report side carries a mechanical slug which won't
+//     id-match the curated seed id. Label-match bridges the gap.
+//
+// Public API unchanged per the Phase 14 commitment — signature +
+// return shape identical.
 //
 // Zero-regression contract:
 //   * No template fields → return items unchanged (same reference
 //     when possible to avoid React key churn).
-//   * No label match for a service-report item → appended at end
-//     of the ordered run (never silently dropped).
+//   * No match (id or label) for a service-report item → appended
+//     at end of the ordered run.
 //   * Template field with no matching item → silently skipped.
 
 
@@ -41,7 +41,8 @@ function _labelKey(s) {
  * template-provided order.
  *
  * @param {Array} items          service-report checklist items.
- *                               Each item has {label, checked, id?}.
+ *                               Each item has {label, checked, id?,
+ *                               field_id?}.
  * @param {Array} templateFields fieldsOrdered from
  *                               useFormTemplateRuntime(form_type).
  *                               Each has {field_id, label, order}.
@@ -63,23 +64,47 @@ export function orderChecklistByTemplate(items, templateFields) {
   );
   if (checklistFields.length === 0) return items;
 
+  // Phase 17 · build BOTH id→item and label→item maps so the
+  // match pass can try id first, then fall back to label.
+  const byFieldId = new Map();
   const byLabel = new Map();
   for (const item of items) {
+    const fid = typeof item?.field_id === "string"
+      ? item.field_id : "";
+    if (fid) {
+      if (!byFieldId.has(fid)) byFieldId.set(fid, []);
+      byFieldId.get(fid).push(item);
+    }
     const key = _labelKey(item?.label);
-    if (!key) continue;
-    if (!byLabel.has(key)) byLabel.set(key, []);
-    byLabel.get(key).push(item);
+    if (key) {
+      if (!byLabel.has(key)) byLabel.set(key, []);
+      byLabel.get(key).push(item);
+    }
   }
 
   const consumed = new Set();
   const ordered = [];
   for (const f of checklistFields) {
-    const key = _labelKey(f?.label);
-    const bucket = byLabel.get(key);
-    if (!bucket || bucket.length === 0) continue;
-    const next = bucket.shift();
-    ordered.push(next);
-    consumed.add(next);
+    // Prefer id-match.
+    let bucket = byFieldId.get(f?.field_id);
+    let next = null;
+    while (bucket && bucket.length) {
+      const cand = bucket.shift();
+      if (!consumed.has(cand)) { next = cand; break; }
+    }
+    // Fall back to label-match for pre-migration items / seed
+    // id-mismatches.
+    if (!next) {
+      const lbucket = byLabel.get(_labelKey(f?.label));
+      while (lbucket && lbucket.length) {
+        const cand = lbucket.shift();
+        if (!consumed.has(cand)) { next = cand; break; }
+      }
+    }
+    if (next) {
+      ordered.push(next);
+      consumed.add(next);
+    }
   }
   // Append any items the template didn't mention, preserving
   // their original relative order.

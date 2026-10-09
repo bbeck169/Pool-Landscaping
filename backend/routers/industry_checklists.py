@@ -308,7 +308,15 @@ def _normalize_industry(v: Optional[str]) -> str:
 def _sanitize_items(items: Iterable[Any]) -> List[Dict[str, Any]]:
     """Coerce a caller-supplied items list into the canonical shape.
     Drops malformed rows silently — the endpoint layer already gates
-    on ``items`` being a non-empty list."""
+    on ``items`` being a non-empty list.
+
+    Phase 17 · Feb-2026 — stamps a stable ``field_id`` on every item
+    (via ``services.checklist_field_id.stamp_field_ids``). On
+    CREATE the id is derived from ``key`` (``chk_<key>``) when
+    present; otherwise from the slugified label. Pre-existing
+    ``field_id``s are preserved untouched (stability lock: an item's
+    id does NOT change when its label is edited).
+    """
     out: List[Dict[str, Any]] = []
     seen_keys: set = set()
     for row in items or ():
@@ -326,11 +334,17 @@ def _sanitize_items(items: Iterable[Any]) -> List[Dict[str, Any]]:
             "label": label[:120],
             "required": bool(row.get("required") or False),
         }
+        existing_fid = str(row.get("field_id") or "").strip()
+        if existing_fid:
+            item["field_id"] = existing_fid
         group = row.get("group")
         if group:
             item["group"] = str(group).strip()[:60]
         out.append(item)
-    return out
+    # Phase 17 · stamp field_id on every item that doesn't already
+    # carry one. Collision-safe via the shared helper.
+    from services.checklist_field_id import stamp_field_ids
+    return stamp_field_ids(out)
 
 
 async def get_industry_checklist(tenant_id: str,
