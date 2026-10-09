@@ -81,7 +81,7 @@ const mockGet = api.get as jest.Mock;
 import PortalOnboardingHealthTile from "@/src/components/customers/PortalOnboardingHealthTile";
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
+/*  Helpers — Phase 9-M 3-card shape                                   */
 /* ------------------------------------------------------------------ */
 
 const HEALTH_RESPONSE = {
@@ -90,20 +90,13 @@ const HEALTH_RESPONSE = {
     activated: { count: 15, delta_30d: 3 },
     signed_in: { count: 8, delta_30d: -2 },
     never_logged_in: { count: 30, delta_30d: null },
+    active_with_card_on_file: { count: 11, delta_30d: 1 },
   },
 };
 
-const noop = () => {};
-
-function renderTile(overrides = {}) {
+function renderTile(overrides: any = {}) {
   return render(
-    <PortalOnboardingHealthTile
-      onFilterInvited={noop}
-      onFilterActivated={noop}
-      onFilterSignedIn={noop}
-      onFilterNever={noop}
-      {...overrides}
-    />,
+    <PortalOnboardingHealthTile activeKey={null} onToggle={jest.fn()} {...overrides} />,
   );
 }
 
@@ -112,30 +105,26 @@ beforeEach(() => {
   mockGet.mockResolvedValue(HEALTH_RESPONSE);
 });
 
-/* ------------------------------------------------------------------ */
-/*  Tests                                                              */
-/* ------------------------------------------------------------------ */
-
-describe("PortalOnboardingHealthTile", () => {
-  it("shows skeleton while loading", async () => {
+describe("PortalOnboardingHealthTile (Phase 9-M · 3 cards)", () => {
+  it("renders Activated / Signed in / Cards on file after API resolves", async () => {
     const { getByTestId, getByText } = renderTile();
     await waitFor(() => getByTestId("onboarding-health-tile"));
-    expect(getByText("42")).toBeTruthy();
-  });
-
-  it("renders all 4 cohort cards after API resolves", async () => {
-    const { getByTestId, getByText } = renderTile();
-    await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    expect(getByTestId("onboarding-cohort-invited")).toBeTruthy();
     expect(getByTestId("onboarding-cohort-activated")).toBeTruthy();
     expect(getByTestId("onboarding-cohort-signed-in")).toBeTruthy();
-    expect(getByTestId("onboarding-cohort-never")).toBeTruthy();
-
-    expect(getByText("42")).toBeTruthy();
+    expect(getByTestId("portal-onboarding-cards-on-file-tile")).toBeTruthy();
     expect(getByText("15")).toBeTruthy();
     expect(getByText("8")).toBeTruthy();
-    expect(getByText("30")).toBeTruthy();
+    expect(getByText("11")).toBeTruthy();
+  });
+
+  it("does NOT render the retired Invited / Never cards or the Chase button", async () => {
+    const { getByTestId, queryByTestId, queryByText } = renderTile();
+    await waitFor(() => getByTestId("onboarding-health-tile"));
+    expect(queryByTestId("onboarding-cohort-invited")).toBeNull();
+    expect(queryByTestId("onboarding-cohort-never")).toBeNull();
+    expect(queryByTestId("onboarding-tile-invited-chase-cta")).toBeNull();
+    expect(queryByTestId("chase-sheet-mock")).toBeNull();
+    expect(queryByText("42")).toBeNull();
   });
 
   it("fires error toast when API fails", async () => {
@@ -146,59 +135,21 @@ describe("PortalOnboardingHealthTile", () => {
     });
   });
 
-  it("triggers onFilterInvited when Invited card is pressed", async () => {
-    const onFilterInvited = jest.fn();
-    const { getByTestId } = renderTile({ onFilterInvited });
+  it("onToggle receives the tapped tile key", async () => {
+    const onToggle = jest.fn();
+    const { getByTestId } = renderTile({ onToggle });
     await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    fireEvent.press(getByTestId("onboarding-cohort-invited"));
-    expect(onFilterInvited).toHaveBeenCalledTimes(1);
+    fireEvent.press(getByTestId("onboarding-cohort-activated"));
+    fireEvent.press(getByTestId("onboarding-cohort-signed-in"));
+    fireEvent.press(getByTestId("portal-onboarding-cards-on-file-tile"));
+    expect(onToggle.mock.calls.map((c) => c[0])).toEqual(["activated", "signed_in", "active_with_card_on_file"]);
   });
 
-  it("triggers onFilterNever when Never card is pressed", async () => {
-    const onFilterNever = jest.fn();
-    const { getByTestId } = renderTile({ onFilterNever });
+  it("marks only the active tile as selected", async () => {
+    const { getByTestId } = renderTile({ activeKey: "signed_in" });
     await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    fireEvent.press(getByTestId("onboarding-cohort-never"));
-    expect(onFilterNever).toHaveBeenCalledTimes(1);
-  });
-
-  it("Chase button enabled when invited > 0", async () => {
-    const { getByTestId } = renderTile();
-    await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    const chaseBtn = getByTestId("onboarding-tile-invited-chase-cta");
-    expect(chaseBtn).toBeTruthy();
-    expect(chaseBtn.props.accessibilityState?.disabled).not.toBe(true);
-  });
-
-  it("Chase button disabled when invited = 0 and never = 0", async () => {
-    mockGet.mockResolvedValueOnce({
-      cohorts: {
-        invited: { count: 0, delta_30d: null },
-        activated: { count: 5, delta_30d: 1 },
-        signed_in: { count: 3, delta_30d: 0 },
-        never_logged_in: { count: 0, delta_30d: null },
-      },
-    });
-    const { getByTestId } = renderTile();
-    await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    const chaseBtn = getByTestId("onboarding-tile-invited-chase-cta");
-    expect(chaseBtn.props.accessibilityState?.disabled).toBe(true);
-  });
-
-  it("opens ChaseStalledInvitesSheet when Chase button pressed", async () => {
-    const { getByTestId, queryByTestId } = renderTile();
-    await waitFor(() => getByTestId("onboarding-health-tile"));
-
-    expect(queryByTestId("chase-sheet-mock")).toBeNull();
-
-    fireEvent.press(getByTestId("onboarding-tile-invited-chase-cta"));
-
-    await waitFor(() => {
-      expect(getByTestId("chase-sheet-mock")).toBeTruthy();
-    });
+    expect(getByTestId("onboarding-cohort-signed-in").props.accessibilityState).toEqual({ selected: true });
+    expect(getByTestId("onboarding-cohort-activated").props.accessibilityState).toEqual({ selected: false });
+    expect(getByTestId("portal-onboarding-cards-on-file-tile").props.accessibilityState).toEqual({ selected: false });
   });
 });

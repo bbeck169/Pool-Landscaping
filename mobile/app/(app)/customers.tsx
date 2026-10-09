@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert, Modal, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -16,12 +16,16 @@ import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
 import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 import RestoreCustomerButton from "@/src/components/customers/RestoreCustomerButton";
-import PortalOnboardingHealthTile from "@/src/components/customers/PortalOnboardingHealthTile";
+import PortalOnboardingHealthTile, {
+  type TileKey, type TileParams, tileKeyFromParams, tileParamsFor,
+} from "@/src/components/customers/PortalOnboardingHealthTile";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { PhoneLink, AddressLink } from "@/src/components/customer";
 
 export default function Customers() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<TileParams>();
+  const tileKey = tileKeyFromParams(routeParams || {});
   const { showToast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
@@ -37,10 +41,11 @@ export default function Customers() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   // Feb-2026 · P35 — mobile infinite-scroll pagination. Initial load
-  // fetches page 1 (100 rows); ``onEndReached`` on the FlatList pulls
+  // fetches page 1; ``onEndReached`` on the FlatList pulls
   // the next page and appends. Total pages is read from the response
   // envelope so we can short-circuit at the tail.
-  const _PAGE_SIZE = 100;
+  // Phase 9-M (web parity b5c09c9dc) — page_size 100 → 50 + slim=1.
+  const _PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -88,9 +93,6 @@ export default function Customers() {
   const [neverLoggedInFilter, setNeverLoggedInFilter] = useState(false);
   const [neverLoggedInCount, setNeverLoggedInCount] = useState<number | null>(null);
 
-  // Dispatch A — Portal Onboarding Tile: "portal_invited=any" filter for chase-invites.
-  const [portalInvitedFilter, setPortalInvitedFilter] = useState(false);
-
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
 
@@ -121,8 +123,15 @@ export default function Customers() {
       if (pendingMergeCandidates) qp.set("pending_merge_candidates", "true");
       // Temp-password parity — "Never logged in" filter.
       if (neverLoggedInFilter) qp.set("first_access", "never");
-      // Dispatch A — Portal Onboarding Tile: chase-invite audience filter.
-      if (portalInvitedFilter) qp.set("portal_invited", "any");
+      // Phase 9-M — onboarding tile filter (mutually exclusive, route-param driven).
+      if (tileKey === "activated") qp.set("portal_activated", "1");
+      else if (tileKey === "signed_in") qp.set("first_access", "any");
+      else if (tileKey === "active_with_card_on_file") {
+        qp.set("has_payment_method", "true");
+        qp.set("is_active", "true");
+      }
+      // Phase 9-M (web parity b5c09c9dc) — opt into the slim list response.
+      qp.set("slim", "1");
       const res: any = await api.get(`/customers?${qp.toString()}`);
       const rows = Array.isArray(res) ? res : (res?.items || []);
       const tp = Number.isFinite(res?.total_pages)
@@ -146,7 +155,7 @@ export default function Customers() {
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter, portalInvitedFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, portalFilter, missingAddressFilter, noPaymentFilter, missingEmailFilter, missingPhoneFilter, includeMerged, pendingMergeCandidates, neverLoggedInFilter, tileKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMore = useCallback(() => {
     if (loadingMore) return;
@@ -271,9 +280,8 @@ export default function Customers() {
     if (includeMerged) labels.push("Merged");
     if (pendingMergeCandidates) labels.push("Pending merge");
     if (neverLoggedInFilter) labels.push("Never logged in");
-    if (portalInvitedFilter) labels.push("Invited (portal)");
     return labels;
-  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates, neverLoggedInFilter, portalInvitedFilter]);
+  }, [missingEmailFilter, missingPhoneFilter, missingAddressFilter, noPaymentFilter, portalFilter, includeDeleted, includeMerged, pendingMergeCandidates, neverLoggedInFilter]);
 
   const moreFiltersSummary = activeFilterLabels.length === 0
     ? "All"
@@ -291,7 +299,23 @@ export default function Customers() {
     setIncludeMerged(false);
     setPendingMergeCandidates(false);
     setNeverLoggedInFilter(false);
-    setPortalInvitedFilter(false);
+    if (tileKey) router.setParams(tileParamsFor(null) as any);
+    setPage(1);
+  };
+
+  // Phase 9-M — tile toggle: tap active = clear, tap other = swap.
+  // Activating a tile drops sibling filters that share its backend
+  // param so the list never sends contradictory values.
+  const handleTileToggle = (key: TileKey) => {
+    const next = key === tileKey ? null : key;
+    router.setParams(tileParamsFor(next) as any);
+    if (next === "activated") setPortalFilter("");
+    if (next === "signed_in") setNeverLoggedInFilter(false);
+    if (next === "active_with_card_on_file") {
+      setNoPaymentFilter(false);
+      // Web parity: Cards-on-file also forces is_active=true on activate.
+      setStatusFilter("active");
+    }
     setPage(1);
   };
 
@@ -334,12 +358,7 @@ export default function Customers() {
       </View>
       {/* Dispatch A — Portal Onboarding Health Tile (admin-only) */}
       {isAdmin ? (
-        <PortalOnboardingHealthTile
-          onFilterInvited={() => { setPortalInvitedFilter(true); setPortalFilter(""); setNeverLoggedInFilter(false); }}
-          onFilterActivated={() => { setPortalFilter("activated"); setPortalInvitedFilter(false); setNeverLoggedInFilter(false); }}
-          onFilterSignedIn={() => { setPortalFilter("activated"); setPortalInvitedFilter(false); setNeverLoggedInFilter(false); }}
-          onFilterNever={() => { setNeverLoggedInFilter(true); setPortalFilter("not_activated"); setPortalInvitedFilter(false); }}
-        />
+        <PortalOnboardingHealthTile activeKey={tileKey} onToggle={handleTileToggle} />
       ) : null}
       {/* P45 — Single "More filters" trigger replacing individual chip rows. */}
       <Pressable

@@ -10,7 +10,7 @@ import { writeCache, readCache } from "@/src/services/readCache";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
-import { Header, JobCard } from "@/src/components/widgets";
+import { Header } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
 import CustomerEquipmentUnits from "@/src/components/customers/CustomerEquipmentUnits";
 import CustomerWarrantiesSection from "@/src/components/warranties/CustomerWarrantiesSection";
@@ -30,6 +30,7 @@ import MuteControlSheet from "@/src/components/customers/MuteControlSheet";
 import CustomerDeleteModal from "@/src/components/customers/CustomerDeleteModal";
 import SubscriptionsSection from "@/src/components/subscriptions/SubscriptionsSection";
 import PortalAccessPanel from "@/src/components/customers/PortalAccessPanel";
+import CustomerJobsSection from "@/src/components/customers/CustomerJobsSection";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
@@ -72,6 +73,10 @@ export default function CustomerDetail() {
   // Route-entry classifier — classify 403 / network errors properly.
   const [loadError, setLoadError] = useState("");
   const [rawLoadError, setRawLoadError] = useState<unknown>(null);
+  // Phase 9-M (web parity b5c09c9dc) — counts snapshot from
+  // ``GET /customers/{id}/summary``. Null until resolved (or on error —
+  // section badges just render without a count).
+  const [summary, setSummary] = useState<any>(null);
 
   const loadCredits = useCallback(async () => {
     try {
@@ -83,8 +88,14 @@ export default function CustomerDetail() {
   const load = useCallback(async () => {
     setLoadError("");
     setRawLoadError(null);
+    // Phase 9-M — summary fetch runs in parallel with the slim profile.
+    api.get(`/customers/${id}/summary`)
+      .then((r: any) => setSummary(r && typeof r === "object" ? r : null))
+      .catch(() => setSummary(null));
     try {
-      const data = await api.get(`/customers/${id}`);
+      // Phase 9-M — ``slim=1`` drops the embedded ``jobs`` array; Job
+      // History is lazy-loaded by <CustomerJobsSection>.
+      const data = await api.get(`/customers/${id}?slim=1`);
       setC(data);
       setLoginEmail(data.email || "");
       api.get(`/documents?customer_id=${id}`).then(setDocs).catch(() => {});
@@ -858,12 +869,12 @@ export default function CustomerDetail() {
         {/* A8. Service notes */}
         <ServiceNotes customerId={id as string} />
 
-        <Text style={styles.sectionTitle}>Job History ({c.jobs?.length || 0})</Text>
-        {c.jobs?.length ? (
-          c.jobs.map((j: any) => <JobCard key={j.id} job={j} testID={`customer-job-${j.id}`} />)
-        ) : (
-          <Text style={styles.empty}>No jobs yet for this customer.</Text>
-        )}
+        {/* Phase 9-M — lazy Job History (summary badge + 5-min TTL cache). */}
+        <CustomerJobsSection
+          customerId={id as string}
+          count={summary?.jobs_count}
+          fallbackJobs={c.jobs}
+        />
 
         {/* Phase J2 / I7 — Communication Timeline. Always visible (not tab-gated). */}
         <Text style={styles.sectionTitle}>Communication Timeline</Text>

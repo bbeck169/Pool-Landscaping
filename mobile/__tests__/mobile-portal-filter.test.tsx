@@ -35,7 +35,9 @@ jest.mock("@/src/services/readCache", () => ({
   readCache: jest.fn(async () => null),
 }));
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn(), setParams: jest.fn() }),
+  // Phase 9-M — customers list reads onboarding-tile filters from route params.
+  useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: () => any) => {
     const React = require("react");
     React.useEffect(() => { const cleanup = cb(); return cleanup; }, [cb]);

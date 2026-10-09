@@ -51,7 +51,9 @@ jest.mock("@/src/api", () => ({
 }));
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn(), setParams: jest.fn() }),
+  // Phase 9-M — customers list reads onboarding-tile filters from route params.
+  useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: any) => {
     const React = require("react");
     React.useEffect(() => { cb(); }, [cb]);
