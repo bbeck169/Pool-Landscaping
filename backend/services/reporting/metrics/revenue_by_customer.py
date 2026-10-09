@@ -19,12 +19,45 @@ pre-R0.1+ response shape verbatim for backward compat.
 from __future__ import annotations
 
 from ..aggregation import AggregationEngine
+from ..paid_date import PAID_STATUS_FILTER, build_paid_window_filter
 from ..registry import Metric, register_metric
 from ._revenue_shared import (
-    build_lens_filter,
     excluded_customer_ids,
     resolve_customer_whitelist,
 )
+
+
+# Phase 4a · Feb-2026 — Revenue by Customer MUST include ONLY
+# fully-paid invoices.  The shared ``build_lens_filter`` helper
+# accepts ``invoiced`` (every doc created in-window regardless of
+# payment status, which inflates the total with open / sent /
+# partial / draft rows AND with ``doc_type="quote"`` docs because
+# the shared helper does not scope the collection) — unsuitable
+# for this report.  The local builder below replaces it and:
+#   * Hard-filters to ``doc_type="invoice"`` so quotes never bleed
+#     into the aggregation.
+#   * Enforces ``PAID_STATUS_FILTER`` on both lenses so a partial-
+#     paid, open, sent, void, refunded, or overdue invoice is
+#     dropped.
+#   * Picks the window field by lens — ``created_at`` for the
+#     ``invoiced`` lens (date the invoice was issued) and the
+#     ``paid_at → paid_date → created_at`` cascade for the
+#     ``collected`` lens (date the money arrived).  Both lenses
+#     remain callable so KPI tiles that persist a lens preference
+#     keep working — just now both always exclude unpaid rows.
+#   * Preserves the shared tenant + soft-delete scoping applied
+#     downstream by ``AggregationEngine._scope`` in ``_build_match``.
+def _build_doc_match(lens: str, start: str, end: str) -> dict:
+    """Phase 4a — paid-only, invoice-only doc filter."""
+    clauses: list[dict] = [
+        {"doc_type": "invoice"},
+        PAID_STATUS_FILTER,
+    ]
+    if lens == "collected":
+        clauses.append(build_paid_window_filter(start, end))
+    else:  # invoiced (default) — issue-date window on paid-only rows.
+        clauses.append({"created_at": {"$gte": start, "$lt": end}})
+    return {"$and": clauses}
 
 
 def _row_pipeline(match_filter: dict) -> list[dict]:
@@ -87,7 +120,12 @@ class RevenueByCustomer(Metric):
         excluded = await excluded_customer_ids(engine)
 
         def _build_match(start: str, end: str) -> dict:
-            lens_filter = build_lens_filter(lens, start, end)
+            # Phase 4a · Feb-2026 — paid-only, invoice-only doc filter.
+            # Replaces the shared ``build_lens_filter`` for this metric
+            # so Revenue by Customer never counts quotes, drafts,
+            # partials, or any non-``paid`` payment_status.  See
+            # ``_build_doc_match`` docstring for the full rationale.
+            lens_filter = _build_doc_match(lens, start, end)
             match: dict = {"$and": [lens_filter]}
             if whitelist is not None:
                 match["$and"].append({"customer_id": {"$in": whitelist}})

@@ -206,6 +206,21 @@ async def revenue_by_customer(start: Optional[str] = None, end: Optional[str] = 
     # bucketing below can only see the caller's invoices.
     tenant_id = tenant["id"]
     paid = await _fetch_paid(tenant_id, start, end)
+    # Phase 4a · Feb-2026 — strict ``payment_status == "paid"`` guard.
+    # ``_fetch_paid`` applies the broader
+    # ``{amount_paid>0 OR payment_status=="paid"}`` filter so other
+    # revenue slices (city / service type) can include partial-paid
+    # rows at their caller's option.  Revenue by Customer must NEVER
+    # count partial / open / sent / draft / void / refunded /
+    # overdue / unpaid / pending — the user-facing table showed
+    # inflated totals when a customer had any non-``paid`` activity
+    # in-window.  Post-filtering here keeps ``_fetch_paid`` shared
+    # (no change to the other revenue reports) while enforcing the
+    # exact Phase 4a semantic locally.
+    paid = [
+        q for q in paid
+        if (q.get("payment_status") or "").strip().lower() == "paid"
+    ]
     # CUSTOMER-RETENTION-ACCOUNT-CORRECTION-PARITY · Feb-2026 — skip
     # invoices whose ``customer_id`` is currently flagged as a
     # bookkeeping / test account so the revenue-by-customer table

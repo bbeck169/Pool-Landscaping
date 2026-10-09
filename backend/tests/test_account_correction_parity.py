@@ -355,11 +355,13 @@ def test_kpi_revenue_by_customer_excludes_flagged(tenant_id):
         f"revenue_by_customer rows: {rows}"
     )
     assert "Charlie" not in row_names
-    # Alpha contributes $1000 invoice + $500 open quote (invoiced
-    # lens matches both doc_type values via ``created_at`` only).
-    # Bravo contributes $2000 invoice.  Charlie's $9999 invoice +
-    # $7777 quote stay out.  Expected total: $3500.
-    assert abs(float(body.get("total") or 0.0) - 3500.0) < 0.01, body
+    # Phase 4a · Feb-2026 — Revenue by Customer is paid-only.  Alpha
+    # contributes $1000 (paid invoice) ONLY; Alpha's $500 open quote
+    # no longer counts (``doc_type=quote`` + ``payment_status!="paid"``
+    # both excluded).  Bravo contributes $2000 (paid invoice).
+    # Charlie's $9999 paid invoice + $7777 quote stay out via the
+    # account_correction exclusion.  Expected total: $3000.
+    assert abs(float(body.get("total") or 0.0) - 3000.0) < 0.01, body
 
 
 # ══════════════════════════════════════════════════════════════════
