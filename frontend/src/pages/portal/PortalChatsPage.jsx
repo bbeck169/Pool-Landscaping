@@ -13,6 +13,11 @@ import { api } from "@/api";
 import { portalColors as colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
 import { ChatAttachmentTile } from "@/components/chat/ChatAttachmentTile";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL || "";
 
@@ -141,6 +146,7 @@ export default function PortalChatsPage() {
   };
 
   return (
+    <PortalPageShell>
     <div className="max-w-6xl mx-auto p-4 md:p-6" data-testid="portal-chats-page">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -386,5 +392,6 @@ export default function PortalChatsPage() {
         </div>
       )}
     </div>
+      </PortalPageShell>
   );
 }

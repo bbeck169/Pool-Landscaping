@@ -4,6 +4,11 @@ import { useSearchParams } from "react-router-dom";
 import { Check, CheckCircle2, Printer, FileText } from "lucide-react";
 import { api } from "@/api";
 import { portalColors as colors } from "@/theme";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 // Feb 2026 · Two service lines → two ToS docs. ``pool`` is the
 // backward-compat default (URL param absent → pool). ``service``
@@ -274,6 +279,7 @@ export default function PortalTerms() {
 
 function MarkdownBody({ source }) {
   return (
+    <PortalPageShell>
     <ReactMarkdown
       components={{
         h2: ({ node, ...props }) => (
@@ -304,5 +310,6 @@ function MarkdownBody({ source }) {
     >
       {source}
     </ReactMarkdown>
+    </PortalPageShell>
   );
 }

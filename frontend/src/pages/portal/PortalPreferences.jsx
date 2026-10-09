@@ -19,6 +19,11 @@ import { useAuth } from "@/auth";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 // Feb-2026 · P11b — App Store consumer-account guideline blockers 3 + 4.
 import DeleteAccountDangerCard from "@/components/portal/DeleteAccountDangerCard";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 
 const CHANNEL_LABELS = {
@@ -284,6 +289,7 @@ function Section({ title, children }) {
 
 function ToggleRow({ label, value, locked, onChange, testid }) {
   return (
+    <PortalPageShell>
     <label className={`flex items-center justify-between gap-3 py-1 ${locked ? "opacity-60" : "cursor-pointer"}`}>
       <span className="text-sm inline-flex items-center gap-1"
             style={{ color: colors.onSurface }}>
@@ -294,5 +300,6 @@ function ToggleRow({ label, value, locked, onChange, testid }) {
              onChange={(e) => onChange(e.target.checked)}
              data-testid={testid} />
     </label>
+    </PortalPageShell>
   );
 }

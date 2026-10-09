@@ -18,6 +18,11 @@ import { Skeleton } from "@/components/ui-kit";
 // ``portal-photo-lightbox`` / ``-close`` / ``-title`` are preserved
 // via ``testidPrefix``.
 import Lightbox from "@/components/portal/Lightbox";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 const PAGE = 24;
 
@@ -72,6 +77,7 @@ export default function PortalPhotosPage() {
   };
 
   return (
+    <PortalPageShell>
     <div className="max-w-6xl mx-auto p-4" data-testid="portal-photos-page">
       <h1
         className="text-2xl font-black mb-1"
@@ -184,5 +190,6 @@ export default function PortalPhotosPage() {
         testidPrefix="portal-photo-lightbox"
       />
     </div>
+      </PortalPageShell>
   );
 }

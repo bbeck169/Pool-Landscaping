@@ -10,6 +10,11 @@ import { api } from "@/api";
 // sees.
 import { portalColors as colors, gradients } from "@/theme";
 import { useAuth } from "@/auth";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 /**
  * Feb-2026 · Slice 6 + M6 — Customer portal "Leave a Review" tab.
@@ -391,6 +396,7 @@ function ReviewThankYou({ result, onReset }) {
   }
 
   return (
+    <PortalPageShell>
     <div
       className="rounded-2xl p-6 text-center"
       style={{
@@ -447,5 +453,6 @@ function ReviewThankYou({ result, onReset }) {
         </button>
       </div>
     </div>
+    </PortalPageShell>
   );
 }

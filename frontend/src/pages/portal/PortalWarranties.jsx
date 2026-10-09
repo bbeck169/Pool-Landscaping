@@ -12,6 +12,11 @@ import { api } from "@/api";
 // portal-dark palette via the shared theme export.  Names preserved
 // so every downstream ``c.X`` read still resolves.
 import { portalColors as c } from "@/theme";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 export default function PortalWarranties() {
   const [state, setState] = useState({ items: [], loading: true, error: "" });
@@ -28,6 +33,7 @@ export default function PortalWarranties() {
   useEffect(() => { load(); }, [load]);
 
   return (
+    <PortalPageShell>
     <div className="max-w-4xl mx-auto p-4 md:p-6" data-testid="portal-warranties-section">
       <div className="mb-4">
         <div className="flex items-center gap-2 text-lg font-bold" style={{ color: c.onSurface }}>
@@ -104,5 +110,6 @@ export default function PortalWarranties() {
         </div>
       )}
     </div>
+      </PortalPageShell>
   );
 }

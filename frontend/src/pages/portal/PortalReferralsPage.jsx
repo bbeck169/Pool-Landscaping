@@ -11,6 +11,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
+// Phase 18b · Feb-2026 — Portal white-card shell. Wraps the
+// export(s) in this file so content renders inside the Phase
+// 3d-portal white dashboard card on the deep-navy page bg.
+import PortalPageShell from "@/components/portal/PortalPageShell";
+
 
 // Feb-2026 · Item 11 — extend pill map with vesting-status labels
 // so the panel renders friendly copy for the new state machine.
@@ -250,6 +255,7 @@ export default function PortalReferralsPage() {
                 : (parseFloat(l.delta) || 0);
               const positive = delta >= 0;
               return (
+                <PortalPageShell>
                 <div key={l.id || i}
                      className="flex items-center justify-between px-2 py-2 border-b border-zinc-50 last:border-0 text-sm">
                   <div className="min-w-0">
@@ -261,6 +267,7 @@ export default function PortalReferralsPage() {
                     {positive ? "+" : "−"}${Math.abs(delta).toFixed(2)}
                   </div>
                 </div>
+                </PortalPageShell>
               );
             })}
           </div>
