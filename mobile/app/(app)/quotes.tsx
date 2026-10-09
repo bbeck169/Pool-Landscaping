@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, FlatList, RefreshControl, Pressable,
   Alert,
@@ -19,6 +19,7 @@ import {
   shouldShowDeclineButton,
   shouldShowReopenButton,
 } from "@/src/utils/quoteLifecycle";
+import QuotesBulkToolbar, { bulkOutcomeMessage } from "@/src/components/quotes/QuotesBulkToolbar";
 
 // ── Phase 3 lifecycle view filter (mirrors web QuotesList.jsx) ────
 const VIEW_FILTERS = [
@@ -49,6 +50,28 @@ export default function Quotes() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const lifecycleBusyRef = useRef<string | null>(null);
+
+  // ── Phase 4b · Bulk selection (web parity f61449679) ─────────────
+  // Same role set as web ``canUserLifecycle`` / server
+  // ``require_admin_or_manager``. Techs never see checkboxes/toolbar.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  useEffect(() => {
+    // Drop selections for rows no longer in the list (filter change / refetch).
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(items.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [items]);
+  const toggleRowSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelectedIds(new Set());
 
   const load = useCallback(async (v: string, dtf: string) => {
     try {
@@ -81,6 +104,28 @@ export default function Quotes() {
   const refresh = () => {
     setRefreshing(true);
     load(view, docTypeFilter);
+  };
+
+  const runBulk = async (route: string, verb: string) => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const res = await api.post(`/quotes/${route}`, { quote_ids: ids });
+      const { message, tone } = bulkOutcomeMessage(verb, res?.succeeded, res?.skipped);
+      showToast(message, tone);
+      // Clear only succeeded ids so skipped rows stay selected for retry.
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of res?.succeeded || []) next.delete(id);
+        return next;
+      });
+    } catch (e: any) {
+      showToast(e?.message || `Bulk ${verb} failed.`, "error");
+    } finally {
+      setBulkBusy(false);
+      load(view, docTypeFilter);
+    }
   };
 
   // ── Phase 3 Decline handler ─────────────────────────────────────
@@ -211,7 +256,7 @@ export default function Quotes() {
           testID="quotes-list"
           data={items}
           keyExtractor={(i) => i.id}
-          contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
+          contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: selectedIds.size ? 160 : spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <Pressable
@@ -220,7 +265,20 @@ export default function Quotes() {
               testID={`quote-card-${item.id}`}
             >
               <View style={styles.topRow}>
-                <View style={styles.typeBadge}>
+                {roleCanLifecycle ? (
+                  <Pressable
+                    onPress={() => toggleRowSelect(item.id)}
+                    hitSlop={10}
+                    style={[styles.checkbox, selectedIds.has(item.id) && styles.checkboxOn]}
+                    testID={`quote-row-select-${item.id}`}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selectedIds.has(item.id) }}
+                    accessibilityLabel={`Select ${item.title || "quote"}`}
+                  >
+                    {selectedIds.has(item.id) ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+                  </Pressable>
+                ) : null}
+                <View style={[styles.typeBadge, { flex: 1 }]}>
                   <Ionicons
                     name={item.doc_type === "invoice" ? "receipt-outline" : "document-text-outline"}
                     size={16}
@@ -268,6 +326,16 @@ export default function Quotes() {
           )}
         />
       )}
+      {roleCanLifecycle ? (
+        <QuotesBulkToolbar
+          selectedCount={selectedIds.size}
+          busy={bulkBusy}
+          onAccept={() => runBulk("bulk-accept", "accepted")}
+          onDecline={() => runBulk("bulk-decline", "declined")}
+          onDelete={() => runBulk("bulk-delete", "deleted")}
+          onClear={clearSelection}
+        />
+      ) : null}
     </View>
   );
 }
@@ -290,6 +358,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   typeBadge: { flexDirection: "row", alignItems: "center", gap: 5 },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center", marginRight: 10, backgroundColor: colors.surface,
+  },
+  checkboxOn: { backgroundColor: colors.brand, borderColor: colors.brand },
   typeText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.brand },
   title: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   customer: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
