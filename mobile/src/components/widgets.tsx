@@ -326,17 +326,34 @@ function WorkstreamPillColumn({ job }: { job: any }) {
 
 function _photoUri(p: any): string | null {
   if (!p) return null;
-  if (typeof p === "string") return p;
-  return p?.url || p?.public_url || p?.thumbnail_url || p?.data || null;
+  if (typeof p === "string") return _buildPhotoUri(p) || null;
+  return _buildPhotoUri(p?.url) || _buildPhotoUri(p?.public_url) || _buildPhotoUri(p?.thumbnail_url) || p?.data || null;
+}
+
+/** Mirrors web `JobPhotoThumbs.jsx` (`${BACKEND}${url}`) — prefix only relative paths. */
+export function _buildPhotoUri(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  if (/^(https?:|data:|file:)/i.test(raw)) return raw;
+  const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+  return `${base.replace(/\/$/, "")}${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
+/** Slim list rows (`/customers/{id}`, `/jobs`) ship `photo_thumb_urls[]`; legacy rows ship `photos[]`. */
+export function jobPhotoUris(job: any): string[] {
+  const thumbs: any[] = Array.isArray(job?.photo_thumb_urls) ? job.photo_thumb_urls : [];
+  if (thumbs.length) return thumbs.map((u) => _buildPhotoUri(u) || "");
+  const photos: any[] = Array.isArray(job?.photos) ? job.photos : [];
+  return photos.map((p) => _photoUri(p) || "");
 }
 
 function WorkstreamPhoto({ job, onOpen }: { job: any; onOpen: () => void }) {
-  const photos = Array.isArray(job?.photos) ? job.photos : [];
-  const primary = _photoUri(photos[0]);
+  const primary = jobPhotoUris(job)[0] || null;
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const showImg = !!primary && failedUri !== primary;
   return (
     <View style={styles.photoBox} testID={`job-card-photo-${job.id}`}>
-      {primary ? (
-        <Image source={{ uri: primary }} style={styles.photoImg} />
+      {showImg ? (
+        <Image source={{ uri: primary }} style={styles.photoImg} onError={() => setFailedUri(primary)} testID={`job-card-photo-img-${job.id}`} />
       ) : (
         <View style={[styles.photoImg, styles.photoPlaceholder]}>
           <Ionicons name="image-outline" size={26} color="#93C5FD" />
@@ -356,17 +373,17 @@ function WorkstreamPhoto({ job, onOpen }: { job: any; onOpen: () => void }) {
 
 function WorkstreamThumbStrip({ job }: { job: any }) {
   const router = useRouter();
-  const photos: any[] = Array.isArray(job?.photos) ? job.photos.slice(1, 7) : [];
-  if (photos.length === 0) return null;
+  const [failed, setFailed] = useState<Record<string, true>>({});
+  const uris = jobPhotoUris(job).slice(1, 7);
+  if (uris.filter(Boolean).length === 0) return null;
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.thumbStrip}
     >
-      {photos.map((p, i) => {
-        const uri = _photoUri(p);
-        if (!uri) return null;
+      {uris.map((uri, i) => {
+        if (!uri || failed[uri]) return null;
         return (
           <Pressable
             key={i}
@@ -374,7 +391,7 @@ function WorkstreamThumbStrip({ job }: { job: any }) {
             onPress={() => router.push(`/job/${job.id}`)}
             testID={`job-card-thumb-${i}-${job.id}`}
           >
-            <Image source={{ uri }} style={styles.thumbImg} />
+            <Image source={{ uri }} style={styles.thumbImg} onError={() => setFailed((f) => ({ ...f, [uri]: true }))} />
           </Pressable>
         );
       })}
