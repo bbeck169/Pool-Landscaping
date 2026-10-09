@@ -95,4 +95,6 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 ## 8. Phase 25 — Mobile parity for web Phases 20/22/23/24 · shipped 2026-10-09
 - Customer profile skeleton loader (886f1c2b7). Action-row reposition flagged N/A on mobile.
 - Portal home: Concierge/Referral/Business card on stat-tile chassis w/ blue/green/navy accents; dynamic Past Due red / Credit green; Quick Action press glow (e873da160).
-- OPEN BLOCKER: unresolved conflict markers in mobile/app/(app)/schedule/calendar.tsx (commit 6911174d9) break the Expo bundle.
+- ~~OPEN BLOCKER: unresolved conflict markers in mobile/app/(app)/schedule/calendar.tsx (commit 6911174d9) break the Expo bundle.~~ RESOLVED in b3cc2b171 (stash side + `fg` red-card color preserved on name + address).
+- Phase 25 re-issue (d7c68d8bc, 69ecc3c60, 2ab050281, 24fbe18b4): Phase 20 action row now SHIPPED above the profile section stack (mobile has no tabs); portal home on dark navy chassis `#03002e` / `#1E293B` / r12 with static KPI glow; Past Due `#7F1D1D` / Credit `#064E3B`.
+- **Mobile-only addition:** Phase 20 action row includes a **Call** button (`customer-action-call` → `tel:` primary mobile) that web's row does not have.
