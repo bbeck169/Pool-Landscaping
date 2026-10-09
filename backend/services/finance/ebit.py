@@ -370,7 +370,30 @@ async def compute_ebit(
         # grep it from the admin UI; the top-level number stays 0.
         labor_cost_breakdown["error"] = str(_labor_exc)
 
-    ebit = revenue - cogs - opex - depreciation
+    # Phase 11 · Feb-2026 — recurring labor cost. Layers salaried /
+    # contracted / fixed-monthly cost on top of the Phase 10 hourly
+    # + per-pool number. Prorates each ``recurring_labor_costs``
+    # entry against the EBIT window using the 30.4375-days average
+    # month constant (brief spec). Non-fatal — compute errors keep
+    # EBIT green with a 0 recurring contribution.
+    recurring_labor_cost_amount: float = 0.0
+    recurring_labor_breakdown: Dict[str, Any] = {
+        "by_entry": [],
+        "total":    0.0,
+        "range":    {"start": range_from, "end": range_to},
+    }
+    try:
+        from services.recurring_labor_cost import compute_recurring_labor_cost
+        recurring_labor_breakdown = await compute_recurring_labor_cost(
+            tenant_id, range_from, range_to, db=db)
+        recurring_labor_cost_amount = float(
+            recurring_labor_breakdown.get("total") or 0.0)
+    except Exception as _rec_exc:                                # noqa: BLE001
+        recurring_labor_breakdown["error"] = str(_rec_exc)
+
+    labor_cost_total_amount = labor_cost_amount + recurring_labor_cost_amount
+
+    ebit = revenue - cogs - opex - depreciation - labor_cost_total_amount
     return {
         "range_from": range_from,
         "range_to": range_to,
@@ -386,6 +409,16 @@ async def compute_ebit(
         # Phase 11 wires this into the EBIT bottom line + layers in
         # recurring labor costs.
         "labor_cost": round(labor_cost_amount, 2),
+        # Phase 11 · Feb-2026 — recurring labor (salaried /
+        # contracted / fixed-monthly). Prorates each entry against
+        # the EBIT window.
+        "recurring_labor_cost": round(recurring_labor_cost_amount, 2),
+        # Phase 11 · Feb-2026 — combined labor (Phase 10 hourly +
+        # per-pool + Phase 11 recurring). This is the value
+        # subtracted from EBIT. Legacy ``labor_cost`` field above
+        # stays as the Phase 10 number only for backwards-compat
+        # with any pre-Phase-11 downstream reader.
+        "labor_cost_total": round(labor_cost_total_amount, 2),
         "breakdown": {
             "invoice_count": len(invoices),
             "line_count": line_count,
@@ -402,6 +435,9 @@ async def compute_ebit(
             "wages_by_role": wages_by_role,
             # Phase 10 · Feb-2026 — full per-tech breakdown.
             "labor_cost_breakdown": labor_cost_breakdown,
+            # Phase 11 · Feb-2026 — recurring labor cost breakdown
+            # (by_entry + total + range), prorated into the window.
+            "recurring_labor_breakdown": recurring_labor_breakdown,
         },
     }
 

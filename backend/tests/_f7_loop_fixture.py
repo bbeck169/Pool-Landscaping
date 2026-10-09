@@ -129,6 +129,11 @@ _REBOUND_MODULES = (
     "services.soshie.moderation",
     "utils",
     "utils_idempotency",
+    # Phase 11 · Feb-2026 — recurring labor costs router + service.
+    "routers.recurring_labor_costs",
+    "services.recurring_labor_cost",
+    "services.labor_cost",
+    "services.finance.ebit",
 )
 
 

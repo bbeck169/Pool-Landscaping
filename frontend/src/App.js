@@ -128,6 +128,10 @@ const AutoVisitEmailSettings = React.lazy(() => import(/* webpackChunkName: "p-s
 const PortalPhotos = React.lazy(() => import(/* webpackChunkName: "p-portal-portalphotos" */ "@/pages/portal/PortalPhotos"));
 const PortalReviews = React.lazy(() => import(/* webpackChunkName: "p-portal-portalreviews" */ "@/pages/portal/PortalReviews"));
 const AdminReviewsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminreviewspage" */ "@/pages/admin/AdminReviewsPage"));
+// Phase 11 · Feb-2026 — recurring labor costs admin surface. Admin
+// only route; backend recurring_labor_costs router does the
+// manager-read-only vs admin-write split server-side.
+const RecurringLaborCostsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-recurring-labor-costs" */ "@/pages/admin/RecurringLaborCostsPage"));
 // Phase A1 · Feb-2026 — Proactive Intelligence full-list page.
 // Route ``/admin/intelligence/alerts`` — gated to admin + super_admin
 // via <AdminOrSuperAdminOnly>; the backend router returns 403 for any
@@ -917,6 +921,7 @@ export default function App() {
             <Route path="request-job" element={<RequestJobPage />} />
             <Route path="admin/job-requests" element={<AdminJobRequestsPage />} />
             <Route path="admin/reviews" element={<AdminOnly><AdminReviewsPage /></AdminOnly>} />
+            <Route path="admin/recurring-labor-costs" element={<AdminOnly><RecurringLaborCostsPage /></AdminOnly>} />
 
             {/* Jobs (Phase 2) */}
             {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}

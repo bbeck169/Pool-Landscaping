@@ -1547,6 +1547,14 @@ api_router.include_router(_p5b2_boc.router)
 from routers import marco_alerts as _marco_alerts_router  # noqa: E402
 api_router.include_router(_marco_alerts_router.router)
 
+# Phase 11 · Feb-2026 — Recurring labor costs admin surface.
+# CRUD endpoints under ``/api/recurring-labor-costs``. Admin /
+# super_admin / owner write; manager read-only; tech + customer
+# 403. Prorates monthly amounts into the EBIT window via
+# ``services.recurring_labor_cost.compute_recurring_labor_cost``.
+from routers import recurring_labor_costs as _p11_recurring_labor  # noqa: E402
+api_router.include_router(_p11_recurring_labor.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 
