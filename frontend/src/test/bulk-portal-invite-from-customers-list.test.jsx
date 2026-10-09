@@ -1,23 +1,34 @@
 /**
- * Feb-2026 · Bulk Portal Invite from customers top-menu.
+ * Feb-2026 · Bulk Portal Invite from CustomersList — Phase 9b
+ * baseline refresh.
  *
- * Source-body contract check (mirrors the H1 pattern at
- * ``customers-bulk-portal-invite.test.jsx``). Locks the four
- * critical invariants of the top-menu button ship:
+ * ─────────────────────────────────────────────────────────────────
+ * Phase 9b REMOVED the top-cluster "Portal Invite" button
+ * (``customers-toolbar-portal-invite-btn``) per user approval. The
+ * two SURVIVING invite surfaces now carry the admin-gate +
+ * disabled-binding + modal-routing contracts:
  *
- *   1. Top-menu button exists with the spec test-id
- *      ``customers-toolbar-portal-invite-btn`` — sits in the
- *      PageHeader ``right`` prop, not inside the selection-only
- *      bulk-actions bar.
- *   2. Admin-only gate (admin + super_admin only via ``isAdmin``).
- *      Manager / technician / customer roles do NOT see it.
- *   3. Disabled when ``selected.size === 0`` with the exact
- *      tooltip copy the spec requires; enabled otherwise.
- *      Click routes to ``setH1ConfirmOpen(true)`` — reuses the
- *      pre-existing H1 modal without extracting a shell.
- *   4. Portal Onboarding Health tile refetches on modal close —
- *      the tile receives ``externalRefetchToken={h1Result}`` so
- *      changing ``h1Result`` bumps its useEffect.
+ *   * ``customers-filter-bulk-portal-invite-btn`` — covered by
+ *     ``customers-filter-bar-bulk-portal-invite.test.jsx``
+ *   * ``bulk-portal-invite`` (selection toolbar) — covered by
+ *     ``customers-bulk-portal-invite.test.jsx``
+ *
+ * This file now locks the two post-9b invariants that are UNIQUE
+ * to the CustomersList shell and NOT covered by the per-surface
+ * suites above:
+ *
+ *   1. Regression guard — the removed top-cluster test-id MUST NOT
+ *      be re-introduced. If a future change re-adds the button,
+ *      the surviving-surface suites would silently cover its
+ *      role-gate / modal-routing / disabled-binding behavior, so
+ *      only a dedicated absence-check catches the re-introduction.
+ *   2. ``PortalOnboardingHealthTile`` receives
+ *      ``externalRefetchToken={h1Result}`` so the tile refetches
+ *      on every H1 modal close.
+ *   3. ``closeH1ConfirmModal`` is the single close-path helper and
+ *      is wired into Cancel / backdrop / success exits — the
+ *      Phase 9b batch-tester bug shape ``setH1ConfirmOpen(false);
+ *      load();`` MUST NOT re-appear inside ``doBulkPortalInvite``.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -35,54 +46,36 @@ const TILE_SRC = fs.readFileSync(
 );
 
 
-describe("CustomersList · Feb-2026 top-menu Portal Invite button", () => {
-  it("emits the spec test-id ``customers-toolbar-portal-invite-btn`` on the top toolbar", () => {
-    expect(CUSTOMERS_SRC).toMatch(
+describe("CustomersList · Feb-2026 Phase 9b top-menu button removal", () => {
+  it("REGRESSION GUARD — the removed top-cluster ``customers-toolbar-portal-invite-btn`` must stay out", () => {
+    // Phase 9b rip. Re-adding this test-id without an explicit
+    // follow-up would silently duplicate the surviving invite
+    // surfaces. If this assertion fails, either rip the button
+    // again or coordinate with the surviving-surface test suites
+    // (``customers-bulk-portal-invite.test.jsx`` +
+    // ``customers-filter-bar-bulk-portal-invite.test.jsx``) to
+    // retire one of them before re-introducing a third surface.
+    expect(CUSTOMERS_SRC).not.toMatch(
       /testid="customers-toolbar-portal-invite-btn"/,
     );
   });
 
-  it("is admin-gated (isAdmin ? ... : null) — tighter than the read gate on the list", () => {
-    // The block that renders the top-menu button MUST be inside an
-    // ``isAdmin ? (...) : null`` conditional so manager / tech /
-    // customer roles never see it. Grab the preamble immediately
-    // before the button test-id and assert the isAdmin gate is
-    // present within 500 characters.
-    const idx = CUSTOMERS_SRC.indexOf(
-      'testid="customers-toolbar-portal-invite-btn"',
+  it("preserves the two SURVIVING invite surfaces (filter-row + selection toolbar)", () => {
+    // The filter-row button (filter-driven flow — uses
+    // ``openBulkPortalInviteFromFilter`` + ``BulkPortalInviteConfirm``
+    // modal).
+    expect(CUSTOMERS_SRC).toMatch(
+      /data-testid="customers-filter-bulk-portal-invite-btn"/,
     );
-    expect(idx).toBeGreaterThan(0);
-    const preamble = CUSTOMERS_SRC.slice(Math.max(0, idx - 500), idx);
-    expect(preamble).toMatch(/isAdmin\s*\?\s*\(/);
-  });
-
-  it("click routes to the pre-existing H1 modal (no shell extraction / no parallel bulk endpoint)", () => {
-    // The onClick handler on the top-menu button MUST call
-    // setH1ConfirmOpen(true) — proves it reuses the mature H1
-    // modal rather than mounting a new confirm shell.
-    const idx = CUSTOMERS_SRC.indexOf(
-      'testid="customers-toolbar-portal-invite-btn"',
-    );
-    expect(idx).toBeGreaterThan(0);
-    // Grab a 400-char window around the button so we can match the
-    // onClick prop on the same JSX element.
-    const window_ = CUSTOMERS_SRC.slice(Math.max(0, idx - 400),
-                                              idx + 400);
-    expect(window_).toMatch(/onClick=\{\(\)\s*=>\s*setH1ConfirmOpen\(true\)\}/);
-  });
-
-  it("is disabled when selected.size === 0 and shows the spec tooltip; enabled otherwise", () => {
-    const idx = CUSTOMERS_SRC.indexOf(
-      'testid="customers-toolbar-portal-invite-btn"',
-    );
-    const window_ = CUSTOMERS_SRC.slice(Math.max(0, idx - 400),
-                                              idx + 800);
-    // The ``disabled`` prop must be bound to ``selected.size === 0``.
-    expect(window_).toMatch(/disabled=\{selected\.size\s*===\s*0\}/);
-    // Spec tooltip verbatim.
-    expect(window_).toMatch(/Select one or more customers to invite/);
-    // Enabled-state tooltip surfaces the selection count.
-    expect(window_).toMatch(/Send portal invite to \$\{selected\.size\}/);
+    // The selection-toolbar button (selection-driven flow — opens
+    // the inline H1 modal via ``setH1ConfirmOpen`` +
+    // ``doBulkPortalInvite``). Uses the ``testid`` prop on the
+    // ui-kit Button, which forwards to ``data-testid``.
+    expect(CUSTOMERS_SRC).toMatch(/testid="bulk-portal-invite"/);
+    // The H1 modal state must still exist — the ``bulk-portal-invite``
+    // button in the selection toolbar depends on it.
+    expect(CUSTOMERS_SRC).toMatch(/setH1ConfirmOpen/);
+    expect(CUSTOMERS_SRC).toMatch(/doBulkPortalInvite/);
   });
 
   it("Portal Onboarding Health tile receives ``externalRefetchToken={h1Result}`` for post-bulk refetch", () => {
