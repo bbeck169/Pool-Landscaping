@@ -103,3 +103,78 @@
      overrides higher up */
   color: inherit;
 }
+
+/* ── Phase 18b · Feb-2026 — Portal page shell carve-out ────────
+ * ``<PortalPageShell>`` renders the Phase 3d-portal white
+ * dashboard card around every portal SUB-page (invoices,
+ * estimates, service reports, payment method, etc.). The card
+ * sits on the ``.portal-dark`` deep-navy page background but
+ * must display dark-on-white text internally. We carve the card
+ * out of the dark text overrides so sub-page content remains
+ * readable without a per-file ``text-slate-*`` sweep.
+ *
+ * Mirrors the ``.portal-sign-scope`` strategy — ``!important``
+ * is required to beat the Tailwind-atomic ``!important`` rules
+ * at the top of this file (``.portal-dark .text-slate-500`` et
+ * al.). Color choices mirror the admin-side defaults so a page
+ * reads identically to its admin counterpart. */
+.portal-dark .portal-page-shell-card {
+  background-color: #FFFFFF !important;
+  color: #0F172A;
+}
+.portal-dark .portal-page-shell-card .text-slate-400,
+.portal-dark .portal-page-shell-card .text-gray-400,
+.portal-dark .portal-page-shell-card .text-zinc-400 {
+  color: #94A3B8 !important;
+}
+.portal-dark .portal-page-shell-card .text-slate-500,
+.portal-dark .portal-page-shell-card .text-gray-500,
+.portal-dark .portal-page-shell-card .text-zinc-500 {
+  color: #64748B !important;
+}
+.portal-dark .portal-page-shell-card .text-slate-600,
+.portal-dark .portal-page-shell-card .text-gray-600,
+.portal-dark .portal-page-shell-card .text-zinc-600 {
+  color: #475569 !important;
+}
+.portal-dark .portal-page-shell-card .text-slate-700,
+.portal-dark .portal-page-shell-card .text-gray-700,
+.portal-dark .portal-page-shell-card .text-zinc-700 {
+  color: #334155 !important;
+}
+.portal-dark .portal-page-shell-card .text-slate-800,
+.portal-dark .portal-page-shell-card .text-gray-800,
+.portal-dark .portal-page-shell-card .text-zinc-800 {
+  color: #1E293B !important;
+}
+.portal-dark .portal-page-shell-card .text-slate-900,
+.portal-dark .portal-page-shell-card .text-gray-900,
+.portal-dark .portal-page-shell-card .text-zinc-900 {
+  color: #0F172A !important;
+}
+.portal-dark .portal-page-shell-card .bg-white {
+  background-color: #FFFFFF !important;
+}
+.portal-dark .portal-page-shell-card .bg-slate-50,
+.portal-dark .portal-page-shell-card .bg-gray-50,
+.portal-dark .portal-page-shell-card .bg-zinc-50 {
+  background-color: #F8FAFC !important;
+}
+.portal-dark .portal-page-shell-card .bg-slate-100,
+.portal-dark .portal-page-shell-card .bg-gray-100,
+.portal-dark .portal-page-shell-card .bg-zinc-100 {
+  background-color: #F1F5F9 !important;
+}
+.portal-dark .portal-page-shell-card .border-slate-200,
+.portal-dark .portal-page-shell-card .border-gray-200,
+.portal-dark .portal-page-shell-card .border-zinc-200 {
+  border-color: #E2E8F0 !important;
+}
+.portal-dark .portal-page-shell-card .border-slate-300,
+.portal-dark .portal-page-shell-card .border-zinc-300 {
+  border-color: #CBD5E1 !important;
+}
+.portal-dark .portal-page-shell-card .divide-slate-200 > * + *,
+.portal-dark .portal-page-shell-card .divide-zinc-200 > * + * {
+  border-color: #E2E8F0 !important;
+}
