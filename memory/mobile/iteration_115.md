@@ -1,0 +1,6 @@
+# Iteration 115 — Phase 25 (web Phases 20/22/23/24 → mobile)
+- F1 flagged: mobile profile layout differs fundamentally (no action row, no tabs) → no force-fit.
+- F2: `CustomerProfileSkeleton` (Animated.loop(sequence) opacity pulse) replaces the bare `<Loading>` spinner and the `if (!c) return null` blank frame.
+- F3: web Phase 23 restyled sections to the portal theme's `colors.surface`/`colors.border` (navy on web). Mobile portal tokens are light (Phase 19 F4), so sections now share the MOBILE stat-tile chassis (white surface + border + radius.lg) — not literal navy. Accents: Concierge colors.brand, Referral colors.success (+ green CTA), Business card navy-variant #1E3A8A/#DBEAFE. Mobile has no NFC-Ready card on home — only the "Business Card" nav row, which got the navy accent.
+- F4: Past Due >0 → #7F1D1D, Credit >0 → #064E3B, value+label → #FFFFFF; Quick Action tiles track pressed via onPressIn/onPressOut (white halo shadow 0.6/20 + surfaceSecondary bg as brightness-95 analogue; elevation 8 for Android).
+- Env lessons: container restarts mid-command and REPLAYS the last command → keep destructive steps idempotent (scripts with "already applied" guards), never chain park/checkout/run in one backgrounded line; run full jest as 3 foreground shards (≤285s each).

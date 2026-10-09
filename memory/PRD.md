@@ -91,3 +91,8 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - F3 ServiceReport sections follow template `fieldsOrdered` via TemplateOrderedSections; isEmpty → hardcoded order. Commit a61203503.
 - F4 Portal page shell: not needed on mobile (portal renders on light surfaces); regression-lock test. Commit f89aad77c.
 - All deferred mobile follow-ups from Phases 9–18 are now closed.
+
+## 8. Phase 25 — Mobile parity for web Phases 20/22/23/24 · shipped 2026-10-09
+- Customer profile skeleton loader (886f1c2b7). Action-row reposition flagged N/A on mobile.
+- Portal home: Concierge/Referral/Business card on stat-tile chassis w/ blue/green/navy accents; dynamic Past Due red / Credit green; Quick Action press glow (e873da160).
+- OPEN BLOCKER: unresolved conflict markers in mobile/app/(app)/schedule/calendar.tsx (commit 6911174d9) break the Expo bundle.

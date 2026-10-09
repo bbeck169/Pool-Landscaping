@@ -1752,3 +1752,11 @@
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
+
+## Iteration 115 — Phase 25: mobile parity for web Phases 20 / 22 / 23 / 24
+- **Commits**:
+  - F2 `886f1c2b71f27ca190421edb687700828baacb35` — customer profile skeleton (CustomerProfileSkeleton.tsx + [id].tsx wiring + test)
+  - F3+F4 `e873da16079cfe8ab4957d233a11baa894c8551b` — portal home: 3 sections on stat-tile chassis + accents; Past Due/Credit dynamic bgs + white text; Quick Action press glow
+- **F1 (Phase 20 action row)**: FLAGGED no-op — mobile has no unified action row (Edit = header icon, Delete = inline admin button, Send/Create = FAB, Call = PhoneLink) and no tabs row.
+- **Tests**: shard-run full suite 43 failed suites / 49 failed tests = identical to HEAD baseline (set-diff empty both ways).
+- **BLOCKER (not mine, not touched)**: commit 6911174d9 (cron) landed unresolved stash conflict markers in `mobile/app/(app)/schedule/calendar.tsx` (~L1578+) and in this file just above → Metro 500s the whole bundle. Needs a manual resolution pass.
