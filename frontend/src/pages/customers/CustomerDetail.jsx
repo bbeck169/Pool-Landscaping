@@ -733,6 +733,19 @@ export default function CustomerDetail() {
           ? `tel:${String(primaryMobile).replace(/[^0-9+]/g, "")}`
           : null;
         return (
+          <>
+          {/* ─────────────────────────────────────────────────────
+              Phase 20 · Feb-2026 — ACTION ROW (above the tabs row).
+              The action-bar block (Edit / Merge / Issue Credit /
+              Mark Correction / Call / Delete / Move to Trash +
+              mobile kebab) was relocated OUT of the shared single-
+              row strip into its own full-width dedicated row that
+              renders ABOVE the Send / Create / Overview tabs row.
+              Buttons remain left-aligned (natural flex-row order,
+              no flex-1 spacer); every testid, handler, role gate,
+              and mobile-kebab collapse behavior is preserved
+              byte-for-byte from the pre-Phase-20 single row.
+          ───────────────────────────────────────────────────── */}
           <div
             className="rounded-2xl mb-4 px-3 py-3"
             style={{
@@ -745,32 +758,6 @@ export default function CustomerDetail() {
               className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
               data-testid="cd-action-row"
             >
-              {/* Left group — Send / Create / Overview. */}
-              <CustomerActionDropdowns
-                customer={customer}
-                onSend={openSendModal}
-                onQuickTask={openQuickTaskFromDropdown}
-                onSendServiceRecordsLink={() => setSrLinkOpen(true)}
-                navy
-              />
-              <div
-                style={{ minWidth: 220 }}
-                data-testid="cd-tabs-dropdown-shell"
-              >
-                <ResponsiveTabs
-                  tabs={visibleTabs}
-                  active={tab}
-                  onChange={setTab}
-                  testidPrefix="cd-tab"
-                  ariaLabel="Customer sections"
-                  forceDropdown
-                  recentStorageKey={
-                    customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
-                  }
-                />
-              </div>
-              {/* Flex spacer separates the left group from the right. */}
-              <div className="flex-1" data-testid="cd-action-row-spacer" />
               {/* Right-primary group — Edit / Merge / Credit / Correction.
                   Collapses into the mobile kebab below ``md:``. */}
               <div
@@ -960,6 +947,53 @@ export default function CustomerDetail() {
               </div>
             </div>
           </div>
+          {/* ─────────────────────────────────────────────────────
+              Phase 20 · Feb-2026 — TABS ROW (below the action row).
+              Hosts the Send / Create dropdowns + the Overview tab
+              selector (``cd-tabs-dropdown-shell`` keeps its testid
+              + ``minWidth: 220`` compact shell). Shares the navy
+              chrome with the action row so the two strips read as
+              a coherent command cluster.
+          ───────────────────────────────────────────────────── */}
+          <div
+            className="rounded-2xl mb-4 px-3 py-3"
+            style={{
+              backgroundColor: colors.nav.bg,
+              border: `1px solid ${colors.nav.border}`,
+            }}
+            data-testid="cd-command-strip-tabs"
+          >
+            <div
+              className="flex flex-row flex-nowrap items-center gap-2 overflow-x-auto"
+              data-testid="cd-tabs-row"
+            >
+              {/* Left group — Send / Create / Overview. */}
+              <CustomerActionDropdowns
+                customer={customer}
+                onSend={openSendModal}
+                onQuickTask={openQuickTaskFromDropdown}
+                onSendServiceRecordsLink={() => setSrLinkOpen(true)}
+                navy
+              />
+              <div
+                style={{ minWidth: 220 }}
+                data-testid="cd-tabs-dropdown-shell"
+              >
+                <ResponsiveTabs
+                  tabs={visibleTabs}
+                  active={tab}
+                  onChange={setTab}
+                  testidPrefix="cd-tab"
+                  ariaLabel="Customer sections"
+                  forceDropdown
+                  recentStorageKey={
+                    customer?.id ? `cd-tabs-recent-3-${customer.id}` : null
+                  }
+                />
+              </div>
+            </div>
+          </div>
+          </>
         );
       })()}
 

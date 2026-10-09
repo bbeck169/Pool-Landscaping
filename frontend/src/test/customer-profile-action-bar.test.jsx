@@ -1,26 +1,36 @@
 /**
- * CUSTOMER-PROFILE-ACTION-BAR · Feb-2026 Phase 2 — single-row
- * layout.
+ * CUSTOMER-PROFILE-ACTION-BAR · Phase 20 · Feb-2026 — ACTION ROW
+ * RELOCATED to its own dedicated full-width row ABOVE the tabs
+ * row.
  *
- * Replaces the row-split layout shipped in the prior atomic
- * (``customer-detail-issue-credit-and-row-split.test.jsx`` retired
- * the row-split describe block as part of the same commit).
+ * Prior session: Feb-2026 Phase 2 unified every affordance
+ * (Send / Create / Overview / Edit / Merge / Issue Credit / Mark
+ * Correction / Call / Delete / Move to Trash + mobile kebab)
+ * into a SINGLE flex-row. Phase 20 splits that single row back
+ * into two rows but preserves the single-row's unification goals
+ * (shared NAVY_* className constants, kebab mirroring, role
+ * gate reuse) byte-for-byte.
  *
- * Layout contract:
- *   • One flex-row container (``cd-action-row``) holds EVERY
- *     affordance — Send / Create / Overview / Edit / Merge /
- *     Issue Credit / Mark Correction / Call / Delete / Trash +
- *     mobile kebab.
- *   • Overview lives INSIDE ``cd-action-row`` (not on a Row 2),
- *     navy-skinned via ``NAVY_OUTLINE`` style — no white shell.
+ * Layout contract (post-Phase-20):
+ *   • ROW 1 — ``cd-command-strip`` wraps a ``cd-action-row``
+ *     flex-row with LEFT-ALIGNED buttons: Edit / Merge / Credit /
+ *     Correction / Call / Delete / Trash + mobile kebab. No
+ *     flex-1 spacer — the row is dedicated to actions only.
+ *   • ROW 2 — ``cd-command-strip-tabs`` wraps a ``cd-tabs-row``
+ *     flex-row holding Send / Create (CustomerActionDropdowns)
+ *     + Overview (ResponsiveTabs forceDropdown via
+ *     ``cd-tabs-dropdown-shell``). Hosts ONLY tab-navigation
+ *     affordances.
+ *   • Both strips share the navy chrome (rounded-2xl mb-4 px-3
+ *     py-3 + colors.nav.bg) for visual coherence.
  *   • Below ``md:`` the Edit / Merge / Credit / Correction /
- *     Delete / Trash set collapses into ``cd-mobile-kebab-
- *     trigger`` so only Send / Create / Overview / Call / kebab
- *     stay visible on narrow viewports.
+ *     Delete / Trash set still collapses into ``cd-mobile-kebab-
+ *     trigger``; only Call + kebab stay visible on narrow
+ *     viewports in Row 1. The tabs row (Row 2) is unaffected by
+ *     the kebab collapse.
  *   • Shared className constants (``BTN_BASE``, ``NAVY_OUTLINE``,
- *     ``NAVY_DANGER``, ``NAVY_WARN``) replace the previous
- *     repeated per-button ``className`` + ``style`` blocks.  A
- *     future palette tweak only touches ONE place.
+ *     ``NAVY_DANGER``, ``NAVY_WARN``) remain the single source
+ *     of truth for navy-adapted button styles.
  *   • Role filtering on the kebab items mirrors the inline
  *     buttons' role gates — zero behavioural drift between the
  *     two surfaces.
@@ -65,24 +75,50 @@ describe("Customer profile action bar · single-row layout", () => {
     expect(slice).toMatch(/overflow-x-auto/);
   });
 
-  it("Overview dropdown lives INSIDE cd-action-row (not Row 2)", () => {
-    const rowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
-    // Scope the slice to the row block — the next sibling block
-    // is the header card comment.
-    const headerIdx = pageSrc.indexOf("{/* Header card */}", rowIdx);
-    const rowBlock = pageSrc.slice(rowIdx, headerIdx);
-    expect(rowBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
-    // And the retired Row-2 white shell is gone.
+  it("Overview dropdown lives in the TABS row below cd-action-row (Phase 20)", () => {
+    // Phase 20 · Feb-2026 — Overview was relocated OUT of
+    // ``cd-action-row`` into its own ``cd-tabs-row`` sibling
+    // beneath the action row.  Both rows share the navy chrome
+    // but each strip hosts a distinct affordance set.  The tabs
+    // row carries ``cd-tabs-dropdown-shell``; the action row no
+    // longer does.
+    const actionRowIdx = pageSrc.indexOf('data-testid="cd-action-row"');
+    expect(actionRowIdx).toBeGreaterThan(-1);
+    const tabsRowIdx = pageSrc.indexOf('data-testid="cd-tabs-row"');
+    expect(tabsRowIdx).toBeGreaterThan(actionRowIdx);
+    // ``cd-tabs-dropdown-shell`` sits on the tabs row — AFTER
+    // the action row in DOM / source order.
+    const shellIdx = pageSrc.indexOf('data-testid="cd-tabs-dropdown-shell"');
+    expect(shellIdx).toBeGreaterThan(actionRowIdx);
+    expect(shellIdx).toBeGreaterThan(tabsRowIdx);
+    // The retired Row-2 white shell is still gone.
     expect(pageSrc).not.toContain("cd-tabs-dropdown-shell-light");
   });
 
-  it("flex-1 spacer separates the left and right groups", () => {
-    expect(pageSrc).toMatch(
-      /data-testid="cd-action-row-spacer"/,
-    );
-    expect(pageSrc).toMatch(
-      /className="flex-1"\s*\n?\s*data-testid="cd-action-row-spacer"/,
-    );
+  it("action row has NO flex-1 spacer — buttons left-align in the dedicated row (Phase 20)", () => {
+    // Phase 20 · Feb-2026 — ``cd-action-row-spacer`` is retired.
+    // The pre-Phase-20 single-row layout used a ``flex-1``
+    // spacer to push the right-group buttons to the right of
+    // the shared row.  In the new split layout the action row
+    // is DEDICATED, so buttons simply left-align via normal
+    // flex-row order — the spacer is removed.
+    expect(pageSrc).not.toMatch(/data-testid="cd-action-row-spacer"/);
+  });
+
+  it("Phase 20 — a second navy strip (cd-command-strip-tabs) renders below the action strip", () => {
+    // The two strips share the navy chrome contract — same
+    // rounded-2xl mb-4 px-3 py-3 wrapper + colors.nav.bg
+    // background.  The second strip hosts the tabs row and must
+    // appear AFTER the first strip in source order.
+    const stripIdx = pageSrc.indexOf('data-testid="cd-command-strip"');
+    const tabsStripIdx = pageSrc.indexOf('data-testid="cd-command-strip-tabs"');
+    expect(stripIdx).toBeGreaterThan(-1);
+    expect(tabsStripIdx).toBeGreaterThan(stripIdx);
+    // Second strip also carries the navy chrome contract.
+    const openIdx = pageSrc.lastIndexOf("<div", tabsStripIdx);
+    const slice = pageSrc.slice(openIdx, tabsStripIdx + 60);
+    expect(slice).toMatch(/className="rounded-2xl mb-4 px-3 py-3"/);
+    expect(slice).toMatch(/backgroundColor:\s*colors\.nav\.bg/);
   });
 });
 
