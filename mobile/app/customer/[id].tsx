@@ -351,6 +351,47 @@ export default function CustomerDetail() {
         }
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
+        {/* Phase 25 · web parity 6bf5306cf (Phase 20) — unified action row
+            lifted ABOVE the section stack (mobile has no tabs row; the
+            stacked sections below are its analogue). Delete + View-as-
+            customer were relocated here verbatim — same testIDs, same
+            handlers, same role gates. Header edit icon is untouched. */}
+        <View style={s2.actionRow} testID="customer-action-row">
+          <TouchableOpacity
+            style={[s2.actionBtn, s2.actionBtnNeutral]}
+            onPress={() => router.push(`/customer/new?id=${id}`)}
+            testID="customer-action-edit"
+          >
+            <Ionicons name="create-outline" size={16} color={colors.brand} />
+            <Text style={[s2.actionBtnText, { color: colors.brand }]}>Edit</Text>
+          </TouchableOpacity>
+          {primaryPhone ? (
+            <TouchableOpacity
+              style={[s2.actionBtn, s2.actionBtnNeutral]}
+              onPress={() => Linking.openURL(`tel:${String(primaryPhone).replace(/[^\d+]/g, "")}`)}
+              testID="customer-action-call"
+            >
+              <Ionicons name="call-outline" size={16} color={colors.brand} />
+              <Text style={[s2.actionBtnText, { color: colors.brand }]}>Call</Text>
+            </TouchableOpacity>
+          ) : null}
+          {isAdmin && c.has_login ? (
+            <Pressable style={[styles.impersonateBtn, s2.actionBtn]} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
+              <Ionicons name="eye-outline" size={16} color="#fff" />
+              <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "View as customer"}</Text>
+            </Pressable>
+          ) : null}
+          {isAdmin ? (
+            <TouchableOpacity
+              style={[s2.deleteBtn, s2.actionBtn]}
+              onPress={() => setConfirmDelete(true)}
+              testID="customer-delete-button"
+            >
+              <Ionicons name="trash-outline" size={16} color="#B91C1C" />
+              <Text style={[s2.deleteBtnText, s2.actionBtnText]}>Delete customer</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         {c.customer_since ? (
           <Text
             testID="mobile-customer-since-label"
@@ -423,17 +464,6 @@ export default function CustomerDetail() {
             onError={(msg) => Alert.alert("Update failed", msg)}
           />
         ) : null}
-        {/* Ship 2 · Delete customer button (admin+ only) */}
-        {isAdmin ? (
-          <TouchableOpacity
-            style={s2.deleteBtn}
-            onPress={() => setConfirmDelete(true)}
-            testID="customer-delete-button"
-          >
-            <Ionicons name="trash-outline" size={16} color="#B91C1C" />
-            <Text style={s2.deleteBtnText}>Delete customer</Text>
-          </TouchableOpacity>
-        ) : null}
         {/* Multi-Contact Phase 1 · Automations mute toggle + banner.
             Distinct from MuteControlSheet above which handles is_muted. */}
         <AutomationsMuteSection
@@ -493,12 +523,6 @@ export default function CustomerDetail() {
           <MultiContact mobiles={c.mobiles} emails={c.emails} />
         )}
 
-        {isAdmin && c.has_login ? (
-          <Pressable style={styles.impersonateBtn} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
-            <Ionicons name="eye-outline" size={18} color="#fff" />
-            <Text style={styles.impersonateText}>{impersonating ? "Switching…" : "View as customer"}</Text>
-          </Pressable>
-        ) : null}
 
         {isAdmin ? (
           <Pressable
@@ -1125,4 +1149,17 @@ const s2 = StyleSheet.create({
     fontSize: fontSize.sm,
     color: "#B91C1C",
   },
+  // Phase 25 · Phase-20 action row (full-width, wraps on narrow phones).
+  actionRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  actionBtn: {
+    flexGrow: 1, flexBasis: "45%", minHeight: 44, height: undefined,
+    marginTop: 0, marginBottom: 0, paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: radius.md, flexDirection: "row", alignItems: "center",
+    justifyContent: "center", gap: 6,
+  },
+  actionBtnNeutral: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  actionBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm },
 });

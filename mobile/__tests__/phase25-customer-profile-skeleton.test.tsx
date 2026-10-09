@@ -1,6 +1,8 @@
 /**
- * Phase 25 · Customer profile skeleton loader (mobile parity with web
- * Phase 22 · 0a176aeeb).
+ * Phase 25 · Customer profile — action-row reposition (web Phase 20 ·
+ * 6bf5306cf) + skeleton loader (web Phase 22 · 0a176aeeb).
+ *
+ *   1. Action row renders ABOVE the section stack; handlers preserved
  *
  *   2. Skeleton shell renders on mount BEFORE any fetch resolves, and
  *      flips to real data once the slim profile resolves.
@@ -9,7 +11,7 @@
  *   + no bare spinner / blank frame
  */
 import React from "react";
-import { Animated } from "react-native";
+import { Animated, Linking } from "react-native";
 import { render, waitFor, act } from "@testing-library/react-native";
 
 let resolveProfile: (v: any) => void = () => {};
@@ -23,8 +25,9 @@ jest.mock("@/src/api", () => ({
 jest.mock("@/src/auth", () => ({
   useAuth: () => ({ user: { id: "u1", role: "admin", name: "Admin" }, startImpersonation: jest.fn() }),
 }));
+const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: mockPush, back: jest.fn(), replace: jest.fn() }),
   useLocalSearchParams: () => ({ id: "cust-1" }),
   useFocusEffect: (cb: any) => require("react").useEffect(() => { cb(); }, []),
   Redirect: () => null,
@@ -44,7 +47,7 @@ jest.mock("@/src/components/ui", () => {
 });
 jest.mock("@/src/components/widgets", () => {
   const { View } = require("react-native");
-  return { Header: () => <View testID="header" />, JobCard: (p: any) => <View testID={p.testID} /> };
+  return { Header: (p: any) => <View testID="header">{p.right}</View>, JobCard: (p: any) => <View testID={p.testID} /> };
 });
 jest.mock("@/src/components/ui/AppTextInput", () => {
   const { TextInput } = require("react-native");
@@ -67,14 +70,29 @@ jest.mock("@/src/components/customers/PaymentMethodTiles", () => ({ __esModule: 
 jest.mock("@/src/components/customers/CommunicationTimeline", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/src/components/comms/DemoAccountToggle", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/src/components/customers/MuteControlSheet", () => ({ __esModule: true, default: () => null }));
-jest.mock("@/src/components/customers/CustomerDeleteModal", () => ({ __esModule: true, default: () => null }));
+jest.mock("@/src/components/customers/CustomerDeleteModal", () => {
+  const { View } = require("react-native");
+  return { __esModule: true, default: (p: any) => (p.visible ? <View testID="customer-delete-modal-open" /> : null) };
+});
 jest.mock("@/src/components/subscriptions/SubscriptionsSection", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/src/components/customers/PortalAccessPanel", () => ({ __esModule: true, default: () => null }));
 
 import CustomerDetail from "@/app/customer/[id]";
-import CustomerProfileSkeleton, { SKELETON_SECTIONS } from "@/src/components/customers/CustomerProfileSkeleton";
+import CustomerProfileSkeleton, { SKELETON_SECTIONS, ACTION_SLOTS } from "@/src/components/customers/CustomerProfileSkeleton";
 
-const CUSTOMER = { id: "cust-1", name: "Jane Test", email: "j@t.com", is_active: true, tags: [] };
+const CUSTOMER = {
+  id: "cust-1", name: "Jane Test", email: "j@t.com", is_active: true, tags: [],
+  has_login: true, mobiles: [{ number_e164: "+15550102000", is_primary: true }],
+};
+
+function testIdsInOrder(node: any, out: string[] = []): string[] {
+  if (!node) return out;
+  if (Array.isArray(node)) { node.forEach((n) => testIdsInOrder(n, out)); return out; }
+  const id = node.props?.testID;
+  if (typeof id === "string" && !out.includes(id)) out.push(id);
+  testIdsInOrder(node.children, out);
+  return out;
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -101,17 +119,23 @@ describe("Phase 25 · customer profile skeleton", () => {
     expect(r.getByTestId("customer-jobs-tab")).toBeTruthy();
   });
 
-  it("silhouette: header card (avatar / name / address) + section labels with badge placeholders", () => {
+  it("silhouette mirrors the real footprint: action row → header card → tile area → body rows", () => {
     const r = render(<CustomerProfileSkeleton />);
-    for (const id of ["cd-skeleton-header-card", "cd-skeleton-avatar", "cd-skeleton-name",
-      "cd-skeleton-address", "cd-skeleton-status-strip", "cd-skeleton-contact-card", "cd-skeleton-sections"]) {
+    for (const id of ["cd-skeleton-action-row", "cd-skeleton-header-card", "cd-skeleton-avatar",
+      "cd-skeleton-name", "cd-skeleton-address", "cd-skeleton-tile-area", "cd-skeleton-status-strip",
+      "cd-skeleton-contact-card", "cd-skeleton-content", "cd-skeleton-sections"]) {
       expect(r.getByTestId(id)).toBeTruthy();
     }
+    ACTION_SLOTS.forEach((k) => expect(r.getByTestId(`cd-skeleton-action-${k}`)).toBeTruthy());
     SKELETON_SECTIONS.forEach((k) => {
       expect(r.getByTestId(`cd-skeleton-section-${k}`)).toBeTruthy();
       expect(r.getByTestId(`cd-skeleton-badge-${k}`)).toBeTruthy();
     });
-    expect(r.queryByTestId("cd-skeleton-action-row")).toBeNull(); // F1 flagged: no mobile action row
+    const order = testIdsInOrder(r.toJSON());
+    const idx = (id: string) => order.indexOf(id);
+    expect(idx("cd-skeleton-action-row")).toBeLessThan(idx("cd-skeleton-header-card"));
+    expect(idx("cd-skeleton-header-card")).toBeLessThan(idx("cd-skeleton-tile-area"));
+    expect(idx("cd-skeleton-tile-area")).toBeLessThan(idx("cd-skeleton-content"));
   });
 
   it("pulse runs Animated.loop(Animated.sequence) and stops on unmount", () => {
@@ -127,5 +151,54 @@ describe("Phase 25 · customer profile skeleton", () => {
     expect(stop).toHaveBeenCalled();
     loopSpy.mockRestore();
     seqSpy.mockRestore();
+  });
+});
+
+describe("Phase 25 · Phase 20 · action row above the section stack", () => {
+  async function mountLoaded() {
+    const r = render(<CustomerDetail />);
+    await act(async () => { resolveProfile(CUSTOMER); });
+    await waitFor(() => r.getByTestId("customer-action-row"));
+    return r;
+  }
+
+  it("1. action row renders before the status pill and every section", async () => {
+    const r = await mountLoaded();
+    const order = testIdsInOrder(r.toJSON());
+    const row = order.indexOf("customer-action-row");
+    expect(row).toBeGreaterThanOrEqual(0);
+    for (const id of ["customer-status-pill", "customer-jobs-tab", "customer-credits-section"]) {
+      const i = order.indexOf(id);
+      if (i >= 0) expect([id, row < i]).toEqual([id, true]);
+    }
+    expect(order.indexOf("customer-status-pill")).toBeGreaterThan(row);
+    expect(order.indexOf("customer-jobs-tab")).toBeGreaterThan(row);
+  });
+
+  it("relocated buttons keep their testIDs and live INSIDE the row", async () => {
+    const r = await mountLoaded();
+    const row = r.getByTestId("customer-action-row");
+    const inRow = testIdsInOrder(row);
+    for (const id of ["customer-action-edit", "customer-action-call",
+      "impersonate-customer-button", "customer-delete-button"]) {
+      expect([id, inRow.includes(id)]).toEqual([id, true]);
+    }
+    expect(r.getAllByTestId("customer-delete-button")).toHaveLength(1);
+    expect(r.getAllByTestId("impersonate-customer-button")).toHaveLength(1);
+    expect(r.getByTestId("edit-customer-button")).toBeTruthy(); // header edit icon preserved
+  });
+
+  it("handlers preserved: Edit → editor route, Call → primary mobile, Delete → existing confirm modal", async () => {
+    const spy = jest.spyOn(Linking, "openURL").mockResolvedValue(true as any);
+    const r = await mountLoaded();
+    const { fireEvent } = require("@testing-library/react-native");
+    fireEvent.press(r.getByTestId("customer-action-edit"));
+    expect(mockPush).toHaveBeenCalledWith("/customer/new?id=cust-1");
+    fireEvent.press(r.getByTestId("customer-action-call"));
+    expect(spy).toHaveBeenCalledWith("tel:+15550102000");
+    spy.mockRestore();
+    expect(r.queryByTestId("customer-delete-modal-open")).toBeNull();
+    fireEvent.press(r.getByTestId("customer-delete-button"));
+    expect(r.getByTestId("customer-delete-modal-open")).toBeTruthy();
   });
 });

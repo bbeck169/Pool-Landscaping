@@ -4,14 +4,16 @@
  *
  * Renders IMMEDIATELY on mount — before the slim profile resolves — in
  * the same silhouette as the real profile so there's no blank frame and
- * no layout jump: header card (avatar + name bar + address line), the
- * status-pill strip, the contact card, then section labels with
- * placeholder count badges (Job History / Documents / Communication).
+ * no layout jump: the Phase-20 action row (Edit / Call / View-as /
+ * Delete), header card (avatar + name bar + address line), the tile
+ * area (status-pill strip + contact card), then body rows — section
+ * labels with placeholder count badges (Job History / Documents /
+ * Communication).
  *
  * Pulse: one shared ``Animated.loop(Animated.sequence(...))`` on
  * opacity (native driver) — the mobile ``animate-pulse`` analogue.
- * No action-row block: mobile has no unified action row (Phase 25 F1
- * flagged), so the skeleton mirrors what mobile actually renders.
+ * Region testIDs mirror web Phase 22 (cd-skeleton-action-row,
+ * cd-skeleton-header-card, cd-skeleton-content, …).
  */
 import React, { useEffect, useRef } from "react";
 import { Animated, ScrollView, StyleSheet, View } from "react-native";
@@ -20,6 +22,7 @@ import { Header } from "@/src/components/widgets";
 import { colors, spacing, radius } from "@/src/theme";
 
 export const SKELETON_SECTIONS = ["jobs", "documents", "timeline"] as const;
+export const ACTION_SLOTS = ["edit", "call", "impersonate", "delete"] as const;
 
 function Bar({ w, h = 12, round = false, testID, style }: {
   w: number | `${number}%`; h?: number; round?: boolean; testID?: string; style?: any;
@@ -50,6 +53,11 @@ export default function CustomerProfileSkeleton() {
       <Header title="Customer" back />
       <ScrollView contentContainerStyle={s.content} scrollEnabled={false}>
         <Animated.View style={{ opacity: pulse }} testID="cd-skeleton-pulse">
+          <View style={s.actionRow} testID="cd-skeleton-action-row">
+            {ACTION_SLOTS.map((k) => (
+              <View key={k} style={s.actionSlot} testID={`cd-skeleton-action-${k}`} />
+            ))}
+          </View>
           <View style={s.card} testID="cd-skeleton-header-card">
             <View style={s.headerRow}>
               <Bar w={56} h={56} round testID="cd-skeleton-avatar" />
@@ -59,15 +67,18 @@ export default function CustomerProfileSkeleton() {
               </View>
             </View>
           </View>
-          <View style={s.pillRow} testID="cd-skeleton-status-strip">
-            <Bar w={96} h={28} round />
-            <Bar w={120} h={28} round />
+          <View testID="cd-skeleton-tile-area">
+            <View style={s.pillRow} testID="cd-skeleton-status-strip">
+              <Bar w={96} h={28} round />
+              <Bar w={120} h={28} round />
+            </View>
+            <View style={[s.card, { gap: spacing.md }]} testID="cd-skeleton-contact-card">
+              <Bar w="60%" />
+              <Bar w="80%" />
+              <Bar w="50%" />
+            </View>
           </View>
-          <View style={[s.card, { gap: spacing.md }]} testID="cd-skeleton-contact-card">
-            <Bar w="60%" />
-            <Bar w="80%" />
-            <Bar w="50%" />
-          </View>
+          <View testID="cd-skeleton-content">
           <View testID="cd-skeleton-sections">
             {SKELETON_SECTIONS.map((k) => (
               <View key={k} style={s.sectionRow} testID={`cd-skeleton-section-${k}`}>
@@ -75,6 +86,7 @@ export default function CustomerProfileSkeleton() {
                 <Bar w={26} h={20} round testID={`cd-skeleton-badge-${k}`} />
               </View>
             ))}
+          </View>
           </View>
         </Animated.View>
       </ScrollView>
@@ -91,6 +103,11 @@ const s = StyleSheet.create({
     borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.md,
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  actionSlot: {
+    flexGrow: 1, flexBasis: "45%", minHeight: 44, borderRadius: radius.md,
+    backgroundColor: colors.divider,
+  },
   pillRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
   sectionRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
