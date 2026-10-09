@@ -56,6 +56,43 @@ def tok() -> str:
     return r.json()["access_token"]
 
 
+# Phase 9 · Feb-2026 — the hardcoded TECH1 / TECH2 user ids used by
+# every test below were scrubbed from the live DB by the Feb-2026
+# PII-scrub pass (see memory/wipe_log_20260727.md).  Phase 9 also
+# added a tenant-isolation guard on PATCH /crews/{cid} that rejects
+# tech_ids referencing members outside the caller's tenant.  Seed
+# the two referenced ids back into the super_admin's LIVE tenant at
+# module setup — the ``AQUATERRA_TID`` constant above is stale (the
+# super@aquaterra.com account's active tenant has drifted since this
+# test was first written), so we resolve dynamically rather than
+# trusting the constant.
+@pytest.fixture(scope="module", autouse=True)
+def _seed_scrubbed_members(sync_db):
+    super_user = sync_db.users.find_one(
+        {"email": SUPER["email"]}, {"_id": 0, "tenant_id": 1},
+    ) or {}
+    tid = super_user.get("tenant_id") or AQUATERRA_TID
+    seeds = [
+        {"id": TECH1, "tenant_id": tid,
+         "name": "Mike Rivera", "first_name": "Mike",
+         "last_name": "Rivera", "email": "mike.rivera@aquaterra.com",
+         "role": "tech", "active": True},
+        {"id": TECH2, "tenant_id": tid,
+         "name": "Sara Nguyen", "first_name": "Sara",
+         "last_name": "Nguyen", "email": "sara.nguyen@aquaterra.com",
+         "role": "tech", "active": True},
+    ]
+    inserted_ids = []
+    for s in seeds:
+        existing = sync_db.users.find_one({"id": s["id"]}, {"_id": 0, "id": 1})
+        if not existing:
+            sync_db.users.insert_one({**s})
+            inserted_ids.append(s["id"])
+    yield
+    if inserted_ids:
+        sync_db.users.delete_many({"id": {"$in": inserted_ids}})
+
+
 def _h(t: str) -> dict:
     return {"Authorization": f"Bearer {t}", "Content-Type": "application/json"}
 

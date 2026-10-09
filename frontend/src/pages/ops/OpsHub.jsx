@@ -632,7 +632,25 @@ function Crews() {
               {(techs || []).map((t) => {
                 const on = form.tech_ids.includes(t.id);
                 return (
-                  <button key={t.id} onClick={() => setForm({ ...form, tech_ids: on ? form.tech_ids.filter((x) => x !== t.id) : [...form.tech_ids, t.id] })}
+                  <button key={t.id} onClick={() => setForm((prev) => {
+                      // Phase 9 · Feb-2026 — multi-member save fix.
+                      // Pre-Phase-9 the handler closed over the outer
+                      // ``form`` reference, so clicking two members
+                      // rapidly (before React re-rendered) collapsed
+                      // the array to just the latest click.  The
+                      // functional updater reads the live state inside
+                      // React's queue so every click builds on top of
+                      // the previous click's result, no stale closure.
+                      const prevIds = Array.isArray(prev.tech_ids)
+                        ? prev.tech_ids : [];
+                      const alreadyOn = prevIds.includes(t.id);
+                      return {
+                        ...prev,
+                        tech_ids: alreadyOn
+                          ? prevIds.filter((x) => x !== t.id)
+                          : [...prevIds, t.id],
+                      };
+                    })}
                     className="text-xs font-semibold px-3 py-1 rounded-full"
                     style={{ backgroundColor: on ? colors.brandTertiary : colors.surfaceSecondary, color: on ? colors.onBrandTertiary : colors.muted, border: `1px solid ${colors.border}` }}
                     data-testid={`crew-tech-${t.id}`}>{t.name}</button>

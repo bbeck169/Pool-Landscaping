@@ -143,6 +143,61 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
                     f"{PALETTE_HEXES}",
                 )
             body["color"] = raw.upper()
+    # Phase 9 · Feb-2026 — crew multi-member save defense in depth.
+    #
+    # The historical bug was a frontend stale-closure that collapsed
+    # tech_ids to the single most-recently-clicked id (OpsHub.jsx
+    # toggle used ``setForm({...form,...})`` instead of the functional
+    # updater).  Even now that the FE is fixed, harden the endpoint
+    # so a future caller sending a non-array ``tech_ids`` field OR a
+    # tech_id that belongs to a different tenant fails loudly instead
+    # of silently truncating the saved roster.
+    if "tech_ids" in body:
+        raw_ids = body.get("tech_ids")
+        if raw_ids is None:
+            raw_ids = []
+        if not isinstance(raw_ids, list):
+            raise HTTPException(
+                400, "tech_ids must be an array of user ids",
+            )
+        # Normalise + de-dupe while preserving order.
+        normalised: List[str] = []
+        seen: set = set()
+        for x in raw_ids:
+            if not isinstance(x, str) or not x:
+                raise HTTPException(
+                    400, "tech_ids entries must be non-empty strings",
+                )
+            if x in seen:
+                continue
+            seen.add(x)
+            normalised.append(x)
+        # Tenant isolation — every incoming id must resolve to a
+        # user OR technician in the caller's tenant.  Prevents a
+        # stale foreign id from landing on a crew when a user is
+        # migrated between tenants.
+        if normalised:
+            tid = tenant["id"]
+            resolved = set()
+            async for u in db.users.find(
+                {"tenant_id": tid, "id": {"$in": normalised}},
+                {"_id": 0, "id": 1},
+            ):
+                resolved.add(u["id"])
+            if len(resolved) < len(normalised):
+                async for t in db.technicians.find(
+                    {"tenant_id": tid, "id": {"$in": normalised}},
+                    {"_id": 0, "id": 1},
+                ):
+                    resolved.add(t["id"])
+            missing = [x for x in normalised if x not in resolved]
+            if missing:
+                raise HTTPException(
+                    400,
+                    "tech_ids references members not in this tenant: "
+                    f"{missing}",
+                )
+        body["tech_ids"] = normalised
     body["updated_at"] = now_iso()
     # Feb-2026 · P0 fix — scope the update to the caller's tenant so
     # a stale/foreign crew id can't mutate rows across tenants.
