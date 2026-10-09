@@ -1748,4 +1748,7 @@
 - **Files added**: `__tests__/calendar-schedule-card-directions.test.tsx`
 - **Verified**: Screenshot confirms: (a) no NavigateJobButton, (b) address beneath name, (c) enlarged font, (d) 4 name-nav + 3 addr-nav pressables detected. Metro clean. Jest 13/13.
 
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
