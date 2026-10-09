@@ -1575,13 +1575,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             header, so the per-card avatar was redundant clutter. */}
         {/* ITEM 3 — Customer name + VIP pill; tapping name opens native map */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-          <Text style={[gStyles.cust, { flexShrink: 1 }, fg]} numberOfLines={1}>{formatCustomerName(job)}</Text>
-          <NavigateJobButton job={job} />
-=======
-=======
->>>>>>> Stashed changes
           <Pressable
             onPress={() => {
               const c = resolveJobCoords(job);
@@ -1592,12 +1585,8 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             accessibilityLabel={`Open directions to ${formatCustomerName(job)}`}
             testID={`job-card-name-nav-${job.id}`}
           >
-            <Text style={[gStyles.cust, { flexShrink: 1 }]} numberOfLines={1}>{formatCustomerName(job)}</Text>
+            <Text style={[gStyles.cust, { flexShrink: 1 }, fg]} numberOfLines={1}>{formatCustomerName(job)}</Text>
           </Pressable>
-<<<<<<< Updated upstream
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
           {job.customer_is_vip ? (
             <View style={gStyles.vipBadgeInline} testID={`job-vip-badge-${job.id}`}>
               <Ionicons name="star" size={9} color="#92400E" />
@@ -1630,7 +1619,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             accessibilityLabel={`Open directions to ${job.address}`}
             testID={`job-card-addr-nav-${job.id}`}
           >
-            <Text style={gStyles.addr} numberOfLines={1} ellipsizeMode="tail" testID={`job-card-addr-${job.id}`}>{job.address}</Text>
+            <Text style={onRed ? { ...gStyles.addr, color: K50_ON_BOLD_RED_FG } : gStyles.addr} numberOfLines={1} ellipsizeMode="tail" testID={`job-card-addr-${job.id}`}>{job.address}</Text>
           </Pressable>
         ) : null}
         {job.property_label ? (
@@ -1696,15 +1685,6 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           landscapeNote={job.service_notes_landscape}
           truncated={job.notes_truncated}
         />
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-        {job.address ? (
-          <AddressLink address={job.address} showIcon={false} style={onRed ? { ...gStyles.addr, color: K50_ON_BOLD_RED_FG } : gStyles.addr} testID={`job-card-addr-${job.id}`} />
-        ) : null}
-=======
->>>>>>> Stashed changes
-=======
->>>>>>> Stashed changes
         {/* Phase 1 Offline Read — "Cached ✓" pill */}
         {cachedForOffline ? (
           <View style={gStyles.cachedPill} testID={`job-cached-pill-${job.id}`}>
