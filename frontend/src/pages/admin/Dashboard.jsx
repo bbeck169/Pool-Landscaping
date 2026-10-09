@@ -583,6 +583,62 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
+      {/* Feb-2026 · Dashboard batch — KPI grid relocated here, directly
+          above the Revenue Forecast / EBIT topline row, per operator
+          request. Order is Active Jobs → Pending → Active Customers →
+          Inactive Customers. Grid breakpoints match the sibling topline
+          row (2-col on mobile, 4-col on large). */}
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6"
+           data-testid="dashboard-kpi-grid">
+        {data ? (
+          <>
+            <KpiCard
+              icon={Briefcase}
+              label="Active Jobs"
+              value={data.active_jobs}
+              onClick={() => navigate("/admin/jobs?status=active")}
+              testId="kpi-active-jobs"
+              tone="sky"
+            />
+            <KpiCard
+              icon={Hourglass}
+              label="Pending"
+              value={data.pending_jobs}
+              onClick={() => navigate("/admin/jobs?status=pending")}
+              testId="kpi-pending"
+              tone="amber"
+            />
+            {/* Feb-2026 · Active/Inactive Customers tile swap.
+                Bottom row of the KPI grid replaces the legacy
+                Customers total + Technicians tiles with a pair
+                keyed to the recurring-service-contract signal.
+                See ``routers/dashboard.py`` for the
+                ``active_customers_count`` /
+                ``inactive_customers_count`` fields; sum invariant
+                (active + inactive == total_customers) preserved. */}
+            <KpiCard
+              icon={UserCheck}
+              label="Active Customers"
+              value={data.active_customers_count}
+              onClick={() => navigate("/customers?status=active")}
+              testId="kpi-active-customers"
+              tone="violet"
+            />
+            <KpiCard
+              icon={UserX}
+              label="Inactive Customers"
+              value={data.inactive_customers_count}
+              onClick={() => navigate("/customers?status=inactive")}
+              testId="kpi-inactive-customers"
+              tone="emerald"
+            />
+          </>
+        ) : (
+          [0, 1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
+        )}
+      </div>
+
       {/* Feb-2026 · Revenue Forecast + EBIT topline tiles. Sit below
           the Mass Messaging card, Global Search Bar, Revenue-insights
           section, and action-cards row per the Feb-2026 Dashboard
@@ -662,9 +718,11 @@ export default function AdminDashboard() {
           adjacent to the KPI grid.  Role gates are unchanged
           (DataIntegrity → super_admin only; CrewProductivity →
           admin+). */}
+      {/* HIDDEN: Data Integrity section — user request 2026-02-09, revert by uncommenting block below.
       {user?.role === "super_admin" ? (
         <DataIntegrityTile userRole={user?.role} />
       ) : null}
+      */}
       {/* Phase K41d · Feb-2026 — Bulk Operations audit tile.
           Renders below DataIntegrityTile because both tiles share
           the "admin drilldown activity" mental model. Role gate is
@@ -697,55 +755,11 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
-      {/* KPI grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        {data ? (
-          <>
-            <KpiCard
-              icon={Briefcase}
-              label="Active Jobs"
-              value={data.active_jobs}
-              onClick={() => navigate("/admin/jobs?status=active")}
-              testId="kpi-active-jobs"
-              tone="sky"
-            />
-            <KpiCard
-              icon={Hourglass}
-              label="Pending"
-              value={data.pending_jobs}
-              onClick={() => navigate("/admin/jobs?status=pending")}
-              testId="kpi-pending"
-              tone="amber"
-            />
-            {/* Feb-2026 · Active/Inactive Customers tile swap.
-                Bottom row of the KPI grid replaces the legacy
-                Customers total + Technicians tiles with a pair
-                keyed to the recurring-service-contract signal.
-                See ``routers/dashboard.py`` for the
-                ``active_customers_count`` /
-                ``inactive_customers_count`` fields; sum invariant
-                (active + inactive == total_customers) preserved. */}
-            <KpiCard
-              icon={UserCheck}
-              label="Active Customers"
-              value={data.active_customers_count}
-              onClick={() => navigate("/customers?status=active")}
-              testId="kpi-active-customers"
-              tone="violet"
-            />
-            <KpiCard
-              icon={UserX}
-              label="Inactive Customers"
-              value={data.inactive_customers_count}
-              onClick={() => navigate("/customers?status=inactive")}
-              testId="kpi-inactive-customers"
-              tone="emerald"
-            />
-          </>
-        ) : (
-          [0, 1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
-        )}
-      </div>
+      {/* Feb-2026 · Dashboard batch — KPI grid moved up to sit
+          directly above the Revenue Forecast / EBIT topline row.
+          Old location preserved as a marker so git-blame points
+          back to this ticket if a reader wonders why the KPIs
+          jumped past the Warranties / Routing Cost tiles. */}
 
       {/* Referral Revenue tile — Phase 20B module B */}
       <ReferralRevenueTile />
