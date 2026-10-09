@@ -226,8 +226,20 @@ async def _send_password_reset_email(
                     "temp_password": temp_password,
                     "login_url": login_url,
                 }
+                # Phase 21 · Feb-2026 — URL-encoded merge-tag
+                # repair. Mirrors the portal-invite path — some
+                # tenants have the admin-reset body stored with
+                # ``%7B%7BLOGIN_URL%7D%7D`` et al. and the
+                # double-brace-only ``render_template`` regex
+                # otherwise ships the encoded tokens verbatim.
+                from services.marketing.merge_tags import (
+                    normalize_url_encoded_merge_tags,
+                )
+                normalised_body = normalize_url_encoded_merge_tags(
+                    tpl["body"],
+                )
                 rendered, _ = render_template(
-                    tpl["body"], ctx, missing="empty",
+                    normalised_body, ctx, missing="empty",
                 )
                 if rendered:
                     inner_html = rendered

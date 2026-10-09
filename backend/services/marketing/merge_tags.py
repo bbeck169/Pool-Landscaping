@@ -2068,6 +2068,86 @@ def rebrace_single_brace_catalog_tokens(body: str) -> str:
     return _SINGLE_BRACE_TOKEN_RE.sub(_upgrade, body)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Phase 21 · Feb-2026 — URL-encoded merge-tag normaliser.
+#
+# Some tenants have portal-invite / password-reset bodies stored
+# with URL-encoded brace sequences (``%7B%7BNAME%7D%7D`` instead of
+# ``{{NAME}}``). This happens when:
+#
+#   * a rich-text editor's clipboard-paste path URL-encodes the
+#     payload before storing it,
+#   * a legacy migration serialised the body through a querystring,
+#     or
+#   * an operator pasted a URL-encoded sample as the "default"
+#     template body.
+#
+# ``render_template`` matches literal ``{{…}}`` only — a URL-encoded
+# token slips through untouched and the recipient sees
+# ``%7B%7BLOGIN_URL%7D%7D`` instead of their login link.
+#
+# This helper normalises those sequences BACK to the canonical
+# brace form **only when they bracket a token-shaped identifier**
+# (uppercase letters / digits / underscores). URL-encoded braces
+# that appear elsewhere in the body (e.g. a legitimate ``%7B`` in
+# a tracked click-through URL) are left verbatim.
+#
+# Handles both the double-brace (``%7B%7B…%7D%7D``) and the single-
+# brace (``%7B…%7D``) encodings; the single-brace path routes
+# through the catalog upgrade so ``%7BCOMPANY_NAME%7D`` →
+# ``{{COMPANY_NAME}}`` in one pass.
+#
+# Case-insensitive on the hex nibbles — ``%7b%7b…%7d%7d`` and
+# ``%7B%7B…%7D%7D`` are both covered. Idempotent — a body that
+# already contains canonical ``{{…}}`` tokens is returned verbatim.
+# ═══════════════════════════════════════════════════════════════════
+_URL_ENC_DOUBLE_BRACE_RE = re.compile(
+    r"%7B%7B\s*([A-Za-z_][A-Za-z0-9_.]*)\s*%7D%7D",
+    re.IGNORECASE,
+)
+_URL_ENC_SINGLE_BRACE_RE = re.compile(
+    r"(?<!%7B)%7B\s*([A-Za-z_][A-Za-z0-9_.]*)\s*%7D(?!%7D)",
+    re.IGNORECASE,
+)
+
+
+def normalize_url_encoded_merge_tags(body: str) -> str:
+    """Rewrite URL-encoded merge-tag braces back to the canonical
+    ``{{TOKEN}}`` / ``{TOKEN}`` form.
+
+    Scope:
+      * ``%7B%7BTOKEN%7D%7D`` → ``{{TOKEN}}`` (ANY identifier
+        shape — the render engine itself gates on resolver
+        presence, so this is safe for non-catalog values the
+        caller passes directly through ``ctx``).
+      * ``%7BTOKEN%7D`` → ``{TOKEN}`` (gated on catalog
+        resolver presence — identical behaviour to
+        ``rebrace_single_brace_catalog_tokens`` but on the
+        URL-encoded surface).
+
+    Non-brace URL encodings (``%2F``, ``%3A`` in tracked URLs,
+    etc.) are untouched. Already-canonical ``{{…}}`` tokens are
+    not re-matched (the regex requires the ``%7B%7B`` prefix).
+    """
+    if not isinstance(body, str):
+        return ""
+    if not body:
+        return body
+
+    body = _URL_ENC_DOUBLE_BRACE_RE.sub(
+        lambda m: "{{" + m.group(1) + "}}", body,
+    )
+
+    def _single(match: "re.Match[str]") -> str:
+        token = match.group(1)
+        if token.upper() in _TAG_INDEX:
+            return "{" + token + "}"
+        return match.group(0)
+
+    body = _URL_ENC_SINGLE_BRACE_RE.sub(_single, body)
+    return body
+
+
 # ═══════════════════════════ Renderer ════════════════════════════════
 def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
                      missing: str = "empty") -> Tuple[str, List[str]]:

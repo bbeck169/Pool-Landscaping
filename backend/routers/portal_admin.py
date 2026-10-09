@@ -352,6 +352,7 @@ async def _try_send_reset_email(
     from services.marketing.merge_tags import (
         render_template,
         rebrace_single_brace_catalog_tokens,
+        normalize_url_encoded_merge_tags,
         _company_name as _resolve_company_name,
         _company_phone as _resolve_company_phone,
     )
@@ -366,6 +367,20 @@ async def _try_send_reset_email(
             to, company_name, company_phone, tenant_id,
         )
         return None
+
+    # Phase 21 · Feb-2026 — URL-encoded merge-tag repair. Some
+    # tenants have portal-invite bodies stored with URL-encoded
+    # brace sequences (``%7B%7BNAME%7D%7D`` et al.) — stems from
+    # rich-text clipboard-paste paths, legacy querystring
+    # migrations, or an operator pasting an already-encoded
+    # sample as the template default. The ``render_template``
+    # regex only matches literal ``{{…}}`` so the encoded tokens
+    # slipped through to the recipient. Normalise BEFORE the
+    # single-brace catalog upgrade so both encodings fold back
+    # to a single canonical shape in one pre-render pass.
+    subject = normalize_url_encoded_merge_tags(subject)
+    body_tpl = normalize_url_encoded_merge_tags(body_tpl)
+    text_tpl = normalize_url_encoded_merge_tags(text_tpl)
 
     # Feb-2026 · Portal-invite merge-tag fix — legacy / user-edited
     # DB rows sometimes carry catalog tokens in the single-brace
