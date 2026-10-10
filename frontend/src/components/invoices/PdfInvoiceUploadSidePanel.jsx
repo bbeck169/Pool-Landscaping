@@ -382,6 +382,24 @@ export default function PdfInvoiceUploadSidePanel({
         const amt = Number(qi.amount_paid).toFixed(2);
         toast.success(`Invoice paid: $${amt} on ${qi.paid_at}`);
       }
+      // Phase 33 Step C.2 · Feb-2026 — auto-create confirmation.
+      // Surface a toast when the commit response's new
+      // ``auto_created_customers`` bucket carries at least one
+      // "created" entry (vs ``deduped_db`` / ``deduped_batch``).
+      // Legacy response shapes (pre-Phase-33) read the array as
+      // ``undefined`` → the toast short-circuits silently.
+      const autoCreated = Array.isArray(res?.auto_created_customers)
+        ? res.auto_created_customers : [];
+      const newlyMinted = autoCreated.filter(
+        (c) => c && c.action === "created",
+      );
+      if (newlyMinted.length > 0) {
+        toast.success(
+          newlyMinted.length === 1
+            ? `New customer added: ${newlyMinted[0].extracted_name || "(unnamed)"}`
+            : `${newlyMinted.length} new customers added from this PDF`,
+        );
+      }
       onImportComplete?.(createdId);
       _reset();
       onClose?.();
@@ -401,6 +419,22 @@ export default function PdfInvoiceUploadSidePanel({
       if (errCode === "paid_without_amount") {
         setStep("preview_ready");
         toast.error("Amount paid is required to commit a paid invoice.");
+        return;
+      }
+      // Phase 33 Step C.2 · Feb-2026 — Step C.1 renamed the
+      // residual pending-customer gate from
+      // ``unresolved_customers`` to ``manual_review_required``.
+      // Both are handled identically here (reset to
+      // preview_ready, show operator-friendly toast) so a
+      // backend serving either code during the one-release
+      // alias window surfaces the right message.
+      if (errCode === "manual_review_required"
+        || errCode === "unresolved_customers") {
+        setStep("preview_ready");
+        toast.error(
+          "This PDF needs a customer selected manually — the "
+          + "extractor did not capture enough info to auto-match.",
+        );
         return;
       }
       setErrorMsg(err?.message || "Create failed.");

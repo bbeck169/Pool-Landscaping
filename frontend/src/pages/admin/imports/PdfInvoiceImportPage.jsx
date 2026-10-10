@@ -54,6 +54,7 @@ import {
   ExternalLink,
   Layers,
   RefreshCw,
+  UserPlus,
 } from "lucide-react";
 import { PageHeader, Button } from "@/components/ui-kit";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -205,6 +206,17 @@ export function messageForUploadError(status, detail) {
   if (code === "unresolved_customers") {
     return "Some invoices still have unresolved customer matches. "
       + "Resolve them before committing.";
+  }
+  // Phase 33 Step C.1 · Feb-2026 — renamed error code for the
+  // residual manual-review bucket after the Step B auto-create
+  // pre-pass. ``unresolved_customers`` is kept above for one
+  // release as a legacy alias (backend emits both the new code
+  // and the legacy ``unresolved`` detail field).
+  if (code === "manual_review_required") {
+    return "Some invoices need manual customer review — the "
+      + "auto-create helper could not resolve them from the PDF "
+      + "(no name, address, or phone captured). Open the review "
+      + "panel and fill in a customer before committing.";
   }
   if (code === "duplicates_detected") {
     return "Duplicates detected — change the on-duplicate mode "
@@ -1417,6 +1429,21 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
         </div>
       ) : (
         <>
+          {/* ─────────────────────────────────────────────────
+              Phase 33 Step C.2 · Feb-2026 — Will-Auto-Create
+              preview badge. Renders when the batch is in
+              ``preview_complete`` and the GET poll response
+              carries ``pending_customer_classification``
+              (populated by the Step C.1 router helper
+              ``classify_pending_for_preview``). Gives the
+              operator advance notice of how many new customers
+              commit will auto-mint — so clicking Commit stops
+              feeling like a surprise. ───────────────────── */}
+          <WillAutoCreateCustomersBanner
+            fileId={fileId}
+            classification={batch.pending_customer_classification}
+          />
+
           {/* PDF-MIRROR · Feb-2026 — Needs Review banner. Renders
               when ≥1 preview row's grand_total AND line-item sum
               are both $0 — the backend will refuse to commit these
@@ -2057,6 +2084,18 @@ export function CommittedSummary({ fileId, outcome, batchId, tileSummary }) {
       {warnings.length > 0 ? (
         <WarningsBanner fileId={fileId} warnings={warnings} />
       ) : null}
+      {/* Phase 33 Step C.2 · Feb-2026 — Auto-created customers
+          success banner. Renders when the commit response
+          carries non-empty ``auto_created_customers`` so the
+          operator sees a clear "N new customers added from this
+          batch" confirmation and can click through to review
+          them. Legacy response shapes (pre-Phase-33) read
+          ``outcome.auto_created_customers`` as ``undefined`` →
+          component short-circuits to ``null``. */}
+      <AutoCreatedCustomersBanner
+        fileId={fileId}
+        autoCreated={outcome?.auto_created_customers}
+      />
       {tileSummary ? (
         <TileSummarySection fileId={fileId} tileSummary={tileSummary} />
       ) : null}
@@ -2200,6 +2239,195 @@ export function WarningsBanner({ fileId, warnings }) {
     </Alert>
   );
 }
+
+
+/**
+ * Phase 33 Step C.2 · Feb-2026 — Will-Auto-Create preview badge.
+ *
+ * Renders in the PreviewSurface above the ``needs-review`` banner
+ * when the GET poll response includes
+ * ``pending_customer_classification`` (populated by the Step C.1
+ * router helper ``classify_pending_for_preview``). Shows the
+ * operator how many brand-new customer rows Commit will mint
+ * from PENDING sentinels — plus a smaller sub-count for rows
+ * that still need manual review (zero identifying info on the
+ * extracted customer).
+ *
+ * Short-circuits to ``null`` on:
+ *   * missing classification key (pre-Phase-33 batches, or
+ *     batches without PENDING sentinels)
+ *   * both buckets empty (nothing to communicate)
+ */
+export function WillAutoCreateCustomersBanner({ fileId, classification }) {
+  const willAuto = Array.isArray(classification?.will_auto_create)
+    ? classification.will_auto_create : [];
+  const manual = Array.isArray(classification?.will_require_manual_review)
+    ? classification.will_require_manual_review : [];
+  if (willAuto.length === 0 && manual.length === 0) return null;
+  return (
+    <div
+      className="mb-3 rounded-md border p-3 flex items-start gap-3"
+      style={{ borderColor: "#60A5FA", backgroundColor: "#EFF6FF" }}
+      data-testid={`pdf-import-will-auto-create-banner-${fileId}`}
+    >
+      <UserPlus size={16} className="mt-0.5 shrink-0" style={{ color: "#1D4ED8" }} />
+      <div className="flex-1 text-sm" style={{ color: "#1E3A8A" }}>
+        <div
+          className="font-semibold"
+          data-testid={`pdf-import-will-auto-create-count-${fileId}`}
+        >
+          {willAuto.length > 0 ? (
+            <>
+              Will auto-create {willAuto.length} customer
+              {willAuto.length === 1 ? "" : "s"} on commit
+            </>
+          ) : (
+            <>No customers to auto-create</>
+          )}
+          {manual.length > 0 ? (
+            <span
+              className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ backgroundColor: "#FEF3C7", color: "#78350F" }}
+              data-testid={`pdf-import-manual-review-count-${fileId}`}
+            >
+              <AlertTriangle size={10} />
+              {manual.length} need manual review
+            </span>
+          ) : null}
+        </div>
+        {willAuto.length > 0 ? (
+          <details className="mt-1 group">
+            <summary
+              className="cursor-pointer list-none text-xs font-medium underline underline-offset-2 group-open:mb-2"
+              data-testid={`pdf-import-will-auto-create-toggle-${fileId}`}
+            >
+              <span className="group-open:hidden">Show details</span>
+              <span className="hidden group-open:inline">Hide details</span>
+            </summary>
+            <ul className="flex flex-col gap-1 text-xs">
+              {willAuto.map((row, idx) => (
+                <li
+                  key={row.pending_customer_id || idx}
+                  className="flex gap-2"
+                  data-testid={`pdf-import-will-auto-create-item-${fileId}`}
+                >
+                  <span className="font-mono text-[11px] opacity-70">
+                    #{row.source_doc_index}
+                  </span>
+                  <span>
+                    {row.extracted_name || "(unnamed)"}
+                    {row.extracted_address
+                      ? ` · ${row.extracted_address}`
+                      : ""}
+                    {row.prior_resolved_customer_id
+                      ? " · (resolved on prior commit attempt)"
+                      : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Phase 33 Step C.2 · Feb-2026 — Auto-created customers success
+ * banner.
+ *
+ * Renders inside ``CommittedSummary`` right after the warnings
+ * banner when the commit response includes a non-empty
+ * ``auto_created_customers`` array (new Step C.1 top-level
+ * bucket). Legacy response shapes read ``autoCreated`` as
+ * ``undefined`` → component short-circuits to ``null``.
+ *
+ * Groups the entries by action (``created`` / ``deduped_db`` /
+ * ``deduped_batch``) so the operator sees the breakdown without
+ * expanding a details panel. The expanded list links each row
+ * to the pre-existing customer-detail page via a native anchor
+ * — same pattern as ``CountCard`` for cross-page affordance
+ * without pulling in Router context.
+ */
+export function AutoCreatedCustomersBanner({ fileId, autoCreated }) {
+  const list = Array.isArray(autoCreated) ? autoCreated : [];
+  if (list.length === 0) return null;
+  const createdCount = list.filter((c) => c.action === "created").length;
+  const dedupedDb = list.filter((c) => c.action === "deduped_db").length;
+  const dedupedBatch = list.filter((c) => c.action === "deduped_batch").length;
+  return (
+    <Alert
+      data-testid={`pdf-import-auto-created-banner-${fileId}`}
+      className="border-emerald-300 bg-emerald-50 text-emerald-900"
+    >
+      <UserPlus className="h-4 w-4 text-emerald-700" />
+      <AlertTitle
+        className="text-emerald-900"
+        data-testid={`pdf-import-auto-created-title-${fileId}`}
+      >
+        {`${list.length} customer${list.length === 1 ? "" : "s"} resolved from this PDF`}
+      </AlertTitle>
+      <AlertDescription>
+        <div className="mt-1 text-xs text-emerald-800">
+          {createdCount > 0 ? (
+            <span data-testid={`pdf-import-auto-created-new-${fileId}`}>
+              {createdCount} new
+            </span>
+          ) : null}
+          {createdCount > 0 && (dedupedDb + dedupedBatch) > 0
+            ? " · " : null}
+          {dedupedDb > 0 ? (
+            <span data-testid={`pdf-import-auto-created-deduped-db-${fileId}`}>
+              {dedupedDb} matched existing
+            </span>
+          ) : null}
+          {dedupedDb > 0 && dedupedBatch > 0 ? " · " : null}
+          {dedupedBatch > 0 ? (
+            <span data-testid={`pdf-import-auto-created-deduped-batch-${fileId}`}>
+              {dedupedBatch} deduped in-batch
+            </span>
+          ) : null}
+        </div>
+        <details className="mt-2 group">
+          <summary
+            className="cursor-pointer list-none text-xs font-medium underline underline-offset-2 group-open:mb-2"
+            data-testid={`pdf-import-auto-created-toggle-${fileId}`}
+          >
+            <span className="group-open:hidden">Show all</span>
+            <span className="hidden group-open:inline">Hide details</span>
+          </summary>
+          <ul className="flex flex-col gap-1 text-xs">
+            {list.map((row, idx) => (
+              <li
+                key={row.pending_customer_id || idx}
+                className="flex gap-2 items-start"
+                data-testid={`pdf-import-auto-created-item-${fileId}`}
+              >
+                <span className="font-mono text-[11px] opacity-70">
+                  #{row.source_doc_index}
+                </span>
+                <a
+                  href={`/customers/${encodeURIComponent(row.resolved_customer_id)}`}
+                  className="underline underline-offset-2 hover:brightness-110"
+                  data-testid={`pdf-import-auto-created-link-${fileId}-${row.resolved_customer_id}`}
+                >
+                  {row.extracted_name || row.resolved_customer_id}
+                </a>
+                <span className="opacity-70">
+                  · {row.action.replace(/_/g, " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+
 
 
 /**
