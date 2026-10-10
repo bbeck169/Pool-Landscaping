@@ -1,6 +1,6 @@
-# Phase C.web Bucket A — Deferred items (final-state after α.rollback + A2 + Batches 3-6)
+# Phase C.web Bucket A — Deferred items (post-residual-sweep)
 
-> **Updated**: Feb 2026 — Post α.rollback + A2 shared helper + Batches 3-6.
+> **Updated**: Feb 2026 — Post α.rollback + A2 shared helper + Batches 3-6 + Residual Batch 7.
 >
 > **Commits shipped this dispatch**:
 > - α.rollback `824c52950` — reverted K71 `_locked` widening + flipped 2 drifted test files (ack-bypass-aged + silent-bypass) to Phase-#3 narrow invariants. Kept the RecurringJobs save-disable α fix.
@@ -9,16 +9,18 @@
 > - Batch 4 `2b53405f8` — portal + leads theme (3 files, 3 deferred).
 > - Batch 5 `d3fcdbf41` — lazy-import + h1-class + pdf-import prefix match (6 files).
 > - Batch 6 `fc084e5b5` — topbar slice-size + fragment-wrap + pt-16 sunset (4 files).
+> - Residual Batch 7 (this commit) — Group U quick-win sweep (4 files cleared).
 >
 > **Statistics**:
 > - **Pre-sweep failing**: 58 files
-> - **Post α/β/γ (start of this dispatch)**: 51 files
-> - **Post Batches 3-6 (now)**: **28 files**
-> - **Net reduction this dispatch**: **23 files (-45%)**
+> - **Post α/β/γ (start of C.web dispatch)**: 51 files
+> - **Post Batches 3-6**: 28 files
+> - **Post Residual Batch 7 (now)**: **24 files**
+> - **Net reduction across all dispatches**: **34 files (-59%)**
 
 ---
 
-## Remaining 28 failing files — categorized
+## Remaining 24 failing files — categorized
 
 ### Group A4 — γ-triaged (DO NOT TOUCH) — 7 files
 Already documented in `phase_c_web_bucket_c_gamma_verdicts.md` with product-decision verdicts pending. All require human ruling before any fix.
@@ -58,39 +60,62 @@ Need multi-assertion flipping, not simple regex-widen.
 - `lead-row-compose-buttons.test.jsx` — "useLocation() may be used only in Router" — Bucket B pattern (test needs `<MemoryRouter>` wrap for the mounted `LeadsDashboardPage`).
 - `k68-customer-status-tab-counts.test.jsx` — "expected null to be truthy" — assertion on an effect-dependency split that the test can't locate. Needs source-walk.
 
-### Group U — unaddressed this dispatch — 7 files
-Not surfaced for regex-widen attempt yet; candidate for next dispatch.
-- `concierge-avatar-parity.test.jsx` — `<AIAvatar name={e.name}>` import path drift (likely moved file).
-- `customer-detail-navy-command-strip.test.jsx` — `expected 42864 to be greater than 60268` — ordering constraint (strip must sit between Portal Access and header card) violated by Phase 28 identity-header reposition. **Likely a Phase-28 regression lock conflict — needs human.**
-- `k52-theming.test.js` — `rgba(255,255,255,0.10)` color token drift in a different search block.
-- `p47-missed-status-badge.test.jsx` — testid split into `tile-next-service-pool` + `tile-next-service-landscape` (needs test to assert either/both).
-- `p49-service-report-restyle.test.jsx` — Portal service-report restyle drift (indexOf null).
-- `phase-n2-input-restyle-refinement.test.jsx` — Search-icon color-token drift (same family as k52).
-- `task-m-job-reopen-ui.test.jsx` — `locked = !!report.submit...` regex drift.
+### Group U.residual — Residual Batch 7 deferred — 3 files
+Investigated in this dispatch but needs multi-source alignment OR a human product ruling. Each deferred with specific rationale:
+
+- `customer-detail-navy-command-strip.test.jsx` — **PHASE 28 REGRESSION LOCK CONFLICT**.
+  - Failure: `expected 42864 to be greater than 60268` (strip's `indexOf` fails the "sits below Portal Access and above the header card" ordering invariant).
+  - Root cause: Phase 28 identity-header reposition changed the Customer Detail layout order — the navy command strip now mounts ABOVE Portal Access, not between it and the header card.
+  - **Needs human**: Which ordering is canonical? Phase 28 shipped the current ordering intentionally; the K71 test's ordering invariant was defined pre-Phase-28. User must rule: (a) revert Phase 28 identity-header position, or (b) rewrite the K71 ordering invariant to match the new layout, or (c) drop the ordering invariant entirely.
+
+- `k52-theming.test.js` — **PHASE N1 UNIVERSAL INPUT RESTYLE DRIFT**.
+  - Failures:
+    - `calendar-filters` strip Search block expects `background: "rgba(255,255,255,0.10)"` + `color: colors.nav.fgMuted` on the search input. Source (CalendarSchedule.jsx:1776) now uses `className="... bg-white ..."` + `text-[#0284C7]` per Phase N1 ("solid-white bg + navy text + blue focus ring").
+    - `quotes-filters` strip asserts `colors.onSurfaceSecondary` NOT in the strip; source has legitimate `onSurfaceSecondary` on inactive lifecycle tab text (QuotesList.jsx:443).
+  - **Needs multi-assertion rewrite**: 2–3 K52.1 assertions need to acknowledge the N1 "nested white card on navy strip" pattern instead of the pre-N1 "white/10 translucent overlay" pattern. Not a simple regex-widen — the assertions are structured as block scans against the whole strip.
+
+- `phase-n2-input-restyle-refinement.test.jsx` — **SOURCE-WIDE SEARCHICON DRIFT (9 files)**.
+  - Failure: D1 scans every `<Search>` in `frontend/src/` and asserts each uses `colors.searchIcon` or `#0284C7`. 24 files use `colors.searchIcon`; 9 outlier files remain on stale tokens (`colors.muted`, `colors.nav.fgMuted`, or missing style entirely):
+    - `components/GlobalSearch.jsx:261`
+    - `components/GlobalSearchBar.jsx:210, 241`
+    - `components/pricebook/PricebookItemPicker.jsx:179` (`colors.muted` stale)
+    - `components/services/MasterServiceCombobox.jsx:337` (`colors.muted` stale)
+    - `components/ui/NavyFilterBar.jsx:146`
+    - `pages/admin/FleetMembership.jsx:125`
+    - `pages/settings/AIBrainPage.jsx:144, 173`
+    - `pages/settings/MasterServicesSettings.jsx:426` (`colors.muted` stale — attempted fix in this dispatch; reverted to keep scope clean)
+  - **Needs theme-sweep commit**: 1-char source alignment per file × 9 files. Theme-token sweep is a legitimate standalone commit — not a test-regex-widen candidate. Flag for a dedicated "N2 search-icon theme sweep" dispatch.
+
+### Group U.cleared — Residual Batch 7 fixed — 4 files
+Cleared in `<SHA>` via regex widen / baseline additions (test-only edits).
+- `concierge-avatar-parity.test.jsx` — widened `name={e.name}` regex to accept `name={e.human_name || e.name}` display-name fallback.
+- `p47-missed-status-badge.test.jsx` — widened 4 assertions to accept Phase 3d-portal pool/landscape split (`tile-next-service(?:-(?:pool|landscape))?`, `summary.next_(pool|landscape)_service.*`, both the legacy "None scheduled" fallback literal + the conditional-hide empty-state pattern).
+- `p49-service-report-restyle.test.jsx` — widened `function Section()` destructure signature to accept the new `templateFieldId` fifth arg; added `portal-service-report-superseded-banner` + `portal-service-report-superseded-original-at` to `P49_TESTIDS_ADDED` allowlist.
+- `task-m-job-reopen-ui.test.jsx` — widened `const locked = !!report.submitted_at;` regex to accept the optional PS-A `&& !techPostSubmitEdit` guard tail.
 
 ---
 
 ## Recommended next-dispatch shape
 
-### Lane 1 (quick wins, ~45 min, 3-5 files)
-- `concierge-avatar-parity` — refresh import path
-- `k52-theming` + `phase-n2-input-restyle-refinement` — align color-token regex to current `colors.X` references
-- `p47-missed-status-badge` — allow suffixed testids via `(?:-pool|-landscape)?`
-- `task-m-job-reopen-ui` — regex-widen for current `locked` form
-
-### Lane 2 (medium, ~1 hr, 5 files)
-- Group A2.residual — fix the testid drift (`qf-line-0-desc` → current form).
+### Lane 1 (quick wins, ~45 min, 5 files)
+- Group A2.residual — testid drift (`qf-line-0-desc` → current form).
 - Group T timeouts — add missing endpoint mocks that cause loading loops.
 
-### Lane 3 (medium-heavy, ~1 hr, 3 files)
+### Lane 2 (medium, ~1 hr, 3 files)
 - Group B4.deferred — rewrite response-shape assertions + wrap `MemoryRouter`.
 
-### Lane 4 (human decision required)
-- `customer-detail-navy-command-strip` — Phase 28 identity-header-reposition broke this lock's ordering invariant. User ruling needed on whether Phase 28 was correct or the strip should move.
+### Lane 3 (theme-token sweep, ~30 min, 9 source files)
+- Phase N2 search-icon alignment: change `colors.muted` → `colors.searchIcon` (and equivalents) on the 9 outlier `<Search>` sites listed above. Expected to clear `phase-n2-input-restyle-refinement.test.jsx` + possibly adjacent k52 search-input assertions.
+
+### Lane 4 (K52.1 N1-reconciliation, ~45 min, 1 file)
+- `k52-theming.test.js` — rewrite the 2–3 K52.1 Slice-A assertions to accept the N1 "nested white card on navy strip" pattern.
+
+### Lane 5 (human decision required)
+- `customer-detail-navy-command-strip` — Phase 28 identity-header-reposition conflict. User ruling needed on whether Phase 28 was correct or the strip should move.
 - Group A4 γ-triaged (7 files).
 
 ---
 
-## Phase 20/22/23/24/26b/27/28/28b/30/31 regression locks
+## Phase 20/22/23/24/26b/27/28/28b/30/31/33/34 regression locks
 
-All verified green via targeted spot-checks during each batch. The α.rollback explicitly restored narrow lock parity on `QuoteInvoiceDetail.jsx` so Phase-26b (category auto-map warnings) and the Phase-27/28/28b CustomerDetail work remained unaffected. No regression-lock drift introduced by any of the 6 commits shipped this dispatch.
+All verified green via targeted spot-checks during each batch. Residual Batch 7 ran the Phase 33 (`pdfImportUnifiedUI` + `pdfi-upload-sidepanel`) and Phase 34 (`revenue-date-range-year-presets`) suites as a sanity gate — 54/54 green post-sweep. No regression-lock drift introduced by any of the 7 commits shipped across this + prior dispatches.

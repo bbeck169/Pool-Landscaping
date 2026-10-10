@@ -69,7 +69,12 @@ describe("Concierge · avatar parity with AI Employee Hub", () => {
     expect(picker).not.toBeNull();
     expect(chat).not.toBeNull();
     // The Hub itself feeds ``name`` too — same fallback rendered
-    // when ``avatar_url`` is null.
-    expect(hubSrc).toMatch(/<AIAvatar[\s\S]*?name=\{e\.name\}/);
+    // when ``avatar_url`` is null. Phase C.web residual · Feb-2026 —
+    // the Hub's prop now reads ``name={e.human_name || e.name}``
+    // (per `AiOpsPages.jsx` display-name fallback). Widen the
+    // regex to accept any expression body as long as it contains
+    // ``e.name`` — the semantic intent (Hub passes an ``e.name``
+    // reference into AIAvatar's name prop) is preserved.
+    expect(hubSrc).toMatch(/<AIAvatar[\s\S]*?name=\{[^}]*e\.name[^}]*\}/);
   });
 });

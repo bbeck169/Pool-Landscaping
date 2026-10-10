@@ -280,8 +280,17 @@ describe("ChecklistModal / PoolChecklistWizard · Task M+P — auto-unlock deriv
     // on the tech's SR, this expression flips to false on the
     // next fetch and the checklist auto-unlocks with zero
     // component-level changes.
+    //
+    // Phase C.web residual · Feb-2026 — PS-A added a
+    // ``techPostSubmitEdit`` guard tail
+    // (``const locked = !!report.submitted_at && !techPostSubmitEdit;``)
+    // so a technician who submitted their own report can still
+    // edit it before the next poll. Widen the regex to accept
+    // the optional guard tail — the semantic intent
+    // (``locked`` derives from ``report.submitted_at``) is
+    // preserved either way.
     expect(CHECKLIST_MODAL_SRC).toMatch(
-      /const\s+locked\s*=\s*!!report\.submitted_at\s*;/,
+      /const\s+locked\s*=\s*!!report\.submitted_at(?:\s*&&\s*!techPostSubmitEdit)?\s*;/,
     );
   });
 

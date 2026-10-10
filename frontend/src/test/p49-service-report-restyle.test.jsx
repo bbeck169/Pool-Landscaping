@@ -75,6 +75,12 @@ const P49_TESTIDS_ADDED = [
   "portal-service-report-detail-root",   // new element — bg-slate-50 wrapper
   "report-kind",                         // previously injected by <Chip>; now inline
   "status-pill-completed",               // previously injected by <StatusPill>; now inline
+  // Phase C.web residual · Feb-2026 — superseded-report banner shipped
+  // post-P49 (service-report cross-submission supersedes a prior
+  // tech's record and the detail view surfaces the audit anchor).
+  // Both testids are additive — zero collisions with the P49 baseline.
+  "portal-service-report-superseded-banner",
+  "portal-service-report-superseded-original-at",
 ];
 
 describe("Phase P49 · Portal service-report visual restyle", () => {
@@ -195,8 +201,15 @@ describe("Phase P49 · Portal service-report visual restyle", () => {
 
   it("Section card + header card carry shadow-sm border", () => {
     // Section shell.
+    // Phase C.web residual · Feb-2026 — ``Section`` gained a fifth
+    // ``templateFieldId`` prop post-P49 (the checklist-template
+    // reclassifier threads the field id through the shell so the
+    // "edit field" affordance can target the right template row).
+    // Widen the signature regex to accept any destructured arg
+    // list — the semantic intent (Section renders a rounded-2xl
+    // shadow-sm shell) is preserved.
     const section = SRC.match(
-      /function Section\(\{ icon: Icon, title, testid, children \}\)\s*\{[\s\S]*?<div\s+className="([^"]+)"/,
+      /function Section\(\{[\s\S]*?\}\)\s*\{[\s\S]*?<div\s+className="([^"]+)"/,
     );
     expect(section).not.toBeNull();
     expect(section[1]).toMatch(/rounded-2xl/);
