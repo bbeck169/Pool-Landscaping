@@ -2,17 +2,17 @@
  * Revenue date-range filter · Feb-2026.
  *
  * Presets: Today · Tomorrow · This Week · Next Week · This Month ·
- * Last Month · Custom Range.  Persists the last selection in
- * localStorage so both revenue tiles remember the range across
- * page loads.
+ * Last Month · This Year · Last Year · Custom Range.  Persists
+ * the last selection in localStorage so both revenue tiles
+ * remember the range across page loads.
  *
  * Phase P15 · Feb-2026 — the Today + Tomorrow presets now compute
  * their date in the tenant's local timezone (via
  * ``Intl.DateTimeFormat`` with a ``timeZone`` option) so an admin
  * clicking "Today" at 01:30 UTC / 18:30 Phoenix gets the CURRENT
  * Phoenix calendar day, not tomorrow's browser-local day.
- * Week / month presets remain browser-local — they're
- * month-granularity and the tz drift is negligible.  They're
+ * Week / month / year presets remain browser-local — they're
+ * month/year-granularity and the tz drift is negligible.  They're
  * queued for a later phase (see wrap-up "Deferred").
  *
  * The effective tenant tz is resolved from
@@ -38,6 +38,14 @@ const PRESETS = [
   { key: "next_week",   label: "Next Week" },
   { key: "this_month",  label: "This Month" },
   { key: "last_month",  label: "Last Month" },
+  // Phase 34 · Feb-2026 — year-granularity presets. Inserted
+  // between Last Month and Custom Range so the dropdown's
+  // visual flow stays "narrow → wide" (day → week → month →
+  // year → arbitrary). Both ranges resolve browser-local at
+  // year granularity — tz drift is immaterial at this
+  // precision, same convention as the month presets above.
+  { key: "this_year",   label: "This Year" },
+  { key: "last_year",   label: "Last Year" },
   { key: "custom",      label: "Custom Range" },
 ];
 
@@ -123,6 +131,29 @@ export function rangeFromPreset(preset, custom, opts) {
       // month presets stays deferred.
       const s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const e = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: _isoDate(s), end: _isoDate(e) };
+    }
+    case "this_year": {
+      // Phase 34 · Feb-2026 — "This Year" = Jan 1 to Dec 31 of
+      // the current browser-local year. Range is inclusive at
+      // both ends; Dec 31 is passed as-is to the backend, which
+      // applies the local-tz end-of-day semantics to the invoice
+      // range filter. Year-granularity matches the Last Month
+      // convention — tz drift at the Jan 1 / Dec 31 boundary is
+      // acceptable (an invoice landing at Dec 31 23:59 Phoenix /
+      // Jan 1 06:59 UTC falls on Dec 31 in either rendering).
+      const y = now.getFullYear();
+      const s = new Date(y, 0, 1);
+      const e = new Date(y, 11, 31);
+      return { start: _isoDate(s), end: _isoDate(e) };
+    }
+    case "last_year": {
+      // Phase 34 · Feb-2026 — "Last Year" = Jan 1 to Dec 31 of
+      // the previous browser-local year. Same tz semantics as
+      // This Year above.
+      const y = now.getFullYear() - 1;
+      const s = new Date(y, 0, 1);
+      const e = new Date(y, 11, 31);
       return { start: _isoDate(s), end: _isoDate(e) };
     }
     case "this_month":
