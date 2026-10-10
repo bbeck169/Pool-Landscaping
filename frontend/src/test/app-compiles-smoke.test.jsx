@@ -76,17 +76,17 @@ describe("App.js compile smoke", () => {
   it("PortalWarranties is imported exactly once", () => {
     const source = fs.readFileSync(APP_PATH, "utf8");
     const matches = source.match(/\bPortalWarranties\b/g) || [];
-    // At least one occurrence (the import line) + N JSX <PortalWarranties>
-    // usages. We only assert the IMPORT count.
+    // Phase P37/P38 code-splitting migrated route-level pages to
+    // ``React.lazy(() => import(...))``. Count both the legacy
+    // static-import form AND the lazy-import declaration.
     const importDecls = source.match(
-      /import\s+[^;]*\bPortalWarranties\b[^;]*;/g,
+      /(?:import\s+[^;]*\bPortalWarranties\b[^;]*;|const\s+PortalWarranties\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*\)\s*\)\s*;)/g,
     ) || [];
     expect(
       importDecls.length,
-      `Expected exactly 1 import statement mentioning PortalWarranties, ` +
-        `got ${importDecls.length}:\n  ${importDecls.join("\n  ")}`,
+      `Expected exactly 1 import statement (static OR lazy) mentioning ` +
+        `PortalWarranties, got ${importDecls.length}:\n  ${importDecls.join("\n  ")}`,
     ).toBe(1);
-    // And there IS at least one JSX site referencing it.
     expect(matches.length).toBeGreaterThan(1);
   });
 });

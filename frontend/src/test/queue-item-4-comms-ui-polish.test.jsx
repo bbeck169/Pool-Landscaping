@@ -95,8 +95,9 @@ describe("Queue Item 4 · Comms UI polish", () => {
   describe("App.js wiring", () => {
     const src = read(APP);
     it("imports the suppression-log page component", () => {
-      expect(src).toContain(
-        'import AdminCommsSuppressionLog from "@/pages/admin/AdminCommsSuppressionLog"',
+      // Phase P37/P38 code-splitting — lazy-import form.
+      expect(src).toMatch(
+        /const\s+AdminCommsSuppressionLog\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*["']@\/pages\/admin\/AdminCommsSuppressionLog["']/,
       );
     });
     it("registers /admin/comms/suppression-log behind SuperAdminOnly", () => {

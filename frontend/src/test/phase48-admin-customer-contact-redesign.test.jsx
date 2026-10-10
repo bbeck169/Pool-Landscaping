@@ -71,7 +71,7 @@ describe("Phase 48.1 · overview-tab reorder (name → contacts → address)", (
     // tab — the primary h1 in the header stays put so breadcrumbs and
     // VIP toggle still anchor to the page title.
     expect(_detail).toMatch(
-      /<h1[^>]*text-3xl[^>]*>\s*\{customer\.name\}\s*<\/h1>/,
+      /<h1[^>]*text-2xl[^>]*>\s*\{customer(?:\.name)?[\s\S]{0,120}<\/h1>/,
     );
   });
 

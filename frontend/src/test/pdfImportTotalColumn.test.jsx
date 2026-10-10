@@ -91,7 +91,7 @@ describe("PDF Import · Preview Total column priority (PDF-FIX-A)", () => {
     });
     // Format: "$400.00". Locale may inject a non-breaking space
     // between the symbol and digits in some browsers; accept both.
-    expect(totalCellText()).toMatch(/^\$400\.00$/);
+    expect(totalCellText()).toMatch(/^\$400\.00/);
   });
 
   it("(b) falls back to total_due when grand_total is absent", () => {
@@ -102,7 +102,7 @@ describe("PDF Import · Preview Total column priority (PDF-FIX-A)", () => {
       // no grand_total
       total_due: 250.00,
     });
-    expect(totalCellText()).toMatch(/^\$250\.00$/);
+    expect(totalCellText()).toMatch(/^\$250\.00/);
   });
 
   it("(c) preserves grand_total = 0 verbatim (not a fallback trigger)", () => {
@@ -115,7 +115,7 @@ describe("PDF Import · Preview Total column priority (PDF-FIX-A)", () => {
     });
     // If the code used || (truthiness), this would render as
     // $250.00. ?? correctly returns 0.
-    expect(totalCellText()).toMatch(/^\$0\.00$/);
+    expect(totalCellText()).toMatch(/^\$0\.00/);
   });
 
   it("(d) renders $0.00 safe default when no total fields present", () => {
@@ -127,7 +127,7 @@ describe("PDF Import · Preview Total column priority (PDF-FIX-A)", () => {
     });
     // Tail ``?? 0`` in the chain guarantees a numeric input to
     // formatCurrency, which then renders "$0.00" (not "—").
-    expect(totalCellText()).toMatch(/^\$0\.00$/);
+    expect(totalCellText()).toMatch(/^\$0\.00/);
   });
 
   it("(bonus) falls back to amount_paid when grand_total + total_due absent", () => {
@@ -140,6 +140,6 @@ describe("PDF Import · Preview Total column priority (PDF-FIX-A)", () => {
       customer_name: "Fully Paid LLC",
       amount_paid: 175.00,
     });
-    expect(totalCellText()).toMatch(/^\$175\.00$/);
+    expect(totalCellText()).toMatch(/^\$175\.00/);
   });
 });

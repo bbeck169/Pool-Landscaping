@@ -135,8 +135,8 @@ describe("Phase 40b · Web UI pages", () => {
 
   it("App.js routes /time-off and /admin/time-off (admin-gated)", () => {
     const app = R("frontend/src/App.js");
-    expect(app).toMatch(/import TimeOffPage from\s+["']@\/pages\/TimeOffPage["']/);
-    expect(app).toMatch(/import AdminTimeOffPage from\s+["']@\/pages\/AdminTimeOffPage["']/);
+    expect(app).toMatch(/const\s+TimeOffPage\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*["']@\/pages\/TimeOffPage["']/);
+    expect(app).toMatch(/const\s+AdminTimeOffPage\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*["']@\/pages\/AdminTimeOffPage["']/);
     expect(app).toMatch(/path="time-off"\s+element=\{<TimeOffPage/);
     expect(app).toMatch(/path="admin\/time-off"\s+element=\{<AdminOnly><AdminTimeOffPage/);
   });

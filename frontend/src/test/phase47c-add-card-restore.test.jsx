@@ -21,7 +21,7 @@ const _page = readFileSync(PAGE, "utf8");
 describe("Phase 47c · App.js route restoration", () => {
   it("imports AddCardPage from the public pages tree", () => {
     expect(_app).toMatch(
-      /import\s+AddCardPage\s+from\s+["']@\/pages\/public\/AddCardPage["']/,
+      /const\s+AddCardPage\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*["']@\/pages\/public\/AddCardPage["']/,
     );
   });
 
