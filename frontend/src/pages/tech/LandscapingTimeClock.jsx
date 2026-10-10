@@ -12,6 +12,9 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import AdminPunchEditsPanel from "@/components/timeclock/AdminPunchEditsPanel";
+import {
+  buildShiftRows, fmtHoursMinutes,
+} from "@/lib/timeclock/pairPunches";
 
 const _ADMIN_ROLES = new Set(["admin", "super_admin", "owner", "manager"]);
 
@@ -498,27 +501,70 @@ export default function LandscapingTimeClock() {
                   </div>
                 </div>
                 {expandedTech === t.user_id ? (
-                  <ul
-                    className="mt-2 space-y-1"
+                  <div
+                    className="mt-2"
                     data-testid={`landscape-time-clock-admin-tech-punches-${t.user_id}`}
                   >
-                    {(t.punches || []).map((p) => (
-                      <li
-                        key={p.id}
-                        className="text-xs"
-                        style={{ color: colors.onSurface }}
-                      >
-                        {fmtTime(p.ts)} ·{" "}
-                        {p.punch_type === "in" ? "In" : "Out"} ·{" "}
-                        {typeof p.lat === "number"
-                          ? p.lat.toFixed(2) : "?"}
-                        ,
-                        {typeof p.lng === "number"
-                          ? p.lng.toFixed(2) : "?"}
-                        {p.job_id ? ` · job=${p.job_id}` : ""}
-                      </li>
-                    ))}
-                  </ul>
+                    <table
+                      className="w-full text-xs"
+                      style={{ borderCollapse: "collapse",
+                               color: colors.onSurface }}
+                      data-testid={`landscape-time-clock-admin-tech-table-${t.user_id}`}
+                    >
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                          <th className="text-left py-1 pr-3 font-semibold">Date</th>
+                          <th className="text-left py-1 pr-3 font-semibold">Clock In</th>
+                          <th className="text-left py-1 pr-3 font-semibold">Clock Out</th>
+                          <th className="text-left py-1 pr-3 font-semibold">Hours Worked</th>
+                          <th className="text-left py-1 pr-3 font-semibold">Location</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {buildShiftRows(t.punches || []).map((row) => (
+                          <tr
+                            key={row.shiftKey}
+                            data-testid={`landscape-time-clock-admin-tech-shift-row-${t.user_id}-${row.shiftKey}`}
+                            data-still-open={row.open ? "true" : "false"}
+                            style={{ borderBottom: `1px solid ${colors.border}` }}
+                          >
+                            <td className="py-1 pr-3 align-top">
+                              {row.showDate ? row.dateLabel : ""}
+                            </td>
+                            <td className="py-1 pr-3 align-top">{row.clockInLabel}</td>
+                            <td className="py-1 pr-3 align-top">{row.clockOutLabel}</td>
+                            <td className="py-1 pr-3 align-top">{row.hoursLabel}</td>
+                            <td
+                              className="py-1 pr-3 align-top"
+                              style={{
+                                fontVariantNumeric: "tabular-nums",
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                color: colors.muted,
+                              }}
+                            >
+                              <div>In  {row.inLatLng}</div>
+                              {row.outLatLng ? <div>Out {row.outLatLng}</div> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr
+                          style={{ borderTop: `1px solid ${colors.border}` }}
+                          data-testid={`landscape-time-clock-admin-tech-total-footer-${t.user_id}`}
+                        >
+                          <td colSpan={3} className="py-1 pr-3 font-semibold">
+                            Total Hours
+                          </td>
+                          <td className="py-1 pr-3 font-semibold">
+                            {fmtHoursMinutes(t.total_seconds || 0)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 ) : null}
               </li>
             ))}
