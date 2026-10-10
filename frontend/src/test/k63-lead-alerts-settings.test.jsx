@@ -106,8 +106,10 @@ describe("App.js · K63 route wiring", () => {
   });
 
   it("imports the LeadAlertsSettings page component", () => {
+    // Phase P37/P38 code-splitting migrated route-level pages to
+    // ``React.lazy(() => import(...))``. Lock the lazy-import shape.
     expect(APP_SRC).toMatch(
-      /import\s+LeadAlertsSettings\s+from\s+"@\/pages\/settings\/LeadAlertsSettings"/,
+      /const\s+LeadAlertsSettings\s*=\s*React\.lazy\(\s*\(\)\s*=>\s*import\([^)]*["']@\/pages\/settings\/LeadAlertsSettings["']/,
     );
   });
 });

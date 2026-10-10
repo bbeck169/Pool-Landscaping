@@ -58,8 +58,14 @@ afterEach(() => cleanup());
 
 
 describe("PortalHome · CTA-row mobile top-margin fix", () => {
-  it("portal-cta-row has mt-12 on mobile so it clears the header",
+  it("portal-cta-row no longer requires mt-12 (P43 sticky-header retirement)",
     async () => {
+      // Phase P43 · Feb-2026 — the legacy ``mt-12 sm:mt-0`` top-offset
+      // hack that pushed the CTA row below the floating UniversalMenu
+      // was REMOVED after the portal shell gained a proper 56px
+      // sticky header (``portal-sticky-header``) inside AppLayout.
+      // Retained as sunset-marker so a future accidental re-addition
+      // fails CI.
       const PortalHome = (await import("@/pages/portal/PortalHome")).default;
       render(
         <MemoryRouter>
@@ -67,12 +73,9 @@ describe("PortalHome · CTA-row mobile top-margin fix", () => {
         </MemoryRouter>,
       );
       const row = await screen.findByTestId("portal-cta-row");
-      // Regression guard — the mobile top-margin class MUST be
-      // present. Losing it re-introduces the overlap with the
-      // header's Sign out / bell / hamburger.
       const cls = row.getAttribute("class") || "";
-      expect(cls).toMatch(/\bmt-12\b/);
-      expect(cls).toMatch(/\bsm:mt-0\b/);
+      expect(cls).not.toMatch(/\bmt-12\b/);
+      expect(cls).toMatch(/\bmb-4\b/);
     });
 
   it("both CTA pills carry the required test-ids", async () => {

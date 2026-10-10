@@ -81,7 +81,7 @@ describe("Portal Quick Actions · tile wiring", () => {
     // action — verifying the base component uses <button> guards
     // against a silent refactor that would kill navigation.
     expect(PORTAL_HOME).toMatch(
-      /function ActionTile\(\{[^)]*\}\)\s*\{\s*return\s*\(\s*<button/,
+      /function ActionTile\(\{[^)]*\}\)\s*\{[\s\S]{0,800}?return\s*\(\s*<button/,
     );
   });
 
