@@ -987,6 +987,284 @@ export default function CustomerDetail() {
         <ArrowLeft size={14} /> All customers
       </button>
 
+      {/* Header card */}
+      {/* Feb-2026 · Customer profile typography bump — identity +
+          contact block reads at 14px (text-sm) across ALL nested
+          text.  Wrapper carries a Tailwind arbitrary variant
+          ([&_.text-xs]:!text-sm) so descendants that render their
+          own text-xs class inside shared components
+          (CustomerGeocodeInfo, ActivationControl, Chip, etc.)
+          scale up here without leaking the bump to those
+          components' other consumers.  ``!important`` guarantees
+          override regardless of utility source order.
+
+          Phase 28 · Feb-2026 — repositioned to render ABOVE the
+          Phase-20 command strip + Phase-27 KPI tile grid so the
+          customer's identity is the first thing visible after
+          the breadcrumb.  Chassis recoloured to Phase-27 dark-
+          navy tokens (``#03002e`` bg, ``#1E293B`` border, light
+          text) for visual coherence with the rest of the admin
+          customer profile.  Phase-27 regression contract on the
+          command strip + KPI tiles unchanged. */}
+      <div
+        className="rounded-2xl p-6 mb-4 [&_.text-xs]:!text-sm"
+        style={{ backgroundColor: "#03002e", border: "1px solid #1E293B", color: "#F1F5F9" }}
+        data-testid="cd-identity-header"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-3 flex-wrap">
+              {customer.customer_since ? (
+                <span
+                  data-testid="customer-since-label"
+                  title={customer.customer_since}
+                  className="text-xs font-medium px-2 py-1 rounded"
+                  style={{ background: colors.surfaceSecondary,
+                              color: colors.onSurfaceSecondary }}
+                >
+                  {`Customer since ${new Date(customer.customer_since)
+                      .toLocaleDateString(undefined, {
+                          month: "long", year: "numeric" })}`}
+                </span>
+              ) : null}
+              {/* Feb-2026 Customer Detail Additions — VIP toggle button
+                  replaces the previous read-only badge. Left-clicking the
+                  star flips is_vip; the small edit affordance opens the
+                  note modal. */}
+              <button
+                onClick={() => toggleVip(!customer.is_vip)}
+                onDoubleClick={() => setVipModal(true)}
+                title={customer.is_vip ? "Remove VIP flag (double-click to edit note)" : "Flag as VIP"}
+                data-testid="customer-vip-toggle"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition"
+                style={{
+                  backgroundColor: customer.is_vip ? "#FEF3C7" : colors.surfaceSecondary,
+                  color: customer.is_vip ? "#92400E" : colors.muted,
+                  border: `1px solid ${customer.is_vip ? "#F59E0B" : colors.border}`,
+                }}
+              >
+                <Star
+                  size={12}
+                  fill={customer.is_vip ? "#F59E0B" : "transparent"}
+                  color={customer.is_vip ? "#F59E0B" : colors.muted}
+                />{" "}
+                {customer.is_vip ? "VIP" : "Flag as VIP"}
+              </button>
+              {customer.is_active === false ? (
+                <span
+                  className="hidden"
+                  aria-hidden="true"
+                  data-testid="customer-inactive-badge"
+                >
+                  Inactive
+                </span>
+              ) : null}
+              <ActivationControl
+                customer={customer}
+                onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}
+                onSuccess={(updated) => {
+                  setCustomer(updated);
+                  setToast({
+                    tone: "success",
+                    message: updated.is_active === false
+                      ? `${updated.name} marked inactive`
+                      : `${updated.name} reactivated`,
+                  });
+                }}
+                onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
+            </div>
+            {/* Feb-2026 · Customer name relocated INTO the identity
+                card (was rendered at page-chrome level via
+                PageHeader).  Sits directly above the address line
+                so the name + property + geocode read as one
+                cohesive identity block.  H1 semantic preserved
+                per accessibility (screen readers key off page
+                landmarks); text-2xl matches the sibling
+                cd-customer-name-secondary echo inside the
+                Overview tab body for visual continuity. */}
+            <h1
+              className="text-2xl font-bold mt-3 mb-1"
+              style={{ color: "#F1F5F9" }}
+              data-testid="customer-detail-inline-h1"
+            >
+              {customer.name}
+            </h1>
+            {/* Feb-2026 · Customer profile — primary-property address
+                line under the name. Clickable → Google Maps
+                directions in a new tab. Falls back to a muted
+                "No address on file" when the customer has no
+                usable property address. Long addresses truncate
+                with ellipsis; ``title`` reveals the full string
+                on hover. */}
+            {(() => {
+              const oneLine = getPrimaryPropertyAddress(properties);
+              if (!oneLine) {
+                return (
+                  <div
+                    className="flex items-center gap-1.5 mt-2 text-sm truncate max-w-xl"
+                    style={{ color: colors.muted }}
+                    data-testid="customer-primary-address"
+                    title="No address on file"
+                  >
+                    <MapPin size={14} />
+                    <span
+                      className="truncate"
+                      data-testid="customer-primary-address-empty"
+                    >
+                      No address on file
+                    </span>
+                  </div>
+                );
+              }
+              const href = "https://www.google.com/maps/dir/?api=1&destination="
+                + encodeURIComponent(oneLine);
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Navigate to ${oneLine}`}
+                  title={oneLine}
+                  className="inline-flex items-center gap-1.5 mt-2 text-sm hover:underline truncate max-w-xl"
+                  style={{ color: colors.onSurfaceSecondary }}
+                  data-testid="customer-primary-address"
+                >
+                  <MapPin size={14} />
+                  <span
+                    className="truncate"
+                    data-testid="customer-primary-address-text"
+                  >
+                    {oneLine}
+                  </span>
+                </a>
+              );
+            })()}
+            {/* Feb-2026 · Customer profile — geocode observability line.
+                Reads customer.latitude / longitude / geocoded_at from
+                the already-Phase-17-populated fields. Non-admin roles
+                see the line but NOT the "Re-geocode" button. See
+                /app/memory/FEATURE_CUSTOMER_MANUAL_REGEOCODE_UI.md. */}
+            <CustomerGeocodeInfo
+              customer={customer}
+              role={meRole}
+              onRefetch={load}
+              onToast={setToast}
+            />
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              {/* Phase 15b · Feb-2026 — inline tag picker with a
+                  "+ Add new tag" affordance in the dropdown. Server
+                  RBAC allows admin + manager writes; other roles will
+                  see the trigger but the PATCH will 403 (parent could
+                  hide via readOnly, but leaving the discovery affordance
+                  in place is intentional). */}
+              <CustomerTagPicker
+                customerId={customer.id}
+                value={customer.tags || []}
+                onChange={(nextTags) =>
+                  setCustomer((c) => c ? { ...c, tags: nextTags } : c)
+                }
+              />
+              {customer.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
+              {customer.has_login ? <Chip label="Portal enabled" tone="success" /> : null}
+              {/* Queue Item 4 · Feb-2026 — outbound-comms whitelist
+                  toggle. Flipping this changes whether Resend + RC
+                  send outbound comms to this customer. Hard-confirm
+                  modal is built into the component. */}
+              <DemoAccountToggle
+                recordType="customer"
+                recordId={customer.id}
+                isDemo={!!customer.is_demo_account}
+                recordLabel={customer.name || "this customer"}
+                size="sm"
+                onChange={(nextVal) =>
+                  setCustomer((c) => c ? { ...c, is_demo_account: nextVal } : c)
+                }
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          {[
+            {
+              icon: Phone,
+              label: (customer.mobiles || []).length > 1 ? "Mobiles" : "Phone",
+              value:
+                (customer.mobiles || []).length > 0
+                  ? (customer.mobiles || [])
+                      .map((m) => `${m.number_e164}${m.label ? ` (${m.label})` : ""}`)
+                      .join("  ·  ")
+                  : (customer.phone
+                      ? <PhoneLink phone={customer.phone} />
+                      : null),
+              testid: "customer-mobiles-display",
+            },
+            {
+              icon: Mail,
+              label: (customer.emails || []).length > 1 ? "Emails" : "Email",
+              value:
+                (customer.emails || []).length > 0
+                  ? (customer.emails || [])
+                      .map((e) => `${e.address}${e.label ? ` (${e.label})` : ""}`)
+                      .join("  ·  ")
+                  : customer.email,
+              testid: "customer-emails-display",
+            },
+            {
+              icon: Droplets,
+              label: "Pool",
+              value:
+                customer.pool_gallons != null
+                  ? `${Number(customer.pool_gallons).toLocaleString()} gal`
+                  : "— (not set)",
+              testid: "customer-pool-gallons-display",
+            },
+            /* APR-III · Feb-2026 — ``Alert phone`` + ``Alert email``
+               stat tiles removed (fields dropped from CustomerIn in
+               APR-II).  Primary phone + email tiles above remain
+               the single contact channels. */
+            /* CP-1-B · Feb-2026 (updated by GCR · Feb-2026) —
+             * Gate code lives in the top stat-tile row and NOWHERE
+             * else on the Overview tab.  The CP-1-B shim that kept
+             * a duplicate ``<Info>`` inside ``cd-address-block``
+             * was removed in the GCR atomic.  Unconditional render
+             * for every role; the shared ``{c.value || "—"}``
+             * fallback in the loop below surfaces an em-dash when
+             * ``customer.gate_code`` is null / undefined / empty
+             * string.  No role guard — gate codes are visible to
+             * anyone with access to the customer profile. */
+            {
+              icon: KeyRound,
+              label: "Gate code",
+              value: customer.gate_code,
+              testid: "cd-stat-gate-code",
+            },
+          ].map((c) => (
+            <div
+              key={c.label}
+              className="rounded-xl p-3"
+              style={{
+                // Phase 28 · Feb-2026 — stat-tile inner-bg uses a
+                // slightly lighter navy (``#0a0940``) for depth
+                // against the ``#03002e`` identity-card chassis.
+                backgroundColor: "#0a0940",
+                border: "1px solid #1E293B",
+              }}
+              data-testid={c.testid}
+            >
+              <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: c.warn ? "#FCD34D" : "rgba(255,255,255,0.7)" }}>
+                <c.icon size={12} />
+                <span className="uppercase font-semibold">{c.label}</span>
+              </div>
+              <div className="text-sm font-semibold truncate" style={{ color: "#F1F5F9" }}>
+                {c.value || "—"}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Feb-2026 · Top action stack — Card-on-file trigger (line 1)
           + Portal invite (line 2) sit together at the top of the
           admin customer detail so the two most-used contact actions
@@ -1471,271 +1749,6 @@ export default function CustomerDetail() {
           </div>
         </Modal>
       ) : null}
-
-      {/* Header card */}
-      {/* Feb-2026 · Customer profile typography bump — identity +
-          contact block reads at 14px (text-sm) across ALL nested
-          text.  Wrapper carries a Tailwind arbitrary variant
-          ([&_.text-xs]:!text-sm) so descendants that render their
-          own text-xs class inside shared components
-          (CustomerGeocodeInfo, ActivationControl, Chip, etc.)
-          scale up here without leaking the bump to those
-          components' other consumers.  ``!important`` guarantees
-          override regardless of utility source order. */}
-      <div
-        className="rounded-2xl p-6 mb-4 [&_.text-xs]:!text-sm"
-        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              {customer.customer_since ? (
-                <span
-                  data-testid="customer-since-label"
-                  title={customer.customer_since}
-                  className="text-xs font-medium px-2 py-1 rounded"
-                  style={{ background: colors.surfaceSecondary,
-                              color: colors.onSurfaceSecondary }}
-                >
-                  {`Customer since ${new Date(customer.customer_since)
-                      .toLocaleDateString(undefined, {
-                          month: "long", year: "numeric" })}`}
-                </span>
-              ) : null}
-              {/* Feb-2026 Customer Detail Additions — VIP toggle button
-                  replaces the previous read-only badge. Left-clicking the
-                  star flips is_vip; the small edit affordance opens the
-                  note modal. */}
-              <button
-                onClick={() => toggleVip(!customer.is_vip)}
-                onDoubleClick={() => setVipModal(true)}
-                title={customer.is_vip ? "Remove VIP flag (double-click to edit note)" : "Flag as VIP"}
-                data-testid="customer-vip-toggle"
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition"
-                style={{
-                  backgroundColor: customer.is_vip ? "#FEF3C7" : colors.surfaceSecondary,
-                  color: customer.is_vip ? "#92400E" : colors.muted,
-                  border: `1px solid ${customer.is_vip ? "#F59E0B" : colors.border}`,
-                }}
-              >
-                <Star
-                  size={12}
-                  fill={customer.is_vip ? "#F59E0B" : "transparent"}
-                  color={customer.is_vip ? "#F59E0B" : colors.muted}
-                />{" "}
-                {customer.is_vip ? "VIP" : "Flag as VIP"}
-              </button>
-              {customer.is_active === false ? (
-                <span
-                  className="hidden"
-                  aria-hidden="true"
-                  data-testid="customer-inactive-badge"
-                >
-                  Inactive
-                </span>
-              ) : null}
-              <ActivationControl
-                customer={customer}
-                onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}
-                onSuccess={(updated) => {
-                  setCustomer(updated);
-                  setToast({
-                    tone: "success",
-                    message: updated.is_active === false
-                      ? `${updated.name} marked inactive`
-                      : `${updated.name} reactivated`,
-                  });
-                }}
-                onError={(msg) => setToast({ tone: "error", message: msg })}
-              />
-            </div>
-            {/* Feb-2026 · Customer name relocated INTO the identity
-                card (was rendered at page-chrome level via
-                PageHeader).  Sits directly above the address line
-                so the name + property + geocode read as one
-                cohesive identity block.  H1 semantic preserved
-                per accessibility (screen readers key off page
-                landmarks); text-2xl matches the sibling
-                cd-customer-name-secondary echo inside the
-                Overview tab body for visual continuity. */}
-            <h1
-              className="text-2xl font-bold mt-3 mb-1"
-              style={{ color: colors.onSurface }}
-              data-testid="customer-detail-inline-h1"
-            >
-              {customer.name}
-            </h1>
-            {/* Feb-2026 · Customer profile — primary-property address
-                line under the name. Clickable → Google Maps
-                directions in a new tab. Falls back to a muted
-                "No address on file" when the customer has no
-                usable property address. Long addresses truncate
-                with ellipsis; ``title`` reveals the full string
-                on hover. */}
-            {(() => {
-              const oneLine = getPrimaryPropertyAddress(properties);
-              if (!oneLine) {
-                return (
-                  <div
-                    className="flex items-center gap-1.5 mt-2 text-sm truncate max-w-xl"
-                    style={{ color: colors.muted }}
-                    data-testid="customer-primary-address"
-                    title="No address on file"
-                  >
-                    <MapPin size={14} />
-                    <span
-                      className="truncate"
-                      data-testid="customer-primary-address-empty"
-                    >
-                      No address on file
-                    </span>
-                  </div>
-                );
-              }
-              const href = "https://www.google.com/maps/dir/?api=1&destination="
-                + encodeURIComponent(oneLine);
-              return (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Navigate to ${oneLine}`}
-                  title={oneLine}
-                  className="inline-flex items-center gap-1.5 mt-2 text-sm hover:underline truncate max-w-xl"
-                  style={{ color: colors.onSurfaceSecondary }}
-                  data-testid="customer-primary-address"
-                >
-                  <MapPin size={14} />
-                  <span
-                    className="truncate"
-                    data-testid="customer-primary-address-text"
-                  >
-                    {oneLine}
-                  </span>
-                </a>
-              );
-            })()}
-            {/* Feb-2026 · Customer profile — geocode observability line.
-                Reads customer.latitude / longitude / geocoded_at from
-                the already-Phase-17-populated fields. Non-admin roles
-                see the line but NOT the "Re-geocode" button. See
-                /app/memory/FEATURE_CUSTOMER_MANUAL_REGEOCODE_UI.md. */}
-            <CustomerGeocodeInfo
-              customer={customer}
-              role={meRole}
-              onRefetch={load}
-              onToast={setToast}
-            />
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
-              {/* Phase 15b · Feb-2026 — inline tag picker with a
-                  "+ Add new tag" affordance in the dropdown. Server
-                  RBAC allows admin + manager writes; other roles will
-                  see the trigger but the PATCH will 403 (parent could
-                  hide via readOnly, but leaving the discovery affordance
-                  in place is intentional). */}
-              <CustomerTagPicker
-                customerId={customer.id}
-                value={customer.tags || []}
-                onChange={(nextTags) =>
-                  setCustomer((c) => c ? { ...c, tags: nextTags } : c)
-                }
-              />
-              {customer.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
-              {customer.has_login ? <Chip label="Portal enabled" tone="success" /> : null}
-              {/* Queue Item 4 · Feb-2026 — outbound-comms whitelist
-                  toggle. Flipping this changes whether Resend + RC
-                  send outbound comms to this customer. Hard-confirm
-                  modal is built into the component. */}
-              <DemoAccountToggle
-                recordType="customer"
-                recordId={customer.id}
-                isDemo={!!customer.is_demo_account}
-                recordLabel={customer.name || "this customer"}
-                size="sm"
-                onChange={(nextVal) =>
-                  setCustomer((c) => c ? { ...c, is_demo_account: nextVal } : c)
-                }
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-          {[
-            {
-              icon: Phone,
-              label: (customer.mobiles || []).length > 1 ? "Mobiles" : "Phone",
-              value:
-                (customer.mobiles || []).length > 0
-                  ? (customer.mobiles || [])
-                      .map((m) => `${m.number_e164}${m.label ? ` (${m.label})` : ""}`)
-                      .join("  ·  ")
-                  : (customer.phone
-                      ? <PhoneLink phone={customer.phone} />
-                      : null),
-              testid: "customer-mobiles-display",
-            },
-            {
-              icon: Mail,
-              label: (customer.emails || []).length > 1 ? "Emails" : "Email",
-              value:
-                (customer.emails || []).length > 0
-                  ? (customer.emails || [])
-                      .map((e) => `${e.address}${e.label ? ` (${e.label})` : ""}`)
-                      .join("  ·  ")
-                  : customer.email,
-              testid: "customer-emails-display",
-            },
-            {
-              icon: Droplets,
-              label: "Pool",
-              value:
-                customer.pool_gallons != null
-                  ? `${Number(customer.pool_gallons).toLocaleString()} gal`
-                  : "— (not set)",
-              testid: "customer-pool-gallons-display",
-            },
-            /* APR-III · Feb-2026 — ``Alert phone`` + ``Alert email``
-               stat tiles removed (fields dropped from CustomerIn in
-               APR-II).  Primary phone + email tiles above remain
-               the single contact channels. */
-            /* CP-1-B · Feb-2026 (updated by GCR · Feb-2026) —
-             * Gate code lives in the top stat-tile row and NOWHERE
-             * else on the Overview tab.  The CP-1-B shim that kept
-             * a duplicate ``<Info>`` inside ``cd-address-block``
-             * was removed in the GCR atomic.  Unconditional render
-             * for every role; the shared ``{c.value || "—"}``
-             * fallback in the loop below surfaces an em-dash when
-             * ``customer.gate_code`` is null / undefined / empty
-             * string.  No role guard — gate codes are visible to
-             * anyone with access to the customer profile. */
-            {
-              icon: KeyRound,
-              label: "Gate code",
-              value: customer.gate_code,
-              testid: "cd-stat-gate-code",
-            },
-          ].map((c) => (
-            <div
-              key={c.label}
-              className="rounded-xl p-3"
-              style={{
-                backgroundColor: colors.surfaceSecondary,
-                border: `1px solid ${colors.border}`,
-              }}
-              data-testid={c.testid}
-            >
-              <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: c.warn ? "#A16207" : colors.muted }}>
-                <c.icon size={12} />
-                <span className="uppercase font-semibold">{c.label}</span>
-              </div>
-              <div className="text-sm font-semibold truncate" style={{ color: colors.onSurface }}>
-                {c.value || "—"}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* Feb-2026 · Tabs — the standalone ``ResponsiveTabs`` block
           that lived here has been relocated into the unified

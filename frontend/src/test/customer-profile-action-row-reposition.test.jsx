@@ -59,17 +59,26 @@ describe("Phase 20 · action row renders ABOVE the tabs row", () => {
     expect(stripIdx).toBeLessThan(tabsStripIdx);
   });
 
-  it("both strips sit BELOW Portal Access and ABOVE the Header card", () => {
+  it("both strips sit BELOW Portal Access (Phase 28 moved Header card above Portal Access)", () => {
+    // Phase 28 · Feb-2026 — the identity ("Header card") was
+    // repositioned to render ABOVE the Phase-20 command strip +
+    // Portal Access so the customer's identity is the first thing
+    // visible after the breadcrumb.  The Phase-20 contract
+    // ``strips sit BELOW Portal Access`` still holds; the former
+    // tail of the chain (``AND ABOVE the Header card``) no longer
+    // reflects the real DOM — the Header card now precedes the
+    // whole chain in source order.
     const portalIdx = SRC.indexOf("<PortalInviteQuickAction");
     const stripIdx = SRC.indexOf('data-testid="cd-command-strip"');
     const tabsStripIdx = SRC.indexOf('data-testid="cd-command-strip-tabs"');
     const headerCardIdx = SRC.indexOf("{/* Header card */}");
     expect(portalIdx).toBeGreaterThan(-1);
     expect(headerCardIdx).toBeGreaterThan(-1);
-    // Order: PortalInvite → actions strip → tabs strip → Header card
+    // Phase-28 source order: Header card → PortalInvite → actions
+    // strip → tabs strip.
+    expect(headerCardIdx).toBeLessThan(portalIdx);
     expect(stripIdx).toBeGreaterThan(portalIdx);
     expect(tabsStripIdx).toBeGreaterThan(stripIdx);
-    expect(headerCardIdx).toBeGreaterThan(tabsStripIdx);
   });
 });
 
@@ -89,11 +98,18 @@ describe("Phase 20 · action row is full-width and dedicated to actions", () => 
   });
 
   it("cd-tabs-row hosts both the Send/Create wrapper AND the Overview dropdown", () => {
+    // Phase 28 · Feb-2026 — ``{/* Header card */}`` was moved
+    // ABOVE cd-tabs-row.  Use the next sibling sentinel —
+    // ``{/* Feb-2026 · Tabs — the standalone`` — to bound the
+    // tabs-row block.  The ``<CustomerActionDropdowns`` + the
+    // ``cd-tabs-dropdown-shell`` must still live inside this
+    // bounded region.
     const tabsRowIdx = SRC.indexOf('data-testid="cd-tabs-row"');
-    const headerCardIdx = SRC.indexOf("{/* Header card */}", tabsRowIdx);
+    const nextSiblingIdx = SRC.indexOf(
+      "{/* Feb-2026 · Tabs — the standalone", tabsRowIdx);
     expect(tabsRowIdx).toBeGreaterThan(-1);
-    expect(headerCardIdx).toBeGreaterThan(tabsRowIdx);
-    const tabsBlock = SRC.slice(tabsRowIdx, headerCardIdx);
+    expect(nextSiblingIdx).toBeGreaterThan(tabsRowIdx);
+    const tabsBlock = SRC.slice(tabsRowIdx, nextSiblingIdx);
     expect(tabsBlock).toContain("<CustomerActionDropdowns");
     expect(tabsBlock).toContain('data-testid="cd-tabs-dropdown-shell"');
   });
