@@ -43,6 +43,14 @@ vi.mock("@/api", () => ({
   },
 }));
 
+
+vi.mock("@/auth", () => ({
+  useAuth: () => ({ user: { id: "u-test-admin", role: "admin",
+                              email: "admin@test.local" },
+                     loading: false }),
+  AuthProvider: ({ children }) => children,
+}));
+
 vi.mock("@/theme", () => ({
   colors: {
     brand: "#0284C7", onBrand: "#FFFFFF",

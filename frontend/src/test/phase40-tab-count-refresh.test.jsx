@@ -38,6 +38,14 @@ vi.mock("@/api", () => ({
   },
 }));
 
+
+vi.mock("@/auth", () => ({
+  useAuth: () => ({ user: { id: "u-test-admin", role: "admin",
+                              email: "admin@test.local" },
+                     loading: false }),
+  AuthProvider: ({ children }) => children,
+}));
+
 vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), {
     success: vi.fn(), error: vi.fn(), warning: vi.fn(),

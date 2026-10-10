@@ -40,6 +40,14 @@ vi.mock("@/api", () => ({
   },
 }));
 
+
+vi.mock("@/auth", () => ({
+  useAuth: () => ({ user: { id: "u-test-admin", role: "admin",
+                              email: "admin@test.local" },
+                     loading: false }),
+  AuthProvider: ({ children }) => children,
+}));
+
 import { invalidateCategoryCache } from "@/components/income/CategoryPicker";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 
