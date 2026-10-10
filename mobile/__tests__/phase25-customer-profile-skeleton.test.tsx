@@ -133,8 +133,9 @@ describe("Phase 25 · customer profile skeleton", () => {
     });
     const order = testIdsInOrder(r.toJSON());
     const idx = (id: string) => order.indexOf(id);
-    expect(idx("cd-skeleton-action-row")).toBeLessThan(idx("cd-skeleton-header-card"));
-    expect(idx("cd-skeleton-header-card")).toBeLessThan(idx("cd-skeleton-tile-area"));
+    // Phase 35 · identity header card slot leads, then the action row.
+    expect(idx("cd-skeleton-header-card")).toBeLessThan(idx("cd-skeleton-action-row"));
+    expect(idx("cd-skeleton-action-row")).toBeLessThan(idx("cd-skeleton-tile-area"));
     expect(idx("cd-skeleton-tile-area")).toBeLessThan(idx("cd-skeleton-content"));
   });
 
@@ -162,16 +163,17 @@ describe("Phase 25 · Phase 20 · action row above the section stack", () => {
     return r;
   }
 
-  it("1. action row renders before the status pill and every section", async () => {
+  it("1. action row renders before every section (Phase 35: identity card + status pill sit ABOVE it)", async () => {
     const r = await mountLoaded();
     const order = testIdsInOrder(r.toJSON());
     const row = order.indexOf("customer-action-row");
     expect(row).toBeGreaterThanOrEqual(0);
-    for (const id of ["customer-status-pill", "customer-jobs-tab", "customer-credits-section"]) {
+    for (const id of ["customer-jobs-tab", "customer-credits-section"]) {
       const i = order.indexOf(id);
       if (i >= 0) expect([id, row < i]).toEqual([id, true]);
     }
-    expect(order.indexOf("customer-status-pill")).toBeGreaterThan(row);
+    expect(order.indexOf("cd-identity-card")).toBeLessThan(row);
+    expect(order.indexOf("customer-status-pill")).toBeLessThan(row);
     expect(order.indexOf("customer-jobs-tab")).toBeGreaterThan(row);
   });
 

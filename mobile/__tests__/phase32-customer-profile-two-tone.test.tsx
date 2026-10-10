@@ -134,8 +134,9 @@ describe("Phase 32 · LIGHT layer", () => {
   });
 
   it.each([
-    ["cd-light-card-customer-since", ["mobile-customer-since-label", "vip-badge"]],
-    ["cd-light-card-active", ["customer-status-pill", "customer-active-toggle"]],
+    // Phase 35 · Customer since + VIP + Active now live in the single light
+    // identity card (web Phase 28 parity) — same light chassis.
+    ["cd-identity-card", ["mobile-customer-since-label", "vip-badge", "customer-status-pill", "customer-active-toggle"]],
     ["cd-light-card-mark-muted", ["mute-control-btn-cust-1"]],
     ["cd-light-card-automations-mute", ["automations-mute-section"]],
   ])("%s is a light card (bg #FFFFFF, 1px #E4E4E7, r12, padding spacing.md=12) wrapping its control", async (id, kids) => {
@@ -147,11 +148,11 @@ describe("Phase 32 · LIGHT layer", () => {
     for (const k of kids as string[]) expect(within(card).getByTestId(k)).toBeTruthy();
   });
 
-  it("Customer since text + Active pill stay inside their wrappers in order (since → active → mark-muted → automations)", async () => {
+  it("light cards in order (Phase 35: identity card → action row → mark-muted → automations)", async () => {
     const r = await mount();
-    const order = ids(r.toJSON()).filter((i) => i.startsWith("cd-light-card-"));
+    const order = ids(r.toJSON()).filter((i) => i === "cd-identity-card" || i === "customer-action-row" || i.startsWith("cd-light-card-"));
     expect(order).toEqual([
-      "cd-light-card-customer-since", "cd-light-card-active", "cd-light-card-mark-muted", "cd-light-card-automations-mute",
+      "cd-identity-card", "customer-action-row", "cd-light-card-mark-muted", "cd-light-card-automations-mute",
     ]);
     expect(r.getByText(/Customer since March 2021/)).toBeTruthy();
   });

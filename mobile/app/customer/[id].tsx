@@ -22,6 +22,7 @@ import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
 import SendServiceRecordsLinkModal from "@/src/components/customers/SendServiceRecordsLinkModal";
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
+import CustomerIdentityCard from "@/src/components/customers/CustomerIdentityCard";
 import PaymentMethodTiles from "@/src/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/src/components/customers/CommunicationTimeline";
 import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
@@ -57,7 +58,7 @@ const QUICK_ACTIONS = [
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
 import AppTextInput from "@/src/components/ui/AppTextInput";
-import { PhoneLink, AddressLink } from "@/src/components/customer";
+import { AddressLink } from "@/src/components/customer";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -423,6 +424,23 @@ export default function CustomerDetail() {
             stacked sections below are its analogue). Delete + View-as-
             customer were relocated here verbatim — same testIDs, same
             handlers, same role gates. Header edit icon is untouched. */}
+        {/* Phase 35 · web parity b40352a (Phase 28) — identity header card
+            ABOVE the Phase 20 action row. Light chassis per Phase 32. */}
+        <CustomerIdentityCard
+          c={c}
+          isActive={isActive}
+          isAdmin={isAdmin}
+          onToggleActive={toggleActivation}
+          primaryPhone={primaryPhone}
+          primaryEmail={primaryEmail}
+          tagsSlot={
+            <CustomerTagsSection
+              customerId={id as string}
+              value={c.tags || []}
+              onChange={(nextTags) => setC((prev: any) => (prev ? { ...prev, tags: nextTags } : prev))}
+            />
+          }
+        />
         <View style={s2.actionRow} testID="customer-action-row">
           <TouchableOpacity
             style={[s2.actionBtn, s2.actionBtnNeutral]}
@@ -464,56 +482,6 @@ export default function CustomerDetail() {
             Action tiles, both ABOVE the section stack. */}
         <KPITileGrid kpi={kpi} />
         <QuickActionTileGrid actions={QUICK_ACTIONS} onPick={jumpTo} />
-        {/* Phase 32 · light card wrapper — Customer since + VIP chip row. */}
-        {c.customer_since || c.is_vip ? (
-          <View style={s2.lightCard} testID="cd-light-card-customer-since">
-            {c.customer_since ? (
-              <Text
-                testID="mobile-customer-since-label"
-                style={{
-                  fontSize: 12,
-                  color: colors.muted,
-                  marginBottom: c.is_vip ? spacing.sm : 0,
-                }}
-              >
-                {`Customer since ${new Date(c.customer_since).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`}
-              </Text>
-            ) : null}
-            {c.is_vip ? (
-              <View style={[styles.vipBadge, { marginBottom: 0 }]} testID="vip-badge">
-                <Ionicons name="star" size={14} color="#92400E" />
-                <Text style={styles.vipBadgeText}>VIP</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
-        {/* Phase 56.2 — status pill + (admin-only) toggle switch. Non-admins see the pill only. */}
-        {/* Phase 32 · light card wrapper — Active status pill + toggle. */}
-        <View style={s2.lightCard} testID="cd-light-card-active">
-          <View
-            style={[styles.statusPill, { marginBottom: 0 }, isActive ? styles.statusPillActive : styles.statusPillInactive]}
-            testID="customer-status-pill"
-          >
-            <Text style={[styles.statusPillText, isActive ? styles.statusPillTextActive : styles.statusPillTextInactive]}>
-              {isActive ? "Active" : "Inactive"}
-            </Text>
-            {isAdmin ? (
-              <Switch
-                testID="customer-active-toggle"
-                value={isActive}
-                onValueChange={toggleActivation}
-                trackColor={{ false: "#9CA3AF", true: "#16A34A" }}
-                thumbColor="#ffffff"
-                ios_backgroundColor="#9CA3AF"
-                style={{ marginLeft: 6, transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
-              />
-            ) : null}
-          </View>
-          {/* Legacy inactive badge retained (invisible) for prior tests referencing this testID. */}
-          {!isActive ? (
-            <View style={{ height: 0, opacity: 0 }} testID="customer-inactive-badge" />
-          ) : null}
-        </View>
         {/* Feb-2026 · P29b — Mobile mute-picker parity. Admin + super_admin
             only (matches the web MuteControl gating). */}
         {isAdmin ? (
@@ -556,45 +524,19 @@ export default function CustomerDetail() {
             onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
           />
         </View>
-        <View style={styles.card}>
-          {primaryPhone ? (
-            <View style={styles.contactRow}>
-              <View style={styles.contactIcon}>
-                <Ionicons name="call-outline" size={18} color={colors.brand} />
-              </View>
-              <PhoneLink phone={primaryPhone} showIcon={false} style={styles.contactValue} testID="customer-phone-link" />
-            </View>
-          ) : null}
-          <ContactRow icon="mail-outline" value={primaryEmail} onPress={() => primaryEmail && Linking.openURL(`mailto:${primaryEmail}`)} />
-          {c.address ? (
-            <View style={styles.contactRow}>
-              <View style={styles.contactIcon}>
-                <Ionicons name="location-outline" size={18} color={colors.brand} />
-              </View>
-              <AddressLink address={c.address} showIcon={false} style={styles.contactValue} testID="customer-address-link" />
-            </View>
-          ) : null}
-          {c.billing_address ? (
+        {/* Phase 35 · phone / email / address / pool moved into the identity
+            card above; billing address keeps its slot here (not in web's
+            Phase 28 identity list). */}
+        {c.billing_address ? (
+          <View style={styles.card}>
             <View style={styles.contactRow}>
               <View style={styles.contactIcon}>
                 <Ionicons name="card-outline" size={18} color={colors.brand} />
               </View>
               <AddressLink address={`Billing: ${c.billing_address}`} showIcon={false} style={styles.contactValue} testID="customer-billing-link" />
             </View>
-          ) : null}
-          {/* Phase 34d — always render (with placeholder when null) so it has
-              the same visual weight as phone/email. */}
-          <View style={styles.contactRow} testID="customer-pool-gallons-display">
-            <View style={styles.contactIcon}>
-              <Ionicons name="water-outline" size={18} color={colors.brand} />
-            </View>
-            <Text style={styles.contactValue}>
-              {c.pool_gallons != null
-                ? `Pool: ${Number(c.pool_gallons).toLocaleString()} gal`
-                : "Pool: — (not set)"}
-            </Text>
           </View>
-        </View>
+        ) : null}
 
         {/* Multi-Contact Phase 1 — admin gets editable editor; non-admin gets read-only */}
         {isAdmin ? (
@@ -976,16 +918,6 @@ export default function CustomerDetail() {
           </>
         ) : null}
 
-        {/* Task 1 · Feb-2026 — Customer Tags section. Chip render +
-            tap-to-add bottom sheet + inline "Create new: <query>". */}
-        <LightPanel>
-          <CustomerTagsSection
-            customerId={id as string}
-            value={c.tags || []}
-            onChange={(nextTags) => setC((prev: any) => (prev ? { ...prev, tags: nextTags } : prev))}
-          />
-        </LightPanel>
-
         {/* Task 1 · Feb-2026 — Outbound-comms Demo whitelist toggle
             with hard-confirm modal. Same contract as web. */}
         <View style={{ marginHorizontal: 16, marginBottom: 12,
@@ -1106,19 +1038,6 @@ export default function CustomerDetail() {
   );
 }
 
-function ContactRow({ icon, value, onPress }: { icon: any; value?: string; onPress?: () => void }) {
-  if (!value) return null;
-  return (
-    <Pressable style={styles.contactRow} onPress={onPress} disabled={!onPress}>
-      <View style={styles.contactIcon}>
-        <Ionicons name={icon} size={18} color={colors.brand} />
-      </View>
-      <Text style={styles.contactValue}>{value}</Text>
-      {onPress ? <Ionicons name="chevron-forward" size={16} color={colors.muted} /> : null}
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: LIGHT_PAGE_BG },
   card: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER, overflow: "hidden" },
@@ -1203,16 +1122,6 @@ const styles = StyleSheet.create({
   adjCancelText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface },
   adjSave: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand },
   adjSaveText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
-  vipBadge: {
-    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
-    gap: 4, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
-    marginBottom: spacing.md,
-  },
-  vipBadgeText: {
-    fontFamily: font.bold, fontSize: fontSize.xs, color: "#92400E",
-    letterSpacing: 1, textTransform: "uppercase",
-  },
   inactiveBadge: {
     alignSelf: "flex-start",
     backgroundColor: "#E5E7EB", borderColor: "#9CA3AF", borderWidth: 1,
@@ -1223,19 +1132,6 @@ const styles = StyleSheet.create({
     fontFamily: font.bold, fontSize: fontSize.xs, color: "#4B5563",
     letterSpacing: 1, textTransform: "uppercase",
   },
-  statusPill: {
-    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
-    marginBottom: spacing.md, borderWidth: 1,
-  },
-  statusPillActive: { backgroundColor: "#DCFCE7", borderColor: "#86EFAC" },
-  statusPillInactive: { backgroundColor: "#E5E7EB", borderColor: "#9CA3AF" },
-  statusPillText: {
-    fontFamily: font.bold, fontSize: fontSize.xs,
-    letterSpacing: 1, textTransform: "uppercase",
-  },
-  statusPillTextActive: { color: "#166534" },
-  statusPillTextInactive: { color: "#4B5563" },
   fab: {
     position: "absolute", bottom: 24, right: 20,
     width: 52, height: 52, borderRadius: 26,

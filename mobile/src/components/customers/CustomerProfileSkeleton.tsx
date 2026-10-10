@@ -60,11 +60,7 @@ export default function CustomerProfileSkeleton() {
       <Header title="Customer" back dark />
       <ScrollView contentContainerStyle={s.content} scrollEnabled={false}>
         <Animated.View style={{ opacity: pulse }} testID="cd-skeleton-pulse">
-          <View style={s.actionRow} testID="cd-skeleton-action-row">
-            {ACTION_SLOTS.map((k) => (
-              <View key={k} style={s.actionSlot} testID={`cd-skeleton-action-${k}`} />
-            ))}
-          </View>
+          {/* Phase 35 · identity header card slot now leads (web Phase 28). */}
           <View style={s.card} testID="cd-skeleton-header-card">
             <View style={s.headerRow}>
               <Bar w={56} h={56} round testID="cd-skeleton-avatar" />
@@ -73,6 +69,11 @@ export default function CustomerProfileSkeleton() {
                 <Bar w="90%" testID="cd-skeleton-address" />
               </View>
             </View>
+          </View>
+          <View style={s.actionRow} testID="cd-skeleton-action-row">
+            {ACTION_SLOTS.map((k) => (
+              <View key={k} style={s.actionSlot} testID={`cd-skeleton-action-${k}`} />
+            ))}
           </View>
           <View testID="cd-skeleton-tile-area">
             <View style={s.kpiGrid} testID="cd-skeleton-kpi-grid">

@@ -175,7 +175,8 @@ describe("Phase 25b · Quick Actions + Phase 20 preserved", () => {
     expect(i("customer-action-row")).toBeGreaterThanOrEqual(0);
     expect(i("customer-action-row")).toBeLessThan(i("cd-kpi-tile-grid"));
     expect(i("cd-kpi-tile-grid")).toBeLessThan(i("cd-quick-action-grid"));
-    expect(i("cd-quick-action-grid")).toBeLessThan(i("customer-status-pill"));
+    // Phase 35 · status pill moved into the identity card ABOVE the action row.
+    expect(i("customer-status-pill")).toBeLessThan(i("customer-action-row"));
     expect(i("cd-quick-action-grid")).toBeLessThan(i("customer-jobs-tab"));
     for (const id of ["customer-action-edit", "customer-action-call", "impersonate-customer-button", "customer-delete-button"]) {
       expect([id, ids(r.getByTestId("customer-action-row")).includes(id)]).toEqual([id, true]);
