@@ -170,6 +170,23 @@ class CommitResult:
     # — surfaced to the operator via the commit response for
     # follow-up but the offending row still lands.
     warnings: List[Dict[str, Any]] = field(default_factory=list)
+    # ═══════════════════════════════════════════════════════════
+    # Phase 33 Step B · Feb-2026 — PDF-import customer auto-create.
+    #
+    # ``auto_created_customers`` carries one entry per PENDING
+    # sentinel resolved during commit — new ``db.customers`` row
+    # inserted OR dedupe hit against an existing row (both DB-side
+    # and in-batch). Shape mirrors
+    # ``AutoCreatedCustomer.__dataclass_fields__`` for wire
+    # stability.
+    #
+    # The commit path now raises ``UnresolvedCustomersError`` ONLY
+    # for pending rows the auto-create helper could not resolve
+    # (zero-signal rows: no name, no address, no phone). All other
+    # PENDING sentinels are rewritten to real customer_ids before
+    # the unresolved gate fires.
+    # ═══════════════════════════════════════════════════════════
+    auto_created_customers: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -338,6 +355,23 @@ async def commit_batch(
     batch_id = batch.get("id") or batch.get("batch_id")
     previews: List[Dict[str, Any]] = batch.get("mapper_previews") or []
     commit_at = datetime.now(timezone.utc).isoformat()
+
+    # ── Phase 33 Step B · Feb-2026 — auto-create PENDING customers.
+    # Walk every ``PENDING::<uuid>`` sentinel BEFORE the unresolved
+    # gate fires. The helper mutates ``previews`` in-place: resolved
+    # pending rows have their ``quote_in.customer_id`` /
+    # ``payment_in.customer_id`` rewritten to real customer_ids so
+    # the downstream duplicate scan + paid-status checks +
+    # insert_many loop see a fully resolved batch. Only pending rows
+    # with zero identifying info (name AND address AND phone all
+    # blank) survive to raise ``UnresolvedCustomersError``.
+    from services.imports.customer_autocreate import (
+        auto_create_pending_customers,
+    )
+    autocreate_result = await auto_create_pending_customers(
+        previews=previews, batch=batch, tenant_id=tenant_id,
+        operator=operator, db=db,
+    )
 
     # ── Pre-flight: unresolved-customer gate ──────────────
     unresolved = collect_unresolved_customers(previews)
@@ -631,6 +665,22 @@ async def commit_batch(
         # can render "Invoice INV-42 updated: unpaid → paid".
         reconciled_invoices=payment_stats.get("reconciled_invoices", []),
         warnings=warnings,
+        # Phase 33 Step B · Feb-2026 — PDF-import auto-create
+        # summary. Serialised shape matches
+        # ``AutoCreatedCustomer`` field order so the Step C.1
+        # unified-payload wrapper can forward it verbatim.
+        auto_created_customers=[
+            {
+                "source_doc_index": c.source_doc_index,
+                "pending_customer_id": c.pending_customer_id,
+                "extracted_name": c.extracted_name,
+                "extracted_address": c.extracted_address,
+                "extracted_phone": c.extracted_phone,
+                "resolved_customer_id": c.resolved_customer_id,
+                "action": c.action,
+            }
+            for c in autocreate_result.auto_created
+        ],
     )
 
 

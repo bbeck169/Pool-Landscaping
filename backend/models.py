@@ -115,6 +115,18 @@ class CustomerIn(BaseModel):
     # flips this to False via PUT /api/customers/{id}, the router cascades a
     # cancellation over all future scheduled jobs and deactivates recurring
     # templates. Missing/legacy docs read back as True (assumed active).
+    # Phase 33 Step B · Feb-2026 — PDF-import auto-create provenance.
+    # ``source`` tags the origin channel of the customer row
+    # (``"pdf_import"`` for rows minted by the PDF-import
+    # auto-create helper, otherwise empty for operator-created or
+    # legacy rows). ``created_via`` carries a finer-grained method
+    # token (``"pdf_import_auto"`` for the auto-create path).
+    # Downstream readers (audit, Customer Detail badge, admin
+    # review UI) key off these to distinguish auto-created
+    # customers from operator-created ones. Legacy customers
+    # without the fields read back as empty string.
+    source: Optional[str] = ""
+    created_via: Optional[str] = ""
     # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; set by
     # the Copilot CRM importer so a single ``rollback`` on the batch
     # can ``delete_many({import_batch_id: X})``. Legacy customers read
