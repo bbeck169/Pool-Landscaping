@@ -658,7 +658,45 @@ async def get_pdf_invoice_batch(
                 ),
             },
         )
-    return _sanitize_row(row)
+    sanitized = _sanitize_row(row)
+    # ─────────────────────────────────────────────────────────
+    # Phase 33 Step C.1 · Feb-2026 — PDF-import auto-create preview
+    # badge. When the batch is in ``preview_complete`` (operator is
+    # about to click Commit) and carries ``PENDING::<uuid>``
+    # sentinels, run a dry-run classification against
+    # ``pending_import_customers`` so the FE can render a
+    # "Will auto-create: N" badge BEFORE commit — no commit-time
+    # surprises for the operator.
+    #
+    # Shape: ``pending_customer_classification: {will_auto_create: [...],
+    # will_require_manual_review: [...]}``. Empty for batches without
+    # PENDING sentinels (no-op); omitted on terminal statuses
+    # (committed / rolled_back) where the batch no longer has
+    # pending work to resolve.
+    # ─────────────────────────────────────────────────────────
+    status = sanitized.get("status") or ""
+    mapper_previews = sanitized.get("mapper_previews") or []
+    if (
+        status == _STATUS_PREVIEW_COMPLETE
+        and mapper_previews
+    ):
+        try:
+            sanitized["pending_customer_classification"] = (
+                await classify_pending_for_preview(
+                    previews=mapper_previews,
+                    tenant_id=tenant["id"],
+                    db=db,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Classification is a UI convenience — never let a
+            # transient DB blip take down the main poll endpoint.
+            logger.warning(
+                "[pdf-import] classify_pending_for_preview failed "
+                "for batch=%s tenant=%s (non-fatal): %s",
+                batch_id, tenant["id"], exc,
+            )
+    return sanitized
 
 
 
@@ -672,6 +710,7 @@ from services.imports.pdf_commit import (                          # noqa: E402
     PaidStatusValidationError,
     UnresolvedCustomersError,
     check_duplicates,
+    classify_pending_for_preview,
     commit_batch,
     rollback_batch,
     write_import_audit,
@@ -874,6 +913,12 @@ async def commit_pdf_invoice_batch(
             db=db,
         )
     except UnresolvedCustomersError as exc:
+        # Phase 33 Step C.1 · Feb-2026 — residuals here are rows
+        # the Step B auto-create helper could not resolve (zero
+        # identifying info: no name, no address, no phone). Pre-
+        # Phase-33 this bucket caught EVERY PENDING sentinel; now
+        # it catches only truly manual-review cases.
+        #
         # Reset batch to preview_complete so the operator can
         # resolve pendings via H.3 UI and retry.
         await db.import_batches.update_one(
@@ -884,12 +929,20 @@ async def commit_pdf_invoice_batch(
         raise HTTPException(
             status_code=400,
             detail={
-                "error": "unresolved_customers",
+                "error": "manual_review_required",
                 "message": (
-                    f"{len(exc.unresolved)} preview(s) still carry "
-                    f"PENDING:: customer sentinels; resolve via the "
-                    f"admin review UI before commit."
+                    f"{len(exc.unresolved)} preview(s) carry "
+                    f"customer rows the auto-create helper "
+                    f"could not resolve (no name, address, or "
+                    f"phone captured); resolve via the admin "
+                    f"review UI before commit."
                 ),
+                "manual_review_needed": _serialise_unresolved(
+                    exc.unresolved,
+                ),
+                # Legacy alias — preserved for pre-Phase-33
+                # frontend callers. Will be dropped in a future
+                # release after FE adopts manual_review_needed.
                 "unresolved": _serialise_unresolved(exc.unresolved),
             },
         )
@@ -1027,6 +1080,50 @@ async def commit_pdf_invoice_batch(
             },
         },
         "warnings": commit_result.warnings,
+        # ═══════════════════════════════════════════════════════
+        # Phase 33 Step C.1 · Feb-2026 — unified mixed-outcome
+        # commit response. The FE renders inline per-row banners
+        # keyed off these buckets instead of the old single-modal
+        # error flow. Every bucket is a top-level array/object so
+        # a mixed-outcome commit (some invoices created, some
+        # customers auto-made, some duplicates skipped, some rows
+        # flagged for manual review) can be rendered in one pass.
+        #
+        # Shape ruling: ADDITIVE — pre-Phase-33 keys above remain
+        # unchanged for backwards compatibility. New keys below
+        # layer on top so callers can migrate at their own pace.
+        # ═══════════════════════════════════════════════════════
+        "auto_created_customers": commit_result.auto_created_customers,
+        "manual_review_needed": [],
+        "skipped": {
+            "duplicates": commit_result.quotes_skipped_duplicates,
+            "idempotent": commit_result.quotes_skipped_idempotent,
+        },
+        "validation_errors": {
+            "insert_errors": commit_result.insert_errors,
+            "payment_errors": commit_result.payment_errors,
+        },
+        "summary": {
+            "committed_count": (
+                commit_result.invoices_created
+                + commit_result.estimates_created
+                + commit_result.payments_created
+                + commit_result.payments_updated
+            ),
+            "auto_created_customers_count": len(
+                commit_result.auto_created_customers,
+            ),
+            "skipped_count": (
+                commit_result.quotes_skipped_duplicates
+                + commit_result.quotes_skipped_idempotent
+            ),
+            "manual_review_count": 0,
+            "warning_count": len(commit_result.warnings),
+            "error_count": (
+                len(commit_result.insert_errors)
+                + len(commit_result.payment_errors)
+            ),
+        },
     }
 
 

@@ -286,6 +286,132 @@ def collect_unresolved_customers(
 
 
 # ═════════════════════════════════════════════════════════════
+# Phase 33 Step C.1 · Feb-2026 — GET preview classification.
+# ═════════════════════════════════════════════════════════════
+async def classify_pending_for_preview(
+    *,
+    previews: List[Dict[str, Any]],
+    tenant_id: str,
+    db,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Dry-run classify every ``PENDING::<uuid>`` sentinel in a
+    preview-complete batch as either ``will_auto_create`` or
+    ``will_require_manual_review`` so the operator UI can render
+    a "Will auto-create: N" badge BEFORE clicking Commit.
+
+    No side-effects: pure read against ``pending_import_customers``.
+    Mirrors the Step B classification rules exactly:
+
+      * At least one of ``extracted_customer_name`` /
+        ``extracted_address`` / ``extracted_phone`` is non-blank
+        → ``will_auto_create`` (the commit path will materialise
+        this pending into a real ``db.customers`` row via the
+        dedupe-first auto-create helper).
+      * All three identifying fields are blank, OR the pending
+        row has been manually deleted since mapping →
+        ``will_require_manual_review`` (the commit path raises
+        400 ``manual_review_required`` listing these rows).
+
+    Shape (both arrays carry the same per-row dict shape so the
+    FE can render one unified table)::
+
+        {
+          "will_auto_create": [
+            {
+              "source_doc_index": 3,
+              "pending_customer_id": "<uuid>",
+              "extracted_name": "Acme Pools LLC",
+              "extracted_address": "123 Pine Dr",
+              "extracted_phone": "555-1234",
+            },
+            ...
+          ],
+          "will_require_manual_review": [
+            {"source_doc_index": 7, "pending_customer_id": "<uuid>",
+              "extracted_name": null, "extracted_address": null,
+              "extracted_phone": null, "reason": "no_identifying_info"},
+            ...
+          ],
+        }
+    """
+    # Walk BOTH quote_in and payment_in — mirror Step B's walk so
+    # the dry-run never misses a sentinel the real auto-create
+    # would resolve.
+    ref_order: List[Tuple[str, int]] = []
+    seen_pids: set = set()
+    for preview in previews:
+        source_doc_index = int(preview.get("source_doc_index", -1))
+        for field_name in ("quote_in", "payment_in"):
+            sub = preview.get(field_name) or {}
+            cid = sub.get("customer_id") or ""
+            if not (isinstance(cid, str) and cid.startswith("PENDING::")):
+                continue
+            pending_id = cid[len("PENDING::"):]
+            if pending_id in seen_pids:
+                continue
+            seen_pids.add(pending_id)
+            ref_order.append((pending_id, source_doc_index))
+
+    if not ref_order:
+        return {"will_auto_create": [], "will_require_manual_review": []}
+
+    # One ``find`` with ``$in`` — bounded working set.
+    pending_rows: Dict[str, Dict[str, Any]] = {}
+    cursor = db.pending_import_customers.find(
+        {"tenant_id": tenant_id,
+          "id": {"$in": [pid for pid, _ in ref_order]}},
+        {"_id": 0},
+    )
+    async for row in cursor:
+        pending_rows[row["id"]] = row
+
+    will_auto: List[Dict[str, Any]] = []
+    manual: List[Dict[str, Any]] = []
+    for pending_id, source_doc_index in ref_order:
+        row = pending_rows.get(pending_id)
+        if row is None:
+            manual.append({
+                "source_doc_index": source_doc_index,
+                "pending_customer_id": pending_id,
+                "extracted_name": None,
+                "extracted_address": None,
+                "extracted_phone": None,
+                "reason": "pending_row_missing",
+            })
+            continue
+        name = row.get("extracted_customer_name") or ""
+        address = row.get("extracted_address") or ""
+        phone = row.get("extracted_phone") or ""
+        has_signal = bool((name or "").strip()
+                            or (address or "").strip()
+                            or (phone or "").strip())
+        payload = {
+            "source_doc_index": source_doc_index,
+            "pending_customer_id": pending_id,
+            "extracted_name": name or None,
+            "extracted_address": address or None,
+            "extracted_phone": phone or None,
+        }
+        if row.get("resolved_customer_id"):
+            # Prior commit attempt already resolved — treat as
+            # will_auto_create so the FE badge still counts it.
+            payload["prior_resolved_customer_id"] = row[
+                "resolved_customer_id"
+            ]
+            will_auto.append(payload)
+        elif has_signal:
+            will_auto.append(payload)
+        else:
+            payload["reason"] = "no_identifying_info"
+            manual.append(payload)
+
+    return {
+        "will_auto_create": will_auto,
+        "will_require_manual_review": manual,
+    }
+
+
+# ═════════════════════════════════════════════════════════════
 # PDFI-PAID-B · Feb-2026 — paid-status validation helper.
 # ═════════════════════════════════════════════════════════════
 def _validate_paid_status(
