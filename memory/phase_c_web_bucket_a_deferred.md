@@ -1,6 +1,6 @@
-# Phase C.web Bucket A — Deferred items (post-residual-sweep)
+# Phase C.web Bucket A — Deferred items (post-Batch-8 residual sweep)
 
-> **Updated**: Feb 2026 — Post α.rollback + A2 shared helper + Batches 3-6 + Residual Batch 7.
+> **Updated**: Feb 2026 — Post α.rollback + A2 shared helper + Batches 3-6 + Residual Batches 7-8.
 >
 > **Commits shipped this dispatch**:
 > - α.rollback `824c52950` — reverted K71 `_locked` widening + flipped 2 drifted test files (ack-bypass-aged + silent-bypass) to Phase-#3 narrow invariants. Kept the RecurringJobs save-disable α fix.
@@ -9,18 +9,20 @@
 > - Batch 4 `2b53405f8` — portal + leads theme (3 files, 3 deferred).
 > - Batch 5 `d3fcdbf41` — lazy-import + h1-class + pdf-import prefix match (6 files).
 > - Batch 6 `fc084e5b5` — topbar slice-size + fragment-wrap + pt-16 sunset (4 files).
-> - Residual Batch 7 (this commit) — Group U quick-win sweep (4 files cleared).
+> - Residual Batch 7 `4689079f3` — Group U quick-win sweep (4 files cleared, 3 deferred).
+> - Residual Batch 8 (this commit) — A2.residual PRICEBOOK-UNIFY picker rename + mock widen (3 files cleared, 2 deferred).
 >
 > **Statistics**:
 > - **Pre-sweep failing**: 58 files
 > - **Post α/β/γ (start of C.web dispatch)**: 51 files
 > - **Post Batches 3-6**: 28 files
-> - **Post Residual Batch 7 (now)**: **24 files**
-> - **Net reduction across all dispatches**: **34 files (-59%)**
+> - **Post Residual Batch 7**: 24 files
+> - **Post Residual Batch 8 (now)**: **21 files**
+> - **Net reduction across all dispatches**: **37 files (-64%)**
 
 ---
 
-## Remaining 24 failing files — categorized
+## Remaining 21 failing files — categorized
 
 ### Group A4 — γ-triaged (DO NOT TOUCH) — 7 files
 Already documented in `phase_c_web_bucket_c_gamma_verdicts.md` with product-decision verdicts pending. All require human ruling before any fix.
@@ -37,13 +39,17 @@ Rules state: no mobile edits for web phases.
 - `phase30-4-confirm-modal-migration.test.jsx`
 - `phase35-mobile-finance-parity.test.jsx`
 
-### Group A2.residual — useAuth-null fixed but testid-drift remains — 5 files
-Shared mock installed in `fa95b2756`; residual failures are `qf-line-0-desc` / `qf-line-0-price` / combobox-site testid drift. Not useAuth-null anymore.
-- `invoice-line-item-price-editable.test.jsx`
-- `invoice-pricebook-writeback.test.jsx`
-- `invoice-save-errors-inline.test.jsx`
-- `p16-1-1-estimate-combobox-gap.test.jsx`
-- `phase40-tab-count-refresh.test.jsx` (timeout; may still be mock-drift)
+### Group A2.residual.remaining — 2 files
+Original A2.residual bucket had 5 files; Batch 8 cleared 3. Remaining 2 need multi-assertion semantic rewrite:
+
+- `p16-1-1-estimate-combobox-gap.test.jsx` — **PHASE PRICEBOOK-UNIFY COMPONENT SWAP**.
+  - Source: `QuoteInvoiceNew.jsx` replaced `MasterServiceCombobox` with `PricebookItemPicker` (Feb-2026 Phase PRICEBOOK-UNIFY).
+  - Failures: assertions anchor to `MasterServiceCombobox` import literal + `qf-line-N-desc` wrapper testid (now `qf-line-N-picker-wrapper` on the shared picker), + wrapper-level option testid `qf-line-N-desc-option-{id}` (now `qf-line-N-picker-item-N` on the shared picker).
+  - **Needs semantic rewrite**: 5+ assertions need to pivot from the combobox shape to the picker shape. The historical intent "P16.1.1 drop-in combobox is wired to description" is now obsolete; the new intent "PRICEBOOK-UNIFY picker is wired to description + unit_price" is covered by `src/pages/quotes/__tests__/QuoteInvoiceNew.pricebook.test.jsx` already. Candidate for **DELETION** rather than rewrite — the P16.1.1 phase is sunsetted.
+
+- `phase40-tab-count-refresh.test.jsx` — **P40 COUNT-REFETCH REGRESSION**.
+  - Failure: After the mute PATCH succeeds, `_countCallsFor(/is_muted=true/) >= 1` fails — the current `CustomersList.jsx` does NOT re-fire `/customers?count_only=true&is_muted=true` after a mute action. P40 fix appears to have regressed OR the current source uses optimistic badge updates without a re-fetch.
+  - **Needs source audit**: Determine if the mute flow should re-fetch counts (P40 contract) or if the test is semantically stale (optimistic-update path). Non-mechanical.
 
 ### Group T — timeout-only — 2 files
 Hangs in 5s waitFor. Likely mock-drift (missing resolver for a specific endpoint, or mocked `useAuth` triggers an infinite loading loop in the component).
@@ -61,61 +67,54 @@ Need multi-assertion flipping, not simple regex-widen.
 - `k68-customer-status-tab-counts.test.jsx` — "expected null to be truthy" — assertion on an effect-dependency split that the test can't locate. Needs source-walk.
 
 ### Group U.residual — Residual Batch 7 deferred — 3 files
-Investigated in this dispatch but needs multi-source alignment OR a human product ruling. Each deferred with specific rationale:
+Investigated in Batch 7 but needs multi-source alignment OR a human product ruling.
 
-- `customer-detail-navy-command-strip.test.jsx` — **PHASE 28 REGRESSION LOCK CONFLICT**.
-  - Failure: `expected 42864 to be greater than 60268` (strip's `indexOf` fails the "sits below Portal Access and above the header card" ordering invariant).
-  - Root cause: Phase 28 identity-header reposition changed the Customer Detail layout order — the navy command strip now mounts ABOVE Portal Access, not between it and the header card.
-  - **Needs human**: Which ordering is canonical? Phase 28 shipped the current ordering intentionally; the K71 test's ordering invariant was defined pre-Phase-28. User must rule: (a) revert Phase 28 identity-header position, or (b) rewrite the K71 ordering invariant to match the new layout, or (c) drop the ordering invariant entirely.
+- `customer-detail-navy-command-strip.test.jsx` — **PHASE 28 REGRESSION LOCK CONFLICT**. Needs human ruling on canonical ordering.
+- `k52-theming.test.js` — **PHASE N1 UNIVERSAL INPUT RESTYLE DRIFT**. Needs multi-assertion rewrite to accept the N1 "nested white card on navy strip" pattern.
+- `phase-n2-input-restyle-refinement.test.jsx` — **SOURCE-WIDE SEARCHICON DRIFT (9 outlier source files)**. Needs a dedicated theme-sweep dispatch (1-char-per-file × 9 files).
 
-- `k52-theming.test.js` — **PHASE N1 UNIVERSAL INPUT RESTYLE DRIFT**.
-  - Failures:
-    - `calendar-filters` strip Search block expects `background: "rgba(255,255,255,0.10)"` + `color: colors.nav.fgMuted` on the search input. Source (CalendarSchedule.jsx:1776) now uses `className="... bg-white ..."` + `text-[#0284C7]` per Phase N1 ("solid-white bg + navy text + blue focus ring").
-    - `quotes-filters` strip asserts `colors.onSurfaceSecondary` NOT in the strip; source has legitimate `onSurfaceSecondary` on inactive lifecycle tab text (QuotesList.jsx:443).
-  - **Needs multi-assertion rewrite**: 2–3 K52.1 assertions need to acknowledge the N1 "nested white card on navy strip" pattern instead of the pre-N1 "white/10 translucent overlay" pattern. Not a simple regex-widen — the assertions are structured as block scans against the whole strip.
+### Group U.cleared — Residual Batches 7-8 fixed — 7 files
+Cleared via regex widen / mock widen / baseline additions (test-only edits).
 
-- `phase-n2-input-restyle-refinement.test.jsx` — **SOURCE-WIDE SEARCHICON DRIFT (9 files)**.
-  - Failure: D1 scans every `<Search>` in `frontend/src/` and asserts each uses `colors.searchIcon` or `#0284C7`. 24 files use `colors.searchIcon`; 9 outlier files remain on stale tokens (`colors.muted`, `colors.nav.fgMuted`, or missing style entirely):
-    - `components/GlobalSearch.jsx:261`
-    - `components/GlobalSearchBar.jsx:210, 241`
-    - `components/pricebook/PricebookItemPicker.jsx:179` (`colors.muted` stale)
-    - `components/services/MasterServiceCombobox.jsx:337` (`colors.muted` stale)
-    - `components/ui/NavyFilterBar.jsx:146`
-    - `pages/admin/FleetMembership.jsx:125`
-    - `pages/settings/AIBrainPage.jsx:144, 173`
-    - `pages/settings/MasterServicesSettings.jsx:426` (`colors.muted` stale — attempted fix in this dispatch; reverted to keep scope clean)
-  - **Needs theme-sweep commit**: 1-char source alignment per file × 9 files. Theme-token sweep is a legitimate standalone commit — not a test-regex-widen candidate. Flag for a dedicated "N2 search-icon theme sweep" dispatch.
-
-### Group U.cleared — Residual Batch 7 fixed — 4 files
-Cleared in `<SHA>` via regex widen / baseline additions (test-only edits).
+**Batch 7 `4689079f3`** (4):
 - `concierge-avatar-parity.test.jsx` — widened `name={e.name}` regex to accept `name={e.human_name || e.name}` display-name fallback.
-- `p47-missed-status-badge.test.jsx` — widened 4 assertions to accept Phase 3d-portal pool/landscape split (`tile-next-service(?:-(?:pool|landscape))?`, `summary.next_(pool|landscape)_service.*`, both the legacy "None scheduled" fallback literal + the conditional-hide empty-state pattern).
-- `p49-service-report-restyle.test.jsx` — widened `function Section()` destructure signature to accept the new `templateFieldId` fifth arg; added `portal-service-report-superseded-banner` + `portal-service-report-superseded-original-at` to `P49_TESTIDS_ADDED` allowlist.
-- `task-m-job-reopen-ui.test.jsx` — widened `const locked = !!report.submitted_at;` regex to accept the optional PS-A `&& !techPostSubmitEdit` guard tail.
+- `p47-missed-status-badge.test.jsx` — widened 4 assertions to accept Phase 3d-portal pool/landscape split.
+- `p49-service-report-restyle.test.jsx` — widened `function Section()` destructure signature + added 2 superseded-banner testids to allowlist.
+- `task-m-job-reopen-ui.test.jsx` — widened `locked` regex to accept the optional PS-A `&& !techPostSubmitEdit` guard tail.
+
+**Batch 8 (this commit)** (3):
+- `invoice-line-item-price-editable.test.jsx` — renamed `qf-line-0-desc` → `qf-line-0-desc-input` (PRICEBOOK-UNIFY picker exposes input via `inputTestid`), widened `/items` mock to `.startsWith("/items")` for the picker's debounced search params, added dropdown-click flow (`qf-line-0-picker-item-0`) to actually SELECT a pricebook item (picker is not auto-select-on-type like the old combobox).
+- `invoice-pricebook-writeback.test.jsx` — same testid rename + mock widen + dropdown-click flow in the "label flips after selecting a pricebook item" test. The checkbox-send-payload test only needs the testid rename.
+- `invoice-save-errors-inline.test.jsx` — testid rename only in the shared `fillLineAndSubmit()` helper (the inline error path doesn't depend on an actual pricebook pick, just typing).
 
 ---
 
 ## Recommended next-dispatch shape
 
-### Lane 1 (quick wins, ~45 min, 5 files)
-- Group A2.residual — testid drift (`qf-line-0-desc` → current form).
-- Group T timeouts — add missing endpoint mocks that cause loading loops.
-
-### Lane 2 (medium, ~1 hr, 3 files)
+### Lane 1 (medium, ~1 hr, 3 files) — RECOMMENDED NEXT
 - Group B4.deferred — rewrite response-shape assertions + wrap `MemoryRouter`.
 
-### Lane 3 (theme-token sweep, ~30 min, 9 source files)
-- Phase N2 search-icon alignment: change `colors.muted` → `colors.searchIcon` (and equivalents) on the 9 outlier `<Search>` sites listed above. Expected to clear `phase-n2-input-restyle-refinement.test.jsx` + possibly adjacent k52 search-input assertions.
+### Lane 2 (theme-token sweep, ~30 min, 9 source files)
+- Phase N2 search-icon alignment: change `colors.muted` → `colors.searchIcon` (and equivalents) on the 9 outlier `<Search>` sites. Expected to clear `phase-n2-input-restyle-refinement.test.jsx` + possibly adjacent k52 search-input assertions.
+
+### Lane 3 (medium, ~45 min, 2 files)
+- Group B3.deferred — rewrite 3 drift assertions each.
 
 ### Lane 4 (K52.1 N1-reconciliation, ~45 min, 1 file)
 - `k52-theming.test.js` — rewrite the 2–3 K52.1 Slice-A assertions to accept the N1 "nested white card on navy strip" pattern.
 
-### Lane 5 (human decision required)
-- `customer-detail-navy-command-strip` — Phase 28 identity-header-reposition conflict. User ruling needed on whether Phase 28 was correct or the strip should move.
+### Lane 5 (delete-vs-rewrite decision)
+- `p16-1-1-estimate-combobox-gap.test.jsx` — P16.1.1 is sunsetted by PRICEBOOK-UNIFY. The newer `QuoteInvoiceNew.pricebook.test.jsx` already covers the picker. **Candidate for deletion with a line in the doc rather than a semantic rewrite.** Needs human ruling.
+
+### Lane 6 (feature-regression investigation)
+- `phase40-tab-count-refresh.test.jsx` — determine canonical mute-flow count-refetch behavior. If P40 regressed in source, this is a bug not a test fix.
+
+### Lane 7 (human decision required)
+- `customer-detail-navy-command-strip` — Phase 28 identity-header-reposition conflict.
 - Group A4 γ-triaged (7 files).
 
 ---
 
-## Phase 20/22/23/24/26b/27/28/28b/30/31/33/34 regression locks
+## Phase 20/22/23/24/26b/27/28/28b/30/31/32/33/34/35 regression locks
 
-All verified green via targeted spot-checks during each batch. Residual Batch 7 ran the Phase 33 (`pdfImportUnifiedUI` + `pdfi-upload-sidepanel`) and Phase 34 (`revenue-date-range-year-presets`) suites as a sanity gate — 54/54 green post-sweep. No regression-lock drift introduced by any of the 7 commits shipped across this + prior dispatches.
+All verified green via targeted spot-checks during each batch. Residual Batches 7-8 ran the Phase 33 (`pdfImportUnifiedUI` + `pdfi-upload-sidepanel`) and Phase 34 (`revenue-date-range-year-presets`) suites as a sanity gate — green post-sweep. No regression-lock drift introduced by any of the 8 commits shipped across this + prior dispatches.

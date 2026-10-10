@@ -70,7 +70,11 @@ beforeEach(() => {
 
 async function fillLineAndSubmit() {
   // Customer pre-selected via query param — skip combobox interaction.
-  fireEvent.change(screen.getByTestId("qf-line-0-desc"),
+  // Phase C.web residual · Feb-2026 — Phase PRICEBOOK-UNIFY swapped
+  // the line-description element from a plain <input> (wrapper owned
+  // ``qf-line-0-desc`` directly) to a nested ``PricebookItemPicker``
+  // whose input lives at the ``qf-line-0-desc-input`` testid.
+  fireEvent.change(screen.getByTestId("qf-line-0-desc-input"),
                    { target: { value: "Widget" } });
   fireEvent.change(screen.getByTestId("qf-line-0-price"),
                    { target: { value: "12" } });

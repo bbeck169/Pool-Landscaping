@@ -20,7 +20,10 @@ vi.mock("@/api", () => ({
       if (url === "/customers?is_active=true") {
         return [{ id: "cust-1", name: "TEST_cust", is_active: true }];
       }
-      if (url === "/items") {
+      // Phase C.web residual · Feb-2026 — PRICEBOOK-UNIFY picker
+      // appends ``?search=...&active=true&limit=50``. Match on
+      // prefix so the picker's debounced search request resolves.
+      if (url.startsWith("/items")) {
         return [{
           id: "pb-1", name: "Backwash Hose", unit_price: 42,
           category: "Pool", item_type: "product",
@@ -82,8 +85,19 @@ describe("Invoice · pricebook writeback checkbox", () => {
   it("label flips to 'Also save this to the pricebook' after selecting a pricebook item", async () => {
     mount();
     await tick();
-    const desc = screen.getByTestId("qf-line-0-desc");
+    // Phase C.web residual · Feb-2026 — PRICEBOOK-UNIFY picker:
+    // typing shows dropdown; an explicit click on the item is
+    // required to fire the picker's ``onChange`` and populate the
+    // line's ``pricebook_item_id`` (which is what flips the label
+    // from "Also add this to the pricebook" → "Also save this to
+    // the pricebook").
+    const desc = screen.getByTestId("qf-line-0-desc-input");
     fireEvent.change(desc, { target: { value: "Backwash Hose" } });
+    const option = await waitFor(
+      () => screen.getByTestId("qf-line-0-picker-item-0"),
+      { timeout: 1500 },
+    );
+    fireEvent.click(option);
     await tick();
     const label = screen.getByTestId("qf-line-0-writeback-label");
     expect(label.textContent).toMatch(/save this to the pricebook/i);
@@ -94,7 +108,8 @@ describe("Invoice · pricebook writeback checkbox", () => {
     await tick();
     // Customer pre-selected via the ?customer_id= query param — skip
     // the CustomerCombobox interaction in JSDOM.
-    fireEvent.change(screen.getByTestId("qf-line-0-desc"),
+    // Phase C.web residual · Feb-2026 — PRICEBOOK-UNIFY picker swap.
+    fireEvent.change(screen.getByTestId("qf-line-0-desc-input"),
                      { target: { value: "Widget" } });
     fireEvent.change(screen.getByTestId("qf-line-0-price"),
                      { target: { value: "12" } });

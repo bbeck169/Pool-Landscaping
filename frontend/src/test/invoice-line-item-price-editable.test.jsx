@@ -21,7 +21,10 @@ vi.mock("@/api", () => ({
       if (url === "/customers?is_active=true") {
         return [{ id: "cust-1", name: "TEST_cust", is_active: true }];
       }
-      if (url === "/items") {
+      // Phase C.web residual · Feb-2026 — PRICEBOOK-UNIFY picker
+      // appends ``?search=...&active=true&limit=50``. Match on
+      // prefix so the picker's debounced search request resolves.
+      if (url.startsWith("/items")) {
         return [{
           id: "pb-1", name: "Backwash Hose", unit_price: 42,
           category: "Pool", item_type: "product",
@@ -78,9 +81,18 @@ describe("Invoice · line-item price editable", () => {
   it("shows a 'custom price' hint when the value diverges from the pricebook default", async () => {
     mount();
     await tick();
-    // Select a pricebook item via the description datalist input.
-    const desc = screen.getByTestId("qf-line-0-desc");
+    // Select a pricebook item via the description picker input.
+    // Phase C.web residual · Feb-2026 — PRICEBOOK-UNIFY picker:
+    // typing populates the dropdown; an explicit click on the
+    // dropdown item is required to fire the picker's ``onChange``
+    // and populate ``li.description`` + ``li.unit_price``.
+    const desc = screen.getByTestId("qf-line-0-desc-input");
     fireEvent.change(desc, { target: { value: "Backwash Hose" } });
+    const option = await waitFor(
+      () => screen.getByTestId("qf-line-0-picker-item-0"),
+      { timeout: 1500 },
+    );
+    fireEvent.click(option);
     await tick();
     // The pricebook default should have prefilled to 42.
     const price = screen.getByTestId("qf-line-0-price");
@@ -97,8 +109,15 @@ describe("Invoice · line-item price editable", () => {
   it("no hint when the price matches the pricebook default", async () => {
     mount();
     await tick();
-    const desc = screen.getByTestId("qf-line-0-desc");
+    // Phase C.web residual · Feb-2026 — see sibling fixture for the
+    // PRICEBOOK-UNIFY dropdown-click pattern.
+    const desc = screen.getByTestId("qf-line-0-desc-input");
     fireEvent.change(desc, { target: { value: "Backwash Hose" } });
+    const option = await waitFor(
+      () => screen.getByTestId("qf-line-0-picker-item-0"),
+      { timeout: 1500 },
+    );
+    fireEvent.click(option);
     await tick();
     expect(screen.queryByTestId("qf-line-0-price-custom")).toBeNull();
   });
