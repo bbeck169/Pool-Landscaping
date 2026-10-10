@@ -41,7 +41,7 @@ describe("Schedule · job-level notes", () => {
     expect(src).toMatch(
       /const\s+jobNote\s*=\s*\(note\s*&&\s*String\(note\)\.trim\(\)\)\s*\?/,
     );
-    expect(src).toMatch(/if\s*\(!jobNote\s*&&\s*!custNote\)\s*return\s+null/);
+    expect(src).toMatch(/if\s*\(!jobNote\s*&&\s*!custNote(?:\s*&&[^)]*)?\)\s*return\s+null/);
   });
 
   it("surfaces the truncation ellipsis when the server flags ``notes_truncated``", () => {

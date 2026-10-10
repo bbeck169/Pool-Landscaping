@@ -41,12 +41,17 @@ describe("SCHEDULE-CUSTOMER-CLICKTHROUGH · source-level wiring "
          + "contract", () => {
   it("TodaySchedule.jsx: customer-name render guards on admin + "
      + "super_admin + j.customer_id", () => {
-    // The gate expression must reference BOTH roles AND the
-    // customer_id presence so the clickable path never fires
-    // without a target.
+    // Phase CROSS-REF Feb-2026 — the admin/super_admin check moved
+    // from an inline ``user?.role`` reference inside the helper
+    // (which was a scope bug — see the inline comment at
+    // ``TodaySchedule.jsx`` ~L1155-1162) to a prop-drilled
+    // ``isAdminTier`` boolean computed at the parent via
+    // ``["admin", "super_admin"].includes(user.role)``. Lock the
+    // new shape: both the parent prop-pass + the gated child.
     expect(TODAY_SRC).toMatch(
-      /user\?\.role\s*===\s*"admin"[\s\S]{0,80}user\?\.role\s*===\s*"super_admin"[\s\S]{0,80}j\.customer_id/,
+      /isAdminTier=\{\s*\["admin",\s*"super_admin"\]\.includes\([\s\S]{0,80}?\)/,
     );
+    expect(TODAY_SRC).toMatch(/isAdminTier\s*&&\s*j\.customer_id/);
   });
 
   it("TodaySchedule.jsx: renders ``<CustomerLink>`` with the "
@@ -77,9 +82,17 @@ describe("SCHEDULE-CUSTOMER-CLICKTHROUGH · source-level wiring "
 
   it("CalendarSchedule.jsx: customer-name render guards on admin + "
      + "super_admin + j.customer_id", () => {
+    // Phase SCHEDULE-CUSTOMER-CLICKTHROUGH · Feb-2026 — the gate
+    // moved from an inline ``user?.role`` reference inside
+    // ``GridPanel`` (bare-ref ReferenceError — see comment at
+    // ``CalendarSchedule.jsx:1118-1125``) to a prop-drilled
+    // ``canClickCustomerName`` boolean computed at the parent via
+    // ``["admin", "super_admin"].includes(…)``. Lock the two
+    // required anchors: the parent prop + the gated child.
     expect(CAL_SRC).toMatch(
-      /user\?\.role\s*===\s*"admin"[\s\S]{0,80}user\?\.role\s*===\s*"super_admin"[\s\S]{0,80}j\.customer_id/,
+      /const\s+canClickCustomerName\s*=\s*\["admin",\s*"super_admin"\]\.includes\(/,
     );
+    expect(CAL_SRC).toMatch(/canClickCustomerName[\s\S]{0,40}&&\s*j\.customer_id/);
   });
 
   it("CalendarSchedule.jsx: renders ``<CustomerLink>`` with the "

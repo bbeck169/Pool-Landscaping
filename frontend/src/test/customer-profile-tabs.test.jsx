@@ -22,7 +22,7 @@ describe("CustomerDetail · F3.5 perf contract", () => {
   it("fetches only THIS customer's jobs via `?customer_id=…`", () => {
     // The customer-scoped call MUST be present.
     expect(SRC).toMatch(
-      /api\.get\(`\/jobs\?customer_id=\$\{encodeURIComponent\(id\)\}`\)/,
+      /api\.get\(\s*`\/jobs\?customer_id=\$\{encodeURIComponent\(id\)\}`/,
     );
   });
 

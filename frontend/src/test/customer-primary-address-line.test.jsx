@@ -75,7 +75,7 @@ describe("Customer primary-property address — page wiring", () => {
   });
 
   it("renders the address element between the h1 row and the chips row", () => {
-    const h1Idx  = pageSrc.indexOf('className="text-3xl font-bold"');
+    const h1Idx  = pageSrc.indexOf('data-testid="customer-detail-inline-h1"');
     const chipsIdx = pageSrc.indexOf('<CustomerTagPicker');
     const addrIdx = pageSrc.indexOf('data-testid="customer-primary-address"');
     expect(h1Idx).toBeGreaterThan(-1);

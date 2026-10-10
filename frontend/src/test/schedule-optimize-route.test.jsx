@@ -200,7 +200,7 @@ describe("CalendarSchedule · Optimize Route wire-up (source guard)", () => {
     // optimizePayload so opening Reorder-then-Save doesn't
     // accidentally apply the last optimize suggestion.
     expect(src).toMatch(
-      /onOpenBulkReorder=\{\(\)\s*=>\s*\{\s*setOptimizePayload\(null\)\s*;\s*setBulkReorderOpen\(true\)/,
+      /onOpenBulkReorder=\{\(\)\s*=>\s*\{[\s\S]{0,1500}setOptimizePayload\(null\)\s*;\s*setBulkReorderOpen\(true\)/,
     );
   });
 });

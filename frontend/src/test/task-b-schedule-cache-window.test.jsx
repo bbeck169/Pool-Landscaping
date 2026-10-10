@@ -96,6 +96,10 @@ describe("Task B · CalendarSchedule cache-window guard", () => {
     // Grepping for the exact patterns keeps the regression guard
     // narrow.
     expect(SRC).toMatch(/const\s+bulkComplete\s*=\s*async[\s\S]{0,600}await\s+load\(\)/);
-    expect(SRC).toMatch(/const\s+bulkMove\s*=\s*async[\s\S]{0,600}await\s+load\(\)/);
+    // bulkMove was refactored to delegate to ``_bulkRescheduleHelper``
+    // which internally invokes ``onReload: load`` instead of ``await
+    // load()`` directly — guard the delegation shape instead so a
+    // future refactor that drops the reload path still fails CI.
+    expect(SRC).toMatch(/const\s+bulkMove\s*=\s*async[\s\S]{0,600}(?:await\s+load\(\)|onReload:\s*load)/);
   });
 });

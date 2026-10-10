@@ -64,8 +64,11 @@ describe("Phase S1 · CalendarSchedule source contracts", () => {
     // Match against the filteredJobs memo — a specific tech is
     // selected AND the job has a technician_id AND the ids don't
     // match → hide. Empty ``technician_id`` slips through.
+    // Phase P11 refactored the inline predicate into a shared
+    // ``jobMatchesLane(j, techId)`` helper that mirrors the backend
+    // 4-field disjunction. Lock the helper call-site instead.
     expect(SRC).toMatch(
-      /techId\s*&&\s*j\.technician_id\s*!==\s*techId\s*&&\s*!!j\.technician_id/,
+      /if\s*\(\s*!jobMatchesLane\(\s*j\s*,\s*techId\s*\)\s*\)\s*return\s+false/,
     );
   });
 
