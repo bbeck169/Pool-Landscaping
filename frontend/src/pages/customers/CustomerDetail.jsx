@@ -1019,8 +1019,8 @@ export default function CustomerDetail() {
                   data-testid="customer-since-label"
                   title={customer.customer_since}
                   className="text-xs font-medium px-2 py-1 rounded"
-                  style={{ background: colors.surfaceSecondary,
-                              color: colors.onSurfaceSecondary }}
+                  style={{ background: "#0a0940",
+                              color: "rgba(255,255,255,0.85)" }}
                 >
                   {`Customer since ${new Date(customer.customer_since)
                       .toLocaleDateString(undefined, {
@@ -1103,7 +1103,7 @@ export default function CustomerDetail() {
                 return (
                   <div
                     className="flex items-center gap-1.5 mt-2 text-sm truncate max-w-xl"
-                    style={{ color: colors.muted }}
+                    style={{ color: "rgba(255,255,255,0.85)" }}
                     data-testid="customer-primary-address"
                     title="No address on file"
                   >
@@ -1127,7 +1127,7 @@ export default function CustomerDetail() {
                   aria-label={`Navigate to ${oneLine}`}
                   title={oneLine}
                   className="inline-flex items-center gap-1.5 mt-2 text-sm hover:underline truncate max-w-xl"
-                  style={{ color: colors.onSurfaceSecondary }}
+                  style={{ color: "rgba(255,255,255,0.85)" }}
                   data-testid="customer-primary-address"
                 >
                   <MapPin size={14} />
