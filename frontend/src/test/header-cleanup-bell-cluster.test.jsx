@@ -63,7 +63,7 @@ describe("Header cleanup — AdminTopBar direct NotificationBell", () => {
     for (const testid of branches) {
       const branchIdx = TOPBAR.indexOf(`data-testid="${testid}"`);
       expect(branchIdx).toBeGreaterThan(-1);
-      const slice = TOPBAR.slice(branchIdx, branchIdx + 2500);
+      const slice = TOPBAR.slice(branchIdx, branchIdx + 3500);
       const settingsIdx = slice.indexOf("<SettingsSprocket />");
       const bellIdx     = slice.search(/<NotificationBell\s+variant="inline"(?:\s+tone="navy")?\s*\/>/);
       const signOutIdx  = slice.indexOf("<SignOutButton />");

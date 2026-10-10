@@ -27,12 +27,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Item 1 — Portal layout ``pt-16`` source-lint
 // ─────────────────────────────────────────────────────────────
 describe("P34 · Item 1 · Portal layout pt-16", () => {
-  it("AppLayout applies ``pt-16`` when on a /portal path", () => {
+  it("portal pt-16 compensation retired (P43 sticky-header replaces the hack)", () => {
     const p = path.resolve(__dirname, "../layouts/AppLayout.jsx");
     const src = fs.readFileSync(p, "utf-8");
-    // Look for the conditional wrapper class. We accept either
-    // single-line or ternary formatting.
-    expect(src).toMatch(/pathname\.startsWith\(["']\/portal["']\)\s*\?\s*["']pt-16["']/);
+    // Phase P43 · Feb-2026 — ``pt-16`` compensation retired after
+    // AppLayout gained a proper ``portal-sticky-header``. Sunset
+    // marker so a future accidental re-addition fails CI.
+    expect(src).not.toMatch(/pathname\.startsWith\(["']\/portal["']\)\s*\?\s*["']pt-16["']/);
   });
 });
 

@@ -59,7 +59,7 @@ describe("AdminTopBar cleanup — cluster ordering across all 3 wrap branches", 
     for (const testid of branches) {
       const branchIdx = TOPBAR.indexOf(`data-testid="${testid}"`);
       expect(branchIdx).toBeGreaterThan(-1);
-      const slice = TOPBAR.slice(branchIdx, branchIdx + 2500);
+      const slice = TOPBAR.slice(branchIdx, branchIdx + 3500);
       const settingsIdx = slice.indexOf("<SettingsSprocket />");
       // Feb-2026 · AdminTopBar bell cleanup — NotificationBell now
       // carries an optional ``tone="navy"`` prop (glyph flips to

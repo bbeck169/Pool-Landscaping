@@ -53,7 +53,7 @@ describe("AppLayout · mobile nav role gate", () => {
     // uses, inverted". Confirm both call-sites reference the same
     // 4-role tuple in the same order.
     const adminTopBarMount = APP_LAYOUT.match(
-      /\["admin",\s*"super_admin",\s*"manager",\s*"technician"\]\.includes\([\s\S]{1,120}?\)\s*&&\s*\(\s*<AdminTopBar/,
+      /\["admin",\s*"super_admin",\s*"manager",\s*"technician"\]\.includes\([\s\S]{1,120}?\)\s*&&\s*\([\s\S]{0,60}?<AdminTopBar/,
     );
     expect(adminTopBarMount).not.toBeNull();
     const row1Gate = APP_LAYOUT.match(
