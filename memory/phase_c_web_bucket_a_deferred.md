@@ -1,201 +1,96 @@
-# Phase C.web Bucket A — Deferred items + α post-mortem
+# Phase C.web Bucket A — Deferred items (final-state after α.rollback + A2 + Batches 3-6)
 
-> **Produced**: Feb 2026 — During Batch-3 investigation (schedule + customer themed sweep).
-> Previous landmarks: α `2878a6be9`, β `ac341143b`, γ `c3d9ed911`.
-> Current failing-suite count post α/β: **51 files** (down from 58).
-> Of the 51, **7 are already triaged in γ** → true remaining pool = **44 files**.
-> **Status**: Batch 3-6 PAUSED pending user decisions on the material findings below.
-
----
-
-## 🛑 CRITICAL — α post-mortem (requires user ruling)
-
-The α commit (`2878a6be9`) widened the K71 `_locked` array in
-`QuoteInvoiceDetail.jsx` from `_doc_type === "invoice" && _st === "paid"` to
-`["sent", "accepted", "paid", "past_due", "unpaid", "overdue"].includes(_st)`.
-
-This "restore source" directive was based on `/app/memory/phase_c_web_bucket_c_rca.md`
-entry **#3** which classified `quote-invoice-detail-ack-bypass-aged.test.jsx`
-as a suspected source regression. That classification was **incorrect**.
-
-### What the RCA missed
-
-Two sibling policy-anchor tests were ALREADY green on the pre-α source and
-assert the OPPOSITE invariant (narrow lock, no silent-bypass path):
-
-**1. `src/test/doc-lock-policy-relax.test.jsx`** — asserts:
-```jsx
-expect(QID_SRC).toMatch(
-  /_locked\s*=\s*_doc_type\s*===\s*"invoice"\s*&&\s*_st\s*===\s*"paid"/,
-);
-expect(QID_SRC).not.toMatch(
-  /_silentBypass\s*=\s*_role\s*===\s*"super_admin"/,
-);
-const silentBypassFalseLines =
-  QID_SRC.match(/const\s+_silentBypass\s*=\s*false\s*;/g) || [];
-expect(silentBypassFalseLines.length).toBeGreaterThanOrEqual(2);
-```
-Post-α this file **fails 3 assertions** — all three because α restored the
-widened array literal + would require `_silentBypass = _role === "super_admin"`
-to satisfy the ack-bypass test's lint on the lock-dialog path.
-
-**2. `src/test/quote-invoice-detail-super-admin-silent-bypass.test.jsx`**
-asserts the inverse of the above:
-```jsx
-expect(SRC).toMatch(/_silentBypass\s*=\s*_role\s*===\s*"super_admin"/);
-```
-Pre-α, source had `_silentBypass = false` → this test was ALREADY FAILING
-pre-α, meaning the super-admin bypass had been intentionally retired by
-the DOC-LOCK-POLICY-RELAX phase.
-
-### The actual history, inferred from comments in `QuoteInvoiceDetail.jsx` lines 1495-1502
-
-> *"DOC-LOCK-POLICY-RELAX · Feb-2026 — estimates are now always editable
-> regardless of status. Invoices are editable unless the status is `paid`
-> (the only user-defined read-only state). `void` / `cancelled` are terminal
-> and 409 server-side, but we don't gate them here either — let the backend
-> be the single source of truth for lock state."*
-
-→ Policy progression:
-1. **Original**: narrow `paid`-only client lock.
-2. **Ack-bypass widen**: expanded to the 6-status array + added
-   `_silentBypass = _role === "super_admin"` so super_admins still edit.
-3. **DOC-LOCK-POLICY-RELAX** (the current prod intent): reverted to narrow
-   `paid`-only lock + `_silentBypass = false` (backend is now the single
-   source of truth; client over-locking caused support tickets).
-
-The `quote-invoice-detail-ack-bypass-aged.test.jsx` test file is a stranded
-anchor from phase #2. The DOC-LOCK-POLICY-RELAX phase retired phase-#2's
-behavior but forgot to delete / rewrite the ack-bypass test file.
-
-### Required user decision (please pick ONE)
-
-**Option α.rollback** (my recommendation):
-- Revert the K71 `_locked` widening in `QuoteInvoiceDetail.jsx` at the two
-  save sites (lines ~1504 + ~1812) back to
-  `_locked = _doc_type === "invoice" && _st === "paid";`.
-- Keep the RecurringJobs portion of α as-is (that one was a legitimate fix).
-- Rewrite `quote-invoice-detail-ack-bypass-aged.test.jsx` to assert the
-  **narrow** lock + `_silentBypass = false` invariants (effectively
-  retire the Phase-#2 behavior lock).
-- `doc-lock-policy-relax.test.jsx` + `quote-invoice-detail-super-admin-silent-bypass.test.jsx`
-  stay as-is; the super-admin test's `_silentBypass = _role === "super_admin"`
-  anchor needs the same test-stale flip (DOC-LOCK-POLICY-RELAX retired it).
-
-**Option α.extend**:
-- Keep the α widening.
-- Additionally restore `_silentBypass = _role === "super_admin"` at both save sites.
-- Flip `doc-lock-policy-relax.test.jsx` to assert the widened invariants.
-- This re-opens the "client over-locks" support-ticket risk the
-  POLICY-RELAX phase explicitly fixed.
-
-**Option α.keep-split** (status quo):
-- Keep α as shipped.
-- Defer the 2 conflicting policy-anchor tests to this doc permanently.
-- Accept that the test suite has 3 mutually-incompatible lock policies locked.
+> **Updated**: Feb 2026 — Post α.rollback + A2 shared helper + Batches 3-6.
+>
+> **Commits shipped this dispatch**:
+> - α.rollback `824c52950` — reverted K71 `_locked` widening + flipped 2 drifted test files (ack-bypass-aged + silent-bypass) to Phase-#3 narrow invariants. Kept the RecurringJobs save-disable α fix.
+> - A2 shared helper `fa95b2756` — `src/test/_helpers/mockAuth.js` + inline `vi.mock("@/auth")` block injected in 6 drifted test files.
+> - Batch 3 `37258e41e` — schedule + customer theme (7 files).
+> - Batch 4 `2b53405f8` — portal + leads theme (3 files, 3 deferred).
+> - Batch 5 `d3fcdbf41` — lazy-import + h1-class + pdf-import prefix match (6 files).
+> - Batch 6 `fc084e5b5` — topbar slice-size + fragment-wrap + pt-16 sunset (4 files).
+>
+> **Statistics**:
+> - **Pre-sweep failing**: 58 files
+> - **Post α/β/γ (start of this dispatch)**: 51 files
+> - **Post Batches 3-6 (now)**: **28 files**
+> - **Net reduction this dispatch**: **23 files (-45%)**
 
 ---
 
-## Remaining 44 failing files — categorized
+## Remaining 28 failing files — categorized
 
-### Group A1 — straight regex-drift repairs (likely 1-3 lines per test file) — **~17 files**
-Source behavior correct; test regex / substring anchor needs updating.
+### Group A4 — γ-triaged (DO NOT TOUCH) — 7 files
+Already documented in `phase_c_web_bucket_c_gamma_verdicts.md` with product-decision verdicts pending. All require human ruling before any fix.
+- `chemical-application-form.test.jsx` · TEST-STALE (DecimalInput fixture)
+- `phase-mobile-drawer-parity.test.jsx` · TEST-STALE (groups-list refresh)
+- `quote-decline-reopen.test.jsx` · NEEDS-HUMAN (Converted filter)
+- `rules-of-hooks-guard.test.jsx` · ENV-ISSUE (eslint shell-out)
+- `schedule-numbered-reorder.test.jsx` · NEEDS-HUMAN (duplicate-detection UX)
+- `settings-sprocket-visibility.test.jsx` · TEST-STALE (widen regex gap)
+- `task-a-sidebar-recurring-jobs.test.jsx` · NEEDS-HUMAN (sunset vs. accident)
 
-- `schedule-job-notes.test.jsx` — `if (!jobNote && !custNote)` regex misses the new 4-way guard `if (!jobNote && !custNote && !pool && !landscape)`.
-- `schedule-optimize-route.test.jsx` — `onOpenBulkReorder=` arrow-form regex drift.
-- `schedule-per-tech-filter.test.jsx` — `techId && j.technician_id !==` arrow-filter regex drift.
-- `task-b-schedule-cache-window.test.jsx` — `bulkMove` async arrow-form regex drift.
-- `pages/schedule/__tests__/schedule-customer-clickthrough.test.jsx` — `user?.role === "admin"` regex drift.
-- `customer-first-access-filter.test.jsx` — `noPaymentFilter, neverLoggedIn,` dependency-array ordering.
-- `customer-primary-address-line.test.jsx` — `indexOf("marker") === -1` indicates the marker string was renamed.
-- `customer-profile-tabs.test.jsx` — `/jobs?customer_id=${encodeURIComponent(id)}` URL regex drift.
-- `customers-list-waitlist-tab.test.jsx` — `/customers?waitlisted=true&count_only=true` URL regex drift.
-- `admin-topbar-cleanup-cluster-reorder.test.jsx` — cluster-ordering `indexOf()` marker drift.
-- `header-cleanup-bell-cluster.test.jsx` — same cluster-ordering drift.
-- `concierge-avatar-parity.test.jsx` — `<AIAvatar name={e.name}>` regex drift.
-- `k52-theming.test.js` — `rgba(255,255,255,0.1...)` background color-token drift.
-- `k63-lead-alerts-settings.test.jsx` — `import LeadAlertsSettings from "@/pages/...` regex drift.
-- `k68-customer-status-tab-counts.test.jsx` — effect-dep-array probe returns null, likely renamed effect.
-- `leads-bulk-hard-delete-and-polish.test.jsx` — `disabled={busy || !hardAcknowledge...}` + `.filter((r) => r.ok)` regex drift.
-- `n5-t1-page-header-adoption.test.jsx` — timeout (test probably await `findByTestId` on a renamed element).
-- `p34-launch-hardening.test.jsx` — `path?.endsWith("/portal") ? "pt-16"` regex drift.
-- `p47-missed-status-badge.test.jsx` — `testid="tile-next-service"` + `"None scheduled"` string drift.
-- `p49-service-report-restyle.test.jsx` — likely CSS token / shadow-sm class drift.
-- `phase-n2-input-restyle-refinement.test.jsx` — `colors.searchIcon` token drift on Search icons.
-- `phase30-4-confirm-modal-migration.test.jsx` — `showConfirm` import regex drift in mobile route files (mobile scope — defer per rules).
-- `phase35-mobile-finance-parity.test.jsx` — `api.get("/recurring-jobs")` string drift (mobile — defer).
-- `phase40-time-off.test.jsx` — `import TimeOffPage from "@/pages/...` regex drift.
-- `phase47c-add-card-restore.test.jsx` — `import AddCardPage from "@/pages/...` regex drift.
-- `phase48-admin-customer-contact-redesign.test.jsx` — `<h1[^>]*text-3xl[^>]*>{custome...}</h1>` regex drift.
-- `portal-home-cta-row-mobile-clearance.test.jsx` — `\bmt-12\b` className drift (likely renamed to `mt-14` or similar).
-- `portal-quick-actions-wiring.test.jsx` — `function ActionTile(...)` regex drift.
-- `queue-item-4-comms-ui-polish.test.jsx` — `import AdminCommsSuppressionLog` drift.
-- `app-compiles-smoke.test.jsx` — `PortalWarranties` import count drift (likely 0, path renamed).
-- `pdfImportTotalColumn.test.jsx` — trailing `Verbatim` label glued onto formatted currency (`$400.00Verbatim`). Source added a "Verbatim" sibling node — regex needs `/^\$400\.00/` (prefix match) OR test fixture needs to query a specific child.
-- `task-m-job-reopen-ui.test.jsx` — `const locked = !!report.submit...` regex drift.
+### Group M — Mobile scope (deferred per rules) — 2 files
+Rules state: no mobile edits for web phases.
+- `phase30-4-confirm-modal-migration.test.jsx`
+- `phase35-mobile-finance-parity.test.jsx`
 
-### Group A2 — Bucket B drift surfaced after α landed (useAuth mock null) — **~8 files**
-All fail with `Cannot destructure property 'user' of 'useAuth(...)' as it is null.`
-This is Bucket B (test-harness mock drift), not Bucket A. Needs a shared
-`vi.mock("@/auth", () => ({ useAuth: () => ({ user: { role: "admin" } }) }))`
-fixture OR each test file to add its own `vi.mock("@/auth", …)` block.
-
+### Group A2.residual — useAuth-null fixed but testid-drift remains — 5 files
+Shared mock installed in `fa95b2756`; residual failures are `qf-line-0-desc` / `qf-line-0-price` / combobox-site testid drift. Not useAuth-null anymore.
 - `invoice-line-item-price-editable.test.jsx`
 - `invoice-pricebook-writeback.test.jsx`
 - `invoice-save-errors-inline.test.jsx`
 - `p16-1-1-estimate-combobox-gap.test.jsx`
-- `quotes-summary-tiles.test.jsx`
-- `pages/quotes/__tests__/QuoteInvoiceNew.pricebook.test.jsx` (timeout — likely same root cause stuck in a loading loop that depends on `useAuth`)
-- `phase40-tab-count-refresh.test.jsx` (timeout — same hypothesis)
-- `n5-t1-page-header-adoption.test.jsx` (timeout, suspect same)
-- `app-layout-mobile-nav-role-gate.test.jsx` (`expected null not to be null` — same auth null leak)
+- `phase40-tab-count-refresh.test.jsx` (timeout; may still be mock-drift)
 
-### Group A3 — α conflict (3 files, see post-mortem above)
-- `doc-lock-policy-relax.test.jsx` ⚠️
-- `quote-invoice-detail-super-admin-silent-bypass.test.jsx` ⚠️
-- (`quote-invoice-detail-ack-bypass-aged.test.jsx` is now green, but it's one
-   of the three mutually-incompatible anchors — resolution depends on your
-   α rollback / extend / keep-split decision.)
+### Group T — timeout-only — 2 files
+Hangs in 5s waitFor. Likely mock-drift (missing resolver for a specific endpoint, or mocked `useAuth` triggers an infinite loading loop in the component).
+- `QuoteInvoiceNew.pricebook.test.jsx` (already has useAuth mock)
+- `n5-t1-page-header-adoption.test.jsx` (already has useAuth mock)
 
-### Group A4 — already triaged (γ, do NOT touch here) — 7 files
-`chemical-application-form.test.jsx`, `phase-mobile-drawer-parity.test.jsx`,
-`quote-decline-reopen.test.jsx`, `rules-of-hooks-guard.test.jsx`,
-`schedule-numbered-reorder.test.jsx`, `settings-sprocket-visibility.test.jsx`,
-`task-a-sidebar-recurring-jobs.test.jsx`.
+### Group B3.deferred — Batch 3 skipped — 2 files
+Need multi-assertion flipping, not simple regex-widen.
+- `customer-first-access-filter.test.jsx` — 3 drift assertions: dep-array adjacency + sibling-count fetch URL refactored.
+- `customers-list-waitlist-tab.test.jsx` — `p43Suffix` refactored out of the direct URL fetch pattern; needs test to lock the new helper call-site.
+
+### Group B4.deferred — Batch 4 skipped — 3 files
+- `leads-bulk-hard-delete-and-polish.test.jsx` — response shape drift (`{requested, deleted, skipped}` vs test's `{results, summary}` expectation). Needs 3 assertions rewritten against the new shape.
+- `lead-row-compose-buttons.test.jsx` — "useLocation() may be used only in Router" — Bucket B pattern (test needs `<MemoryRouter>` wrap for the mounted `LeadsDashboardPage`).
+- `k68-customer-status-tab-counts.test.jsx` — "expected null to be truthy" — assertion on an effect-dependency split that the test can't locate. Needs source-walk.
+
+### Group U — unaddressed this dispatch — 7 files
+Not surfaced for regex-widen attempt yet; candidate for next dispatch.
+- `concierge-avatar-parity.test.jsx` — `<AIAvatar name={e.name}>` import path drift (likely moved file).
+- `customer-detail-navy-command-strip.test.jsx` — `expected 42864 to be greater than 60268` — ordering constraint (strip must sit between Portal Access and header card) violated by Phase 28 identity-header reposition. **Likely a Phase-28 regression lock conflict — needs human.**
+- `k52-theming.test.js` — `rgba(255,255,255,0.10)` color token drift in a different search block.
+- `p47-missed-status-badge.test.jsx` — testid split into `tile-next-service-pool` + `tile-next-service-landscape` (needs test to assert either/both).
+- `p49-service-report-restyle.test.jsx` — Portal service-report restyle drift (indexOf null).
+- `phase-n2-input-restyle-refinement.test.jsx` — Search-icon color-token drift (same family as k52).
+- `task-m-job-reopen-ui.test.jsx` — `locked = !!report.submit...` regex drift.
 
 ---
 
 ## Recommended next-dispatch shape
 
-Given the α conflict + context budget, I recommend you split the next
-dispatch into two independent lanes you can prioritize:
+### Lane 1 (quick wins, ~45 min, 3-5 files)
+- `concierge-avatar-parity` — refresh import path
+- `k52-theming` + `phase-n2-input-restyle-refinement` — align color-token regex to current `colors.X` references
+- `p47-missed-status-badge` — allow suffixed testids via `(?:-pool|-landscape)?`
+- `task-m-job-reopen-ui` — regex-widen for current `locked` form
 
-### Lane 1 (small, HIGH priority — unblocks policy sanity)
-Rule α.rollback / α.extend / α.keep-split (see post-mortem). Scope: 2-3
-files max.
+### Lane 2 (medium, ~1 hr, 5 files)
+- Group A2.residual — fix the testid drift (`qf-line-0-desc` → current form).
+- Group T timeouts — add missing endpoint mocks that cause loading loops.
 
-### Lane 2 (medium, resumable at your pace)
-Approve Group A1 as pure regex-drift sweep (**17 files**, 1-3 line changes
-each, 3-retry-per-file policy). I can batch these in 2-3 commits of 6-8
-files each. Expected success rate: ~90% (deferred files land back in this
-doc).
+### Lane 3 (medium-heavy, ~1 hr, 3 files)
+- Group B4.deferred — rewrite response-shape assertions + wrap `MemoryRouter`.
 
-### Lane 3 (medium — needs test-harness decision)
-Approve Group A2 pattern: either (a) a shared `src/test/_helpers/mockAuth.js`
-module that each affected file imports, OR (b) per-file `vi.mock("@/auth")`
-blocks. Scope: 1 shared helper file + 8 test files = 9 files.
+### Lane 4 (human decision required)
+- `customer-detail-navy-command-strip` — Phase 28 identity-header-reposition broke this lock's ordering invariant. User ruling needed on whether Phase 28 was correct or the strip should move.
+- Group A4 γ-triaged (7 files).
 
 ---
 
-## Statistics
+## Phase 20/22/23/24/26b/27/28/28b/30/31 regression locks
 
-- Pre-sweep failing: 58
-- Post α/β/γ: 51 (-7)
-- True remaining pool: 44 (minus 7 γ-triaged)
-- α conflict: 3 files
-- Bucket B (useAuth) drift: 8 files
-- Pure Bucket A regex drift: ~20-25 files
-- Mobile scope (defer per rules): 2 files (`phase30-4-confirm-modal-migration`, `phase35-mobile-finance-parity`)
-
-**Blocking question**: your ruling on α (rollback / extend / keep-split).
-Everything else can proceed in parallel after that one call.
+All verified green via targeted spot-checks during each batch. The α.rollback explicitly restored narrow lock parity on `QuoteInvoiceDetail.jsx` so Phase-26b (category auto-map warnings) and the Phase-27/28/28b CustomerDetail work remained unaffected. No regression-lock drift introduced by any of the 6 commits shipped this dispatch.
