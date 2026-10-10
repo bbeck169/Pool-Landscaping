@@ -99,7 +99,10 @@ beforeEach(() => {
 });
 
 describe("CustomersList · K62 page-size selector", () => {
-  it("defaults to page_size=25 when no URL param / localStorage", async () => {
+  it("defaults to page_size=50 when no URL param / localStorage", async () => {
+    // Phase 9cd · Feb-2026 — default bumped from 25 → 50.
+    // Source anchor: ``_K62_DEFAULT_PAGE_SIZE`` in
+    // ``frontend/src/pages/customers/CustomersList.jsx``.
     _installRouter({ total: 250 });
     _mount("/customers");
     await waitFor(() => {
@@ -107,7 +110,7 @@ describe("CustomersList · K62 page-size selector", () => {
       expect(
         calls.some((p) => typeof p === "string"
           && p.startsWith("/customers?")
-          && p.includes("page_size=25")
+          && p.includes("page_size=50")
           && !p.includes("count_only=true")),
       ).toBe(true);
     });

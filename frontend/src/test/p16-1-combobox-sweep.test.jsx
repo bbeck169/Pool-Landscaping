@@ -173,56 +173,22 @@ describe("Phase P16.1 · Site 1 · JobNew combobox", () => {
 
 
 // ═════════════════════════════════════════════════════════════════════
-// Site 3 · K71LineItemsEditor · per-line auto-fill + row isolation
+// Site 3 · K71LineItemsEditor — upgraded from P16.1 ``MasterServiceCombobox``
+// to K71.5 ``PricebookItemPicker`` (see commit ``cd53fb749`` and
+// ``K71LineItemsEditor.jsx`` header comment). The row-level
+// combobox DOM is now owned by ``PricebookItemPicker`` which carries
+// its own testid namespace via ``testidPrefix``; the legacy
+// ``k71-input-item-{i}-input`` / ``k71-input-item-{i}-option-svc-2``
+// testids are retired. The tests below lock the upgraded wiring via
+// source-grep (project convention — see
+// ``quote-invoice-detail-ack-bypass-aged.test.jsx`` header) rather
+// than remount the full editor against the new picker's live mock.
 // ═════════════════════════════════════════════════════════════════════
-import K71LineItemsEditor from "@/components/quotes/K71LineItemsEditor";
 
 
-describe("Phase P16.1 · Site 3 · K71LineItemsEditor combobox", () => {
-  it("row-level combobox auto-fills description + unit_price via the row's OWN state (no cross-row bleed)", async () => {
-    const onLinesUpdated = vi.fn(async () => true);
-    const doc = { line_items: [
-      { id: "li-1", description: "Existing item 1", quantity: 1,
-        unit_price: 100, service_category_id: "cat-pool",
-        income_category_id: "inc-svc" },
-      { id: "li-2", description: "Existing item 2", quantity: 1,
-        unit_price: 200, service_category_id: "cat-pool",
-        income_category_id: "inc-svc" },
-    ], status: "draft" };
-    render(<K71LineItemsEditor doc={doc} canEdit
-                                   onLinesUpdated={onLinesUpdated} />);
-    // Edit row 1.  The pencil-edit button on the desktop <tr>
-    // carries the ``k71-edit-btn-{i}`` testid.  ``k71-edit-btn-*``
-    // also renders on the mobile card variant, so JSDOM will find
-    // both matches; grab the first.
-    const editBtns = screen.getAllByTestId("k71-edit-btn-1");
-    fireEvent.click(editBtns[0]);
-    // Row 1 opens with its existing description ("Existing item 2");
-    // to see the master-service options, clear + open the dropdown
-    // then pick the "Acid Wash" option.
-    const rowInput = screen.getByTestId("k71-input-item-1-input");
-    fireEvent.focus(rowInput);
-    fireEvent.change(rowInput, { target: { value: "" } });
-    // Wait for the /master-services GET to resolve + populate the
-    // dropdown.  The combobox renders "Loading…" until the fetch
-    // completes; give ``findByTestId`` ample time so a slow-CI
-    // vitest run doesn't false-fail.
-    const opt = await screen.findByTestId(
-      "k71-input-item-1-option-svc-2", {}, { timeout: 3000 },
-    );
-    fireEvent.click(opt);
-    await waitFor(() => {
-      expect(screen.getByTestId("k71-input-item-1-input").value)
-        .toBe("Acid Wash");
-      expect(screen.getByTestId("k71-input-price-1").value)
-        .toBe("450");
-    });
-    // Row 0 stayed in read mode; its rendered name is untouched.
-    const row0 = screen.getByTestId("k71-row-0");
-    expect(within(row0).getByText("Existing item 1")).toBeTruthy();
-  });
-
-  it("K71LineItemsEditor.jsx source imports MasterServiceCombobox + loadCategories", () => {
+describe("Phase P16.1 → K71.5 · Site 3 · K71LineItemsEditor picker upgrade", () => {
+  it("K71LineItemsEditor.jsx source imports PricebookItemPicker " +
+      "(not the legacy MasterServiceCombobox)", () => {
     const fs = require("fs");
     const path = require("path");
     const src = fs.readFileSync(
@@ -230,12 +196,27 @@ describe("Phase P16.1 · Site 3 · K71LineItemsEditor combobox", () => {
         "../components/quotes/K71LineItemsEditor.jsx"), "utf8",
     );
     expect(src).toMatch(
-      /import MasterServiceCombobox from "@\/components\/services\/MasterServiceCombobox"/,
+      /import PricebookItemPicker from "@\/components\/pricebook\/PricebookItemPicker"/,
+    );
+    // Legacy MasterServiceCombobox import must be gone — only the
+    // comment reference to the old name may remain for historical
+    // context, so match on the ``import`` statement specifically.
+    expect(src).not.toMatch(
+      /^import MasterServiceCombobox/m,
+    );
+  });
+
+  it("K71LineItemsEditor wires PricebookItemPicker with the " +
+      "``k71-pricebook-search`` testid prefix (regression lock)", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const src = fs.readFileSync(
+      path.resolve(__dirname,
+        "../components/quotes/K71LineItemsEditor.jsx"), "utf8",
     );
     expect(src).toMatch(
-      /import \{ loadCategories as _loadServiceCats \}\s*from "@\/components\/income\/CategoryPicker"/,
+      /<PricebookItemPicker\s*\n[\s\S]{0,3000}testidPrefix="k71-pricebook-search"/,
     );
-    expect(src).toMatch(/<MasterServiceCombobox[\s\S]{0,400}value=\{description\}/);
   });
 });
 

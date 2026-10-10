@@ -99,13 +99,16 @@ describe("classifyJob", () => {
       ).toBe("repair");
     });
 
-    it("empty / missing service_type stays null even when completed (no bucket leak)", () => {
-      // Guards the existing ``computePillCounts`` invariant that
-      // ``{ service_type: '', status: 'completed' }`` does NOT bump
-      // the Services total — the empty-string short-circuit must
-      // still fire before the fallback.
-      expect(classifyJob({ service_type: "", status: "completed" })).toBeNull();
-      expect(classifyJob({ status: "completed" })).toBeNull();
+    it("empty / missing service_type is bucketed as 'service' when completed (Phase P27 fallback)", () => {
+      // Phase P27 · Feb-2026 — commit ``b1fe56b39`` reversed the
+      // pre-P27 ``if (!st) return null;`` short-circuit so a
+      // completed job whose ``service_type`` was mistakenly left
+      // blank (legacy CSV import, hand-created work order) still
+      // lands in the Services bucket instead of silently
+      // disappearing from the pill total. Non-completed empty
+      // ``service_type`` still returns ``null`` (unchanged).
+      expect(classifyJob({ service_type: "", status: "completed" })).toBe("service");
+      expect(classifyJob({ status: "completed" })).toBe("service");
     });
   });
 });
@@ -119,12 +122,14 @@ describe("computePillCounts", () => {
       { service_type: "landscape maintenance", status: "pending" },
       { service_type: "Pump Repair", status: "completed" },
       { service_type: "Fix Leak", status: "pending" },
-      // Unclassifiable → does NOT bump either bucket.
+      // Unclassifiable + non-completed → does NOT bump either bucket.
       { service_type: "Consultation", status: "pending" },
+      // Phase P27 · Feb-2026 — empty + completed now falls through
+      // to Services (see ``jobCategory.classifyJob`` comment).
       { service_type: "", status: "completed" },
     ];
     const c = computePillCounts(jobs);
-    expect(c.services.total).toBe(3);
+    expect(c.services.total).toBe(4);
     expect(c.services.remaining).toBe(2);
     expect(c.repairs.total).toBe(2);
     expect(c.repairs.remaining).toBe(1);
