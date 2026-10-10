@@ -203,17 +203,18 @@ describe("Phase 25 · Phase 20 · action row above the section stack", () => {
   });
 });
 
-describe("Phase 25b · skeleton is DARK (web Phase 27 chassis); structure + testIDs unchanged", () => {
+describe("Phase 32 · skeleton is TWO-TONE (white page, dark nav/action/KPI regions); structure + testIDs unchanged", () => {
   const flat = (el: any) => StyleSheet.flatten(el.props.style) || {};
-  it("root + cards on #03002e with #1E293B borders; pulse bars on #1E293B", () => {
+  it("root + cards light (#FFFFFF / #E4E4E7 / r12); pulse bars light; action slots dark navy", () => {
     const r = render(<CustomerProfileSkeleton />);
-    expect(flat(r.getByTestId("customer-detail-skeleton")).backgroundColor).toBe("#03002e");
+    expect(flat(r.getByTestId("customer-detail-skeleton")).backgroundColor).toBe("#FFFFFF");
     for (const id of ["cd-skeleton-header-card", "cd-skeleton-contact-card"]) {
       const st = flat(r.getByTestId(id));
-      expect([id, st.backgroundColor, st.borderColor, st.borderRadius]).toEqual([id, "#03002e", "#1E293B", 12]);
+      expect([id, st.backgroundColor, st.borderColor, st.borderRadius]).toEqual([id, "#FFFFFF", "#E4E4E7", 12]);
     }
-    expect(flat(r.getByTestId("cd-skeleton-avatar")).backgroundColor).toBe("#1E293B");
-    expect(flat(r.getByTestId("cd-skeleton-action-edit")).backgroundColor).toBe("#1E293B");
+    expect(flat(r.getByTestId("cd-skeleton-avatar")).backgroundColor).toBe("#E4E4E7");
+    const slot = flat(r.getByTestId("cd-skeleton-action-edit"));
+    expect([slot.backgroundColor, slot.borderColor]).toEqual(["#03002e", "#1E293B"]);
   });
 
   it("tile area reserves the 6 KPI tiles in locked order", () => {
@@ -222,6 +223,9 @@ describe("Phase 25b · skeleton is DARK (web Phase 27 chassis); structure + test
     const kpis = area.filter((i) => i.startsWith("cd-skeleton-kpi-") && i !== "cd-skeleton-kpi-grid");
     expect(kpis).toEqual(KPI_SLOTS.map((k) => `cd-skeleton-kpi-${k}`));
     expect(KPI_SLOTS).toEqual(["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"]);
-    KPI_SLOTS.forEach((k) => expect(flat(r.getByTestId(`cd-skeleton-kpi-${k}`)).borderColor).toBe("#1E293B"));
+    KPI_SLOTS.forEach((k) => {
+      const st = flat(r.getByTestId(`cd-skeleton-kpi-${k}`));
+      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, "#03002e", "#1E293B"]);
+    });
   });
 });

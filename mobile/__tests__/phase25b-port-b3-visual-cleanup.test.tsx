@@ -115,18 +115,20 @@ function mockOk() {
 
 beforeEach(() => jest.clearAllMocks());
 
-describe("B3.1 · property cards dark", () => {
-  it("card #03002e / #1E293B; label white; address + meta muted white", async () => {
+// Phase 32 reverses B3.1 + B3.2 (two-tone: white page, light property
+// cards + light error screen). B3.3 Header dark prop is unchanged.
+describe("B3.1 → Phase 32 · property cards light", () => {
+  it("card #FFFFFF / #E4E4E7; label #09090B; address + meta #52525B", async () => {
     mockOk();
     const r = render(<CustomerDetail />);
     await waitFor(() => r.getByTestId("mobile-property-p1"));
     await act(async () => {});
     const card = flat(r.getByTestId("mobile-property-p1"));
-    expect([card.backgroundColor, card.borderColor, card.borderWidth]).toEqual([DARK, BORDER, 1]);
-    expect(flat(r.getByText("Main House")).color).toBe(WHITE);
-    expect(flat(r.getByText("1 Palm Way, Tampa, FL, 33601")).color).toBe(MUTED);
-    expect(flat(r.getByText("pool")).color).toBe(MUTED);
-    expect(flat(r.getByText(/Pool: 15,000 gal/)).color).toBe(MUTED);
+    expect([card.backgroundColor, card.borderColor, card.borderWidth]).toEqual([WHITE, "#E4E4E7", 1]);
+    expect(flat(r.getByText("Main House")).color).toBe("#09090B");
+    expect(flat(r.getByText("1 Palm Way, Tampa, FL, 33601")).color).toBe("#52525B");
+    expect(flat(r.getByText("pool")).color).toBe("#52525B");
+    expect(flat(r.getByText(/Pool: 15,000 gal/)).color).toBe("#52525B");
   });
 
   it("profile passes dark to Header; LightPanel sections untouched (border #1E293B, light surface)", async () => {
@@ -143,15 +145,15 @@ describe("B3.1 · property cards dark", () => {
   });
 });
 
-describe("B3.2 · error/retry screen dark", () => {
-  it("root #03002e, title + retry text white, Header dark", async () => {
+describe("B3.2 → Phase 32 · error/retry screen light (nav bar stays dark)", () => {
+  it("root #FFFFFF, title #09090B, retry text #fff on brand button, Header dark", async () => {
     const { ApiError } = jest.requireMock("@/src/api");
     mockApiGet.mockImplementation(() => Promise.reject(new ApiError(403, "Forbidden")));
     const r = render(<CustomerDetail />);
     await waitFor(() => r.getByTestId("customer-detail-error"));
-    expect(flat(r.getByTestId("customer-detail-error")).backgroundColor).toBe(DARK);
-    expect(flat(r.getByTestId("customer-detail-error-title")).color).toBe(WHITE);
-    expect(flat(r.getByText("Retry")).color).toBe(WHITE);
+    expect(flat(r.getByTestId("customer-detail-error")).backgroundColor).toBe(WHITE);
+    expect(flat(r.getByTestId("customer-detail-error-title")).color).toBe("#09090B");
+    expect(flat(r.getByText("Retry")).color).toBe("#fff");
     expect(r.getByTestId("customer-detail-retry-btn")).toBeTruthy();
     expect(r.getByTestId("header-stub-dark")).toBeTruthy();
   });

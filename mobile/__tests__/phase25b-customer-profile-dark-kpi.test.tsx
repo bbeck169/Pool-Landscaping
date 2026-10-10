@@ -109,11 +109,12 @@ async function mount(kpi: any) {
 }
 
 describe("Phase 25b · dark chassis", () => {
-  it("page root is #03002e; section titles flip to light text", async () => {
+  // Phase 32 reverses the page-bg flip: white page, dark tiles on top.
+  it("page root is white (Phase 32 two-tone); section titles use dark text", async () => {
     const r = await mount({});
-    expect(flat(r.toJSON() as any).backgroundColor).toBe(DARK);
+    expect(flat(r.toJSON() as any).backgroundColor).toBe("#FFFFFF");
     const title = r.getByText(/Communication Timeline/);
-    expect(flat(title).color).toBe("#FFFFFF");
+    expect(flat(title).color).toBe("#09090B");
   });
 
   it("un-restyled child sections sit in light inset panels (readable on navy)", async () => {

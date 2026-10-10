@@ -40,6 +40,10 @@ import {
 import {
   DARK_BG, DARK_BORDER, DARK_TILE_RADIUS, DARK_TEXT, DARK_TEXT_MUTED,
 } from "@/src/lib/customerDarkTokens";
+// Phase 32 · two-tone — white page + light card wrappers; dark tiles above.
+import {
+  LIGHT_PAGE_BG, LIGHT_CARD_BG, LIGHT_CARD_BORDER, LIGHT_TEXT, LIGHT_TEXT_MUTED, LIGHT_CARD_RADIUS,
+} from "@/src/lib/customerLightTokens";
 
 // Quick Action tiles → the section each would open (mobile: scroll target).
 const QUICK_ACTIONS = [
@@ -211,15 +215,15 @@ export default function CustomerDetail() {
     const mapped = rawLoadError ? mapApiError(rawLoadError) : null;
     const icon = mapped ? errorKindIcon(mapped.kind) : "alert-circle-outline";
     return (
-      <View style={{ flex: 1, backgroundColor: DARK_BG }} testID="customer-detail-error">
+      <View style={{ flex: 1, backgroundColor: LIGHT_PAGE_BG }} testID="customer-detail-error">
         <Header title="Customer" back dark />
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
-          <Ionicons name={icon as any} size={48} color={DARK_TEXT_MUTED} />
-          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: DARK_TEXT, marginTop: spacing.md, textAlign: "center" }} testID="customer-detail-error-title">
+          <Ionicons name={icon as any} size={48} color={LIGHT_TEXT_MUTED} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: LIGHT_TEXT, marginTop: spacing.md, textAlign: "center" }} testID="customer-detail-error-title">
             {mapped?.title || loadError}
           </Text>
           {mapped && mapped.message !== mapped.title && (
-            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: DARK_TEXT_MUTED, marginTop: spacing.sm, textAlign: "center" }} testID="customer-detail-error-message">
+            <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: LIGHT_TEXT_MUTED, marginTop: spacing.sm, textAlign: "center" }} testID="customer-detail-error-message">
               {mapped.message}
             </Text>
           )}
@@ -228,7 +232,7 @@ export default function CustomerDetail() {
             onPress={load}
             testID="customer-detail-retry-btn"
           >
-            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: DARK_TEXT }}>Retry</Text>
+            <Text style={{ fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" }}>Retry</Text>
           </Pressable>
         </View>
       </View>
@@ -460,87 +464,98 @@ export default function CustomerDetail() {
             Action tiles, both ABOVE the section stack. */}
         <KPITileGrid kpi={kpi} />
         <QuickActionTileGrid actions={QUICK_ACTIONS} onPick={jumpTo} />
-        {c.customer_since ? (
-          <Text
-            testID="mobile-customer-since-label"
-            style={{
-              fontSize: 12,
-              color: colors.muted,
-              marginBottom: spacing.sm,
-            }}
-          >
-            {`Customer since ${new Date(c.customer_since).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`}
-          </Text>
-        ) : null}
-        {c.is_vip ? (
-          <View style={styles.vipBadge} testID="vip-badge">
-            <Ionicons name="star" size={14} color="#92400E" />
-            <Text style={styles.vipBadgeText}>VIP</Text>
+        {/* Phase 32 · light card wrapper — Customer since + VIP chip row. */}
+        {c.customer_since || c.is_vip ? (
+          <View style={s2.lightCard} testID="cd-light-card-customer-since">
+            {c.customer_since ? (
+              <Text
+                testID="mobile-customer-since-label"
+                style={{
+                  fontSize: 12,
+                  color: colors.muted,
+                  marginBottom: c.is_vip ? spacing.sm : 0,
+                }}
+              >
+                {`Customer since ${new Date(c.customer_since).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`}
+              </Text>
+            ) : null}
+            {c.is_vip ? (
+              <View style={[styles.vipBadge, { marginBottom: 0 }]} testID="vip-badge">
+                <Ionicons name="star" size={14} color="#92400E" />
+                <Text style={styles.vipBadgeText}>VIP</Text>
+              </View>
+            ) : null}
           </View>
         ) : null}
         {/* Phase 56.2 — status pill + (admin-only) toggle switch. Non-admins see the pill only. */}
-        <View
-          style={[styles.statusPill, isActive ? styles.statusPillActive : styles.statusPillInactive]}
-          testID="customer-status-pill"
-        >
-          <Text style={[styles.statusPillText, isActive ? styles.statusPillTextActive : styles.statusPillTextInactive]}>
-            {isActive ? "Active" : "Inactive"}
-          </Text>
-          {isAdmin ? (
-            <Switch
-              testID="customer-active-toggle"
-              value={isActive}
-              onValueChange={toggleActivation}
-              trackColor={{ false: "#9CA3AF", true: "#16A34A" }}
-              thumbColor="#ffffff"
-              ios_backgroundColor="#9CA3AF"
-              style={{ marginLeft: 6, transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
-            />
+        {/* Phase 32 · light card wrapper — Active status pill + toggle. */}
+        <View style={s2.lightCard} testID="cd-light-card-active">
+          <View
+            style={[styles.statusPill, { marginBottom: 0 }, isActive ? styles.statusPillActive : styles.statusPillInactive]}
+            testID="customer-status-pill"
+          >
+            <Text style={[styles.statusPillText, isActive ? styles.statusPillTextActive : styles.statusPillTextInactive]}>
+              {isActive ? "Active" : "Inactive"}
+            </Text>
+            {isAdmin ? (
+              <Switch
+                testID="customer-active-toggle"
+                value={isActive}
+                onValueChange={toggleActivation}
+                trackColor={{ false: "#9CA3AF", true: "#16A34A" }}
+                thumbColor="#ffffff"
+                ios_backgroundColor="#9CA3AF"
+                style={{ marginLeft: 6, transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+              />
+            ) : null}
+          </View>
+          {/* Legacy inactive badge retained (invisible) for prior tests referencing this testID. */}
+          {!isActive ? (
+            <View style={{ height: 0, opacity: 0 }} testID="customer-inactive-badge" />
           ) : null}
         </View>
-        {/* Legacy inactive badge retained (invisible) for prior tests referencing this testID. */}
-        {!isActive ? (
-          <View style={{ height: 0, opacity: 0 }} testID="customer-inactive-badge" />
-        ) : null}
         {/* Feb-2026 · P29b — Mobile mute-picker parity. Admin + super_admin
             only (matches the web MuteControl gating). */}
         {isAdmin ? (
-          <MuteControlSheet
-            customer={c}
-            canMute
-            canUnmute
-            onChange={(payload) => {
-              if (!payload) return;
-              if (payload.muted) {
-                setC((prev: any) => ({
-                  ...prev,
-                  is_muted: true,
-                  is_active: false,
-                  muted_at: payload.muted_at,
-                  muted_reason: payload.muted_reason ?? null,
-                }));
-              } else if (payload.unmuted) {
-                setC((prev: any) => ({
-                  ...prev,
-                  is_muted: false,
-                  is_active: true,
-                  muted_at: undefined,
-                  muted_reason: undefined,
-                }));
-              }
-            }}
-            onError={(msg) => Alert.alert("Update failed", msg)}
-          />
+          <View style={s2.lightCard} testID="cd-light-card-mark-muted">
+            <MuteControlSheet
+              customer={c}
+              canMute
+              canUnmute
+              onChange={(payload) => {
+                if (!payload) return;
+                if (payload.muted) {
+                  setC((prev: any) => ({
+                    ...prev,
+                    is_muted: true,
+                    is_active: false,
+                    muted_at: payload.muted_at,
+                    muted_reason: payload.muted_reason ?? null,
+                  }));
+                } else if (payload.unmuted) {
+                  setC((prev: any) => ({
+                    ...prev,
+                    is_muted: false,
+                    is_active: true,
+                    muted_at: undefined,
+                    muted_reason: undefined,
+                  }));
+                }
+              }}
+              onError={(msg) => Alert.alert("Update failed", msg)}
+            />
+          </View>
         ) : null}
         {/* Multi-Contact Phase 1 · Automations mute toggle + banner.
             Distinct from MuteControlSheet above which handles is_muted. */}
-        <LightPanel>
+        {/* Phase 32 · light card wrapper — Mute automated comms. */}
+        <View style={s2.lightCard} testID="cd-light-card-automations-mute">
           <AutomationsMuteSection
             customer={c}
             isAdmin={isAdmin}
             onUpdated={(patch) => setC((prev: any) => ({ ...prev, ...patch }))}
           />
-        </LightPanel>
+        </View>
         <View style={styles.card}>
           {primaryPhone ? (
             <View style={styles.contactRow}>
@@ -893,15 +908,15 @@ export default function CustomerDetail() {
                 marginBottom: spacing.sm,
                 padding: spacing.md,
                 borderRadius: radius.md,
-                backgroundColor: DARK_BG,
+                backgroundColor: colors.surface,
                 borderWidth: 1,
-                borderColor: DARK_BORDER,
+                borderColor: colors.border,
               }}
               testID={`mobile-property-${p.id}`}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                 <Ionicons name="home-outline" size={16} color={colors.brand} />
-                <Text style={{ fontFamily: font.bold, color: DARK_TEXT, fontSize: fontSize.md }}>
+                <Text style={{ fontFamily: font.bold, color: colors.onSurface, fontSize: fontSize.md }}>
                   {p.label}
                 </Text>
                 {p.sort_order === 0 ? (
@@ -917,17 +932,17 @@ export default function CustomerDetail() {
                   </View>
                 ) : null}
               </View>
-              <Text style={{ marginTop: 4, color: DARK_TEXT_MUTED, fontSize: fontSize.sm }}>
+              <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.sm }}>
                 {[p.address?.line1, p.address?.city, p.address?.state, p.address?.postal_code]
                   .filter(Boolean).join(", ")}
               </Text>
               {(p.service_types || []).length ? (
-                <Text style={{ marginTop: 4, color: DARK_TEXT_MUTED, fontSize: fontSize.xs }}>
+                <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
                   {(p.service_types || []).join(" · ")}
                 </Text>
               ) : null}
               {p.pool_size_gallons ? (
-                <Text style={{ marginTop: 2, color: DARK_TEXT_MUTED, fontSize: fontSize.xs }}>
+                <Text style={{ marginTop: 2, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
                   Pool: {p.pool_size_gallons.toLocaleString()} gal
                 </Text>
               ) : null}
@@ -1105,7 +1120,7 @@ function ContactRow({ icon, value, onPress }: { icon: any; value?: string; onPre
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: DARK_BG },
+  root: { flex: 1, backgroundColor: LIGHT_PAGE_BG },
   card: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER, overflow: "hidden" },
   contactRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: DARK_BORDER },
   contactIcon: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
@@ -1113,8 +1128,8 @@ const styles = StyleSheet.create({
   notesBox: { backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, padding: spacing.lg, borderWidth: 1, borderColor: DARK_BORDER, marginTop: spacing.md },
   notesLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: DARK_TEXT, marginBottom: 4 },
   notes: { fontFamily: font.regular, fontSize: fontSize.base, color: DARK_TEXT_MUTED, lineHeight: 20 },
-  sectionTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: DARK_TEXT, marginTop: spacing.xl, marginBottom: spacing.md },
-  empty: { fontFamily: font.regular, fontSize: fontSize.base, color: DARK_TEXT_MUTED },
+  sectionTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: LIGHT_TEXT, marginTop: spacing.xl, marginBottom: spacing.md },
+  empty: { fontFamily: font.regular, fontSize: fontSize.base, color: LIGHT_TEXT_MUTED },
   loginBadge: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
   loginBadgeText: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.success, flex: 1 },
   createLoginBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brandTertiary, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
@@ -1266,5 +1281,10 @@ const s2 = StyleSheet.create({
     justifyContent: "center", gap: 6,
   },
   actionBtnNeutral: { backgroundColor: DARK_BG, borderWidth: 1, borderColor: DARK_BORDER },
+  // Phase 32 · light card chassis for the four status/mute controls.
+  lightCard: {
+    backgroundColor: LIGHT_CARD_BG, borderWidth: 1, borderColor: LIGHT_CARD_BORDER,
+    borderRadius: LIGHT_CARD_RADIUS, padding: spacing.md, marginBottom: spacing.sm,
+  },
   actionBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm },
 });

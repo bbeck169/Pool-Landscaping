@@ -19,10 +19,13 @@ import React, { useEffect, useRef } from "react";
 import { Animated, ScrollView, StyleSheet, View } from "react-native";
 
 import { Header } from "@/src/components/widgets";
-import { spacing, radius } from "@/src/theme";
-// Phase 25b · web parity 66328fc7d (Phase 27) — skeleton flips to the
-// dark navy chassis; structure / timing / testIDs unchanged.
+import { colors, spacing, radius } from "@/src/theme";
+// Phase 32 · two-tone — skeleton mirrors the profile: white page + light
+// cards/bars; the regions that are dark on the real page (nav bar,
+// action row, KPI tiles) stay dark navy. Structure / timing / testIDs
+// unchanged.
 import { DARK_BG, DARK_BORDER, DARK_TILE_RADIUS } from "@/src/lib/customerDarkTokens";
+import { LIGHT_PAGE_BG, LIGHT_CARD_BG, LIGHT_CARD_BORDER, LIGHT_CARD_RADIUS } from "@/src/lib/customerLightTokens";
 
 export const SKELETON_SECTIONS = ["jobs", "documents", "timeline"] as const;
 export const ACTION_SLOTS = ["edit", "call", "impersonate", "delete"] as const;
@@ -54,7 +57,7 @@ export default function CustomerProfileSkeleton() {
 
   return (
     <View style={s.root} testID="customer-detail-skeleton" accessibilityLabel="Loading customer">
-      <Header title="Customer" back />
+      <Header title="Customer" back dark />
       <ScrollView contentContainerStyle={s.content} scrollEnabled={false}>
         <Animated.View style={{ opacity: pulse }} testID="cd-skeleton-pulse">
           <View style={s.actionRow} testID="cd-skeleton-action-row">
@@ -75,8 +78,8 @@ export default function CustomerProfileSkeleton() {
             <View style={s.kpiGrid} testID="cd-skeleton-kpi-grid">
               {KPI_SLOTS.map((k) => (
                 <View key={k} style={s.kpiTile} testID={`cd-skeleton-kpi-${k}`}>
-                  <Bar w="70%" h={10} />
-                  <Bar w="50%" h={16} />
+                  <Bar w="70%" h={10} style={s.darkBar} />
+                  <Bar w="50%" h={16} style={s.darkBar} />
                 </View>
               ))}
             </View>
@@ -107,18 +110,19 @@ export default function CustomerProfileSkeleton() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: DARK_BG },
+  root: { flex: 1, backgroundColor: LIGHT_PAGE_BG },
   content: { padding: spacing.lg },
-  bar: { backgroundColor: DARK_BORDER },
+  bar: { backgroundColor: colors.divider },
+  darkBar: { backgroundColor: DARK_BORDER },
   card: {
-    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1,
-    borderColor: DARK_BORDER, padding: spacing.lg, marginBottom: spacing.md,
+    backgroundColor: LIGHT_CARD_BG, borderRadius: LIGHT_CARD_RADIUS, borderWidth: 1,
+    borderColor: LIGHT_CARD_BORDER, padding: spacing.lg, marginBottom: spacing.md,
   },
   headerRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   actionSlot: {
     flexGrow: 1, flexBasis: "45%", minHeight: 44, borderRadius: radius.md,
-    backgroundColor: DARK_BORDER,
+    backgroundColor: DARK_BG, borderWidth: 1, borderColor: DARK_BORDER,
   },
   kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   kpiTile: {
