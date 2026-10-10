@@ -2078,7 +2078,7 @@ export default function RecurringJobs() {
                       className="text-sm font-semibold px-3 py-1.5 rounded"
                       style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                       data-testid="recurring-jobs-cancel">Cancel</button>
-              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type || !!priceErr || !propertyGateOk}
+              <button type="button" onClick={save} disabled={!editing.customer_id || !editing.service_type || !!priceErr}
                       className="text-sm font-bold px-4 py-1.5 rounded"
                       style={{ background: colors.brand, color: "#fff", border: 0, opacity: (!editing.customer_id || !editing.service_type || !!priceErr) ? 0.5 : 1 }}
                       data-testid="recurring-jobs-save">

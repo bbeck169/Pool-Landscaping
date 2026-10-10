@@ -1501,7 +1501,8 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
             // the backend returns (currently only ``paid`` invoices).
             const _doc_type = String(doc.doc_type || "quote").toLowerCase();
             const _st = String(doc.status || "").toLowerCase();
-            const _locked = _doc_type === "invoice" && _st === "paid";
+            const _locked = ["sent", "accepted", "paid",
+                              "past_due", "unpaid", "overdue"].includes(_st);
             const _silentBypass = false;
             if (_locked && !_silentBypass && !lockBypassAcked) {
               setPendingLines(nextLines);
@@ -1809,7 +1810,8 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                       // is ``paid``.
                       const _doc_type = String(doc.doc_type || "quote").toLowerCase();
                       const _st = String(doc.status || "").toLowerCase();
-                      const _locked = _doc_type === "invoice" && _st === "paid";
+                      const _locked = ["sent", "accepted", "paid",
+                                        "past_due", "unpaid", "overdue"].includes(_st);
                       const _silentBypass = false;
                       if (_locked && !_silentBypass && !lockBypassAcked) {
                         setPendingLines({ __terms__: termsDraft });
