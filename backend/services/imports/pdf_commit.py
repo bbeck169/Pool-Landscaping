@@ -347,16 +347,16 @@ async def commit_batch(
         # rewrap as HTTPException.
         raise UnresolvedCustomersError(unresolved)
 
-    # ── Pre-flight: PDFI-PAID-B paid-status validation ───
-    # Scan quote_in.is_paid=True previews for the two required
-    # follow-on fields; reject (and let the router roll the
-    # batch back to preview_complete) if either is missing.
-    paid_err = _validate_paid_status(previews)
-    if paid_err is not None:
-        err_code, idxs = paid_err
-        raise PaidStatusValidationError(err_code, idxs)
-
-    # ── Pre-flight: duplicate scan ─────────────────────────
+    # ── Pre-flight: duplicate scan (MOVED-UP · Phase 33 Step A)
+    # Moved BEFORE paid-status validation so the latter can filter
+    # out previews destined to be skipped by ``on_duplicate=skip``.
+    # Previously, a duplicate preview carrying ``is_paid=True`` with
+    # missing paid_at / amount_paid tripped the 422 gate even when
+    # the operator selected Skip — breaking batches that would
+    # otherwise commit cleanly.  Idempotency scan (quotes already
+    # inserted with this batch_id) also contributes to the skip set
+    # so a resumed commit never re-raises 422 on an already-landed
+    # row.
     duplicates = await check_duplicates(
         previews=previews, tenant_id=tenant_id, db=db,
     )
@@ -365,8 +365,10 @@ async def commit_batch(
 
     dup_by_idx = {d.source_doc_index: d for d in duplicates}
 
-    # ── Idempotency: skip previews already inserted ───────
-    already_inserted_indexes = set()
+    # Idempotency scan — collect indices of previews already
+    # inserted so they too are excluded from paid-status
+    # validation and from the per-row commit loop below.
+    already_inserted_indexes: set = set()
     async for row in db.quotes.find(
         {"tenant_id": tenant_id, "import_batch_id": batch_id},
         {"_id": 0, "import_source_doc_index": 1},
@@ -374,6 +376,27 @@ async def commit_batch(
         idx = row.get("import_source_doc_index")
         if idx is not None:
             already_inserted_indexes.add(int(idx))
+
+    # ── Pre-flight: PDFI-PAID-B paid-status validation ───
+    # Scan quote_in.is_paid=True previews for the two required
+    # follow-on fields; reject (and let the router roll the
+    # batch back to preview_complete) if either is missing.
+    #
+    # Phase 33 Step A · Feb-2026 — filter out previews destined
+    # to be skipped (duplicate + on_duplicate=skip, or already
+    # inserted via idempotency) BEFORE validating so skip-selected
+    # rows no longer trigger 422.
+    skip_idx_set = set(already_inserted_indexes)
+    if on_duplicate == _DUP_SKIP:
+        skip_idx_set.update(dup_by_idx.keys())
+    _validation_targets = [
+        p for p in previews
+        if int(p.get("source_doc_index", -1)) not in skip_idx_set
+    ]
+    paid_err = _validate_paid_status(_validation_targets)
+    if paid_err is not None:
+        err_code, idxs = paid_err
+        raise PaidStatusValidationError(err_code, idxs)
 
     # ── Build the doc list ────────────────────────────────
     to_insert: List[Dict[str, Any]] = []
