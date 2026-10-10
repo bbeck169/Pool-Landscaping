@@ -107,3 +107,17 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 > Mobile has no editor for existing invoice/estimate/quote line items. All line-item editors on mobile are for NEW items only (`app/quote/new.tsx`, `src/components/jobs/LineItemsSection.tsx`), and NEW items can never carry the `category_auto_mapped` flag (the flag is stamped by the backend archive-time fan-out on EXISTING line items only).
 > Mobile also has no pricebook CategoriesAdmin screen (`admin/tags.tsx` manages tags, not pricebook categories).
 > Decision: Port A is a documented no-op. If a mobile line-item editor for existing invoices/estimates is added in the future, it must mirror web K71's amber warning chip pattern.
+
+## 10. Phase 35 — Mobile parity for web Phase 28 (identity header) + Phase 34 (Year presets)
+
+### 2026-10-10 · Port A (web Phase 28, b40352a) — SHIPPED (mobile 207e5e1f5)
+- New `mobile/src/components/customers/CustomerIdentityCard.tsx` mounted FIRST below the dark nav bar, ABOVE the Phase 20 action row (then KPI grid → Quick Actions → section stack).
+- Consolidates, in web order: inline name, Customer since, VIP (read-only `vip-badge`, no toggle), Active pill + toggle, primary phone / email / address, pool gallons, gate code (only when `c.gate_code` is set), tags (`CustomerTagsSection` passed in as a slot from `[id].tsx`).
+- Light chassis per Phase 32 two-tone (white, 1px `#E4E4E7`, r12, padding 12). The Phase 32 `cd-light-card-customer-since` / `cd-light-card-active` wrappers are folded into this card.
+- Unchanged positions: billing address (own card), multi-contact editor, Mark Muted, Mute automated comms. Dark KPI / Quick Actions / action row unchanged. Skeleton header-card slot now leads the action-row slots.
+- Deferred: a mobile VIP toggle (web `toggleVip`) needs its own phase.
+
+### 2026-10-10 · Port B (web Phase 34, 4f1ddc8) — NO MOBILE SURFACE (documented no-op)
+- Mobile has no Revenue Insights date-range dropdown: the admin dashboard (`app/(app)/index.tsx`) calls `GET /dashboard` with no range parameter, and no mobile file mirrors web's `RevenueDateRangeFilter.jsx`.
+- `src/components/dashboard/RevenueForecastTile.tsx` (forward-looking forecast tabs, mirrors web `RevenueForecastTile.jsx`) and `app/profit-report.tsx` (its own range options incl. YTD) are separate features that web Phase 34 didn't touch — intentionally not changed.
+- If a mobile Revenue Insights range filter is added later, it must use web's preset order: Today / Tomorrow / This Week / Next Week / This Month / Last Month / This Year / Last Year / Custom Range.
