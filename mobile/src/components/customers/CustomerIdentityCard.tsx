@@ -1,5 +1,7 @@
 /**
  * Phase 35 · web parity b40352a (Phase 28) — customer identity header.
+ * Phase 36 · VIP badge is an admin toggle (web ``customer-vip-toggle``):
+ * optimistic flip → PATCH /customers/{cid}/vip → rollback + toast on error.
  *
  * One light card at the TOP of the mobile customer profile (above the
  * Phase 20 action row) consolidating: name, Customer since, VIP badge
@@ -12,11 +14,13 @@
  * kept verbatim. Tags are passed in as a slot so the parent keeps owning
  * the CustomerTagsSection mount + onChange wiring.
  */
-import React from "react";
-import { View, Text, Pressable, Switch, StyleSheet, Linking } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, Pressable, Switch, StyleSheet, Linking, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PhoneLink, AddressLink } from "@/src/components/customer";
+import { useToast } from "@/src/components/ToastProvider";
+import { toggleVip } from "@/src/api/customers";
 import {
   LIGHT_CARD_BG, LIGHT_CARD_BORDER, LIGHT_TEXT, LIGHT_TEXT_MUTED, LIGHT_CARD_RADIUS,
 } from "@/src/lib/customerLightTokens";
@@ -40,8 +44,56 @@ function Row({ icon, children, testID }: { icon: any; children: React.ReactNode;
   );
 }
 
-function SinceVipRow({ c }: { c: any }) {
-  if (!c.customer_since && !c.is_vip) return null;
+// Phase 36 · optimistic VIP state. Local state is the render source; it
+// re-syncs whenever the parent's ``c.is_vip`` changes (refetch / cache).
+function useVipToggle(c: any) {
+  const { showToast } = useToast();
+  const [vip, setVip] = useState<boolean>(Boolean(c.is_vip));
+  const [busy, setBusy] = useState(false);
+  const note = useRef<string | null>(c.vip_note ?? null);
+  const inFlight = useRef(false); // same-frame double-tap guard
+
+  useEffect(() => { setVip(Boolean(c.is_vip)); }, [c.is_vip]);
+  useEffect(() => { note.current = c.vip_note ?? null; }, [c.vip_note]);
+  const onToggle = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    const prev = vip;
+    const next = !prev;
+    setVip(next);
+    setBusy(true);
+    try {
+      const doc = await toggleVip(c.id, next, note.current);
+      if (doc && typeof doc.is_vip === "boolean") setVip(doc.is_vip);
+      if (doc && "vip_note" in doc) note.current = doc.vip_note ?? null;
+      showToast(next ? "Flagged as VIP" : "Removed VIP flag");
+    } catch (e: any) {
+      setVip(prev);
+      showToast(e?.message || "Could not update VIP flag", "error");
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+  return { vip, busy, onToggle };
+}
+
+function VipBadgeInner({ vip, busy }: { vip: boolean; busy: boolean }) {
+  return (
+    <View style={vip ? s.vipBadge : s.vipBadgeOff} testID={vip ? "vip-badge" : "vip-badge-off"}>
+      {busy ? (
+        <ActivityIndicator size="small" color={vip ? "#92400E" : colors.muted} style={s.vipSpinner} testID="customer-vip-toggle-spinner" />
+      ) : (
+        <Ionicons name={vip ? "star" : "star-outline"} size={14} color={vip ? "#92400E" : colors.muted} />
+      )}
+      <Text style={vip ? s.vipBadgeText : s.vipBadgeTextOff}>{vip ? "VIP" : "Flag as VIP"}</Text>
+    </View>
+  );
+}
+
+function SinceVipRow({ c, isAdmin }: { c: any; isAdmin: boolean }) {
+  const { vip, busy, onToggle } = useVipToggle(c);
+  if (!c.customer_since && !vip && !isAdmin) return null;
   return (
     <View style={s.chipRow} testID="cd-identity-since-row">
       {c.customer_since ? (
@@ -49,11 +101,21 @@ function SinceVipRow({ c }: { c: any }) {
           {`Customer since ${new Date(c.customer_since).toLocaleDateString(undefined, { month: "long", year: "numeric" })}`}
         </Text>
       ) : null}
-      {c.is_vip ? (
-        <View style={s.vipBadge} testID="vip-badge">
-          <Ionicons name="star" size={14} color="#92400E" />
-          <Text style={s.vipBadgeText}>VIP</Text>
-        </View>
+      {isAdmin ? (
+        <Pressable
+          onPress={onToggle}
+          disabled={busy}
+          hitSlop={8}
+          style={({ pressed }) => [s.vipToggle, (pressed || busy) && { opacity: 0.6 }]}
+          accessibilityRole="switch"
+          accessibilityLabel={vip ? "Remove VIP flag" : "Flag as VIP"}
+          accessibilityState={{ checked: vip, busy, disabled: busy }}
+          testID="customer-vip-toggle"
+        >
+          <VipBadgeInner vip={vip} busy={busy} />
+        </Pressable>
+      ) : vip ? (
+        <VipBadgeInner vip busy={false} />
       ) : null}
     </View>
   );
@@ -127,7 +189,7 @@ export default function CustomerIdentityCard({ c, isActive, isAdmin, onToggleAct
   return (
     <View style={s.card} testID="cd-identity-card">
       <Text style={s.name} numberOfLines={2} testID="customer-detail-inline-name">{c.name}</Text>
-      <SinceVipRow c={c} />
+      <SinceVipRow c={c} isAdmin={isAdmin} />
       <ActiveRow isActive={isActive} isAdmin={isAdmin} onToggleActive={onToggleActive} />
       <ContactRows c={c} primaryPhone={primaryPhone} primaryEmail={primaryEmail} />
       {tagsSlot ? <View testID="cd-identity-tags">{tagsSlot}</View> : null}
@@ -159,6 +221,15 @@ const s = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
   },
   vipBadgeText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#92400E", letterSpacing: 1, textTransform: "uppercase" },
+  // Phase 36 · "Flag as VIP" off-state (web: surfaceSecondary / muted / border).
+  vipBadgeOff: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    gap: 4, backgroundColor: colors.surfaceSecondary, borderColor: colors.border, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
+  },
+  vipBadgeTextOff: { fontFamily: font.bold, fontSize: fontSize.xs, color: colors.muted, letterSpacing: 1, textTransform: "uppercase" },
+  vipToggle: { minHeight: 44, justifyContent: "center" },
+  vipSpinner: { width: 14, height: 14, transform: [{ scale: 0.6 }] },
   statusPill: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1,
