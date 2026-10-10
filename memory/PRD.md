@@ -121,3 +121,16 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - Mobile has no Revenue Insights date-range dropdown: the admin dashboard (`app/(app)/index.tsx`) calls `GET /dashboard` with no range parameter, and no mobile file mirrors web's `RevenueDateRangeFilter.jsx`.
 - `src/components/dashboard/RevenueForecastTile.tsx` (forward-looking forecast tabs, mirrors web `RevenueForecastTile.jsx`) and `app/profit-report.tsx` (its own range options incl. YTD) are separate features that web Phase 34 didn't touch — intentionally not changed.
 - If a mobile Revenue Insights range filter is added later, it must use web's preset order: Today / Tomorrow / This Week / Next Week / This Month / Last Month / This Year / Last Year / Custom Range.
+
+## 11. Phase 36 — Mobile VIP toggle + Revenue Insights filter
+
+### 2026-10-10 · Port A — mobile VIP toggle — SHIPPED
+- `CustomerIdentityCard.tsx`: admins get a `Pressable` (`customer-vip-toggle`, parity with web) wrapping the badge. The inner view keeps `vip-badge` when VIP; the off-state is "Flag as VIP" (`vip-badge-off`, web's surfaceSecondary/muted/border look). Non-admins see the read-only `vip-badge` only when VIP, because the backend endpoint is `require_admin`.
+- New `src/api/customers.ts::toggleVip` → `PATCH /api/customers/{cid}/vip` with body `{ is_vip, vip_note }`, mirroring web `toggleVip` (it forwards the existing `vip_note` so a toggle never wipes it). The backend stamps/clears `vip_since`, mirrors to subscribers, and notifies on OFF→ON. No backend change.
+- Optimistic flip → API → server doc is authoritative → rollback + error toast on failure. Spinner on the star while in flight, the press is disabled, and a ref guard stops same-frame double taps. Success toasts match web ("Flagged as VIP" / "Removed VIP flag").
+- Deferred: web's double-click VIP-note modal has no mobile equivalent yet.
+
+### 2026-10-10 · Port B — mobile Revenue Insights filter — DEFERRED
+- Mobile Revenue Insights filter is a 7-file lift because mobile uses 3 partial-equivalent range-aware endpoints (one per tile) rather than a single `/dashboard` call. Future phase needs: audit each endpoint's query-param support, build/reuse preset dropdown component, wire shared range state across 3 tiles. Est. 7 mobile files + possibly 1-2 backend endpoints if they don't already accept start/end.
+- Findings so far: `GET /dashboard` takes no range params. Web's `RevenueDateRangeFilter` drives `GET /admin/dashboard/revenue-by-category`, `/income-by-service-category` and `/revenue-forecast`, and all three already require `start`/`end`. Mobile today has only tap-through tiles (`/income-by-category` → `GET /finances/income-by-category`, a different endpoint; `/reports/revenue-by-service` → `GET /reports`) plus `RevenueForecastTile` with its own tabs (no Last Month/Year presets).
+- When built, use web's preset order: Today / Tomorrow / This Week / Next Week / This Month / Last Month / This Year / Last Year / Custom Range. `@react-native-community/datetimepicker` 8.4.4 is already installed for Custom Range.
