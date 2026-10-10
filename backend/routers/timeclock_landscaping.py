@@ -271,6 +271,18 @@ async def my_jobs_today(user: dict = Depends(get_current_user)):
 # ── Phase 4-landscape · Feb-2026 · Admin aggregation ─────────────
 _LANDSCAPE_DEPTS = ("landscaping", "landscape_tech", "landscaper", "both")
 
+# Phase 31 — hide designated landscape test accounts from the Team
+# Aggregation UI without affecting their user records, auth, seed data,
+# or `test_credentials.md`. These users still exist, still log in, and
+# still accrue data elsewhere — they just don't surface in the
+# ``admin_summary`` payroll table. Scoped by email (stable unique id)
+# rather than name or user_id. ``frozenset`` for immutability; converted
+# to ``list`` for the MongoDB ``$nin`` operator at query time.
+_AGGREGATION_HIDE_EMAILS = frozenset({
+    "carlos@aquaterra.com",
+    "luis@aquaterra.com",
+})
+
 
 @router.get("/admin-summary")
 async def admin_summary(start: Optional[str] = Query(None),
@@ -293,7 +305,8 @@ async def admin_summary(start: Optional[str] = Query(None),
     techs_cur = db.users.find(
         {"tenant_id": tenant_id,
          "role": "technician",
-         "department": {"$in": list(_LANDSCAPE_DEPTS)}},
+         "department": {"$in": list(_LANDSCAPE_DEPTS)},
+         "email": {"$nin": list(_AGGREGATION_HIDE_EMAILS)}},
         {"_id": 0, "id": 1, "name": 1, "email": 1},
     ).sort("name", 1)
     techs = await techs_cur.to_list(1000)

@@ -219,3 +219,87 @@ def test_dangling_in_marks_status_in_and_no_time_counted(ctx):
     assert row["status"] == "in"
     assert row["total_seconds"] == 0
     assert row["last_punch"]["punch_type"] == "in"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 31 · Hide designated landscape test accounts from the UI
+# ─────────────────────────────────────────────────────────────────────
+def _seed_user_with_email(tenant_id, email, *, department="landscaping"):
+    uid = f"tech-{uuid.uuid4().hex[:8]}"
+    _db.users.insert_one({
+        "id": uid, "tenant_id": tenant_id, "role": "technician",
+        "name": f"TCAS tech {uid[-4:]}", "email": email,
+        "department": department, "active": True,
+    })
+    return {"id": uid, "email": email}
+
+
+def test_phase31_hide_landscape_test_techs_from_admin_summary(ctx):
+    """``carlos@aquaterra.com`` + ``luis@aquaterra.com`` are the
+    designated landscape-tech QA login accounts (see
+    ``memory/test_credentials.md``). They must stay auth-functional,
+    stay seed-stable, and stay in the DB — but the Team Aggregation
+    payroll table shouldn't surface them because they clutter the
+    report with demo-preview punch history. The ``_AGGREGATION_HIDE_EMAILS``
+    frozenset in ``routers/timeclock_landscaping.py`` enforces this at the
+    query layer. This test asserts the hide list wins over normal
+    landscape-department inclusion, and that a non-hidden landscape
+    tech in the same tenant still appears.
+    """
+    tid = ctx["tid"]
+    _seed_user_with_email(tid, "carlos@aquaterra.com")
+    _seed_user_with_email(tid, "luis@aquaterra.com")
+    other = _seed_user_with_email(tid, f"other-{uuid.uuid4().hex[:6]}@tcas.test")
+    r = requests.get(
+        f"{API}/timeclock/admin-summary",
+        headers=_auth(ctx["admin"]["token"]), timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    returned_emails = {t.get("name") for t in r.json()["techs"]}
+    returned_ids = {t["user_id"] for t in r.json()["techs"]}
+    assert other["id"] in returned_ids, (
+        "non-hidden landscape tech must still appear in admin_summary")
+    # The two Phase-31 hide emails must NOT surface — assert via the
+    # authoritative users-collection scan so we're not fooled by a
+    # name collision.
+    hidden_user_ids = [
+        u["id"] for u in _db.users.find(
+            {"tenant_id": tid,
+             "email": {"$in": ["carlos@aquaterra.com",
+                                "luis@aquaterra.com"]}},
+            {"_id": 0, "id": 1},
+        )
+    ]
+    assert len(hidden_user_ids) == 2, (
+        "pre-flight: both hide-list seeds must land in the users collection")
+    for uid in hidden_user_ids:
+        assert uid not in returned_ids, (
+            f"hide-list user {uid} leaked into admin_summary.techs")
+    # Belt-and-suspenders — assert by name as well so a schema drift
+    # that drops ``email`` from the response can't mask a regression.
+    assert "carlos@aquaterra.com" not in returned_emails
+    assert "luis@aquaterra.com" not in returned_emails
+
+
+def test_phase31_hide_emails_do_not_appear_even_with_punches(ctx):
+    """A hide-listed email with real punches on the current week must
+    STILL be absent from the response. Guards against a regression
+    where someone adds a punch-based filter upstream and forgets the
+    user-level ``$nin``."""
+    tid = ctx["tid"]
+    carlos = _seed_user_with_email(tid, "carlos@aquaterra.com")
+    monday, sunday = _this_week()
+    t0 = datetime.combine(
+        monday, datetime.min.time(), timezone.utc,
+    ) + timedelta(days=1, hours=9)
+    _seed_punch(tid, carlos["id"], punch_type="in", ts_utc=t0)
+    _seed_punch(tid, carlos["id"], punch_type="out",
+                 ts_utc=t0 + timedelta(hours=2))
+    r = requests.get(
+        f"{API}/timeclock/admin-summary?start={monday.isoformat()}"
+        f"&end={sunday.isoformat()}",
+        headers=_auth(ctx["admin"]["token"]), timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    returned_ids = {t["user_id"] for t in r.json()["techs"]}
+    assert carlos["id"] not in returned_ids
