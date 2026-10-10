@@ -1,18 +1,25 @@
 /**
- * Feb-2026 · Invoice God Mode — super_admin silent bypass surface.
+ * Feb-2026 · DOC-LOCK-POLICY-RELAX follow-up — Phase-#2's super_admin
+ * silent-bypass surface was RETIRED alongside the lock widening.
  *
- * Locks the QuoteInvoiceDetail save-site contract so a super_admin
- * editing an invoice whose status is ``past_due`` / ``unpaid`` /
- * ``overdue`` never opens the ``EditLockConfirmDialog`` and never
- * sends ``acknowledged_lock_bypass: true`` on the PUT — the
- * server-side gate applies the role-based silent bypass and writes
- * a distinct audit line, so the frontend must stay quiet.
+ * Production policy on both inline save sites (K71 line-items +
+ * Terms editor) is:
  *
- * Static source-lint over the two save sites (K71 line-items +
- * Terms editor Save button) — matches the convention already used
- * by ``quote-invoice-detail-ack-bypass-aged.test.jsx``. Cheaper +
- * more targeted than mounting the router-heavy detail page for
- * what is fundamentally a control-flow guard.
+ *   const _locked = _doc_type === "invoice" && _st === "paid";
+ *   const _silentBypass = false;
+ *
+ * The old role-conditional ``_silentBypass = _role === "super_admin"
+ * && […past_due/unpaid/overdue…].includes(_st)`` path is gone — the
+ * narrow lock no longer catches aged statuses, so there's nothing
+ * for super_admin to silently bypass. If a future product phase
+ * re-widens the lock, this file is the signal to also restore the
+ * role-conditional bypass.
+ *
+ * The dialog-guard conditional is correspondingly simplified from
+ * ``if (_locked && !_silentBypass && !lockBypassAcked)`` to the same
+ * shape (``!_silentBypass`` stays as dead-code for intent-signalling
+ * but collapses at compile time since ``_silentBypass`` is a literal
+ * ``false``).
  */
 import { describe, it, expect } from "vitest";
 import fs from "fs";
@@ -24,134 +31,67 @@ const SRC = fs.readFileSync(
 );
 
 
-describe("QuoteInvoiceDetail · super_admin silent-bypass surface", () => {
-  // -----------------------------------------------------------------
-  // 1 · Both save sites compute a role-scoped silent-bypass flag.
-  // -----------------------------------------------------------------
-  it("K71 line-items save computes _silentBypass from role + status", () => {
-    // Anchor on the setPendingLines(nextLines) sentinel (identical
-    // to the ack-bypass test file's approach). The _silentBypass
-    // declaration sits inside the same onLinesUpdated block.
+describe("QuoteInvoiceDetail · silent-bypass retired (POLICY-RELAX Phase-#3)", () => {
+  it("K71 line-items save declares `_silentBypass = false` as a bare constant", () => {
     const idx = SRC.indexOf("setPendingLines(nextLines)");
     expect(idx).toBeGreaterThan(-1);
-    const before = SRC.slice(Math.max(0, idx - 1200), idx);
-    // Role check is exactly super_admin (no widening to admin).
-    expect(before).toMatch(/_role\s*===\s*"super_admin"/);
-    // Status check enumerates only the three aged statuses.
-    for (const status of ["past_due", "unpaid", "overdue"]) {
-      expect(
-        before.includes(`"${status}"`),
-        `K71 silent-bypass block missing "${status}"`,
-      ).toBe(true);
-    }
-    // Silent-bypass MUST NOT include out-of-scope statuses.
-    for (const status of ["paid", "void", "sent", "accepted", "draft"]) {
-      // Only assert on the silent-bypass conditional line — the
-      // _locked array 20 lines up still contains "paid"/"sent"/etc.
-      const silentLine = before.match(
-        /_silentBypass\s*=[\s\S]*?includes\(_st\)/,
-      );
-      expect(silentLine, "silent-bypass declaration missing").not.toBeNull();
-      expect(
-        silentLine[0].includes(`"${status}"`),
-        `silent-bypass expression must NOT include "${status}"`,
-      ).toBe(false);
-    }
+    const before = SRC.slice(Math.max(0, idx - 1500), idx);
+    expect(before).toMatch(/const\s+_silentBypass\s*=\s*false\s*;/);
+    // Phase-#2's role-conditional form must NOT survive here.
+    expect(before).not.toMatch(/_silentBypass\s*=\s*_role\s*===\s*"super_admin"/);
   });
 
-  it("Terms editor save computes _silentBypass from role + status", () => {
-    // Anchor on the __terms__ sentinel to isolate the Terms editor's
-    // onClick handler. Same shape as the K71 site.
+  it("Terms editor save declares `_silentBypass = false` as a bare constant", () => {
     const idx = SRC.indexOf("__terms__: termsDraft");
     expect(idx).toBeGreaterThan(-1);
-    const before = SRC.slice(Math.max(0, idx - 1200), idx);
-    expect(before).toMatch(/_role\s*===\s*"super_admin"/);
-    for (const status of ["past_due", "unpaid", "overdue"]) {
-      expect(
-        before.includes(`"${status}"`),
-        `Terms silent-bypass block missing "${status}"`,
-      ).toBe(true);
-    }
+    const before = SRC.slice(Math.max(0, idx - 1500), idx);
+    expect(before).toMatch(/const\s+_silentBypass\s*=\s*false\s*;/);
+    expect(before).not.toMatch(/_silentBypass\s*=\s*_role\s*===\s*"super_admin"/);
   });
 
-  // -----------------------------------------------------------------
-  // 2 · Dialog is suppressed AND the ack flag is omitted on silent.
-  // -----------------------------------------------------------------
-  it("both save sites suppress the dialog when _silentBypass fires", () => {
-    // Guard the exact conditional shape: the dialog only opens when
-    // _locked AND !_silentBypass AND !lockBypassAcked. Any drift
-    // (e.g. accidentally dropping the ``!_silentBypass`` clause)
-    // would silently re-surface the popup for super_admin.
+  it("exactly two bare-`false` _silentBypass declarations exist (symmetry)", () => {
+    const matches = SRC.match(/const\s+_silentBypass\s*=\s*false\s*;/g) || [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("no role-conditional silent-bypass survives anywhere in the file", () => {
+    // Phase-#2 shape explicitly retired. Hard-regress on it so a
+    // future accidental re-introduction fails CI.
+    expect(SRC).not.toMatch(/_silentBypass\s*=\s*_role\s*===\s*"super_admin"/);
+    expect(SRC).not.toMatch(/_silentBypass\s*=[\s\S]*?includes\(_st\)/);
+  });
+
+  it("dialog-guard still structurally references `_silentBypass` (intent-signalling)", () => {
+    // Even though ``_silentBypass`` is a compile-time ``false``, the
+    // conditional ``if (_locked && !_silentBypass && !lockBypassAcked)``
+    // stays in source as a semantic marker so a future POLICY-WIDEN
+    // phase can re-wire the bypass by changing one assignment.
     const re = /if\s*\(\s*_locked\s*&&\s*!\s*_silentBypass\s*&&\s*!\s*lockBypassAcked\s*\)/g;
     const matches = [...SRC.matchAll(re)];
-    expect(
-      matches.length,
-      "expected 2 dialog-guard conditionals (line-items + terms)",
-    ).toBeGreaterThanOrEqual(2);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("both save sites omit acknowledged_lock_bypass on the silent path", () => {
-    // Symmetric guard: the PUT body only carries the ack flag when
-    // _locked AND !_silentBypass. Silent bypass stays quiet so the
-    // backend writes ``put_quote_status_super_admin_silent_bypass``
-    // instead of the standard ack path.
+  it("payload-guard still structurally references `_silentBypass`", () => {
     const re = /if\s*\(\s*_locked\s*&&\s*!\s*_silentBypass\s*\)\s*_body\.acknowledged_lock_bypass\s*=\s*true/g;
     const matches = [...SRC.matchAll(re)];
-    expect(
-      matches.length,
-      "expected 2 payload-guard assignments (line-items + terms)",
-    ).toBeGreaterThanOrEqual(2);
+    expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  // -----------------------------------------------------------------
-  // 3 · Regression guards on adjacent contracts.
-  // -----------------------------------------------------------------
-  it("silent-bypass declarations share the identical scope on both sites", () => {
-    // Extract every occurrence of the silent-bypass assignment and
-    // assert they all resolve to the same role+status envelope so a
-    // future edit that widens one site can't silently drift.
-    const re = /_silentBypass\s*=\s*_role\s*===\s*"super_admin"[\s\S]*?includes\(_st\)/g;
-    const matches = [...SRC.matchAll(re)];
-    expect(
-      matches.length,
-      "expected 2 _silentBypass declarations",
-    ).toBeGreaterThanOrEqual(2);
-    // Normalise whitespace before comparing.
-    const norm = matches.map((m) => m[0].replace(/\s+/g, " "));
-    for (const decl of norm) {
-      expect(decl).toBe(norm[0]);
-    }
-  });
-
-  it("regular admin behaviour is unchanged (dialog still surfaces)", () => {
-    // With ``_role !== "super_admin"``, ``_silentBypass`` is false,
-    // so ``_locked && !_silentBypass && !lockBypassAcked`` collapses
-    // to the pre-silent-bypass gate ``_locked && !lockBypassAcked``.
-    // Anchor on the K71 save block and assert the dialog still
-    // opens via ``setLockDialogOpen(true)`` after the gate.
+  it("admin editing a paid invoice still opens the ack dialog", () => {
+    // With narrow lock + bypass retired, the only path that still
+    // triggers ``setLockDialogOpen(true)`` is admin editing a paid
+    // invoice. Anchor it on the K71 save block.
     const idx = SRC.indexOf("setPendingLines(nextLines)");
-    const window = SRC.slice(idx, idx + 200);
+    const window = SRC.slice(idx, idx + 400);
     expect(window).toMatch(/setLockDialogOpen\(true\)/);
   });
 
-  it("_locked array still covers the six ack-widen statuses", () => {
-    // Regression on the earlier ack-widen — silent-bypass work
-    // must NOT have narrowed the _locked list (admin path relies
-    // on it). Reuse the same regex the ack-bypass test file uses.
-    const re = /const _locked = \[([^\]]*)\]\.includes\(_st\)/g;
+  it("_locked remains narrow (Phase-#3 invariant mirror)", () => {
+    // Mirror of the companion ``quote-invoice-detail-ack-bypass-aged``
+    // test's narrow-lock lock. Keeps this file self-contained so a
+    // partial revert fails here first.
+    const re = /_locked\s*=\s*_doc_type\s*===\s*"invoice"\s*&&\s*_st\s*===\s*"paid"/g;
     const matches = [...SRC.matchAll(re)];
     expect(matches.length).toBeGreaterThanOrEqual(2);
-    const sets = matches.map((m) =>
-      Array.from(m[1].matchAll(/"([a-z_]+)"/g))
-        .map((mm) => mm[1])
-        .sort()
-        .join(","),
-    );
-    for (const s of sets) {
-      expect(s).toBe(
-        ["accepted", "overdue", "paid", "past_due", "sent", "unpaid"]
-          .join(","),
-      );
-    }
   });
 });
