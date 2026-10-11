@@ -5342,6 +5342,303 @@ async def pool_service_email_history(
     return {"items": rows, "count": len(rows)}
 
 
+# ─── Feb-2026 · Pool-service drill-down endpoints ────────────────────
+#
+# Three callers from the admin surface:
+#   * TC-A — bucket chip click (Maintenance / Repairs / Other / Unassigned)
+#   * TC-B — per-tech row click (jobs that tech completed this week)
+#   * TC-C — Auto-Friday email delivery row click
+#
+# All three re-run the same per-week aggregation primitives as
+# ``compute_pool_service`` so the modal's totals NEVER drift from
+# the chip/row counts that opened the modal (brief rule — see
+# ``test_pool_service_drilldown.py::_bucket_totals_match_summary``).
+
+_POOL_BUCKETS = {"maintenance", "repairs", "other", "unassigned"}
+
+
+async def _pool_jobs_in_window(
+    tenant_id: str, date_from: str, date_to: str,
+) -> List[dict]:
+    """Return every pool-industry job scheduled in the window.
+
+    Shared helper so the summary and the drill-down share one
+    source of truth. Mirrors ``compute_pool_service``'s projection
+    + industry-strict-filter path EXACTLY so a job that lands in
+    one bucket on the summary report also lands in the same
+    bucket on the drill-down.
+    """
+    try:
+        tenant_doc = await db.tenants.find_one(
+            {"id": tenant_id},
+            {"_id": 0, "id": 1, "industries": 1, "industry": 1},
+        ) or {"id": tenant_id}
+    except Exception:  # noqa: BLE001
+        tenant_doc = {"id": tenant_id}
+    from utils import not_deleted_filter as _nd
+    from routers.industry_checklists import (
+        derive_industry_for_job as _derive_industry,
+    )
+    jobs = await db.jobs.find(
+        {"tenant_id": tenant_id,
+          "scheduled_date": {"$gte": date_from, "$lte": date_to},
+          **_nd()},
+        {"_id": 0, "id": 1, "technician_id": 1, "technician_name": 1,
+         "status": 1, "scheduled_date": 1,
+         "service_type": 1, "job_type": 1, "title": 1,
+         "industry": 1, "checklist_industry": 1,
+         "work_class": 1,
+         "customer_id": 1, "customer_name": 1, "crew_id": 1,
+         "crew_name": 1,
+         "completed_at": 1, "updated_at": 1},
+    ).to_list(10000)
+    return [j for j in jobs
+             if _derive_industry(j, tenant_doc, strict_mode=True) == "pool"]
+
+
+def _classify_pool_job(j: dict) -> dict:
+    """Return the per-job bucket metadata used by the drill-down.
+
+    Keys:
+      * ``bucket``   — one of ``maintenance`` / ``repairs`` /
+                        ``other`` / ``skipped`` / ``dropped``.
+      * ``tech_id``  — resolved tech-id after the attribution
+                        ladder (may be ``None`` → unassigned).
+      * ``row``      — row dict ready for the drill-down modal.
+    """
+    status = (j.get("status") or "").lower()
+    raw_wc = j.get("work_class")
+    wc = str(raw_wc).strip().lower() if isinstance(raw_wc, str) else None
+    if status == "completed":
+        if wc == "service":   bucket = "maintenance"
+        elif wc == "repair":  bucket = "repairs"
+        else:                 bucket = "other"
+    elif status in SKIPPED_STATUSES:
+        bucket = "skipped"
+    else:
+        bucket = "dropped"
+    return {
+        "bucket": bucket,
+        "status": status or "unknown",
+        "work_class": wc or None,
+        "row": {
+            "job_id":            j.get("id"),
+            "title":             j.get("title") or "",
+            "customer_id":       j.get("customer_id"),
+            "customer_name":     j.get("customer_name") or "",
+            "scheduled_date":    j.get("scheduled_date"),
+            "completed_at":      (j.get("completed_at")
+                                   or j.get("updated_at")),
+            "technician_id":     j.get("technician_id"),
+            "technician_name":   j.get("technician_name") or "",
+            "crew_id":           j.get("crew_id"),
+            "crew_name":         j.get("crew_name") or "",
+            "status":            status or "unknown",
+            "work_class":        wc or None,
+            "service_type":      (j.get("service_type")
+                                   or j.get("job_type") or ""),
+            "job_type":          j.get("job_type") or "",
+        },
+    }
+
+
+@router.get("/reports/pool-service/jobs")
+async def pool_service_jobs_drilldown(
+    date_from: str = Query(..., description="ISO date — inclusive window start"),
+    date_to:   str = Query(..., description="ISO date — inclusive window end"),
+    bucket: Optional[str] = Query(
+        None,
+        description=("Optional bucket filter — one of "
+                      "``maintenance|repairs|other|unassigned``. "
+                      "Mutually exclusive with ``tech_id``."),
+    ),
+    tech_id: Optional[str] = Query(
+        None,
+        description=("Optional tech id. Pass ``unassigned`` to "
+                      "return every job whose attribution ladder "
+                      "fell through to the Unassigned sentinel."),
+    ),
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Drill-down list for the Pool Service Report.
+
+    Backs:
+      * TC-A — bucket chip click (``?bucket=maintenance|...``)
+      * TC-B — per-tech row click (``?tech_id=<id>`` /
+               ``?tech_id=unassigned``)
+
+    Validations:
+      * At least one of ``bucket`` / ``tech_id`` MUST be supplied.
+      * They are mutually exclusive — passing both → 422.
+      * ``bucket`` must be in the enumerated set.
+    """
+    if (bucket is None) == (tech_id is None):
+        raise HTTPException(
+            422,
+            "pass exactly one of ``bucket`` or ``tech_id`` "
+            "(mutually exclusive, at least one required)",
+        )
+    if bucket is not None and bucket not in _POOL_BUCKETS:
+        raise HTTPException(
+            422, f"bucket must be one of {sorted(_POOL_BUCKETS)}",
+        )
+    tenant_id = tenant["id"]
+    all_jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
+
+    # Attribution ladder — same shape + priority as
+    # ``compute_pool_service`` so drill-down bucketing never drifts.
+    name_to_uid: Dict[str, Optional[str]] = {}
+    _unique_names = list({
+        (j.get("technician_name") or "").strip()
+        for j in all_jobs
+        if not j.get("technician_id")
+            and (j.get("technician_name") or "").strip()
+    })
+    for nm in _unique_names:
+        escaped = re.escape(nm)
+        matches = await db.users.find(
+            {"tenant_id": tenant_id,
+              "name": {"$regex": f"^{escaped}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "technician_id": 1},
+        ).to_list(3)
+        if len(matches) == 1:
+            m = matches[0]
+            name_to_uid[nm] = m.get("technician_id") or m.get("id")
+        else:
+            name_to_uid[nm] = None
+    _unique_crews = list({
+        (j.get("crew_id") or "")
+        for j in all_jobs
+        if not j.get("technician_id")
+            and not name_to_uid.get(
+                (j.get("technician_name") or "").strip())
+            and (j.get("crew_id") or "")
+    })
+    crew_to_uid: Dict[str, Optional[str]] = {}
+    if _unique_crews:
+        _crew_rows = await db.crews.find(
+            {"tenant_id": tenant_id, "id": {"$in": _unique_crews}},
+            {"_id": 0, "id": 1, "tech_ids": 1},
+        ).to_list(len(_unique_crews))
+        for cr in _crew_rows:
+            _m = cr.get("tech_ids") or []
+            crew_to_uid[cr["id"]] = _m[0] if _m else None
+
+    def _resolve_tid(j: dict) -> Optional[str]:
+        if j.get("technician_id"): return j["technician_id"]
+        nm = (j.get("technician_name") or "").strip()
+        if nm and name_to_uid.get(nm): return name_to_uid[nm]
+        cid = j.get("crew_id") or ""
+        if cid and crew_to_uid.get(cid): return crew_to_uid[cid]
+        return None
+
+    out: List[dict] = []
+    for j in all_jobs:
+        meta = _classify_pool_job(j)
+        resolved_tid = _resolve_tid(j)
+        meta["row"]["resolved_tech_id"] = resolved_tid
+        # ``bucket`` filter — maintenance/repairs/other map 1:1.
+        # ``unassigned`` is a cross-cutting filter: completed-or-
+        # skipped jobs whose attribution ladder fell through.
+        if bucket is not None:
+            if bucket == "unassigned":
+                if meta["bucket"] in ("dropped",): continue
+                if resolved_tid is not None: continue
+            elif meta["bucket"] != bucket:
+                continue
+        else:  # tech_id branch
+            if tech_id == "unassigned":
+                if resolved_tid is not None: continue
+                if meta["bucket"] in ("dropped",): continue
+            elif resolved_tid != tech_id:
+                continue
+            # Exclude dropped jobs from per-tech view — those have
+            # a non-terminal status (``scheduled``, ``in_progress``)
+            # and surface via ``dropped_count`` on the summary.
+            if meta["bucket"] == "dropped":
+                continue
+        out.append(meta["row"])
+    out.sort(key=lambda r: (r.get("scheduled_date") or "",
+                              r.get("customer_name") or ""))
+    return {
+        "items": out,
+        "count": len(out),
+        "window": {"start": date_from, "end": date_to},
+        "filter": {"bucket": bucket, "tech_id": tech_id},
+    }
+
+
+@router.get("/reports/pool-service/email-history/{delivery_id}/contents")
+async def pool_service_email_delivery_contents(
+    delivery_id: str,
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Drill-down for Auto-Friday email delivery rows (TC-C).
+
+    Returns the delivery row + the per-week pool-service jobs
+    that WOULD have been included in the email (re-computed from
+    the aggregator for the delivery's ``week_start``..``week_end``
+    window). We re-compute rather than reading a stored snapshot
+    because the delivery log only stores recipient + status
+    metadata, not the per-row job list.
+    """
+    tenant_id = tenant["id"]
+    delivery = await db.email_delivery_log.find_one(
+        {"id": delivery_id, "tenant_id": tenant_id,
+          "kind": "pool_service_report"},
+        {"_id": 0},
+    )
+    if not delivery:
+        raise HTTPException(404, "delivery not found")
+
+    date_from = delivery.get("week_start")
+    date_to   = delivery.get("week_end")
+    if not (date_from and date_to):
+        raise HTTPException(422, "delivery row missing week window")
+
+    jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
+    # Only COMPLETED jobs are included in the Auto-Friday email —
+    # skipped + dropped are summary-only.
+    rows = []
+    customers: Dict[str, dict] = {}
+    for j in jobs:
+        meta = _classify_pool_job(j)
+        if meta["bucket"] not in ("maintenance", "repairs", "other"):
+            continue
+        row = meta["row"]
+        rows.append(row)
+        cid = row.get("customer_id") or ""
+        if cid:
+            agg = customers.setdefault(cid, {
+                "customer_id":   cid,
+                "customer_name": row.get("customer_name") or "",
+                "jobs":          [],
+            })
+            agg["jobs"].append({
+                "job_id":         row["job_id"],
+                "title":          row["title"],
+                "scheduled_date": row["scheduled_date"],
+                "work_class":     row["work_class"],
+            })
+    rows.sort(key=lambda r: (r.get("customer_name") or "",
+                              r.get("scheduled_date") or ""))
+    customer_list = sorted(
+        customers.values(),
+        key=lambda c: (c["customer_name"] or "").lower(),
+    )
+
+    return {
+        "delivery":  delivery,
+        "jobs":      rows,
+        "customers": customer_list,
+        "job_count":      len(rows),
+        "customer_count": len(customer_list),
+        "window":    {"start": date_from, "end": date_to},
+    }
+
+
 # ─── Phase 52.A · Monthly pricing digest email history ──────────────
 @router.get("/reports/pricing-insights/email-history")
 async def pricing_insights_email_history(
@@ -5617,11 +5914,24 @@ async def compute_pool_service(tenant_id: str,
     # bucket into ``other`` rather than default to ``"service"``).
     jobs = await db.jobs.find(
         {"tenant_id": tenant_id, "scheduled_date": date_range, **_nd()},
-        {"_id": 0, "technician_id": 1, "technician_name": 1,
+        {"_id": 0, "id": 1, "technician_id": 1, "technician_name": 1,
          "status": 1, "scheduled_date": 1,
          "service_type": 1, "job_type": 1, "title": 1,
          "industry": 1, "checklist_industry": 1,
-         "work_class": 1},
+         "work_class": 1,
+         # Feb-2026 — fields needed by the drill-down endpoint
+         # (/reports/pool-service/jobs) and the ``crew_id`` ladder
+         # rung in the attribution priority chain below. Keep this
+         # projection in lock-step with the drill-down endpoint's
+         # projection — adding a column there without extending the
+         # projection here causes a silent null on the modal.
+         "customer_id": 1, "customer_name": 1, "crew_id": 1,
+         "crew_name": 1,
+         # ``completed_at`` carries the authoritative completion
+         # timestamp when the job's status was flipped. ``updated_at``
+         # is a last-resort fallback for legacy rows that never
+         # received a dedicated completed_at stamp.
+         "completed_at": 1, "updated_at": 1},
     ).to_list(10000)
 
     # POOL-A · industry filter — strict mode so a job with no
@@ -5703,6 +6013,41 @@ async def compute_pool_service(tenant_id: str,
         if tid_j and nm and tid_j not in cached_name_by_tid:
             cached_name_by_tid[tid_j] = nm
 
+    # Feb-2026 · Pool-service attribution — crew-id ladder rung.
+    # Jobs with NO ``technician_id`` AND no resolvable
+    # ``technician_name`` get a last-chance rescue via their
+    # ``crew_id``: we look up the crew's ``tech_ids`` array and
+    # use the FIRST element as a de-facto lead. Rationale: crews
+    # that run a job on behalf of a single-tech lead sometimes
+    # stamp only ``crew_id`` on the job doc (pre-K42 history);
+    # the array's first element is the canonical lead per the
+    # ``POST /crews`` validator. Documented limitation: multi-
+    # tech crews collapse to the single lead for the report —
+    # per-head attribution requires a service-report row, which
+    # the Pool Service Report doesn't currently join against.
+    _unique_crew_candidates = list({
+        (j.get("crew_id") or "")
+        for j in jobs
+        if not j.get("technician_id")
+            and not name_to_uid.get((j.get("technician_name") or "").strip())
+            and (j.get("crew_id") or "")
+    })
+    crew_to_uid: Dict[str, Optional[str]] = {}
+    if _unique_crew_candidates:
+        _crew_rows = await db.crews.find(
+            {"tenant_id": tenant_id,
+              "id": {"$in": _unique_crew_candidates}},
+            {"_id": 0, "id": 1, "tech_ids": 1},
+        ).to_list(len(_unique_crew_candidates))
+        for cr in _crew_rows:
+            _members = cr.get("tech_ids") or []
+            crew_to_uid[cr["id"]] = _members[0] if _members else None
+        # Warm tmap for the rescued ids so the row renders a name.
+        _rescued_ids = [v for v in crew_to_uid.values() if v and v not in tmap]
+        if _rescued_ids:
+            _one = await resolve_technicians(db, tenant_id, _rescued_ids)
+            tmap.update(_one)
+
     agg: dict = {}
     unassigned = {"pools_serviced": 0, "repairs_completed": 0,
                    "other": 0, "skipped": 0}
@@ -5720,11 +6065,47 @@ async def compute_pool_service(tenant_id: str,
     _dropped_period = 0
     for j in jobs:
         tid = j.get("technician_id")
-        # Feb 2026 · Effective-ID rescue for name-only jobs.
+        # Feb-2026 · Attribution PRIORITY LADDER (documented).
+        #
+        # The schema reality for this codebase (verified Feb-2026
+        # against prod data on tenant ``affdfbfa-88b9-4baa-ae45-
+        # 2ef78531b6e4``):
+        #
+        #   | Field                 | Jobs with value | Used? |
+        #   |-----------------------|-----------------|-------|
+        #   | technician_id         | 5884 / 6024     | #1    |
+        #   | technician_name       | 5874 / 6024     | #2    |
+        #   | crew_id               | 5795 / 6024     | #3    |
+        #   | assigned_tech_id      | 0 / 6024        | SKIP  |
+        #   | completed_by          | 0 / 6024        | SKIP  |
+        #   | signoff_tech_id       | 0 / 6024        | SKIP  |
+        #   | crew_lead_id          | 0 / 6024        | SKIP  |
+        #   | tech_ids[]            | 0 / 6024        | SKIP  |
+        #   | assigned_tech_ids[]   | 0 / 6024        | SKIP  |
+        #
+        # Ladder (highest priority wins; break on first non-null):
+        #
+        #   1. ``technician_id``         — direct id attribution.
+        #   2. ``technician_name``       — unique users.name lookup
+        #                                   via ``name_to_uid`` map.
+        #   3. ``crew_id`` → ``crews.tech_ids[0]`` (de-facto lead).
+        #   4. ``Unassigned`` sentinel   — explicit row, NOT silent.
+        #
+        # The brief's suggested rungs (``completed_by``,
+        # ``signoff_tech_id``, ``assigned_tech_id``,
+        # ``crew_lead_id``, ``tech_ids[]``) are intentionally
+        # DROPPED above — those fields don't exist on any pool
+        # job in this schema (verified via live DB enumeration).
+        # Reinstate them here IF a future migration populates
+        # those columns on real traffic.
         if not tid:
             nm = (j.get("technician_name") or "").strip()
             if nm:
                 tid = name_to_uid.get(nm)
+        if not tid:
+            _cid = j.get("crew_id") or ""
+            if _cid:
+                tid = crew_to_uid.get(_cid)
         status = (j.get("status") or "").lower()
         # POOL-B · read the raw ``work_class`` value — DO NOT call
         # ``infer_work_class`` here.  Per SPEC §274 unknown / null
@@ -5835,6 +6216,51 @@ async def compute_pool_service(tenant_id: str,
     total_other             = sum(r["other"] for r in rows)
     total_skipped           = sum(r["skipped"] for r in rows)
 
+    # Feb-2026 · Reconciliation diagnostic.
+    #
+    # Invariant (per phase spec):
+    #     sum(per-tech maintenance)
+    #   + sum(per-tech repairs)
+    #   + sum(per-tech other)
+    #   + sum(per-tech skipped) === completed + skipped + dropped
+    #
+    # ``counted_total`` is what we rendered into the per-tech rows
+    # (service + repair + other_types + skipped). ``actual_total``
+    # is the total pool jobs in the window (completed + skipped +
+    # dropped). ``matches=True`` means every job in the window
+    # landed in exactly one bucket on the per-tech view.  If the
+    # delta is non-zero we LOG a warning (no exception) so the
+    # admin surface can render a reconciliation banner.
+    _counted_total = (total_pools_serviced
+                       + total_repairs_completed
+                       + total_other
+                       + total_skipped)
+    _actual_total = _completed_pool_period + sum(
+        1 for j in jobs
+        if (j.get("status") or "").lower() in SKIPPED_STATUSES
+    ) + _dropped_period
+    # Dropped jobs are intentionally not in buckets, but DO count
+    # against the "actual" denominator (they're pool jobs in the
+    # window). ``matches`` only requires the completed + skipped
+    # halves — the dropped bucket is surfaced separately via
+    # ``dropped_count`` on the response and the frontend banner.
+    _matches = (_counted_total + _dropped_period) == _actual_total
+    _delta = _actual_total - (_counted_total + _dropped_period)
+    if not _matches:
+        logger.warning(
+            "[pool-service] reconciliation delta=%d counted=%d "
+            "actual=%d dropped=%d tenant=%s week=%s..%s",
+            _delta, _counted_total, _actual_total, _dropped_period,
+            tenant_id, week_start, week_end,
+        )
+    reconciliation = {
+        "matches": _matches,
+        "delta": _delta,
+        "counted_total": _counted_total,
+        "actual_total": _actual_total,
+        "dropped_count": _dropped_period,
+    }
+
     return {
         # ─── Legacy fields — preserved shape ─────────────────────
         "week_start": week_start,
@@ -5885,6 +6311,24 @@ async def compute_pool_service(tenant_id: str,
             "repairs_completed": total_repairs_completed,
         },
         "by_technician": rows,
+
+        # ─── Feb-2026 · Pool-service drill-down phase ───────────
+        # ``reconciliation`` is a passive diagnostic — never raises,
+        # only logs a WARN when ``matches=false``. The admin
+        # surface renders a yellow banner off the ``matches`` flag.
+        # ``other_label`` lets the FE relabel the historic "Other"
+        # bucket to "Other job types" without a per-locale string
+        # table. ``attribution_priority`` is published so the next
+        # engineer can trace which fields were considered when a
+        # job landed in Unassigned.
+        "reconciliation": reconciliation,
+        "other_label": "Other job types",
+        "attribution_priority": [
+            "technician_id",
+            "technician_name",
+            "crew_id→crews.tech_ids[0]",
+            "Unassigned",
+        ],
     }
 
 

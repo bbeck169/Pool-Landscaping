@@ -26,6 +26,11 @@ import { Waves, Download, ChevronDown, ChevronUp, RefreshCw } from "lucide-react
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
+// Feb-2026 · Pool-service drill-down phase — shared modal used by
+// TC-A (bucket chip click), TC-B (per-tech row click) and TC-C
+// (Auto-Friday email delivery row click). Loads jobs on open so
+// the summary page stays light.
+import PoolServiceDrilldownModal from "@/components/reports/PoolServiceDrilldownModal";
 
 function mondayOf(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
@@ -64,18 +69,48 @@ function toCsv(rows) {
  * duplicated (brief rule §"Both sections share the same row-shape
  * renderer").  ``variant`` picks which counter to render bold in
  * the middle column + which data-testid suffix to stamp.
+ *
+ * Feb-2026 · Pool-service drill-down phase — the whole row is now
+ * a <button> so admins can click into the per-tech modal (TC-B).
+ * The row-level click is wired via ``onClick`` on the <tr>; we
+ * use ``tabIndex=0`` + ``role=button`` + keyboard handlers so
+ * keyboard-only users land the same affordance.
  */
-function TechRow({ row, variant }) {
+function TechRow({ row, variant, onDrilldown }) {
   const isRepair = variant === "repairs";
-  const primary = isRepair ? row.repairs_completed : row.pools_serviced;
+  const isOther  = variant === "other";
+  const primary = isRepair
+    ? row.repairs_completed
+    : isOther ? row.other : row.pools_serviced;
   const primaryTestId = isRepair
     ? `pool-report-tech-row-${row.technician_id || "unassigned"}-repairs`
-    : `pool-report-tech-row-${row.technician_id || "unassigned"}-serviced`;
+    : isOther
+      ? `pool-report-tech-row-${row.technician_id || "unassigned"}-other`
+      : `pool-report-tech-row-${row.technician_id || "unassigned"}-serviced`;
+  const handleClick = () => {
+    onDrilldown && onDrilldown({
+      techId: row.technician_id || "unassigned",
+      techName: row.technician_name,
+    });
+  };
+  const handleKey = (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      handleClick();
+    }
+  };
   return (
     <tr
       key={row.technician_id || row.technician_name}
       data-testid={`pool-service-row-${row.technician_id || "unassigned"}-${variant}`}
-      style={{ borderBottom: `1px solid ${colors.border}` }}
+      onClick={handleClick}
+      onKeyDown={handleKey}
+      role="button"
+      tabIndex={0}
+      style={{
+        borderBottom: `1px solid ${colors.border}`,
+        cursor: "pointer",
+      }}
     >
       <td className="px-4 py-2.5 font-semibold" style={{ color: colors.onSurface }}>
         {row.technician_name}
@@ -163,11 +198,20 @@ export default function PoolServiceReport() {
     return () => { alive = false; };
   }, [week]);
 
+  // Feb-2026 · Pool-service drill-down phase — the modal is a
+  // single component with three variants (bucket / tech /
+  // delivery). ``drilldown`` carries the variant + its inputs;
+  // ``null`` closes.
+  const [drilldown, setDrilldown] = useState(null);
+
   const maintenance = useMemo(
     () => data?.maintenance || [], [data],
   );
   const repairs = useMemo(
     () => data?.repairs || [], [data],
+  );
+  const otherRows = useMemo(
+    () => data?.other || [], [data],
   );
   const summary = data?.summary || {
     maintenance_visits: 0,
@@ -195,6 +239,23 @@ export default function PoolServiceReport() {
   const droppedCount = typeof data?.dropped_count === "number"
     ? data.dropped_count
     : 0;
+  // Feb-2026 · Pool-service drill-down phase — compute the
+  // "Unassigned" aggregate from the per-tech rows. The backend
+  // appends an explicit ``{technician_id: null, technician_name:
+  // "Unassigned"}`` row when non-zero so admins see the gap
+  // without silently losing jobs. The chip + the Unassigned-
+  // section drill-in use this.
+  const unassignedRow = useMemo(() => {
+    const rows = data?.by_technician || [];
+    return rows.find((r) => !r.technician_id) || null;
+  }, [data]);
+  const unassignedTotal = unassignedRow
+    ? ((unassignedRow.pools_serviced || 0)
+       + (unassignedRow.repairs_completed || 0)
+       + (unassignedRow.other || 0))
+    : 0;
+  const reconciliation = data?.reconciliation || null;
+  const otherLabel = data?.other_label || "Other";
 
   const downloadCsv = () => {
     // Union of maintenance + repairs, deduped by technician_id so a
@@ -330,8 +391,46 @@ export default function PoolServiceReport() {
             )}
           </div>
 
-          {/* Summary strip — counts + total.  ``Other`` chip hidden
-              when zero per brief §"Empty states". */}
+          {/* Feb-2026 · Pool-service drill-down phase —
+              reconciliation banner. Backend emits a passive
+              ``reconciliation`` diagnostic (never raises); the
+              banner surfaces when ``matches=false`` so admins
+              know the per-tech rows don't sum to the actual
+              pool-job volume for the week. ``delta`` is signed:
+              positive = jobs missing from the rendered buckets;
+              negative = double-counting (should never happen in
+              practice but surfaced defensively). */}
+          {reconciliation && !reconciliation.matches && (
+            <div
+              className="rounded-2xl mb-3 px-4 py-3 text-sm"
+              style={{
+                background: "#FEF3C7", color: "#92400E",
+                border: "1px solid #FDE68A",
+              }}
+              data-testid="pool-report-reconciliation-banner"
+            >
+              <strong>Reconciliation mismatch:</strong>{" "}
+              rendered rows sum to{" "}
+              <span data-testid="pool-report-reconciliation-counted">
+                {reconciliation.counted_total}
+              </span>{" "}
+              but the window has{" "}
+              <span data-testid="pool-report-reconciliation-actual">
+                {reconciliation.actual_total}
+              </span>{" "}
+              pool jobs (delta{" "}
+              <span data-testid="pool-report-reconciliation-delta">
+                {reconciliation.delta}
+              </span>
+              ). Check the server logs for the exact tenant / week.
+            </div>
+          )}
+
+          {/* Summary strip — counts + total. All chips are now
+              clickable (open the TC-A drill-down modal). The
+              ``Other`` chip is always clickable when non-zero —
+              label follows the server-published ``other_label``
+              so a future rename doesn't require a FE deploy. */}
           <div
             className="rounded-2xl mb-4 px-4 py-3 flex flex-wrap items-center gap-3 text-sm"
             style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
@@ -346,19 +445,31 @@ export default function PoolServiceReport() {
               value={totalMaintenance}
               tone="brand"
               testid="pool-report-total-serviced"
+              onClick={() => setDrilldown({ variant: "bucket", bucket: "maintenance" })}
             />
             <Chip
               label="Repairs"
               value={totalRepairs}
               tone="repair"
               testid="pool-report-total-repairs"
+              onClick={() => setDrilldown({ variant: "bucket", bucket: "repairs" })}
             />
             {totalOther > 0 && (
               <Chip
-                label="Other"
+                label={otherLabel}
                 value={totalOther}
                 tone="warn"
                 testid="pool-report-total-other"
+                onClick={() => setDrilldown({ variant: "bucket", bucket: "other" })}
+              />
+            )}
+            {unassignedTotal > 0 && (
+              <Chip
+                label="Unassigned"
+                value={unassignedTotal}
+                tone="warn"
+                testid="pool-report-total-unassigned"
+                onClick={() => setDrilldown({ variant: "bucket", bucket: "unassigned" })}
               />
             )}
             <Chip label="Total" value={totalAll} tone="neutral" testid="pool-report-total-all" />
@@ -412,6 +523,7 @@ export default function PoolServiceReport() {
                         key={`m-${r.technician_id || r.technician_name}`}
                         row={r}
                         variant="maintenance"
+                        onDrilldown={(p) => setDrilldown({ variant: "tech", ...p })}
                       />
                     ))
                   )}
@@ -466,6 +578,7 @@ export default function PoolServiceReport() {
                         key={`r-${r.technician_id || r.technician_name}`}
                         row={r}
                         variant="repairs"
+                        onDrilldown={(p) => setDrilldown({ variant: "tech", ...p })}
                       />
                     ))
                   )}
@@ -473,6 +586,64 @@ export default function PoolServiceReport() {
               </table>
             </div>
           </div>
+
+          {/* Feb-2026 · Pool-service drill-down phase — "Other job
+              types" section. Previously the "Other" bucket was
+              only visible via the summary chip, which hid per-
+              tech attribution and caused the "silent 21-job gap"
+              bug (ethan@54 maintenance + 0 visible rows for the
+              21 ``other``-typed jobs → total 75 ≠ 54+0). Now the
+              bucket renders a dedicated table so admins see
+              who's producing non-``work_class`` jobs AND can
+              click into the drill-down for exact job list. */}
+          {otherRows.length > 0 && (
+            <div
+              className="rounded-2xl overflow-hidden mt-4"
+              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+              data-testid="pool-service-other-section"
+            >
+              <div
+                className="px-4 py-3 text-xs font-semibold flex justify-between items-center"
+                style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
+              >
+                <span className="uppercase">{otherLabel}</span>
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold"
+                  style={{ background: "#FEF3C7", color: "#92400E" }}
+                >
+                  {totalOther}
+                </span>
+              </div>
+              <table className="w-full text-sm" data-testid="pool-service-other-table">
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <th className="text-left px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Tech Name
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      {otherLabel}
+                    </th>
+                    <th className="text-right px-4 py-2.5"
+                        style={{ color: colors.muted, fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>
+                      Skipped
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {otherRows.map((r) => (
+                    <TechRow
+                      key={`o-${r.technician_id || r.technician_name}`}
+                      row={r}
+                      variant="other"
+                      onDrilldown={(p) => setDrilldown({ variant: "tech", ...p })}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
@@ -507,7 +678,27 @@ export default function PoolServiceReport() {
             <tbody>
               {history.map((h) => (
                 <tr key={h.id} data-testid={`pool-service-email-history-row-${h.id}`}
-                    style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    onClick={() => setDrilldown({
+                      variant: "delivery",
+                      deliveryId: h.id,
+                      deliveryTitle: `Delivery · ${h.week_start} → ${h.week_end}`,
+                    })}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter" || ev.key === " ") {
+                        ev.preventDefault();
+                        setDrilldown({
+                          variant: "delivery",
+                          deliveryId: h.id,
+                          deliveryTitle: `Delivery · ${h.week_start} → ${h.week_end}`,
+                        });
+                      }
+                    }}
+                    style={{
+                      borderBottom: `1px solid ${colors.border}`,
+                      cursor: "pointer",
+                    }}>
                   <td className="px-4 py-2" style={{ color: colors.onSurface }}>
                     {h.sent_at ? new Date(h.sent_at).toLocaleString() : "—"}
                   </td>
@@ -537,6 +728,31 @@ export default function PoolServiceReport() {
           </table>
         )}
       </div>
+
+      {/* Feb-2026 · Pool-service drill-down phase — shared modal.
+          Three variants (bucket / tech / delivery). ``drilldown``
+          state is set by the chip, row, and email-history row
+          click handlers above; the modal reads the variant and
+          fetches on open. ``onClose`` nulls out the state. */}
+      {drilldown && (
+        <PoolServiceDrilldownModal
+          variant={drilldown.variant}
+          open={!!drilldown}
+          onClose={() => setDrilldown(null)}
+          dateFrom={data?.week_start || week}
+          dateTo={data?.week_end
+            || (() => {
+              const s = new Date(week + "T00:00:00");
+              s.setDate(s.getDate() + 6);
+              return s.toISOString().slice(0, 10);
+            })()}
+          bucket={drilldown.bucket}
+          techId={drilldown.techId}
+          techName={drilldown.techName}
+          deliveryId={drilldown.deliveryId}
+          deliveryTitle={drilldown.deliveryTitle}
+        />
+      )}
     </div>
   );
 }
@@ -545,8 +761,15 @@ export default function PoolServiceReport() {
  * Small labelled count chip used in the summary strip.
  * Kept private to this file — three tones (brand / repair / warn /
  * neutral) match the section colouring.
+ *
+ * Feb-2026 · Pool-service drill-down phase — accepts an optional
+ * ``onClick`` prop. When provided, the chip renders as a <button>
+ * so it is keyboard-focusable and announces itself as a control
+ * (TC-A — the admin can click a bucket chip to see the per-job
+ * list). Chips without ``onClick`` (currently just the "Total"
+ * chip) remain plain <span> labels.
  */
-function Chip({ label, value, tone, testid }) {
+function Chip({ label, value, tone, testid, onClick }) {
   const palette = {
     brand:   { bg: colors.brand, fg: "#fff" },
     repair:  { bg: "#B45309",     fg: "#fff" },
@@ -554,18 +777,38 @@ function Chip({ label, value, tone, testid }) {
     neutral: { bg: colors.surface, fg: colors.onSurface, border: colors.border },
   };
   const p = palette[tone] || palette.neutral;
+  const inner = (
+    <>
+      <span style={{ opacity: 0.85 }}>{label}:</span>
+      <span>{value}</span>
+    </>
+  );
+  const style = {
+    background: p.bg,
+    color: p.fg,
+    border: p.border ? `1px solid ${p.border}` : "none",
+  };
+  const common = "inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold";
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        data-testid={testid}
+        onClick={onClick}
+        className={common}
+        style={{ ...style, cursor: "pointer" }}
+      >
+        {inner}
+      </button>
+    );
+  }
   return (
     <span
       data-testid={testid}
-      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold"
-      style={{
-        background: p.bg,
-        color: p.fg,
-        border: p.border ? `1px solid ${p.border}` : "none",
-      }}
+      className={common}
+      style={style}
     >
-      <span style={{ opacity: 0.85 }}>{label}:</span>
-      <span>{value}</span>
+      {inner}
     </span>
   );
 }
