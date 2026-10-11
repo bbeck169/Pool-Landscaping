@@ -8,6 +8,15 @@
  *
  * ``onInsert("{{TOKEN}}")`` fires with the current row's token wrapped
  * in double-braces so caller can splice at the cursor.
+ *
+ * M-TAG-FIX FOLLOWUP Fix 2 · Feb-2026 — the backend grouped+flat
+ * endpoints now canonicalise the identifier field to ``key``;
+ * ``token`` is emitted as a DEPRECATED alias for one release cycle.
+ * This consumer reads ``t.key`` with a fallback to ``t.token`` so
+ * both the pre-rename and post-rename response shapes work during
+ * the deprecation window. Remove the fallback after the visual
+ * email builder phase ships + mobile port lands. See
+ * ``/app/memory/deprecations.md``.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
@@ -15,6 +24,11 @@ import { api } from "@/api";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+
+// Canonical identifier accessor — reads ``key`` with a fallback to
+// the DEPRECATED ``token`` alias so both response shapes work during
+// the Feb-2026 field-rename deprecation window.
+const _tagKey = (t) => (t && (t.key || t.token)) || "";
 
 // Session-cached catalog — hits /api/marketing/merge-tags at most
 // once per page load. Keyed by nothing (single tenant per SPA session).
@@ -69,7 +83,7 @@ export function MergeTagPalette({ open, onOpenChange, onInsert }) {
     for (const [cat, tags] of Object.entries(catalog)) {
       const matching = tags.filter((t) => {
         if (!needle) return true;
-        const hay = (t.token + " " + (t.label || "") + " " + (t.description || "")).toLowerCase();
+        const hay = (_tagKey(t) + " " + (t.label || "") + " " + (t.description || "")).toLowerCase();
         return hay.includes(needle);
       });
       if (matching.length) out.push({ category: cat, tags: matching });
@@ -104,11 +118,11 @@ export function MergeTagPalette({ open, onOpenChange, onInsert }) {
       setActiveIdx((i) => Math.max(0, i - 1));
     } else if (e.key === "Enter" && flatOrder[activeIdx]) {
       e.preventDefault();
-      insert(flatOrder[activeIdx].token);
+      insert(_tagKey(flatOrder[activeIdx]));
     }
   }
 
-  const activeToken = flatOrder[activeIdx]?.token;
+  const activeToken = _tagKey(flatOrder[activeIdx]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -161,23 +175,25 @@ export function MergeTagPalette({ open, onOpenChange, onInsert }) {
                   {grp.category}
                   <span className="ml-auto text-zinc-400 normal-case">{grp.tags.length}</span>
                 </button>
-                {!isCollapsed && grp.tags.map((t) => (
+                {!isCollapsed && grp.tags.map((t) => {
+                  const tk = _tagKey(t);
+                  return (
                   <button
-                    key={t.token}
-                    onClick={() => insert(t.token)}
+                    key={tk}
+                    onClick={() => insert(tk)}
                     onMouseEnter={() => {
-                      const idx = flatOrder.findIndex((f) => f.token === t.token);
+                      const idx = flatOrder.findIndex((f) => _tagKey(f) === tk);
                       if (idx >= 0) setActiveIdx(idx);
                     }}
-                    data-testid={`merge-tag-row-${t.token}`}
+                    data-testid={`merge-tag-row-${tk}`}
                     className={`w-full flex items-center gap-2 px-3 py-2 rounded text-left transition ${
-                      activeToken === t.token
+                      activeToken === tk
                         ? "bg-zinc-100"
                         : "hover:bg-zinc-50"
                     }`}
                   >
                     <span className="font-mono text-xs text-zinc-900">
-                      {"{{"}{t.token}{"}}"}
+                      {"{{"}{tk}{"}}"}
                     </span>
                     <span className="text-sm text-zinc-500 truncate">
                       {t.label}
@@ -191,7 +207,8 @@ export function MergeTagPalette({ open, onOpenChange, onInsert }) {
                       </span>
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             );
           })}

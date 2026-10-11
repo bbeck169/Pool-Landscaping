@@ -2418,12 +2418,23 @@ def catalog_grouped() -> Dict[str, List[Dict[str, Any]]]:
     optional ``description`` / ``sample_value`` keys; both fall
     back to the empty string so a single under-documented tag can
     no longer 500 the whole endpoint and empty the picker.
+
+    M-TAG-FIX FOLLOWUP Fix 2 · Feb-2026 — the canonical identifier
+    field is now ``key`` (aligned with the flat endpoint consumed by
+    the upcoming visual-email-builder + mobile port).  ``token`` is
+    emitted alongside as a DEPRECATED alias for one release cycle
+    so no in-flight consumer breaks mid-rollout.  See
+    ``/app/memory/deprecations.md`` for the removal schedule.
     """
     by_cat: Dict[str, List[Dict[str, Any]]] = {}
     for t in MERGE_TAGS:
+        tok = t["token"]
         by_cat.setdefault(t["category"], []).append({
-            "token": t["token"],
-            "label": t.get("label", t["token"]),
+            "key": tok,
+            # DEPRECATED alias — remove after visual-email-builder
+            # phase ships + mobile port consumes ``key``.
+            "token": tok,
+            "label": t.get("label", tok),
             "description": t.get("description", ""),
             "sample_value": t.get("sample_value", ""),
         })
@@ -2435,12 +2446,21 @@ def catalog_flat() -> List[Dict[str, Any]]:
     by ``GET /api/merge-tags`` (visual-email-builder prerequisite).
     Response-item shape: ``{key, label, description, category,
     sample_value}``.
+
+    M-TAG-FIX FOLLOWUP Fix 2 · Feb-2026 — also emits the DEPRECATED
+    ``token`` alias (byte-equal to ``key``) for one release cycle so
+    legacy consumers that haven't yet switched to ``key`` keep
+    working.  See ``/app/memory/deprecations.md``.
     """
     out: List[Dict[str, Any]] = []
     for t in MERGE_TAGS:
+        tok = t["token"]
         out.append({
-            "key": t["token"],
-            "label": t.get("label", t["token"]),
+            "key": tok,
+            # DEPRECATED alias — remove after visual-email-builder
+            # phase ships + mobile port consumes ``key``.
+            "token": tok,
+            "label": t.get("label", tok),
             "description": t.get("description", ""),
             "category": t["category"],
             "sample_value": t.get("sample_value", ""),

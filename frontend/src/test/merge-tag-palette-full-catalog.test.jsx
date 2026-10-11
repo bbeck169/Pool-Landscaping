@@ -59,6 +59,40 @@ vi.mock("@/api", () => ({
 // Import AFTER mocks are registered.
 import { MergeTagPalette, __resetMergeTagCacheForTests }
   from "@/components/marketing/MergeTagPalette";
+import { api } from "@/api";
+
+
+// M-TAG-FIX FOLLOWUP Fix 2 — three mock shapes exercised below.
+// Backend emits BOTH ``key`` and ``token`` during the deprecation
+// window; a legacy pre-rename cache would emit ``token`` only; a
+// post-removal response would emit ``key`` only. The consumer MUST
+// handle all three so no in-flight client breaks.
+const _CATALOG_LEGACY_TOKEN_ONLY = {
+  categories: {
+    Customer: [
+      { token: "NAME",       label: "Name",       description: "Full name" },
+      { token: "FIRST_NAME", label: "First Name", description: "First name" },
+    ],
+  },
+};
+
+const _CATALOG_CANONICAL_KEY_ONLY = {
+  categories: {
+    Customer: [
+      { key: "NAME",       label: "Name",       description: "Full name" },
+      { key: "FIRST_NAME", label: "First Name", description: "First name" },
+    ],
+  },
+};
+
+const _CATALOG_DEPRECATION_WINDOW_BOTH = {
+  categories: {
+    Customer: [
+      { key: "NAME",       token: "NAME",       label: "Name",       description: "Full name" },
+      { key: "FIRST_NAME", token: "FIRST_NAME", label: "First Name", description: "First name" },
+    ],
+  },
+};
 
 
 function Harness({ onInsert }) {
@@ -218,5 +252,89 @@ describe("MergeTagPalette · subject + body parity", () => {
     expect(
       screen.getByTestId("body-textarea").value,
     ).toBe("{{EMAIL}}");
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// M-TAG-FIX FOLLOWUP Fix 2 · key/token field rename deprecation window
+//
+// The backend grouped+flat merge-tag endpoints now canonicalise the
+// identifier field to ``key`` and emit ``token`` as a DEPRECATED
+// alias. This consumer MUST read ``t.key`` with a fallback to
+// ``t.token`` so no in-flight client breaks during the deprecation
+// window. See ``/app/memory/deprecations.md`` for the removal
+// schedule.
+// ═══════════════════════════════════════════════════════════════════
+describe("MergeTagPalette · key/token field rename deprecation window", () => {
+  function _TinyHarness({ onInsert }) {
+    const [open, setOpen] = React.useState(false);
+    return (
+      <>
+        <button data-testid="tiny-open" onClick={() => setOpen(true)}>
+          Open
+        </button>
+        <MergeTagPalette
+          open={open}
+          onOpenChange={setOpen}
+          onInsert={onInsert}
+        />
+      </>
+    );
+  }
+
+  it("renders rows + inserts correctly when the API emits ONLY the " +
+     "DEPRECATED ``token`` field (legacy pre-rename shape)", async () => {
+    api.get.mockImplementationOnce(async () => _CATALOG_LEGACY_TOKEN_ONLY);
+    const insert = vi.fn();
+    render(<_TinyHarness onInsert={insert} />);
+    fireEvent.click(screen.getByTestId("tiny-open"));
+    const row = await screen.findByTestId("merge-tag-row-NAME");
+    expect(row).toBeTruthy();
+    expect(screen.getByTestId("merge-tag-row-FIRST_NAME")).toBeTruthy();
+    fireEvent.click(row);
+    expect(insert).toHaveBeenCalledWith("{{NAME}}");
+  });
+
+  it("renders rows + inserts correctly when the API emits ONLY the " +
+     "canonical ``key`` field (post-removal shape)", async () => {
+    api.get.mockImplementationOnce(async () => _CATALOG_CANONICAL_KEY_ONLY);
+    const insert = vi.fn();
+    render(<_TinyHarness onInsert={insert} />);
+    fireEvent.click(screen.getByTestId("tiny-open"));
+    const row = await screen.findByTestId("merge-tag-row-NAME");
+    expect(row).toBeTruthy();
+    expect(screen.getByTestId("merge-tag-row-FIRST_NAME")).toBeTruthy();
+    fireEvent.click(row);
+    expect(insert).toHaveBeenCalledWith("{{NAME}}");
+  });
+
+  it("renders rows + inserts correctly when the API emits BOTH " +
+     "``key`` and ``token`` (deprecation-window shape — current " +
+     "production backend)", async () => {
+    api.get.mockImplementationOnce(
+      async () => _CATALOG_DEPRECATION_WINDOW_BOTH,
+    );
+    const insert = vi.fn();
+    render(<_TinyHarness onInsert={insert} />);
+    fireEvent.click(screen.getByTestId("tiny-open"));
+    const row = await screen.findByTestId("merge-tag-row-FIRST_NAME");
+    expect(row).toBeTruthy();
+    fireEvent.click(row);
+    expect(insert).toHaveBeenCalledWith("{{FIRST_NAME}}");
+  });
+
+  it("search filter works against ``key`` when ``token`` is absent " +
+     "(the canonical post-removal shape)", async () => {
+    api.get.mockImplementationOnce(async () => _CATALOG_CANONICAL_KEY_ONLY);
+    render(<_TinyHarness onInsert={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("tiny-open"));
+    await screen.findByTestId("merge-tag-row-NAME");
+    const search = screen.getByTestId("merge-tag-palette-search");
+    fireEvent.change(search, { target: { value: "FIRST" } });
+    await waitFor(() => {
+      expect(screen.queryByTestId("merge-tag-row-NAME")).toBeNull();
+    });
+    expect(screen.getByTestId("merge-tag-row-FIRST_NAME")).toBeTruthy();
   });
 });

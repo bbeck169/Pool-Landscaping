@@ -377,3 +377,123 @@ def test_normalize_url_encoded_merge_tags_idempotent():
     assert normalize_url_encoded_merge_tags(body) == body
     encoded = "<p>%7B%7BNAME%7D%7D</p>"
     assert "{{NAME}}" in normalize_url_encoded_merge_tags(encoded)
+
+
+# ─── Fix 2 · Feb-2026 — key/token field rename deprecation window ──
+#
+# Both ``catalog_flat()`` + ``catalog_grouped()`` MUST emit the
+# canonical ``key`` field on every item.  ``token`` MUST ALSO be
+# present as a DEPRECATED alias with the byte-identical value so
+# in-flight consumers (pre-rename cache, mobile port, visual-email-
+# builder) don't break during the deprecation window.  See
+# ``/app/memory/deprecations.md`` for the removal schedule.
+
+
+def test_catalog_flat_emits_canonical_key_and_token_alias_on_every_item():
+    flat = catalog_flat()
+    assert len(flat) >= 12, (
+        "flat catalog must retain the ≥12-tag floor set by the "
+        "visual-email-builder prerequisite"
+    )
+    for item in flat:
+        assert "key" in item, (
+            f"flat catalog item missing canonical ``key`` field: {item!r}"
+        )
+        assert "token" in item, (
+            f"flat catalog item missing DEPRECATED ``token`` alias "
+            f"(deprecation window still open): {item!r}"
+        )
+        assert item["key"] == item["token"], (
+            f"``key``/``token`` drifted on item {item!r} — they must "
+            "be byte-identical throughout the deprecation window"
+        )
+
+
+def test_catalog_grouped_emits_canonical_key_and_token_alias_on_every_item():
+    grouped = catalog_grouped()
+    assert grouped, "grouped catalog must have at least one category"
+    total_items = 0
+    for category, items in grouped.items():
+        assert items, f"category {category!r} must have at least one item"
+        for item in items:
+            total_items += 1
+            assert "key" in item, (
+                f"grouped catalog item missing canonical ``key`` field "
+                f"(category={category!r}): {item!r}"
+            )
+            assert "token" in item, (
+                f"grouped catalog item missing DEPRECATED ``token`` "
+                f"alias (category={category!r}): {item!r}"
+            )
+            assert item["key"] == item["token"], (
+                f"``key``/``token`` drifted on item {item!r} — must be "
+                "byte-identical throughout the deprecation window"
+            )
+    assert total_items >= 12, (
+        "grouped catalog must retain the ≥12-tag floor across all "
+        "categories combined"
+    )
+
+
+# ─── Fix 2 · Feb-2026 — endpoint role-gating ───────────────────────
+#
+# Both ``GET /api/merge-tags`` (flat) + ``GET /api/marketing/merge-
+# tags`` (grouped) are admin/manager-only.  Customers must receive
+# a 403.  We invoke the handlers directly (bypassing the ASGI
+# plumbing) with a synthetic customer-role user dict so the role
+# check runs in-process without needing a live server or JWT.
+
+
+@pytest.fixture(scope="module")
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_merge_tags_flat_endpoint_denies_customer_role():
+    from fastapi import HTTPException
+    from routers.marketing_templates import list_merge_tags_flat
+    customer_user = {
+        "id": "cust-x", "email": "cust@example.com",
+        "role": "customer", "name": "Cust X",
+        "tenant_id": "test-tenant",
+    }
+    with pytest.raises(HTTPException) as excinfo:
+        await list_merge_tags_flat(user=customer_user)
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_merge_tags_grouped_endpoint_denies_customer_role():
+    from fastapi import HTTPException
+    from routers.marketing_templates import list_merge_tags
+    customer_user = {
+        "id": "cust-y", "email": "cust2@example.com",
+        "role": "customer", "name": "Cust Y",
+        "tenant_id": "test-tenant",
+    }
+    with pytest.raises(HTTPException) as excinfo:
+        await list_merge_tags(user=customer_user)
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_merge_tags_flat_endpoint_allows_admin_role():
+    """Companion positive test — admin receives the full flat catalog
+    with both ``key`` and the deprecated ``token`` alias on every
+    item."""
+    from routers.marketing_templates import list_merge_tags_flat
+    admin_user = {
+        "id": "admin-x", "email": "admin@example.com",
+        "role": "admin", "name": "Admin X",
+        "tenant_id": "test-tenant",
+    }
+    res = await list_merge_tags_flat(user=admin_user)
+    assert "tags" in res
+    assert len(res["tags"]) >= 12
+    first = res["tags"][0]
+    assert "key" in first
+    assert "token" in first
+    assert first["key"] == first["token"]
+
+
