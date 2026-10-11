@@ -1760,3 +1760,10 @@
 - **F1 (Phase 20 action row)**: FLAGGED no-op — mobile has no unified action row (Edit = header icon, Delete = inline admin button, Send/Create = FAB, Call = PhoneLink) and no tabs row.
 - **Tests**: shard-run full suite 43 failed suites / 49 failed tests = identical to HEAD baseline (set-diff empty both ways).
 - **BLOCKER (not mine, not touched)**: commit 6911174d9 (cron) landed unresolved stash conflict markers in `mobile/app/(app)/schedule/calendar.tsx` (~L1578+) and in this file just above → Metro 500s the whole bundle. Needs a manual resolution pass.
+
+## Iteration 116 — Templates Library Phase 3 (Mobile) re-verification
+- **Commit**: 77affb86c (feature) · verified at HEAD 2f65a39a6
+- **Date**: 2026-10-11
+- **Changes**: none to code — audit + E2E verification (Jest 45/45, curl contract, Expo-web offline/reconnect/finalize/PDF)
+- **Files modified**: memory only (PRD.md, mobile/iteration_116.md, mobile/commit_log.md)
+- **Web files referenced**: frontend/src/api/templates.js

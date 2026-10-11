@@ -79,6 +79,13 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - **Env note:** the preview DB had no system definitions. They were loaded with the documented Phase 1 seed command
   `python3 backend/templates_seed/seed_templates.py --commit` (data only, no code changed).
 - **Tests:** `mobile/__tests__/templates-{offline-drafts,fields,draft-hook,api}.test.*` (45 tests).
+- **Re-verified 2026-10-11 (no code changes):** Jest 45/45. API as mike: create → PATCH 200 → finalize 200 →
+  PATCH 409 → `/pdf` 200 `application/pdf` → duplicate (draft) → delete 200; defs admin 23 / mike 8 / landscaper 8.
+  Expo-web E2E (Playwright `set_offline`): edit offline → `template_drafts:*` + `template_drafts_pending_sync:*`
+  written, "Offline — will sync" shown, Finalize blocked; reconnect → queue flushed in 8.6 s (NetInfo web
+  reachability probe), server title = offline edit → finalize → inputs read-only → PDF downloaded. Landscape tech
+  UI path sits behind the existing app-wide Clock-In gate (unchanged). Nav entry is in Tools / More / admin drawer
+  (no new bottom tab — the 5-slot tab bar is full). No external repo cloned.
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
 - Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.
