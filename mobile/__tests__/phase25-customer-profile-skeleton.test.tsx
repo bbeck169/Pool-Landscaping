@@ -216,7 +216,7 @@ describe("Phase 32 · skeleton is TWO-TONE (white page, dark nav/action/KPI regi
     }
     expect(flat(r.getByTestId("cd-skeleton-avatar")).backgroundColor).toBe("#E4E4E7");
     const slot = flat(r.getByTestId("cd-skeleton-action-edit"));
-    expect([slot.backgroundColor, slot.borderColor]).toEqual(["#03002e", "#1E293B"]);
+    expect([slot.backgroundColor, slot.borderColor]).toEqual(["#334155", "#64748B"]); // Phase 40 · steel
   });
 
   it("tile area reserves the 6 KPI tiles in locked order", () => {
@@ -227,7 +227,7 @@ describe("Phase 32 · skeleton is TWO-TONE (white page, dark nav/action/KPI regi
     expect(KPI_SLOTS).toEqual(["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"]);
     KPI_SLOTS.forEach((k) => {
       const st = flat(r.getByTestId(`cd-skeleton-kpi-${k}`));
-      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, "#03002e", "#1E293B"]);
+      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, "#115E59", "#1E293B"]); // Phase 40 · teal
     });
   });
 });

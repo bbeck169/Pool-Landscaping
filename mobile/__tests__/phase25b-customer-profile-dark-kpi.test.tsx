@@ -74,6 +74,7 @@ jest.mock("@/src/components/customers/PortalAccessPanel", () => ({ __esModule: t
 import CustomerDetail from "@/app/customer/[id]";
 
 const DARK = "#03002e", BORDER = "#1E293B", RED = "#7F1D1D", GREEN = "#064E3B";
+const TEAL = "#115E59"; // Phase 40 · web Phase 38 KPI neutral
 const ORDER = ["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"];
 const CUSTOMER = { id: "cust-1", name: "Jane Test", email: "j@t.com", is_active: true, tags: [],
   has_login: true, mobiles: [{ number_e164: "+15550102000", is_primary: true }] };
@@ -138,7 +139,7 @@ describe("Phase 25b · KPI tiles (kpi-summary)", () => {
     const r = await mount({ balance_due_cents: 0, past_due_cents: 0, credit_cents: 0, overdue_count: 0 });
     for (const k of ORDER) {
       const st = flat(r.getByTestId(`cd-kpi-tile-${k}`));
-      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, DARK, BORDER]);
+      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, TEAL, BORDER]);
     }
   });
 
@@ -149,9 +150,9 @@ describe("Phase 25b · KPI tiles (kpi-summary)", () => {
     expect(bg("past-due")).toBe(RED);
     expect(bg("overdue")).toBe(RED);
     expect(bg("credit")).toBe(GREEN);
-    expect(bg("balance-due")).toBe(DARK);
-    expect(bg("pending-est")).toBe(DARK);
-    expect(bg("unread-msgs")).toBe(DARK);
+    expect(bg("balance-due")).toBe(TEAL);
+    expect(bg("pending-est")).toBe(TEAL);
+    expect(bg("unread-msgs")).toBe(TEAL);
     expect(r.getByTestId("cd-kpi-tile-balance-due-value").props.children).toBe("$123.45");
     expect(r.getByTestId("cd-kpi-tile-overdue-value").props.children).toBe("2");
     expect(flat(r.getByTestId("cd-kpi-tile-past-due-value")).color).toBe("#FFFFFF");
@@ -186,7 +187,8 @@ describe("Phase 25b · Quick Actions + Phase 20 preserved", () => {
   it("each Quick Action tile scrolls to its section anchor (exactly once)", async () => {
     const r = await mount({});
     const sv: any = r.UNSAFE_getByType(ScrollView).instance;
-    const ys: Record<string, number> = { jobs: 1400, tasks: 900, notes: 1100, timeline: 1700, equipment: 600 };
+    // Phase 40 · Messages (timeline) tile retired from the 12-tile web-order grid.
+    const ys: Record<string, number> = { jobs: 1400, tasks: 900, notes: 1100, equipment: 600 };
     for (const [k, y] of Object.entries(ys)) {
       fireEvent(r.getByTestId(`cd-section-${k}`), "layout", { nativeEvent: { layout: { x: 0, y, width: 300, height: 100 } } });
     }

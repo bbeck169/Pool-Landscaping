@@ -36,10 +36,11 @@ import CustomerJobsSection from "@/src/components/customers/CustomerJobsSection"
 import CustomerProfileSkeleton from "@/src/components/customers/CustomerProfileSkeleton";
 // Phase 25b · web parity 66328fc7d (Phase 27) — dark chassis + KPI tiles + Quick Actions.
 import {
-  KPITileGrid, QuickActionTileGrid, LightPanel, type KpiSummary,
+  KPITileGrid, QuickActionTileGrid, LightPanel, SectionAnchor, type KpiSummary, type QuickAction,
 } from "@/src/components/customers/CustomerDarkProfileParts";
 import {
   DARK_BG, DARK_BORDER, DARK_TILE_RADIUS, DARK_TEXT, DARK_TEXT_MUTED,
+  CD_ACTION_BTN_BG, CD_ACTION_BTN_BORDER, CD_CALL_BTN_BG,
 } from "@/src/lib/customerDarkTokens";
 // Phase 32 · two-tone — white page + light card wrappers; dark tiles above.
 import {
@@ -47,13 +48,23 @@ import {
 } from "@/src/lib/customerLightTokens";
 
 // Quick Action tiles → the section each would open (mobile: scroll target).
-const QUICK_ACTIONS = [
+// Phase 40 · web Phase 38 parity — 12 tiles in web TABS order (Measurements /
+// Chemical History / Quotes / Invoices / Reviews hidden: no mobile section).
+// ``gate`` mirrors the section's own render gate so a tile never points at
+// a section the viewer can't see (web role-gated tab pattern).
+const QUICK_ACTIONS: (QuickAction & { gate?: "admin" | "adminOrTech" })[] = [
+  { k: "overview", label: "Overview", icon: "person-circle-outline" },
+  { k: "properties", label: "Properties", icon: "home-outline" },
   { k: "jobs", label: "Jobs", icon: "briefcase-outline" },
-  { k: "tasks", label: "Tasks", icon: "checkbox-outline" },
-  { k: "notes", label: "Service Notes", icon: "document-text-outline" },
-  { k: "timeline", label: "Messages", icon: "chatbubbles-outline" },
+  { k: "documents", label: "Documents", icon: "folder-open-outline", gate: "admin" },
   { k: "equipment", label: "Equipment", icon: "construct-outline" },
-  { k: "payments", label: "Payments", icon: "card-outline" },
+  { k: "warranties", label: "Warranties", icon: "shield-checkmark-outline", gate: "adminOrTech" },
+  { k: "tasks", label: "Tasks", icon: "checkbox-outline" },
+  { k: "notes", label: "Notes", icon: "document-text-outline" },
+  { k: "credits", label: "Credits", icon: "wallet-outline", gate: "admin" },
+  { k: "payments", label: "Payments", icon: "card-outline", gate: "admin" },
+  { k: "subscriptions", label: "Subscriptions", icon: "repeat-outline", gate: "admin" },
+  { k: "portal", label: "Portal Access", icon: "key-outline", gate: "admin" },
 ];
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
@@ -103,6 +114,7 @@ export default function CustomerDetail() {
   const [summary, setSummary] = useState<any>(null);
   // Phase 25b — KPI snapshot from ``GET /customers/{id}/kpi-summary``.
   const [kpi, setKpi] = useState<KpiSummary>(null);
+  const [activeQa, setActiveQa] = useState<string | null>(null); // Phase 40 · active tile outline
   const scrollRef = React.useRef<ScrollView>(null);
   const sectionY = React.useRef<Record<string, number>>({});
   const onAnchor = useCallback((k: string, y: number) => { sectionY.current[k] = y; }, []);
@@ -443,30 +455,30 @@ export default function CustomerDetail() {
         />
         <View style={s2.actionRow} testID="customer-action-row">
           <TouchableOpacity
-            style={[s2.actionBtn, s2.actionBtnNeutral]}
+            style={[s2.actionBtn, s2.actionBtnSteel]}
             onPress={() => router.push(`/customer/new?id=${id}`)}
             testID="customer-action-edit"
           >
-            <Ionicons name="create-outline" size={16} color={colors.brand} />
-            <Text style={[s2.actionBtnText, { color: colors.brand }]}>Edit</Text>
+            <Ionicons name="create-outline" size={16} color="#FFFFFF" />
+            <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Edit</Text>
           </TouchableOpacity>
           {primaryPhone ? (
             <TouchableOpacity
-              style={[s2.actionBtn, s2.actionBtnNeutral]}
+              style={[s2.actionBtn, s2.actionBtnCall]}
               onPress={() => Linking.openURL(`tel:${String(primaryPhone).replace(/[^\d+]/g, "")}`)}
               testID="customer-action-call"
             >
-              <Ionicons name="call-outline" size={16} color={colors.brand} />
-              <Text style={[s2.actionBtnText, { color: colors.brand }]}>Call</Text>
+              <Ionicons name="call-outline" size={16} color="#FFFFFF" />
+              <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Call</Text>
             </TouchableOpacity>
           ) : null}
           {isAdmin && c.has_login ? (
-            <Pressable style={[styles.impersonateBtn, s2.actionBtn]} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
+            <Pressable style={[s2.actionBtn, s2.actionBtnSteel]} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
               <Ionicons name="eye-outline" size={16} color="#fff" />
               <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "View as customer"}</Text>
             </Pressable>
           ) : null}
-          {isAdmin ? (
+        {isAdmin ? (
             <TouchableOpacity
               style={[s2.deleteBtn, s2.actionBtn]}
               onPress={() => setConfirmDelete(true)}
@@ -481,7 +493,15 @@ export default function CustomerDetail() {
         {/* Phase 25b · web Phase 27 — 6 KPI tiles (locked order) + Quick
             Action tiles, both ABOVE the section stack. */}
         <KPITileGrid kpi={kpi} />
-        <QuickActionTileGrid actions={QUICK_ACTIONS} onPick={jumpTo} />
+        <QuickActionTileGrid
+          actions={QUICK_ACTIONS.filter((a) => !a.gate || (a.gate === "admin" ? isAdmin : isAdminOrTech))}
+          activeKey={activeQa}
+          onPick={(k) => {
+            setActiveQa(k);
+            if (k === "overview") scrollRef.current?.scrollTo({ y: 0, animated: true });
+            else jumpTo(k);
+          }}
+        />
         {/* Feb-2026 · P29b — Mobile mute-picker parity. Admin + super_admin
             only (matches the web MuteControl gating). */}
         {isAdmin ? (
@@ -666,6 +686,7 @@ export default function CustomerDetail() {
           </View>
         ) : null}
 
+        <SectionAnchor k="subscriptions" onAnchor={onAnchor} onNode={onNode}>
         {/* B4 — Subscriptions CRUD */}
         {isAdmin ? (
           <View style={{ marginTop: spacing.xl }}>
@@ -674,7 +695,9 @@ export default function CustomerDetail() {
             </LightPanel>
           </View>
         ) : null}
+        </SectionAnchor>
 
+        <SectionAnchor k="credits" onAnchor={onAnchor} onNode={onNode}>
         {/* Credits section (Phase 10 / Phase 13B) */}
         {isAdmin ? (
           <View style={styles.creditsSection} testID="customer-credits-section">
@@ -727,6 +750,7 @@ export default function CustomerDetail() {
             )}
           </View>
         ) : null}
+        </SectionAnchor>
 
         {/* Adjust balance modal */}
         <Modal visible={adjustOpen} transparent animationType="fade" testID="adjust-credits-modal">
@@ -775,6 +799,7 @@ export default function CustomerDetail() {
           </KeyboardAvoidingView>
         </Modal>
 
+        <SectionAnchor k="portal" onAnchor={onAnchor} onNode={onNode}>
         {isAdmin ? (
           c.has_login ? (
             <View style={styles.loginBadge} testID="customer-has-login">
@@ -802,6 +827,7 @@ export default function CustomerDetail() {
             />
           </LightPanel>
         ) : null}
+        </SectionAnchor>
 
         {c.notes ? (
           <View style={styles.notesBox}>
@@ -810,6 +836,7 @@ export default function CustomerDetail() {
           </View>
         ) : null}
 
+        <SectionAnchor k="documents" onAnchor={onAnchor} onNode={onNode}>
         {isAdmin ? (
           <>
             <View style={styles.docHeader}>
@@ -834,7 +861,9 @@ export default function CustomerDetail() {
             )}
           </>
         ) : null}
+        </SectionAnchor>
 
+        <SectionAnchor k="properties" onAnchor={onAnchor} onNode={onNode}>
         {/* Feb-2026 MP2 UI — read-only property list for mobile admins.
             Editing surfaces exist on web only per the ship brief. */}
         <Text style={styles.sectionTitle}>
@@ -891,6 +920,7 @@ export default function CustomerDetail() {
             </View>
           ))
         )}
+        </SectionAnchor>
 
         {/* Phase 56.11-mobile — Equipment photo library section (legacy). */}
         <Text style={styles.sectionTitle}>Equipment Photos</Text>
@@ -908,6 +938,7 @@ export default function CustomerDetail() {
           </>
         ) : null}
 
+        <SectionAnchor k="warranties" onAnchor={onAnchor} onNode={onNode}>
         {/* Warranty Contracts — read-only list (v1, no add/edit on mobile). */}
         {isAdminOrTech ? (
           <>
@@ -917,6 +948,7 @@ export default function CustomerDetail() {
             </LightPanel>
           </>
         ) : null}
+        </SectionAnchor>
 
         {/* Task 1 · Feb-2026 — Outbound-comms Demo whitelist toggle
             with hard-confirm modal. Same contract as web. */}
@@ -1176,7 +1208,9 @@ const s2 = StyleSheet.create({
     borderRadius: radius.md, flexDirection: "row", alignItems: "center",
     justifyContent: "center", gap: 6,
   },
-  actionBtnNeutral: { backgroundColor: DARK_BG, borderWidth: 1, borderColor: DARK_BORDER },
+  // Phase 40 · web Phase 38 — steel Edit / View-as, emerald Call.
+  actionBtnSteel: { backgroundColor: CD_ACTION_BTN_BG, borderWidth: 1, borderColor: CD_ACTION_BTN_BORDER },
+  actionBtnCall: { backgroundColor: CD_CALL_BTN_BG, borderWidth: 1, borderColor: CD_CALL_BTN_BG },
   // Phase 32 · light card chassis for the four status/mute controls.
   lightCard: {
     backgroundColor: LIGHT_CARD_BG, borderWidth: 1, borderColor: LIGHT_CARD_BORDER,

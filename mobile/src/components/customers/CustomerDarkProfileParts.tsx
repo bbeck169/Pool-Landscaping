@@ -8,6 +8,11 @@
  *     soft white glow on every tile (Phase 25 KPI_GLOW).
  *   * QuickActionTileGrid — mobile analogue of web's tab-picker tiles:
  *     each tile scrolls the profile to its section in the stack.
+ *   * Phase 40 · web Phase 38 grouping — neutral KPI tiles teal
+ *     (#115E59, slate-300 labels); Quick Action tiles slate-900 with icon
+ *     accents cycling teal / indigo / slate by index (i % 3) and an indigo
+ *     #4F46E5 outline on the last-picked (active) tile. SectionAnchor is a
+ *     chassis-less scroll target for sections without a LightPanel.
  *   * LightPanel — light inset card that keeps un-restyled child
  *     sections readable on the navy page; doubles as a scroll anchor.
  */
@@ -17,8 +22,10 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { colors, font, fontSize, spacing } from "@/src/theme";
 import {
-  DARK_BG, DARK_BORDER, DARK_TILE_RADIUS, DARK_TEXT, DARK_TEXT_MUTED,
+  DARK_BORDER, DARK_TILE_RADIUS, DARK_TEXT, DARK_TEXT_MUTED,
   DANGER_BG, SUCCESS_BG, KPI_GLOW,
+  CD_FINANCIAL_NEUTRAL_BG, CD_FINANCIAL_NEUTRAL_LABEL, CD_NAV_TILE_BG, CD_NAV_TILE_ACTIVE_BG,
+  CD_ICON_ACCENTS, CD_ACTIVE_TILE_BORDER,
 } from "@/src/lib/customerDarkTokens";
 
 export type KpiSummary = {
@@ -51,8 +58,8 @@ export function KPITileGrid({ kpi }: { kpi: KpiSummary }) {
           testID={`cd-kpi-tile-${t.k}`}
         >
           <View style={s.tileHead}>
-            <Ionicons name={t.icon as any} size={14} color={DARK_TEXT_MUTED} />
-            <Text style={s.tileLabel} numberOfLines={1}>{t.label}</Text>
+            <Ionicons name={t.icon as any} size={14} color={t.bg ? DARK_TEXT_MUTED : CD_FINANCIAL_NEUTRAL_LABEL} />
+            <Text style={[s.tileLabel, !t.bg && { color: CD_FINANCIAL_NEUTRAL_LABEL }]} numberOfLines={1}>{t.label}</Text>
           </View>
           <Text style={s.tileValue} testID={`cd-kpi-tile-${t.k}-value`}>{t.value}</Text>
         </View>
@@ -63,22 +70,41 @@ export function KPITileGrid({ kpi }: { kpi: KpiSummary }) {
 
 export type QuickAction = { k: string; label: string; icon: string };
 
-export function QuickActionTileGrid({ actions, onPick }: { actions: QuickAction[]; onPick: (k: string) => void }) {
+export const qaIconColor = (i: number, active: boolean) => (active ? DARK_TEXT : CD_ICON_ACCENTS[i % CD_ICON_ACCENTS.length]);
+
+export function QuickActionTileGrid({ actions, onPick, activeKey }: {
+  actions: QuickAction[]; onPick: (k: string) => void; activeKey?: string | null;
+}) {
   return (
     <View style={s.grid} testID="cd-quick-action-grid">
-      {actions.map((a) => (
-        <Pressable
-          key={a.k}
-          onPress={() => onPick(a.k)}
-          style={({ pressed }) => [s.qa, pressed && { opacity: 0.85 }]}
-          testID={`cd-quick-action-${a.k}`}
-          accessibilityRole="button"
-          accessibilityLabel={`Jump to ${a.label}`}
-        >
-          <Ionicons name={a.icon as any} size={18} color={DARK_TEXT} />
-          <Text style={s.qaLabel} numberOfLines={1}>{a.label}</Text>
-        </Pressable>
-      ))}
+      {actions.map((a, i) => {
+        const on = activeKey === a.k;
+        return (
+          <Pressable
+            key={a.k}
+            onPress={() => onPick(a.k)}
+            style={({ pressed }) => [s.qa, on && s.qaActive, pressed && { opacity: 0.85 }]}
+            testID={`cd-quick-action-${a.k}`}
+            accessibilityRole="button"
+            accessibilityLabel={`Jump to ${a.label}`}
+            accessibilityState={{ selected: on }}
+          >
+            <Ionicons name={a.icon as any} size={18} color={qaIconColor(i, on)} testID={`cd-quick-action-${a.k}-icon`} />
+            <Text style={s.qaLabel} numberOfLines={1}>{a.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/** Phase 40 · chassis-less scroll target (same anchor contract as LightPanel). */
+export function SectionAnchor({ k, onAnchor, onNode, children }: {
+  k: string; onAnchor: (k: string, y: number) => void; onNode: (k: string, node: any) => void; children: React.ReactNode;
+}) {
+  return (
+    <View onLayout={(e) => onAnchor(k, e.nativeEvent.layout.y)} ref={(n) => onNode(k, n)} collapsable={false} testID={`cd-anchor-${k}`}>
+      {children}
     </View>
   );
 }
@@ -107,7 +133,7 @@ const s = StyleSheet.create({
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   tile: {
     flexGrow: 1, flexBasis: "30%", minHeight: 76, padding: spacing.md, justifyContent: "space-between",
-    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
+    backgroundColor: CD_FINANCIAL_NEUTRAL_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
     ...KPI_GLOW,
   },
   tileHead: { flexDirection: "row", alignItems: "center", gap: 4 },
@@ -115,8 +141,9 @@ const s = StyleSheet.create({
   tileValue: { fontFamily: font.bold, fontSize: fontSize.lg, color: DARK_TEXT, marginTop: 4 },
   qa: {
     flexGrow: 1, flexBasis: "30%", minHeight: 64, padding: spacing.sm, alignItems: "center", justifyContent: "center", gap: 4,
-    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
+    backgroundColor: CD_NAV_TILE_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
   },
+  qaActive: { backgroundColor: CD_NAV_TILE_ACTIVE_BG, borderColor: CD_ACTIVE_TILE_BORDER },
   qaLabel: { fontFamily: font.semibold, fontSize: fontSize.sm, color: DARK_TEXT },
   panel: {
     backgroundColor: colors.surface, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,

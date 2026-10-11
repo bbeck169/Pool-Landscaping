@@ -103,6 +103,8 @@ jest.mock("@/src/components/customers/PortalAccessPanel", () => ({ __esModule: t
 import CustomerDetail from "@/app/customer/[id]";
 
 const DARK = "#03002e", BORDER = "#1E293B", RED = "#7F1D1D", GREEN = "#064E3B";
+// Phase 40 · web Phase 38 tile palette (KPI teal / nav slate-900 / steel + emerald buttons).
+const TEAL = "#115E59", NAV = "#0F172A", STEEL = "#334155", STEEL_BORDER = "#64748B", CALL = "#059669";
 const PAGE = "#FFFFFF", LBORDER = "#E4E4E7";
 const flat = (el: any) => StyleSheet.flatten(el.props.style) || {};
 const CUSTOMER = {
@@ -110,7 +112,8 @@ const CUSTOMER = {
   is_vip: true, customer_since: "2021-03-15T00:00:00Z", mobiles: [{ number_e164: "+15550102000", is_primary: true }],
 };
 const KPI_ORDER = ["balance-due", "past-due", "credit", "overdue", "pending-est", "unread-msgs"];
-const QA = ["jobs", "tasks", "notes", "timeline", "equipment", "payments"];
+// Phase 40 · 12 tiles in web TABS order (Messages tile retired — not a web tab).
+const QA = ["overview", "properties", "jobs", "documents", "equipment", "warranties", "tasks", "notes", "credits", "payments", "subscriptions", "portal"];
 
 async function mount(kpi: any = {}) {
   mockApiGet.mockImplementation((url: string) => {
@@ -171,7 +174,7 @@ describe("Phase 32 · DARK layer (unchanged)", () => {
     expect(order).toEqual(KPI_ORDER.map((k) => `cd-kpi-tile-${k}`));
     for (const k of KPI_ORDER) {
       const st = flat(r.getByTestId(`cd-kpi-tile-${k}`));
-      expect([k, st.backgroundColor, st.borderColor, st.shadowColor]).toEqual([k, DARK, BORDER, "#FFFFFF"]);
+      expect([k, st.backgroundColor, st.borderColor, st.shadowColor]).toEqual([k, TEAL, BORDER, "#FFFFFF"]);
       expect(flat(r.getByTestId(`cd-kpi-tile-${k}-value`)).color).toBe("#FFFFFF");
     }
   });
@@ -179,14 +182,14 @@ describe("Phase 32 · DARK layer (unchanged)", () => {
   it("dynamic red/green intact", async () => {
     const r = await mount({ past_due_cents: 100, credit_cents: 50, overdue_count: 2 });
     const bg = (k: string) => flat(r.getByTestId(`cd-kpi-tile-${k}`)).backgroundColor;
-    expect([bg("past-due"), bg("credit"), bg("overdue"), bg("balance-due")]).toEqual([RED, GREEN, RED, DARK]);
+    expect([bg("past-due"), bg("credit"), bg("overdue"), bg("balance-due")]).toEqual([RED, GREEN, RED, TEAL]);
   });
 
   it("6 Quick Action tiles dark navy", async () => {
     const r = await mount();
     for (const k of QA) {
       const st = flat(r.getByTestId(`cd-quick-action-${k}`));
-      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, DARK, BORDER]);
+      expect([k, st.backgroundColor, st.borderColor]).toEqual([k, NAV, BORDER]);
     }
   });
 
@@ -195,9 +198,12 @@ describe("Phase 32 · DARK layer (unchanged)", () => {
     for (const id of ["customer-action-row", "customer-action-edit", "customer-action-call", "impersonate-customer-button", "customer-delete-button"]) {
       expect(r.getByTestId(id)).toBeTruthy();
     }
-    for (const id of ["customer-action-edit", "customer-action-call"]) {
+    const want: Record<string, string[]> = {
+      "customer-action-edit": [STEEL, STEEL_BORDER], "customer-action-call": [CALL, CALL], "impersonate-customer-button": [STEEL, STEEL_BORDER],
+    };
+    for (const [id, [bg, bd]] of Object.entries(want)) {
       const st = flat(r.getByTestId(id));
-      expect([id, st.backgroundColor, st.borderColor]).toEqual([id, DARK, BORDER]);
+      expect([id, st.backgroundColor, st.borderColor]).toEqual([id, bg, bd]);
     }
   });
 });

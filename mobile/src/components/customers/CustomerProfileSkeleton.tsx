@@ -24,7 +24,10 @@ import { colors, spacing, radius } from "@/src/theme";
 // cards/bars; the regions that are dark on the real page (nav bar,
 // action row, KPI tiles) stay dark navy. Structure / timing / testIDs
 // unchanged.
-import { DARK_BG, DARK_BORDER, DARK_TILE_RADIUS } from "@/src/lib/customerDarkTokens";
+// Phase 40 · web Phase 38 grouping — KPI slots teal, action slots steel.
+import {
+  DARK_BORDER, DARK_TILE_RADIUS, CD_FINANCIAL_NEUTRAL_BG, CD_ACTION_BTN_BG, CD_ACTION_BTN_BORDER,
+} from "@/src/lib/customerDarkTokens";
 import { LIGHT_PAGE_BG, LIGHT_CARD_BG, LIGHT_CARD_BORDER, LIGHT_CARD_RADIUS } from "@/src/lib/customerLightTokens";
 
 export const SKELETON_SECTIONS = ["jobs", "documents", "timeline"] as const;
@@ -123,12 +126,12 @@ const s = StyleSheet.create({
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   actionSlot: {
     flexGrow: 1, flexBasis: "45%", minHeight: 44, borderRadius: radius.md,
-    backgroundColor: DARK_BG, borderWidth: 1, borderColor: DARK_BORDER,
+    backgroundColor: CD_ACTION_BTN_BG, borderWidth: 1, borderColor: CD_ACTION_BTN_BORDER,
   },
   kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   kpiTile: {
     flexGrow: 1, flexBasis: "30%", minHeight: 76, padding: spacing.md, gap: spacing.sm,
-    backgroundColor: DARK_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
+    backgroundColor: CD_FINANCIAL_NEUTRAL_BG, borderRadius: DARK_TILE_RADIUS, borderWidth: 1, borderColor: DARK_BORDER,
   },
   pillRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },
   sectionRow: {
