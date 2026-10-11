@@ -80,6 +80,40 @@ async def get_portal_summary(
     cid = _require_customer(user)
     today = datetime.now(timezone.utc).date().isoformat()
 
+    # DATA-PARITY-C1 · Feb-2026 — Portal/admin credit parity.
+    # The portal previously computed credit INLINE below by summing
+    # overpayments across invoices (``remaining < 0`` branch).  That
+    # algorithm diverged from the admin KPI endpoint, which reads
+    # the ledger-aggregated ``customer_credits_balance.balance_cents``
+    # row maintained by the referral/manual-credit write paths.
+    # Result: a customer with an admin-granted credit (referral
+    # reward, manual "Issue Credit") that hasn't been applied to any
+    # invoice yet saw $280 on the admin profile and $0 on the portal.
+    # Diane Lloyd is the canonical repro.
+    #
+    # Fix: route every money figure (balance_due, past_due, credit,
+    # overdue_count) through the shared ``compute_customer_balance``
+    # function so the portal cannot drift from the admin surface.
+    # The breakdown counts (``open_invoice_count``,
+    # ``past_due_invoice_count``) stay computed from the inline
+    # invoice loop below — they're UI-only and not canonical.
+    from services.customer_balance import compute_customer_balance
+    try:
+        canonical = await compute_customer_balance(
+            db, tenant["id"], cid,
+        )
+    except Exception as _ccb_exc:                                     # noqa: BLE001
+        # Defensive: fall through to the inline computation so a
+        # transient failure doesn't blank the portal landing tiles.
+        # The counts path below still fires; the inline balance/past-
+        # due numbers are a reasonable fallback.
+        import logging as _p_log
+        _p_log.getLogger("customer_portal").warning(
+            "[portal-summary] compute_customer_balance failed cid=%s: %s",
+            cid, _ccb_exc,
+        )
+        canonical = None
+
     invs: List[Dict[str, Any]] = await db.quotes.find(
         {
             "tenant_id": tenant["id"],
@@ -116,6 +150,19 @@ async def get_portal_summary(
         elif remaining < 0:
             # Overpayment → treat the absolute difference as customer credit.
             credit += -remaining
+
+    # DATA-PARITY-C1 · Feb-2026 — Override the inline figures with
+    # the canonical values from the shared compute function.  The
+    # inline loop stays wired for ``open_ct`` / ``past_ct`` which
+    # the portal UI uses for its ``breakdown`` tile (and which the
+    # admin KPI doesn't surface).  ``credit`` is particularly
+    # important here: the inline path only ever surfaces credit via
+    # invoice overpayments; the canonical path reads the ledger
+    # directly so admin-granted-but-unapplied credits show up.
+    if canonical is not None:
+        balance_due = canonical["balance_due"]
+        past_due = canonical["past_due"]
+        credit = canonical["credit_balance_cents"] / 100.0
 
     # ── Phase P47 · Feb-2026 · Next-service query fix ────────────
     # Pre-P47 this used ``find_one`` with sort
