@@ -22,9 +22,11 @@
  * matches what the admin is looking at.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { Waves, Download, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { Waves, Download, ChevronDown, ChevronUp, RefreshCw, Send } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { colors } from "@/theme";
 // Feb-2026 · Pool-service drill-down phase — shared modal used by
 // TC-A (bucket chip click), TC-B (per-tech row click) and TC-C
@@ -203,6 +205,46 @@ export default function PoolServiceReport() {
   // delivery). ``drilldown`` carries the variant + its inputs;
   // ``null`` closes.
   const [drilldown, setDrilldown] = useState(null);
+  // Mini-fix B · Feb-2026 — admin-triggered Friday email.
+  // ``sendingNow`` disables the button mid-request so a rapid-
+  // click can't fire two deliveries. The handler re-fetches the
+  // history after the POST resolves so the newly-inserted
+  // delivery row is visible without a page refresh.
+  const [sendingNow, setSendingNow] = useState(false);
+  const confirm = useConfirm();
+  const reloadHistory = async () => {
+    try {
+      const res = await api.get(
+        "/reports/pool-service/email-history?limit=10",
+      );
+      setHistory(res?.items || []);
+    } catch { /* silent — handled by the next page refresh */ }
+  };
+  const handleSendNow = async () => {
+    const ok = await confirm({
+      title: `Send the Pool Service email for week ${week}?`,
+      description: "This will create a new delivery entry. Admins currently in the recipient list will receive the email.",
+      confirmLabel: "Send now",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    setSendingNow(true);
+    try {
+      const res = await api.post(
+        "/reports/pool-service/email-history/run-now",
+        { week_ref: week },
+      );
+      const stub = res?.mocked
+        ? `Delivery mocked (${res?.reason || "unknown"}).`
+        : `Delivered to ${res?.recipient_count ?? 0} recipient${res?.recipient_count === 1 ? "" : "s"}.`;
+      toast.success(`Pool Service email sent — ${stub}`);
+      await reloadHistory();
+    } catch (e) {
+      toast.error(`Could not send: ${e?.message || "unknown error"}`);
+    } finally {
+      setSendingNow(false);
+    }
+  };
 
   const maintenance = useMemo(
     () => data?.maintenance || [], [data],
@@ -640,7 +682,28 @@ export default function PoolServiceReport() {
           style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
         >
           <span>Auto-Friday email deliveries (last 10)</span>
-          <span style={{ fontStyle: "italic" }}>Cron: Friday 17:00 UTC</span>
+          <div className="flex items-center gap-3">
+            <span style={{ fontStyle: "italic" }}>Cron: Friday 17:00 UTC</span>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleSendNow}
+                disabled={sendingNow}
+                className="inline-flex items-center gap-1 text-[11px] font-bold uppercase px-2.5 py-1 rounded-md"
+                style={{
+                  background: sendingNow ? colors.surfaceSecondary : colors.brand,
+                  color: sendingNow ? colors.muted : "#fff",
+                  border: `1px solid ${sendingNow ? colors.border : colors.brand}`,
+                  cursor: sendingNow ? "not-allowed" : "pointer",
+                }}
+                data-testid="pool-service-send-now"
+                title="Trigger the Friday email now for the selected week. Creates a new delivery entry."
+              >
+                <Send size={11} />
+                {sendingNow ? "Sending…" : "Send now"}
+              </button>
+            )}
+          </div>
         </div>
         {history.length === 0 ? (
           <div className="px-4 py-6 text-center text-sm" style={{ color: colors.muted }}

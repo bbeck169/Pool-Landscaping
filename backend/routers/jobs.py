@@ -5307,6 +5307,28 @@ async def avg_job_time_report(q: Optional[str] = None,
 SKIPPED_STATUSES = ["skipped", "cancelled", "canceled", "no_show", "missed"]
 
 
+def _tech_display_label(resolved_name: Optional[str],
+                         raw_tech_id: str,
+                         is_active: bool = True) -> str:
+    """Mini-fix A · Feb-2026 — never leak a raw UUID into the UI.
+
+    * When ``resolved_name`` is present → return it (append
+      ``(deactivated)`` when ``is_active=False`` so the admin
+      can tell at a glance).
+    * When ``resolved_name`` is empty → return
+      ``Unknown tech (xxxxxxxx)`` using the first 8 chars of
+      the raw id. The caller is responsible for stashing the
+      full id as a tooltip on the UI side if needed.
+    """
+    nm = (resolved_name or "").strip()
+    if nm:
+        if is_active is False:
+            return f"{nm} (deactivated)"
+        return nm
+    short = (raw_tech_id or "unknown")[:8]
+    return f"Unknown tech ({short})"
+
+
 def _service_week(anchor_iso: str | None):
     """Return (monday, sunday) ISO dates for the week containing anchor (default today)."""
     d = datetime.fromisoformat(anchor_iso[:10]).date() if anchor_iso else datetime.now(timezone.utc).date()
@@ -5340,6 +5362,66 @@ async def pool_service_email_history(
         {"_id": 0},
     ).sort("sent_at", -1).to_list(limit)
     return {"items": rows, "count": len(rows)}
+
+
+class _PoolServiceRunNowBody(BaseModel):
+    """Mini-fix B · Feb-2026 — admin-triggered Friday email body.
+
+    ``week_ref`` accepts any ISO date inside the target week —
+    the aggregator derives the Mon-Sun window from it. ``None``
+    (default) picks the current week.
+    """
+    week_ref: Optional[str] = None
+
+
+@router.post("/reports/pool-service/email-history/run-now")
+async def pool_service_email_run_now(
+    body: _PoolServiceRunNowBody,
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Mini-fix B · Feb-2026 — admin-triggered Pool Service email.
+
+    Lets an admin re-run the Friday email for a given week from
+    the admin surface so a correction/resend doesn't require a
+    scheduler window. Each call creates its own delivery row
+    (brief rule: allow repeats) and writes the ``payload_snapshot``
+    so the drill-down /contents endpoint reads a FROZEN view.
+
+    Returns a stub echo of the delivery outcome. Admin-role gated
+    (require_admin) — non-admins see 403 via the dependency.
+    """
+    from services.pool_service_email import send_pool_service_email_now
+    stub = await send_pool_service_email_now(
+        tenant["id"], body.week_ref,
+    )
+    # Audit trail — mirrors the ``autobilling.soft_delete`` pattern
+    # in routers.finances. Mini-fix B deliberately logs
+    # ``actor_user_id`` + ``actor_email`` so a security review can
+    # trace a surprise re-send back to the admin who hit the
+    # button.
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": admin.get("id"),
+            "actor_email": admin.get("email"),
+            "action": "pool_service_report.email.run_now",
+            "target_id": stub["delivery_id"],
+            "metadata": {
+                "week_start": stub.get("week_start"),
+                "week_end": stub.get("week_end"),
+                "recipient_count": stub.get("recipient_count"),
+                "sent": stub.get("sent"),
+                "mocked": stub.get("mocked"),
+            },
+            "at": now_iso(),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "pool_service_report.email.run_now audit failed: %s", e,
+        )
+    return stub
 
 
 # ─── Feb-2026 · Pool-service drill-down endpoints ────────────────────
@@ -6309,11 +6391,20 @@ async def compute_pool_service(tenant_id: str,
     rows = []
     for tid, a in agg.items():
         info = tmap.get(tid) or {}
+        # Mini-fix A · Feb-2026 — Tech-name fallback that never
+        # leaks a raw UUID into the UI. Priority:
+        #   1. ``info.name`` from the resolver cascade (canonical).
+        #   2. ``cached_name_by_tid`` — denormalised name on the
+        #      job doc for a tech whose users row no longer resolves.
+        #   3. ``Unknown tech (xxxxxxxx)`` — first-8 of the raw id.
+        # When the users row exists but is deactivated, append
+        # ``(deactivated)`` so the admin can tell at a glance.
+        _resolved_name = info.get("name") or cached_name_by_tid.get(tid)
+        _display_name = _tech_display_label(_resolved_name, tid,
+                                              info.get("active", True))
         rows.append({
             "technician_id": tid,
-            "technician_name": info.get("name")
-                                 or cached_name_by_tid.get(tid)
-                                 or tid,
+            "technician_name": _display_name,
             "technician_active": info.get("active", True),
             "pools_serviced":    a["pools_serviced"],
             "repairs_completed": a["repairs_completed"],

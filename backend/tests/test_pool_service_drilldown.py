@@ -761,3 +761,163 @@ def test_email_contents_legacy_delivery_falls_back_to_recompute_tagged():
         assert r["job_count"] == 1
     finally:
         _cleanup(tid, uid, email)
+
+
+# ───────── Mini-fix A · tech-name fallback (never leak UUIDs) ─────────
+
+def test_summary_renders_unknown_tech_label_when_user_missing():
+    """A technician_id that cannot be resolved to a user name
+    MUST render as ``Unknown tech (xxxxxxxx)``, never the raw
+    UUID. ``xxxxxxxx`` is the first 8 chars of the id."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        # Deliberately NOT seeding a users row for this tech id.
+        orphan_tid = "b8a68119-1234-abcd-5678-9876543210aa"
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=orphan_tid)
+        body = requests.get(
+            f"{API}/reports/pool-service?date_from={mon}&date_to={sun}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        row = next((r for r in body["by_technician"]
+                     if r["technician_id"] == orphan_tid), None)
+        assert row is not None
+        assert row["technician_name"] == "Unknown tech (b8a68119)"
+        # Full UUID is NOT in the human-readable label.
+        assert orphan_tid not in row["technician_name"]
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_summary_marks_deactivated_user_with_suffix():
+    """Deactivated techs still resolve by name BUT the label
+    carries ``(deactivated)`` so admins can tell."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        # Seed a tech user WITH active=False.
+        from utils import hash_password
+        tech_uid = f"TEST-deact-{uuid.uuid4().hex[:6]}"
+        _db.users.insert_one({
+            "id": tech_uid, "tenant_id": tid,
+            "email": f"{tech_uid}@example.com", "name": "Pat Retired",
+            "role": "technician", "technician_id": tech_uid,
+            "active": False,
+            "password_hash": hash_password("password123"),
+        })
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=tech_uid)
+        body = requests.get(
+            f"{API}/reports/pool-service?date_from={mon}&date_to={sun}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        row = next((r for r in body["by_technician"]
+                     if r["technician_id"] == tech_uid), None)
+        assert row is not None
+        assert row["technician_name"] == "Pat Retired (deactivated)"
+        assert row["technician_active"] is False
+    finally:
+        _cleanup(tid, uid, email)
+
+
+# ───────── Mini-fix B · admin-triggered Friday email ─────────
+
+def test_run_now_requires_admin_role_403_for_tech():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        # Seed a technician user and get its token.
+        from utils import hash_password
+        tech_uid = f"TEST-rn-tech-{uuid.uuid4().hex[:6]}"
+        tech_email = f"rn-tech-{uuid.uuid4().hex[:6]}@example.com"
+        _db.users.insert_one({
+            "id": tech_uid, "tenant_id": tid, "email": tech_email,
+            "name": "RN Tech", "role": "technician",
+            "password_hash": hash_password("password123"),
+        })
+        tech_tok = _login(tech_email)
+        r = requests.post(
+            f"{API}/reports/pool-service/email-history/run-now",
+            headers={"Authorization": f"Bearer {tech_tok}"},
+            json={}, timeout=15,
+        )
+        assert r.status_code == 403
+    finally:
+        _db.users.delete_one({"id": tech_uid})
+        _cleanup(tid, uid, email)
+
+
+def test_run_now_creates_delivery_with_snapshot_and_returns_stub():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name,
+                   customer_name="RunNowCo")
+        r = requests.post(
+            f"{API}/reports/pool-service/email-history/run-now",
+            headers={"Authorization": f"Bearer {tok}"},
+            json={"week_ref": mon}, timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        stub = r.json()
+        assert "delivery_id" in stub
+        assert stub["week_start"] == mon
+        assert stub["week_end"]   == sun
+        # Delivery row persisted with ``payload_snapshot``.
+        delivery = _db.email_delivery_log.find_one(
+            {"id": stub["delivery_id"]}, {"_id": 0},
+        )
+        assert delivery is not None
+        snap = delivery.get("payload_snapshot") or {}
+        assert isinstance(snap, dict)
+        assert snap.get("jobs"), "snapshot jobs must be populated"
+        assert delivery.get("trigger") == "admin_manual"
+        # Audit-log entry present.
+        audit = _db.audit_log.find_one(
+            {"action": "pool_service_report.email.run_now",
+              "target_id": stub["delivery_id"]},
+            {"_id": 0},
+        )
+        assert audit is not None
+        assert audit.get("actor_user_id") == uid
+    finally:
+        _cleanup(tid, uid, email)
+        _db.audit_log.delete_many(
+            {"action": "pool_service_report.email.run_now",
+              "actor_user_id": uid},
+        )
+
+
+def test_run_now_allows_repeat_calls_each_creates_new_delivery():
+    """Admin may re-send after a correction — brief rule: allow
+    repeats; each run creates its own delivery record."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name)
+        stubs = []
+        for _ in range(2):
+            r = requests.post(
+                f"{API}/reports/pool-service/email-history/run-now",
+                headers={"Authorization": f"Bearer {tok}"},
+                json={"week_ref": mon}, timeout=20,
+            )
+            assert r.status_code == 200
+            stubs.append(r.json())
+        # Distinct delivery ids — no dedupe collision.
+        assert stubs[0]["delivery_id"] != stubs[1]["delivery_id"]
+    finally:
+        _cleanup(tid, uid, email)
+        _db.audit_log.delete_many(
+            {"action": "pool_service_report.email.run_now",
+              "actor_user_id": uid},
+        )

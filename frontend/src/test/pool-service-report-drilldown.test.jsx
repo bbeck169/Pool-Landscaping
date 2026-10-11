@@ -12,9 +12,26 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockGet = vi.fn();
+const mockPost = vi.fn();
+let _confirmResult = true;
+const _toastSuccess = vi.fn();
+const _toastError = vi.fn();
 
 vi.mock("@/api", () => ({
-  api: { get: (...a) => mockGet(...a) },
+  api: {
+    get: (...a) => mockGet(...a),
+    post: (...a) => mockPost(...a),
+  },
+}));
+vi.mock("@/components/ui/confirm-dialog", () => ({
+  useConfirm: () => async () => _confirmResult,
+  ConfirmProvider: ({ children }) => children,
+}));
+vi.mock("sonner", () => ({
+  toast: Object.assign(() => {}, {
+    success: (...a) => _toastSuccess(...a),
+    error: (...a) => _toastError(...a),
+  }),
 }));
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { role: "admin", id: "u-1" } }),
@@ -24,6 +41,10 @@ import PoolServiceReport from "@/pages/reports/PoolServiceReport";
 
 beforeEach(() => {
   mockGet.mockReset();
+  mockPost.mockReset();
+  _toastSuccess.mockReset();
+  _toastError.mockReset();
+  _confirmResult = true;
 });
 
 const _summary = {
@@ -335,5 +356,79 @@ describe("Pool Service Report · drill-down phase", () => {
     const banner = await screen.findByTestId("pool-report-reconciliation-banner");
     expect(banner).toBeInTheDocument();
     expect(screen.queryByTestId("pool-report-reconciliation-toggle")).toBeNull();
+  });
+
+  it("Mini-fix A — row renders 'Unknown tech (short-id)' when backend returns the fallback label", async () => {
+    _wire({
+      summary: {
+        ..._summary,
+        maintenance: [
+          { technician_id: "b8a68119-1234-abcd-5678-9876543210aa",
+             technician_name: "Unknown tech (b8a68119)",
+             technician_active: true,
+             pools_serviced: 2, repairs_completed: 0,
+             other: 0, skipped: 0, completed: 2, completed_all: 2 },
+        ],
+        by_technician: [
+          { technician_id: "b8a68119-1234-abcd-5678-9876543210aa",
+             technician_name: "Unknown tech (b8a68119)",
+             pools_serviced: 2, repairs_completed: 0, other: 0,
+             skipped: 0, completed: 2, completed_all: 2 },
+        ],
+      },
+    });
+    render(<PoolServiceReport />);
+    const row = await screen.findByTestId(
+      "pool-service-row-b8a68119-1234-abcd-5678-9876543210aa-maintenance",
+    );
+    // The row's visible text must carry the "Unknown tech" label
+    // — never the raw UUID.
+    expect(row.textContent).toMatch(/Unknown tech \(b8a68119\)/);
+    expect(row.textContent).not.toMatch(
+      /b8a68119-1234-abcd-5678-9876543210aa/,
+    );
+  });
+});
+
+
+// ───────── Mini-fix B · admin-triggered Send-now button ─────────
+
+describe("Pool Service Report · Mini-fix B · Send now button", () => {
+  it("fires POST and shows a success toast when admin confirms", async () => {
+    _confirmResult = true;
+    mockPost.mockResolvedValue({
+      delivery_id: "d-new-1", sent: true, mocked: false,
+      recipient_count: 11, week_start: "2026-02-09",
+      week_end: "2026-02-15",
+    });
+    mockGet.mockImplementation((url) => {
+      if (url.startsWith("/reports/pool-service?")) {
+        return Promise.resolve(_summary);
+      }
+      if (url.startsWith("/reports/pool-service/email-history?")) {
+        return Promise.resolve({ items: [], count: 0 });
+      }
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    const btn = await screen.findByTestId("pool-service-send-now");
+    await user.click(btn);
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith(
+      "/reports/pool-service/email-history/run-now",
+      expect.objectContaining({ week_ref: expect.any(String) }),
+    ));
+    await waitFor(() => expect(_toastSuccess).toHaveBeenCalled());
+  });
+
+  it("does NOT fire POST when the admin dismisses the confirm", async () => {
+    _confirmResult = false;
+    mockGet.mockImplementation(() => Promise.resolve(_summary));
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    const btn = await screen.findByTestId("pool-service-send-now");
+    await user.click(btn);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });

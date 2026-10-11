@@ -396,3 +396,99 @@ async def run_weekly_pool_service_email() -> Dict[str, Any]:
     await release_lease(lease.get("lease_id"))
     return {"tenants_processed": len(results), "results": results,
              "lease": "acquired", "tick_iso": lease.get("tick_iso")}
+
+
+async def send_pool_service_email_now(
+    tenant_id: str, week_ref: str | None = None,
+) -> Dict[str, Any]:
+    """Mini-fix B · Feb-2026 — admin-triggered send.
+
+    Runs the SAME pipeline as the Friday cron for a single
+    tenant/week but intentionally BYPASSES the dedupe guard so
+    an admin can re-send after a correction (brief rule: "allow
+    repeats; each run creates its own delivery record").
+
+    ``week_ref`` is any ISO date inside the target week; the
+    aggregator derives the Mon-Sun window from it. ``None``
+    defaults to this week.
+
+    Returns the stub ``{delivery_id, sent, mocked, reason,
+    recipient_count, week_start, week_end}`` so the admin
+    endpoint can echo it back and tag the audit log.
+    """
+    # Lazy imports keep the module import-safe (same pattern as
+    # the scheduler path above).
+    from routers.jobs import (
+        compute_pool_service,
+        collect_completed_pool_jobs_for_window,
+    )
+    tenant_doc = await db.tenants.find_one(
+        {"id": tenant_id}, {"_id": 0, "id": 1, "name": 1},
+    ) or {"id": tenant_id}
+    tenant_name = tenant_doc.get("name") or "Your business"
+
+    # ``week_ref`` is any ISO date inside the target week. We
+    # pass it as ``date_from`` only (NOT both ``date_from`` and
+    # ``date_to`` — doing so would clamp the window to a single
+    # day). ``compute_pool_service`` runs ``_service_week`` when
+    # only one endpoint is supplied and derives the Mon-Sun
+    # window from the anchor. ``None`` defaults to the current
+    # week via the same helper.
+    report = await compute_pool_service(tenant_id, week_ref, None)
+    try:
+        report["_jobs_sample"] = await collect_completed_pool_jobs_for_window(
+            tenant_id, report.get("week_start"), report.get("week_end"),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "pool-service manual snapshot collection failed for %s: %s",
+            tenant_id, e,
+        )
+        report["_jobs_sample"] = []
+
+    recipients = await _get_tenant_admin_emails(tenant_id)
+    html = _compose_html(tenant_name, report)
+    subject = (
+        f"{tenant_name} · Pool Service Report · "
+        f"{report.get('week_start')} → {report.get('week_end')}"
+    )
+    result = await _send_via_resend(subject, html, recipients)
+    # Delivery row — this writes the ``payload_snapshot`` populated
+    # above so the ``/contents`` drill-down reads a FROZEN view.
+    # We capture the generated ``id`` BEFORE calling the opaque
+    # ``_log_delivery`` helper by re-implementing its logic inline;
+    # keeps the helper's shape stable for the scheduler path.
+    delivery_id = new_id()
+    doc = {
+        "id": delivery_id,
+        "tenant_id": tenant_id,
+        "kind": "pool_service_report",
+        "week_start": report.get("week_start"),
+        "week_end": report.get("week_end"),
+        "recipients": recipients,
+        "total_completed": int(report.get("total_completed") or 0),
+        "total_skipped": int(report.get("total_skipped") or 0),
+        "sent": bool(result.get("sent")),
+        "mocked": bool(result.get("mocked")),
+        "reason": result.get("reason"),
+        "resend_id": result.get("resend_id"),
+        "sent_at": now_iso(),
+        "payload_snapshot": _build_delivery_snapshot(report),
+        # Mini-fix B · tag manual-trigger rows so admins can
+        # distinguish them from the Friday-cron ones on the
+        # history panel.
+        "trigger": "admin_manual",
+    }
+    try:
+        await db.email_delivery_log.insert_one(doc)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"manual pool-service delivery log failed: {e}")
+    return {
+        "delivery_id":     delivery_id,
+        "sent":            bool(result.get("sent")),
+        "mocked":          bool(result.get("mocked")),
+        "reason":          result.get("reason"),
+        "recipient_count": len(recipients),
+        "week_start":      report.get("week_start"),
+        "week_end":        report.get("week_end"),
+    }
