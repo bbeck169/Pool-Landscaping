@@ -441,7 +441,25 @@ async def patch_item(iid: str, body: ItemPatch,
         raise HTTPException(404, "Item not found")
     if row.get("deleted_at"):
         raise HTTPException(409, "Item is archived — restore it first")
-    upd = {k: v for k, v in body.dict(exclude_none=True).items()}
+    # Pricebook Category UX fixes · Feb-2026 — Task A support.
+    # Allow explicit ``null`` on the two category axes to clear the
+    # value on the row (``income_category_id`` is nullable server-
+    # side; ``service_category_id`` is required and will still be
+    # rejected by ``validate_service_category`` below with a 400).
+    # We use ``exclude_unset`` to see what the caller sent, then
+    # fall back to ``exclude_none`` semantics for every OTHER
+    # field so the long tail of numeric / string validators (which
+    # don't tolerate ``None``) keep their pre-fix contract.
+    _sent = body.dict(exclude_unset=True)
+    _CATEGORY_AXES = ("service_category_id", "income_category_id")
+    upd = {}
+    for k, v in _sent.items():
+        if k in _CATEGORY_AXES:
+            # Normalise ``""`` → ``None`` so Mongo stores a real
+            # null rather than an empty string.
+            upd[k] = None if v == "" else v
+        elif v is not None:
+            upd[k] = v
     if not upd:
         raise HTTPException(400, "No fields to update")
     if "unit_price" in upd and upd["unit_price"] < 0:

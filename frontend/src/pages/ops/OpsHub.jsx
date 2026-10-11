@@ -13,17 +13,25 @@ import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, 
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 import EditItemModal from "@/components/pricebook/EditItemModal";
+// Pricebook Category UX fixes · Feb-2026 — Task A/B — native
+// <select> inline category cell. Replaces the previous
+// click-to-edit <CategoryComboCell> on Pricebook rows so admins
+// can change a row's category inline without opening the Edit
+// modal + see the full active-category list (no 12-row truncation).
+import CategorySelectCell from "@/components/pricebook/CategorySelectCell";
 // Phase 10 · Feb-2026 — technician pay-rates (hourly + per-pool-job)
 // edit modal. Opened from the TeamRoster kebab menu (admin /
 // super_admin only via ``canEditPay``). Persists through
 // ``PATCH /api/users/{id}`` which the Phase 10 team.py extension
 // now accepts ``hourly_rate`` + ``per_pool_rate`` on.
 import TechnicianPayRatesModal from "@/components/team/TechnicianPayRatesModal";
-// Task C · Feb-2026 — Pricebook rows now embed a click-to-edit
-// category combobox parameterized against ``PATCH /api/items/{id}``.
-// Same component the Recurring Jobs table uses (parameterized in
-// Task C · Commit 1 to accept a ``patchUrl`` prop).
-import CategoryComboCell from "@/components/recurring/CategoryComboCell";
+// Pricebook Category UX fixes · Feb-2026 — Task A/B — Pricebook
+// rows swapped from the recurring-jobs combobox to a native
+// <select> cell (see components/pricebook/CategorySelectCell.jsx
+// import above). The combobox import below used to drive both the
+// Pricebook rows AND the Recurring Jobs table but Pricebook no
+// longer consumes it. Removed on migration so eslint-no-unused-vars
+// / Prod bundle size stay honest.
 // Task E · Feb-2026 — Shared navy filter/search strip primitive
 // consumed by six list pages (Customers, Invoices, Pricebook,
 // Recurring Jobs, Work Stream, Payments Ledger).
@@ -165,9 +173,9 @@ export default function OpsHub() {
 }
 
 /* ─── shared helpers ─── */
-function Card({ children, testid }) {
+function Card({ children, testid, cardRef }) {
   return (
-    <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }} data-testid={testid}>
+    <div ref={cardRef} className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }} data-testid={testid}>
       {children}
     </div>
   );
@@ -2207,6 +2215,36 @@ function SupplierBadge({ slug, testid }) {
 export function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
+  // Pricebook Category UX fixes · Feb-2026 — Task C.
+  // ``category_id`` URL param hydrates the inline list filter so
+  // deep-links from the Archive-category modal land on a
+  // pre-filtered Pricebook. Scroll-into-view + focus runs once per
+  // mount with a param to make the filter obvious to the admin.
+  const [pbParams, setPbParams] = useSearchParams();
+  const categoryIdFilter = pbParams.get("category_id") || "";
+  const listRef = React.useRef(null);
+  const chipRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!categoryIdFilter) return;
+    // Defer one frame so the list has rendered the chip; a hard
+    // `scrollIntoView({ behavior: "smooth" })` + focus beats a
+    // silently-already-filtered page when the admin arrives from
+    // the Archive confirmation.
+    const t = setTimeout(() => {
+      try {
+        listRef.current && listRef.current.scrollIntoView({
+          behavior: "smooth", block: "start",
+        });
+        chipRef.current && chipRef.current.focus();
+      } catch { /* jsdom path — ignored */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [categoryIdFilter]);
+  const clearCategoryFilter = () => {
+    const next = new URLSearchParams(pbParams);
+    next.delete("category_id");
+    setPbParams(next, { replace: true });
+  };
   // Phase 56-b · Aug-2026 — Multi-supplier pricing form state.
   //   ``income_category_id`` drives which suppliers appear in the
   //   grid; ``supplier_prices`` is an object keyed by slug → dollar
@@ -2300,6 +2338,16 @@ export function PriceBook() {
       // sync time via ``services.suppliers.sync.apply_products``.
       out = out.filter((r) => (r.supplier_slug || "") === supplierFilter);
     }
+    // Pricebook Category UX fixes · Feb-2026 — Task C — client-side
+    // ``service_category_id`` filter honoring the URL param. Only
+    // the service axis is wired (that's the axis the Archive modal
+    // in CategoriesAdmin lives on today; income archive — if ever
+    // shipped — would reuse the same param contract or branch here).
+    if (categoryIdFilter) {
+      out = out.filter(
+        (r) => (r.service_category_id || "") === categoryIdFilter,
+      );
+    }
     if (debouncedSearch) {
       const needle = debouncedSearch.toLowerCase();
       out = out.filter((r) => {
@@ -2312,7 +2360,7 @@ export function PriceBook() {
       });
     }
     return out;
-  }, [rows, supplierFilter, debouncedSearch]);
+  }, [rows, supplierFilter, debouncedSearch, categoryIdFilter]);
   // PB1 · Feb-2026 — internal cost columns visible only to admins.
   // Uses ``useAuth`` from the app context to gate the two new columns
   // + the two new form fields. Non-admins still see the rest of the
@@ -2664,7 +2712,7 @@ export function PriceBook() {
   };
   const closeEditModal = () => setEditModalItem(null);
   return (
-    <Card testid="pricebook-page">
+    <Card testid="pricebook-page" cardRef={listRef}>
       {/* Task E · Feb-2026: NavyFilterBar migration.
           Fresh row above the existing "Items · N + checkbox +
           Manage Categories + Add new item" header (per Task E
@@ -2699,6 +2747,43 @@ export function PriceBook() {
             ))}
         </NavyFilterBar.Select>
       </NavyFilterBar>
+      {/* Pricebook Category UX fixes · Feb-2026 — Task C.
+          Dismissible chip surfaces the active ``category_id`` URL
+          filter. Clicking the ``✕`` strips the param from the URL
+          via setSearchParams so a reload doesn't re-apply the
+          filter. Alphabetised resolution against ``serviceCats``
+          — ``value`` is the id, label is the resolved name. The
+          chip is keyboard-focusable (``chipRef``) so arrivals from
+          the Archive-category modal land focus here. */}
+      {categoryIdFilter ? (
+        <div className="mb-3" data-testid="pricebook-category-chip-row">
+          <button
+            ref={chipRef}
+            type="button"
+            onClick={clearCategoryFilter}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
+            style={{
+              backgroundColor: "#DBEAFE",
+              color: "#1E3A8A",
+              border: "1px solid #93C5FD",
+            }}
+            aria-label="Clear category filter"
+            data-testid="pricebook-category-chip"
+          >
+            <span>
+              Category:{" "}
+              <span data-testid="pricebook-category-chip-name">
+                {(Array.isArray(serviceCats)
+                  ? (serviceCats.find((c) => c.id === categoryIdFilter)?.name)
+                  : "") || categoryIdFilter}
+              </span>
+            </span>
+            <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1 }}>
+              ✕
+            </span>
+          </button>
+        </div>
+      ) : null}
       <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-3">
           <input
@@ -2879,31 +2964,30 @@ export function PriceBook() {
                     </div>
                   </>
                 ) : null}
-                {/* Task C · Feb-2026 — Inline category cells.
-                    Service is always visible; Income is hidden
-                    with an inert ``—`` placeholder when the item
-                    is typed ``service`` (services carry no income
-                    category per the P56 modal contract). Names
-                    are resolved from ``serviceCats`` /
-                    ``incomeCats`` because ``/api/items`` returns
-                    only the category-id fields, not denorm names.
-                    ``onPatched={refresh}`` refetches the whole
-                    list so the row's persisted state replaces the
-                    typed draft (matches the P56 bulk-edit sibling
-                    pattern). */}
+                {/* Pricebook Category UX fixes · Feb-2026 — Task A/B.
+                    Both axes now render ``<CategorySelectCell>`` —
+                    a native <select> fed by the parent's
+                    ``serviceCats`` / ``incomeCats`` arrays (same
+                    source as /pricebook/categories, no 12-row
+                    truncation). onChange triggers one PATCH
+                    /items/{id} with the new ``{axis}_category_id``;
+                    on failure the <select> reverts and a sonner
+                    toast fires. Legacy testids on the wrapper
+                    (``pb-cell-service-category-${r.id}`` /
+                    ``pb-cell-income-category-${r.id}``) and the
+                    display id (``pb-cat-{axis}-${r.id}-display``)
+                    are preserved for regression continuity. */}
                 <div className="w-32"
                       data-testid={`pb-cell-service-category-${r.id}`}>
-                  <CategoryComboCell
+                  <CategorySelectCell
                     axis="service"
                     row={r}
-                    value={(Array.isArray(serviceCats)
-                      ? (serviceCats.find(
-                          (c) => c.id === r.service_category_id,
-                        )?.name)
-                      : "") || ""}
+                    value={r.service_category_id || ""}
+                    options={Array.isArray(serviceCats) ? serviceCats : []}
                     patchUrl={`/items/${r.id}`}
-                    onPatched={() => refresh()}
+                    onSaved={() => refresh()}
                     dataTestidBase={`pb-cat-service-${r.id}`}
+                    allowNone={false}
                   />
                 </div>
                 <div className="w-32"
@@ -2915,15 +2999,15 @@ export function PriceBook() {
                       —
                     </div>
                   ) : (
-                    <CategoryComboCell
+                    <CategorySelectCell
                       axis="income"
                       row={r}
-                      value={((incomeCats || []).find(
-                        (c) => c.id === r.income_category_id,
-                      )?.name) || ""}
+                      value={r.income_category_id || ""}
+                      options={Array.isArray(incomeCats) ? incomeCats : []}
                       patchUrl={`/items/${r.id}`}
-                      onPatched={() => refresh()}
+                      onSaved={() => refresh()}
                       dataTestidBase={`pb-cat-income-${r.id}`}
+                      allowNone={true}
                     />
                   )}
                 </div>

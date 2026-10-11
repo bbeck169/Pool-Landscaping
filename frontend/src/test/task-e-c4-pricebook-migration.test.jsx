@@ -40,7 +40,7 @@ describe("Task E · Commit 4 — Pricebook two-row header contract", () => {
   it("adds NavyFilterBar as a fresh row inside the PriceBook Card", () => {
     // Locate the PriceBook return + assert NavyFilterBar sits
     // BEFORE the "Items · N + checkbox" summary row.
-    const priceBookIdx = SRC.indexOf("<Card testid=\"pricebook-page\">");
+    const priceBookIdx = SRC.indexOf("<Card testid=\"pricebook-page\"");
     expect(priceBookIdx).toBeGreaterThan(-1);
     const cardBlock = SRC.slice(priceBookIdx, priceBookIdx + 3500);
     // NavyFilterBar mount + K52.1 marker forwarded via ...rest.
@@ -74,25 +74,33 @@ describe("Task E · Commit 4 — Pricebook two-row header contract", () => {
   });
 
   it("keeps both Task C row-body category cells intact (Commits 5120940e7..b83b80507)", () => {
-    // Task C · Feb-2026 — each Pricebook row renders TWO
-    // ``<CategoryComboCell>`` instances (service + income). This
-    // assertion guards against an accidental import or scope
-    // regression while migrating the header strip.
-    expect(SRC).toMatch(/import CategoryComboCell from "@\/components\/recurring\/CategoryComboCell";/);
+    // Pricebook Category UX fixes · Feb-2026 — the Pricebook rows
+    // now embed the native <select> ``<CategorySelectCell>`` on
+    // BOTH axes (service + income). The previous
+    // ``<CategoryComboCell>`` text-combobox was retired here to
+    // kill the 12-row client-side truncation + unlock single-click
+    // inline save. The regression lock below swaps the old
+    // import assertion for the new one; the wrapper testids
+    // (``pb-cell-service-category-${r.id}`` /
+    // ``pb-cell-income-category-${r.id}``) remain unchanged.
+    expect(SRC).toMatch(/import CategorySelectCell from "@\/components\/pricebook\/CategorySelectCell";/);
+    // The old recurring combobox must NOT be re-imported into
+    // OpsHub.jsx — that would reintroduce the truncation bug.
+    expect(SRC).not.toMatch(/import CategoryComboCell from "@\/components\/recurring\/CategoryComboCell";/);
     // Both cell testids resolve — computed against ``r.id`` per
     // row iteration.
     expect(SRC).toMatch(/data-testid=\{`pb-cell-service-category-\$\{r\.id\}`\}/);
     expect(SRC).toMatch(/data-testid=\{`pb-cell-income-category-\$\{r\.id\}`\}/);
-    // Both cells are still driven through the parameterized
-    // ``CategoryComboCell`` primitive (not an inline copy-paste
+    // Both cells are driven through the new parameterized
+    // ``CategorySelectCell`` primitive (not an inline copy-paste
     // reintroduced during the header migration).
     const cellIdx = SRC.indexOf("pb-cell-service-category-");
     expect(cellIdx).toBeGreaterThan(-1);
     const cellBlock = SRC.slice(cellIdx, cellIdx + 800);
-    expect(cellBlock).toMatch(/<CategoryComboCell/);
+    expect(cellBlock).toMatch(/<CategorySelectCell/);
     const incomeCellIdx = SRC.indexOf("pb-cell-income-category-");
     expect(incomeCellIdx).toBeGreaterThan(-1);
     const incomeCellBlock = SRC.slice(incomeCellIdx, incomeCellIdx + 800);
-    expect(incomeCellBlock).toMatch(/<CategoryComboCell/);
+    expect(incomeCellBlock).toMatch(/<CategorySelectCell/);
   });
 });

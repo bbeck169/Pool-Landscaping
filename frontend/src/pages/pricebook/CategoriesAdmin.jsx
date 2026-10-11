@@ -32,7 +32,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Archive, ArchiveRestore, Plus, Pencil, GripVertical } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -159,6 +159,7 @@ function ArchiveWarnDialog({
   const [refs, setRefs] = useState(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!open || !category?.id) { setRefs(null); return; }
@@ -194,9 +195,46 @@ function ArchiveWarnDialog({
             <>
               <div data-testid="category-refs-summary">
                 <div>
-                  <strong data-testid="category-refs-pricebook-count">
-                    {refs?.pricebook_item_count ?? 0}
-                  </strong>{" "}
+                  {/* Pricebook Category UX fixes · Feb-2026 — Task C.
+                      The item count becomes a clickable link only
+                      on the service axis (that's where the
+                      Pricebook list filter lives today). On
+                      income axis we keep the plain <strong>
+                      display — the pricebook list has no
+                      ``income_category_id`` filter and conjuring a
+                      fake deep-link would strand the admin. The
+                      service axis button closes the archive modal
+                      first (so the admin sees the newly-filtered
+                      list cleanly) then navigates to
+                      /pricebook?t=pricebook&category_id=<id>. */}
+                  {axis === "service" && category?.id ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenChange(false);
+                        navigate(
+                          `/pricebook?t=pricebook&category_id=${encodeURIComponent(category.id)}`,
+                        );
+                      }}
+                      className="font-bold underline"
+                      style={{
+                        color: colors.brand,
+                        background: "transparent",
+                        padding: 0,
+                        cursor: "pointer",
+                      }}
+                      aria-label={
+                        `Review ${refs?.pricebook_item_count ?? 0} pricebook item${refs?.pricebook_item_count === 1 ? "" : "s"} in ${category?.name || ""}`
+                      }
+                      data-testid="category-refs-pricebook-count"
+                    >
+                      {refs?.pricebook_item_count ?? 0}
+                    </button>
+                  ) : (
+                    <strong data-testid="category-refs-pricebook-count">
+                      {refs?.pricebook_item_count ?? 0}
+                    </strong>
+                  )}{" "}
                   active pricebook item{refs?.pricebook_item_count === 1 ? "" : "s"} reference this category.
                 </div>
                 <div>
