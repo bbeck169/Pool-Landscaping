@@ -23,6 +23,13 @@ import RevenueDateRangeFilter, { type RevenueRange } from "@/src/components/dash
 import RevenueByCategoryTile from "@/src/components/dashboard/RevenueByCategoryTile";
 import IncomeByServiceCategoryTile from "@/src/components/dashboard/IncomeByServiceCategoryTile";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import MassMessagingCard from "@/src/components/dashboard/MassMessagingCard";
+import DashboardActionCards from "@/src/components/dashboard/DashboardActionCards";
+import SoshiePublishingTile from "@/src/components/dashboard/SoshiePublishingTile";
+import BulkOpsAuditTile from "@/src/components/dashboard/BulkOpsAuditTile";
+import CrewProductivityTile from "@/src/components/dashboard/CrewProductivityTile";
+import RoutingCostTile from "@/src/components/dashboard/RoutingCostTile";
+import WarrantiesExpiringTile from "@/src/components/dashboard/WarrantiesExpiringTile";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -32,6 +39,9 @@ export default function Dashboard() {
   // drives both donuts + the Revenue Forecast headline.
   const [revenueRange, setRevenueRange] = useState<RevenueRange | null>(null);
   const isRevenueAdmin = user?.role === "super_admin" || user?.role === "admin";
+  // Phase 39B · web Dashboard.jsx role gates.
+  const isManagerPlus = isRevenueAdmin || user?.role === "manager";
+  const isAdminPlus = ["super_admin", "admin", "owner"].includes(String(user?.role));
 
   // Phase O5 · Offline-first dashboard — reads from SQLite cache first,
   // then fetches fresh data in the background when online.
@@ -113,7 +123,8 @@ export default function Dashboard() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refetch(); }} />}
       >
         {/* Phase 39A · section order mirrors web Dashboard.jsx top → bottom.
-            39B slot — MassMessagingCard. */}
+            Phase 39B · Mass Messaging CTA (admin / super_admin; self-guards). */}
+        {isRevenueAdmin ? <MassMessagingCard /> : null}
 
         {/* Revenue insights — shared range filter + two donuts (web
             ``revenue-tiles-section``). Backend is admin/super_admin only. */}
@@ -128,7 +139,8 @@ export default function Dashboard() {
           </View>
         ) : null}
 
-        {/* 39B slot — DashboardActionCards. */}
+        {/* Phase 39B · Action Cards (manager+). */}
+        {isManagerPlus ? <DashboardActionCards /> : null}
 
         {/* KPI grid — taps carry web's status filters. */}
         <View style={[styles.grid, { marginBottom: spacing.lg }]} testID="dashboard-kpi-grid">
@@ -152,7 +164,8 @@ export default function Dashboard() {
         ) : null}
         </View>
 
-        {/* 39B slot — SoshiePublishingTile. */}
+        {/* Phase 39B · Soshie Publishing (super_admin / admin / owner). */}
+        {isAdminPlus ? <SoshiePublishingTile /> : null}
         <WeatherWidget />
 
         {(data.requested_jobs ?? 0) > 0 ? (
@@ -167,7 +180,15 @@ export default function Dashboard() {
           </Pressable>
         ) : null}
 
-        {/* 39B slot — BulkOps / CrewProductivity / RoutingCost / WarrantiesExpiring. */}
+        {/* Phase 39B · admin tiles (super_admin / admin / owner), web order. */}
+        {isAdminPlus ? (
+          <View testID="dashboard-admin-tiles">
+            <BulkOpsAuditTile data={data} />
+            <CrewProductivityTile />
+            <RoutingCostTile />
+            <WarrantiesExpiringTile />
+          </View>
+        ) : null}
 
         <ReferralRevenueTile />
 
