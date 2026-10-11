@@ -1788,16 +1788,28 @@ from services.preview_isolation import (
 )
 app.add_middleware(_PreviewPIIMiddleware)
 
-# Boot-time route-registry audit (Phase 1: WARN-only on preview;
-# promoted to hard-fail in a follow-up commit after full endpoint
-# coverage). Runs AFTER all routers are imported + registered so the
-# audit sees the final route table.
+# Boot-time route-registry audit + preview-scrub (Phase 1: WARN-only
+# on preview; promoted to hard-fail in a follow-up commit after full
+# endpoint coverage). The scrubber runs ONCE on boot with a 24h
+# dedup guard so a crash-loop restart storm doesn't double-run.
+# Production env: both the registry audit and the scrubber are
+# strict no-ops.
 @app.on_event("startup")
 async def _preview_isolation_boot_audit():
     try:
         _assert_pii_registry_coverage(app)
     except Exception as e:  # pragma: no cover — defensive
         logger.error(f"[preview_isolation] boot audit failed: {e}")
+    # Boot scrub — guarded by is_production_env() + 24h dedup + the
+    # localhost-only Mongo check inside ``run_once``. Spawned as a
+    # background task so a slow scrub doesn't block the readiness
+    # probe (the healthcheck in commit 3/5 reports scrub status).
+    try:
+        from services.preview_isolation.scrubber import run_once as _preview_scrub
+        import asyncio as _asyncio
+        _asyncio.create_task(_preview_scrub(db))
+    except Exception as e:  # pragma: no cover
+        logger.error(f"[preview_isolation] scrubber launch failed: {e}")
 
 
 scheduler = AsyncIOScheduler(timezone="UTC")
