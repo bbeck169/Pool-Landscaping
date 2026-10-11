@@ -1767,3 +1767,24 @@
 - **Changes**: none to code — audit + E2E verification (Jest 45/45, curl contract, Expo-web offline/reconnect/finalize/PDF)
 - **Files modified**: memory only (PRD.md, mobile/iteration_116.md, mobile/commit_log.md)
 - **Web files referenced**: frontend/src/api/templates.js
+
+## Iteration 117 — Phase 39B: mobile dashboard widget parity (7 widgets)
+- **Commit**: 56864ac19
+- **Date**: 2026-10-11
+- **Changes**: MassMessagingCard (admin/super_admin → /marketing/broadcasts), DashboardActionCards (manager+, GET /dashboard/action-cards, 60s poll), SoshiePublishingTile, BulkOpsAuditTile (/dashboard fields), CrewProductivityTile (range tabs + table), RoutingCostTile (7/30/90d chips), WarrantiesExpiringTile — last 5 gated super_admin/admin/owner. Mounted in web section order.
+- **Files modified**: app/(app)/index.tsx; added src/components/dashboard/{MassMessagingCard,DashboardActionCards,BulkOpsAuditTile,RoutingCostTile,WarrantiesExpiringTile,SoshiePublishingTile,CrewProductivityTile}.tsx, __tests__/phase39b-mobile-dashboard-widgets.test.tsx
+- **Web files referenced**: pages/admin/Dashboard.jsx, components/mass-messaging/MassMessagingCard.jsx, components/dashboard/DashboardActionCards.jsx, components/admin/{BulkOps,RoutingCost,WarrantiesExpiring,SoshiePublishing,CrewProductivity}Tile.jsx
+
+## Iteration 118 — Phase 39C: Team CPO Readiness + Recommendations Queue (write actions)
+- **Commit**: see `git log --grep "phase 39C"`
+- **Date**: 2026-10-11
+- **Changes**: TeamCpoReadinessWidget (3 parallel GETs, bulk POST /training/nudge-non-starters, optimistic "Nudged" + rollback + toast); RecommendationsQueueWidget (GET ?older_than_days=7, POST /{id}/send + /{id}/discard w/ confirm, optimistic remove + index-preserving rollback + toast, silent reload). Mounted after Payments, before Revenue by Service, gated admin/super_admin (backend-effective; web mounts ungated).
+- **Files modified**: app/(app)/index.tsx; added src/components/dashboard/{TeamCpoReadinessWidget,RecommendationsQueueWidget}.tsx, __tests__/phase39c-mobile-dashboard-write-actions.test.tsx
+- **Web files referenced**: components/admin/TeamCpoReadinessWidget.jsx, components/admin/RecommendationsQueueWidget.jsx, pages/admin/Dashboard.jsx; backend routers recommendations_queue.py / training.py / training_nudge.py (read-only, role guards)
+
+## Iteration 119 — Phase 40b: Issue Credit command-strip button
+- **Commit**: see `git log --grep "phase 40b"`
+- **Date**: 2026-10-11
+- **Changes**: `customer-action-issue-credit` steel button in the customer action row (after View-as, before Delete) → `jumpTo("credits")`. Gated admin/super_admin (= mobile Credits section gate; web gate also includes manager/owner but Credits section is hidden for them on mobile). Credits + Equipment blocks byte-identical (sha1 match).
+- **Files modified**: app/customer/[id].tsx (+14), __tests__/phase40-customer-profile-visual-grouping.test.tsx (+33, append-only)
+- **Web files referenced**: pages/customers/CustomerDetail.jsx (canIssueCredit, cd-issue-credit-btn)
