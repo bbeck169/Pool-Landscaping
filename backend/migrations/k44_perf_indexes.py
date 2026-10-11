@@ -113,6 +113,61 @@ _INDEXES: List[Tuple[str, str, List[Tuple[str, int]]]] = [
      [("tenant_id", 1), ("customer_id", 1), ("created_at", -1)]),
     ("properties", "perf_customers_properties_tenant_customer",
      [("tenant_id", 1), ("customer_id", 1)]),
+
+    # ─────────────────────────────────────────────────────────────
+    # Phase 37 · Feb-2026 — customer-profile hot-path indexes.
+    #
+    # The customer-profile aggregator endpoints
+    # (``GET /customers/{cid}/summary`` and
+    # ``GET /customers/{cid}/kpi-summary``) fire count/aggregate
+    # queries against five collections that were only covered by
+    # ``tenant_id``-only prefixes before Phase 37. On an
+    # Aquaterra-scale tenant (~35k ``service_reports``, O(10k)
+    # ``messages`` / ``customer_tasks`` / ``warranty_contracts``
+    # per tenant), the planner was tenant-prefix-scanning the
+    # whole collection on every profile open — contributing the
+    # bulk of the 30s+ user-reported profile load.
+    #
+    # Investigation report:
+    #   * ``service_reports`` previously used
+    #     ``(tenant_id, job_id, tech_id)`` which could not serve
+    #     ``{tenant_id, customer_id}`` filters.
+    #   * ``customer_tasks`` had no non-``_id_`` index at all.
+    #   * ``messages``, ``customer_equipment`` + ``warranty_contracts``
+    #     each had a ``perf_triad_*_tenant_id`` fallback that
+    #     scanned every tenant row to filter by customer.
+    #
+    # Each key is a strict superset of the existing tenant-only
+    # fallback (``(tenant_id, customer_id, <sort/filter>)``), so
+    # the planner picks the new index on every customer-scoped
+    # read without affecting tenant-wide reporting pipelines
+    # (CFO / reporting fan-outs still match the shorter prefix
+    # on the existing ``tenant_id`` indexes).
+    ("service_reports",
+     "p37_service_reports_tenant_customer_submitted",
+     [("tenant_id", 1), ("customer_id", 1), ("submitted_at", -1)]),
+    ("customer_tasks",
+     "p37_customer_tasks_tenant_customer_created",
+     [("tenant_id", 1), ("customer_id", 1), ("created_at", -1)]),
+    ("messages",
+     "p37_messages_tenant_customer_sender_read",
+     [("tenant_id", 1), ("customer_id", 1),
+      ("sender", 1), ("read_by_staff", 1)]),
+    # Customer-profile Equipment tab —
+    # ``routers.customer_equipment.list_customer_equipment`` fires
+    # ``.find({tenant, customer, is_deleted: {$ne: True}}).sort(created_at ASC)``.
+    # Compound covers the sort direction as well.
+    ("customer_equipment",
+     "p37_customer_equipment_tenant_customer_created",
+     [("tenant_id", 1), ("customer_id", 1), ("created_at", 1)]),
+    # Customer-profile Warranties tab —
+    # ``routers.warranties.admin_customer_warranties`` fires a
+    # ``count_documents({tenant, customer})`` + a
+    # ``.find({tenant, customer}).sort(start_date DESC).skip().limit()``.
+    # Compound covers the sort direction + the paginator.
+    ("warranty_contracts",
+     "p37_warranty_contracts_tenant_customer_startdate",
+     [("tenant_id", 1), ("customer_id", 1), ("start_date", -1)]),
 ]
 
 
