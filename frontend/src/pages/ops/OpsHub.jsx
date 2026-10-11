@@ -2979,6 +2979,12 @@ export function PriceBook() {
                     are preserved for regression continuity. */}
                 <div className="w-32"
                       data-testid={`pb-cell-service-category-${r.id}`}>
+                  {/* Feb-2026 — Axis-specific allowNone contract:
+                      service category is REQUIRED on items
+                      server-side (``validate_service_category``
+                      400s on null) so ``allowNone={false}`` here;
+                      income category is optional and the income
+                      cell below passes ``allowNone={true}``. */}
                   <CategorySelectCell
                     axis="service"
                     row={r}

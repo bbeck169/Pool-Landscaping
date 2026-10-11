@@ -140,9 +140,13 @@ describe("Profit Report · Uncategorized Fix deep-link", () => {
       .toMatch(/Widget A/);
     expect(screen.getByTestId("profit-report-fix-item-item-B").textContent)
       .toMatch(/Widget B/);
-    // Each row carries a "Set category" link.
+    // Each row carries a "Set category" link. Feb-2026 — route
+    // normalised from the (buggy) ``/pricebook`` to the real
+    // ``/price-book`` path (per App.js). Match the full prefix so
+    // a future accidental ``/pricebook`` relapse re-fails this
+    // test.
     expect(screen.getByTestId("profit-report-fix-item-link-item-A"))
-      .toHaveAttribute("href", expect.stringContaining("/pricebook"));
+      .toHaveAttribute("href", expect.stringContaining("/price-book"));
   });
 
   it("Done button dismisses the modal", async () => {

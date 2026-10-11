@@ -200,6 +200,44 @@ def test_patch_service_category_null_rejected_400_service_required():
         _cleanup(tid, uid, email)
 
 
+def test_patch_service_category_null_lock_tester_feedback_feb_2026():
+    """Tester feedback · Feb-2026 — the ``— None —`` option is
+    intentionally OMITTED on the service axis because service
+    category is REQUIRED on items server-side. This test is a
+    duplicate-with-sharper-intent lock of the behaviour: PATCHing
+    ``{service_category_id: null}`` must return 400 and the row's
+    existing category id must NOT be mutated.
+
+    Lives alongside ``test_patch_service_category_null_rejected_
+    400_service_required`` above — kept as a separate test so a
+    future refactor that accidentally removes the stricter 400
+    produces two failures (not just one), making the regression
+    impossible to miss in a quick ``pytest -q`` scan.
+    """
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        existing_cat = _seed_svc_cat(tid, "LockedExisting")
+        item_id = _seed_item(tid, existing_cat)
+        r = requests.patch(
+            f"{API}/items/{item_id}",
+            headers={"Authorization": f"Bearer {tok}"},
+            json={"service_category_id": None},
+            timeout=15,
+        )
+        assert r.status_code == 400, r.text
+        detail = r.json().get("detail") or {}
+        assert detail.get("error") == "service_category_required"
+        # Row's existing service_category_id MUST be unchanged.
+        row = _db.items.find_one(
+            {"id": item_id, "tenant_id": tid},
+            {"_id": 0, "service_category_id": 1},
+        )
+        assert row["service_category_id"] == existing_cat
+    finally:
+        _cleanup(tid, uid, email)
+
+
 def test_patch_income_category_valid_id_persists():
     tid = _seed_tenant()
     uid, email, tok = _seed_admin(tid)

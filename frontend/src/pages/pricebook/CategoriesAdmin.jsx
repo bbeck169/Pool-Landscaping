@@ -206,14 +206,17 @@ function ArchiveWarnDialog({
                       service axis button closes the archive modal
                       first (so the admin sees the newly-filtered
                       list cleanly) then navigates to
-                      /pricebook?t=pricebook&category_id=<id>. */}
+                      /price-book?t=pricebook&category_id=<id>.
+                      Route lives at ``/price-book`` per App.js —
+                      the tab-slug alias ``price-book → pricebook``
+                      inside OpsHub covers the ``t=`` param. */}
                   {axis === "service" && category?.id ? (
                     <button
                       type="button"
                       onClick={() => {
                         onOpenChange(false);
                         navigate(
-                          `/pricebook?t=pricebook&category_id=${encodeURIComponent(category.id)}`,
+                          `/price-book?t=pricebook&category_id=${encodeURIComponent(category.id)}`,
                         );
                       }}
                       className="font-bold underline"

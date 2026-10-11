@@ -5,7 +5,7 @@
  * reference this category" link in the Archive-category modal.
  * Clicking the count:
  *   1. Closes the archive modal.
- *   2. Navigates to /pricebook?t=pricebook&category_id=<id> so
+ *   2. Navigates to /price-book?t=pricebook&category_id=<id> so
  *      the admin lands on the Pricebook list pre-filtered to the
  *      affected category.
  */
@@ -93,7 +93,7 @@ describe("Archive-category modal · count link · Task C", () => {
 
     fireEvent.click(countBtn);
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith(
-      "/pricebook?t=pricebook&category_id=svc-99",
+      "/price-book?t=pricebook&category_id=svc-99",
     ));
   }, 15000);
 

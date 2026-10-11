@@ -662,8 +662,13 @@ export default function ProfitReportPage() {
                           {it.id}
                         </div>
                       </div>
+                      {/* Feb-2026 · Pricebook route lives at
+                          ``/price-book`` per App.js — not
+                          ``/pricebook`` (which only hosts the
+                          ``/pricebook/categories`` admin child
+                          route). Avoid the 404 regression. */}
                       <a
-                        href={`/pricebook?highlight=${encodeURIComponent(it.id)}`}
+                        href={`/price-book?highlight=${encodeURIComponent(it.id)}`}
                         className="text-xs font-semibold px-2 py-1 rounded-md"
                         style={{ background: "#0891B2", color: "#fff" }}
                         data-testid={`profit-report-fix-item-link-${it.id}`}

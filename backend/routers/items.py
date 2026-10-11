@@ -125,6 +125,17 @@ async def list_items(
         bypass rationale.
     :param limit: Row cap (default 1000, max 1000). Sort is
         ``("name", 1)`` ascending, unchanged from pre-Task-G.
+
+    Projection note · Feb-2026 — the response uses ``{"_id": 0}``
+    so EVERY document field (including ``service_category_id`` /
+    ``income_category_id``) is returned to the client. If a given
+    row's ``service_category_id`` is ``null`` on the wire that
+    reflects the Mongo document, NOT a serializer omission. The
+    legacy flat ``category`` string field is a separate taxonomy
+    (unmigrated pricebook rows carry it alongside a null FK id)
+    and the Pricebook list surfaces both to make the drift
+    visible to admins; a full data backfill is tracked separately
+    (see /app/memory/pricebook_backfill_audit.md).
     """
     tenant_id = (user.get("tenant_id") or "").strip()
     if not tenant_id:

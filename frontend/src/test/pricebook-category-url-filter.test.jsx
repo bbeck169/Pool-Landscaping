@@ -4,9 +4,10 @@
  * Vitest coverage for the PriceBook URL-param category filter.
  *
  * Cases:
- *   1. ``/pricebook?category_id=<id>`` hydrates the filter on mount,
- *      the dismissible chip renders with the resolved category
- *      name, and the row grid is pre-filtered to that category.
+ *   1. ``/price-book?category_id=<id>`` hydrates the filter on
+ *      mount, the dismissible chip renders with the resolved
+ *      category name, and the row grid is pre-filtered to that
+ *      category.
  *   2. Clicking the chip's ✕ clears the URL param + removes the
  *      chip so a reload no longer re-applies the filter.
  */
@@ -87,7 +88,7 @@ describe("PriceBook · ?category_id URL filter · Task C", () => {
   it("hydrates the filter from the URL + renders the dismissible chip + filters rows", async () => {
     _wireFetches();
     render(
-      <MemoryRouter initialEntries={["/pricebook?t=pricebook&category_id=svc-10"]}>
+      <MemoryRouter initialEntries={["/price-book?t=pricebook&category_id=svc-10"]}>
         <PriceBook />
       </MemoryRouter>,
     );
@@ -109,7 +110,7 @@ describe("PriceBook · ?category_id URL filter · Task C", () => {
   it("clicking the chip's ✕ strips category_id from the URL + removes the chip + restores all rows", async () => {
     _wireFetches();
     render(
-      <MemoryRouter initialEntries={["/pricebook?t=pricebook&category_id=svc-10"]}>
+      <MemoryRouter initialEntries={["/price-book?t=pricebook&category_id=svc-10"]}>
         <PriceBook />
       </MemoryRouter>,
     );
