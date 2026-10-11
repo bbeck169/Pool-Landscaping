@@ -478,6 +478,20 @@ export default function CustomerDetail() {
               <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "View as customer"}</Text>
             </Pressable>
           ) : null}
+          {/* Phase 40b · web ``cd-issue-credit-btn`` → scroll to the Credits
+              section (its Adjust modal is reused untouched). Gated like the
+              Credits section it targets (admin / super_admin). */}
+          {isAdmin ? (
+            <TouchableOpacity
+              style={[s2.actionBtn, s2.actionBtnSteel]}
+              onPress={() => jumpTo("credits")}
+              testID="customer-action-issue-credit"
+              accessibilityLabel="Issue Credit"
+            >
+              <Ionicons name="cash-outline" size={16} color="#FFFFFF" />
+              <Text style={[s2.actionBtnText, { color: "#FFFFFF" }]}>Issue Credit</Text>
+            </TouchableOpacity>
+          ) : null}
         {isAdmin ? (
             <TouchableOpacity
               style={[s2.deleteBtn, s2.actionBtn]}

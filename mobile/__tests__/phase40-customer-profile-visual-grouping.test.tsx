@@ -274,3 +274,36 @@ describe("Phase 40 · Equipment section untouched", () => {
     expect(within(r.getByTestId("cd-section-equipment")).getByTestId("equipment-library-stub")).toBeTruthy();
   });
 });
+
+describe("Phase 40b · Issue Credit command-strip button", () => {
+  it("admin: in the action row after View-as / before Delete; steel bg + border, white text", async () => {
+    const r = await mount();
+    const row = ids(r.toJSON()).filter((i) => ["customer-action-edit", "impersonate-customer-button", "customer-action-issue-credit", "customer-delete-button"].includes(i));
+    expect(row).toEqual(["customer-action-edit", "impersonate-customer-button", "customer-action-issue-credit", "customer-delete-button"]);
+    expect(within(r.getByTestId("customer-action-row")).getByTestId("customer-action-issue-credit")).toBeTruthy();
+    const st = flat(r.getByTestId("customer-action-issue-credit"));
+    expect([st.backgroundColor, st.borderColor]).toEqual(["#334155", "#64748B"]);
+    expect(flat(within(r.getByTestId("customer-action-issue-credit")).getByText("Issue Credit")).color).toBe("#FFFFFF");
+  });
+  it("tap scrolls to the Credits anchor exactly once; Adjust modal stays closed", async () => {
+    const r = await mount();
+    const sv: any = r.UNSAFE_getByType(ScrollView).instance;
+    fireEvent(r.getByTestId("cd-anchor-credits"), "layout", { nativeEvent: { layout: { x: 0, y: 1500, width: 300, height: 100 } } });
+    sv.scrollTo.mockClear();
+    fireEvent.press(r.getByTestId("customer-action-issue-credit"));
+    await act(async () => { await new Promise((res) => setTimeout(res, 160)); });
+    expect(sv.scrollTo.mock.calls).toEqual([[{ y: 1500 - 12, animated: true }]]);
+    expect(r.queryByTestId("adjust-credits-modal")).toBeNull();
+  });
+  it("super_admin sees it; manager / owner / technician do not (Credits section is admin-only on mobile)", async () => {
+    mockRole = "super_admin";
+    let r = await mount();
+    expect(r.getByTestId("customer-action-issue-credit")).toBeTruthy();
+    for (const role of ["manager", "owner", "technician"]) {
+      r.unmount();
+      mockRole = role;
+      r = await mount();
+      expect([role, r.queryByTestId("customer-action-issue-credit"), r.queryByTestId("customer-credits-section")]).toEqual([role, null, null]);
+    }
+  });
+});
