@@ -482,3 +482,282 @@ def test_email_delivery_contents_404_on_missing_or_wrong_tenant():
         assert r.status_code == 404
     finally:
         _cleanup(tid, uid, email)
+
+
+# ───────── Fix 1 · drill-down status filter (Feb-2026 follow-up) ─────────
+
+def test_drilldown_tech_id_default_completed_matches_chip_count():
+    """Fix 1 — the default ``status=completed`` filter restores
+    chip↔modal parity (prior behavior returned completed +
+    skipped so the modal exceeded the chip)."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mike_uid, mike_name = _seed_tech(tid, "Mike Rivera")
+        mon, sun = _mon_sun()
+        # 5 completed service + 2 missed (status=skipped) — pre-fix
+        # the drill-down returned all 7.
+        for _ in range(5):
+            _seed_job(tid, sched=mon, work_class="service",
+                       technician_id=mike_uid, technician_name=mike_name)
+        for _ in range(2):
+            _seed_job(tid, sched=mon, status="skipped",
+                       technician_id=mike_uid, technician_name=mike_name)
+        drill = requests.get(
+            f"{API}/reports/pool-service/jobs"
+            f"?date_from={mon}&date_to={sun}&tech_id={mike_uid}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        # Default status=completed → only the 5 completed rows.
+        assert drill["count"] == 5
+        # Summary chip count for the tech row matches.
+        summary = requests.get(
+            f"{API}/reports/pool-service?date_from={mon}&date_to={sun}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        by_tech = {t["technician_id"]: t for t in summary["by_technician"]}
+        row_completed = (by_tech[mike_uid]["pools_serviced"]
+                          + by_tech[mike_uid]["repairs_completed"]
+                          + by_tech[mike_uid]["other"])
+        assert drill["count"] == row_completed
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_drilldown_unassigned_default_completed_matches_chip_count():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        # 14 completed service unassigned + 42 missed unassigned.
+        for _ in range(14):
+            _seed_job(tid, sched=mon, work_class="service",
+                       customer_name="Completed")
+        for _ in range(42):
+            _seed_job(tid, sched=mon, status="skipped",
+                       customer_name="MissedCo")
+        drill = requests.get(
+            f"{API}/reports/pool-service/jobs"
+            f"?date_from={mon}&date_to={sun}&bucket=unassigned",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        # Default status=completed → only the 14 completed rows.
+        assert drill["count"] == 14
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_drilldown_status_missed_returns_only_skipped():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mike_uid, mike_name = _seed_tech(tid, "Mike Rivera")
+        mon, sun = _mon_sun()
+        for _ in range(5):
+            _seed_job(tid, sched=mon, work_class="service",
+                       technician_id=mike_uid, technician_name=mike_name)
+        for _ in range(2):
+            _seed_job(tid, sched=mon, status="skipped",
+                       technician_id=mike_uid, technician_name=mike_name)
+        drill = requests.get(
+            f"{API}/reports/pool-service/jobs"
+            f"?date_from={mon}&date_to={sun}"
+            f"&tech_id={mike_uid}&status=missed",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        assert drill["count"] == 2
+        assert drill["filter"]["status"] == "missed"
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_drilldown_status_all_returns_union_excluding_dropped():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mike_uid, mike_name = _seed_tech(tid, "Mike Rivera")
+        mon, sun = _mon_sun()
+        for _ in range(3):
+            _seed_job(tid, sched=mon, work_class="service",
+                       technician_id=mike_uid, technician_name=mike_name)
+        for _ in range(1):
+            _seed_job(tid, sched=mon, status="skipped",
+                       technician_id=mike_uid, technician_name=mike_name)
+        # A non-terminal (dropped) job — must NOT appear in status=all.
+        _seed_job(tid, sched=mon, status="scheduled",
+                   technician_id=mike_uid, technician_name=mike_name)
+        drill = requests.get(
+            f"{API}/reports/pool-service/jobs"
+            f"?date_from={mon}&date_to={sun}"
+            f"&tech_id={mike_uid}&status=all",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        # 3 completed + 1 missed = 4, scheduled job excluded.
+        assert drill["count"] == 4
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_drilldown_rejects_unknown_status():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        r = requests.get(
+            f"{API}/reports/pool-service/jobs"
+            f"?date_from={mon}&date_to={sun}"
+            f"&bucket=maintenance&status=garbage",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=10,
+        )
+        assert r.status_code == 422
+    finally:
+        _cleanup(tid, uid, email)
+
+
+# ───────── Fix 2 · reconciliation now requires dropped==0 ─────────
+
+def test_reconciliation_matches_false_when_dropped_nonzero():
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name)
+        # Two "dropped" jobs — non-terminal status, no completed
+        # timestamp. Pre-fix the reconciliation returned matches=
+        # true even though 2 jobs were silently dropped.
+        dropped_a = _seed_job(tid, sched=mon, status="scheduled",
+                                customer_name="DropA")
+        dropped_b = _seed_job(tid, sched=mon, status="in_progress",
+                                customer_name="DropB")
+        body = requests.get(
+            f"{API}/reports/pool-service?date_from={mon}&date_to={sun}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        rec = body["reconciliation"]
+        assert rec["matches"] is False
+        assert rec["delta"] == 2
+        assert rec["dropped_count"] == 2
+        sample_ids = {s["job_id"] for s in rec["dropped_sample"]}
+        assert dropped_a in sample_ids and dropped_b in sample_ids
+        # Each sample row carries a human-readable reason.
+        for s in rec["dropped_sample"]:
+            assert "reason" in s and s["reason"]
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_reconciliation_dropped_sample_capped_at_ten():
+    """Sanity on the cap — seed 15 dropped jobs, assert only 10
+    land in the sample so the payload stays lean."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        for i in range(15):
+            _seed_job(tid, sched=mon, status="scheduled",
+                       customer_name=f"Drop{i:02d}")
+        body = requests.get(
+            f"{API}/reports/pool-service?date_from={mon}&date_to={sun}",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        rec = body["reconciliation"]
+        assert rec["dropped_count"] == 15
+        assert len(rec["dropped_sample"]) == 10
+    finally:
+        _cleanup(tid, uid, email)
+
+
+# ───────── Fix 3 · delivery contents snapshot vs legacy ─────────
+
+def test_email_contents_reads_snapshot_when_present_and_ignores_later_jobs():
+    """Fix 3 — a delivery emitted WITH a ``payload_snapshot`` must
+    return the snapshotted job list, NOT the current aggregator
+    result (which would include jobs completed after the email)."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        # Seed 2 completed jobs that were in the email body.
+        jid_a = _seed_job(tid, sched=mon, work_class="service",
+                           technician_id=ethan_uid, technician_name=ethan_name,
+                           customer_name="InEmail-A")
+        jid_b = _seed_job(tid, sched=mon, work_class="service",
+                           technician_id=ethan_uid, technician_name=ethan_name,
+                           customer_name="InEmail-B")
+        # Create a delivery with the frozen snapshot.
+        delivery_id = f"TEST-dlv-{uuid.uuid4().hex[:6]}"
+        _db.email_delivery_log.insert_one({
+            "id": delivery_id, "tenant_id": tid,
+            "kind": "pool_service_report",
+            "week_start": mon, "week_end": sun,
+            "recipients": ["admin@example.com"], "sent": True,
+            "mocked": False, "total_completed": 2,
+            "sent_at": "2026-02-14T17:00:00+00:00",
+            "payload_snapshot": {
+                "job_ids": [jid_a, jid_b],
+                "customer_ids": ["cust-a", "cust-b"],
+                "jobs": [
+                    {"job_id": jid_a, "title": "Weekly service A",
+                      "customer_id": "cust-a",
+                      "customer_name": "InEmail-A",
+                      "scheduled_date": mon,
+                      "work_class": "service", "status": "completed"},
+                    {"job_id": jid_b, "title": "Weekly service B",
+                      "customer_id": "cust-b",
+                      "customer_name": "InEmail-B",
+                      "scheduled_date": mon,
+                      "work_class": "service", "status": "completed"},
+                ],
+            },
+        })
+        # Add a new completed job AFTER the delivery was logged.
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name,
+                   customer_name="PostEmail")
+        r = requests.get(
+            f"{API}/reports/pool-service/email-history/"
+            f"{delivery_id}/contents",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        assert r["source"] == "snapshot"
+        assert r["job_count"] == 2  # not 3
+        names = sorted(c["customer_name"] for c in r["customers"])
+        assert names == ["InEmail-A", "InEmail-B"]
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_email_contents_legacy_delivery_falls_back_to_recompute_tagged():
+    """Fix 3 — a delivery WITHOUT a snapshot (pre-change) still
+    returns something, tagged ``source: 'legacy_recompute'`` so
+    admins know the drift risk."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name,
+                   customer_name="LegacyCo")
+        delivery_id = f"TEST-dlv-{uuid.uuid4().hex[:6]}"
+        _db.email_delivery_log.insert_one({
+            "id": delivery_id, "tenant_id": tid,
+            "kind": "pool_service_report",
+            "week_start": mon, "week_end": sun,
+            "recipients": ["admin@example.com"], "sent": True,
+            "mocked": False, "total_completed": 1,
+            "sent_at": "2026-02-14T17:00:00+00:00",
+            # No ``payload_snapshot`` — simulates a pre-fix row.
+        })
+        r = requests.get(
+            f"{API}/reports/pool-service/email-history/"
+            f"{delivery_id}/contents",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        assert r["source"] == "legacy_recompute"
+        assert r["job_count"] == 1
+    finally:
+        _cleanup(tid, uid, email)

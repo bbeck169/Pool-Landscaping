@@ -5355,6 +5355,17 @@ async def pool_service_email_history(
 # ``test_pool_service_drilldown.py::_bucket_totals_match_summary``).
 
 _POOL_BUCKETS = {"maintenance", "repairs", "other", "unassigned"}
+# Feb-2026 · Pool-service drill-down follow-up (Fix 1).
+# Status filter on the drill-down endpoint. Default is
+# ``completed`` so the modal matches the chip count on the
+# summary report (the chip counts only completed jobs). The
+# ``missed`` branch is the sibling view for admins who want to
+# audit skipped visits, and ``all`` is the union excluding the
+# "dropped" bucket (jobs with a non-terminal status like
+# scheduled / in_progress — those are surfaced via
+# ``dropped_count`` on the summary and never appear here).
+_POOL_STATUS_FILTERS = {"completed", "missed", "all"}
+_COMPLETED_BUCKETS = {"maintenance", "repairs", "other"}
 
 
 async def _pool_jobs_in_window(
@@ -5458,6 +5469,15 @@ async def pool_service_jobs_drilldown(
                       "return every job whose attribution ladder "
                       "fell through to the Unassigned sentinel."),
     ),
+    status: str = Query(
+        "completed",
+        description=("Status filter — one of ``completed`` (default, "
+                      "matches the summary chip count), ``missed`` "
+                      "(skipped/cancelled visits), or ``all`` (union). "
+                      "``dropped`` (non-terminal) jobs are never in "
+                      "the drill-down — they surface via "
+                      "``dropped_count`` on the summary payload."),
+    ),
     admin: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -5472,6 +5492,14 @@ async def pool_service_jobs_drilldown(
       * At least one of ``bucket`` / ``tech_id`` MUST be supplied.
       * They are mutually exclusive — passing both → 422.
       * ``bucket`` must be in the enumerated set.
+      * ``status`` must be in ``{completed, missed, all}``.
+
+    Status filter · Feb-2026 (Fix 1) — the summary chip only
+    counts completed visits; prior to this param the endpoint
+    was returning completed + skipped and the modal row count
+    exceeded the chip. Default is ``completed`` so the modal
+    stays in lock-step with the chip. ``missed`` + ``all`` are
+    exposed for future admin audit flows.
     """
     if (bucket is None) == (tech_id is None):
         raise HTTPException(
@@ -5482,6 +5510,11 @@ async def pool_service_jobs_drilldown(
     if bucket is not None and bucket not in _POOL_BUCKETS:
         raise HTTPException(
             422, f"bucket must be one of {sorted(_POOL_BUCKETS)}",
+        )
+    if status not in _POOL_STATUS_FILTERS:
+        raise HTTPException(
+            422,
+            f"status must be one of {sorted(_POOL_STATUS_FILTERS)}",
         )
     tenant_id = tenant["id"]
     all_jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
@@ -5538,25 +5571,30 @@ async def pool_service_jobs_drilldown(
         meta = _classify_pool_job(j)
         resolved_tid = _resolve_tid(j)
         meta["row"]["resolved_tech_id"] = resolved_tid
+        # Fix 1 · Feb-2026 — status filter FIRST so bucket + tech
+        # branches share one truth. ``dropped`` is never surfaced
+        # here (non-terminal statuses live on the summary's
+        # ``dropped_count`` field).
+        _b = meta["bucket"]
+        if _b == "dropped":
+            continue
+        if status == "completed" and _b not in _COMPLETED_BUCKETS:
+            continue
+        if status == "missed" and _b != "skipped":
+            continue
+        # status == "all" lets every non-dropped row through.
         # ``bucket`` filter — maintenance/repairs/other map 1:1.
         # ``unassigned`` is a cross-cutting filter: completed-or-
         # skipped jobs whose attribution ladder fell through.
         if bucket is not None:
             if bucket == "unassigned":
-                if meta["bucket"] in ("dropped",): continue
                 if resolved_tid is not None: continue
-            elif meta["bucket"] != bucket:
+            elif _b != bucket:
                 continue
         else:  # tech_id branch
             if tech_id == "unassigned":
                 if resolved_tid is not None: continue
-                if meta["bucket"] in ("dropped",): continue
             elif resolved_tid != tech_id:
-                continue
-            # Exclude dropped jobs from per-tech view — those have
-            # a non-terminal status (``scheduled``, ``in_progress``)
-            # and surface via ``dropped_count`` on the summary.
-            if meta["bucket"] == "dropped":
                 continue
         out.append(meta["row"])
     out.sort(key=lambda r: (r.get("scheduled_date") or "",
@@ -5565,7 +5603,8 @@ async def pool_service_jobs_drilldown(
         "items": out,
         "count": len(out),
         "window": {"start": date_from, "end": date_to},
-        "filter": {"bucket": bucket, "tech_id": tech_id},
+        "filter": {"bucket": bucket, "tech_id": tech_id,
+                     "status": status},
     }
 
 
@@ -5577,12 +5616,20 @@ async def pool_service_email_delivery_contents(
 ):
     """Drill-down for Auto-Friday email delivery rows (TC-C).
 
-    Returns the delivery row + the per-week pool-service jobs
-    that WOULD have been included in the email (re-computed from
-    the aggregator for the delivery's ``week_start``..``week_end``
-    window). We re-compute rather than reading a stored snapshot
-    because the delivery log only stores recipient + status
-    metadata, not the per-row job list.
+    Returns the delivery row + the completed pool-service jobs
+    that were in the email.
+
+    Fix 3 · Feb-2026 — snapshot-first read.
+      * Deliveries emitted AFTER this change carry a
+        ``payload_snapshot`` field capturing the jobs that were
+        in the email body at send time. ``/contents`` returns
+        the snapshot verbatim (``source: "snapshot"``).
+      * Legacy deliveries (pre-change) lack the snapshot. For
+        those, we fall back to recomputing from the aggregator
+        for the delivery's week window (``source:
+        "legacy_recompute"``). Admins can see the difference
+        via the ``source`` tag on the response.
+    No backfill is performed — legacy rows stay legacy.
     """
     tenant_id = tenant["id"]
     delivery = await db.email_delivery_log.find_one(
@@ -5598,6 +5645,59 @@ async def pool_service_email_delivery_contents(
     if not (date_from and date_to):
         raise HTTPException(422, "delivery row missing week window")
 
+    snap = delivery.get("payload_snapshot")
+    if snap and isinstance(snap, dict) and snap.get("jobs"):
+        # Fix 3 — snapshot path. Build the (job, customer) rows
+        # from the frozen payload. Customers come straight off
+        # the ``jobs`` array — one aggregator pass, no extra
+        # Mongo reads.
+        jobs_rows = []
+        customers: Dict[str, dict] = {}
+        for j in snap.get("jobs", []):
+            row = {
+                "job_id":         j.get("job_id"),
+                "title":          j.get("title") or "",
+                "customer_id":    j.get("customer_id"),
+                "customer_name":  j.get("customer_name") or "",
+                "scheduled_date": j.get("scheduled_date"),
+                "status":         j.get("status") or "completed",
+                "work_class":     j.get("work_class"),
+                "service_type":   j.get("service_type") or "",
+                "technician_id":  j.get("technician_id"),
+                "technician_name": j.get("technician_name") or "",
+            }
+            jobs_rows.append(row)
+            cid = row.get("customer_id") or ""
+            if cid:
+                agg = customers.setdefault(cid, {
+                    "customer_id":   cid,
+                    "customer_name": row.get("customer_name") or "",
+                    "jobs":          [],
+                })
+                agg["jobs"].append({
+                    "job_id":         row["job_id"],
+                    "title":          row["title"],
+                    "scheduled_date": row["scheduled_date"],
+                    "work_class":     row["work_class"],
+                })
+        jobs_rows.sort(key=lambda r: (r.get("customer_name") or "",
+                                        r.get("scheduled_date") or ""))
+        customer_list = sorted(
+            customers.values(),
+            key=lambda c: (c["customer_name"] or "").lower(),
+        )
+        return {
+            "delivery":  delivery,
+            "jobs":      jobs_rows,
+            "customers": customer_list,
+            "job_count":      len(jobs_rows),
+            "customer_count": len(customer_list),
+            "window":    {"start": date_from, "end": date_to},
+            "source":    "snapshot",
+        }
+
+    # Legacy path — delivery pre-dates the snapshot change. Fall
+    # back to recomputation and tag the response so admins know.
     jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
     # Only COMPLETED jobs are included in the Auto-Friday email —
     # skipped + dropped are summary-only.
@@ -5636,7 +5736,38 @@ async def pool_service_email_delivery_contents(
         "job_count":      len(rows),
         "customer_count": len(customer_list),
         "window":    {"start": date_from, "end": date_to},
+        "source":    "legacy_recompute",
     }
+
+
+async def collect_completed_pool_jobs_for_window(
+    tenant_id: str, date_from: Optional[str], date_to: Optional[str],
+) -> List[dict]:
+    """Return the completed pool jobs for a tenant/week window.
+
+    Fix 3 · Feb-2026 — called by
+    ``services.pool_service_email.run_weekly_pool_service_email``
+    at send time so the delivery row's ``payload_snapshot`` field
+    captures the exact jobs that landed in the email body.
+
+    Mirrors the ``/reports/pool-service/jobs`` endpoint's
+    completed-bucket semantics (maintenance + repairs + other —
+    skipped and dropped are excluded) so the snapshot drill-down
+    and the inline chip count stay in lock-step.
+
+    Returns an empty list on bad window input; raising from the
+    scheduler branch would skip the delivery outright.
+    """
+    if not (date_from and date_to):
+        return []
+    jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
+    out: List[dict] = []
+    for j in jobs:
+        meta = _classify_pool_job(j)
+        if meta["bucket"] not in _COMPLETED_BUCKETS:
+            continue
+        out.append(meta["row"])
+    return out
 
 
 # ─── Phase 52.A · Monthly pricing digest email history ──────────────
@@ -6063,6 +6194,12 @@ async def compute_pool_service(tenant_id: str,
     # see how many jobs the report is quietly excluding.  Does NOT
     # feed any legacy counter — exposed only via ``dropped_count``.
     _dropped_period = 0
+    # Fix 2 · Feb-2026 — capture per-job reason + id for the first
+    # 10 dropped jobs so the reconciliation banner can show admins
+    # exactly WHICH jobs could not be attributed and WHY, without
+    # requiring a server-log dive. Cap of 10 keeps the payload lean.
+    _DROPPED_SAMPLE_CAP = 10
+    _dropped_sample: List[dict] = []
     for j in jobs:
         tid = j.get("technician_id")
         # Feb-2026 · Attribution PRIORITY LADDER (documented).
@@ -6132,6 +6269,21 @@ async def compute_pool_service(tenant_id: str,
             # can distinguish "nothing happened" from "we dropped
             # 7 jobs with abnormal statuses".
             _dropped_period += 1
+            if len(_dropped_sample) < _DROPPED_SAMPLE_CAP:
+                # Fix 2 · Feb-2026 — record the first 10 dropped
+                # jobs with a human-readable reason so admins can
+                # inspect without opening logs.
+                _reason = (
+                    f"non-terminal status: {status}" if status
+                    else "missing status"
+                )
+                _dropped_sample.append({
+                    "job_id": j.get("id"),
+                    "customer_name": j.get("customer_name") or "",
+                    "scheduled_date": j.get("scheduled_date"),
+                    "status": status or None,
+                    "reason": _reason,
+                })
             continue
         if not tid:
             unassigned[bucket_key] += 1
@@ -6216,21 +6368,29 @@ async def compute_pool_service(tenant_id: str,
     total_other             = sum(r["other"] for r in rows)
     total_skipped           = sum(r["skipped"] for r in rows)
 
-    # Feb-2026 · Reconciliation diagnostic.
+    # Feb-2026 · Reconciliation diagnostic — Fix 2 (follow-up).
     #
     # Invariant (per phase spec):
     #     sum(per-tech maintenance)
     #   + sum(per-tech repairs)
     #   + sum(per-tech other)
-    #   + sum(per-tech skipped) === completed + skipped + dropped
+    #   + sum(per-tech skipped) === completed + skipped
     #
     # ``counted_total`` is what we rendered into the per-tech rows
     # (service + repair + other_types + skipped). ``actual_total``
     # is the total pool jobs in the window (completed + skipped +
-    # dropped). ``matches=True`` means every job in the window
-    # landed in exactly one bucket on the per-tech view.  If the
-    # delta is non-zero we LOG a warning (no exception) so the
-    # admin surface can render a reconciliation banner.
+    # dropped).
+    #
+    # ``matches`` now requires BOTH halves of the invariant:
+    #   1. counted_total == actual_total  (no gap)
+    #   2. dropped_count == 0             (nothing silently dropped)
+    #
+    # ``delta`` is the signed gap ``actual - counted`` which (for
+    # the common case of nothing weird happening) equals the
+    # dropped-count: dropped jobs are IN the actual total but NOT
+    # IN counted. Positive delta → jobs missing from the rendered
+    # buckets; negative delta → double-counting (should never
+    # happen in practice, surfaced defensively).
     _counted_total = (total_pools_serviced
                        + total_repairs_completed
                        + total_other
@@ -6239,19 +6399,22 @@ async def compute_pool_service(tenant_id: str,
         1 for j in jobs
         if (j.get("status") or "").lower() in SKIPPED_STATUSES
     ) + _dropped_period
-    # Dropped jobs are intentionally not in buckets, but DO count
-    # against the "actual" denominator (they're pool jobs in the
-    # window). ``matches`` only requires the completed + skipped
-    # halves — the dropped bucket is surfaced separately via
-    # ``dropped_count`` on the response and the frontend banner.
-    _matches = (_counted_total + _dropped_period) == _actual_total
-    _delta = _actual_total - (_counted_total + _dropped_period)
+    _delta = _actual_total - _counted_total
+    _matches = (_counted_total == _actual_total) and (_dropped_period == 0)
     if not _matches:
+        # Fix 2 · richer log line — include the first-N dropped
+        # job ids + reasons so a prod bug can be chased without
+        # recomputing the aggregator from scratch.
+        _sample_log = ", ".join(
+            f"{s['job_id']}({s['reason']})"
+            for s in _dropped_sample[:5]
+        )
         logger.warning(
             "[pool-service] reconciliation delta=%d counted=%d "
-            "actual=%d dropped=%d tenant=%s week=%s..%s",
+            "actual=%d dropped=%d tenant=%s week=%s..%s "
+            "sample=[%s]",
             _delta, _counted_total, _actual_total, _dropped_period,
-            tenant_id, week_start, week_end,
+            tenant_id, week_start, week_end, _sample_log,
         )
     reconciliation = {
         "matches": _matches,
@@ -6259,6 +6422,10 @@ async def compute_pool_service(tenant_id: str,
         "counted_total": _counted_total,
         "actual_total": _actual_total,
         "dropped_count": _dropped_period,
+        # Fix 2 · Feb-2026 — first-N dropped jobs with reasons so
+        # the admin surface can show a drop-sample list under the
+        # yellow banner (cap of 10 rows keeps the payload lean).
+        "dropped_sample": _dropped_sample,
     }
 
     return {

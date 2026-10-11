@@ -169,10 +169,12 @@ describe("Pool Service Report · drill-down phase", () => {
     await user.click(chip);
     const modal = await screen.findByTestId("pool-service-drilldown-modal");
     expect(modal).toBeInTheDocument();
-    // Correct URL fired.
+    // Fix 1 · Feb-2026 — the modal MUST pass ``status=completed``
+    // so the row count matches the summary chip (prior behavior
+    // returned completed + missed and the modal exceeded the chip).
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\/reports\/pool-service\/jobs\?date_from=2026-02-09&date_to=2026-02-15&bucket=maintenance$/,
+        /^\/reports\/pool-service\/jobs\?date_from=2026-02-09&date_to=2026-02-15&bucket=maintenance&status=completed$/,
       ),
     ));
     // Table renders the mocked jobs.
@@ -195,9 +197,10 @@ describe("Pool Service Report · drill-down phase", () => {
     const techRow = await screen.findByTestId("pool-service-row-ethan-maintenance");
     await user.click(techRow);
     await screen.findByTestId("pool-service-drilldown-modal");
+    // Fix 1 · tech variant also forwards ``status=completed``.
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\/reports\/pool-service\/jobs\?date_from=2026-02-09&date_to=2026-02-15&tech_id=ethan$/,
+        /^\/reports\/pool-service\/jobs\?date_from=2026-02-09&date_to=2026-02-15&tech_id=ethan&status=completed$/,
       ),
     ));
     // Title mentions the tech's name.
@@ -258,5 +261,79 @@ describe("Pool Service Report · drill-down phase", () => {
     const chip = await screen.findByTestId("pool-report-total-unassigned");
     expect(chip).toBeInTheDocument();
     expect(chip.textContent).toMatch(/3/);
+  });
+
+  it("Fix 2 — banner surfaces dropped_sample and expands/collapses on click", async () => {
+    _wire({
+      summary: {
+        ..._summary,
+        reconciliation: {
+          matches: false, delta: 2,
+          counted_total: 75, actual_total: 77, dropped_count: 2,
+          dropped_sample: [
+            { job_id: "drop-1", customer_name: "DropA",
+               scheduled_date: "2026-02-10",
+               status: "scheduled",
+               reason: "non-terminal status: scheduled" },
+            { job_id: "drop-2", customer_name: "DropB",
+               scheduled_date: "2026-02-11",
+               status: "in_progress",
+               reason: "non-terminal status: in_progress" },
+          ],
+        },
+      },
+    });
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    const banner = await screen.findByTestId("pool-report-reconciliation-banner");
+    expect(banner).toBeInTheDocument();
+    // Collapsed by default — sample list not visible.
+    expect(screen.queryByTestId("pool-report-reconciliation-sample-list")).toBeNull();
+    const toggle = screen.getByTestId("pool-report-reconciliation-toggle");
+    await user.click(toggle);
+    const list = await screen.findByTestId("pool-report-reconciliation-sample-list");
+    expect(list).toBeInTheDocument();
+    expect(screen.getByTestId("pool-report-reconciliation-sample-row-drop-1"))
+      .toBeInTheDocument();
+    expect(screen.getByTestId("pool-report-reconciliation-sample-row-drop-2"))
+      .toBeInTheDocument();
+    // Second click collapses again.
+    await user.click(toggle);
+    await waitFor(() => expect(
+      screen.queryByTestId("pool-report-reconciliation-sample-list"),
+    ).toBeNull());
+  });
+
+  it("Fix 2 — happy path with dropped_count=0 keeps the banner hidden", async () => {
+    _wire({
+      summary: {
+        ..._summary,
+        reconciliation: {
+          matches: true, delta: 0,
+          counted_total: 75, actual_total: 75, dropped_count: 0,
+          dropped_sample: [],
+        },
+      },
+    });
+    render(<PoolServiceReport />);
+    await screen.findByTestId("pool-service-summary");
+    expect(screen.queryByTestId("pool-report-reconciliation-banner")).toBeNull();
+  });
+
+  it("Fix 2 — matches=false with dropped_count=0 still shows the banner but no toggle", async () => {
+    _wire({
+      summary: {
+        ..._summary,
+        reconciliation: {
+          matches: false, delta: 1,
+          counted_total: 74, actual_total: 75, dropped_count: 0,
+          dropped_sample: [],
+        },
+      },
+    });
+    render(<PoolServiceReport />);
+    const banner = await screen.findByTestId("pool-report-reconciliation-banner");
+    expect(banner).toBeInTheDocument();
+    expect(screen.queryByTestId("pool-report-reconciliation-toggle")).toBeNull();
   });
 });

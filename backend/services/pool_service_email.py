@@ -179,6 +179,28 @@ async def _send_via_resend(subject: str, html: str, to_emails: List[str]) -> Dic
 
 async def _log_delivery(tenant_id: str, report: Dict[str, Any],
                          recipients: List[str], result: Dict[str, Any]) -> None:
+    # Fix 3 · Feb-2026 — Pool-service drill-down follow-up.
+    #
+    # Snapshot the completed jobs that WOULD have been in the
+    # email body at SEND TIME. ``/email-history/{id}/contents``
+    # reads this snapshot directly so jobs completed AFTER the
+    # delivery can't backfill into a historic email's "included"
+    # list (prior behavior re-ran the aggregator at request time
+    # which caused the "contents shows 5 jobs but delivery.
+    # total_completed=4" drift).
+    #
+    # Shape (lean on purpose — we skip the heavy per-job payload):
+    #   {
+    #     "job_ids":      [str, ...],                 # dedupe + sort
+    #     "customer_ids": [str, ...],                 # dedupe + sort
+    #     "jobs": [{job_id, title, customer_id,
+    #                customer_name, scheduled_date,
+    #                work_class, status}, ...],
+    #   }
+    #
+    # ``work_class`` surfaces so the modal can label each row
+    # Maintenance / Repair / Other without a second lookup.
+    payload_snapshot = _build_delivery_snapshot(report)
     doc = {
         "id": new_id(),
         "tenant_id": tenant_id,
@@ -193,11 +215,57 @@ async def _log_delivery(tenant_id: str, report: Dict[str, Any],
         "reason": result.get("reason"),
         "resend_id": result.get("resend_id"),
         "sent_at": now_iso(),
+        "payload_snapshot": payload_snapshot,
     }
     try:
         await db.email_delivery_log.insert_one(doc)
     except Exception as e:
         logger.warning(f"email_delivery_log insert failed: {e}")
+
+
+def _build_delivery_snapshot(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a minimal snapshot of completed jobs for the email.
+
+    Fix 3 (Feb-2026) — ``/email-history/{id}/contents`` reads
+    this instead of recomputing. The snapshot captures the LIVE
+    aggregator's view at send-time: only maintenance + repairs +
+    other-typed completed jobs are included (matches the email
+    body). Skipped visits are tracked on the delivery row via
+    ``total_skipped`` but never render in the drill-down.
+
+    ``report`` is the dict returned by ``compute_pool_service`` —
+    we read its ``_jobs_sample`` field when present, else fall
+    through to the per-tech rows + customer_ids known there. The
+    richer per-job snapshot is populated by the caller (see
+    ``run_weekly_pool_service_email``) which has access to the
+    raw jobs list via the aggregator helper.
+    """
+    jobs = report.get("_jobs_sample") or []
+    seen_jobs: set = set()
+    seen_customers: set = set()
+    rows: List[Dict[str, Any]] = []
+    for j in jobs:
+        jid = j.get("job_id") or j.get("id")
+        cid = j.get("customer_id")
+        if not jid or jid in seen_jobs:
+            continue
+        seen_jobs.add(jid)
+        if cid:
+            seen_customers.add(cid)
+        rows.append({
+            "job_id":         jid,
+            "title":          j.get("title") or "",
+            "customer_id":    cid,
+            "customer_name":  j.get("customer_name") or "",
+            "scheduled_date": j.get("scheduled_date"),
+            "work_class":     j.get("work_class"),
+            "status":         j.get("status") or "completed",
+        })
+    return {
+        "job_ids":      sorted(seen_jobs),
+        "customer_ids": sorted(seen_customers),
+        "jobs":         rows,
+    }
 
 
 async def run_weekly_pool_service_email() -> Dict[str, Any]:
@@ -234,7 +302,10 @@ async def run_weekly_pool_service_email() -> Dict[str, Any]:
                 "lease": "not_acquired", "tick_iso": lease.get("tick_iso")}
 
     # Lazy import to avoid circular jobs.py → this module.
-    from routers.jobs import compute_pool_service
+    from routers.jobs import (
+        compute_pool_service,
+        collect_completed_pool_jobs_for_window,
+    )
     results: List[Dict[str, Any]] = []
     tenants = await db.tenants.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     for t in tenants:
@@ -245,6 +316,24 @@ async def run_weekly_pool_service_email() -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"pool-service compute skipped for tenant {tid}: {e}")
             continue
+        # Fix 3 · Feb-2026 — snapshot the completed jobs for this
+        # tenant/week BEFORE sending so ``_log_delivery`` can
+        # persist them on the delivery row (``payload_snapshot``).
+        # ``/email-history/{id}/contents`` reads this snapshot
+        # instead of recomputing at request time, which keeps the
+        # historic email contents stable even if more jobs are
+        # completed after the delivery.
+        try:
+            _snap_jobs = await collect_completed_pool_jobs_for_window(
+                tid, report.get("week_start"), report.get("week_end"),
+            )
+            report["_jobs_sample"] = _snap_jobs
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "pool-service snapshot collection failed for %s: %s",
+                tid, e,
+            )
+            report["_jobs_sample"] = []
         recipients = await _get_tenant_admin_emails(tid)
         html = _compose_html(tenant_name, report)
         subject = f"{tenant_name} · Pool Service Report · {report.get('week_start')} → {report.get('week_end')}"

@@ -100,16 +100,23 @@ export default function PoolServiceDrilldownModal({
       try {
         let res;
         if (variant === "bucket") {
+          // Fix 1 · Feb-2026 — Option A chosen: the modal ALWAYS
+          // asks for completed-only jobs so the row count matches
+          // the summary chip count. ``missed`` / ``all`` branches
+          // remain available on the endpoint for a future audit
+          // flow but are not surfaced in this UI.
           res = await api.get(
             `/reports/pool-service/jobs?date_from=${encodeURIComponent(dateFrom)}` +
             `&date_to=${encodeURIComponent(dateTo)}` +
-            `&bucket=${encodeURIComponent(bucket)}`,
+            `&bucket=${encodeURIComponent(bucket)}` +
+            `&status=completed`,
           );
         } else if (variant === "tech") {
           res = await api.get(
             `/reports/pool-service/jobs?date_from=${encodeURIComponent(dateFrom)}` +
             `&date_to=${encodeURIComponent(dateTo)}` +
-            `&tech_id=${encodeURIComponent(techId)}`,
+            `&tech_id=${encodeURIComponent(techId)}` +
+            `&status=completed`,
           );
         } else if (variant === "delivery") {
           res = await api.get(

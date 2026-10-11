@@ -399,31 +399,13 @@ export default function PoolServiceReport() {
               pool-job volume for the week. ``delta`` is signed:
               positive = jobs missing from the rendered buckets;
               negative = double-counting (should never happen in
-              practice but surfaced defensively). */}
+              practice but surfaced defensively).
+              Fix 2 · Feb-2026 — the banner now includes the
+              first-N dropped jobs (``dropped_sample``) so admins
+              can click "View details" to inspect without
+              opening logs. */}
           {reconciliation && !reconciliation.matches && (
-            <div
-              className="rounded-2xl mb-3 px-4 py-3 text-sm"
-              style={{
-                background: "#FEF3C7", color: "#92400E",
-                border: "1px solid #FDE68A",
-              }}
-              data-testid="pool-report-reconciliation-banner"
-            >
-              <strong>Reconciliation mismatch:</strong>{" "}
-              rendered rows sum to{" "}
-              <span data-testid="pool-report-reconciliation-counted">
-                {reconciliation.counted_total}
-              </span>{" "}
-              but the window has{" "}
-              <span data-testid="pool-report-reconciliation-actual">
-                {reconciliation.actual_total}
-              </span>{" "}
-              pool jobs (delta{" "}
-              <span data-testid="pool-report-reconciliation-delta">
-                {reconciliation.delta}
-              </span>
-              ). Check the server logs for the exact tenant / week.
-            </div>
+            <ReconciliationBanner reconciliation={reconciliation} />
           )}
 
           {/* Summary strip — counts + total. All chips are now
@@ -756,6 +738,99 @@ export default function PoolServiceReport() {
     </div>
   );
 }
+
+/**
+ * Feb-2026 · Fix 2 — Reconciliation banner with inline dropped-
+ * jobs sample. Keeps the (compact) collapsed shape by default
+ * and expands a small inline list when the admin clicks "View
+ * details". Lives at module scope so vitest can mount it in
+ * isolation + the main page body stays readable.
+ */
+function ReconciliationBanner({ reconciliation }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const sample = Array.isArray(reconciliation?.dropped_sample)
+    ? reconciliation.dropped_sample : [];
+  const droppedCount = reconciliation?.dropped_count || 0;
+  return (
+    <div
+      className="rounded-2xl mb-3 px-4 py-3 text-sm"
+      style={{
+        background: "#FEF3C7", color: "#92400E",
+        border: "1px solid #FDE68A",
+      }}
+      data-testid="pool-report-reconciliation-banner"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <strong>Reconciliation off by{" "}
+          <span data-testid="pool-report-reconciliation-delta">
+            {reconciliation.delta}
+          </span>:
+        </strong>
+        <span>
+          rendered rows sum to{" "}
+          <span data-testid="pool-report-reconciliation-counted">
+            {reconciliation.counted_total}
+          </span>{" "}
+          but the window has{" "}
+          <span data-testid="pool-report-reconciliation-actual">
+            {reconciliation.actual_total}
+          </span>{" "}
+          pool jobs
+          {droppedCount > 0 && (
+            <>
+              {" "}·{" "}
+              <span data-testid="pool-report-reconciliation-dropped-count">
+                {droppedCount}
+              </span>{" "}
+              could not be attributed
+            </>
+          )}
+          .
+        </span>
+        {sample.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="underline text-xs font-semibold"
+            style={{ color: "#92400E", background: "transparent",
+                       padding: 0, cursor: "pointer" }}
+            data-testid="pool-report-reconciliation-toggle"
+          >
+            {expanded ? "Hide details" : "View details"}
+          </button>
+        )}
+      </div>
+      {expanded && sample.length > 0 && (
+        <ul
+          className="mt-2 ml-4 list-disc text-xs"
+          data-testid="pool-report-reconciliation-sample-list"
+        >
+          {sample.map((s) => (
+            <li
+              key={s.job_id}
+              data-testid={`pool-report-reconciliation-sample-row-${s.job_id}`}
+            >
+              <a
+                href={`/jobs/${encodeURIComponent(s.job_id)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+                style={{ color: "#92400E" }}
+              >
+                {s.customer_name || s.job_id}
+              </a>
+              {" · "}
+              <span>{s.scheduled_date || "—"}</span>
+              {" · "}
+              <span>{s.reason}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 
 /**
  * Small labelled count chip used in the summary strip.
