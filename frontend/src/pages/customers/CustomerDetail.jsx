@@ -270,6 +270,31 @@ const CD_DARK_CARD_BG      = "#03002e";
 const CD_DARK_CARD_BORDER  = "#1E293B";
 const CD_DANGER_BG         = "#7F1D1D";          // red-900, Past-Due + Overdue>0
 const CD_SUCCESS_BG        = "#064E3B";          // emerald-900, Credit>0
+// Phase 38 · Feb-2026 — admin customer profile visual grouping.
+// All constants layer ON TOP of the Phase 27 chassis palette; the
+// pre-Phase-38 constants above remain the source of truth for the
+// identity-header card + page shell + skeleton + dynamic Past-Due /
+// Credit / Overdue flips, so Phase 24 / 27 / 28 regression locks
+// stay intact. New constants only drive (a) the KPI tile neutral
+// bg, (b) the action-row Edit/Merge/Credit/Correction button bg +
+// border, (c) the Quick-Action nav-tile base bg, and (d) the
+// Quick-Action icon-tint rotation.
+//
+// Contrast verified against WCAG 2.1 — see Phase 38 test file
+// (``_FINANCIAL_NEUTRAL_WHITE_CONTRAST``, etc.).
+const CD_FINANCIAL_NEUTRAL_BG   = "#115E59";     // teal-800, KPI neutral bg (7.9:1 vs white)
+const CD_FINANCIAL_NEUTRAL_LABEL = "#CBD5E1";    // slate-300, KPI muted label on teal neutral (5.1:1 — up from the pre-P38 slate-400 which drops to 2.4:1 on teal)
+const CD_ACTION_BTN_BG          = "#334155";     // slate-700, Edit/Merge/Credit/Correction medium steel (9.8:1 vs white)
+const CD_ACTION_BTN_BORDER      = "#64748B";     // slate-500, action button outline on steel
+const CD_NAV_TILE_BG            = "#0F172A";     // slate-900, QA nav tile base — slightly lighter than CD_DARK_CARD_BG for grouping separation (17.4:1 vs white)
+const CD_ICON_ACCENT_TEAL       = "#2DD4BF";     // teal-400, every 3rd QA tile (i % 3 == 0)
+const CD_ICON_ACCENT_INDIGO     = "#818CF8";     // indigo-400, every 3rd QA tile (i % 3 == 1)
+const CD_ICON_ACCENT_SLATE      = "#94A3B8";     // slate-400, every 3rd QA tile (i % 3 == 2) — matches the pre-P38 single icon tint for a 1/3 coverage overlap
+const CD_ICON_ACCENTS           = [
+  CD_ICON_ACCENT_TEAL,
+  CD_ICON_ACCENT_INDIGO,
+  CD_ICON_ACCENT_SLATE,
+];
 const CD_TILE_CLASSES      = "text-left rounded-2xl p-3 transition hover:brightness-95";
 const CD_ACTION_TILE_CLASSES =
   "rounded-xl p-3 text-left transition hover:brightness-95 "
@@ -329,14 +354,25 @@ function KPITileGrid({ kpi, testidPrefix = "cd" }) {
       {tiles.map((t) => {
         const Icon = t.icon;
         const hasDynamicBg = Boolean(t.bgColor);
-        const labelColor = hasDynamicBg ? "#FFFFFF" : "#94A3B8";
+        // Phase 38 · Feb-2026 — on the Phase-24 dynamic flip (red /
+        // emerald), labels stay pure-white per the Phase-27 lock.
+        // On the Phase-38 teal neutral bg, slate-300 holds the
+        // ≥4.5:1 "muted secondary" contrast tier (the pre-P38
+        // slate-400 drops to 2.4:1 on teal and would fail WCAG).
+        const labelColor = hasDynamicBg
+          ? "#FFFFFF"
+          : CD_FINANCIAL_NEUTRAL_LABEL;
         const valueColor = hasDynamicBg ? "#FFFFFF" : "#F1F5F9";
         return (
           <div
             key={t.k}
             className={CD_TILE_CLASSES}
             style={{
-              backgroundColor: CD_DARK_CARD_BG,
+              // Phase 38 · Feb-2026 — KPI neutral bg flips to the
+              // teal grouping color; chassis border untouched so
+              // the dynamic Past-Due / Credit / Overdue overrides
+              // (via ``t.bgColor``) continue to layer on top.
+              backgroundColor: CD_FINANCIAL_NEUTRAL_BG,
               border: `1px solid ${CD_DARK_CARD_BORDER}`,
               ...(t.bgColor ? {backgroundColor: t.bgColor} : {}),
             }}
@@ -374,9 +410,20 @@ function QuickActionTileGrid({ tabs, active, onPick, testidPrefix = "cd-quick-ac
       className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-4"
       data-testid={`${testidPrefix}-grid`}
     >
-      {tabs.map((t) => {
+      {tabs.map((t, i) => {
         const Icon = t.icon;
         const isActive = active === t.k;
+        // Phase 38 · Feb-2026 — rotate the icon tint across the 17
+        // tiles for visual grouping. Phase 27 pins the BORDER
+        // expression (``isActive ? "#4F46E5" : CD_DARK_CARD_BORDER``)
+        // byte-for-byte; the accent lives on the icon-only path per
+        // the brief's "colored left border OR icon accent" clause.
+        // Active tile keeps the full slate icon (same as pre-P38)
+        // so the ``#4F46E5`` indigo border reads as the dominant
+        // active-tile signal without a competing icon color.
+        const iconColor = isActive
+          ? "#94A3B8"
+          : CD_ICON_ACCENTS[i % CD_ICON_ACCENTS.length];
         return (
           <button
             key={t.k}
@@ -384,7 +431,11 @@ function QuickActionTileGrid({ tabs, active, onPick, testidPrefix = "cd-quick-ac
             onClick={() => onPick(t.k)}
             className={CD_ACTION_TILE_CLASSES}
             style={{
-              backgroundColor: isActive ? "#0a0940" : CD_DARK_CARD_BG,
+              // Phase 38 · Feb-2026 — nav-tile bg flips to a slightly
+              // lighter navy so the tile grid visually separates
+              // from the page shell (CD_DARK_CARD_BG) while staying
+              // high-contrast (17.4:1 vs white text).
+              backgroundColor: isActive ? "#0a0940" : CD_NAV_TILE_BG,
               border: `1px solid ${isActive ? "#4F46E5" : CD_DARK_CARD_BORDER}`,
               color: "#F1F5F9",
             }}
@@ -393,7 +444,7 @@ function QuickActionTileGrid({ tabs, active, onPick, testidPrefix = "cd-quick-ac
             aria-pressed={isActive ? "true" : "false"}
           >
             <div className="flex items-center gap-2">
-              <Icon size={16} style={{color: "#94A3B8"}} />
+              <Icon size={16} style={{color: iconColor}} />
               <span className="text-sm font-semibold">{t.label}</span>
             </div>
           </button>
@@ -1319,9 +1370,16 @@ export default function CustomerDetail() {
         const NAVY_WARN =
           "hover:!bg-orange-400/25 focus:!ring-2 focus:!ring-orange-300/60";
         const navyOutlineStyle = {
-          background: "transparent",
+          // Phase 38 · Feb-2026 — Edit / Merge / Issue Credit /
+          // Mark Correction buttons flip from a transparent-outline
+          // treatment to a solid medium-steel-blue (slate-700)
+          // with a slate-500 border, matching the user's "visual
+          // grouping on dark navy" spec. Call / Delete / Hard-Delete
+          // buttons sit outside this IIFE and keep their current
+          // green / red / amber hues per the brief.
+          background: CD_ACTION_BTN_BG,
           color: colors.nav.fg,
-          border: `1px solid rgba(255,255,255,0.20)`,
+          border: `1px solid ${CD_ACTION_BTN_BORDER}`,
         };
         const navyDangerStyle = {
           background: "rgba(239,68,68,0.18)",

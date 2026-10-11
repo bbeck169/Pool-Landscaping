@@ -239,3 +239,5 @@ node_modules/.vite/
 frontend/build/
 frontend/node_modules/.cache/default-development/4.pack_
 frontend/node_modules/.cache/default-development/16.pack_
+frontend/node_modules/.cache/default-development/5.pack_
+frontend/node_modules/.cache/default-development/3.pack_
