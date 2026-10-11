@@ -34,6 +34,7 @@ from services.marketing.render import (
 from services.marketing.merge_tags import (
     render_template as render_uppercase_tags,
     catalog_grouped as merge_tags_catalog,
+    catalog_flat as merge_tags_catalog_flat,
     render_context as build_merge_ctx,
 )
 # Phase 9 · Feb 2026 — canonical outbound email adapter. Imported at
@@ -118,6 +119,22 @@ async def list_merge_tags(user: dict = Depends(get_current_user)):
     if user.get("role") not in ("admin", "super_admin", "manager"):
         raise HTTPException(403, "Not allowed")
     return {"categories": merge_tags_catalog()}
+
+
+@router.get("/merge-tags")
+async def list_merge_tags_flat(user: dict = Depends(get_current_user)):
+    """M-TAG-FIX · Feb-2026 — flat merge-tag registry alias.
+
+    Companion to ``GET /api/marketing/merge-tags`` for the visual
+    email builder prerequisite. Returns a FLAT list (not grouped)
+    with the ``{key, label, description, category, sample_value}``
+    item shape so the builder's dropdown can lazy-render the full
+    catalog without a client-side flatten pass. Admin/manager-only,
+    same auth as the grouped endpoint.
+    """
+    if user.get("role") not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    return {"tags": merge_tags_catalog_flat()}
 
 
 @router.post("/marketing/templates/{tid}/revert")

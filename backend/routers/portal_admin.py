@@ -217,8 +217,8 @@ _HARDCODED_INVITE_SUBJECT = "Your customer portal login"
 _HARDCODED_INVITE_HTML_TPL = (
     "<p>Hi {{NAME}},</p>"
     "<p>Your portal login is ready.</p>"
-    "<p><strong>Email:</strong> {{TO}}<br>"
-    "<strong>Temporary password:</strong> "
+    "<p><strong>Email:</strong> {{TO}}</p>"
+    "<p><strong>Temporary password:</strong> "
     "<code>{{TEMP_PASSWORD}}</code></p>"
     "<p><a href='{{LOGIN_URL}}'>Sign in here</a> and change "
     "your password from Profile.</p>"
@@ -394,6 +394,32 @@ async def _try_send_reset_email(
     subject = rebrace_single_brace_catalog_tokens(subject)
     body_tpl = rebrace_single_brace_catalog_tokens(body_tpl)
     text_tpl = rebrace_single_brace_catalog_tokens(text_tpl)
+
+    # M-TAG-FIX · Feb-2026 — empty-TEMP_PASSWORD paragraph strip.
+    # When no temporary password is minted (e.g. re-sending a login
+    # reminder on an already-active portal account), the enclosing
+    # ``<p>…{{TEMP_PASSWORD}}…</p>`` line is removed from both the
+    # HTML and plain-text surfaces BEFORE substitution so the
+    # recipient never sees a dangling "Temporary password: " prefix.
+    # The template authoring contract is that ``{{TEMP_PASSWORD}}``
+    # lives on its own line/paragraph for this strip to work
+    # correctly — enforced for the hardcoded fallback above.
+    if not (temp_password or "").strip():
+        import re as _re
+        body_tpl = _re.sub(
+            r"<p[^>]*>(?:(?!</?p\b)[\s\S])*?"
+            r"\{\{\s*TEMP_PASSWORD\s*\}\}"
+            r"(?:(?!</?p\b)[\s\S])*?</p>",
+            "",
+            body_tpl,
+            flags=_re.IGNORECASE,
+        )
+        text_tpl = _re.sub(
+            r"^.*\{\{\s*TEMP_PASSWORD\s*\}\}.*\r?\n?",
+            "",
+            text_tpl,
+            flags=_re.IGNORECASE | _re.MULTILINE,
+        )
 
     # Render the three surfaces through the same engine so a token
     # that appears in only one surface still resolves uniformly.

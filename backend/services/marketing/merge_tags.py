@@ -1742,16 +1742,20 @@ MERGE_TAGS: List[Dict[str, Any]] = [
          or (((ctx or {}).get("lead") or {}).get("name") or ""))},
     {"token": "LEAD_EMAIL", "label": "Lead — Email",
      "category": "Lead",
+     "description": "Email address captured from the lead form.",
      "resolver": lambda ctx: _safe_str(
          ctx.get("lead_email")
          or (((ctx or {}).get("lead") or {}).get("email") or ""))},
     {"token": "LEAD_PHONE", "label": "Lead — Phone",
      "category": "Lead",
+     "description": "Phone number captured from the lead form.",
      "resolver": lambda ctx: _safe_str(
          ctx.get("lead_phone")
          or (((ctx or {}).get("lead") or {}).get("phone") or ""))},
     {"token": "LEAD_SOURCE", "label": "Lead — Source",
      "category": "Lead",
+     "description": ("Attribution channel for the lead (e.g. "
+                       "``website``, ``google_ads``, ``referral``)."),
      "resolver": lambda ctx: _safe_str(
          ctx.get("lead_source")
          or (((ctx or {}).get("lead") or {}).get("source") or ""))},
@@ -1826,11 +1830,19 @@ MERGE_TAGS: List[Dict[str, Any]] = [
          or (((ctx or {}).get("customer") or {}).get("name") or ""))},
     {"token": "CUSTOMER_EMAIL", "label": "Customer — Email",
      "category": "Customer",
+     "description": ("Email address of the customer "
+                       "(``customer.email``). Duplicate token under "
+                       "the Lead-contact send-path category — same "
+                       "resolver cascade."),
      "resolver": lambda ctx: _safe_str(
          ctx.get("customer_email")
          or (((ctx or {}).get("customer") or {}).get("email") or ""))},
     {"token": "CUSTOMER_PHONE", "label": "Customer — Phone",
      "category": "Customer",
+     "description": ("Phone number of the customer "
+                       "(``customer.phone``). Duplicate token under "
+                       "the Lead-contact send-path category — same "
+                       "resolver cascade."),
      "resolver": lambda ctx: _safe_str(
          ctx.get("customer_phone")
          or (((ctx or {}).get("customer") or {}).get("phone") or ""))},
@@ -1956,9 +1968,15 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "resolver": lambda ctx: _safe_str(ctx.get("pay_link") or "")},
     {"token": "ESTIMATE_NUMBER", "label": "Estimate — Number",
      "category": "Quote",
+     "description": ("Short estimate identifier shown in the subject "
+                       "line + body (duplicate of the Estimate-"
+                       "category token, Quote-category send paths)."),
      "resolver": lambda ctx: _safe_str(ctx.get("estimate_number") or "")},
     {"token": "ESTIMATE_TOTAL", "label": "Estimate — Total",
      "category": "Quote",
+     "description": ("Formatted total for the estimate (duplicate "
+                       "of the Estimate-category token, Quote-"
+                       "category send paths)."),
      "resolver": lambda ctx: _safe_str(ctx.get("estimate_total") or "")},
     {"token": "ESTIMATE_EXPIRES", "label": "Estimate — Expiry Label",
      "category": "Quote",
@@ -2013,6 +2031,83 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "description": ("Human-readable service-type label on the ToS "
                        "document (``\"pool\"`` / ``\"landscaping\"``)."),
      "resolver": lambda ctx: _safe_str(ctx.get("service_label") or "")},
+
+    # ═══════════════════════════════════════════════════════════════
+    # M-TAG-FIX · Feb-2026 — short-form aliases for the "insert merge
+    # tag" picker + portal-invite path tokens.  These delegate to the
+    # long-form resolvers so templates authored with the shorter
+    # name (``{{NAME}}`` vs ``{{CUSTOMER_FULL_NAME}}``) resolve
+    # identically.  Required by the Feb-2026 picker-fix brief's
+    # minimum tag set.
+    # ═══════════════════════════════════════════════════════════════
+    {"token": "NAME", "label": "Name", "category": "Customer",
+     "description": "Recipient's full name — alias of CUSTOMER_FULL_NAME.",
+     "sample_value": "Jane Smith", "resolver": _customer_full},
+    {"token": "FIRST_NAME", "label": "First Name", "category": "Customer",
+     "description": "Recipient's first name — alias of CUSTOMER_FIRST_NAME.",
+     "sample_value": "Jane", "resolver": _customer_first},
+    {"token": "LAST_NAME", "label": "Last Name", "category": "Customer",
+     "description": "Recipient's last name — alias of CUSTOMER_LAST_NAME.",
+     "sample_value": "Smith", "resolver": _customer_last},
+    {"token": "EMAIL", "label": "Email", "category": "Customer",
+     "description": "Recipient's email — alias of CUSTOMER_EMAIL.",
+     "sample_value": "jane@example.com",
+     "resolver": _res("customer", "email")},
+    {"token": "PHONE", "label": "Phone", "category": "Customer",
+     "description": "Recipient's phone — alias of CUSTOMER_PHONE.",
+     "sample_value": "(555) 123-4567",
+     "resolver": _res("customer", "phone")},
+    {"token": "DUE_DATE", "label": "Due Date", "category": "Invoice",
+     "description": "Invoice due date — alias of INVOICE_DUE_DATE.",
+     "sample_value": "2026-03-15",
+     "resolver": lambda ctx: _safe_str(
+        ((ctx or {}).get("invoice") or {}).get("due_date") or ""
+     )},
+    {"token": "JOB_NAME", "label": "Job Name", "category": "Job",
+     "description": "Job's service name — alias of SERVICE_NAME.",
+     "sample_value": "Weekly Pool Service",
+     "resolver": lambda ctx: _safe_str(
+        ((ctx or {}).get("job") or {}).get("service_name")
+        or ((ctx or {}).get("job") or {}).get("service_type")
+        or ((ctx or {}).get("job") or {}).get("title") or ""
+     )},
+    {"token": "PORTAL_URL", "label": "Customer Portal URL",
+     "category": "Portal",
+     "description": "Portal auto-login URL — alias of CUSTOMER_PORTAL_LOGIN_LINK.",
+     "sample_value": "https://app.example.com/portal/auto-login?token=...",
+     "resolver": _portal_link},
+    {"token": "LOGIN_URL", "label": "Portal Login URL",
+     "category": "Portal",
+     "description": "Direct portal login URL — portal-invite path.",
+     "sample_value": "https://app.example.com/login",
+     "resolver": lambda ctx: _safe_str((ctx or {}).get("login_url") or "")},
+    {"token": "TEMP_PASSWORD", "label": "Temporary Password",
+     "category": "Portal",
+     "description": "Freshly minted portal password — portal-invite path.",
+     "sample_value": "Abc123xyz",
+     "resolver": lambda ctx: _safe_str((ctx or {}).get("temp_password") or "")},
+    {"token": "TO", "label": "Recipient Email", "category": "Portal",
+     "description": "Current send's recipient email — portal-invite path.",
+     "sample_value": "jane@example.com",
+     "resolver": lambda ctx: _safe_str(
+        (ctx or {}).get("to") or _res("customer", "email")(ctx) or ""
+     )},
+    {"token": "PORTAL_REFERRALS_URL", "label": "Portal Referrals URL",
+     "category": "Portal",
+     "description": ("Deep-link to the customer-portal referrals "
+                      "dashboard — populated by the referral watcher."),
+     "sample_value": "https://app.example.com/portal/referrals",
+     "resolver": lambda ctx: _safe_str(
+        (ctx or {}).get("portal_referrals_url") or ""
+     )},
+    {"token": "LEAD_SUBJECT_PREFIX", "label": "Lead Subject Prefix",
+     "category": "Lead",
+     "description": ("Internal-only subject prefix on the admin "
+                      "lead-alert email."),
+     "sample_value": "[New lead] ",
+     "resolver": lambda ctx: _safe_str(
+        (ctx or {}).get("lead_subject_prefix") or ""
+     )},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]
@@ -2149,8 +2244,49 @@ def normalize_url_encoded_merge_tags(body: str) -> str:
 
 
 # ═══════════════════════════ Renderer ════════════════════════════════
+
+# M-TAG-FIX · Feb-2026 — residual sweep patterns applied AFTER the
+# cascade resolver.  Any ``{{…}}`` / ``%7B%7B…%7D%7D`` that still
+# survives is scrubbed + logged so recipients never see raw braces.
+_RESIDUAL_URL_ENCODED_RE = re.compile(
+    r"%7B%7B[^%]*?%7D%7D", re.IGNORECASE,
+)
+_RESIDUAL_LITERAL_RE = re.compile(r"\{\{[^{}]*?\}\}")
+
+
+def _strip_residual_merge_tags(
+    body: str, *,
+    template_key: Optional[str] = None,
+    template_id: Optional[str] = None,
+) -> str:
+    """Belt-and-braces scrub: strip any residual ``{{…}}`` or URL-
+    encoded ``%7B%7B…%7D%7D`` from an already-rendered body.  Logs
+    a WARNING per unique leaked token so operators can trace via
+    existing log tooling."""
+    if not isinstance(body, str) or not body:
+        return body or ""
+    leaked: List[str] = []
+    def _log_and_strip(match: "re.Match[str]") -> str:
+        leaked.append(match.group(0))
+        return ""
+    out = _RESIDUAL_URL_ENCODED_RE.sub(_log_and_strip, body)
+    out = _RESIDUAL_LITERAL_RE.sub(_log_and_strip, out)
+    if leaked:
+        for tok in sorted(set(leaked))[:5]:
+            logger.warning(
+                "[merge_tags] residual merge-tag stripped from"
+                " rendered body: token=%r template_id=%s"
+                " template_key=%s",
+                tok, template_id, template_key,
+            )
+    return out
+
+
 def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
-                     missing: str = "empty") -> Tuple[str, List[str]]:
+                     missing: str = "empty",
+                     *,
+                     template_id: Optional[str] = None,
+                     template_key: Optional[str] = None) -> Tuple[str, List[str]]:
     """Render ``body`` by substituting every ``{{TOKEN}}`` for its
     resolved value from ``ctx``.
 
@@ -2169,6 +2305,16 @@ def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
         return "", []
     ctx = ctx or {}
     unresolved: List[str] = []
+
+    # M-TAG-FIX · Feb-2026 — normalise URL-encoded brace sequences
+    # (``%7B%7BTOKEN%7D%7D`` / ``%7BTOKEN%7D``) back to canonical
+    # ``{{TOKEN}}`` BEFORE substitution.  Legacy template bodies
+    # ingested through a URL-encoding clipboard-paste or querystring
+    # migration path otherwise slip past ``_TAG_RE`` and leak
+    # ``%7B%7B…%7D%7D`` to the recipient.  Idempotent — a body
+    # already in the canonical form is byte-identical after this
+    # call.
+    body = normalize_url_encoded_merge_tags(body)
 
     def _sub(match: "re.Match[str]") -> str:
         raw = match.group(1)
@@ -2220,6 +2366,17 @@ def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
         return "" if missing == "empty" else f"[MISSING: {upper}]"
 
     rendered = _TAG_RE.sub(_sub, body)
+
+    # M-TAG-FIX · Feb-2026 — belt-and-braces residual sweep.  Any
+    # odd-shaped brace sequence that survives the primary cascade
+    # (invalid identifiers like ``{{some phrase}}``, URL-encoded
+    # tokens with whitespace padding, etc.) is scrubbed + logged
+    # so the recipient never sees raw braces.
+    rendered = _strip_residual_merge_tags(
+        rendered,
+        template_id=template_id,
+        template_key=template_key,
+    )
     return rendered, sorted(set(unresolved))
 
 
@@ -2255,12 +2412,37 @@ def render_context(*, customer: Optional[Dict[str, Any]] = None,
 def catalog_grouped() -> Dict[str, List[Dict[str, Any]]]:
     """Return the merge-tag registry grouped by category, minus the
     resolver callables (JSON-serialisable). Used by
-    ``GET /api/marketing/merge-tags``."""
+    ``GET /api/marketing/merge-tags``.
+
+    M-TAG-FIX · Feb-2026 — hardened against entries that omit the
+    optional ``description`` / ``sample_value`` keys; both fall
+    back to the empty string so a single under-documented tag can
+    no longer 500 the whole endpoint and empty the picker.
+    """
     by_cat: Dict[str, List[Dict[str, Any]]] = {}
     for t in MERGE_TAGS:
         by_cat.setdefault(t["category"], []).append({
             "token": t["token"],
-            "label": t["label"],
-            "description": t["description"],
+            "label": t.get("label", t["token"]),
+            "description": t.get("description", ""),
+            "sample_value": t.get("sample_value", ""),
         })
     return by_cat
+
+
+def catalog_flat() -> List[Dict[str, Any]]:
+    """M-TAG-FIX · Feb-2026 — flat JSON-serialisable registry used
+    by ``GET /api/merge-tags`` (visual-email-builder prerequisite).
+    Response-item shape: ``{key, label, description, category,
+    sample_value}``.
+    """
+    out: List[Dict[str, Any]] = []
+    for t in MERGE_TAGS:
+        out.append({
+            "key": t["token"],
+            "label": t.get("label", t["token"]),
+            "description": t.get("description", ""),
+            "category": t["category"],
+            "sample_value": t.get("sample_value", ""),
+        })
+    return out
