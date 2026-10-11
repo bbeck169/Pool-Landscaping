@@ -26,7 +26,10 @@ import { Waves, Download, ChevronDown, ChevronUp, RefreshCw, Send } from "lucide
 import { toast } from "sonner";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
-import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+  DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 import { colors } from "@/theme";
 // Feb-2026 · Pool-service drill-down phase — shared modal used by
 // TC-A (bucket chip click), TC-B (per-tech row click) and TC-C
@@ -206,12 +209,14 @@ export default function PoolServiceReport() {
   // ``null`` closes.
   const [drilldown, setDrilldown] = useState(null);
   // Mini-fix B · Feb-2026 — admin-triggered Friday email.
-  // ``sendingNow`` disables the button mid-request so a rapid-
-  // click can't fire two deliveries. The handler re-fetches the
-  // history after the POST resolves so the newly-inserted
-  // delivery row is visible without a page refresh.
+  // Safety follow-up (Feb-2026): the Send-Now flow now uses a
+  // custom confirm dialog with an explicit "Dry run (preview
+  // only)" checkbox DEFAULTING to CHECKED. An admin must
+  // explicitly uncheck the box to send real emails — and the
+  // confirm copy switches to a loud ⚠ when they do.
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [sendDryRun, setSendDryRun] = useState(true);
   const [sendingNow, setSendingNow] = useState(false);
-  const confirm = useConfirm();
   const reloadHistory = async () => {
     try {
       const res = await api.get(
@@ -220,24 +225,34 @@ export default function PoolServiceReport() {
       setHistory(res?.items || []);
     } catch { /* silent — handled by the next page refresh */ }
   };
-  const handleSendNow = async () => {
-    const ok = await confirm({
-      title: `Send the Pool Service email for week ${week}?`,
-      description: "This will create a new delivery entry. Admins currently in the recipient list will receive the email.",
-      confirmLabel: "Send now",
-      cancelLabel: "Cancel",
-    });
-    if (!ok) return;
+  const openSendDialog = () => {
+    // Always reset dry_run to TRUE every time the dialog opens
+    // so a prior-session un-check doesn't leak into a fresh
+    // flow.
+    setSendDryRun(true);
+    setSendDialogOpen(true);
+  };
+  const executeSendNow = async () => {
+    setSendDialogOpen(false);
     setSendingNow(true);
     try {
       const res = await api.post(
         "/reports/pool-service/email-history/run-now",
-        { week_ref: week },
+        { week_ref: week, dry_run: sendDryRun },
       );
-      const stub = res?.mocked
-        ? `Delivery mocked (${res?.reason || "unknown"}).`
-        : `Delivered to ${res?.recipient_count ?? 0} recipient${res?.recipient_count === 1 ? "" : "s"}.`;
-      toast.success(`Pool Service email sent — ${stub}`);
+      const forced = res?.dry_run_forced_by_env;
+      const effective = res?.dry_run;
+      let stub;
+      if (effective && forced) {
+        stub = `Dry run (forced by preview environment) · ${res?.recipient_count ?? 0} recipient${res?.recipient_count === 1 ? "" : "s"} would receive the email.`;
+      } else if (effective) {
+        stub = `Dry run · ${res?.recipient_count ?? 0} recipient${res?.recipient_count === 1 ? "" : "s"} would receive the email.`;
+      } else if (res?.mocked) {
+        stub = `Delivery mocked (${res?.reason || "unknown"}).`;
+      } else {
+        stub = `Delivered to ${res?.recipient_count ?? 0} recipient${res?.recipient_count === 1 ? "" : "s"}.`;
+      }
+      toast.success(`Pool Service email · ${stub}`);
       await reloadHistory();
     } catch (e) {
       toast.error(`Could not send: ${e?.message || "unknown error"}`);
@@ -687,7 +702,7 @@ export default function PoolServiceReport() {
             {isAdmin && (
               <button
                 type="button"
-                onClick={handleSendNow}
+                onClick={openSendDialog}
                 disabled={sendingNow}
                 className="inline-flex items-center gap-1 text-[11px] font-bold uppercase px-2.5 py-1 rounded-md"
                 style={{
@@ -798,6 +813,86 @@ export default function PoolServiceReport() {
           deliveryTitle={drilldown.deliveryTitle}
         />
       )}
+
+      {/* Safety · Feb-2026 — Send-now confirm dialog with the
+          explicit dry-run checkbox. DEFAULT CHECKED so an
+          accidental Enter press on an empty dialog can't blast
+          real emails. The non-dry-run copy switches to a loud ⚠
+          + a destructive-tone CTA. */}
+      <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+        <DialogContent data-testid="pool-service-send-dialog">
+          <DialogHeader>
+            <DialogTitle>Send the Pool Service email for week {week}?</DialogTitle>
+            <DialogDescription>
+              This will create a new delivery entry.{" "}
+              {sendDryRun
+                ? "The payload will be snapshotted but NO email will be sent."
+                : "Admins currently in the recipient list will receive the email."}
+            </DialogDescription>
+          </DialogHeader>
+          <label
+            className="flex items-start gap-2 py-2 cursor-pointer select-none"
+            style={{ color: colors.onSurface }}
+          >
+            <input
+              type="checkbox"
+              checked={sendDryRun}
+              onChange={(e) => setSendDryRun(e.target.checked)}
+              data-testid="pool-service-send-dry-run-toggle"
+              className="mt-0.5"
+            />
+            <span className="text-sm">
+              <strong>Dry run (preview only)</strong>
+              <span className="block text-xs" style={{ color: colors.muted }}>
+                Builds the payload + snapshots the delivery but skips the
+                mailer. Unchecking sends REAL emails.
+              </span>
+            </span>
+          </label>
+          {!sendDryRun && (
+            <div
+              className="rounded-md px-3 py-2 text-sm"
+              style={{
+                background: "#FEE2E2", color: "#991B1B",
+                border: "1px solid #FCA5A5",
+              }}
+              data-testid="pool-service-send-real-warning"
+            >
+              <strong>⚠ This will send REAL emails to the recipient list.</strong>{" "}
+              Preview environments force dry run regardless — only
+              production will actually mail.
+            </div>
+          )}
+          <DialogFooter className="mt-2">
+            <button
+              type="button"
+              onClick={() => setSendDialogOpen(false)}
+              className="px-3 py-1.5 rounded-md text-sm"
+              style={{
+                background: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="pool-service-send-cancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={executeSendNow}
+              className="px-3 py-1.5 rounded-md text-sm font-semibold"
+              style={{
+                background: sendDryRun ? colors.brand : "#B91C1C",
+                color: "#fff",
+                border: `1px solid ${sendDryRun ? colors.brand : "#B91C1C"}`,
+              }}
+              data-testid="pool-service-send-confirm"
+            >
+              {sendDryRun ? "Run dry run" : "Send REAL emails"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

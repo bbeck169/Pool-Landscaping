@@ -399,7 +399,10 @@ async def run_weekly_pool_service_email() -> Dict[str, Any]:
 
 
 async def send_pool_service_email_now(
-    tenant_id: str, week_ref: str | None = None,
+    tenant_id: str,
+    week_ref: str | None = None,
+    *,
+    dry_run: bool = True,
 ) -> Dict[str, Any]:
     """Mini-fix B · Feb-2026 — admin-triggered send.
 
@@ -408,20 +411,44 @@ async def send_pool_service_email_now(
     an admin can re-send after a correction (brief rule: "allow
     repeats; each run creates its own delivery record").
 
+    Safety · Feb-2026 — ``dry_run`` defaults to ``True``. On a
+    dry run we still build + persist the payload snapshot so
+    admins can inspect what WOULD have been sent, but the
+    mailer call is skipped and the row carries
+    ``trigger: "admin_dry_run"``, ``sent: false``, ``mocked:
+    true``.
+
+    Env guard · a non-production environment (``APP_ENV !=
+    production``) FORCES ``dry_run=True`` regardless of the
+    caller's argument. Preview/staging never blasts real
+    emails. The forced posture surfaces on the stub as
+    ``dry_run_forced_by_env`` so admins + the audit log can
+    tell the difference.
+
     ``week_ref`` is any ISO date inside the target week; the
     aggregator derives the Mon-Sun window from it. ``None``
     defaults to this week.
 
     Returns the stub ``{delivery_id, sent, mocked, reason,
-    recipient_count, week_start, week_end}`` so the admin
-    endpoint can echo it back and tag the audit log.
+    recipient_count, week_start, week_end, dry_run,
+    dry_run_forced_by_env}``.
     """
+    from boot_flags import is_production as _is_prod
     # Lazy imports keep the module import-safe (same pattern as
     # the scheduler path above).
     from routers.jobs import (
         compute_pool_service,
         collect_completed_pool_jobs_for_window,
     )
+
+    # Env guard — any non-production env forces dry_run.
+    _forced_by_env = False
+    _effective_dry_run = bool(dry_run)
+    if not _is_prod():
+        if not _effective_dry_run:
+            _forced_by_env = True
+        _effective_dry_run = True
+
     tenant_doc = await db.tenants.find_one(
         {"id": tenant_id}, {"_id": 0, "id": 1, "name": 1},
     ) or {"id": tenant_id}
@@ -447,12 +474,27 @@ async def send_pool_service_email_now(
         report["_jobs_sample"] = []
 
     recipients = await _get_tenant_admin_emails(tenant_id)
-    html = _compose_html(tenant_name, report)
-    subject = (
-        f"{tenant_name} · Pool Service Report · "
-        f"{report.get('week_start')} → {report.get('week_end')}"
-    )
-    result = await _send_via_resend(subject, html, recipients)
+
+    if _effective_dry_run:
+        # Dry run — skip the mailer entirely. Stub mimics a
+        # mocked send so downstream UIs don't need branching.
+        result = {
+            "sent": False,
+            "mocked": True,
+            "reason": (
+                "admin_dry_run_forced_by_preview_env"
+                if _forced_by_env else "admin_dry_run"
+            ),
+            "resend_id": None,
+        }
+    else:
+        html = _compose_html(tenant_name, report)
+        subject = (
+            f"{tenant_name} · Pool Service Report · "
+            f"{report.get('week_start')} → {report.get('week_end')}"
+        )
+        result = await _send_via_resend(subject, html, recipients)
+
     # Delivery row — this writes the ``payload_snapshot`` populated
     # above so the ``/contents`` drill-down reads a FROZEN view.
     # We capture the generated ``id`` BEFORE calling the opaque
@@ -474,10 +516,10 @@ async def send_pool_service_email_now(
         "resend_id": result.get("resend_id"),
         "sent_at": now_iso(),
         "payload_snapshot": _build_delivery_snapshot(report),
-        # Mini-fix B · tag manual-trigger rows so admins can
-        # distinguish them from the Friday-cron ones on the
-        # history panel.
-        "trigger": "admin_manual",
+        # Safety · Feb-2026 — distinguish the three trigger
+        # modes on the history panel.
+        "trigger": "admin_dry_run" if _effective_dry_run else "admin_manual",
+        "dry_run": _effective_dry_run,
     }
     try:
         await db.email_delivery_log.insert_one(doc)
@@ -491,4 +533,6 @@ async def send_pool_service_email_now(
         "recipient_count": len(recipients),
         "week_start":      report.get("week_start"),
         "week_end":        report.get("week_end"),
+        "dry_run":         _effective_dry_run,
+        "dry_run_forced_by_env": _forced_by_env,
     }

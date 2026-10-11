@@ -877,7 +877,12 @@ def test_run_now_creates_delivery_with_snapshot_and_returns_stub():
         snap = delivery.get("payload_snapshot") or {}
         assert isinstance(snap, dict)
         assert snap.get("jobs"), "snapshot jobs must be populated"
-        assert delivery.get("trigger") == "admin_manual"
+        # Fix 3 · Feb-2026 — preview env coerces dry_run so the
+        # trigger reflects that posture. The admin-manual
+        # (non-dry) branch is only reachable in production.
+        assert delivery.get("trigger") in (
+            "admin_manual", "admin_dry_run",
+        )
         # Audit-log entry present.
         audit = _db.audit_log.find_one(
             {"action": "pool_service_report.email.run_now",
@@ -915,6 +920,228 @@ def test_run_now_allows_repeat_calls_each_creates_new_delivery():
             stubs.append(r.json())
         # Distinct delivery ids — no dedupe collision.
         assert stubs[0]["delivery_id"] != stubs[1]["delivery_id"]
+    finally:
+        _cleanup(tid, uid, email)
+        _db.audit_log.delete_many(
+            {"action": "pool_service_report.email.run_now",
+              "actor_user_id": uid},
+        )
+
+
+# ───────── Fix 1 · snapshot key-existence check (Feb-2026 follow-up) ─────────
+
+def test_empty_payload_snapshot_returned_as_snapshot_source_not_legacy():
+    """Fix 1 — an empty-but-present ``payload_snapshot`` (admin
+    dry-ran on a week with zero completed jobs) must return
+    ``source: 'snapshot'`` and job_count=0 — NOT be mis-tagged
+    as ``legacy_recompute``."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        delivery_id = f"TEST-empty-{uuid.uuid4().hex[:6]}"
+        _db.email_delivery_log.insert_one({
+            "id": delivery_id, "tenant_id": tid,
+            "kind": "pool_service_report",
+            "week_start": mon, "week_end": sun,
+            "recipients": [], "sent": True, "mocked": False,
+            "total_completed": 0,
+            "sent_at": "2026-02-14T17:00:00+00:00",
+            # Explicit empty snapshot — ``jobs`` falsy but KEY
+            # present. Prior behavior slid into legacy_recompute.
+            "payload_snapshot": {"job_ids": [], "customer_ids": [],
+                                  "jobs": []},
+        })
+        r = requests.get(
+            f"{API}/reports/pool-service/email-history/"
+            f"{delivery_id}/contents",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        assert r["source"] == "snapshot"
+        assert r["job_count"] == 0
+        assert r["customer_count"] == 0
+    finally:
+        _cleanup(tid, uid, email)
+
+
+def test_truly_missing_snapshot_still_falls_back_to_legacy_recompute():
+    """Fix 1 negative — only a delivery WITHOUT the
+    ``payload_snapshot`` key gets the legacy_recompute tag."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        mon, sun = _mon_sun()
+        delivery_id = f"TEST-nosnap-{uuid.uuid4().hex[:6]}"
+        _db.email_delivery_log.insert_one({
+            "id": delivery_id, "tenant_id": tid,
+            "kind": "pool_service_report",
+            "week_start": mon, "week_end": sun,
+            "recipients": [], "sent": True, "mocked": False,
+            "total_completed": 0,
+            "sent_at": "2026-02-14T17:00:00+00:00",
+            # No ``payload_snapshot`` at all.
+        })
+        r = requests.get(
+            f"{API}/reports/pool-service/email-history/"
+            f"{delivery_id}/contents",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        ).json()
+        assert r["source"] == "legacy_recompute"
+    finally:
+        _cleanup(tid, uid, email)
+
+
+# ───────── Fix 2 · tech-name consistency across weeks ─────────
+
+def test_same_technician_id_renders_same_label_across_weeks():
+    """Fix 2 — a given ``technician_id`` must render the SAME
+    label on every week in the summary response, regardless of
+    whether the ``technician_name`` denorm happened to be
+    populated on jobs in that week."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        # Seed a tech user whose canonical label is "Mike Rivera".
+        mike_uid, mike_name = _seed_tech(tid, "Mike Rivera")
+
+        from datetime import date, timedelta
+        today = date.today()
+        weeks = []
+        for i in (0, 1, 2):
+            mon = today - timedelta(days=today.weekday() + 7 * i)
+            sun = mon + timedelta(days=6)
+            weeks.append((mon.isoformat(), sun.isoformat()))
+
+        # Week 0 — job carries technician_name denorm.
+        _seed_job(tid, sched=weeks[0][0], work_class="service",
+                   technician_id=mike_uid,
+                   technician_name=mike_name)
+        # Week 1 — job carries ONLY technician_id (no denorm).
+        _seed_job(tid, sched=weeks[1][0], work_class="service",
+                   technician_id=mike_uid)
+        # Week 2 — same (no denorm) — different week.
+        _seed_job(tid, sched=weeks[2][0], work_class="service",
+                   technician_id=mike_uid)
+
+        labels = []
+        for mon, sun in weeks:
+            r = requests.get(
+                f"{API}/reports/pool-service"
+                f"?date_from={mon}&date_to={sun}",
+                headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+            ).json()
+            row = next((rr for rr in r["by_technician"]
+                         if rr["technician_id"] == mike_uid), None)
+            assert row is not None, f"no row for Mike on week {mon}"
+            labels.append(row["technician_name"])
+        # All three weeks must render the SAME label.
+        assert len(set(labels)) == 1, (
+            f"inconsistent labels across weeks: {labels}"
+        )
+        # And the label MUST be the canonical name, not a UUID.
+        assert labels[0] == "Mike Rivera"
+    finally:
+        _cleanup(tid, uid, email)
+
+
+# ───────── Fix 3 · dry_run safety + preview-env guard ─────────
+
+def test_run_now_dry_run_true_skips_mailer_but_persists_snapshot(monkeypatch):
+    """Fix 3 — dry_run=true writes the delivery row with
+    ``payload_snapshot`` populated AND tagged
+    ``trigger: 'admin_dry_run'`` BUT MUST NOT call the mailer."""
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, ethan_name = _seed_tech(tid, "Ethan Smith")
+        mon, sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid, technician_name=ethan_name,
+                   customer_name="DryRunCo")
+        # Spy on the mailer via mock patch at the module level —
+        # if the dry-run branch is wired correctly, this fn is
+        # never awaited.
+        import services.pool_service_email as _psm
+        called = {"n": 0}
+        orig = _psm._send_via_resend
+
+        async def _spy(*a, **kw):
+            called["n"] += 1
+            return await orig(*a, **kw)
+        _psm._send_via_resend = _spy
+        try:
+            r = requests.post(
+                f"{API}/reports/pool-service/email-history/run-now",
+                headers={"Authorization": f"Bearer {tok}"},
+                json={"week_ref": mon, "dry_run": True}, timeout=20,
+            )
+        finally:
+            _psm._send_via_resend = orig
+        assert r.status_code == 200, r.text
+        stub = r.json()
+        assert stub["dry_run"] is True
+        assert stub["sent"] is False
+        assert stub["mocked"] is True
+        assert called["n"] == 0, "mailer must not be called in dry_run"
+        row = _db.email_delivery_log.find_one(
+            {"id": stub["delivery_id"]}, {"_id": 0},
+        )
+        assert row["trigger"] == "admin_dry_run"
+        assert row["sent"] is False
+        assert (row.get("payload_snapshot") or {}).get("jobs"), (
+            "snapshot must still be populated on dry run"
+        )
+    finally:
+        _cleanup(tid, uid, email)
+        _db.audit_log.delete_many(
+            {"action": "pool_service_report.email.run_now",
+              "actor_user_id": uid},
+        )
+
+
+def test_run_now_dry_run_false_in_preview_env_forces_dry_run():
+    """Fix 3 — a non-production environment (``APP_ENV !=
+    production``) coerces dry_run to True regardless of the
+    admin's request, and the response flags this on
+    ``dry_run_forced_by_env``.
+    """
+    # Confirm we're on a non-production APP_ENV. We don't mutate
+    # the env in-test; the preview harness runs with
+    # ``APP_ENV=development`` per /app/backend/.env.
+    from boot_flags import is_production
+    assert not is_production(), (
+        "test harness must run outside production — set APP_ENV"
+    )
+    tid = _seed_tenant()
+    uid, email, tok = _seed_admin(tid)
+    try:
+        ethan_uid, _ = _seed_tech(tid, "Ethan Smith")
+        mon, _sun = _mon_sun()
+        _seed_job(tid, sched=mon, work_class="service",
+                   technician_id=ethan_uid)
+        # Spy on the mailer AGAIN to prove it's not called even
+        # when the admin requests a real send.
+        import services.pool_service_email as _psm
+        called = {"n": 0}
+        orig = _psm._send_via_resend
+
+        async def _spy(*a, **kw):
+            called["n"] += 1
+            return await orig(*a, **kw)
+        _psm._send_via_resend = _spy
+        try:
+            r = requests.post(
+                f"{API}/reports/pool-service/email-history/run-now",
+                headers={"Authorization": f"Bearer {tok}"},
+                json={"week_ref": mon, "dry_run": False}, timeout=20,
+            )
+        finally:
+            _psm._send_via_resend = orig
+        stub = r.json()
+        assert stub["dry_run"] is True
+        assert stub["dry_run_forced_by_env"] is True
+        assert stub["sent"] is False
+        assert called["n"] == 0
     finally:
         _cleanup(tid, uid, email)
         _db.audit_log.delete_many(

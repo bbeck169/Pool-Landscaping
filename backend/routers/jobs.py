@@ -5370,8 +5370,17 @@ class _PoolServiceRunNowBody(BaseModel):
     ``week_ref`` accepts any ISO date inside the target week —
     the aggregator derives the Mon-Sun window from it. ``None``
     (default) picks the current week.
+
+    ``dry_run`` (Feb-2026 safety follow-up) defaults to ``True``:
+    a dry run builds the exact same payload + saves the delivery
+    row with the ``payload_snapshot`` populated BUT skips the
+    mailer so admins can preview without blasting real emails.
+    Non-production environments (``APP_ENV != production``)
+    FORCE dry_run regardless of this flag — see
+    ``send_pool_service_email_now`` for the env guard.
     """
     week_ref: Optional[str] = None
+    dry_run: bool = True
 
 
 @router.post("/reports/pool-service/email-history/run-now")
@@ -5388,12 +5397,20 @@ async def pool_service_email_run_now(
     (brief rule: allow repeats) and writes the ``payload_snapshot``
     so the drill-down /contents endpoint reads a FROZEN view.
 
-    Returns a stub echo of the delivery outcome. Admin-role gated
-    (require_admin) — non-admins see 403 via the dependency.
+    Safety · Feb-2026 — ``dry_run`` defaults to ``True`` so a
+    rushed/accidental click doesn't blast real emails. The
+    endpoint ALSO force-coerces dry_run to True in non-
+    production environments (``APP_ENV != production``) — see
+    the ``is_production()`` gate in services.pool_service_email.
+
+    Returns a stub echo of the delivery outcome plus the
+    ``dry_run`` flag that was actually applied (useful when the
+    env guard coerced it). Admin-role gated (require_admin) —
+    non-admins see 403 via the dependency.
     """
     from services.pool_service_email import send_pool_service_email_now
     stub = await send_pool_service_email_now(
-        tenant["id"], body.week_ref,
+        tenant["id"], body.week_ref, dry_run=body.dry_run,
     )
     # Audit trail — mirrors the ``autobilling.soft_delete`` pattern
     # in routers.finances. Mini-fix B deliberately logs
@@ -5414,6 +5431,12 @@ async def pool_service_email_run_now(
                 "recipient_count": stub.get("recipient_count"),
                 "sent": stub.get("sent"),
                 "mocked": stub.get("mocked"),
+                # Safety · Feb-2026 — audit the dry_run posture
+                # the server actually applied (may differ from
+                # the admin's request when the preview-env guard
+                # coerced it).
+                "dry_run": stub.get("dry_run"),
+                "dry_run_forced_by_env": stub.get("dry_run_forced_by_env", False),
             },
             "at": now_iso(),
         })
@@ -5601,6 +5624,26 @@ async def pool_service_jobs_drilldown(
     tenant_id = tenant["id"]
     all_jobs = await _pool_jobs_in_window(tenant_id, date_from, date_to)
 
+    # Fix 2 · Feb-2026 follow-up — resolve tech display labels
+    # for every unique ``technician_id`` in the window via the
+    # SAME users-collection resolver + ``_tech_display_label``
+    # helper that the summary report uses. Keeps the drill-down
+    # row labels consistent with the per-tech rows the admin
+    # clicked (no "Unknown tech" in the modal when the summary
+    # row shows "Mike Rivera").
+    from services.service_report_view import resolve_technicians as _resolve_techs
+    _unique_tech_ids = list({j.get("technician_id") or ""
+                               for j in all_jobs
+                               if j.get("technician_id")})
+    _tech_label_map: Dict[str, str] = {}
+    if _unique_tech_ids:
+        _tmap = await _resolve_techs(db, tenant_id, _unique_tech_ids)
+        for _tid in _unique_tech_ids:
+            _info = _tmap.get(_tid) or {}
+            _tech_label_map[_tid] = _tech_display_label(
+                _info.get("name"), _tid, _info.get("active", True),
+            )
+
     # Attribution ladder — same shape + priority as
     # ``compute_pool_service`` so drill-down bucketing never drifts.
     name_to_uid: Dict[str, Optional[str]] = {}
@@ -5653,6 +5696,19 @@ async def pool_service_jobs_drilldown(
         meta = _classify_pool_job(j)
         resolved_tid = _resolve_tid(j)
         meta["row"]["resolved_tech_id"] = resolved_tid
+        # Fix 2 · Feb-2026 follow-up — overwrite the per-job
+        # ``technician_name`` denorm with the canonical users-
+        # collection label so the drill-down row matches the
+        # summary row the admin clicked. ``resolved_tid`` is
+        # used because the row's bucket depends on it (jobs
+        # attributed by name or crew-id get labelled by the
+        # resolved id, not the raw ``technician_id`` field).
+        if resolved_tid and resolved_tid in _tech_label_map:
+            meta["row"]["technician_name"] = _tech_label_map[resolved_tid]
+        elif resolved_tid:
+            meta["row"]["technician_name"] = _tech_display_label(
+                None, resolved_tid, True,
+            )
         # Fix 1 · Feb-2026 — status filter FIRST so bucket + tech
         # branches share one truth. ``dropped`` is never surfaced
         # here (non-terminal statuses live on the summary's
@@ -5727,8 +5783,15 @@ async def pool_service_email_delivery_contents(
     if not (date_from and date_to):
         raise HTTPException(422, "delivery row missing week window")
 
+    # Fix 1 · Feb-2026 follow-up — snapshot path is gated on KEY
+    # EXISTENCE, not truthy ``jobs``. A delivery triggered on a
+    # zero-completed-jobs week legitimately carries
+    # ``payload_snapshot = {"jobs": []}`` — treating that as
+    # legacy_recompute re-runs the aggregator unnecessarily AND
+    # mis-tags the response. Only truly-absent snapshots fall
+    # through to the recompute path.
     snap = delivery.get("payload_snapshot")
-    if snap and isinstance(snap, dict) and snap.get("jobs"):
+    if isinstance(snap, dict):
         # Fix 3 — snapshot path. Build the (job, customer) rows
         # from the frozen payload. Customers come straight off
         # the ``jobs`` array — one aggregator pass, no extra
@@ -6391,15 +6454,23 @@ async def compute_pool_service(tenant_id: str,
     rows = []
     for tid, a in agg.items():
         info = tmap.get(tid) or {}
-        # Mini-fix A · Feb-2026 — Tech-name fallback that never
-        # leaks a raw UUID into the UI. Priority:
-        #   1. ``info.name`` from the resolver cascade (canonical).
-        #   2. ``cached_name_by_tid`` — denormalised name on the
-        #      job doc for a tech whose users row no longer resolves.
-        #   3. ``Unknown tech (xxxxxxxx)`` — first-8 of the raw id.
-        # When the users row exists but is deactivated, append
-        # ``(deactivated)`` so the admin can tell at a glance.
-        _resolved_name = info.get("name") or cached_name_by_tid.get(tid)
+        # Fix 2 · Feb-2026 follow-up — Tech-name resolution must
+        # be WEEK-INDEPENDENT. Prior behavior fell back to
+        # ``cached_name_by_tid`` (a per-window dict warmed from
+        # jobs that happened to carry a ``technician_name``
+        # denorm). On weeks where none of the jobs carried the
+        # denorm, the same ``technician_id`` resolved to
+        # ``Unknown tech (xxxxxxxx)`` — causing the "same id,
+        # different labels across weeks" bug.
+        #
+        # Now the label comes ONLY from the users-collection
+        # resolver (``tmap`` via ``resolve_technicians``) so a
+        # given ``technician_id`` renders the same label on
+        # EVERY week. ``cached_name_by_tid`` is still used for
+        # ``name_to_uid`` lookups (jobs without an id → id
+        # rescue via users.name) because that is intrinsically
+        # a per-window operation.
+        _resolved_name = info.get("name")
         _display_name = _tech_display_label(_resolved_name, tid,
                                               info.get("active", True))
         rows.append({

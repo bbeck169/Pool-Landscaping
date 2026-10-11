@@ -394,13 +394,7 @@ describe("Pool Service Report · drill-down phase", () => {
 // ───────── Mini-fix B · admin-triggered Send-now button ─────────
 
 describe("Pool Service Report · Mini-fix B · Send now button", () => {
-  it("fires POST and shows a success toast when admin confirms", async () => {
-    _confirmResult = true;
-    mockPost.mockResolvedValue({
-      delivery_id: "d-new-1", sent: true, mocked: false,
-      recipient_count: 11, week_start: "2026-02-09",
-      week_end: "2026-02-15",
-    });
+  it("opens the custom confirm dialog with dry_run DEFAULT CHECKED", async () => {
     mockGet.mockImplementation((url) => {
       if (url.startsWith("/reports/pool-service?")) {
         return Promise.resolve(_summary);
@@ -414,21 +408,105 @@ describe("Pool Service Report · Mini-fix B · Send now button", () => {
     render(<PoolServiceReport />);
     const btn = await screen.findByTestId("pool-service-send-now");
     await user.click(btn);
-    await waitFor(() => expect(mockPost).toHaveBeenCalledWith(
-      "/reports/pool-service/email-history/run-now",
-      expect.objectContaining({ week_ref: expect.any(String) }),
-    ));
-    await waitFor(() => expect(_toastSuccess).toHaveBeenCalled());
+    // The dialog appears with the dry-run checkbox CHECKED by
+    // default so an accidental Enter cannot blast real emails.
+    const toggle = await screen.findByTestId(
+      "pool-service-send-dry-run-toggle",
+    );
+    expect(toggle).toBeChecked();
+    // Confirm CTA shows the dry-run copy, not the loud one.
+    expect((await screen.findByTestId("pool-service-send-confirm"))
+      .textContent).toMatch(/Run dry run/);
+    // The loud ⚠ warning is NOT visible while dry_run is true.
+    expect(screen.queryByTestId("pool-service-send-real-warning")).toBeNull();
   });
 
-  it("does NOT fire POST when the admin dismisses the confirm", async () => {
-    _confirmResult = false;
+  it("fires POST with dry_run=true (default) and shows a success toast", async () => {
+    mockPost.mockResolvedValue({
+      delivery_id: "d-new-1", sent: false, mocked: true,
+      recipient_count: 11, week_start: "2026-02-09",
+      week_end: "2026-02-15",
+      dry_run: true, dry_run_forced_by_env: false,
+      reason: "admin_dry_run",
+    });
+    mockGet.mockImplementation((url) => {
+      if (url.startsWith("/reports/pool-service?")) {
+        return Promise.resolve(_summary);
+      }
+      if (url.startsWith("/reports/pool-service/email-history?")) {
+        return Promise.resolve({ items: [], count: 0 });
+      }
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    await user.click(await screen.findByTestId("pool-service-send-now"));
+    await user.click(await screen.findByTestId("pool-service-send-confirm"));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith(
+      "/reports/pool-service/email-history/run-now",
+      expect.objectContaining({ dry_run: true, week_ref: expect.any(String) }),
+    ));
+    await waitFor(() => expect(_toastSuccess).toHaveBeenCalled());
+    // Success toast copy mentions "Dry run".
+    expect(_toastSuccess.mock.calls[0][0]).toMatch(/Dry run/);
+  });
+
+  it("unchecking dry_run reveals the loud ⚠ warning and switches CTA copy", async () => {
     mockGet.mockImplementation(() => Promise.resolve(_summary));
     const user = userEvent.setup();
     render(<PoolServiceReport />);
-    const btn = await screen.findByTestId("pool-service-send-now");
-    await user.click(btn);
-    await new Promise((r) => setTimeout(r, 50));
+    await user.click(await screen.findByTestId("pool-service-send-now"));
+    const toggle = await screen.findByTestId(
+      "pool-service-send-dry-run-toggle",
+    );
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    // Loud warning appears.
+    expect(await screen.findByTestId("pool-service-send-real-warning"))
+      .toBeInTheDocument();
+    // CTA copy flipped.
+    expect((screen.getByTestId("pool-service-send-confirm")).textContent)
+      .toMatch(/Send REAL emails/);
+  });
+
+  it("firing POST after unchecking dry_run sends dry_run: false in the body", async () => {
+    mockPost.mockResolvedValue({
+      delivery_id: "d-new-2", sent: true, mocked: false,
+      recipient_count: 11, week_start: "2026-02-09",
+      week_end: "2026-02-15",
+      dry_run: false, dry_run_forced_by_env: false,
+    });
+    mockGet.mockImplementation((url) => {
+      if (url.startsWith("/reports/pool-service?")) {
+        return Promise.resolve(_summary);
+      }
+      if (url.startsWith("/reports/pool-service/email-history?")) {
+        return Promise.resolve({ items: [], count: 0 });
+      }
+      return Promise.resolve({});
+    });
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    await user.click(await screen.findByTestId("pool-service-send-now"));
+    await user.click(
+      await screen.findByTestId("pool-service-send-dry-run-toggle"),
+    );
+    await user.click(screen.getByTestId("pool-service-send-confirm"));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith(
+      "/reports/pool-service/email-history/run-now",
+      expect.objectContaining({ dry_run: false }),
+    ));
+  });
+
+  it("Cancel dismisses the dialog without firing POST", async () => {
+    mockGet.mockImplementation(() => Promise.resolve(_summary));
+    const user = userEvent.setup();
+    render(<PoolServiceReport />);
+    await user.click(await screen.findByTestId("pool-service-send-now"));
+    await user.click(await screen.findByTestId("pool-service-send-cancel"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("pool-service-send-dialog")).toBeNull(),
+    );
     expect(mockPost).not.toHaveBeenCalled();
   });
 });
