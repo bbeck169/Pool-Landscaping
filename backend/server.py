@@ -2250,6 +2250,14 @@ async def _background_seed():
         # got promoted to admin by an unrelated migration. Idempotent.
         from seed import seed_demo_manager as _seed_demo_manager
         await step("seed_demo_manager", _seed_demo_manager())
+    # Feb-2026 mini-fix · Idempotent self-heal for the PRIMARY
+    # demo-customer users row (``customer@aquaterra.com``).  Covers
+    # the drift case where a preview pod lost the row after an
+    # unrelated migration/reseed and QA logins against
+    # ``/app/memory/test_credentials.md`` started failing with 401
+    # ``invalid_credentials``.  Mirrors ``seed_demo_second_customer``.
+    from seed import seed_demo_primary_customer as _seed_primary_customer
+    await step("seed_demo_primary_customer", _seed_primary_customer())
     # Feb-2026 · Customer service-reports enhancements — idempotent
     # seed for a second customer login so ``e1_tester`` can verify the
     # wrong-customer 403 branch on the new photo-stream route. Runs

@@ -1,6 +1,7 @@
 # Test Credentials — Pool & Landscaping of Vistancia
 
 > Reset to password123 by reset_demo_passwords_to_default.py on 2026-09-10T16:05:36.052474+00:00 (demo mode)
+> Last end-to-end verified (`POST /api/auth/login` → 200 + token) on 2026-02-15 against the preview DB. **6/6 accounts authenticate.** The missing `customer@aquaterra.com` users row was restored by the new idempotent `seed_demo_primary_customer` boot step (anchored to customer_id `573affb3-5cae-4970-8be1-8922ab7034ee` in the aquaterra tenant).
 
 ## Auth mechanism
 - POST `/api/auth/login` with `{email, password}` returns `{access_token, user}`.

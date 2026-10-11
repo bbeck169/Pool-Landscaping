@@ -146,6 +146,7 @@ async def get_customer_media(
     *,
     kind: MediaKind = "all",
     for_portal: bool = True,
+    ignore_parent_hidden: bool = False,
     limit: int = 200,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -163,6 +164,15 @@ async def get_customer_media(
     Admin callers (``for_portal=False``) bypass the portal gate
     but still honour per-item ``is_deleted`` so trashed media
     stays hidden.
+
+    ``ignore_parent_hidden=True`` (audit callers only) applies
+    every portal-side filter EXCEPT the parent-entity
+    ``hidden_from_portal`` gate.  Used by
+    ``audit_tenant_customer_media`` so the "admin bag" vs
+    "portal bag" diff isolates drift that is purely caused by
+    ``hidden_from_portal`` — items hidden by per-item
+    ``visibility="internal"`` or ``is_deleted=True`` stay
+    excluded on BOTH sides and don't inflate the drift count.
     """
     jobs = await _customer_jobs(db, tenant_id, customer_id)
     estimates = await _customer_estimates(db, tenant_id, customer_id)
@@ -183,7 +193,7 @@ async def get_customer_media(
 
     # ── 1. jobs[].photos / jobs[].videos (tech upload) ─────────────
     for j in jobs:
-        if for_portal and j.get("hidden_from_portal"):
+        if for_portal and (not ignore_parent_hidden) and j.get("hidden_from_portal"):
             continue
         for p in (j.get("photos") or []):
             if not isinstance(p, dict):
@@ -235,7 +245,7 @@ async def get_customer_media(
 
     # ── 2. estimates[].photos / estimates[].videos ─────────────────
     for e in estimates:
-        if for_portal and e.get("hidden_from_portal"):
+        if for_portal and (not ignore_parent_hidden) and e.get("hidden_from_portal"):
             continue
         for p in (e.get("photos") or []):
             if not isinstance(p, dict):
@@ -286,7 +296,7 @@ async def get_customer_media(
 
     # ── 3. service_reports[].photos / videos ───────────────────────
     for r in service_reports:
-        if for_portal and r.get("hidden_from_portal"):
+        if for_portal and (not ignore_parent_hidden) and r.get("hidden_from_portal"):
             continue
         pub = r.get("public_uuid")
         for p in (r.get("photos") or []):
@@ -400,9 +410,19 @@ async def audit_tenant_customer_media(
         if not cid:
             continue
         try:
+            # DATA-PARITY-C3 · Feb-2026 mini-fix — admin side of the
+            # audit now applies EVERY portal filter except the parent
+            # ``hidden_from_portal`` gate.  Pre-fix the admin bag used
+            # ``for_portal=False`` which SKIPPED per-item
+            # ``visibility != "customer"`` filtering, so videos marked
+            # ``visibility="internal"`` by a tech showed up as drift
+            # even though they are correctly hidden by the portal's
+            # per-item filter (not by ``hidden_from_portal``).  The
+            # diff is now a pure measure of parent-level drift.
             admin_bag = await get_customer_media(
                 db, tenant_id, cid, kind="all",
-                for_portal=False, limit=10_000,
+                for_portal=True, ignore_parent_hidden=True,
+                limit=10_000,
             )
             portal_bag = await get_customer_media(
                 db, tenant_id, cid, kind="all",

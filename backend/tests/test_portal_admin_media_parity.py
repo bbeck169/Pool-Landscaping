@@ -245,3 +245,108 @@ def test_media_audit_endpoint_admin_dry_run_returns_report_shape():
             await _cleanup(db, tid)
 
     run_test(_go)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. Mini-fix (Feb-2026) · Audit must NOT false-positive on items
+#    excluded by per-item filters (``visibility="internal"`` or
+#    ``is_deleted=True``).  Only ``hidden_from_portal`` on the parent
+#    entity counts as drift.
+# ═══════════════════════════════════════════════════════════════════
+def test_media_audit_ignores_per_item_visibility_internal():
+    """One customer with THREE media items on a single job:
+
+      * photo A — ``visibility="customer"``, parent not hidden
+                  (visible on both admin + portal → not drift)
+      * video B — ``visibility="internal"``, parent not hidden
+                  (hidden on portal by per-item filter, but NOT a
+                  ``hidden_from_portal`` decision — must NOT inflate
+                  drift)
+      * photo C — on a SECOND job with ``hidden_from_portal=True``
+                  (legit drift → counts as 1)
+
+    Expected: audit reports ``customers_drifted == 1`` with exactly
+    one entry in ``hidden_media_ids`` (photo C's id)."""
+
+    async def _go(db):
+        _rebind(db)
+        from routers.admin_migrations import run_customer_media_audit
+
+        tid, cid = _mk_tid(), _mk_cid()
+        await _cleanup(db, tid)
+        try:
+            jid_visible = _PREFIX + "j-" + uuid.uuid4().hex[:10]
+            jid_hidden = _PREFIX + "j-" + uuid.uuid4().hex[:10]
+            visible_photo_id = _PREFIX + "p-" + uuid.uuid4().hex[:8]
+            internal_video_id = _PREFIX + "v-" + uuid.uuid4().hex[:8]
+            hidden_photo_id = _PREFIX + "p-" + uuid.uuid4().hex[:8]
+
+            await db.customers.insert_one({
+                "id": cid, "tenant_id": tid, "name": "Internal Vis Fixture",
+            })
+            # Job 1 — not hidden; carries one visible photo + one
+            # internal-only video that the portal correctly skips.
+            await db.jobs.insert_one({
+                "id": jid_visible, "tenant_id": tid, "customer_id": cid,
+                "title": "Visible job", "service_type": "pool",
+                "status": "completed",
+                "hidden_from_portal": False,
+                "photos": [{
+                    "id": visible_photo_id,
+                    "url": "/mock/photo-visible.jpg",
+                    "mime": "image/jpeg",
+                    "visibility": "customer",
+                    "uploaded_at": "2026-10-10T10:00:00+00:00",
+                }],
+                "videos": [{
+                    "id": internal_video_id,
+                    "url": "/mock/video-internal.mp4",
+                    "mime": "video/mp4",
+                    "visibility": "internal",
+                    "uploaded_at": "2026-10-10T10:05:00+00:00",
+                }],
+            })
+            # Job 2 — hidden_from_portal; one embedded photo that
+            # is the ONLY legitimate drift we expect to report.
+            await db.jobs.insert_one({
+                "id": jid_hidden, "tenant_id": tid, "customer_id": cid,
+                "title": "Hidden job", "service_type": "pool",
+                "status": "completed",
+                "hidden_from_portal": True,
+                "photos": [{
+                    "id": hidden_photo_id,
+                    "url": "/mock/photo-hidden.jpg",
+                    "mime": "image/jpeg",
+                    "visibility": "customer",
+                    "uploaded_at": "2026-10-10T10:10:00+00:00",
+                }],
+            })
+
+            user = {"id": "admin-x", "role": "admin"}
+            tenant = {"id": tid}
+            r = await run_customer_media_audit(
+                fix=False, limit=None, user=user, tenant=tenant,
+            )
+
+            assert r["ok"] is True
+            assert r["customers_scanned"] == 1
+            assert r["customers_drifted"] == 1, (
+                "Audit over-counted drift — ``visibility=internal`` "
+                "or ``is_deleted`` items should NOT appear as "
+                "``hidden_from_portal`` drift. "
+                f"Report: {r}"
+            )
+            assert len(r["mismatches"]) == 1
+            m = r["mismatches"][0]
+            assert m["customer_id"] == cid
+            # EXACTLY the hidden_from_portal photo is reported;
+            # the internal video is NOT.
+            assert m["hidden_media_ids"] == [hidden_photo_id], (
+                f"Unexpected drift media_ids: {m['hidden_media_ids']} "
+                f"(expected only [{hidden_photo_id}])"
+            )
+            assert internal_video_id not in m["hidden_media_ids"]
+        finally:
+            await _cleanup(db, tid)
+
+    run_test(_go)

@@ -418,6 +418,117 @@ async def seed_demo_manager():
     return {"repaired": True, "updates": updates}
 
 
+async def seed_demo_primary_customer():
+    """Feb-2026 mini-fix · Idempotent self-heal for the primary demo
+    customer login (``customer@aquaterra.com``).
+
+    Context
+    -------
+    The initial ``seed()`` bulk-seeds this row only when
+    ``SEED_DEMO_USERS=1`` runs — but preview pods were created BEFORE
+    that gate was wired, which means the users row can go missing
+    after an unrelated migration/reseed and QA testing against the
+    credentials in ``/app/memory/test_credentials.md`` stalls with a
+    401 ``invalid_credentials`` response (there's no user row to
+    verify the password against).
+
+    ``auto_heal_demo_passwords_if_needed`` already rehashes the row
+    when it exists — this helper is the counterpart that ensures the
+    row EXISTS in the first place.  Mirrors
+    ``seed_demo_second_customer`` 1:1: anchors the user to an
+    existing customer doc in the aquaterra tenant, prefers Jennifer
+    Carson by name, and never deletes/merges other rows.
+
+    Invariant on success:
+
+        customer@aquaterra.com  ⇒  users row with role="customer",
+                                   linked to an aquaterra tenant
+                                   customer via ``customer_id``,
+                                   password_hash = hash("password123").
+
+    If no anchor customer exists in the tenant → no-op.  Safe to
+    call on every boot.
+    """
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    email = "customer@aquaterra.com"
+
+    # Pick an anchor customer in the aquaterra tenant.  Prefer the
+    # historical Jennifer Carson row by name, else any customer that
+    # already carries the login email (previously-healed row), else
+    # any aquaterra customer whose email is NOT reserved for
+    # customer2.  Robert Blake is explicitly skipped — that's
+    # customer2's anchor and the two must remain distinct per the
+    # test_credentials.md invariant.
+    tenant_scope = {"tenant_id": tenant_id} if tenant_id else {}
+    cust = await db.customers.find_one(
+        {**tenant_scope, "email": email},
+        {"_id": 0, "id": 1, "name": 1},
+    )
+    if not cust:
+        cust = await db.customers.find_one(
+            {**tenant_scope, "name": "Jennifer Carson"},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+    if not cust:
+        cust = await db.customers.find_one(
+            {**tenant_scope,
+             "name": {"$ne": "Robert Blake"},
+             "email": {"$ne": "customer2@aquaterra.com"}},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+    if not cust:
+        return {"created": False, "reason": "no_anchor_customer"}
+    cust_id = cust["id"]
+    cust_name = cust.get("name") or "Demo Customer"
+
+    # 1) Ensure the customer doc carries the login email + has_login.
+    await db.customers.update_one(
+        {"id": cust_id},
+        {"$set": {"email": email, "has_login": True}},
+    )
+
+    # 2) Ensure the users row exists + password/customer_id are correct.
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        updates: dict = {}
+        if existing.get("role") != "customer":
+            updates["role"] = "customer"
+        if existing.get("customer_id") != cust_id:
+            updates["customer_id"] = cust_id
+        if tenant_id and existing.get("tenant_id") != tenant_id:
+            updates["tenant_id"] = tenant_id
+        if existing.get("active") is False:
+            updates["active"] = True
+        # Always heal the password so the account authenticates with
+        # the shared demo default — same posture as
+        # ``auto_heal_demo_passwords_if_needed``.
+        updates["password_hash"] = hash_password("password123")
+        await db.users.update_one({"email": email}, {"$set": updates})
+        return {"created": False, "healed": True, "email": email,
+                 "customer_id": cust_id}
+
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": cust_name,
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "customer",
+        "avatar": "",
+        "technician_id": None,
+        "customer_id": cust_id,
+        "active": True,
+        "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    from config import logger as _lg
+    _lg.info("[seed_demo_primary_customer] created customer@aquaterra.com "
+             f"linked to customer_id={cust_id}")
+    return {"created": True, "email": email, "customer_id": cust_id}
+
+
+
+
 async def seed_demo_second_customer():
     """Feb-2026 · Customer service-reports enhancements — idempotent
     seed for a second customer login.
