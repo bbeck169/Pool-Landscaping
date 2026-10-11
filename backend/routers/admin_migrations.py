@@ -1869,3 +1869,58 @@ async def run_customer_media_audit(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# DATA-PARITY-C2 · Feb-2026
+# POST /admin/customers/service-records-audit
+#
+# For every non-deleted customer in the caller's tenant, confirms
+# the admin-visible submitted-service-report set equals the portal-
+# visible set via the shared
+# ``services.customer_service_records.visible_service_report_filter``
+# canonical filter shape.
+#
+# Admin-gated. ``fix=true`` is a report-only no-op (drift here is
+# a schema-level signal, not auto-repairable).
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/customers/service-records-audit",
+    operation_id="admin.customers.service_records_audit",
+)
+async def run_customer_service_records_audit(
+    fix: bool = Query(
+        False,
+        description=(
+            "Report-only even when true. See response ``note`` field."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        description="Optional cap on customers scanned.",
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    role = (user or {}).get("role")
+    if role not in ("admin", "owner", "super_admin"):
+        raise HTTPException(403, "admin_only")
+
+    from services.customer_service_records import (
+        audit_tenant_service_records_parity,
+    )
+
+    logger.info(
+        "[service-records-audit] user=%s tenant=%s fix=%s limit=%s",
+        user.get("id"), tenant.get("id"), fix, limit,
+    )
+    report = await audit_tenant_service_records_parity(
+        db, tenant["id"], fix=fix, limit=limit,
+    )
+    logger.info(
+        "[service-records-audit] complete · tenant=%s scanned=%s "
+        "matched=%s drifted=%s",
+        tenant.get("id"), report.get("customers_scanned"),
+        report.get("customers_matched"), report.get("customers_drifted"),
+    )
+    return report
+
