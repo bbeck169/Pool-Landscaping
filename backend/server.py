@@ -5217,6 +5217,24 @@ async def _run_boot_sequence():
             logger.warning(f"k44_perf_indexes migration crashed: {e}")
     asyncio.create_task(_bg_k44_perf_indexes())
 
+    # Feb-2026 · PERF-AUDIT-A — gap-fill indexes on balance/credit/
+    # payment hot paths + ``customers.tags`` + Active-tab sort.
+    # Companion to k44 — see migration docstring for rationale.
+    async def _bg_perf_audit_a_indexes():
+        try:
+            from migrations.perf_audit_a_indexes import run as _pa_a_run
+            _pa_a_boot = await _pa_a_run()
+            _s = _pa_a_boot.get("summary") or {}
+            logger.info(
+                "[migration] perf_audit_a_indexes: created=%s "
+                "already_present=%s errors=%s",
+                _s.get("created"), _s.get("already_present"),
+                len(_s.get("errors") or []),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"perf_audit_a_indexes migration crashed: {e}")
+    asyncio.create_task(_bg_perf_audit_a_indexes())
+
     # Feb-2026 · Diag-Timeout Task 3 — Schedule/Dispatch perf indexes.
     # Additive companion to K44 covering the missing tech-id OR arms
     # on ``jobs`` and the ``(tenant_id, service_lat|service_days|
