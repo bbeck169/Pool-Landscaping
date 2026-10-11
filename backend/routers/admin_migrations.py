@@ -1670,3 +1670,74 @@ async def analytics_ip_salt_backfill(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# M-TAG-FIX FOLLOWUP Fix 1 · Feb-2026
+# POST /admin/migrations/portal-invite-split-paragraph
+#
+# Wraps ``services.migrations.portal_invite_split_email_temppassword_
+# paragraph_v1.run`` — the one-shot migration that rewrites every
+# stored ``portal_invite_email`` ``marketing_templates`` row from the
+# LEGACY single-paragraph ``<p>Email: {{TO}}<br>Temporary password:
+# {{TEMP_PASSWORD}}</p>`` shape to the canonical two-paragraph shape.
+# The migration is global (scans every tenant) — see the dry-run
+# audit against production in commit ``e7fbc7060``: 1779 tenants
+# matched the legacy shape.
+#
+# Super_admin role gate (same as the backfill endpoints above).
+# Dry-run default (``fix=false``) — the caller MUST pass ``fix=true``
+# to apply.  Audit-logged at INFO (dry-run) or WARN (fix) with the
+# caller + tenant context + report counts.  Idempotent via the
+# migration's internal sentinel: a second fix run short-circuits.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/migrations/portal-invite-split-paragraph",
+    operation_id="admin.migrations.portal_invite_split_paragraph",
+)
+async def run_portal_invite_split_paragraph(
+    fix: bool = Query(
+        False,
+        description=(
+            "Safety-first default.  Set to ``true`` to actually "
+            "rewrite the legacy single-paragraph shape to the "
+            "two-paragraph canonical shape.  The migration is "
+            "idempotent either way — a second fix run short-"
+            "circuits via the sentinel and a dry-run after a fix "
+            "run reports zero remaining matches."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    _require_super_admin(user)
+    from services.migrations.portal_invite_split_email_temppassword_paragraph_v1 import (  # noqa: E501
+        run as _split_paragraph_run,
+    )
+
+    dry_run = not fix
+
+    log_line = (
+        f"[portal-invite-split-paragraph] user={user.get('id')} "
+        f"email={user.get('email')} caller_tenant={tenant.get('id')} "
+        f"dry_run={dry_run}"
+    )
+    if dry_run:
+        logger.info(log_line)
+    else:
+        # Fix runs are globally destructive (cross-tenant writes) —
+        # WARN-level audit for ops visibility.
+        logger.warning("CROSS-TENANT admin migration · " + log_line)
+
+    report = await _split_paragraph_run(db, dry_run=dry_run)
+
+    logger.info(
+        "[portal-invite-split-paragraph] complete · user=%s dry_run=%s "
+        "tenants_scanned=%s matched=%s migrated=%s skipped=%s "
+        "failed=%s skipped_already_ran=%s",
+        user.get("id"), dry_run,
+        report.get("tenants_scanned"), report.get("templates_matched"),
+        report.get("templates_migrated"), report.get("templates_skipped"),
+        report.get("templates_failed"), report.get("skipped"),
+    )
+    return report
+
