@@ -546,9 +546,8 @@ export default function PortalHome() {
               <button
                 key={emp.id}
                 onClick={() => setAiChat({ employee: emp })}
-                className="text-left rounded-2xl p-4 transition hover:brightness-110 flex items-start gap-3"
+                className="portal-action-tile text-left rounded-2xl p-4 transition flex items-start gap-3"
                 style={{
-                  backgroundColor: colors.surfaceSecondary,
                   border: `1px solid ${colors.border}`,
                 }}
                 data-testid={`portal-ai-${emp.key}-card`}
@@ -779,11 +778,18 @@ function ActionTile({ icon: Icon, label, tone, onClick, testid, badge }) {
   // affordance does not pop in abruptly.  The stat Tile chassis
   // (Balance Due / Past Due / Credit) deliberately does NOT get
   // this glow — see ``Tile`` below.
+  //
+  // Portal-Contrast · Feb-2026 — Quick Actions sat on
+  // ``surfaceSecondary`` (#0a0940) against the ``surface`` (#03002e)
+  // page bg, a ≈12% luminance delta that read as no separation at
+  // all.  The shared ``portal-action-tile`` CSS variant lifts them
+  // to ``#1E3A5F`` (white text ≈ 10.5:1 contrast, ≈ 2.9:1 against the
+  // page bg).  Metric tiles (``Tile``) remain untouched.
   return (
     <button
       onClick={onClick}
-      className="rounded-xl p-4 text-left transition hover:brightness-95 hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] transition-shadow duration-200 relative"
-      style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+      className="portal-action-tile rounded-xl p-4 text-left transition hover:brightness-95 hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] transition-shadow duration-200 relative"
+      style={{ border: `1px solid ${colors.border}` }}
       data-testid={testid}
     >
       <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-2" style={{ backgroundColor: tone + "20", color: tone }}>
@@ -956,12 +962,7 @@ function RequestServiceModal({ onClose, onSent }) {
             <select
               value={form.service_type}
               onChange={set("service_type")}
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-              style={{
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-                border: `1px solid ${colors.border}`,
-              }}
+              className="portal-input w-full px-3 py-2 rounded-lg text-sm outline-none"
               data-testid="portal-request-service-type"
             >
               {SERVICE_TYPE_OPTIONS.map((s) => (
@@ -981,12 +982,7 @@ function RequestServiceModal({ onClose, onSent }) {
               type="date"
               value={form.preferred_date}
               onChange={set("preferred_date")}
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-              style={{
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-                border: `1px solid ${colors.border}`,
-              }}
+              className="portal-input w-full px-3 py-2 rounded-lg text-sm outline-none"
               data-testid="portal-request-service-date"
             />
           </div>
@@ -1003,12 +999,7 @@ function RequestServiceModal({ onClose, onSent }) {
               onChange={set("notes")}
               rows={4}
               placeholder="Anything we should know?"
-              className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-              style={{
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-                border: `1px solid ${colors.border}`,
-              }}
+              className="portal-input w-full px-3 py-2 rounded-lg text-sm outline-none"
               data-testid="portal-request-service-notes"
             />
           </div>
@@ -1282,13 +1273,8 @@ function CustomerAiChatPane({ employee, onClose }) {
                 ? "e.g. What's my current balance?"
                 : "e.g. When's my next visit?"
             }
-            className="flex-1 px-3 py-2 rounded-xl text-sm outline-none resize-none"
-            style={{
-              backgroundColor: colors.surfaceSecondary,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-              maxHeight: 120,
-            }}
+            className="portal-input flex-1 px-3 py-2 rounded-xl text-sm outline-none resize-none"
+            style={{ maxHeight: 120 }}
             data-testid="portal-ai-composer-input"
           />
           <button

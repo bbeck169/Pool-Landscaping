@@ -137,13 +137,21 @@ describe("Phase 23 · Ask a Concierge · dark chassis + BLUE accent", () => {
     );
   });
 
-  it("inner AI-employee buttons swap glass bg for the surfaceSecondary dark card", () => {
+  it("inner AI-employee buttons use the Portal-Contrast ``portal-action-tile`` chassis (replaces Phase-23 ``surfaceSecondary``)", () => {
     const idx = PH_SRC.indexOf('data-testid="portal-ai-section"');
     const sectionEnd = PH_SRC.indexOf("portal-referral-section", idx);
     const section = PH_SRC.slice(idx, sectionEnd > 0 ? sectionEnd : idx + 3000);
-    // The inner cards use ``colors.surfaceSecondary`` (raised
-    // card bg) + ``colors.border`` — matches the dark chassis.
-    expect(section).toMatch(/backgroundColor:\s*colors\.surfaceSecondary/);
+    // Portal-Contrast · Feb-2026 — The AI concierge buttons
+    // (Billy, Skedra) now ride the shared ``portal-action-tile``
+    // class defined in ``@/styles/portal-dark.css`` which lifts
+    // the surface to ``#1E3A5F`` for visible separation against
+    // the ``#03002e`` page bg.  The pre-Portal-Contrast
+    // ``backgroundColor: colors.surfaceSecondary`` inline bg is
+    // intentionally retired (it resolved to #0a0940, which was
+    // the dark-on-dark regression the Portal-Contrast phase
+    // fixed).
+    expect(section).toMatch(/className=["'][^"']*\bportal-action-tile\b/);
+    expect(section).not.toMatch(/backgroundColor:\s*colors\.surfaceSecondary/);
     // The pre-Phase-23 ``rgba(255,255,255,0.16)`` glass bg +
     // ``rgba(255,255,255,0.28)`` border + ``backdropFilter`` are
     // retired.

@@ -641,8 +641,7 @@ export function PortalMessages() {
       </div>
       <div className="rounded-2xl p-3 flex items-center gap-2" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…" rows={1}
-          className="flex-1 px-3 py-2 text-sm rounded-lg outline-none resize-none focus:ring-2"
-          style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+          className="portal-input flex-1 px-3 py-2 text-sm rounded-lg outline-none resize-none focus:ring-2"
           data-testid="msg-input" />
         <Button onClick={send} disabled={busy || !text.trim()} testid="msg-send"><Send size={14} /></Button>
       </div>
@@ -881,12 +880,7 @@ export function PortalProfile() {
               }}
               placeholder="Confirm current email"
               data-testid="portal-profile-confirm-current-email"
-              className="w-full text-sm px-3 py-2 rounded-md"
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: colors.surface,
-                color: colors.onSurface,
-              }}
+              className="portal-input w-full text-sm px-3 py-2 rounded-md"
             />
             {confirmEmailError ? (
               <p
@@ -1011,8 +1005,7 @@ export function PortalRequestService() {
             minLength={MIN_LEN}
             maxLength={MAX_LEN}
             placeholder="Describe what you need — e.g., green pool, broken sprinkler, tree trim, etc."
-            className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
-            style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+            className="portal-input w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
             data-testid="rs-details"
           />
           <div className="flex items-center justify-between mt-1 text-xs" style={{ color: colors.muted }}>

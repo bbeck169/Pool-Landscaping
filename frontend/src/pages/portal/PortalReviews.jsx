@@ -252,12 +252,7 @@ export default function PortalReviews() {
                 ? "How can we improve?"
                 : "Tell us about your experience…"
             }
-            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-            }}
+            className="portal-input w-full px-3 py-2 rounded-lg text-sm outline-none"
             data-testid="portal-review-comment"
           />
 

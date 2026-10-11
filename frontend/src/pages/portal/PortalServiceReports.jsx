@@ -210,9 +210,7 @@ export function PortalServiceReports() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search notes, name, address…"
-          className="rounded-lg px-3 py-2 text-sm sm:col-span-2"
-          style={{ border: `1px solid ${colors.border}`,
-                    background: colors.surface }}
+          className="portal-input rounded-lg px-3 py-2 text-sm sm:col-span-2"
           data-testid="sr-list-search"
         />
         <input
@@ -220,9 +218,7 @@ export function PortalServiceReports() {
           value={serviceType}
           onChange={(e) => setServiceType(e.target.value)}
           placeholder="Service type"
-          className="rounded-lg px-3 py-2 text-sm"
-          style={{ border: `1px solid ${colors.border}`,
-                    background: colors.surface }}
+          className="portal-input rounded-lg px-3 py-2 text-sm"
           data-testid="sr-list-filter-service-type"
         />
         <div className="flex gap-2">
@@ -230,9 +226,7 @@ export function PortalServiceReports() {
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
-            className="rounded-lg px-3 py-2 text-sm flex-1"
-            style={{ border: `1px solid ${colors.border}`,
-                      background: colors.surface }}
+            className="portal-input rounded-lg px-3 py-2 text-sm flex-1"
             aria-label="From date"
             data-testid="sr-list-filter-from"
           />
@@ -240,9 +234,7 @@ export function PortalServiceReports() {
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
-            className="rounded-lg px-3 py-2 text-sm flex-1"
-            style={{ border: `1px solid ${colors.border}`,
-                      background: colors.surface }}
+            className="portal-input rounded-lg px-3 py-2 text-sm flex-1"
             aria-label="To date"
             data-testid="sr-list-filter-to"
           />

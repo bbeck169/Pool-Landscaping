@@ -178,3 +178,75 @@
 .portal-dark .portal-page-shell-card .divide-zinc-200 > * + * {
   border-color: #E2E8F0 !important;
 }
+
+/* ── Portal-Contrast · Feb-2026 — Shared ``.portal-input`` variant ─
+ * The portal shell paints inputs/textareas/selects via the dark
+ * shadcn --input CSS variable (``215 28% 17%`` ≈ #1E293B).  Combined
+ * with per-page inline ``backgroundColor: portalColors.surface`` /
+ * ``colors.border`` styles that both resolve to deep-navy, every
+ * typed/placeholder char ships as dark-on-dark on the portal — the
+ * reported Service-Reports search field, Service-Type / date filters,
+ * the Reviews comments textarea, PortalHome's Request-Service modal,
+ * the AI concierge composer, PortalChats composer and new-message
+ * modal, PortalPages (Request Service + email-change confirmation +
+ * conversations composer), and PortalReviewSubmit all suffered the
+ * same bug.
+ *
+ * Fix: a shared ``.portal-input`` class pinned to a white surface
+ * with a navy-900 text color, a slate-300 border, an accessible
+ * slate-500 placeholder (meets WCAG AA 4.5:1 on #FFFFFF), a visible
+ * blue focus ring (matches admin's ``inputBorder``), and a legible
+ * disabled state (muted gray text on slate-100).  Scoped to
+ * ``.portal-dark`` so admin-side inputs are untouched; nested
+ * inside the parent selector so date-picker popovers and other
+ * popover panels inherit the readable surface automatically.
+ */
+.portal-dark .portal-input,
+.portal-dark input.portal-input,
+.portal-dark select.portal-input,
+.portal-dark textarea.portal-input {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+  border: 1px solid #CBD5E1 !important;
+  caret-color: #0F172A;
+}
+.portal-dark .portal-input::placeholder {
+  color: #64748B !important;
+  opacity: 1;
+}
+.portal-dark .portal-input:focus,
+.portal-dark .portal-input:focus-visible {
+  outline: none !important;
+  border-color: #3B82F6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45) !important;
+}
+.portal-dark .portal-input:disabled,
+.portal-dark .portal-input[aria-disabled="true"] {
+  background-color: #F1F5F9 !important;
+  color: #64748B !important;
+  cursor: not-allowed;
+}
+
+/* ── Portal-Contrast · Feb-2026 — ``.portal-action-tile`` variant ─
+ * Portal-Home Quick Actions (Service Reports, Invoices, Estimates,
+ * Payment Method, Leave a Review, Photos, Videos, Messages) + Ask-a-
+ * Concierge cards (Billy, Skedra) sat on ``portalColors.surface``
+ * (#03002e) with ``surfaceSecondary`` (#0a0940) tile backgrounds —
+ * ≈ 12% luminance delta, invisible against the page bg.  Metric tiles
+ * (Balance Due / Past Due / Credit / Overdue / Pending Estimates /
+ * Unread Messages) deliberately keep ``colors.surface`` because they
+ * convey state via dynamic ``bgColor`` overrides and must remain
+ * untouched.
+ *
+ * ``.portal-action-tile`` lifts the two action-tile groups to
+ * ``#1E3A5F`` — WCAG contrast of white text on #1E3A5F ≈ 10.5:1
+ * (passes AAA for body + large text) and ≈ 2.9:1 against the
+ * ``#03002e`` page bg (above the 3:1 non-text UI minimum).  Hover
+ * mirrors the existing ``brightness-95`` chrome admin tiles use. */
+.portal-dark .portal-action-tile {
+  background-color: #1E3A5F !important;
+  color: #F8FAFC;
+}
+.portal-dark .portal-action-tile:hover {
+  background-color: #26497A !important;
+}

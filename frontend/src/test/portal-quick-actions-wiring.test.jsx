@@ -80,8 +80,14 @@ describe("Portal Quick Actions · tile wiring", () => {
     // The ActionTile helper is defined once and used by every quick
     // action — verifying the base component uses <button> guards
     // against a silent refactor that would kill navigation.
+    //
+    // Portal-Contrast · Feb-2026 — Quick Action tile commentary
+    // grew by ~15 lines to document the ``portal-action-tile``
+    // migration.  Bumped the ``[\s\S]{0,…}`` lookahead ceiling
+    // from 800 to 1500 to keep the regex matching while still
+    // asserting the function body ends in a ``<button`` return.
     expect(PORTAL_HOME).toMatch(
-      /function ActionTile\(\{[^)]*\}\)\s*\{[\s\S]{0,800}?return\s*\(\s*<button/,
+      /function ActionTile\(\{[^)]*\}\)\s*\{[\s\S]{0,1500}?return\s*\(\s*<button/,
     );
   });
 

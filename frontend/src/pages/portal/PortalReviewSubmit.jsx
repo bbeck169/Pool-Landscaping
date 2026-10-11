@@ -103,9 +103,7 @@ export default function PortalReviewSubmit() {
                           onChange={(e) => setComment(e.target.value)}
                           maxLength={2000}
                           placeholder="Anything else you'd like us to know?"
-                          className="w-full px-3 py-2 rounded-lg text-sm"
-                          style={{ backgroundColor: colors.surface, color: colors.onSurface,
-                                    border: `1px solid ${colors.border}` }}
+                          className="portal-input w-full px-3 py-2 rounded-lg text-sm"
                           data-testid="review-text" />
               <button type="submit" disabled={busy || !rating}
                         className="w-full py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-60"

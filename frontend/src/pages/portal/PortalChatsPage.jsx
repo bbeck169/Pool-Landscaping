@@ -335,8 +335,7 @@ export default function PortalChatsPage() {
                 <input value={text} onChange={(e) => setText(e.target.value)}
                        onKeyDown={(e) => e.key === "Enter" && send()}
                        placeholder="Type a message…"
-                       className="flex-1 p-2.5 text-sm rounded-lg"
-                       style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                       className="portal-input flex-1 p-2.5 text-sm rounded-lg"
                        data-testid="portal-chats-input" />
                 <button onClick={send}
                         disabled={uploading || (!text.trim() && pending.length === 0)}
@@ -373,14 +372,12 @@ export default function PortalChatsPage() {
             </div>
             <input value={subject} onChange={(e) => setSubject(e.target.value)}
                    placeholder="Subject"
-                   className="w-full p-2.5 text-sm rounded-lg mb-2"
-                   style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                   className="portal-input w-full p-2.5 text-sm rounded-lg mb-2"
                    data-testid="chat-new-subject" />
             <textarea value={firstMsg} onChange={(e) => setFirstMsg(e.target.value)}
                       rows={4}
                       placeholder="Your message…"
-                      className="w-full p-2.5 text-sm rounded-lg mb-4"
-                      style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                      className="portal-input w-full p-2.5 text-sm rounded-lg mb-4"
                       data-testid="chat-new-body" />
             <button onClick={createThread}
                     className="w-full py-2 text-sm font-bold rounded-lg"
