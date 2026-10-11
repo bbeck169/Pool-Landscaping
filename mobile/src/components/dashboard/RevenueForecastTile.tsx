@@ -5,6 +5,11 @@
  * Today · Tomorrow · This Week · This Month · Next Month.
  * Hits GET /api/admin/dashboard/revenue-forecast?start=...&end=...
  * Mirrors web RevenueForecastTile.jsx.
+ *
+ * Phase 39A · the headline block (combined total "projected in range" +
+ * Booked / Recurring chips + caption) is driven by the dashboard's shared
+ * Revenue Insights ``range`` prop, as on web. The quick-view tabs stay
+ * tile-local and do NOT propagate to the shared filter.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -53,8 +58,58 @@ const TABS: TabDef[] = [
   { key: "next_month", label: "Next Month", build: nextMonthRange },
 ];
 
+/* ── Headline (shared range) ────────────────────────────────── */
+function plural(n: number, word: string) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
+
+function Chip({ icon, label, value, color, testID }: { icon: any; label: string; value: string; color: string; testID: string }) {
+  return (
+    <View style={[s.chip, { backgroundColor: color + "12", borderColor: color + "30" }]} testID={testID}>
+      <View style={s.chipHead}>
+        <Ionicons name={icon} size={11} color={color} />
+        <Text style={[s.chipLabel, { color }]}>{label}</Text>
+      </View>
+      <Text style={s.chipValue}>{value}</Text>
+    </View>
+  );
+}
+
+function Headline({ range }: { range: { start: string; end: string } }) {
+  const [data, setData] = useState<any>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setData(null); setErr("");
+    api.get(`/admin/dashboard/revenue-forecast?start=${range.start}&end=${range.end}`)
+      .then((r: any) => { if (alive) setData(r || {}); })
+      .catch((e: any) => { if (alive) setErr(e?.message || "Failed to load."); });
+    return () => { alive = false; };
+  }, [range.start, range.end]);
+  if (err) return <Text style={s.heroErr} testID="revenue-forecast-error">{err}</Text>;
+  if (data === null) {
+    return <View style={s.heroLoading} testID="revenue-forecast-loading"><ActivityIndicator color={colors.brand} /></View>;
+  }
+  const booked = data.booked || {}, rec = data.recurring || {};
+  return (
+    <View style={{ gap: spacing.sm }} testID="revenue-forecast-headline">
+      <View style={s.heroRow}>
+        <Text style={s.heroValue} testID="revenue-forecast-combined">{money(data.combined_total ?? 0)}</Text>
+        <Text style={s.heroSub}>projected in range</Text>
+      </View>
+      <View style={s.chipRow}>
+        <Chip icon="calendar-outline" label="Booked" value={money(booked.amount ?? 0)} color="#0891B2" testID="revenue-forecast-booked" />
+        <Chip icon="refresh-outline" label="Recurring" value={money(rec.amount ?? 0)} color="#7C3AED" testID="revenue-forecast-recurring" />
+      </View>
+      <Text style={s.hint} testID="revenue-forecast-caption">
+        {`Based on ${plural(booked.job_count ?? 0, "booked job")} + `}
+        {(rec.recurring_job_count ?? 0) > 0 ? `${plural(rec.recurring_job_count, "recurring job")} + ` : ""}
+        {`${plural(rec.subscription_count ?? 0, "active subscription")} across ${plural(rec.cycle_count ?? 0, "billing cycle")}.`}
+      </Text>
+    </View>
+  );
+}
+
 /* ── Component ──────────────────────────────────────────────── */
-export default function RevenueForecastTile() {
+export default function RevenueForecastTile({ range }: { range?: { start: string; end: string } | null } = {}) {
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [tabData, setTabData] = useState<any>(null);
   const [tabBusy, setTabBusy] = useState(false);
@@ -84,6 +139,8 @@ export default function RevenueForecastTile() {
         <Ionicons name="trending-up-outline" size={16} color={colors.muted} />
         <Text style={s.headerLabel}>Revenue Forecast</Text>
       </View>
+
+      {range?.start && range?.end ? <Headline range={range} /> : null}
 
       {/* Quick-view tabs */}
       <View style={s.tabRow} testID="revenue-forecast-quick-view">
@@ -217,4 +274,14 @@ const s = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.muted,
   },
+  heroRow: { flexDirection: "row", alignItems: "baseline", flexWrap: "wrap", gap: spacing.sm },
+  heroValue: { fontFamily: font.bold, fontSize: 28, color: colors.onSurface },
+  heroSub: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted },
+  heroErr: { padding: spacing.sm, borderRadius: radius.md, backgroundColor: "#FEE2E2", color: "#7F1D1D", fontFamily: font.medium, fontSize: fontSize.sm },
+  heroLoading: { height: 96, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
+  chipRow: { flexDirection: "row", gap: spacing.sm },
+  chip: { flex: 1, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 6 },
+  chipHead: { flexDirection: "row", alignItems: "center", gap: 4 },
+  chipLabel: { fontFamily: font.bold, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 },
+  chipValue: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
 });

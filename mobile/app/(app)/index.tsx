@@ -1,7 +1,5 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, Alert } from "react-native";
-import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
@@ -9,7 +7,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useOfflineQuery } from "@/src/hooks/useOfflineQuery";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
-import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
+import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { Header } from "@/src/components/widgets";
@@ -21,12 +19,19 @@ import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import CreditsBudgetChip from "@/src/components/ai/CreditsBudgetChip";
 import EbitTile from "@/src/components/dashboard/EbitTile";
 import RevenueForecastTile from "@/src/components/dashboard/RevenueForecastTile";
+import RevenueDateRangeFilter, { type RevenueRange } from "@/src/components/dashboard/RevenueDateRangeFilter";
+import RevenueByCategoryTile from "@/src/components/dashboard/RevenueByCategoryTile";
+import IncomeByServiceCategoryTile from "@/src/components/dashboard/IncomeByServiceCategoryTile";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
+  // Phase 39A · shared Revenue Insights range (web ``revenueRange``) —
+  // drives both donuts + the Revenue Forecast headline.
+  const [revenueRange, setRevenueRange] = useState<RevenueRange | null>(null);
+  const isRevenueAdmin = user?.role === "super_admin" || user?.role === "admin";
 
   // Phase O5 · Offline-first dashboard — reads from SQLite cache first,
   // then fetches fresh data in the background when online.
@@ -107,38 +112,35 @@ export default function Dashboard() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); refetch(); }} />}
       >
-        {/* Revenue parity tiles (Feb-2026) — three tap-through
-            entries at the very top of the admin Dashboard, above
-            Budget Health / Weather / Hero. Visible only to admin-
-            like roles (super_admin / admin / manager). Techs and
-            customers never reach this screen (redirected above),
-            so the gate below only excludes any future non-admin
-            role from seeing the tiles. */}
-        {(user?.role === "super_admin" || user?.role === "admin" || user?.role === "manager") ? (
-          <View style={styles.revenueTiles} testID="dashboard-revenue-tiles">
-            <RevenueTile
-              testID="admin-tile-revenue-by-category"
-              icon="pie-chart-outline"
-              label="Revenue by Category"
-              hint="Paid invoices, this month"
-              onPress={() => router.push("/income-by-category")}
-            />
-            <RevenueTile
-              testID="admin-tile-revenue-by-service"
-              icon="bar-chart-outline"
-              label="Revenue by Service"
-              hint="Top-earning services"
-              onPress={() => router.push("/reports/revenue-by-service")}
-            />
-            <RevenueTile
-              testID="admin-tile-forecast-revenue"
-              icon="trending-up-outline"
-              label="Forecast Revenue"
-              hint="Projected billing by window"
-              onPress={() => router.push("/reports/forecast")}
-            />
+        {/* Phase 39A · section order mirrors web Dashboard.jsx top → bottom.
+            39B slot — MassMessagingCard. */}
+
+        {/* Revenue insights — shared range filter + two donuts (web
+            ``revenue-tiles-section``). Backend is admin/super_admin only. */}
+        {isRevenueAdmin ? (
+          <View style={styles.revenueSection} testID="revenue-tiles-section">
+            <View style={styles.revenueHead}>
+              <Text style={styles.revenueTitle}>Revenue insights</Text>
+              <RevenueDateRangeFilter onChange={setRevenueRange} />
+            </View>
+            <RevenueByCategoryTile range={revenueRange} />
+            <IncomeByServiceCategoryTile range={revenueRange} />
           </View>
         ) : null}
+
+        {/* 39B slot — DashboardActionCards. */}
+
+        {/* KPI grid — taps carry web's status filters. */}
+        <View style={[styles.grid, { marginBottom: spacing.lg }]} testID="dashboard-kpi-grid">
+          <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs ?? 0} onPress={() => router.push({ pathname: "/(app)/jobs", params: { status: "active" } } as any)} />
+          <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs ?? 0} onPress={() => router.push({ pathname: "/(app)/jobs", params: { status: "pending" } } as any)} />
+          <Kpi icon="checkmark-circle" label="Active Customers" value={data.active_customers_count ?? 0} onPress={() => router.push({ pathname: "/(app)/customers", params: { status: "active" } } as any)} />
+          <Kpi icon="close-circle" label="Inactive Customers" value={data.inactive_customers_count ?? 0} onPress={() => router.push({ pathname: "/(app)/customers", params: { status: "inactive" } } as any)} />
+        </View>
+
+        {/* Topline — Revenue Forecast (headline follows the shared range) + EBIT. */}
+        <View testID="dashboard-topline-tiles">
+          {isRevenueAdmin ? <RevenueForecastTile range={revenueRange} /> : null}
 
         {/* Phase 53e · Feb-2026 — EBIT exec-summary tile. Restricted
             to super_admin + admin (manager sees the full profit
@@ -148,37 +150,10 @@ export default function Dashboard() {
             <EbitTile />
           </View>
         ) : null}
-
-        {/* Phase J2 / H10 — Revenue Forecast tile with quick-view
-            tabs: Today · Tomorrow · This Week · This Month · Next Month.
-            Admin/super_admin only. */}
-        {(user?.role === "super_admin" || user?.role === "admin" || user?.role === "manager") ? (
-          <RevenueForecastTile />
-        ) : null}
-
-        {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
-        <BudgetHealthCard />
-        <WeatherWidget />
-        <View style={styles.hero}>
-          <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient colors={["rgba(0,60,95,0.55)", "rgba(26,43,60,0.92)"]} style={StyleSheet.absoluteFill} />
-          <View style={styles.heroInner}>
-            <Text style={styles.heroLabel}>Total Paid Revenue (lifetime)</Text>
-            <Text style={styles.heroValue} testID="dashboard-revenue">
-              {money(data.revenue ?? 0)}
-            </Text>
-            <View style={styles.heroRow}>
-              <View style={styles.heroPill}>
-                <Ionicons name="flash" size={14} color="#fff" />
-                <Text style={styles.heroPillText}>{data.active_jobs ?? 0} active jobs</Text>
-              </View>
-              <View style={styles.heroPill}>
-                <Ionicons name="time-outline" size={14} color="#fff" />
-                <Text style={styles.heroPillText}>{money(data.outstanding ?? 0)} due</Text>
-              </View>
-            </View>
-          </View>
         </View>
+
+        {/* 39B slot — SoshiePublishingTile. */}
+        <WeatherWidget />
 
         {(data.requested_jobs ?? 0) > 0 ? (
           <Pressable style={styles.requestBanner} onPress={() => router.push("/(app)/jobs")} testID="new-requests-banner">
@@ -192,12 +167,7 @@ export default function Dashboard() {
           </Pressable>
         ) : null}
 
-        <View style={styles.grid}>
-          <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
-          <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
-          <Kpi icon="checkmark-circle" label="Active Customers" value={data.active_customers_count ?? 0} onPress={() => router.push("/(app)/customers")} />
-          <Kpi icon="close-circle" label="Inactive Customers" value={data.inactive_customers_count ?? 0} onPress={() => router.push("/(app)/customers")} />
-        </View>
+        {/* 39B slot — BulkOps / CrewProductivity / RoutingCost / WarrantiesExpiring. */}
 
         <ReferralRevenueTile />
 
@@ -205,9 +175,7 @@ export default function Dashboard() {
 
         <PaymentsWidget onOpen={() => router.push("/payments")} onOpenInvoice={(id: string) => router.push(`/quote/${id}`)} />
 
-        <MaintenanceDigest onOpen={() => router.push("/maintenance")} />
-
-        <ReadyToSchedule onOpenQuote={(id: string) => router.push(`/quote/${id}`)} />
+        {/* 39C slot — TeamCpoReadinessWidget + RecommendationsQueueWidget. */}
 
         {data.revenue_by_service?.length ? (
           <View style={styles.chartCard} testID="revenue-by-service">
@@ -265,6 +233,14 @@ export default function Dashboard() {
             <StatusChip status={j.status} />
           </Pressable>
         ))}
+
+        {/* Mobile-only utilities (no web equivalent) — kept, below Recent Jobs. */}
+        <View style={styles.mobileExtras} testID="dashboard-mobile-extras">
+          <BudgetHealthCard />
+          {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
+          <MaintenanceDigest onOpen={() => router.push("/maintenance")} />
+          <ReadyToSchedule onOpenQuote={(id: string) => router.push(`/quote/${id}`)} />
+        </View>
       </ScrollView>
     </View>
   );
@@ -663,31 +639,6 @@ function Kpi({ icon, label, value, onPress }: { icon: any; label: string; value:
   );
 }
 
-function RevenueTile({
-  testID, icon, label, hint, onPress,
-}: {
-  testID: string; icon: any; label: string; hint: string; onPress: () => void;
-}) {
-  return (
-    <Pressable
-      testID={testID}
-      onPress={onPress}
-      style={({ pressed }) => [styles.revenueTile, pressed && { opacity: 0.85 }]}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <View style={styles.revenueTileIcon}>
-        <Ionicons name={icon} size={22} color={colors.brand} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.revenueTileLabel}>{label}</Text>
-        <Text style={styles.revenueTileHint}>{hint}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-    </Pressable>
-  );
-}
-
 /** Phase 20B module B — Referral Revenue tile (mobile). */
 function ReferralRevenueTile() {
   const router = useRouter();
@@ -737,24 +688,10 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     textAlign: "center",
   },
-  revenueTiles: { gap: spacing.sm, marginBottom: spacing.lg },
-  revenueTile: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  revenueTileIcon: {
-    width: 42, height: 42, borderRadius: radius.md,
-    backgroundColor: colors.brandTertiary,
-    alignItems: "center", justifyContent: "center",
-  },
-  revenueTileLabel: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
-  revenueTileHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+  revenueSection: { marginBottom: spacing.sm },
+  revenueHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  revenueTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  mobileExtras: { marginTop: spacing.xl },
   refTile: { flexDirection: "row", alignItems: "center", gap: spacing.md,
              backgroundColor: colors.brand, padding: spacing.lg,
              borderRadius: radius.lg, marginBottom: spacing.lg },
@@ -768,21 +705,6 @@ const styles = StyleSheet.create({
               marginTop: 2 },
   refSub: { fontFamily: font.regular, fontSize: 12,
             color: "rgba(255,255,255,0.85)", marginTop: 2 },
-  hero: { height: 160, borderRadius: radius.lg, overflow: "hidden", marginBottom: spacing.lg },
-  heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
-  heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },
-  heroValue: { fontFamily: font.bold, fontSize: 34, color: "#fff", marginTop: 2 },
-  heroRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
-  heroPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-  },
-  heroPillText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#fff" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   kpi: {
     width: "47.5%",
