@@ -30,6 +30,8 @@ import BulkOpsAuditTile from "@/src/components/dashboard/BulkOpsAuditTile";
 import CrewProductivityTile from "@/src/components/dashboard/CrewProductivityTile";
 import RoutingCostTile from "@/src/components/dashboard/RoutingCostTile";
 import WarrantiesExpiringTile from "@/src/components/dashboard/WarrantiesExpiringTile";
+import TeamCpoReadinessWidget from "@/src/components/dashboard/TeamCpoReadinessWidget";
+import RecommendationsQueueWidget from "@/src/components/dashboard/RecommendationsQueueWidget";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -196,7 +198,15 @@ export default function Dashboard() {
 
         <PaymentsWidget onOpen={() => router.push("/payments")} onOpenInvoice={(id: string) => router.push(`/quote/${id}`)} />
 
-        {/* 39C slot — TeamCpoReadinessWidget + RecommendationsQueueWidget. */}
+        {/* Phase 39C · Team CPO Readiness + Recommendations Queue. Web mounts
+            ungated but every endpoint is admin / super_admin only (403
+            otherwise), so mobile gates to the effective set. */}
+        {isRevenueAdmin ? (
+          <View testID="dashboard-write-widgets">
+            <TeamCpoReadinessWidget />
+            <RecommendationsQueueWidget />
+          </View>
+        ) : null}
 
         {data.revenue_by_service?.length ? (
           <View style={styles.chartCard} testID="revenue-by-service">
