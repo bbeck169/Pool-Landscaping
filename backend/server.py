@@ -1773,6 +1773,32 @@ app.add_middleware(_ServerTimingMiddleware)
 from services.observability.log_429_middleware import Log429Middleware
 app.add_middleware(Log429Middleware)
 
+# Preview isolation · Feb-2026 P0 — PII-sanitization middleware for
+# JSON-body ingress routes. On production env (``APP_ENV=production``)
+# this is a strict no-op; on preview env it intercepts the request
+# body of every registered PII-ingress route, replaces real PII with
+# deterministic synthetic equivalents, and rejects live Stripe
+# tokens / SSN / CC / DL / DOB fields with 400. Installed near the
+# top of the middleware stack so the body sanitizer fires BEFORE any
+# downstream handler sees the payload. See
+# ``services/preview_isolation/`` + ``/app/memory/preview_data_leak_rca.md``.
+from services.preview_isolation import (
+    PreviewMiddleware as _PreviewPIIMiddleware,
+    assert_registry_coverage as _assert_pii_registry_coverage,
+)
+app.add_middleware(_PreviewPIIMiddleware)
+
+# Boot-time route-registry audit (Phase 1: WARN-only on preview;
+# promoted to hard-fail in a follow-up commit after full endpoint
+# coverage). Runs AFTER all routers are imported + registered so the
+# audit sees the final route table.
+@app.on_event("startup")
+async def _preview_isolation_boot_audit():
+    try:
+        _assert_pii_registry_coverage(app)
+    except Exception as e:  # pragma: no cover — defensive
+        logger.error(f"[preview_isolation] boot audit failed: {e}")
+
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 

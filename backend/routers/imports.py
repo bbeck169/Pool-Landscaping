@@ -84,6 +84,35 @@ from services.imports.pdf_tiled_extractor import extract_with_tiling
 from services.imports.pdf_mapper import map_extracted_to_quote_in
 from utils import require_admin
 
+# Preview isolation · Feb-2026 P0 — the PDF-invoice extractor
+# produces structured rows with real customer PII (``customer_name``,
+# ``bill_to_address``, phone/email metadata). Those rows persist to
+# ``import_batches.extracted_documents_full`` + ``mapper_previews``
+# which later turn into real ``customers`` + ``quotes`` rows on
+# commit. We sanitize at the PERSIST site so every downstream
+# consumer (commit route, preview polling route) reads pre-sanitized
+# content. Production env: the helpers below are strict no-ops
+# because ``sanitize_pdf_extracted_rows`` short-circuits on
+# ``is_production_env()``.
+from services.preview_isolation import (
+    sanitize_pdf_extracted_rows as _preview_sanitize_pdf_extracted_rows,
+)
+
+
+def _preview_sanitize_pdf_docs(docs: list) -> list:
+    """Sanitize the ``ExtractedDocument.model_dump()`` list before
+    persist. No-op on production."""
+    return _preview_sanitize_pdf_extracted_rows(docs)
+
+
+def _preview_sanitize_pdf_previews(previews: list) -> list:
+    """Sanitize the ``MapperReport.model_dump()`` list before
+    persist. The nested ``quote_in`` + ``extracted_customer_*``
+    fields carry PII; the recursive dict walker inside the
+    sanitizer handles both top-level + nested keys."""
+    return _preview_sanitize_pdf_extracted_rows(previews)
+
+
 # ``get_current_tenant`` mirrors the import shape used by
 # ``routers/quotes.py``.
 from routers.tenants import get_current_tenant
@@ -437,12 +466,12 @@ async def _run_pipeline(
                 # ≤36-page single-shot batches — the field is
                 # additive-only.
                 "tile_summary": batch.tile_summary,
-                "extracted_documents_full": [
+                "extracted_documents_full": _preview_sanitize_pdf_docs([
                     d.model_dump(mode="json") for d in batch.documents
-                ],
-                "mapper_previews": [
+                ]),
+                "mapper_previews": _preview_sanitize_pdf_previews([
                     m.model_dump(mode="json") for m in mapper_previews
-                ],
+                ]),
             }, "$unset": {
                 # Partial fields are only relevant during
                 # processing / failure states.

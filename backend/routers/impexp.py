@@ -118,6 +118,23 @@ async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
     tenant_id = tenant["id"]
     import_id = new_id()
 
+    # Preview isolation · Feb-2026 P0 — on preview env every CSV row
+    # has its PII fields replaced with deterministic synthetic
+    # equivalents BEFORE the import runs. Production env: no-op
+    # pass-through. The sanitizer rejects live Stripe tokens / raw
+    # SSN / CC via ``PIIIngressRejected`` → 400 from the handler.
+    try:
+        from services.preview_isolation import (
+            sanitize_csv_rows as _sanitize_csv_rows,
+            PIIIngressRejected as _PIIIngressRejected,
+        )
+        rows = _sanitize_csv_rows(rows, kind="customer")
+    except _PIIIngressRejected as exc:  # pragma: no cover
+        raise HTTPException(400, detail={
+            "code": "pii.ingress_rejected",
+            "reason": exc.reason, "field": exc.field,
+        })
+
     # ─── Pass 1: build docs + collect dedup keys ──────────────────────
     built: list[tuple[int, dict]] = []  # (row_idx, doc)
     warnings: list[dict] = []
