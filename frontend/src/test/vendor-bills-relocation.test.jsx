@@ -51,19 +51,22 @@ describe("Vendor Bills · relocated to Finance/Invoicing " +
     expect(rowMatches.length).toBe(1);
   });
 
-  it("sits inside the Finance group (before the ai_employees " +
+  it("sits inside the Finance group (before the marketing " +
      "opener) — not inside Reports", () => {
     const rowIdx = NAV_SRC.indexOf('to: "/admin/finance/bills"');
-    const aiEmployeesOpenerIdx = NAV_SRC.indexOf(
-      '{ key: "ai_employees"');
+    const marketingOpenerIdx = NAV_SRC.indexOf(
+      '{ key: "marketing"');
     const reportsOpenerIdx = NAV_SRC.indexOf(
       '{ key: "reports"');
     expect(rowIdx).toBeGreaterThan(-1);
-    expect(aiEmployeesOpenerIdx).toBeGreaterThan(-1);
+    expect(marketingOpenerIdx).toBeGreaterThan(-1);
     expect(reportsOpenerIdx).toBeGreaterThan(-1);
-    // Row must land in Finance (before ai_employees) — the
-    // Reports group opens WAY later.
-    expect(rowIdx).toBeLessThan(aiEmployeesOpenerIdx);
+    // Row must land in Finance (before marketing) — the
+    // Reports group opens WAY later.  (Pre-TOP-NAV-RESTRUCTURE
+    // this landmark was the ``ai_employees`` opener, which is
+    // retired in Feb-2026; ``marketing`` is now the next
+    // opener after Finance so the semantic guard is preserved.)
+    expect(rowIdx).toBeLessThan(marketingOpenerIdx);
     expect(rowIdx).toBeLessThan(reportsOpenerIdx);
   });
 

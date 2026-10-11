@@ -144,16 +144,40 @@ function useVisibleGroups() {
       }))
       .filter((g) => g.entries.length > 0)
       .map((g) => {
+        // TOP-NAV-RESTRUCTURE · Feb-2026 — build an ORDERED list
+        // of ``sections`` so the dropdown can emit nested
+        // submenus (``kind: "nested"``), classic flat subsection
+        // headers (``kind: "subsection"``), or raw rows
+        // (``kind: "flat"``) in the exact author-ordered sequence
+        // they appear in ``ADMIN_NAV_V2``.  Each run of
+        // consecutive entries sharing the same
+        // ``(nested, subsection)`` tuple collapses into one
+        // section.  ``noSub`` + ``bySub`` are retained for
+        // legacy call sites (none remain in-tree but keeps the
+        // shape forward-compatible for the Expo specialist's
+        // mobile parity brief).
+        const sections = [];
         const bySub = {};
         const noSub = [];
+        let cur = null;
         for (const e of g.entries) {
-          if (e.subsection) {
-            (bySub[e.subsection] = bySub[e.subsection] || []).push(e);
-          } else {
+          const nested = e.nested || null;
+          const subsection = e.subsection || null;
+          const kind = nested ? "nested" : (subsection ? "subsection" : "flat");
+          const label = nested || subsection || null;
+          if (!cur || cur.kind !== kind || cur.label !== label) {
+            cur = { kind, label, entries: [] };
+            sections.push(cur);
+          }
+          cur.entries.push(e);
+          // Legacy mirrors (preserved for backwards-compat).
+          if (subsection) {
+            (bySub[subsection] = bySub[subsection] || []).push(e);
+          } else if (!nested) {
             noSub.push(e);
           }
         }
-        return { ...g, noSub, bySub };
+        return { ...g, sections, noSub, bySub };
       });
   }, [can, effectiveRole, industries]);
 }
@@ -222,13 +246,31 @@ function TopNavChip({ item }) {
  */
 function CategoryDropdown({ group }) {
   const CatIcon = group.icon;
+  const location = useLocation();
+  // TOP-NAV-RESTRUCTURE · Feb-2026 — active-state propagation.
+  // Any entry across every section (flat / subsection / nested)
+  // whose ``to`` matches the current pathname lights up the
+  // top-level trigger pill.  Also builds a per-nested-label
+  // "has active child" map so the nested ``SubTrigger`` can
+  // match (Operations → AI Operations row glows when a child
+  // route like ``/admin/copilot`` is active).
+  const nestedActive = {};
+  let anyActive = false;
+  for (const s of (group.sections || [])) {
+    for (const e of s.entries) {
+      if (location.pathname === e.to) {
+        anyActive = true;
+        if (s.kind === "nested") nestedActive[s.label] = true;
+      }
+    }
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         className="group inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-sm font-semibold whitespace-nowrap transition-all duration-200 ease-out will-change-transform hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:scale-[1.02] data-[state=open]:!bg-[color:var(--nav-bg-active-navy)]"
         style={{
           color: colors.nav.fg,
-          background: "transparent",
+          background: anyActive ? colors.nav.bgActiveNavy : "transparent",
           // Expose the K64 canonical as a CSS var so the
           // ``data-[state=open]`` selector can lock it in without a
           // JS handler racing the Radix state.
@@ -246,11 +288,14 @@ function CategoryDropdown({ group }) {
         }}
         onMouseLeave={(e) => {
           if (e.currentTarget.getAttribute("data-state") !== "open") {
-            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.background = anyActive
+              ? colors.nav.bgActiveNavy
+              : "transparent";
           }
           e.currentTarget.style.boxShadow = "";
         }}
         data-testid={`admin-topbar-${group.key}`}
+        data-active={anyActive ? "true" : "false"}
         aria-label={group.label}
       >
         {CatIcon ? <CatIcon size={16} className="opacity-90" /> : null}
@@ -263,33 +308,111 @@ function CategoryDropdown({ group }) {
         style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg }}
         data-testid={`admin-topbar-${group.key}-menu`}
         data-k52-navy-popover="true"
+        collisionPadding={8}
       >
-        {group.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
-        {group.noSub.length > 0 && Object.keys(group.bySub).length > 0 ? (
-          <DropdownMenuSeparator className="h-[2px] bg-white/25" />
-        ) : null}
-        {Object.entries(group.bySub).map(([sub, entries], j, subArr) => (
-          <React.Fragment key={sub}>
-            <DropdownMenuLabel
-              className="pl-3"
-              style={{
-                color: colors.nav.fg,
-                backgroundColor: colors.nav.bgActiveNavy,
-              }}
-            >
-              <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
-                {sub}
-              </span>
-            </DropdownMenuLabel>
-            {entries.map((e) => <EntryItem key={e.to} e={e} />)}
-            {j < subArr.length - 1 ? (
-              <DropdownMenuSeparator className="h-[2px] bg-white/25" />
-            ) : null}
-          </React.Fragment>
-        ))}
+        {(group.sections || []).map((s, j, arr) => {
+          const isLast = j === arr.length - 1;
+          // Separator between non-first sections of DIFFERENT kinds
+          // or labels — keeps the visual grouping tight.
+          const needsLeadSep = j > 0;
+          if (s.kind === "nested") {
+            const subKey = `nested-${s.label}-${j}`;
+            const subActive = !!nestedActive[s.label];
+            return (
+              <React.Fragment key={subKey}>
+                {needsLeadSep ? (
+                  <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+                ) : null}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    data-testid={`admin-topbar-${group.key}-nested-${slug(s.label)}`}
+                    data-active={subActive ? "true" : "false"}
+                    className="flex items-center gap-2 pl-3 cursor-pointer text-white data-[state=open]:bg-[#2A2F7A]"
+                    style={subActive ? {
+                      backgroundColor: colors.nav.bgActive,
+                      color: colors.nav.fgActive,
+                    } : undefined}
+                  >
+                    <span className="truncate font-semibold">{s.label}</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent
+                      className="min-w-[260px] max-h-[70vh] overflow-y-auto p-1 border-0 shadow-xl [&_[role=menuitem]]:text-white [&_[role=menuitem]]:cursor-pointer [&_[role=menuitem]:focus]:bg-[#2A2F7A] [&_[role=menuitem]:focus]:text-white [&_[role=menuitem]:hover]:bg-[#2A2F7A] [&_[role=menuitem]:hover]:text-white [&_[role=menuitem]:hover]:shadow-[0_0_10px_#3B82F6] [&_[role=menuitem]:focus]:shadow-[0_0_10px_#3B82F6] [&_[role=menuitem]]:transition-shadow [&_[role=menuitem]]:duration-200 [&_[data-radix-menu-label]]:text-white/72 [&_[role=separator]]:bg-white/25"
+                      style={{ backgroundColor: colors.nav.bg, color: colors.nav.fg }}
+                      data-testid={`admin-topbar-${group.key}-nested-${slug(s.label)}-menu`}
+                      data-k52-navy-popover="true"
+                      collisionPadding={8}
+                    >
+                      {s.entries.map((e, k) => (
+                        <React.Fragment key={e.to}>
+                          {e.nestedDivider && k > 0 ? (
+                            <>
+                              <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+                              <DropdownMenuLabel
+                                className="pl-3"
+                                style={{
+                                  color: colors.nav.fg,
+                                  backgroundColor: colors.nav.bgActiveNavy,
+                                }}
+                              >
+                                <span className="inline-block px-3 py-1.5 text-xs font-bold uppercase tracking-wide opacity-80">
+                                  Governance
+                                </span>
+                              </DropdownMenuLabel>
+                            </>
+                          ) : null}
+                          <EntryItem e={e} />
+                        </React.Fragment>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+              </React.Fragment>
+            );
+          }
+          if (s.kind === "subsection") {
+            return (
+              <React.Fragment key={`sub-${s.label}-${j}`}>
+                {needsLeadSep ? (
+                  <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+                ) : null}
+                <DropdownMenuLabel
+                  className="pl-3"
+                  style={{
+                    color: colors.nav.fg,
+                    backgroundColor: colors.nav.bgActiveNavy,
+                  }}
+                >
+                  <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
+                    {s.label}
+                  </span>
+                </DropdownMenuLabel>
+                {s.entries.map((e) => <EntryItem key={e.to} e={e} />)}
+              </React.Fragment>
+            );
+          }
+          // flat
+          return (
+            <React.Fragment key={`flat-${j}`}>
+              {needsLeadSep ? (
+                <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+              ) : null}
+              {s.entries.map((e) => <EntryItem key={e.to} e={e} />)}
+            </React.Fragment>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+
+// TOP-NAV-RESTRUCTURE · Feb-2026 — tiny kebab-slugger for testids.
+function slug(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 
@@ -387,24 +510,73 @@ function MobileMenu({ visible, fixedItems }) {
                 <span>{g.label}</span>
               </DropdownMenuSubTrigger>
               <DropdownMenuPortal>
-                <DropdownMenuSubContent className="min-w-[240px] max-h-[70vh] overflow-y-auto">
-                  {g.noSub.map((e) => <EntryItem key={e.to} e={e} />)}
-                  {Object.entries(g.bySub).map(([sub, entries]) => (
-                    <React.Fragment key={sub}>
-                      <DropdownMenuLabel
-                        className="pl-3"
-                        style={{
-                          color: colors.nav.fg,
-                          backgroundColor: colors.nav.bgActiveNavy,
-                        }}
-                      >
-                        <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
-                          {sub}
-                        </span>
-                      </DropdownMenuLabel>
-                      {entries.map((e) => <EntryItem key={e.to} e={e} />)}
-                    </React.Fragment>
-                  ))}
+                <DropdownMenuSubContent className="min-w-[240px] max-h-[70vh] overflow-y-auto" collisionPadding={8}>
+                  {(g.sections || []).map((s, j) => {
+                    if (s.kind === "nested") {
+                      return (
+                        <DropdownMenuSub key={`m-nested-${s.label}-${j}`}>
+                          <DropdownMenuSubTrigger
+                            data-testid={`admin-topbar-mobile-${g.key}-nested-${slug(s.label)}`}
+                            className="flex items-center gap-2 font-semibold"
+                          >
+                            <span className="truncate">{s.label}</span>
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuPortal>
+                            <DropdownMenuSubContent
+                              className="min-w-[240px] max-h-[70vh] overflow-y-auto"
+                              data-testid={`admin-topbar-mobile-${g.key}-nested-${slug(s.label)}-menu`}
+                              collisionPadding={8}
+                            >
+                              {s.entries.map((e, k) => (
+                                <React.Fragment key={e.to}>
+                                  {e.nestedDivider && k > 0 ? (
+                                    <>
+                                      <DropdownMenuSeparator className="h-[2px] bg-white/25" />
+                                      <DropdownMenuLabel
+                                        className="pl-3"
+                                        style={{
+                                          color: colors.nav.fg,
+                                          backgroundColor: colors.nav.bgActiveNavy,
+                                        }}
+                                      >
+                                        <span className="inline-block px-3 py-1.5 text-xs font-bold uppercase tracking-wide opacity-80">
+                                          Governance
+                                        </span>
+                                      </DropdownMenuLabel>
+                                    </>
+                                  ) : null}
+                                  <EntryItem e={e} />
+                                </React.Fragment>
+                              ))}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuPortal>
+                        </DropdownMenuSub>
+                      );
+                    }
+                    if (s.kind === "subsection") {
+                      return (
+                        <React.Fragment key={`m-sub-${s.label}-${j}`}>
+                          <DropdownMenuLabel
+                            className="pl-3"
+                            style={{
+                              color: colors.nav.fg,
+                              backgroundColor: colors.nav.bgActiveNavy,
+                            }}
+                          >
+                            <span className="inline-block px-3 py-1.5 text-base font-bold uppercase">
+                              {s.label}
+                            </span>
+                          </DropdownMenuLabel>
+                          {s.entries.map((e) => <EntryItem key={e.to} e={e} />)}
+                        </React.Fragment>
+                      );
+                    }
+                    return (
+                      <React.Fragment key={`m-flat-${j}`}>
+                        {s.entries.map((e) => <EntryItem key={e.to} e={e} />)}
+                      </React.Fragment>
+                    );
+                  })}
                 </DropdownMenuSubContent>
               </DropdownMenuPortal>
             </DropdownMenuSub>

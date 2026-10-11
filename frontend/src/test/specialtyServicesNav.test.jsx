@@ -1,82 +1,80 @@
 /**
- * Feb-2026 · Pool Service PS-C — Specialty Services nav group.
+ * Feb-2026 · TOP-NAV-RESTRUCTURE — Specialty Services nested nav.
  *
- * Pins the new top-level "Specialty Services" group + two entries
- * (Filter Tracker, Salt Cell Tracker) added to ADMIN_NAV_V2.  Also
- * regressions the surrounding groups (Operations before, Customers
- * after) so a future refactor that shuffles group order fails
- * loudly here.
+ * Walked back from the Feb-2026 Pool Service PS-C "top-level
+ * Specialty Services group" to its new home as a NESTED submenu
+ * inside Operations (second nested row, directly below
+ * "AI Operations").  Both tracker rows (Filter Tracker, Salt
+ * Cell Tracker) are preserved byte-for-byte with
+ * ``nested: "Specialty Services"`` added.
+ *
+ * This file locks:
+ *   1. The former top-level ``specialty_services`` group is GONE.
+ *   2. Both tracker entries now live inside the ``operations``
+ *      group with ``nested: "Specialty Services"``.
+ *   3. The two trackers sit AFTER the "AI Operations" nested
+ *      block but BEFORE the Schedule & Dispatch subsection.
+ *   4. Row properties (to / label / icon / feature / industry
+ *      / aliases) are untouched.
+ *   5. NAV_FLAT still surfaces the trackers under the
+ *      "Specialty Services" group label (so command-palette
+ *      search still groups them under that name even though
+ *      they're nested inside Operations now).
  */
 import { describe, it, expect } from "vitest";
 import { ADMIN_NAV_V2, NAV_FLAT } from "@/nav/adminNav";
 
 
-describe("PS-C · Specialty Services nav group", () => {
-  const group = ADMIN_NAV_V2.find(
-    (g) => g.key === "specialty_services",
-  );
-
-  it("is present in ADMIN_NAV_V2 with the expected label", () => {
-    expect(group).toBeTruthy();
-    expect(group.label).toBe("Specialty Services");
-    // Group must carry an icon (lucide component ref).
-    expect(group.icon).toBeTruthy();
+describe("TOP-NAV-RESTRUCTURE · Specialty Services nested nav", () => {
+  it("the former top-level 'specialty_services' group is retired", () => {
+    const group = ADMIN_NAV_V2.find((g) => g.key === "specialty_services");
+    expect(group).toBeFalsy();
   });
 
-  it("carries exactly Filter + Salt Cell tracker entries", () => {
-    const paths = group.entries.map((e) => e.to);
-    expect(paths).toContain("/tracking/filter");
-    expect(paths).toContain("/tracking/salt-cell");
-    expect(group.entries.length).toBe(2);
+  it("both trackers now live inside the operations group with " +
+     "nested: 'Specialty Services'", () => {
+    const ops = ADMIN_NAV_V2.find((g) => g.key === "operations");
+    expect(ops).toBeTruthy();
+    const filter = ops.entries.find((e) => e.to === "/tracking/filter");
+    const salt = ops.entries.find((e) => e.to === "/tracking/salt-cell");
+    expect(filter).toBeTruthy();
+    expect(salt).toBeTruthy();
+    expect(filter.nested).toBe("Specialty Services");
+    expect(salt.nested).toBe("Specialty Services");
+    // Preserved row properties.
+    expect(filter.label).toBe("Filter Tracker");
+    expect(filter.feature).toBe("jobs");
+    expect(filter.industry).toBe("pools");
+    expect(filter.icon).toBeTruthy();
+    expect(salt.label).toBe("Salt Cell Tracker");
+    expect(salt.feature).toBe("jobs");
+    expect(salt.industry).toBe("pools");
+    expect(salt.icon).toBeTruthy();
   });
 
-  it("filter tracker entry has label + icon + jobs feature", () => {
-    const e = group.entries.find(
-      (x) => x.to === "/tracking/filter",
-    );
-    expect(e.label).toBe("Filter Tracker");
-    expect(e.feature).toBe("jobs");
-    expect(e.icon).toBeTruthy();
+  it("the nested 'Specialty Services' block sits AFTER the " +
+     "nested 'AI Operations' block but BEFORE the Schedule & " +
+     "Dispatch subsection", () => {
+    const ops = ADMIN_NAV_V2.find((g) => g.key === "operations");
+    const idx = (pred) => ops.entries.findIndex(pred);
+    const lastAiOps = (() => {
+      let last = -1;
+      ops.entries.forEach((e, i) => {
+        if (e.nested === "AI Operations") last = i;
+      });
+      return last;
+    })();
+    const firstSpecialty = idx((e) => e.nested === "Specialty Services");
+    const firstSchedule = idx((e) => e.subsection === "Schedule & Dispatch");
+    expect(lastAiOps).toBeGreaterThan(-1);
+    expect(firstSpecialty).toBeGreaterThan(lastAiOps);
+    expect(firstSchedule).toBeGreaterThan(firstSpecialty);
   });
 
-  it("salt cell tracker entry has label + icon + jobs feature", () => {
-    const e = group.entries.find(
-      (x) => x.to === "/tracking/salt-cell",
-    );
-    expect(e.label).toBe("Salt Cell Tracker");
-    expect(e.feature).toBe("jobs");
-    expect(e.icon).toBeTruthy();
-  });
-
-  it("is placed immediately after Operations and before Customers", () => {
-    const keys = ADMIN_NAV_V2.map((g) => g.key);
-    const opsIdx  = keys.indexOf("operations");
-    const custIdx = keys.indexOf("customers");
-    const ssIdx   = keys.indexOf("specialty_services");
-    expect(opsIdx).toBeGreaterThan(-1);
-    expect(custIdx).toBeGreaterThan(-1);
-    expect(ssIdx).toBe(opsIdx + 1);
-    expect(ssIdx).toBe(custIdx - 1);
-  });
-
-  it("NAV_FLAT includes the two tracker entries with group='Specialty Services'", () => {
-    const filterFlat = NAV_FLAT.find(
-      (e) => e.to === "/tracking/filter",
-    );
-    const saltFlat = NAV_FLAT.find(
-      (e) => e.to === "/tracking/salt-cell",
-    );
-    expect(filterFlat.group).toBe("Specialty Services");
-    expect(saltFlat.group).toBe("Specialty Services");
-  });
-
-  it("does not disturb pre-existing groups (Finance, AI Employees, Marketing, Operations, Customers, Reports)", () => {
-    const requiredKeys = [
-      "finance", "ai_employees", "marketing",
-      "operations", "customers", "reports",
-    ];
-    for (const k of requiredKeys) {
-      expect(ADMIN_NAV_V2.find((g) => g.key === k)).toBeTruthy();
-    }
+  it("NAV_FLAT groups both trackers under 'Specialty Services'", () => {
+    const f = NAV_FLAT.find((e) => e.to === "/tracking/filter");
+    const s = NAV_FLAT.find((e) => e.to === "/tracking/salt-cell");
+    expect(f.group).toBe("Specialty Services");
+    expect(s.group).toBe("Specialty Services");
   });
 });

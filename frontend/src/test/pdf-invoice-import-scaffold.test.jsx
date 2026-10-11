@@ -146,12 +146,15 @@ describe("Task B · Commit 1 route + sidebar wiring (source-inspect)", () => {
     expect(importIdx).toBeGreaterThan(autobillingIdx);
     expect(lateFeesIdx).toBeGreaterThan(importIdx);
     // The new entry must sit inside the Finance group — grep
-    // guard: PDF Import's line must appear BEFORE the ai_employees
-    // group opens.
-    const aiEmployeesOpenerIdx = NAV_SRC.indexOf(
-      '{ key: "ai_employees"');
-    expect(aiEmployeesOpenerIdx).toBeGreaterThan(-1);
-    expect(importIdx).toBeLessThan(aiEmployeesOpenerIdx);
+    // guard: PDF Import's line must appear BEFORE the marketing
+    // group opens.  (Pre-TOP-NAV-RESTRUCTURE this landmark was
+    // the ``ai_employees`` opener, which is retired in Feb-2026;
+    // ``marketing`` is now the next opener after Finance so the
+    // semantic guard is preserved.)
+    const marketingOpenerIdx = NAV_SRC.indexOf(
+      '{ key: "marketing"');
+    expect(marketingOpenerIdx).toBeGreaterThan(-1);
+    expect(importIdx).toBeLessThan(marketingOpenerIdx);
     // Row properties.
     const importSlice = NAV_SRC.slice(importIdx, importIdx + 300);
     expect(importSlice).toMatch(/hard_rule:\s*"admin_only"/);
