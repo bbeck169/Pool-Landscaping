@@ -87,7 +87,7 @@ vi.mock("@/nav/adminNav", () => ({
         { to: "/settings/ai-brain",       label: "AI Brain",           nested: "AI Operations" },
         { to: "/os/lana",                 label: "Lana AI Assistant",  nested: "AI Operations" },
         { to: "/admin/seo/atlas",         label: "Atlas SEO Agent",    nested: "AI Operations" },
-        { to: "/communications",          label: "Communications",     nested: "AI Operations" },
+        { to: "/admin/communications-log", label: "Communications",     nested: "AI Operations" },
         { to: "/admin/portal-inbox",      label: "Portal Inbox",       nested: "AI Operations" },
         { to: "/marketing/gbp-posts",     label: "GBP Post Drafter",   nested: "AI Operations" },
         { to: "/admin/ai-personas-scope", label: "AI Access Scope",    nested: "AI Operations", nestedDivider: true },
@@ -239,7 +239,7 @@ describe("TOP-NAV-RESTRUCTURE · Operations dropdown nested submenu " +
       { to: "/settings/ai-brain",    label: "AI Brain" },
       { to: "/os/lana",              label: "Lana AI Assistant" },
       { to: "/admin/seo/atlas",      label: "Atlas SEO Agent" },
-      { to: "/communications",       label: "Communications" },
+      { to: "/admin/communications-log", label: "Communications" },
       { to: "/admin/portal-inbox",   label: "Portal Inbox" },
       { to: "/marketing/gbp-posts",  label: "GBP Post Drafter" },
     ];
@@ -360,6 +360,30 @@ describe("TOP-NAV-RESTRUCTURE · dropdown primitive reuse (grep-lock)", () => {
     expect(TOPBAR_SRC).toMatch(
       /admin-topbar-mobile-\$\{g\.key\}-nested-/,
     );
+  });
+
+  it("nested SubTriggers do NOT override Radix defaults — hover + " +
+     "keyboard (ArrowRight-to-open, Esc-to-close, Enter-to-activate) " +
+     "are inherited untouched from DropdownMenuPrimitive.Sub", () => {
+    // Isolate the nested-SubTrigger JSX blocks and verify the only
+    // handlers wired on them are presentational (``className``,
+    // ``style``, ``data-*``, ``aria-*``) — no ``onKeyDown`` /
+    // ``onPointerEnter`` / ``onPointerLeave`` / ``onFocus`` /
+    // ``onBlur`` would smother Radix's built-in hover-intent timer
+    // and keyboard router.
+    const subTriggerBlocks = [
+      ...TOPBAR_SRC.matchAll(
+        /<DropdownMenuSubTrigger\b[\s\S]*?>/g,
+      ),
+    ].map((m) => m[0]);
+    expect(subTriggerBlocks.length).toBeGreaterThan(0);
+    for (const block of subTriggerBlocks) {
+      expect(block).not.toMatch(/\bonKeyDown=/);
+      expect(block).not.toMatch(/\bonPointerEnter=/);
+      expect(block).not.toMatch(/\bonPointerLeave=/);
+      expect(block).not.toMatch(/\bonMouseEnter=/);
+      expect(block).not.toMatch(/\bonMouseLeave=/);
+    }
   });
 });
 

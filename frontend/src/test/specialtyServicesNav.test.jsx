@@ -44,11 +44,11 @@ describe("TOP-NAV-RESTRUCTURE · Specialty Services nested nav", () => {
     // Preserved row properties.
     expect(filter.label).toBe("Filter Tracker");
     expect(filter.feature).toBe("jobs");
-    expect(filter.industry).toBe("pools");
+    expect(filter.industry).toBe("pool");
     expect(filter.icon).toBeTruthy();
     expect(salt.label).toBe("Salt Cell Tracker");
     expect(salt.feature).toBe("jobs");
-    expect(salt.industry).toBe("pools");
+    expect(salt.industry).toBe("pool");
     expect(salt.icon).toBeTruthy();
   });
 

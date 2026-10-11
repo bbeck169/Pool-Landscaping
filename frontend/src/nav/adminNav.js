@@ -153,10 +153,10 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/outreach/prospects",  label: "Outreach Prospects", icon: SearchIcon, feature: "seo", subsection: "Outreach" },
     { to: "/admin/outreach/templates",  label: "Outreach Templates", icon: FileText,   feature: "seo", subsection: "Outreach" },
     // GBP
-    { to: "/gbp",          label: "GBP Hub",      icon: Building2, feature: "gbp", subsection: "Google Business" },
-    { to: "/gbp/posts",    label: "GBP Posts",    icon: FileText,  feature: "gbp", subsection: "Google Business" },
-    { to: "/gbp/reviews",  label: "GBP Reviews",  icon: StarIcon,  feature: "gbp", subsection: "Google Business" },
-    { to: "/gbp/business", label: "GBP Business", icon: Building2, feature: "gbp", subsection: "Google Business" },
+    { to: "/gbp",                  label: "GBP Hub",      icon: Building2, feature: "gbp", subsection: "Google Business" },
+    { to: "/gbp?tab=posts",        label: "GBP Posts",    icon: FileText,  feature: "gbp", subsection: "Google Business" },
+    { to: "/gbp?tab=reviews",      label: "GBP Reviews",  icon: StarIcon,  feature: "gbp", subsection: "Google Business" },
+    { to: "/gbp?tab=business",     label: "GBP Business", icon: Building2, feature: "gbp", subsection: "Google Business" },
     // NAV-REORG · Feb-2026 — admin-side review surfaces nested
     // into Marketing (legacy standalone top-level group folded).
     // Grouped alongside the pre-existing public-facing review
@@ -183,7 +183,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/ai-brain",  label: "AI Brain",            icon: Sparkles,     feature: "settings",     hard_rule: "admin_only", nested: "AI Operations" },
     { to: "/os/lana",            label: "Lana AI Assistant",   icon: Sparkles,     feature: "settings",                            nested: "AI Operations" },
     { to: "/admin/seo/atlas",    label: "Atlas SEO Agent",     icon: SearchIcon,   feature: "seo",                                 nested: "AI Operations" },
-    { to: "/communications",     label: "Communications",      icon: MessageSquare, feature: "marketing",                           nested: "AI Operations" },
+    { to: "/admin/communications-log",     label: "Communications",      icon: MessageSquare, feature: "marketing",                           nested: "AI Operations" },
     { to: "/admin/portal-inbox", label: "Portal Inbox",        icon: MessageSquare, feature: "marketing",                           nested: "AI Operations" },
     { to: "/marketing/gbp-posts", label: "GBP Post Drafter",    icon: Sparkles,     feature: "marketing",    hard_rule: "admin_only", nested: "AI Operations" },
     // -- Governance separator (first governance row carries
@@ -199,8 +199,8 @@ export const ADMIN_NAV_V2 = [
     // group.  Both tracker entries preserved byte-for-byte
     // (route / icon / feature / industry / aliases) with
     // only ``nested: "Specialty Services"`` added.
-    { to: "/tracking/filter",    label: "Filter Tracker",    icon: FilterFunnelIcon, feature: "jobs", industry: "pools", aliases: ["Filter Cleaning", "Filter Cleanings", "Cartridge Cleanings"],              nested: "Specialty Services" },
-    { to: "/tracking/salt-cell", label: "Salt Cell Tracker", icon: Droplets,         feature: "jobs", industry: "pools", aliases: ["Salt Cell Replacements", "Salt Cell Cleanings", "Cell Replacements"], nested: "Specialty Services" },
+    { to: "/tracking/filter",    label: "Filter Tracker",    icon: FilterFunnelIcon, feature: "jobs", industry: "pool", aliases: ["Filter Cleaning", "Filter Cleanings", "Cartridge Cleanings"],              nested: "Specialty Services" },
+    { to: "/tracking/salt-cell", label: "Salt Cell Tracker", icon: Droplets,         feature: "jobs", industry: "pool", aliases: ["Salt Cell Replacements", "Salt Cell Cleanings", "Cell Replacements"], nested: "Specialty Services" },
     // Schedule & dispatch
     { to: "/schedule",               label: "Schedule",           icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch", aliases: ["Calendar", "Bookings", "Jobs Calendar", "Appointments"] },
     { to: "/admin/jobs",             label: "Jobs (admin)",       icon: ListChecks,   feature: "jobs", subsection: "Schedule & Dispatch" },
@@ -285,7 +285,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/log-history",       label: "Log History",      icon: History,     feature: "jobs", subsection: "Workforce" },
     // Field service
     { to: "/maintenance",  label: "Maintenance",  icon: Cog,      feature: "jobs", subsection: "Field Service" },
-    { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", industry: "pools", subsection: "Field Service" },
+    { to: "/pool-service", label: "Pool Service", icon: Waves,    feature: "jobs", industry: "pool", subsection: "Field Service" },
     { to: "/equipment",    label: "Equipment",    icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     { to: "/admin/assets", label: "Assets",       icon: Wrench,   feature: "jobs", subsection: "Field Service" },
     // Feb-2026 · C3 — Chemical Applications regulatory spray log.
@@ -399,9 +399,9 @@ export const ADMIN_NAV_V2 = [
     // dashboard. Ops uses this to tune the 75m radius default and
     // diagnose consent / throttle patterns.
     { to: "/reports/gps-auto-start-audit", label: "GPS Auto-Start Audit", icon: MapPin,   feature: "reports", subsection: "Reports" },
-    { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports", subsection: "Reports" },
+    { to: "/reports/revenue-by-service",  label: "Revenue Slices",    icon: PieChart,  feature: "reports", subsection: "Reports" },
     { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling", subsection: "Reports" },
-    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports", industry: "pools", subsection: "Reports" },
+    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports", industry: "pool", subsection: "Reports" },
     { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports", subsection: "Reports" },
     // G2 · Feb-2026 — Driver Activity (server-detected GPS stops).
     { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only", subsection: "Reports" },
@@ -507,20 +507,56 @@ export const NAV_FLAT = ADMIN_NAV_V2.flatMap((g) =>
 // Filter a nav-entry list by the tenant's active industries.
 // Entries tagged with an ``industry`` slug are hidden unless that
 // slug appears in ``industries``. Untagged entries (the vast
-// majority) are always shown — Phase C's "light touch" scope only
-// gates a handful of pool/landscape-specific surfaces.
+// Nav-level industry filter helper (Phase C).  Hides industry-
+// gated entries when the tenant doesn't carry the matching
+// industry slug on ``tenant.industries``.  Entries without an
+// ``industry`` key (the vast silent majority) are always shown —
+// Phase C's "light touch" scope only gates a handful of pool /
+// landscape-specific surfaces.
 //
 // Empty ``industries`` array (tenant migration hasn't landed yet,
 // or an admin explicitly cleared the array) → show everything
 // (fail-open) so the sidebar never mysteriously empties out.
+//
+// ── TOLERANT SLUG MATCH · Feb-2026 ──────────────────────────────
+// Two "canonical" industry slug sets co-exist in-tree:
+//
+//   * ``routers/industry_checklists.INDUSTRY_SLUGS`` (used by
+//     signup + wizard + public endpoints) uses the SINGULAR root
+//     ("pool", "landscape", "cleaning"…).  Signup's
+//     ``INDUSTRY_ALIASES`` normalises plural inbound forms
+//     ("pools" → "pool") on write, so a tenant whose signup
+//     landed after Feb-2026 carries SINGULAR on ``industries[]``.
+//
+//   * ``services/industries.INDUSTRIES`` (Phase A multi-industry
+//     mirror) uses the PLURAL form ("pools", "landscaping"…) and
+//     the frontend mirror in ``config/industries.js`` matches
+//     that spelling.
+//
+// Prior to this helper's Feb-2026 tolerance pass, a Phase C nav
+// entry tagged ``industry: "pools"`` was invisible to a tenant
+// whose Mongo doc stored the signup-canonical ``["pool"]``,
+// silently nuking the entire "Specialty Services" nested
+// submenu on pool-only tenants.  Normalising both sides (lower-
+// case · trim · drop a trailing ``s`` so plural / singular
+// collapse to a shared root) makes the gate forgiving in both
+// directions.  Historic / future drift on either canonical set
+// no longer flips a group off without warning.
+function _normIndustrySlug(s) {
+  if (typeof s !== "string") return "";
+  let v = s.toLowerCase().trim().replace(/-/g, "_").replace(/\s+/g, "_");
+  if (v.length > 1 && v.endsWith("s")) v = v.slice(0, -1);
+  return v;
+}
 export function filterNavByIndustries(entries, industries) {
   if (!Array.isArray(entries)) return entries;
   const arr = Array.isArray(industries) ? industries : [];
   if (arr.length === 0) return entries;
+  const tenantNorm = new Set(arr.map(_normIndustrySlug).filter(Boolean));
   return entries.filter((e) => {
     if (!e || typeof e !== "object") return true;
     if (typeof e.industry !== "string") return true;
-    return arr.includes(e.industry);
+    return tenantNorm.has(_normIndustrySlug(e.industry));
   });
 }
 

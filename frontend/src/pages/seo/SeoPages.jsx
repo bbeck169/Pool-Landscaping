@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { ArrowLeft, Search, Save, Sparkles, Calendar as CalIcon, MapPin, Star } from "lucide-react";
 import { api } from "@/api";
@@ -498,7 +498,21 @@ export function WordPressSettings() {
 // ─── GBP Hub ───────────────────────────────────────────────────────────────
 export function GbpHub() {
   const [status, setStatus] = useState(null);
-  const [tab, setTab] = useState("posts");
+  // TOP-NAV-RESTRUCTURE · Feb-2026 — the Google Business nav
+  // sub-items (``GBP Posts`` / ``GBP Reviews`` / ``GBP Business``)
+  // used to point at ``/gbp/posts`` / ``/gbp/reviews`` /
+  // ``/gbp/business`` — none of which were real routes.  They now
+  // deep-link into this hub with ``?tab=`` so the nav rows land on
+  // the correct tab instead of hitting the 404 catch-all.  The
+  // internal ``setTab`` state still owns runtime tab switches; the
+  // query param only seeds the initial value on mount.
+  const [searchParams] = useSearchParams();
+  const _initialTab = (() => {
+    const t = (searchParams.get("tab") || "").toLowerCase();
+    const valid = ["posts", "reviews", "business", "calendar", "ai-settings"];
+    return valid.includes(t) ? t : "posts";
+  })();
+  const [tab, setTab] = useState(_initialTab);
   const [posts, setPosts] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [ai, setAi] = useState({ autopost: false, auto_reply: false });
