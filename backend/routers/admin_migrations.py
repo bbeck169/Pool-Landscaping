@@ -1741,3 +1741,71 @@ async def run_portal_invite_split_paragraph(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# PERF-AUDIT-C · Feb-2026
+# POST /admin/customers/balance-audit
+#
+# Iterates every customer in the caller's tenant, computes
+# balance_due / past_due / credit_balance_cents / overdue_count via
+# ``services.customer_balance.compute_customer_balance``, and
+# compares to the denormalized fields stored on the customer doc.
+# Reports counts + up to 50 mismatches for the operator diff UI.
+# ``fix=true`` writes computed values back onto drifted customers;
+# dry-run (``fix=false``, default) reports without writing.
+#
+# Admin/owner/super_admin role gate.  Audit log at WARN when fix=true.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/customers/balance-audit",
+    operation_id="admin.customers.balance_audit",
+)
+async def run_customer_balance_audit(
+    fix: bool = Query(
+        False,
+        description=(
+            "Safety-first default.  Set to ``true`` to write the "
+            "freshly computed balance_due / past_due / credit / "
+            "overdue values back onto drifted customer docs.  "
+            "Idempotent — repeated calls converge."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        description=(
+            "Optional cap on customers scanned (for incremental "
+            "audits on large tenants).  Omit to scan every "
+            "non-deleted customer in the caller's tenant."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    role = (user or {}).get("role")
+    if role not in ("admin", "owner", "super_admin"):
+        raise HTTPException(403, "admin_only")
+
+    from services.customer_balance import audit_tenant_customer_balances
+
+    log_line = (
+        f"[balance-audit] user={user.get('id')} "
+        f"email={user.get('email')} tenant={tenant.get('id')} "
+        f"fix={fix} limit={limit}"
+    )
+    if fix:
+        logger.warning(log_line)
+    else:
+        logger.info(log_line)
+
+    report = await audit_tenant_customer_balances(
+        db, tenant["id"], fix=fix, limit=limit,
+    )
+    logger.info(
+        "[balance-audit] complete · tenant=%s fix=%s scanned=%s "
+        "matched=%s drifted=%s missing=%s fixed=%s",
+        tenant.get("id"), fix, report.get("customers_scanned"),
+        report.get("customers_matched"), report.get("customers_drifted"),
+        report.get("customers_missing"), report.get("customers_fixed"),
+    )
+    return report
+

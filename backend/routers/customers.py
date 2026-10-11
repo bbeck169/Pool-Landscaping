@@ -2177,6 +2177,34 @@ async def get_customer(cid: str,
     # ``Query(False, ...)`` sentinel object (truthy under ``bool()``).
     # Mirror the ``list_customers`` _slim coercion.
     _slim_profile = bool(slim) if isinstance(slim, bool) else False
+    # PERF-AUDIT-B/C · Feb-2026 — Phase A balance denorm.  Ensures
+    # ``balance_due`` / ``past_due`` / ``credit_balance_cents`` /
+    # ``overdue_count`` + ``balance_recomputed_at`` are present on
+    # the response doc.  Lazy-backfills on stale/missing values so
+    # the profile tiles can render straight from the Phase A payload
+    # without a second KPI round-trip.  Common case (fresh denorm)
+    # is a no-op field read; cold path (stale/absent) triggers the
+    # shared aggregation + persists back.  Admins + managers only
+    # (techs don't see the balance tiles on the profile UI).
+    _role_pa = (user.get("role") or "").lower()
+    if _role_pa in ("admin", "super_admin", "manager", "owner"):
+        try:
+            from services.customer_balance import (
+                ensure_fresh_balance_denorm as _efbd,
+            )
+            fresh = await _efbd(db, tenant["id"], cid, cust_doc=doc)
+            # Merge the fresh (or already-cached) denorm fields
+            # back onto the response doc.  ``as_of`` → stamp.
+            doc["balance_due"] = fresh["balance_due"]
+            doc["past_due"] = fresh["past_due"]
+            doc["credit_balance_cents"] = fresh["credit_balance_cents"]
+            doc["overdue_count"] = fresh["overdue_count"]
+            doc["balance_recomputed_at"] = fresh.get("as_of")
+        except Exception as _efbd_exc:                                # noqa: BLE001
+            logger.warning(
+                "[get_customer] Phase A balance backfill failed "
+                "cid=%s: %s", cid, _efbd_exc,
+            )
     from utils import not_deleted_filter as _nd_cust
     # Phase 9d · Feb-2026 — the embedded ``jobs`` array is a legacy
     # convenience payload the current frontend never consumes
