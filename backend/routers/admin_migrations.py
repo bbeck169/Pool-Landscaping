@@ -1809,3 +1809,63 @@ async def run_customer_balance_audit(
     )
     return report
 
+
+# ─────────────────────────────────────────────────────────────────────
+# DATA-PARITY-C3 · Feb-2026
+# POST /admin/customers/media-audit
+#
+# For every non-deleted customer in the caller's tenant, compare the
+# media counts visible to admin vs. visible to portal via the shared
+# ``services.customer_media.get_customer_media`` reader. Reports
+# mismatches with sample ``hidden_media_ids`` for the operator diff
+# UI.
+#
+# ``fix=true`` is intentionally a no-op — the only source of drift
+# is the admin-authored ``hidden_from_portal`` flag which we don't
+# auto-flip. Report-only even in fix mode (documented in the
+# response ``note`` field).
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/customers/media-audit",
+    operation_id="admin.customers.media_audit",
+)
+async def run_customer_media_audit(
+    fix: bool = Query(
+        False,
+        description=(
+            "Report-only even when true. ``hidden_from_portal`` is "
+            "admin-authored and we don't auto-flip it. See the "
+            "response ``note`` field."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        description="Optional cap on customers scanned.",
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    role = (user or {}).get("role")
+    if role not in ("admin", "owner", "super_admin"):
+        raise HTTPException(403, "admin_only")
+
+    from services.customer_media import audit_tenant_customer_media
+
+    log_line = (
+        f"[media-audit] user={user.get('id')} "
+        f"email={user.get('email')} tenant={tenant.get('id')} "
+        f"fix={fix} limit={limit}"
+    )
+    logger.info(log_line)
+
+    report = await audit_tenant_customer_media(
+        db, tenant["id"], fix=fix, limit=limit,
+    )
+    logger.info(
+        "[media-audit] complete · tenant=%s scanned=%s matched=%s "
+        "drifted=%s",
+        tenant.get("id"), report.get("customers_scanned"),
+        report.get("customers_matched"), report.get("customers_drifted"),
+    )
+    return report
+

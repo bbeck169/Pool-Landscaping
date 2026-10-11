@@ -1,75 +1,74 @@
-"""Phase 5A · Customer portal — shareable video feed (Feb 2026).
+"""Phase 5A / DATA-PARITY-C3 · Feb-2026 — Portal video feed.
 
-Parallel to ``portal_photos.py``. Returns the videos across the calling
-customer's jobs + estimates in the current tenant whose
-``visibility == "customer"`` and ``is_deleted == false``. The actual
-streaming happens through ``/api/media/videos/{path}`` — this endpoint
-just enumerates what's playable.
+Thin wrapper over ``services.customer_media.get_customer_media``.
+Pre-fix state (Feb-2026): this file was the sole live
+``/api/portal/videos`` handler and walked ONLY ``jobs.videos[]`` +
+``estimates.videos[]`` with a ``visibility=="customer"`` filter —
+missing service-report videos and admin-uploaded files.  Post-fix:
+the shared reader merges all four sources.
 """
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
-from routers.tenants import get_current_tenant
 from utils import get_current_user
-from utils import not_deleted_filter as _nd
+from routers.tenants import get_current_tenant
+from services.customer_media import get_customer_media
 
 router = APIRouter()
-
-
-def _project_video(v: dict, entity_kind: str, entity: dict) -> dict:
-    return {
-        "kind": entity_kind,                       # "job" or "estimate"
-        "entity_id": entity.get("id"),
-        "entity_title": entity.get("title") or entity.get("service_type") or "Service",
-        "job_scheduled_date": entity.get("scheduled_date") if entity_kind == "job" else None,
-        "video_id": v.get("id"),
-        "storage_path": v.get("storage_path"),
-        "mime": v.get("mime"),
-        "size_bytes": v.get("size_bytes"),
-        "duration_seconds": v.get("duration_seconds"),
-        "caption": v.get("caption"),
-        "uploaded_at": v.get("uploaded_at"),
-        "uploaded_by_name": v.get("uploaded_by_name"),
-    }
 
 
 @router.get("/portal/videos")
 async def portal_videos(
     limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    job_id: Optional[str] = Query(None),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Return every shareable video the calling customer can play,
-    newest-first."""
+    """Flat, newest-first list of videos the calling customer can
+    play.  The actual streaming happens through
+    ``/api/media/videos/{path}`` or ``/api/public/service/<uuid>/
+    video/<id>`` — this endpoint just enumerates what's playable."""
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Customers only")
     cid = user["customer_id"]
     tid = tenant["id"]
 
-    projection = {"_id": 0, "id": 1, "title": 1, "service_type": 1,
-                  "scheduled_date": 1, "videos": 1}
-
-    jobs = await db.jobs.find(
-        {"tenant_id": tid, "customer_id": cid, "videos": {"$exists": True, "$ne": []}},
-        projection,
-    ).to_list(2000)
-
-    estimates = await db.estimates.find(
-        {"tenant_id": tid, "customer_id": cid, "videos": {"$exists": True, "$ne": []}},
-        projection,
-    ).to_list(2000)
-
-    out: List[dict] = []
-    for j in jobs:
-        for v in (j.get("videos") or []):
-            if v.get("visibility") == "customer" and not v.get("is_deleted"):
-                out.append(_project_video(v, "job", j))
-    for e in estimates:
-        for v in (e.get("videos") or []):
-            if v.get("visibility") == "customer" and not v.get("is_deleted"):
-                out.append(_project_video(v, "estimate", e))
-
-    out.sort(key=lambda r: r.get("uploaded_at") or "", reverse=True)
-    return {"videos": out[:limit], "total": len(out)}
+    bag = await get_customer_media(
+        db, tid, cid, kind="video",
+        for_portal=True, limit=limit, offset=offset,
+    )
+    items = bag["items"]
+    if job_id:
+        items = [i for i in items if i.get("job_id") == job_id]
+    # Backwards-compat shape — the previous handler returned
+    # ``{videos: [...], total: N}`` keyed by ``video_id`` +
+    # ``storage_path`` etc.  Mirror the superset of fields.
+    videos_shape = [
+        {
+            "kind":             "job"
+                                 if i.get("source") == "job"
+                                 else ("estimate"
+                                       if i.get("source") == "estimate"
+                                       else "service_report"),
+            "entity_id":        i.get("job_id") or i.get("estimate_id"),
+            "entity_title":     i.get("job_title")
+                                 or i.get("estimate_title"),
+            "video_id":         i.get("media_id"),
+            "storage_path":     i.get("url"),
+            "url":              i.get("url"),
+            "mime":             i.get("mime"),
+            "size_bytes":       i.get("size_bytes"),
+            "duration_seconds": i.get("duration_seconds"),
+            "caption":          i.get("caption") or "",
+            "uploaded_at":      i.get("uploaded_at"),
+            "source":           i.get("source"),
+        }
+        for i in items
+    ]
+    return {
+        "videos": videos_shape,
+        "total":  bag["total"] if not job_id else len(videos_shape),
+    }
