@@ -404,19 +404,59 @@ async def _try_send_reset_email(
     # The template authoring contract is that ``{{TEMP_PASSWORD}}``
     # lives on its own line/paragraph for this strip to work
     # correctly — enforced for the hardcoded fallback above.
+    #
+    # M-TAG-FIX FOLLOWUP · Feb-2026 — DEFENSE IN DEPTH.  Admins who
+    # hand-edited their stored template MAY have merged
+    # ``{{TEMP_PASSWORD}}`` into a mixed paragraph alongside other
+    # merge tags (``{{TO}}``, ``{{NAME}}``, …).  Blindly stripping
+    # such a paragraph would delete the OTHER tags too — exactly
+    # the bug that landed the Email line in the trash for tenants
+    # on the legacy seed shape.  The hardened rule: ONLY strip a
+    # paragraph when it is DEDICATED to ``TEMP_PASSWORD`` — i.e.
+    # contains no OTHER ``{{...}}`` catalog token inside the same
+    # ``<p>...</p>`` (plain-text: ``...TEMP_PASSWORD...`` line).
+    # Mixed-tag paragraphs survive the strip untouched; the
+    # ``{{TEMP_PASSWORD}}`` placeholder inside them renders to the
+    # empty string via the normal substitution cascade, producing
+    # ``Temporary password: `` cosmetic residue — a tolerable UX
+    # degradation vs. the catastrophic loss-of-Email-line bug.
+    # The companion data migration
+    # ``services/migrations/portal_invite_split_email_temppassword_paragraph_v1``
+    # proactively splits the legacy single-paragraph seed shape so
+    # most tenants never fall through to the mixed-paragraph branch.
     if not (temp_password or "").strip():
         import re as _re
+
+        _ANY_OTHER_TAG = _re.compile(
+            r"\{\{\s*(?!TEMP_PASSWORD\b)[A-Za-z_][A-Za-z0-9_.]*\s*\}\}",
+            _re.IGNORECASE,
+        )
+
+        def _strip_dedicated_p(match: "_re.Match[str]") -> str:
+            inner = match.group(0)
+            # Reject mixed-tag paragraphs — preserves {{TO}} etc.
+            if _ANY_OTHER_TAG.search(inner):
+                return inner
+            return ""
+
         body_tpl = _re.sub(
             r"<p[^>]*>(?:(?!</?p\b)[\s\S])*?"
             r"\{\{\s*TEMP_PASSWORD\s*\}\}"
             r"(?:(?!</?p\b)[\s\S])*?</p>",
-            "",
+            _strip_dedicated_p,
             body_tpl,
             flags=_re.IGNORECASE,
         )
+
+        def _strip_dedicated_line(match: "_re.Match[str]") -> str:
+            inner = match.group(0)
+            if _ANY_OTHER_TAG.search(inner):
+                return inner
+            return ""
+
         text_tpl = _re.sub(
             r"^.*\{\{\s*TEMP_PASSWORD\s*\}\}.*\r?\n?",
-            "",
+            _strip_dedicated_line,
             text_tpl,
             flags=_re.IGNORECASE | _re.MULTILINE,
         )
