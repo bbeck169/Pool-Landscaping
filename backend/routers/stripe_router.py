@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from config import db
@@ -621,43 +621,104 @@ async def reconcile_checkout_session(
 
 
 @router.post("/webhook")
-async def post_webhook(request: Request):
+async def post_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Stripe webhook ingress — P0c Stage 2 · Feb-2026.
+
+    Flow (bounded by Stripe's 10s acknowledgment timeout):
+
+      1. Read raw body + ``stripe-signature`` header.
+      2. SIG VERIFY (synchronous, fast). Bad sig → 400 immediately
+         so Stripe surfaces the misconfigured endpoint in its
+         Dashboard delivery log. Thin-payload fallback transient
+         failure → 502 so Stripe retries (we never got a valid
+         event to persist).
+      3. DEDUP LEDGER insert (synchronous, local-Mongo fast).
+         Duplicate ``event.id`` short-circuits with 200 so Stripe
+         stops retrying the same event.
+      4. BACKGROUND DISPATCH — business logic (``handle_webhook_
+         event``) + ledger status writes (mark_handled / mark_failed
+         / record_dead_letter) run AFTER the 200 has been sent.
+         Stripe never waits on step 4.
+
+    Rationale: Stripe advertises a 10s acknowledgment budget, and
+    the business handler can touch external APIs (``stripe.Event.
+    retrieve`` on Thin payloads, tenant-billing downstream calls)
+    that approach that budget on cold paths. Returning 200 before
+    step 4 trades Stripe-level retry (via 5xx) for OUR dead-letter
+    + replay surface (``POST /api/admin/stripe/dead-letter/{id}/
+    retry``). The dead-letter path has always been the primary
+    operator recovery mechanism; this commit just makes it the
+    ONLY retry mechanism for post-200 failures.
+    """
     payload = await request.body()
     sig = request.headers.get("stripe-signature") or ""
     try:
         event = stripe_svc.verify_and_parse_webhook(payload=payload, sig_header=sig)
     except stripe_svc.ThinPayloadRetrieveError as exc:
-        # Feb-2026 · Transient failure hydrating a Thin-payload event via
-        # ``stripe.Event.retrieve``. 502 tells Stripe "server-side blip,
-        # please retry" — the webhook delivery pipeline honors 5xx with
-        # exponential backoff, so the event isn't lost. A 4xx here would
-        # silently drop the event.
+        # Transient fetch failure during Thin-payload hydration.
+        # 502 → Stripe retries with backoff. No ledger row written
+        # (we don't have a validated event yet).
         raise HTTPException(502, f"stripe.event.retrieve failed: {exc}")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:  # includes stripe.error.SignatureVerificationError
         raise HTTPException(400, f"invalid signature: {exc}")
 
-    # Phase B3 · Feb-2026 — dedup ledger. First insert of the
-    # ``event.id`` wins; a Stripe retry (same id) short-circuits.
-    from services.payments.stripe_webhook_ledger import (
-        insert_or_skip, mark_handled, mark_failed, record_dead_letter,
-    )
+    # Dedup ledger — kept synchronous so a Stripe retry of the same
+    # event.id doesn't produce a second background dispatch. First
+    # insert wins; duplicates short-circuit before scheduling work.
+    from services.payments.stripe_webhook_ledger import insert_or_skip
     ledger = await insert_or_skip(event)
     if ledger.get("status") == "skipped_duplicate":
         return {"ok": True, "handled": False, "status": "skipped_duplicate",
                 "event_id": ledger.get("event_id")}
 
-    # Phase B3 · Feb-2026 — dead-letter wrap. Any handler crash lands
-    # the event in ``stripe_webhook_dead_letter`` + returns 502 so
-    # Stripe retries. Signature-verification errors above already
-    # short-circuit before we hit this block.
+    # Hand off to the background processor. The 200 goes out next.
+    background_tasks.add_task(
+        _process_webhook_event_background,
+        event=event,
+        event_id=ledger.get("event_id") or "",
+    )
+    return {"ok": True, "status": "accepted",
+            "event_id": ledger.get("event_id") or "",
+            "handled": "pending"}
+
+
+async def _process_webhook_event_background(
+    *, event: Dict[str, Any], event_id: str,
+) -> None:
+    """P0c Stage 2 · Feb-2026 — Background processor for Stripe
+    webhook events.
+
+    Runs AFTER the handler has returned 200 to Stripe. Preserves the
+    full prior failure semantics minus the Stripe-side retry: any
+    exception lands in ``stripe_webhook_dead_letter`` (where an
+    operator can inspect + replay via the admin endpoints) and
+    flips the dedup-ledger row to ``status=failed``. The 200 we
+    already sent means Stripe will NOT retry this event.
+    """
+    from services.payments.stripe_webhook_ledger import (
+        mark_handled, mark_failed, record_dead_letter,
+    )
     try:
         result = await stripe_svc.handle_webhook_event(event)
-    except stripe_svc.ThinPayloadRetrieveError:
-        # Preserve the existing Thin-payload retry semantics — not a
-        # handler bug, so no dead-letter row.
-        raise
+        await mark_handled(event_id, result=result)
+    except stripe_svc.ThinPayloadRetrieveError as exc:
+        # Post-200 Thin-payload fallback failure. Stripe won't retry
+        # anymore — operator replays via dead-letter.
+        import traceback
+        await record_dead_letter(
+            event,
+            error_class="ThinPayloadRetrieveError",
+            error_message=str(exc),
+            stack_trace=traceback.format_exc(),
+            raw_payload=event,
+        )
+        await mark_failed(event_id, error=str(exc))
+        logger.error(
+            "[stripe.webhook.bg] ThinPayloadRetrieveError event_id=%s: %s",
+            event_id, exc,
+        )
     except Exception as exc:  # noqa: BLE001
         import traceback
         await record_dead_letter(
@@ -667,10 +728,11 @@ async def post_webhook(request: Request):
             stack_trace=traceback.format_exc(),
             raw_payload=event,
         )
-        await mark_failed(ledger.get("event_id") or "", error=str(exc))
-        raise HTTPException(502, f"handler failed: {exc}")
-    await mark_handled(ledger.get("event_id") or "", result=result)
-    return {"ok": True, **result}
+        await mark_failed(event_id, error=str(exc))
+        logger.error(
+            "[stripe.webhook.bg] handler crash event_id=%s class=%s: %s",
+            event_id, type(exc).__name__, exc,
+        )
 
 
 # Feb 2026 · P1 Hotfix #3 — Legacy-URL alias. Stripe Dashboard was
@@ -679,8 +741,8 @@ async def post_webhook(request: Request):
 # by forwarding to the same handler. Both routes accept the exact
 # same payload + signature and produce identical responses.
 @webhook_alias_router.post("/webhook")
-async def post_webhook_alias(request: Request):
-    return await post_webhook(request)
+async def post_webhook_alias(request: Request, background_tasks: BackgroundTasks):
+    return await post_webhook(request, background_tasks)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -778,4 +840,23 @@ async def post_test_hook_tenant_billing_event(body: TestHookEventBody):
         "query_string": b"",
     }
     req = _StarletteRequest(scope, receive=_receive)
-    return await post_webhook(req)
+    # P0c Stage 2 · Feb-2026 — ``post_webhook`` now takes
+    # ``BackgroundTasks`` as a dependency. The test-hook endpoint
+    # drives it directly (not via FastAPI's DI graph), so we mint a
+    # fresh ``BackgroundTasks()`` and run its tasks manually after
+    # ``post_webhook`` returns so the smoke-test synchronously sees
+    # the ledger write + any dead-letter row.
+    bg = BackgroundTasks()
+    resp = await post_webhook(req, bg)
+    # Drain background tasks inline so the test-hook caller gets a
+    # synchronous view of the final ledger / dead-letter state.
+    for task in bg.tasks:
+        func = task.func
+        args = task.args
+        kwargs = task.kwargs
+        import inspect as _inspect
+        if _inspect.iscoroutinefunction(func):
+            await func(*args, **kwargs)
+        else:
+            func(*args, **kwargs)
+    return resp

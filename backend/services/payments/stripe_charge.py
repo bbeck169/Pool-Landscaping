@@ -150,6 +150,146 @@ def _select_webhook_secret() -> str:
     ).strip()
 
 
+def check_stripe_mode_consistency() -> Dict[str, Any]:
+    """P0c Stage 2 · Feb-2026 — Boot-time Stripe mode/secret consistency
+    audit. Returns a structured report describing which env vars
+    resolved for the current ``STRIPE_MODE`` and whether their
+    prefixes match the declared mode. Logs ``ERROR`` for each
+    inconsistency so an on-call operator sees the misconfig in
+    pod logs the moment the backend boots.
+
+    DOES NOT RAISE. Non-webhook Stripe flows (charges, setup-intents)
+    still function with a mismatched webhook secret; blocking boot
+    would make the misconfig harder to surface, not easier.
+
+    Also exported for the admin diagnostic endpoint
+    (``GET /api/admin/stripe/webhook-diagnostic``) — the same checks
+    power the on-UI remediation guidance.
+    """
+    issues: List[Dict[str, Any]] = []
+    mode = _mode()
+    env_hint = (os.environ.get("APP_ENV") or "").strip().lower()
+    is_prod_env = env_hint == "production"
+
+    api_key = _select_secret_key() or ""
+    wh_secret = _select_webhook_secret() or ""
+
+    # ── API key checks ────────────────────────────────────────────
+    if not api_key:
+        issues.append({
+            "severity": "error",
+            "code": "api_key_missing",
+            "message": (
+                f"Stripe API key is unset for STRIPE_MODE={mode}. "
+                f"Set STRIPE_SECRET_KEY_{mode.upper()} (or "
+                "STRIPE_API_KEY) on the pod."
+            ),
+        })
+    elif mode == "live" and api_key.startswith("sk_test_"):
+        issues.append({
+            "severity": "error",
+            "code": "api_key_test_in_live_mode",
+            "message": (
+                "Stripe API key is sk_test_* but STRIPE_MODE=live. "
+                "Rotate STRIPE_SECRET_KEY_LIVE to a sk_live_* key — "
+                "live charges + Thin-payload Event.retrieve calls "
+                "will fail against test keys."
+            ),
+        })
+    elif mode == "test" and api_key.startswith("sk_live_"):
+        issues.append({
+            "severity": "error",
+            "code": "api_key_live_in_test_mode",
+            "message": (
+                "Stripe API key is sk_live_* but STRIPE_MODE=test. "
+                "Rotate STRIPE_SECRET_KEY_TEST to a sk_test_* key — "
+                "test suites will post against real live Stripe."
+            ),
+        })
+
+    # ── Webhook signing secret checks ─────────────────────────────
+    if not wh_secret:
+        issues.append({
+            "severity": "error",
+            "code": "webhook_secret_missing",
+            "message": (
+                f"Stripe webhook signing secret unset for STRIPE_MODE="
+                f"{mode}. Set STRIPE_WEBHOOK_SECRET_{mode.upper()} "
+                "on the pod — webhook signature verification will "
+                "400 every event until this lands."
+            ),
+        })
+    elif not wh_secret.startswith("whsec_"):
+        issues.append({
+            "severity": "error",
+            "code": "webhook_secret_malformed",
+            "message": (
+                f"Stripe webhook secret for STRIPE_MODE={mode} does "
+                "not start with 'whsec_' — this is not a Stripe "
+                "signing secret. Copy the correct value from the "
+                "Stripe Dashboard webhook settings page."
+            ),
+        })
+
+    # ── Mode-env coherence check ──────────────────────────────────
+    # If the pod declares itself production (APP_ENV=production) but
+    # STRIPE_MODE is still test, log a loud warning — likely a stale
+    # deploy from a prior environment.
+    if is_prod_env and mode == "test":
+        issues.append({
+            "severity": "error",
+            "code": "stripe_test_mode_on_production_pod",
+            "message": (
+                "APP_ENV=production but STRIPE_MODE=test. Live-mode "
+                "payment events will not reach this pod. Set "
+                "STRIPE_MODE=live and restart."
+            ),
+        })
+
+    # Determine mode_match tag used by the UI diagnostic.
+    if api_key and wh_secret:
+        key_live = api_key.startswith("sk_live_")
+        key_test = api_key.startswith("sk_test_")
+        if mode == "live" and key_live and wh_secret.startswith("whsec_"):
+            mode_match = "live"
+        elif mode == "test" and key_test and wh_secret.startswith("whsec_"):
+            mode_match = "test"
+        elif (mode == "live" and not key_live) or (mode == "test" and not key_test):
+            mode_match = "mismatch"
+        else:
+            mode_match = "unknown"
+    else:
+        mode_match = "unknown"
+
+    report = {
+        "mode": mode,
+        "app_env": env_hint or None,
+        "api_key_configured": bool(api_key),
+        "api_key_prefix": (api_key[:8] + "…") if api_key else None,
+        "api_key_length": len(api_key),
+        "webhook_secret_configured": bool(wh_secret),
+        "webhook_secret_prefix": (wh_secret[:8] + "…") if wh_secret else None,
+        "webhook_secret_length": len(wh_secret),
+        "mode_match": mode_match,
+        "issues": issues,
+    }
+
+    # Log ERROR for each issue so pod logs capture them loudly.
+    for issue in issues:
+        logger.error(
+            "[stripe-boot-check] %s: %s", issue["code"], issue["message"],
+        )
+    if not issues:
+        logger.info(
+            "[stripe-boot-check] OK — mode=%s api_key=%s… webhook_secret=%s… match=%s",
+            mode,
+            api_key[:8] if api_key else "<unset>",
+            wh_secret[:8] if wh_secret else "<unset>",
+            mode_match,
+        )
+    return report
+
+
 # Phase 42.3 · Feb 2026 — pin api_version centrally. Matches the SDK-
 # shipped default at stripe-python@15.0.0 → insulates the response
 # shape from whoever last touched the Stripe dashboard.

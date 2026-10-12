@@ -1836,6 +1836,18 @@ async def _preview_isolation_boot_audit():
     except Exception as e:  # pragma: no cover
         logger.error(f"[preview_isolation] scrubber launch failed: {e}")
 
+    # P0c Stage 2 · Feb-2026 — Stripe mode/secret consistency check.
+    # Runs on every boot; logs ERROR for each inconsistency so an
+    # on-call operator sees misconfigured env the moment the pod
+    # starts. Does NOT raise — non-webhook Stripe flows still work
+    # with a wrong webhook secret, and silently failing boot would
+    # hide the problem.
+    try:
+        from services.payments.stripe_charge import check_stripe_mode_consistency
+        check_stripe_mode_consistency()
+    except Exception as e:  # pragma: no cover — defensive
+        logger.error(f"[stripe-boot-check] crashed: {e}")
+
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 
