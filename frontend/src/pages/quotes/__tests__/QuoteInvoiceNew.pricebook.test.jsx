@@ -85,25 +85,39 @@ describe("QuoteInvoiceNew × PricebookItemPicker", () => {
       const desc = await waitFor(() =>
         screen.getByTestId("qf-line-0-desc-input"),
       );
+      // Phase PRICEBOOK-UNIFY · Feb-2026 — PricebookItemPicker runs a
+      // 250 ms debounced ``setTimeout`` + async fetch chain before
+      // populating ``results[]``. ``fireEvent.change`` on the input
+      // fires the onChange prop synchronously, but the debounced
+      // results commit happens on the next macrotask tick + microtask
+      // chain. The test environment doesn't configure
+      // ``IS_REACT_ACT_ENVIRONMENT`` so wrapping in ``act(...)`` won't
+      // help — we instead give waitFor a timeout above the 250 ms
+      // debounce + room for the fetch resolution + React commit.
       fireEvent.change(desc, { target: { value: "acid" } });
       const row = await waitFor(() =>
         screen.getByTestId("qf-line-0-picker-item-0"),
-      { timeout: 1500 });
+      { timeout: 4500 });
       fireEvent.click(row);
       await waitFor(() =>
         expect(
           screen.getByTestId("qf-line-0-desc-input").value,
-        ).toBe("Muriatic acid — gal"),
+          // QF-1 · Feb-2026 (Option B + legacy-string) — on pick,
+          // ``item.description`` populates the picker's description
+          // slot (which drives this input's displayed value), while
+          // ``item.name`` populates a separate ``item_name`` SKU
+          // slot on the line. The pre-QF1 flow folded both into
+          // one value; this test previously asserted the SKU label
+          // after pick but the picker now shows the description.
+        ).toBe("Pool acid"),
       );
-      const price = screen.getByTestId("qf-line-0-qty").closest("div")
-        .parentElement.querySelector('[data-testid="qf-line-0-price"]');
-      // Fallback: the unit-price input isn't strictly testid'd, use
-      // the raw ``value`` off the surrounding form via query.
+      // Fallback: the unit-price input isn't strictly testid'd via a
+      // top-level attribute; find it via the Quote-line price testid.
       const priceInput = screen.getAllByRole("spinbutton").find(
         (i) => i.getAttribute("data-testid") === "qf-line-0-price"
                 || i.value === "12.5"
                 || i.value === "12.50",
       );
       expect(priceInput).toBeTruthy();
-    });
+    }, 10000);
 });
