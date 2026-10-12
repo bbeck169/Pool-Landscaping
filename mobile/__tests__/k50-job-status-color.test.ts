@@ -15,15 +15,15 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     expect(jobStatusColor("open")).toBe("#EAF7F0");
     expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
-    expect(jobStatusColor("completed")).toBe("#DC2626");
+    expect(jobStatusColor("completed")).toBe("#ff4542");
     expect(jobStatusColor("cancelled")).toBe("#FECACA");
     expect(jobStatusColor("skipped")).toBe("#FED7AA");
   });
 
   it("resolves legacy aliases (active / closed / canceled)", () => {
     expect(jobStatusColor("active")).toBe("#FEF3C7");
-    expect(jobStatusColor("closed")).toBe("#DC2626");
-    expect(jobStatusColor("done")).toBe("#DC2626");
+    expect(jobStatusColor("closed")).toBe("#ff4542");
+    expect(jobStatusColor("done")).toBe("#ff4542");
     expect(jobStatusColor("canceled")).toBe("#FECACA");
   });
 
@@ -40,7 +40,7 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
 
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
-    expect(jobStatusColor("COMPLETED")).toBe("#DC2626");
+    expect(jobStatusColor("COMPLETED")).toBe("#ff4542");
   });
 
   it("returns null for statuses outside the K50 map (caller falls back)", () => {
@@ -65,7 +65,7 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
       open: "#EAF7F0",
       scheduled: "#EAF7F0",
       in_progress: "#FEF3C7",
-      completed: "#DC2626",
+      completed: "#ff4542",
       cancelled: "#FECACA",
       skipped: "#FED7AA",
     });
