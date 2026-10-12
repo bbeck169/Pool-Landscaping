@@ -4790,6 +4790,23 @@ async def _run_boot_sequence():
             logger.warning(f"seed_system_templates migration crashed: {e}")
     asyncio.create_task(_bg_seed_system_templates())
 
+    # Feb-2026 · Quote/Estimate email · fan-out the ``quote_estimate_
+    # email`` system template across every tenant. Idempotent via
+    # ``(tenant_id, system_key)`` natural key; fail-soft per tenant.
+    # Logging is a single aggregated INFO line — no per-tenant chatter.
+    async def _bg_seed_quote_estimate_template():
+        try:
+            from services.migrations.seed_quote_estimate_template import (
+                seed_all_tenants as _seed_quote_estimate_all,
+            )
+            _q_report = await _seed_quote_estimate_all()
+            logger.info(f"[seed_quote_estimate_template] {_q_report}")
+        except Exception as e:
+            logger.warning(
+                f"seed_quote_estimate_template migration crashed: {e}"
+            )
+    asyncio.create_task(_bg_seed_quote_estimate_template())
+
     # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
     # of the ``mobiles`` / ``emails`` arrays from the legacy scalar
     # ``phone`` / ``email`` fields. Skipped for docs that already have

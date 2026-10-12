@@ -576,6 +576,23 @@ async def create_tenant(body: TenantCreate, admin: dict = Depends(require_super_
             "[tenant.provision] system-template seed failed for %s: %s",
             doc["id"], e,
         )
+    # Feb-2026 · Quote/Estimate email — idempotent per-tenant seed of
+    # the ``quote_estimate_email`` system template. Fail-soft so a
+    # seed error here cannot block tenant provisioning.
+    try:
+        from services.migrations.seed_quote_estimate_template import (
+            seed_for_tenant as _seed_quote_tpl,
+        )
+        _quote_report = await _seed_quote_tpl(doc["id"])
+        logger.info(
+            "[tenant.provision] seeded quote_estimate_email for %s: %s",
+            doc["id"], _quote_report,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[tenant.provision] quote_estimate_email seed failed for %s: %s",
+            doc["id"], e,
+        )
     return doc
 
 

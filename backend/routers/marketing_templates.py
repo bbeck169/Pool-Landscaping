@@ -58,6 +58,10 @@ ALLOWED_CATEGORIES = {
     # portal_invite_email`` and ``code=job_completion_sms``. Seeded
     # by ``migrations/te_portal_job_templates_seed.py``.
     "portal_invite", "job_completion",
+    # Feb-2026 · Quote/Estimate email seed — one system-default row
+    # per tenant with ``system_key=quote_estimate_email``. Seeded by
+    # ``services/migrations/seed_quote_estimate_template.py``.
+    "quotes",
 }
 
 
