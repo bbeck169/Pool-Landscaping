@@ -8,7 +8,7 @@
 //   POST /stop, all fields (recurrence_never_ends, monthly_pattern,
 //   monthly_nth_week, monthly_weekday).
 // Admin / super-admin / manager only.
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, Switch, Pressable, Platform,
   Modal, ScrollView } from "react-native";
@@ -16,6 +16,7 @@ import { useFocusEffect } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import dayjs from "dayjs";
 import { format as fmtDate } from "date-fns";
+import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
@@ -50,7 +51,23 @@ type RecurringJob = {
   monthly_weekday?: number;
   /** Server-computed next occurrences, date-only ISO (``YYYY-MM-DD``). */
   upcoming?: string[];
+  // Web parity (RecurringJobs.jsx R2 / P54) · search + category filter fields.
+  customer_company_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
+  service_category_id?: string | null;
 };
+
+type ServiceCategory = { id: string; name: string; is_archived?: boolean };
+
+/** Web R2 parity · customer-field haystack only (name, company, email,
+ *  phone) — NOT notes / job type. ``q`` is already trimmed + lowercased. */
+function matchesSearch(r: RecurringJob, q: string): boolean {
+  if (!q) return true;
+  const hay = [r.customer_name, r.customer_company_name, r.customer_email, r.customer_phone]
+    .filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(q);
+}
 
 // Web parity (52c3eb6fa) · 5 of the 7 shared presets, in chip display order.
 const DATE_PRESET_KEYS = ["today", "this_week", "next_7_days", "next_30_days", "this_month"] as const;
@@ -208,7 +225,38 @@ export default function RecurringJobsMobile() {
     setDateFilter({ start: fmtDate(start, "yyyy-MM-dd"), end: fmtDate(end, "yyyy-MM-dd"), presetKey: key });
   }, []);
   const clearDateFilter = useCallback(() => setDateFilter(NO_DATE_FILTER), []);
-  const visibleRows = useMemo(() => filterByNextDate(rows, dateFilter), [rows, dateFilter]);
+  // Web parity (R2) · customer search — ``searchInput`` is what the user
+  // types; ``searchQuery`` is the 250 ms-debounced, trimmed, lowercased
+  // value the filter reads.
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput.trim().toLowerCase()), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+  // Web parity (P54) · service-category filter. ``""`` = All categories.
+  const [serviceCategoryFilter, setServiceCategoryFilter] = useState("");
+  const [serviceCats, setServiceCats] = useState<ServiceCategory[]>([]);
+  const [catSheetOpen, setCatSheetOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/service-categories")
+      .then((r: any) => {
+        if (!cancelled) setServiceCats((r?.items || []).filter((c: ServiceCategory) => !c.is_archived));
+      })
+      .catch(() => { if (!cancelled) setServiceCats([]); }); // graceful: only "All categories"
+    return () => { cancelled = true; };
+  }, []);
+  const serviceCategoryLabel =
+    serviceCats.find((c) => c.id === serviceCategoryFilter)?.name || "All categories";
+  // search AND category AND date (AND the server-side Active / Paused tab).
+  const visibleRows = useMemo(() => {
+    let vis = rows;
+    if (searchQuery) vis = vis.filter((r) => matchesSearch(r, searchQuery));
+    if (serviceCategoryFilter) vis = vis.filter((r) => r.service_category_id === serviceCategoryFilter);
+    return filterByNextDate(vis, dateFilter);
+  }, [rows, searchQuery, serviceCategoryFilter, dateFilter]);
+  const anyFilterActive = !!(searchQuery || serviceCategoryFilter || dateFilterActive);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -400,6 +448,56 @@ export default function RecurringJobsMobile() {
           <Text style={s.hint} testID="recurring-hint">
             Auto-generates a rolling 2-week horizon of jobs (nightly at 02:00 UTC).
           </Text>
+          {/* Web parity (R2 + P54) · customer search + service-category
+              filter — inline, full width, above the date chips. */}
+          <View style={s.searchWrap}>
+            <Ionicons name="search-outline" size={18} color={colors.muted} />
+            <AppTextInput
+              testID="recurring-search-input"
+              style={s.searchInput}
+              value={searchInput}
+              onChangeText={setSearchInput}
+              placeholder="Search by customer name…"
+              placeholderTextColor={colors.muted}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              accessibilityLabel="Search recurring jobs by customer"
+            />
+            {searchInput.length > 0 ? (
+              <Pressable onPress={() => setSearchInput("")} testID="recurring-search-clear" hitSlop={12} accessibilityLabel="Clear search">
+                <Ionicons name="close-circle" size={18} color={colors.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+          <Pressable
+            onPress={() => setCatSheetOpen(true)}
+            style={[s.dateField, s.catField]}
+            testID="recurring-jobs-service-category-filter"
+            accessibilityLabel="Filter recurring jobs by service category"
+          >
+            <Text style={s.dateFieldText} numberOfLines={1}>{serviceCategoryLabel}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.muted} />
+          </Pressable>
+          <Sheet visible={catSheetOpen} onClose={() => setCatSheetOpen(false)} title="Service category" testID="recurring-jobs-service-category-sheet">
+            <ScrollView style={{ maxHeight: 420 }}>
+              {[{ id: "", name: "All categories" }, ...serviceCats].map((c) => {
+                const on = serviceCategoryFilter === c.id;
+                return (
+                  <Pressable
+                    key={c.id || "all"}
+                    onPress={() => { setServiceCategoryFilter(c.id); setCatSheetOpen(false); }}
+                    style={s.catOption}
+                    testID={`recurring-jobs-service-category-option-${c.id || "all"}`}
+                    accessibilityState={{ selected: on }}
+                  >
+                    <Text style={[s.catOptionText, on && { color: colors.brand, fontFamily: font.semibold }]}>{c.name}</Text>
+                    {on ? <Ionicons name="checkmark" size={18} color={colors.brand} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Sheet>
           {/* Web parity (52c3eb6fa) · "Next" date filter row. */}
           <View style={s.dateFilterBox} testID="recurring-jobs-date-filter">
             <Text style={s.fieldLabel}>Next date</Text>
@@ -455,9 +553,9 @@ export default function RecurringJobsMobile() {
         </View>
       }
     >
-      {dateFilterActive && visibleRows.length === 0 ? (
-        <Text style={s.hint} testID="recurring-jobs-date-no-match">
-          No recurring jobs have a next date in this range.
+      {anyFilterActive && visibleRows.length === 0 && rows.length > 0 ? (
+        <Text style={s.hint} testID="recurring-jobs-empty">
+          No recurring jobs match your search.
         </Text>
       ) : null}
       {visibleRows.map((r) => (
@@ -809,6 +907,23 @@ const s = StyleSheet.create({
   filterChipText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
   filterChipTextActive: { color: colors.brand },
   dateRangeRow: { flexDirection: "row", gap: spacing.sm },
+  // Web parity (R2 / P54) · search box mirrors src/components/tools/SearchBar
+  // styling (minus its outer margin); category option rows for the sheet.
+  searchWrap: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44,
+  },
+  searchInput: {
+    flex: 1, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  },
+  catField: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44 },
+  catOption: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    minHeight: 44, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  catOptionText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
   clearBtn: { alignSelf: "flex-start", minHeight: 32, justifyContent: "center" },
   clearText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, textDecorationLine: "underline" },
   row: {
