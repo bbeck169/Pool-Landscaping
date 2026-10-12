@@ -120,7 +120,24 @@ function NoteBlock({ label, text, jobId, testId }) {
       && window.__EXPANDED_FIX_V2__ === undefined) {
     window.__EXPANDED_FIX_V2__ = "jobnotescallout_noteblock";
   }
-  const [expanded, setExpanded] = useState(false); // expanded fix
+  // Recurrence #7 (Feb-2026) — atomic-tuple useState pattern.
+  // The deploy pipeline silently dropped line 189 (the sibling
+  // useState in the default-export component) between HEAD and
+  // the production artifact on `.0d15d04e`, producing a 4-site
+  // orphan read + ReferenceError. The pattern below splits the
+  // hook call and the destructure across THREE statements so a
+  // line-level drop cannot leave a hook-reference orphaned, and
+  // adds an Array.isArray fallback so if the tuple is somehow
+  // undefined the component gracefully degrades to always-
+  // collapsed instead of crashing. DO NOT SPLIT the three lines
+  // across unrelated edits — they are an atomic unit.
+  if (typeof window !== "undefined"
+      && window.__EXPANDED_FIX_V3__ === undefined) {
+    window.__EXPANDED_FIX_V3__ = "jobnotescallout_noteblock_v3";
+  }
+  const expandedTuple = React.useState(false); // expanded fix v3 (atomic — do not split)
+  const expanded      = Array.isArray(expandedTuple) ? expandedTuple[0] : false;
+  const setExpanded   = Array.isArray(expandedTuple) ? expandedTuple[1] : () => {};
   const safe = (text && String(text).trim()) ? String(text) : "";
   if (!safe) return null;
   const overflow = safe.length > CUSTOMER_NOTE_CHAR_LIMIT
@@ -186,7 +203,21 @@ export default function JobNotesCallout({
       && window.__EXPANDED_FIX_V2_MAIN__ === undefined) {
     window.__EXPANDED_FIX_V2_MAIN__ = "jobnotescallout_main";
   }
-  const [expanded, setExpanded] = useState(false); // expanded fix
+  // Recurrence #7 (Feb-2026) — atomic-tuple useState pattern.
+  // THIS component was the one whose line-level useState was
+  // dropped on prod `.0d15d04e`. The split-across-three-statements
+  // pattern below is the primary defensive measure — if a future
+  // deploy strips any one of the three lines, the remaining lines
+  // keep the component rendering (graceful degrade to always-
+  // collapsed) instead of a ReferenceError. See NoteBlock above
+  // for the detailed rationale. DO NOT SPLIT.
+  if (typeof window !== "undefined"
+      && window.__EXPANDED_FIX_V3_MAIN__ === undefined) {
+    window.__EXPANDED_FIX_V3_MAIN__ = "jobnotescallout_main_v3";
+  }
+  const expandedTuple = React.useState(false); // expanded fix v3 (atomic — do not split)
+  const expanded      = Array.isArray(expandedTuple) ? expandedTuple[0] : false;
+  const setExpanded   = Array.isArray(expandedTuple) ? expandedTuple[1] : () => {};
   const jobNote     = (note && String(note).trim()) ? String(note) : "";
   const custNote    = (customerNote && String(customerNote).trim())
                         ? String(customerNote).trim() : "";
