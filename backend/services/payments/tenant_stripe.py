@@ -369,34 +369,233 @@ class StripeConnectProvider(TenantPaymentProvider):
         )
 
     async def test_connection(self, *, tenant_id: str) -> ConnectionHealth:
+        """P0e Stage 2 · Feb-2026 — Distinct error-branch probe.
+
+        Each Stripe SDK exception maps to a specific ``error_code``
+        + user-facing ``message`` + ``remediation`` string. The
+        admin UI keys off ``error_code`` to decide which recovery
+        affordance to render (``Re-enter Stripe Key`` for revoked /
+        mismatch; silent retry suggestion for connectivity / rate-
+        limit). On success, the response carries the mode detected
+        from the key prefix so the admin can confirm live-vs-test
+        before clicking Save.
+        """
         tok = await self._tenant_access_token(tenant_id)
         if not tok:
             return ConnectionHealth(
                 provider_key=PROVIDER_KEY, tenant_id=tenant_id,
                 ok=False, connected_account_id_masked=None,
-                message="No Stripe connection configured for this tenant.",
+                message=(
+                    "No Stripe connection configured for this tenant. "
+                    "Click 'Connect Stripe' to start the OAuth flow."
+                ),
                 checked_at=_now_iso(),
+                error_code="stripe_not_connected",
+                remediation="Click 'Connect Stripe' on the Integrations card.",
             )
+
+        # Mode inference — purely from key prefix. The SDK accepts
+        # both ``sk_live_`` + ``sk_test_`` + Connect's rotating
+        # ``access_token`` (which also follows the ``sk_live_`` /
+        # ``sk_test_`` convention). Returned on BOTH success + any
+        # error path so the UI can prominently warn when the mode
+        # doesn't match the pod's configured ``STRIPE_MODE``.
+        _mode = (
+            "live" if tok.startswith("sk_live_")
+            else "test" if tok.startswith("sk_test_")
+            else None
+        )
+
         try:
-            # Cheapest Stripe API probe — Account.retrieve (returns
-            # the connected account object; also validates the token
-            # hasn't been revoked).
-            resp = await self._blocking(self._stripe.Account.retrieve, api_key=tok)
+            resp = await self._blocking(
+                self._stripe.Account.retrieve, api_key=tok,
+            )
             data = resp if isinstance(resp, dict) else resp.to_dict()
-            acct = data.get("id")
+            acct = data.get("id") or ""
+            masked = (
+                f"{acct[:5]}…{acct[-4:]}"
+                if acct and len(acct) > 8 else acct
+            )
             return ConnectionHealth(
                 provider_key=PROVIDER_KEY, tenant_id=tenant_id,
                 ok=True,
-                connected_account_id_masked=(f"{acct[:5]}…{acct[-4:]}" if acct and len(acct) > 8 else acct),
-                message="Stripe Account.retrieve returned OK.",
+                connected_account_id_masked=masked or None,
+                message=f"Connected to Stripe account {masked} ({_mode or 'unknown'} mode).",
                 checked_at=_now_iso(),
+                mode=_mode,
             )
-        except Exception as e:
+        except self._stripe.error.AuthenticationError as e:
+            # Revoked / rotated / wrong-account / malformed key.
+            log.warning(
+                "stripe test_connection AuthenticationError tenant=%s: %s",
+                tenant_id, str(e)[:200],
+            )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=(
+                    "The stored Stripe secret key was rejected. It "
+                    "may have been revoked, rotated, or belongs to a "
+                    "different account. Click 'Re-enter Stripe Key' "
+                    "to update it."
+                ),
+                checked_at=_now_iso(),
+                error_code="stripe_key_invalid_or_revoked",
+                error_class="AuthenticationError",
+                remediation=(
+                    "Reconnect Stripe via OAuth — the current token has "
+                    "been rejected by Stripe and must be refreshed."
+                ),
+                mode=_mode,
+            )
+        except self._stripe.error.PermissionError as e:
+            log.warning(
+                "stripe test_connection PermissionError tenant=%s: %s",
+                tenant_id, str(e)[:200],
+            )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=(
+                    "The Stripe key is valid but lacks required "
+                    "permissions. Use a restricted key with "
+                    "[Account Read, Payment Read/Write, Customer "
+                    "Read/Write, Charge Read/Write, Webhook endpoint "
+                    "access] or the default secret key."
+                ),
+                checked_at=_now_iso(),
+                error_code="stripe_key_missing_scopes",
+                error_class="PermissionError",
+                remediation=(
+                    "Issue a new restricted key with the required "
+                    "scopes OR use the default (unrestricted) secret "
+                    "key from Stripe Dashboard → Developers → API keys."
+                ),
+                mode=_mode,
+            )
+        except self._stripe.error.RateLimitError as e:
+            log.warning(
+                "stripe test_connection RateLimitError tenant=%s: %s",
+                tenant_id, str(e)[:200],
+            )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=(
+                    "Stripe is rate-limiting requests. Retry in a "
+                    "few seconds."
+                ),
+                checked_at=_now_iso(),
+                error_code="stripe_rate_limited",
+                error_class="RateLimitError",
+                remediation="Wait 10 seconds and click Test again.",
+                mode=_mode,
+            )
+        except self._stripe.error.APIConnectionError as e:
+            log.warning(
+                "stripe test_connection APIConnectionError tenant=%s: %s",
+                tenant_id, str(e)[:200],
+            )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=(
+                    "Could not reach Stripe's API. Check your "
+                    "network / firewall and retry in a moment."
+                ),
+                checked_at=_now_iso(),
+                error_code="stripe_connectivity_error",
+                error_class="APIConnectionError",
+                remediation=(
+                    "Verify outbound HTTPS to api.stripe.com from "
+                    "the pod + retry. If the problem persists, "
+                    "check Stripe's status page."
+                ),
+                mode=_mode,
+            )
+        except self._stripe.error.InvalidRequestError as e:
+            # ``account_id`` mismatch sometimes surfaces here when
+            # the stored token's Stripe account was deleted or when
+            # a sub-account lookup is attempted with a parent key.
+            log.warning(
+                "stripe test_connection InvalidRequestError tenant=%s: %s",
+                tenant_id, str(e)[:200],
+            )
+            msg = str(e)
+            is_account_mismatch = (
+                "account" in msg.lower()
+                and ("mismatch" in msg.lower() or "no such account" in msg.lower())
+            )
+            if is_account_mismatch:
+                return ConnectionHealth(
+                    provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                    ok=False, connected_account_id_masked=None,
+                    message=(
+                        "The Stripe key belongs to a different "
+                        "account than this tenant expects. "
+                        "Reconnect using the correct Stripe account."
+                    ),
+                    checked_at=_now_iso(),
+                    error_code="stripe_account_mismatch",
+                    error_class="InvalidRequestError",
+                    remediation=(
+                        "Disconnect this tenant from Stripe and "
+                        "reconnect using the intended Stripe account."
+                    ),
+                    mode=_mode,
+                )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=f"Stripe rejected the request: {msg[:160]}",
+                checked_at=_now_iso(),
+                error_code="stripe_api_error",
+                error_class="InvalidRequestError",
+                remediation=(
+                    "See pod logs for the full Stripe error. The "
+                    "request was syntactically rejected by Stripe."
+                ),
+                mode=_mode,
+            )
+        except self._stripe.error.StripeError as e:  # catch-all
+            log.warning(
+                "stripe test_connection %s tenant=%s: %s",
+                type(e).__name__, tenant_id, str(e)[:200],
+            )
+            return ConnectionHealth(
+                provider_key=PROVIDER_KEY, tenant_id=tenant_id,
+                ok=False, connected_account_id_masked=None,
+                message=(
+                    f"Stripe returned an unexpected error: "
+                    f"{str(e)[:160]}. See logs for details."
+                ),
+                checked_at=_now_iso(),
+                error_code="stripe_api_error",
+                error_class=type(e).__name__,
+                remediation=(
+                    "Check pod logs for the full Stripe error. "
+                    "Retry; if the problem persists, open a support "
+                    "ticket with the error_class + checked_at."
+                ),
+                mode=_mode,
+            )
+        except Exception as e:  # pragma: no cover — defensive
+            log.exception(
+                "stripe test_connection non-SDK exception tenant=%s",
+                tenant_id,
+            )
             return ConnectionHealth(
                 provider_key=PROVIDER_KEY, tenant_id=tenant_id,
                 ok=False, connected_account_id_masked=None,
                 message=f"Stripe probe failed: {type(e).__name__}",
                 checked_at=_now_iso(),
+                error_code="stripe_probe_internal_error",
+                error_class=type(e).__name__,
+                remediation=(
+                    "This is an internal error, not a Stripe-side "
+                    "rejection. See pod logs."
+                ),
+                mode=_mode,
             )
 
     # ── OAuth callback (used by the router) ──────────────────────

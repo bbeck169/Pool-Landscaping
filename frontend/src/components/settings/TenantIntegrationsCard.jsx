@@ -50,6 +50,127 @@ const COMING_SOON = [
   { key: "storage",   label: "Object storage",   desc: "S3 · GCS · Emergent-managed default." },
 ];
 
+// P0e Stage 2 S2-2 · Feb-2026 — error-code → toast-title mapping.
+// Keyed off the backend ``error_code`` field; falls back to a
+// generic string on any unrecognised code so new codes don't crash
+// the UI during the deprecation window of an older frontend.
+const _PROBE_ERROR_TITLES = {
+  stripe_not_connected:          "not connected",
+  stripe_key_invalid_or_revoked: "key rejected — re-enter required",
+  stripe_key_missing_scopes:     "key missing permissions",
+  stripe_rate_limited:           "rate-limited — retry in a moment",
+  stripe_connectivity_error:     "connectivity error — check network",
+  stripe_account_mismatch:       "account mismatch — reconnect",
+  stripe_api_error:              "Stripe API error",
+  stripe_probe_internal_error:   "internal error — see logs",
+};
+function _probeErrorTitle(code) {
+  return _PROBE_ERROR_TITLES[code] || "connection failed";
+}
+
+// P0e Stage 2 S2-2 · Feb-2026 — Error codes that mean the stored
+// token is unrecoverable and the admin MUST reconnect via OAuth
+// (clicking the inline button triggers the connect-link flow).
+const _PROBE_RECONNECT_CODES = new Set([
+  "stripe_key_invalid_or_revoked",
+  "stripe_account_mismatch",
+  "stripe_not_connected",
+]);
+
+// P0e Stage 2 S2-2 · Feb-2026 — Panel surfaced in the Stripe card
+// after a probe. Shows a GREEN success summary (account + mode +
+// timestamp) OR a RED/AMBER error state with the backend-provided
+// specific message, remediation, and (for revoked/mismatch codes)
+// a prominent "Re-enter Stripe Key" button that re-enters the
+// OAuth flow.
+function StripeProbeResultPanel({ result, onReconnect, busy }) {
+  if (!result) return null;
+  const ok = !!result.ok;
+  const code = result.error_code || null;
+  const isTransient = code === "stripe_rate_limited" || code === "stripe_connectivity_error";
+  const needsReconnect = !ok && code && _PROBE_RECONNECT_CODES.has(code);
+
+  const tone = ok ? "green" : (isTransient ? "amber" : "red");
+  const toneStyles = {
+    green: { bg: "#F0FDF4", border: "#86EFAC", text: "#166534", label: "Connected" },
+    amber: { bg: "#FFFBEB", border: "#FCD34D", text: "#92400E", label: "Transient issue" },
+    red:   { bg: "#FEF2F2", border: "#FCA5A5", text: "#991B1B", label: "Action required" },
+  }[tone];
+  const ts = result.checked_at
+    ? new Date(result.checked_at).toLocaleString()
+    : null;
+
+  return (
+    <div
+      className="rounded-lg px-3 py-2 text-xs space-y-2"
+      style={{
+        backgroundColor: toneStyles.bg,
+        border: `1px solid ${toneStyles.border}`,
+        color: toneStyles.text,
+      }}
+      data-testid="stripe-probe-result"
+      data-tone={tone}
+      data-error-code={code || ""}
+    >
+      <div className="font-semibold" data-testid="stripe-probe-tone-label">
+        {toneStyles.label}
+      </div>
+      {ok && (
+        <>
+          {result.connected_account_id_masked && (
+            <div data-testid="stripe-probe-account">
+              <span className="font-semibold">Account:</span>{" "}
+              <span className="font-mono">{result.connected_account_id_masked}</span>
+            </div>
+          )}
+          {result.mode && (
+            <div data-testid="stripe-probe-mode">
+              <span className="font-semibold">Mode:</span>{" "}
+              <span className="font-mono">{result.mode}</span>
+            </div>
+          )}
+        </>
+      )}
+      <div data-testid="stripe-probe-message" className="whitespace-pre-wrap">
+        {result.message || (ok ? "Connection OK." : "Connection failed.")}
+      </div>
+      {!ok && result.remediation && (
+        <div
+          className="text-[11px]"
+          data-testid="stripe-probe-remediation"
+          style={{ opacity: 0.9 }}
+        >
+          {result.remediation}
+        </div>
+      )}
+      {ts && (
+        <div className="text-[11px]" data-testid="stripe-probe-timestamp" style={{ opacity: 0.7 }}>
+          Last checked: {ts}
+        </div>
+      )}
+      {needsReconnect && (
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={onReconnect}
+            disabled={busy}
+            className="px-3 py-1 rounded-md text-xs font-semibold"
+            style={{
+              backgroundColor: toneStyles.text,
+              color: "#FFFFFF",
+              opacity: busy ? 0.6 : 1,
+            }}
+            data-testid="stripe-probe-reenter-key"
+          >
+            {busy ? "Opening Stripe…" : "Re-enter Stripe Key"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // Phase I1.7.c.1 — AI provider display metadata (short_name → label).
 const AI_PROVIDER_LABELS = {
   ai_openai:    { short: "openai",    label: "OpenAI",    desc: "Bring your own OpenAI API key (GPT-4o etc)." },
@@ -185,6 +306,14 @@ function StripeCard({ row, health, canWrite, busy, setBusyFor, reload }) {
   const state = isConnected ? "connected" : "disconnected";
   const stateLabel = isConnected ? "Connected" : "Not connected";
 
+  // P0e Stage 2 S2-2 · Feb-2026 — In-card probe result slot. Keyed
+  // off the ``error_code`` field returned by the backend probe so
+  // we render error-specific remediation + a prominent
+  // "Re-enter Stripe Key" button on invalid/revoked/mismatch
+  // codes. Replaces the pre-fix toast-only generic
+  // "Stripe probe failed: AuthenticationError" message.
+  const [probeResult, setProbeResult] = useState(null);
+
   const connect = async () => {
     setBusyFor("stripe", "connect");
     try {
@@ -200,11 +329,26 @@ function StripeCard({ row, health, canWrite, busy, setBusyFor, reload }) {
     setBusyFor("stripe", "test");
     try {
       const r = await api.post("/tenants/me/integrations/stripe/test");
-      if (r?.ok) toast.success(`Stripe · ${r.message || "connected"}`);
-      else toast.error(`Stripe · ${r?.message || "connection failed"}`);
+      setProbeResult(r);
+      if (r?.ok) {
+        const mode = r.mode || "unknown";
+        toast.success(`Stripe · connected (${mode} mode)`);
+      } else {
+        // Distinct error — show in-card detail; toast carries a
+        // short title so the admin notices without having to
+        // scroll.
+        const title = _probeErrorTitle(r?.error_code);
+        toast.error(`Stripe · ${title}`);
+      }
       await reload();
-    } catch (e) { toast.error(e?.message || "Stripe test failed"); }
-    finally { setBusyFor("stripe", null); }
+    } catch (e) {
+      setProbeResult({
+        ok: false, error_code: "stripe_probe_internal_error",
+        message: e?.message || "Stripe test failed",
+        remediation: "See browser console or pod logs for details.",
+      });
+      toast.error(e?.message || "Stripe test failed");
+    } finally { setBusyFor("stripe", null); }
   };
 
   const remove = async () => {
@@ -214,6 +358,7 @@ function StripeCard({ row, health, canWrite, busy, setBusyFor, reload }) {
       const r = await api.delete("/tenants/me/integrations/stripe");
       if (r?.removed) toast.success("Stripe disconnected.");
       else toast("Stripe was not connected.");
+      setProbeResult(null);
       await reload();
     } catch (e) { toast.error(e?.message || "Stripe disconnect failed"); }
     finally { setBusyFor("stripe", null); }
@@ -258,6 +403,14 @@ function StripeCard({ row, health, canWrite, busy, setBusyFor, reload }) {
               <span data-testid="tenant-integration-stripe-last-used">{new Date(row.last_used_at).toLocaleString()}</span></div>
           )}
         </div>
+      )}
+
+      {probeResult && (
+        <StripeProbeResultPanel
+          result={probeResult}
+          onReconnect={connect}
+          busy={!!busy.stripe}
+        />
       )}
 
       <div className="flex items-center gap-2 flex-wrap">
