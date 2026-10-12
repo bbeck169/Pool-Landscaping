@@ -199,6 +199,26 @@ async def _build_payload(est: dict, tenant: dict, *,
         property_address = bill_to.get("address")
 
     line_items = est.get("line_items") or []
+    # Feb-2026 · Track 3 — per-line ``total`` fallback. Historical write
+    # paths (``routers/quotes.py``, ``routers/estimator.py``) do not
+    # persist ``total`` / ``line_total`` on each line_item; the admin
+    # React editor computes them client-side at render time while the
+    # customer-facing ``EstimateView`` ungrouped table reads ``li.total``
+    # bare and renders blanks when null.  Compute the display total at
+    # the serializer boundary so BOTH admin and public payloads carry a
+    # non-null numeric value for every line.  Mirrors the customer PDF
+    # fallback in ``estimate_viewer.py::is_customer_pdf`` (see the
+    # ``_lt_raw`` branch) to keep JSON + PDF numbers byte-identical.
+    # Preserve any pre-computed value (``total`` wins, then
+    # ``line_total``) — only fill when BOTH are absent/null.
+    _patched_lines = []
+    for li in line_items:
+        if (li.get("total") is None) and (li.get("line_total") is None):
+            _qty = float(li.get("quantity") or 0)
+            _unit = float(li.get("unit_price") or 0)
+            li = {**li, "total": round(_qty * _unit, 2)}
+        _patched_lines.append(li)
+    line_items = _patched_lines
     totals = _compute_totals(est)
     if as_customer:
         line_items = _project_line_items_for_customer(line_items)
