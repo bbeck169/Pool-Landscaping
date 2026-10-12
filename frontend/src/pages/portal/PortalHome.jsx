@@ -20,6 +20,7 @@ import MyReferralsSection from "@/pages/portal/MyReferralsSection";
 import AIAvatar from "@/components/ai/AIAvatar";
 import TechAvatar from "@/components/common/TechAvatar";
 import PaymentMethodPromptModal from "@/components/portal/PaymentMethodPromptModal";
+import PortalEditProfileModal from "@/components/portal/PortalEditProfileModal";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -81,6 +82,18 @@ export default function PortalHome() {
   //   ``{next_visits: []}`` = eligible → no tiles rendered.
   //   ``"error"`` = endpoint 500'd → row hidden, no crash.
   const [nextVisits, setNextVisits] = useState(null);
+
+  // Feb-2026 · Edit Profile — hero banner quick-edit modal state.
+  // Atomic-tuple pattern used in sibling modal; parent needs only a
+  // plain boolean so the standard destructured ``useState`` is kept
+  // here (parent isn't on the deploy-corruption at-risk list).
+  const [profileOpen, setProfileOpen] = useState(false);
+  const _refetchGreeting = () => {
+    // Lightweight — the hero only consumes ``data.customer.first_name``
+    // + ``data.customer.name``, so refetching ``/portal/home`` is
+    // sufficient. No regen of nextVisits / summary necessary.
+    api.get("/portal/home").then(setData).catch(() => {});
+  };
 
   const loadSummary = () => {
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
@@ -154,6 +167,23 @@ export default function PortalHome() {
           once per browser session when the customer has no card or a
           card expiring within 30 days.  Hidden during impersonation. */}
       <PaymentMethodPromptModal />
+      {/* Feb-2026 · Edit Profile — quick-edit modal (4 fields) opened
+          from the hero banner button. ``initial`` pre-fills from the
+          already-fetched ``/portal/home`` payload so the modal has
+          no own data-source. ``onSaved`` triggers a lightweight
+          refetch so the greeting + hero reflect any name change
+          without a full page reload. */}
+      <PortalEditProfileModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        initial={{
+          first_name: data?.customer?.first_name || "",
+          last_name:  data?.customer?.last_name  || "",
+          phone:      data?.customer?.phone      || "",
+          email:      data?.customer?.email      || "",
+        }}
+        onSaved={_refetchGreeting}
+      />
       {/* Feb-2026 · Item 9 — first thing the customer sees.
           Phase 34 · Feb 2026 · surgical removal — the "Good evening,
           {name}!" greeting tile (blue→green gradient + Contact us /
@@ -226,6 +256,27 @@ export default function PortalHome() {
             backgroundPosition: "center",
           }}
         />
+        {/* Feb-2026 · Edit Profile — hero quick-affordance. Absolute
+            top-right pill so the ``Hi, {first}`` greeting + Next
+            Visit tile keep their visual weight. Opens the quick-edit
+            modal (first_name / last_name / phone / email); users
+            needing more fields follow the "Edit full profile →"
+            link inside the modal to ``/portal/profile``. */}
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium backdrop-blur"
+          style={{
+            background: "rgba(255,255,255,0.15)",
+            color: "#FFFFFF",
+            border: "1px solid rgba(255,255,255,0.25)",
+          }}
+          data-testid="portal-hero-edit-profile-btn"
+          aria-label="Edit profile"
+        >
+          <UserRound className="w-3.5 h-3.5" aria-hidden="true" />
+          Edit profile
+        </button>
         <div className="relative">
           <p className="text-white/85 text-sm">Welcome back</p>
           <h1 className="text-3xl md:text-4xl font-bold mt-1">Hi, {first} 👋</h1>
