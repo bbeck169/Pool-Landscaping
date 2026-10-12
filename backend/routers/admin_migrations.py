@@ -1898,18 +1898,20 @@ async def run_customer_credit_parity_audit(
         plural = int(cust.get("credits_balance_cents") or 0)
 
         _single_ok = ledger_cents == singular
-        _plural_ok = ledger_cents == plural
+        _plural_ok_or_absent = (plural == 0 or ledger_cents == plural)
 
-        if _single_ok and _plural_ok:
+        if _single_ok and _plural_ok_or_absent:
+            # Canonical field agrees with ledger AND plural is
+            # either absent/0 (deprecated, expected) or incidentally
+            # also agrees. Clean row.
             matched += 1
             continue
         if not _single_ok:
             drifted_singular += 1
-        if not _plural_ok and plural != 0:
-            # Only count plural drift when it's non-zero AND disagrees.
-            # Every row has plural absent/0 after S2-1 so this will
-            # typically be 0 on preview — but production legacy data
-            # may still have historical plural values.
+        if plural != 0 and plural != ledger_cents:
+            # Non-zero plural that disagrees with ledger — this
+            # is the surface that leaked wrong values to the
+            # legacy portal/AI readers before S2-2.
             drifted_plural += 1
 
         if len(mismatches) < _CAP:
