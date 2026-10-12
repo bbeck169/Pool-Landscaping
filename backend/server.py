@@ -857,10 +857,22 @@ api_router.include_router(_i3_admin_health_check.router)
 # Preview isolation · Feb-2026 P0 — admin healthcheck endpoint
 # ``GET /api/admin/preview-isolation-status`` reports env, mongo
 # host, registry status, PII-shape audit, and last boot-scrub.
-# Returns HTTP 404 on production env (endpoint intentionally
-# doesn't exist in prod).
-from routers import preview_isolation_admin as _preview_iso_admin  # noqa: E402
-api_router.include_router(_preview_iso_admin.router)
+#
+# 2026-02 · Stage 3 Commit I3 — route-registration gate.
+# Production MUST NOT register this route at all (not just 404
+# from the handler). An unauthenticated prod probe hits an
+# unknown-path → FastAPI's default 404 fires BEFORE the auth
+# dependency can emit a 401. Previously the include_router ran
+# unconditionally and the handler returned 404 after auth — which
+# leaked the endpoint's existence to any prober via the
+# `WWW-Authenticate` behaviour / 401 vs 404 differential. The
+# handler's internal `if is_production_env(): raise 404` guard
+# below is kept as defense-in-depth for the case where this
+# registration gate is accidentally bypassed by a future refactor.
+from services.preview_isolation.config import is_production_env as _preview_iso_is_prod  # noqa: E402
+if not _preview_iso_is_prod():
+    from routers import preview_isolation_admin as _preview_iso_admin  # noqa: E402
+    api_router.include_router(_preview_iso_admin.router)
 # Feb-2026 · P0/2 recurrence — comms diagnostic endpoints.
 # GET /api/admin/comms-diagnostics  → env + in-mem last-send state
 # POST /api/admin/comms-diagnostics/test → admin-triggered live send
