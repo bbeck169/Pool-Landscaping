@@ -8,7 +8,7 @@ import React from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell,
           Image as ImageIcon, MessageSquare, Gauge, Star, RefreshCw,
-          UploadCloud, ExternalLink, Search, FileText, Loader2 } from "lucide-react";
+          UploadCloud, ExternalLink, Search, Send, FileText, Loader2 } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
@@ -141,7 +141,7 @@ export function AskThisDocPanel({ onCitationSelect }) {
       data-testid="ai-brain-ask-panel"
     >
       <div className="flex items-center gap-2 mb-2">
-        <Search size={14} style={{ color: colors.brand }} />
+        <Search size={14} style={{ color: colors.searchIcon }} />
         <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
           Ask this doc
         </div>
@@ -170,7 +170,7 @@ export function AskThisDocPanel({ onCitationSelect }) {
           style={{ backgroundColor: colors.brand, color: "#fff" }}
           data-testid="ai-brain-ask-submit"
         >
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           Ask
         </button>
       </form>

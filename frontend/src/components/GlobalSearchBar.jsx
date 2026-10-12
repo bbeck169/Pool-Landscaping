@@ -207,7 +207,7 @@ export default function GlobalSearchBar() {
         aria-expanded={mobileExpanded}
         data-testid="global-search-bar-mobile-toggle"
       >
-        <Search size={16} />
+        <Search size={16} color={colors.searchIcon} aria-hidden="true" />
       </button>
 
       {/* Input strip — always visible on ``sm`` and up; on narrow
@@ -238,7 +238,7 @@ export default function GlobalSearchBar() {
         }}
         data-testid="global-search-bar-hero"
       >
-        <Search size={18} color={HERO_ICON} aria-hidden="true" />
+        <Search size={18} color={colors.searchIcon} aria-hidden="true" />
         <input
           ref={inputRef}
           type="text"

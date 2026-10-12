@@ -426,7 +426,7 @@ export default function MasterServicesSettings() {
           <Search
             size={14}
             className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-            style={{ color: colors.muted }}
+            style={{ color: colors.searchIcon }}
           />
           <input
             type="search"

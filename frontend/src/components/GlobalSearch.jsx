@@ -34,6 +34,7 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router-dom";
+import { colors } from "@/theme";
 import { Search, X } from "lucide-react";
 import { useGlobalSearchResults } from "@/hooks/useGlobalSearchResults";
 
@@ -258,7 +259,7 @@ export default function GlobalSearch({ initialQuery = "" } = {}) {
             gap: 8,
           }}
         >
-          <Search size={16} color={PALETTE_MUTED} aria-hidden="true" />
+          <Search size={16} color={colors.searchIcon} aria-hidden="true" />
           <input
             ref={inputRef}
             type="text"

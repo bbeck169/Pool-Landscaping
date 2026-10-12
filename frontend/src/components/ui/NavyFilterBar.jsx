@@ -146,7 +146,7 @@ NavyFilterBar.Search = function NavyFilterBarSearch({
       <SearchIcon
         size={16}
         className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-        style={{ color: colors.inputBorder }}
+        style={{ color: colors.searchIcon }}
         aria-hidden="true"
       />
       <input

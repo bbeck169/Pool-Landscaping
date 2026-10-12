@@ -122,7 +122,7 @@ export default function FleetMembership() {
           border: `1px solid ${colors.border}`,
         }}
       >
-        <SearchIcon size={14} style={{ color: colors.muted }} />
+        <SearchIcon size={14} style={{ color: colors.searchIcon }} />
         <input
           type="search"
           data-testid="admin-fleet-membership-search"
