@@ -957,6 +957,110 @@ def _estimate_total(ctx: Dict[str, Any]) -> str:
         return "$0.00"
 
 
+# Feb-2026 · Quote/Estimate email seed · line-items HTML resolver.
+# The regex Mustache renderer in ``services/marketing/render.py`` has
+# no loop syntax (``{{#each}}`` / ``{% for %}``), so every list-shaped
+# value is pre-rendered by a resolver. ``QUOTE_LINE_ITEMS_HTML``
+# reads ``ctx['quote']['line_items']`` — a list of dicts shaped like
+# ``{description, quantity, unit_price, line_total}`` (keys match
+# ``backend/models.py::LineItem`` + the computed ``line_total`` from
+# ``routers/quotes.py::compute_totals``) — and emits an email-safe
+# inline-styled ``<table>`` with per-row rows + a subtotal/tax/total
+# footer. Empty / missing input → empty string so the surrounding
+# template stays clean.
+def _fmt_money(v: Any) -> str:
+    try:
+        return f"${float(v or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _quote_line_items_html(ctx: Dict[str, Any]) -> str:
+    quote = ctx.get("quote") or ctx.get("estimate") or {}
+    items = quote.get("line_items") or []
+    if not items:
+        return ""
+    row_style = ("padding:8px 10px;border-bottom:1px solid #E5E7EB;"
+                  "font-size:14px;color:#111827;")
+    num_style = row_style + "text-align:right;font-variant-numeric:tabular-nums;"
+    head_style = ("padding:8px 10px;border-bottom:2px solid #111827;"
+                   "font-size:12px;color:#4B5563;text-transform:uppercase;"
+                   "letter-spacing:0.03em;text-align:left;")
+    head_num = head_style + "text-align:right;"
+    rows_html: List[str] = []
+    for it in items:
+        desc = _safe_str(it.get("description") or "").strip() or "—"
+        qty_raw = it.get("quantity")
+        try:
+            qty = f"{float(qty_raw or 0):g}"
+        except (TypeError, ValueError):
+            qty = _safe_str(qty_raw)
+        unit_price = _fmt_money(it.get("unit_price"))
+        # Prefer explicit ``line_total`` from compute_totals; fall
+        # back to qty × unit_price so a caller passing bare items
+        # (no precomputed total) still renders correctly.
+        if it.get("line_total") is not None:
+            line_total = _fmt_money(it.get("line_total"))
+        else:
+            try:
+                lt = float(qty_raw or 0) * float(it.get("unit_price") or 0)
+                line_total = _fmt_money(lt)
+            except (TypeError, ValueError):
+                line_total = "$0.00"
+        rows_html.append(
+            f'<tr>'
+            f'<td style="{row_style}">{desc}</td>'
+            f'<td style="{num_style}">{qty}</td>'
+            f'<td style="{num_style}">{unit_price}</td>'
+            f'<td style="{num_style}">{line_total}</td>'
+            f'</tr>'
+        )
+    foot: List[str] = []
+    sub = quote.get("subtotal")
+    tax = quote.get("tax")
+    total = quote.get("total")
+    foot_label = ("padding:8px 10px;font-size:13px;color:#4B5563;"
+                   "text-align:right;")
+    foot_val = ("padding:8px 10px;font-size:13px;color:#111827;"
+                 "text-align:right;font-variant-numeric:tabular-nums;")
+    foot_total_label = ("padding:10px;font-size:14px;color:#111827;"
+                         "font-weight:700;text-align:right;"
+                         "border-top:2px solid #111827;")
+    foot_total_val = ("padding:10px;font-size:14px;color:#111827;"
+                       "font-weight:700;text-align:right;"
+                       "border-top:2px solid #111827;"
+                       "font-variant-numeric:tabular-nums;")
+    if sub is not None:
+        foot.append(
+            f'<tr><td colspan="3" style="{foot_label}">Subtotal</td>'
+            f'<td style="{foot_val}">{_fmt_money(sub)}</td></tr>'
+        )
+    if tax is not None:
+        foot.append(
+            f'<tr><td colspan="3" style="{foot_label}">Tax</td>'
+            f'<td style="{foot_val}">{_fmt_money(tax)}</td></tr>'
+        )
+    if total is not None:
+        foot.append(
+            f'<tr><td colspan="3" style="{foot_total_label}">Total</td>'
+            f'<td style="{foot_total_val}">{_fmt_money(total)}</td></tr>'
+        )
+    return (
+        '<table role="presentation" cellspacing="0" cellpadding="0" '
+        'border="0" width="100%" '
+        'style="border-collapse:collapse;width:100%;margin:16px 0;">'
+        '<thead><tr>'
+        f'<th style="{head_style}">Description</th>'
+        f'<th style="{head_num}">Qty</th>'
+        f'<th style="{head_num}">Unit Price</th>'
+        f'<th style="{head_num}">Line Total</th>'
+        '</tr></thead>'
+        '<tbody>' + "".join(rows_html) + '</tbody>'
+        + ('<tfoot>' + "".join(foot) + '</tfoot>' if foot else '')
+        + '</table>'
+    )
+
+
 # Phase 11 · Feb 2026 — Equipment Service Tracker resolvers. Resolve
 # against ``ctx['equipment_tracker']`` — outside that scope they
 # resolve empty, which lands the token in ``unresolved_tokens`` when
@@ -1896,6 +2000,20 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "category": "Quote",
      "description": "Admin URL that opens the quote/estimate detail page.",
      "resolver": lambda ctx: _safe_str(ctx.get("quote_admin_link") or "")},
+    {"token": "QUOTE_LINE_ITEMS_HTML",
+     "label": "Quote — Line Items Table (HTML)",
+     "category": "Quote",
+     "description": ("Pre-rendered email-safe HTML ``<table>`` of the "
+                       "quote/estimate line items with Qty / Unit "
+                       "Price / Line Total columns and a Subtotal / "
+                       "Tax / Total footer. Reads "
+                       "``ctx['quote']['line_items']`` (falls back to "
+                       "``ctx['estimate']['line_items']`` for callers "
+                       "staging estimates). Empty when no items — "
+                       "needed because the regex Mustache renderer "
+                       "has no loop syntax."),
+     "sample_value": "<table>…</table>",
+     "resolver": _quote_line_items_html},
     {"token": "LEAD_ADMIN_INNER_HTML", "label": "Lead Admin — Inner HTML",
      "category": "Lead",
      "description": ("Pre-rendered inner HTML for the canonical lead-"
