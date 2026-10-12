@@ -902,6 +902,19 @@ export default function App() {
               from email/SMS link. */}
           <Route path="/portal/setup-success" element={<SetupSuccess />} />
           <Route path="/portal/setup-cancelled" element={<SetupSuccess />} />
+          {/* Task QQ Phase 2 · Feb 2026 — Lumino hosted-checkout return.
+              PORTAL-PAYMENT-RETURN-WRAP (Feb-2026) — this route lives
+              OUTSIDE the AppLayout wrapper to match the sibling
+              return-URL pages (setup-success, add-card, review/submit,
+              sign/:token, service/:uuid). When a customer returns from
+              Lumino hosted checkout they may land here without a
+              valid portal JWT (localStorage expired, cross-device
+              return, email-forwarded link). Keeping this route inside
+              AppLayout silently bounced them to /portal/login and the
+              payment confirmation UX was lost. Dark `portalColors` is
+              preserved inside the component — no portal nav/sidebar
+              chrome is wrapped around it. */}
+          <Route path="/portal/payment-method/return" element={<PortalPaymentReturn />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -1500,8 +1513,12 @@ export default function App() {
 
             {/* Customer portal (Phase 4) */}
             <Route path="portal/home" element={<PortalHome />} />
-            {/* Task QQ Phase 2 · Feb 2026 — Lumino hosted-checkout return. */}
-            <Route path="portal/payment-method/return" element={<PortalPaymentReturn />} />
+            {/* PORTAL-PAYMENT-RETURN-WRAP (Feb-2026) — the Lumino
+                hosted-checkout return route previously lived here
+                (inside the AppLayout wrapper). Moved out of the
+                protected shell to the sibling-return group above
+                (see line ~906) so unauthenticated returners don't
+                get silently redirected to /portal/login. */}
             {/* BUG D fix (Feb-2026) — defensive redirect so any
                 stray link to bare ``/portal`` lands on the home page
                 instead of NotFound. */}
