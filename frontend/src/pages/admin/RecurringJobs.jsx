@@ -24,6 +24,12 @@ import MasterServiceCombobox from "@/components/services/MasterServiceCombobox";
 import { CustomerLink, PhoneLink } from "@/components/customer";
 // Task E · Feb-2026 — Shared navy filter/search strip primitive.
 import NavyFilterBar from "@/components/ui/NavyFilterBar";
+// Feb-2026 · Shared forward-looking date-range presets (extracted
+// from CalendarSchedule's inlined ``RANGE_PRESETS`` + ``openPreset``
+// in 054633ec0). RecurringJobs cherry-picks 5 keys for its "Next"
+// column filter — see the ``DATE_PRESET_KEYS`` sub-selection below.
+import { PRESETS as _RANGE_PRESETS, presetByKey as _presetByKey } from "@/lib/scheduleRangePresets";
+import { format as _fmtDate } from "date-fns";
 
 const FREQ_OPTIONS = [
   { value: "weekly", label: "Weekly" },
@@ -34,6 +40,16 @@ const FREQ_OPTIONS = [
   { value: "custom", label: "Custom (every N days)" },
 ];
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// Feb-2026 · "Next" column date filter. Cherry-picks 5 forward-
+// looking presets from the shared ``scheduleRangePresets`` module
+// (the module also exports ``next_90_days`` + ``this_quarter`` which
+// are Schedule-page-only — RecurringJobs stays on the brief's 5).
+// Order below is the display order of the chip row.
+const DATE_PRESET_KEYS = [
+  "today", "this_week", "next_7_days", "next_30_days", "this_month",
+];
+const _DATE_PRESETS = DATE_PRESET_KEYS.map((k) => _presetByKey(k));
 
 function fmtMoney(cents) { return `$${(Number(cents || 0) / 100).toFixed(2)}`; }
 function todayIso() { return new Date().toISOString().slice(0, 10); }
@@ -192,6 +208,31 @@ export default function RecurringJobs() {
   //   below the definition — so the filter has data before the
   //   Edit modal is ever opened).
   const [serviceCategoryFilter, setServiceCategoryFilter] = useState("");
+  // Feb-2026 · "Next" column date-range filter.
+  //   dateFilter.start / .end are date-only ISO strings
+  //   (``YYYY-MM-DD``) matching the shape of ``r.upcoming[0]`` so
+  //   the filter is a plain inclusive string compare. ``presetKey``
+  //   tracks which chip (if any) is currently active so the
+  //   active-state styling is a 1:1 read, not a reverse-match.
+  //   Empty start+end = filter OFF (default) — matches existing
+  //   filter semantics (search + category). Local state only; no
+  //   URL persistence per brief directive.
+  const [dateFilter, setDateFilter] = useState({ start: "", end: "", presetKey: "" });
+  const applyDatePreset = React.useCallback((key) => {
+    const entry = _presetByKey(key);
+    if (!entry) return;
+    const { start, end } = entry.resolve(new Date());
+    setDateFilter({
+      start: _fmtDate(start, "yyyy-MM-dd"),
+      end: _fmtDate(end, "yyyy-MM-dd"),
+      presetKey: key,
+    });
+  }, []);
+  const clearDateFilter = React.useCallback(
+    () => setDateFilter({ start: "", end: "", presetKey: "" }),
+    [],
+  );
+  const _dateFilterActive = !!(dateFilter.start || dateFilter.end);
   // Filtered view — kept as a memo so ``_visibleIds`` and the
   // table render share the exact same result set (bulk-select "on
   // page" must scope to the filtered rows, not the raw list).
@@ -215,8 +256,24 @@ export default function RecurringJobs() {
         (r) => r.service_category_id === serviceCategoryFilter,
       );
     }
+    // Feb-2026 · "Next" column date-range filter — composes with
+    // search + category under AND semantics. The compare is a plain
+    // inclusive string compare on the date-only ``YYYY-MM-DD`` ISO
+    // (``r.upcoming[0]`` is already date-only server-side). Rows
+    // with no ``upcoming`` are DROPPED when the filter is active —
+    // document says "whose next occurrence falls within the range",
+    // so a row with no next occurrence doesn't qualify.
+    if (dateFilter.start || dateFilter.end) {
+      const lo = dateFilter.start || "0000-01-01";
+      const hi = dateFilter.end   || "9999-12-31";
+      vis = vis.filter((r) => {
+        const next = (r.upcoming && r.upcoming[0]) || "";
+        if (!next) return false;
+        return next >= lo && next <= hi;
+      });
+    }
     return vis;
-  }, [items, searchQuery, serviceCategoryFilter]);
+  }, [items, searchQuery, serviceCategoryFilter, dateFilter]);
 
   const load = async () => {
     setLoading(true);
@@ -1303,6 +1360,87 @@ export default function RecurringJobs() {
             ))}
           </NavyFilterBar.Select>
         </NavyFilterBar>
+        {/* Feb-2026 · "Next" column date-range filter row. Sits
+             directly under the main NavyFilterBar so the chip row
+             and the custom-range inputs read as part of the same
+             filter block visually. Styling mirrors Schedule's
+             preset chips (plain button + rounded-full + same font
+             weight) but kept lightweight since this surface has
+             fewer filter dimensions than Schedule. */}
+        <div
+          className="mt-2 flex flex-wrap items-center gap-2 px-1"
+          data-testid="recurring-jobs-date-filter"
+        >
+          <span
+            className="text-xs font-medium"
+            style={{ color: colors.muted }}
+          >
+            Next date:
+          </span>
+          {_DATE_PRESETS.map((p) => {
+            const active = dateFilter.presetKey === p.key;
+            return (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => applyDatePreset(p.key)}
+                className="text-xs font-semibold px-3 py-1 rounded-full border transition-colors"
+                style={{
+                  background: active ? colors.gradient.css : "transparent",
+                  color: active ? "#fff" : colors.text,
+                  borderColor: active ? "transparent" : colors.border,
+                  textShadow: active ? colors.gradient.textShadow : undefined,
+                }}
+                data-testid={`recurring-jobs-date-preset-${p.key}`}
+                data-active={active ? "true" : "false"}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+          <input
+            type="date"
+            value={dateFilter.start}
+            onChange={(e) => setDateFilter((d) => ({
+              ...d, start: e.target.value, presetKey: "",
+            }))}
+            className="text-xs px-2 py-1 rounded border"
+            style={{
+              background: colors.surface,
+              color: colors.text,
+              borderColor: colors.border,
+            }}
+            aria-label="Next-date start"
+            data-testid="recurring-jobs-date-start"
+          />
+          <span className="text-xs" style={{ color: colors.muted }}></span>
+          <input
+            type="date"
+            value={dateFilter.end}
+            onChange={(e) => setDateFilter((d) => ({
+              ...d, end: e.target.value, presetKey: "",
+            }))}
+            className="text-xs px-2 py-1 rounded border"
+            style={{
+              background: colors.surface,
+              color: colors.text,
+              borderColor: colors.border,
+            }}
+            aria-label="Next-date end"
+            data-testid="recurring-jobs-date-end"
+          />
+          {_dateFilterActive && (
+            <button
+              type="button"
+              onClick={clearDateFilter}
+              className="text-xs font-medium underline"
+              style={{ color: colors.muted }}
+              data-testid="recurring-jobs-date-clear"
+            >
+              Clear
+            </button>
+          )}
+        </div>
         <div className="rounded-2xl overflow-x-auto"
              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
           <table className="w-full text-sm" data-testid="recurring-jobs-table">
