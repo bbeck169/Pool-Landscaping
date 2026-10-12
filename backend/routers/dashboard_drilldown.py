@@ -780,6 +780,29 @@ async def _apply_resolve_item(
         del_result = await db.jobs.delete_one(del_filter)
         deleted_count = int(getattr(del_result, "deleted_count", 0) or 0)
 
+        # Feb-2026 · RECURRING-JOBS SAFETY NET (Cause C) — if this
+        # orphan hard-delete removed a job tied to a recurring
+        # template, rewind the parent's last_generated_through so
+        # the next cron run re-materializes the hole. ``job`` is
+        # the pre-fetched doc with photos.data stripped; it carries
+        # recurring_template_id + scheduled_date. Fail-soft.
+        if deleted_count and job.get("recurring_template_id"):
+            try:
+                from services.recurring_jobs_backfill import (
+                    rewind_template_cursor_on_job_delete,
+                )
+                await rewind_template_cursor_on_job_delete(
+                    job=job, tenant_id=row_tenant_id or tenant_id or "",
+                    actor_user_id=actor_id,
+                )
+            except Exception as _rw_exc:                        # noqa: BLE001
+                logger.warning(
+                    "recurring_job.cursor_rewind.failed "
+                    "tenant=%s deleted_job=%s error=%s:%s",
+                    row_tenant_id or tenant_id, job_id,
+                    type(_rw_exc).__name__, _rw_exc,
+                )
+
         def _extra_hd(**kw: Any) -> Dict[str, Any]:
             base: Dict[str, Any] = {"job_id": job_id, **kw}
             if bulk_batch_id:
@@ -1064,7 +1087,13 @@ async def data_integrity_resolve_bulk(
             find_filter["tenant_id"] = tenant_id
         pre_docs: List[Dict[str, Any]] = []
         async for j in db.jobs.find(
-            find_filter, {"_id": 0, "id": 1, "tenant_id": 1, "status": 1},
+            find_filter,
+            # Feb-2026 · RECURRING-JOBS SAFETY NET (Cause C) —
+            # projection expanded to carry recurring_template_id +
+            # scheduled_date so the per-row cursor-rewind helper
+            # has what it needs after the delete_many persists.
+            {"_id": 0, "id": 1, "tenant_id": 1, "status": 1,
+             "recurring_template_id": 1, "scheduled_date": 1},
         ):
             pre_docs.append(j)
         found_ids = {j.get("id") for j in pre_docs}
@@ -1077,6 +1106,29 @@ async def data_integrity_resolve_bulk(
             getattr(del_result, "deleted_count", 0) or 0,
         )
         actor_id = user.get("id") or user.get("_id") or ""
+        # Feb-2026 · RECURRING-JOBS SAFETY NET (Cause C) — for every
+        # pre-fetched doc that was tied to a recurring template,
+        # rewind the parent template's cursor so the next cron run
+        # re-materializes the hole. Looped per-row to keep failures
+        # isolated. Fail-soft — bulk delete already succeeded.
+        for _j in pre_docs:
+            if not _j.get("recurring_template_id"):
+                continue
+            try:
+                from services.recurring_jobs_backfill import (
+                    rewind_template_cursor_on_job_delete,
+                )
+                await rewind_template_cursor_on_job_delete(
+                    job=_j, tenant_id=_j.get("tenant_id") or "",
+                    actor_user_id=actor_id,
+                )
+            except Exception as _rw_exc:                        # noqa: BLE001
+                logger.warning(
+                    "recurring_job.cursor_rewind.failed "
+                    "tenant=%s deleted_job=%s error=%s:%s",
+                    _j.get("tenant_id"), _j.get("id"),
+                    type(_rw_exc).__name__, _rw_exc,
+                )
         # Emit one audit per pre-fetched doc — per-row observability
         # preserved even though the underlying op was a single call.
         for j in pre_docs:

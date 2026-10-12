@@ -3413,8 +3413,33 @@ async def public_job_photo_preview(jid: str, pid: str):
 async def delete_job(jid: str,
                      user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · RECURRING-JOBS SAFETY NET (Cause C) — read the job
+    # doc BEFORE deleting so we have recurring_template_id +
+    # scheduled_date to feed the cursor-rewind helper. Fail-soft:
+    # delete must still succeed if the pre-read or helper raises.
+    _pre = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "tenant_id": 1,
+         "recurring_template_id": 1, "scheduled_date": 1},
+    )
     res = await db.jobs.delete_one({"id": jid, "tenant_id": tenant["id"]})
     await db.notifications.delete_many({"job_id": jid, "tenant_id": tenant["id"]})
+    if _pre and _pre.get("recurring_template_id"):
+        try:
+            from services.recurring_jobs_backfill import (
+                rewind_template_cursor_on_job_delete,
+            )
+            await rewind_template_cursor_on_job_delete(
+                job=_pre, tenant_id=tenant["id"],
+                actor_user_id=user.get("id"),
+            )
+        except Exception as _rw_exc:                            # noqa: BLE001
+            logger.warning(
+                "recurring_job.cursor_rewind.failed "
+                "tenant=%s deleted_job=%s error=%s:%s",
+                tenant["id"], jid,
+                type(_rw_exc).__name__, _rw_exc,
+            )
     return {"ok": True, "deleted": res.deleted_count}
 
 
