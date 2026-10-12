@@ -74,6 +74,18 @@ _FREE_TEXT_KEYS = {
 }
 _CUSTOM_FIELDS_KEYS = {"custom_fields"}
 _TAGS_KEYS = {"tags"}
+# 2026-02 · P0 Stage 3 Step B — ``emails`` / ``mobiles`` / ``phones``
+# / ``secondary_addresses`` are PRE-SYNTHESIZED by
+# ``synthesize_customer_fields`` into their final object-array shape.
+# The subsequent recursive dict walk in ``_sanitize_dict`` would
+# otherwise call ``_sanitize_dict`` on every inner entry and run
+# ``synthesize_customer_fields`` on them again — which spreads a full
+# customer-shaped synthetic (``name``, ``email``, ``phone``, …) INTO
+# each nested entry, destroying the ``{"address": ..., "label": ...}``
+# / ``{"number_e164": ..., "label": ...}`` object shape consumed by
+# the ``normalize_emails`` / ``normalize_mobiles`` validators. Hold
+# these lists verbatim — the synthesizer already did the right thing.
+_LIST_KEEP_AS_IS_KEYS = {"emails", "mobiles", "phones", "secondary_addresses"}
 
 # ────────────────────────────────────────────────────────────────────
 # REJECT patterns — raise rather than sanitize.
@@ -152,6 +164,11 @@ def _sanitize_dict(data: Dict[str, Any], kind: str) -> Dict[str, Any]:
         elif k in _TAGS_KEYS and isinstance(v, list):
             # Tags are typically short labels; leave them pass-through
             # (per Refinement 1 — tag registry lookup is a follow-up).
+            out[k] = v
+        elif k in _LIST_KEEP_AS_IS_KEYS:
+            # Pre-synthesized object arrays (emails/mobiles/phones/
+            # secondary_addresses). Do NOT recurse — see
+            # ``_LIST_KEEP_AS_IS_KEYS`` docstring.
             out[k] = v
         elif isinstance(v, dict):
             out[k] = _sanitize_dict(v, kind=kind)

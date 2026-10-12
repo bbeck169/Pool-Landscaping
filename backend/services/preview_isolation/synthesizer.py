@@ -109,14 +109,44 @@ def synthesize_customer_fields(real: Dict[str, Any]) -> Dict[str, Any]:
         "latitude": None,
         "longitude": None,
     })
-    # List fields — emails[], phones[], mobiles[] carry one synthetic
+    # List fields — emails[], mobiles[], phones[] carry one synthetic
     # entry each if the real doc had any entries at all.
-    if real.get("emails"):
-        patch["emails"] = [f"preview-customer{slug}@preview.local"]
-    if real.get("phones"):
-        patch["phones"] = [{"number": f"{_PHONE_BAND_CUSTOMER}{slug}", "type": "home"}]
-    if real.get("mobiles"):
-        patch["mobiles"] = [f"{_PHONE_BAND_MOBILE}{slug}"]
+    #
+    # 2026-02 · P0 Stage 3 Step B (schema shape fix) — these fields
+    # are object arrays per the Pydantic schema in ``models.py``
+    # (``mobiles: Optional[List[dict]]``, ``emails: Optional[List[dict]]``)
+    # and ``services/customer_multi_contact.py::normalize_mobiles`` /
+    # ``normalize_emails``. The prior release emitted LIST-OF-STRING
+    # (`["preview@local"]`) which broke `GET /api/customers` with a
+    # 500 on page_size > 5 because the Pydantic validator rejected
+    # the shape. Shape now matches the normalizer's output verbatim
+    # so round-trips through list / detail endpoints succeed.
+    synth_email = f"preview-customer{slug}@preview.local"
+    synth_phone = f"{_PHONE_BAND_CUSTOMER}{slug}"
+    synth_mobile = f"{_PHONE_BAND_MOBILE}{slug}"
+    if "emails" in real:
+        patch["emails"] = [{
+            "address": synth_email,
+            "label": "Primary",
+            "is_primary": True,
+            "marketing_ok": True,
+            "notifications_enabled": True,
+        }]
+    if "mobiles" in real:
+        patch["mobiles"] = [{
+            "number_e164": synth_mobile,
+            "label": "Primary",
+            "is_primary": True,
+            "sms_ok": True,
+            "notifications_enabled": True,
+        }]
+    if "phones" in real:
+        patch["phones"] = [
+            {"type": "home",   "number": synth_phone,
+             "e164": synth_phone,  "raw": None},
+            {"type": "mobile", "number": synth_mobile,
+             "e164": synth_mobile, "raw": None},
+        ]
     return patch
 
 

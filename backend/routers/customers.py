@@ -847,6 +847,23 @@ async def list_customers(
     include_merged: bool = Query(False, description="Feb-2026 · Customer Merge — include records whose ``merged_into`` is set. Default false — merged rows are hidden so admins don't see stale duplicates."),
     page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
     page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
+    # 2026-02 · P0 Stage 3 Step B — reject the ``size`` alias
+    # explicitly. Several ad-hoc clients were calling
+    # ``GET /api/customers?size=100`` expecting a ``page_size`` alias;
+    # FastAPI silently ignored it and returned the full unpaginated
+    # legacy list, producing confusing "no pagination" results.
+    # Rejecting with the project-standard
+    # ``{error_code, detail, message}`` 400 shape teaches callers to
+    # migrate to ``page_size``.
+    size: Optional[int] = Query(
+        None,
+        deprecated=True,
+        description=(
+            "**Not supported.** Use ``page_size`` instead. Passing "
+            "``size`` returns a 400 with ``error_code = "
+            "unknown_param``."
+        ),
+    ),
     sort: Optional[str] = Query(
         "created_desc",
         description=(
@@ -891,6 +908,23 @@ async def list_customers(
     if user.get("role") not in ("admin", "manager", "technician",
                                      "super_admin"):
         raise HTTPException(403, "Not allowed")
+    # 2026-02 · P0 Stage 3 Step B — unknown ``size`` alias → 400.
+    # Caught before RBAC permits the request so even an authenticated
+    # admin can't accidentally rely on a silently-ignored param.
+    # Shape mirrors the ``page_size`` validator below so the frontend
+    # error-handling layer treats both the same way.
+    if size is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "unknown_param",
+                "detail": "unsupported_query_param",
+                "message":
+                    "'size' is not a supported query param on this "
+                    "endpoint. Use 'page_size' instead.",
+                "param": "size",
+            },
+        )
     # Phase 9c · Feb-2026 — Coerce ``slim`` to a plain bool. When
     # list_customers is called directly from Python (e.g. the
     # ``tests/_f7_loop_fixture.py`` perf-contract suite) the
