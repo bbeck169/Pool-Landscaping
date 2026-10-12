@@ -1,4 +1,29 @@
 /*! P0d · 2026-10-12 · Force chunk hash change to purge stale 5979.aad12649.chunk.js from downstream caches. If this file compiles, confirm the resulting chunk filename does NOT match .aad12649. */
+/*
+ * expanded-usage audit (chunk 5979 · JobNotesCallout.jsx · Feb-2026)
+ *   line  76   JSDoc text ``expanded`` state                        declared? n/a    (comment, not identifier)
+ *   line  86   const [expanded, setExpanded] = useState(false)      declared? YES    DECLARATION — scope: NoteBlock
+ *   line  98   className={expanded ? "" : "line-clamp-3"}           declared? yes    line 86 (NoteBlock)
+ *   line 111   setExpanded((x) => !x)                               declared? yes    line 86 (NoteBlock)  [setter]
+ *   line 121   aria-expanded={expanded}                             declared? yes    line 86 (NoteBlock)  [attribute name is hyphenated token; RHS is bare identifier read]
+ *   line 122   aria-label={expanded ? ... : ...}                    declared? yes    line 86 (NoteBlock)
+ *   line 126   {expanded ? "Show less" : "Show more"}               declared? yes    line 86 (NoteBlock)
+ *   line 145   const [expanded, setExpanded] = useState(false)      declared? YES    DECLARATION — scope: JobNotesCallout
+ *   line 191   className={expanded ? "" : "line-clamp-2"}           declared? yes    line 145 (JobNotesCallout)
+ *   line 223   setExpanded((x) => !x)                               declared? yes    line 145 (JobNotesCallout)  [setter]
+ *   line 227   aria-expanded={expanded}                             declared? yes    line 145 (JobNotesCallout)
+ *   line 229   {expanded ? "Show less" : "Show more"}               declared? yes    line 145 (JobNotesCallout)
+ *
+ * Orphan count: 0. All reads covered by one of the two useState
+ * declarations in this file. See src/test/expanded-identifier-
+ * guard.test.jsx for the CI-level sweep that locks this invariant.
+ * Historical: 5th recurrence of ``/schedule`` ReferenceError;
+ * every prior fix patched one site and left the other scope's
+ * useState unprotected against future refactors. The two
+ * ``// expanded fix`` inline comments next to the useState
+ * declarations below are the mandated regression breadcrumb —
+ * do NOT strip them.
+ */
 /**
  * Feb-2026 · Schedule polish — Job Notes visibility bump.
  *
@@ -83,7 +108,7 @@ function _mayOverflow(s) {
  * also hits the ceiling at 3 lines.
  */
 function NoteBlock({ label, text, jobId, testId }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false); // expanded fix
   const safe = (text && String(text).trim()) ? String(text) : "";
   if (!safe) return null;
   const overflow = safe.length > CUSTOMER_NOTE_CHAR_LIMIT
@@ -142,7 +167,7 @@ export default function JobNotesCallout({
   // Rules of Hooks — ``useState`` must be called on every render.
   // Compute the derived values first and hoist the hook above the
   // empty-state early return so the hook order stays stable.
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false); // expanded fix
   const jobNote     = (note && String(note).trim()) ? String(note) : "";
   const custNote    = (customerNote && String(customerNote).trim())
                         ? String(customerNote).trim() : "";
