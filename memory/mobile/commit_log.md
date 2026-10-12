@@ -1795,3 +1795,16 @@
 - **Changes**: 7-key preset helper (verified identical to web module, 21k anchors x 3 TZs); 5 pill chips + From/To DateField + Clear; inclusive upcoming[0] filter, AND with Active/Paused tab; "Next: YYYY-MM-DD|—" row meta.
 - **Follow-up backlog**: mobile RecurringJobs search + service-category filter parity (web NavyFilterBar) — not on mobile yet.
 - **Web files referenced**: frontend/src/lib/scheduleRangePresets.js, pages/admin/RecurringJobs.jsx, test/recurring-jobs-date-filter.test.jsx
+
+## Iteration 121 — Schedule "completed" color #DC2626 → #ff4542 (web parity 85fd76f17 / dd1b9d0d9)
+- **Commits**: c5482f90f (feat: src/lib/jobStatus.ts + src/utils/scheduleStatus.ts), 21d85e2a8 (test: k50-job-status-color + schedule-card-phase3-parity)
+- **Date**: 2026-10-12
+- **Changes**: K50 completed bg + left border → #ff4542; K50_BOLD_RED_BG now derives from K50_JOB_STATUS_BG.completed (closes silent white-text-flip drift). "Closed" green pill + map pins untouched.
+- **Backlog**: MOBILE-MAP-PIN-COMPLETED-COLOR-DRIFT (ScheduleMap.native green #16A34A / DailyRouteMap.native gray #6B7280 / DailyRouteMap.web green #22C55E). Also: mobile Grid filters `scheduled_date === focusISO` (exact string) so jobs stored with full ISO timestamps (e.g. 15 completed seed jobs on 2026-09-15) never render while WeekStrip counts them.
+- **Pre-existing failing suites (unrelated, mock both helpers or assert calendar.tsx strings)**: k32-tech-scoped-schedule (ExpoTaskManager), schedule-map-toggle (stale jobStatus mock), s1-schedule-tech-filter, phase-schedule-tech-filter-technician-id, schedule-select-all.
+
+## Iteration 122 — RecurringJobs customer search + service-category filter (web parity R2 / P54)
+- **Commits**: 30a6a0849 (feat: app/finance/recurring-jobs.tsx), 465d88bea (test: new recurring-jobs-search-category-filter.test.tsx + 1-line testID follow in recurring-jobs-date-filter.test.tsx)
+- **Date**: 2026-10-12
+- **Changes**: search (customer name/company/email/phone, 250ms debounce) + category Sheet picker (GET /service-categories, exact service_category_id) AND date AND tab; empty msg → web's "No recurring jobs match your search." (recurring-jobs-empty).
+- **Notes**: test placed in mobile/__tests__/ (not app/finance/__tests__/ — expo-router would register it as a route). Seed data: 0 recurring jobs have service_category_id → any category pick = 0 rows on preview (accepted; not mutated).
