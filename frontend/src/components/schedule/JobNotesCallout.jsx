@@ -1,3 +1,4 @@
+/*! P0d · 2026-10-12 · Force chunk hash change to purge stale 5979.aad12649.chunk.js from downstream caches. If this file compiles, confirm the resulting chunk filename does NOT match .aad12649. */
 /**
  * Feb-2026 · Schedule polish — Job Notes visibility bump.
  *

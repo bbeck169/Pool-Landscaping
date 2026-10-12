@@ -91,7 +91,8 @@
   },
   "scripts": {
     "start": "NODE_OPTIONS=--max-old-space-size=4096 craco start",
-    "build": "NODE_OPTIONS=--max-old-space-size=4096 craco build",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 craco build && yarn verify-chunks",
+    "verify-chunks": "node scripts/verify-no-stale-chunks.js",
     "test": "craco test",
     "test:unit": "vitest run --config vitest.config.js",
     "test:unit:watch": "vitest --config vitest.config.js",
