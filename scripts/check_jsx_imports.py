@@ -48,12 +48,15 @@ BUILTIN_SAFE = {
 
 
 def _strip_comments(src: str) -> str:
-    """Very lightweight comment stripper — removes /* ... */ and //... to
-    avoid matching JSX-looking identifiers inside prose."""
-    # /* ... */ block comments.
-    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
-    # // line comments (avoid protocol URLs like https://).
+    """Very lightweight comment stripper — removes // line comments
+    FIRST (so a stray ``/*`` substring inside a ``//`` comment can't
+    confuse the block-comment regex into eating subsequent real code),
+    then removes /* ... */ blocks."""
+    # // line comments (avoid protocol URLs like https://). Done FIRST.
     src = re.sub(r"(^|[^:])//[^\n]*", r"\1", src)
+    # /* ... */ block comments. Non-greedy + DOTALL so unterminated
+    # blocks fail to match rather than eating everything to EOF.
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return src
 
 
@@ -102,8 +105,19 @@ def scan_file(path: Path) -> list[tuple[int, str]]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) > 1:
-        roots = [Path(a) for a in argv[1:]]
+    # --prod-only excludes test / __tests__ directories. The scanner
+    # cannot track vi.mock-injected names (they aren't declared in
+    # the usual import / const / function patterns), and vitest is
+    # the appropriate guard for test-file identifier bugs. CI uses
+    # --prod-only so the ReferenceError-at-runtime class of bug
+    # (which only matters in shipped production code) is blocked.
+    prod_only = False
+    args = list(argv[1:])
+    if "--prod-only" in args:
+        prod_only = True
+        args = [a for a in args if a != "--prod-only"]
+    if args:
+        roots = [Path(a) for a in args]
     else:
         roots = [Path("/app/frontend/src"), Path("/app/mobile/app"),
                  Path("/app/mobile/src")]
@@ -120,6 +134,11 @@ def main(argv: list[str]) -> int:
                 continue
             if "node_modules" in path.parts:
                 continue
+            if prod_only:
+                # Skip test harness directories — vitest is their guard.
+                parts = set(path.parts)
+                if "test" in parts or "__tests__" in parts:
+                    continue
             issues = scan_file(path)
             if issues:
                 # Deduplicate by tag but keep first line hit.
