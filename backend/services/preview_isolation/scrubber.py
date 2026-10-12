@@ -108,6 +108,21 @@ _IP_SAFE_PREFIX = ("192.0.2.", "198.51.100.", "203.0.113.", "10.", "192.168.",
                     "172.31.", "169.254.", "fe80:", "fc00:", "fd00:")
 
 
+# 2026-02 · P0 Stage 3 Commit G — demo-seed email allowlist.
+# ``customer@aquaterra.com`` and ``customer2@aquaterra.com`` are
+# the two seeded portal-demo customers (see
+# ``/app/memory/test_credentials.md``). The seed_demo_second
+# _customer code re-creates these on every boot; if the scrubber
+# re-synthesizes their ``email`` field to the ``preview-customer
+# {slug}@preview.local`` namespace, the portal login breaks and
+# every portal/admin parity test fails. Preserve the exact
+# ``@aquaterra.com`` email on those two rows.
+_DEMO_SEED_EMAIL_ALLOWLIST: set = {
+    "customer@aquaterra.com",
+    "customer2@aquaterra.com",
+}
+
+
 def _is_localhost_mongo() -> bool:
     url = os.environ.get("MONGO_URL", "")
     return "localhost" in url or "127.0.0.1" in url
@@ -183,14 +198,26 @@ def _needs_scrub(row: Dict[str, Any]) -> bool:
     name / email / phone / search_haystack / phone_raw /
     address_line1 / geo fields / geocode_address_hash /
     partial-dict ``emails`` / ``mobiles`` / ``phones`` arrays.
+
+    Demo-seed emails (``customer@aquaterra.com`` /
+    ``customer2@aquaterra.com``) are allowlisted — see
+    ``_DEMO_SEED_EMAIL_ALLOWLIST`` docstring.
     """
+    # Demo-seed fixture rows pass through unchanged.
+    if (row.get("email") or "") in _DEMO_SEED_EMAIL_ALLOWLIST:
+        # Still check the OTHER PII indicators — the seed row may
+        # need geocode_address_hash / search_haystack scrub even
+        # though email is pinned.
+        pass_through_email = True
+    else:
+        pass_through_email = False
     # Primary PII fields.
     name = row.get("name") or ""
     email = row.get("email") or ""
     phone = row.get("phone") or ""
     if name and not _PREVIEW_NAME_RE.match(name):
         return True
-    if email and not _PREVIEW_EMAIL_RE.match(email):
+    if email and not pass_through_email and not _PREVIEW_EMAIL_RE.match(email):
         return True
     if phone and not _is_preview_shaped_phone(phone):
         return True
@@ -308,6 +335,13 @@ async def _scrub_customer_rows(db, coll_name: str,
             patch.pop("id", None)
             patch.pop("tenant_id", None)
             patch.pop("role", None)
+            # 2026-02 · P0 Stage 3 Commit G — preserve the two
+            # demo-seed emails; the synth would otherwise replace
+            # them with the preview namespace, breaking the
+            # portal demo login.
+            if coll_name == "customers" and \
+                    (row.get("email") or "") in _DEMO_SEED_EMAIL_ALLOWLIST:
+                patch["email"] = row["email"]
             # Users: also sanitize IP + photo in the same update.
             if coll_name == "users":
                 patch.update(_user_ip_photo_patch(row) or {})

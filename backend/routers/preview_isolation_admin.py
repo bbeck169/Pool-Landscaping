@@ -160,7 +160,18 @@ _AUDIT_RULES: List[Dict[str, Any]] = [
                            "$not": {"$regex": r"^Preview ",
                                       "$options": "i"}}}},
     {"coll": "customers", "field": "email",
-     "filter": {"email": {"$exists": True, "$nin": [None, ""],
+     "filter": {"email": {"$exists": True, "$nin": [
+         None, "",
+         # 2026-02 · P0 Stage 3 Commit G — demo-seed fixtures.
+         # ``customer@aquaterra.com`` and ``customer2@aquaterra.com``
+         # are the two SEEDED portal-demo customer credentials used
+         # by every portal/admin parity test (see
+         # ``/app/memory/test_credentials.md``). The seed_demo_second
+         # _customer seed re-creates these on every boot; the scrub
+         # must preserve the exact email string so the portal login
+         # still works. Not customer PII.
+         "customer@aquaterra.com", "customer2@aquaterra.com",
+     ],
                             "$not": {"$regex": r"^preview-(customer|portal)\d+@preview\.local$",
                                        "$options": "i"}}}},
     {"coll": "customers", "field": "phone",
@@ -209,7 +220,9 @@ _AUDIT_RULES: List[Dict[str, Any]] = [
                                        "$not": {"$regex": r"^preview (lead|customer)",
                                                   "$options": "i"}}}},
     {"coll": "leads", "field": "created_ip",
-     "filter": {"created_ip": {"$exists": True, "$nin": [None, "", "0.0.0.0"]}}},
+     "filter": {"created_ip": {"$exists": True,
+                                 "$nin": [None, "", "0.0.0.0", "127.0.0.1"],
+                                 "$not": {"$regex": r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|fe80:|fc00:|fd00:|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|::1)"}}}},
     {"coll": "leads", "field": "message",
      "filter": {"$and": [
          {"message": {"$exists": True, "$nin": [None, ""]}},
