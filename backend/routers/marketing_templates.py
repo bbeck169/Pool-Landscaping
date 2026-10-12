@@ -62,11 +62,21 @@ ALLOWED_CATEGORIES = {
 
 
 class TemplateIn(BaseModel):
+    # P1-M3-HARDENING · Feb-2026 — ``populate_by_name`` lets a legacy
+    # or alias field name on an incoming payload still bind to its
+    # canonical model field. Preventive measure in case a prod caller
+    # ships ``body_html`` (rich-editor convention mirrored on
+    # ``TemplatePatch``) on the create path instead of ``body``.
+    model_config = {"populate_by_name": True}
     name: str = Field(..., min_length=1, max_length=120)
     channel: str
     category: str = "general"
     subject: Optional[str] = None
     body: str = ""
+    # ``body_html`` is a first-class alias for ``body`` on create too
+    # (matches the PATCH-time behavior added in Phase 9). If BOTH are
+    # supplied, explicit ``body`` wins. See ``create_template`` below.
+    body_html: Optional[str] = None
     active: bool = True
 
 
@@ -96,6 +106,33 @@ def _serialize(row: dict) -> dict:
     row = dict(row)
     row.pop("_id", None)
     return row
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P1-M3-HARDENING · Feb-2026 — Lazy, idempotent index ensure. The
+# marketing_templates list query filters by ``tenant_id`` (always) +
+# ``channel`` + sorts by ``updated_at`` DESC. A compound covering
+# index keeps pagination fast as tenants accumulate templates.
+# ``create_index`` is a no-op when the exact index already exists.
+# ─────────────────────────────────────────────────────────────────────
+_indexes_ensured = False
+
+
+async def _ensure_indexes_once() -> None:
+    global _indexes_ensured
+    if _indexes_ensured:
+        return
+    try:
+        await db.marketing_templates.create_index(
+            [("tenant_id", 1), ("channel", 1), ("updated_at", -1)],
+            name="mt_tenant_channel_updated_desc",
+            background=True,
+        )
+        _indexes_ensured = True
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "[marketing-templates] index ensure skipped: %s", exc,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -173,20 +210,75 @@ async def list_templates(
     channel: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     active: Optional[bool] = Query(None),
+    # P1-M3-HARDENING · Feb-2026 — opt-in pagination. When EITHER
+    # ``page`` or ``size`` is supplied the response adds the
+    # ``items / total / page / size / has_next`` envelope keys. The
+    # legacy ``templates / count`` keys are KEPT ALONGSIDE so existing
+    # callers (MassMessaging composer, Sequences, Review Requests,
+    # Forms, CustomerDetail, legacy Library page) keep working
+    # verbatim. When neither param is supplied the response is
+    # exactly as before (up to 500 rows).
+    page: Optional[int] = Query(None, ge=1),
+    size: Optional[int] = Query(None, ge=1, le=500),
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
-    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
-    if channel:
-        q["channel"] = channel
-    if category:
-        q["category"] = category
-    if active is not None:
-        q["active"] = active
-    rows = await db.marketing_templates.find(q, {"_id": 0}).sort(
-        [("system", -1), ("updated_at", -1)],
-    ).to_list(500)
-    return {"templates": rows, "count": len(rows)}
+    try:
+        await _ensure_indexes_once()
+        q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+        if channel:
+            q["channel"] = channel
+        if category:
+            q["category"] = category
+        if active is not None:
+            q["active"] = active
+
+        if page is not None or size is not None:
+            eff_page = page or 1
+            eff_size = size or 50
+            total = await db.marketing_templates.count_documents(q)
+            skip = (eff_page - 1) * eff_size
+            rows = await db.marketing_templates.find(q, {"_id": 0}).sort(
+                [("system", -1), ("updated_at", -1)],
+            ).skip(skip).limit(eff_size).to_list(eff_size)
+            has_next = (skip + len(rows)) < total
+            return {
+                "items": rows,
+                "total": total,
+                "page": eff_page,
+                "size": eff_size,
+                "has_next": has_next,
+                # Legacy aliases — do NOT remove without a FE sweep.
+                "templates": rows,
+                "count": len(rows),
+            }
+
+        rows = await db.marketing_templates.find(q, {"_id": 0}).sort(
+            [("system", -1), ("updated_at", -1)],
+        ).to_list(500)
+        return {"templates": rows, "count": len(rows)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # P1-M3-HARDENING · Feb-2026 — Any uncaught exception on list
+        # MUST surface as a 500 with a specific ``error_code`` so the
+        # admin UI can render the actual failure instead of a bare
+        # proxy 502. Full stack trace is logged at ERROR level.
+        logger.exception(
+            "[marketing-templates] list failed for tenant %s: %s",
+            tenant.get("id"), exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": "marketing_template_list_internal_error",
+                "message": (
+                    f"Could not load templates ({type(exc).__name__}). "
+                    "Please retry; if the problem persists, contact "
+                    "support."
+                ),
+            },
+        )
 
 
 @router.post("/marketing/templates", status_code=201)
@@ -196,22 +288,54 @@ async def create_template(
     tenant: dict = Depends(get_current_tenant),
 ):
     _validate_shape(body.channel, body.subject)
-    doc = {
-        "id": new_id(),
-        "tenant_id": tenant["id"],
-        "name": body.name.strip(),
-        "channel": body.channel,
-        "category": body.category or "general",
-        "subject": (body.subject or "").strip() if body.channel == "email" else None,
-        "body": body.body or "",
-        "active": bool(body.active),
-        "system": False,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "created_by": user.get("id"),
-    }
-    await db.marketing_templates.insert_one(doc)
-    return _serialize(doc)
+    try:
+        # P1-M3-HARDENING · Feb-2026 — ``body_html`` is a first-class
+        # alias for ``body`` on create (rich-editor payloads). If the
+        # explicit ``body`` field is empty AND ``body_html`` arrived,
+        # the alias wins so no user content gets silently dropped.
+        resolved_body = body.body
+        if not (resolved_body or "").strip() and body.body_html:
+            resolved_body = body.body_html
+
+        doc = {
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "name": body.name.strip(),
+            "channel": body.channel,
+            "category": body.category or "general",
+            "subject": (body.subject or "").strip() if body.channel == "email" else None,
+            "body": resolved_body or "",
+            "active": bool(body.active),
+            "system": False,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "created_by": user.get("id"),
+        }
+        await db.marketing_templates.insert_one(doc)
+        return _serialize(doc)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # P1-M3-HARDENING · Feb-2026 — Any uncaught exception on
+        # create MUST surface as a 500 with a specific ``error_code``
+        # so the admin never sees a bare proxy 502. Full stack trace
+        # is logged at ERROR level so the admin can file a ticket
+        # with correlation data.
+        logger.exception(
+            "[marketing-templates] create failed for tenant %s: %s",
+            tenant.get("id"), exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": "marketing_template_create_internal_error",
+                "message": (
+                    f"Could not create template ({type(exc).__name__}). "
+                    "Please retry; if the problem persists, contact "
+                    "support."
+                ),
+            },
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

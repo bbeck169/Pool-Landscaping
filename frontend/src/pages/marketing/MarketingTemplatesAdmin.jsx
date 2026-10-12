@@ -42,19 +42,31 @@ export default function MarketingTemplatesListPage() {
   const nav = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // P1-M3-HARDENING · Feb-2026 — distinct error vs empty state so
+  // admins see WHAT broke instead of a misleading "No templates"
+  // on a backend 5xx.
+  const [loadError, setLoadError] = useState(null);
   const [filter, setFilter] = useState({ channel: "", category: "", active: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const params = new URLSearchParams();
       if (filter.channel) params.set("channel", filter.channel);
       if (filter.category) params.set("category", filter.category);
       if (filter.active !== "") params.set("active", filter.active);
       const res = await api.get(`/marketing/templates?${params}`);
-      setRows(res.templates || []);
+      // Supports both the legacy (``templates``/``count``) and the
+      // P1 paginated (``items``/``total``) response shapes.
+      setRows(res.templates || res.items || []);
     } catch (e) {
-      toast.error(e.message || "Failed to load templates");
+      const detail = e?.data?.detail;
+      const code = (detail && typeof detail === "object")
+        ? detail.error_code : null;
+      const message = e?.message || "Failed to load templates";
+      setLoadError({ code, message });
+      toast.error(code ? `${code}: ${message}` : message);
     } finally {
       setLoading(false);
     }
@@ -73,7 +85,15 @@ export default function MarketingTemplatesListPage() {
       });
       nav(`/marketing/templates/${res.id}`);
     } catch (e) {
-      toast.error(e.message || "Create failed");
+      // P1-M3-HARDENING · Feb-2026 — surface the specific error_code
+      // from the backend so the admin never sees a bare "Create
+      // failed" toast on a 5xx. A 502 from the proxy still falls
+      // through here as a plain Error without a code.
+      const detail = e?.data?.detail;
+      const code = (detail && typeof detail === "object")
+        ? detail.error_code : null;
+      const message = e?.message || "Create failed";
+      toast.error(code ? `${code}: ${message}` : message);
     }
   }
 
@@ -148,13 +168,55 @@ export default function MarketingTemplatesListPage() {
           {loading && (
             <div className="py-10 text-center text-sm text-zinc-500">Loading…</div>
           )}
-          {!loading && rows.length === 0 && (
-            <div className="py-10 text-center text-sm text-zinc-400"
-                 data-testid="templates-list-empty">
-              No templates. Click <em>New template</em> to create one.
+          {!loading && loadError && (
+            <div className="py-10 text-center"
+                 data-testid="templates-list-error">
+              <div className="inline-block max-w-xl px-6 py-4 rounded-lg bg-red-50 border border-red-200 text-left">
+                <div className="text-sm font-medium text-red-900 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  Could not load templates
+                </div>
+                <div className="text-xs mt-1.5 text-red-700">
+                  {loadError.code && (
+                    <code className="font-mono text-[11px] px-1 py-0.5 rounded bg-red-100 text-red-900 mr-1.5"
+                          data-testid="templates-list-error-code">
+                      {loadError.code}
+                    </code>
+                  )}
+                  <span data-testid="templates-list-error-message">
+                    {loadError.message}
+                  </span>
+                </div>
+                <button
+                  onClick={load}
+                  data-testid="templates-list-retry-btn"
+                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-red-600 text-white text-xs hover:bg-red-700"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           )}
-          {!loading && rows.map((r) => (
+          {!loading && !loadError && rows.length === 0 && (
+            <div className="py-10 text-center"
+                 data-testid="templates-list-empty">
+              <div className="text-sm text-zinc-700 font-medium">
+                No templates yet.
+              </div>
+              <div className="text-xs text-zinc-500 mt-1">
+                Create your first one to get started.
+              </div>
+              <button
+                onClick={createNew}
+                data-testid="templates-empty-new-btn"
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-900 text-white text-xs hover:bg-zinc-800"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New template
+              </button>
+            </div>
+          )}
+          {!loading && !loadError && rows.map((r) => (
             <div key={r.id}
                  data-testid={`templates-row-${r.id}`}
                  className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-zinc-100 items-center hover:bg-zinc-50/70 cursor-pointer"
