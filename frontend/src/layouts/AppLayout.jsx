@@ -530,7 +530,7 @@ function AppLayout() {
         <button
           type="button"
           onClick={onLogout}
-          className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+          className="mx-2 mt-1 mb-2 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
           // NAV-restyle · Feb-2026 — blue hover glow on the rail-
           // Logout tile so it visually joins the pin/entry hover
           // family. Non-route surface → no ``aria-current`` gate.
@@ -545,7 +545,7 @@ function AppLayout() {
           aria-label="Log out"
           title="Log out"
         >
-          <LogOut size={18} />
+          <LogOut size={14} />
           <span className="leading-none text-center">Logout</span>
         </button>
       </aside>

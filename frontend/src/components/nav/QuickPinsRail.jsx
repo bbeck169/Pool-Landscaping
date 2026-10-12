@@ -104,7 +104,7 @@ function SortableRailPin({ pin, onRequestRemove }) {
         className={({ isActive }) =>
           [
             "rounded-xl flex flex-col items-center justify-center gap-1 py-2.5",
-            "text-[10px] font-semibold",
+            "text-[9px] font-semibold",
             "transition-all duration-200 ease-out will-change-transform",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
             "hover:scale-[1.02] focus-visible:scale-[1.02]",
@@ -136,7 +136,7 @@ function SortableRailPin({ pin, onRequestRemove }) {
         aria-label={_displayLabel(pin.label)}
         title={_displayLabel(pin.label)}
       >
-        <Icon size={20} className="transition-colors duration-200" />
+        <Icon size={16} className="transition-colors duration-200" />
         <span className="leading-none text-center transition-colors duration-200">{_displayLabel(pin.label)}</span>
       </NavLink>
     </div>
@@ -215,7 +215,7 @@ export default function QuickPinsRail({ role }) {
         type="button"
         onClick={() => setAddOpen(true)}
         disabled={atCap}
-        className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="mx-2 mt-1 rounded-xl flex flex-col items-center justify-center gap-1 py-2.5 text-[9px] font-semibold border border-dashed transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
         style={{
           color: colors.nav.fg,
           borderColor: colors.nav.border,
@@ -225,7 +225,7 @@ export default function QuickPinsRail({ role }) {
         aria-label={atCap ? `Pin cap of ${cap} reached — remove a pin to add another` : "Add a Quick Access pin"}
         title={atCap ? `At cap (${cap})` : "Add pin"}
       >
-        <Plus size={18} />
+        <Plus size={14} />
         <span className="leading-none text-center">{atCap ? `${cap}/${cap}` : "Add pin"}</span>
       </button>
 
