@@ -340,6 +340,7 @@ async def preview_isolation_status(user: dict = Depends(require_admin)):
         "preview_tenant_whitelist_size": len(PREVIEW_TENANT_WHITELIST),
         "registry": {
             "declared_pii_routes": registry_report["declared_pii_routes"],
+            "exempted_routes": registry_report.get("exempted_routes", 0),
             "total_routes": registry_report["total_routes"],
             "status": registry_report["status"],
             "missing_registered_routes": [

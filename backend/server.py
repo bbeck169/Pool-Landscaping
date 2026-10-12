@@ -1803,10 +1803,16 @@ app.add_middleware(_PreviewPIIMiddleware)
 # strict no-ops.
 @app.on_event("startup")
 async def _preview_isolation_boot_audit():
-    try:
-        _assert_pii_registry_coverage(app)
-    except Exception as e:  # pragma: no cover — defensive
-        logger.error(f"[preview_isolation] boot audit failed: {e}")
+    # 2026-02 · P0 Stage 3 Commit F — hard-fail boot on preview if
+    # the PII route registry audit returns RED. ``assert_registry_
+    # coverage`` is a strict no-op on production (returns the
+    # report, never raises) so this never crashes prod boot. On
+    # preview, RuntimeError propagates out of the startup callback
+    # and uvicorn terminates — forcing the admin to either wire
+    # the decorator or add the orphan to the exemption list with
+    # a concrete justification BEFORE the server starts serving
+    # traffic.
+    _assert_pii_registry_coverage(app)
     # Boot scrub — guarded by is_production_env() + 24h dedup + the
     # localhost-only Mongo check inside ``run_once``. Spawned as a
     # background task so a slow scrub doesn't block the readiness
