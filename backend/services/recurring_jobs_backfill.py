@@ -77,14 +77,20 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # RECURRING-JOBS SAFETY NET (context-loss resilience breadcrumb)
 # Companion routers (fire sites):
-#   - backend/routers/jobs.py              (PUT /jobs/{jid})
+#   - backend/routers/jobs.py              (PUT /jobs/{jid} completion;
+#                                           DELETE /jobs/{jid} hard-delete)
 #   - backend/routers/service_reports.py   (submit path)
 #   - backend/routers/mobile_sync.py       (offline replay)
+#   - backend/routers/dashboard_drilldown.py (orphan hard-delete, single + bulk)
 # Companion audit: /app/docs/recurring-jobs-audit.md
+# Helpers exposed:
+#   - materialize_next_from_completed_job   on-complete safety net
+#   - rewind_template_cursor_on_job_delete  delete-cursor rewind (Cause C)
 # Nightly cron fix: 54af96872 (cursor advances only on provable progress)
 # Admin backfill endpoint chain: 22164d562, ea54df36b, 9593a8450, 8e691ea4f
 # Infinite recurrence (null end_date): 43be86e2d
 # Site 2 (service_reports) idempotency: option (a) — helper internal only.
+# Delete-rewind scope: HARD DELETE ONLY (soft-delete is operator intent).
 # ---------------------------------------------------------------------------
 
 import logging
@@ -463,3 +469,126 @@ async def materialize_next_from_completed_job(
         job_doc["id"], actor_user_id,
     )
     return job_doc
+
+
+
+# ────────────────────────────────────────────────────────────────────
+# Delete-cursor-rewind (RECURRING-DELETE-RESETS-CURSOR, Cause C)
+# ────────────────────────────────────────────────────────────────────
+async def rewind_template_cursor_on_job_delete(
+    *,
+    job: Dict[str, Any],
+    tenant_id: str,
+    actor_user_id: Optional[str] = None,
+) -> Optional[str]:
+    """Safety-net: on hard-delete of a job tied to a recurring template,
+    rewind the parent template's ``last_generated_through`` cursor so
+    the next cron run re-materializes the hole. Closes Cause C of the
+    recurring-jobs permanent-hole bug (54af96872 covered Cause A/B).
+
+    Scope: HARD DELETE ONLY. Soft-delete sites deliberately do NOT
+    call this helper — the current cron contract treats soft-deleted
+    rows as "operator intent to keep this out of the schedule" and
+    skips them (see ``run_horizon_backfill`` row classifier at line
+    ~165). Rewinding on soft-delete would be a no-op in practice.
+
+    Preconditions (early returns, each returns ``None``):
+
+      1. ``job.get("recurring_template_id")`` is None → no-op
+         (non-recurring job).
+      2. ``job.get("scheduled_date")`` is missing or unparseable → no-op.
+      3. Parent template not found in ``db.recurring_job_templates``
+         → no-op (template already deleted; cron won't walk it anyway).
+      4. Current cursor is set and ``scheduled_date > cursor`` → no-op
+         (cron hasn't reached this date yet; next walk will cover it
+         naturally).
+      5. Current cursor is None → no-op (cron hasn't materialized
+         anything yet; nothing to rewind).
+
+    On rewind: ``$set`` the cursor to ``scheduled_date - 1 day`` (ISO
+    string) — but only via a Mongo filter guard that refuses to
+    overwrite a cursor that another delete already pushed further
+    back. Prevents a stale rewind from clobbering a lower cursor.
+
+    Logger output::
+
+        recurring_job.cursor_rewind.triggered
+            tenant=<id> template=<id> deleted_job=<id>
+            old_cursor=<iso|None> new_cursor=<iso> actor=<id>
+
+    Caller contract — rewind failures MUST NOT block the parent
+    delete HTTP call. Caller wraps in try/except and emits
+    ``recurring_job.cursor_rewind.failed`` WARN (not re-raised).
+
+    Returns the new cursor ISO string on rewind, ``None`` if any
+    precondition short-circuited.
+    """
+    from config import db
+    from utils import now_iso
+
+    # ── Precondition 1 — not recurring ──────────────────────────
+    template_id = job.get("recurring_template_id")
+    if not template_id:
+        return None
+    deleted_job_id = job.get("id")
+
+    # ── Precondition 2 — unparseable scheduled_date ─────────────
+    sched_raw = job.get("scheduled_date")
+    if not sched_raw:
+        return None
+    try:
+        sched = date.fromisoformat(str(sched_raw))
+    except Exception:
+        return None
+
+    # ── Precondition 3 — template missing ───────────────────────
+    tpl = await db.recurring_job_templates.find_one(
+        {"id": template_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "last_generated_through": 1},
+    )
+    if not tpl:
+        return None
+
+    # ── Preconditions 4+5 — cursor state ────────────────────────
+    cursor_raw = tpl.get("last_generated_through")
+    if not cursor_raw:
+        # Cron has materialized nothing yet; natural walk from
+        # start_date will cover whatever's missing.
+        return None
+    try:
+        cursor = date.fromisoformat(str(cursor_raw))
+    except Exception:
+        # Malformed cursor — don't try to repair here; let the cron
+        # self-heal via its usual flow.
+        return None
+    if sched > cursor:
+        # Future date beyond cursor — cron hasn't walked past it yet,
+        # so the next run will cover it naturally.
+        return None
+
+    new_cursor_iso = (sched - timedelta(days=1)).isoformat()
+
+    # ── Rewind (guarded) ────────────────────────────────────────
+    # The ``$gt`` filter is the race-guard: if another delete already
+    # pushed the cursor lower than our target, this update is a no-op.
+    result = await db.recurring_job_templates.update_one(
+        {"id": template_id, "tenant_id": tenant_id,
+         "last_generated_through": {"$gt": new_cursor_iso}},
+        {"$set": {"last_generated_through": new_cursor_iso,
+                    "cursor_rewound_at": now_iso(),
+                    "cursor_rewound_reason": "job_deleted",
+                    "cursor_rewound_deleted_job_id": deleted_job_id}},
+    )
+    if result.modified_count == 0:
+        # Race: another delete beat us to a lower cursor. That lower
+        # value already heals this hole + more. No action needed.
+        return None
+
+    logger.info(
+        "recurring_job.cursor_rewind.triggered "
+        "tenant=%s template=%s deleted_job=%s "
+        "old_cursor=%s new_cursor=%s actor=%s",
+        tenant_id, template_id, deleted_job_id,
+        cursor_raw, new_cursor_iso, actor_user_id,
+    )
+    return new_cursor_iso

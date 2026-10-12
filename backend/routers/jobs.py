@@ -1,14 +1,18 @@
 # ruff: noqa: F403,F405
 # ---------------------------------------------------------------------------
 # RECURRING-JOBS SAFETY NET (context-loss resilience breadcrumb)
-# Primary file: this module (Site 1 — PUT /jobs/{jid} status-flip block)
+# Primary file: this module
+#   - Site 1 — PUT /jobs/{jid} status-flip block (on-complete safety net)
+#   - Site H1 — DELETE /jobs/{jid} hard-delete (cursor-rewind, Cause C)
 # Companion service: backend/services/recurring_jobs_backfill.py
 #   → materialize_next_from_completed_job(job=..., tenant_id=..., actor_user_id=...)
+#   → rewind_template_cursor_on_job_delete(job=..., tenant_id=..., actor_user_id=...)
 # Companion audit: /app/docs/recurring-jobs-audit.md
 # Nightly cron fix: 54af96872 (cursor advances only on provable progress)
 # Admin backfill endpoint chain: 22164d562, ea54df36b, 9593a8450, 8e691ea4f
 # Infinite recurrence (null end_date): 43be86e2d
 # Site 2 (service_reports) idempotency: option (a) — helper internal only.
+# Delete-rewind scope: HARD DELETE ONLY (soft-delete is operator intent).
 # ---------------------------------------------------------------------------
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request, BackgroundTasks
 from pydantic import BaseModel, ConfigDict, field_validator

@@ -188,7 +188,9 @@ No sentinel-date pattern in use. Null is the canonical infinite marker.
 
 ---
 
-## 7. On-complete safety-net — three fire sites
+## 7. Session recurring-jobs defenses
+
+### 7a · On-complete safety net — three fire sites
 
 ### Site 1 — `backend/routers/jobs.py:2962` (PUT /jobs/{jid})
 
@@ -250,6 +252,37 @@ Rationale: field-tech "submit service report" is the production hot-path for clo
 ```
 
 Rationale: mobile offline-sync replay of a tech-closed job. `_prev_status` captured at 141; guarded by `if _prev_status != "completed":` at 147.
+
+### 7b · Delete-cursor-rewind (RECURRING-DELETE-RESETS-CURSOR, Cause C)
+
+**Helper:** `rewind_template_cursor_on_job_delete(*, job, tenant_id, actor_user_id)` co-located in `backend/services/recurring_jobs_backfill.py` with `materialize_next_from_completed_job`.
+
+**Scope:** HARD DELETE ONLY. Soft-delete sites deliberately do NOT fire this helper — the current cron contract treats soft-deleted rows as operator intent (see classifier at `recurring_jobs_backfill.py:~165`). Rewinding on soft-delete would be a no-op in practice.
+
+**Wired at:**
+
+| File | Line | Op | Pre-fetch |
+|---|---|---|---|
+| `backend/routers/jobs.py` | ~3415 | `DELETE /jobs/{jid}` (admin) | New `find_one` with projection `{id, tenant_id, recurring_template_id, scheduled_date}` before `delete_one` |
+| `backend/routers/dashboard_drilldown.py` | ~780 | single orphan hard-delete | Expanded existing `find_one` projection to include `recurring_template_id` + `scheduled_date` |
+| `backend/routers/dashboard_drilldown.py` | ~1075 | bulk orphan hard-delete (`delete_many`) | Expanded `pre_docs` projection on line ~1072 to include both fields; loop helper over `pre_docs` after persist |
+
+**Not wired at (hard-delete sites intentionally skipped):**
+
+- `backend/routers/recurring_jobs.py:1895` (`POST /recurring-jobs/{id}/stop`) — the `/stop` route sets `active=False` + `end_date=today` on the template; cron filter excludes `active=False` + walker emits 0 dates past `end_date=today`. Rewinding would be moot.
+
+**Idempotency / race guard:** the Mongo write uses a filter guard `{"last_generated_through": {"$gt": new_cursor_iso}}` so a stale rewind cannot overwrite a lower cursor that another delete already pushed back. First-writer-wins semantics without a transaction.
+
+**Fail-soft contract:** every wiring site wraps the helper call in `try/except` and emits a `recurring_job.cursor_rewind.failed` WARN with context on exception. The parent delete HTTP call always returns its original response.
+
+**Logger output on success:**
+
+```
+recurring_job.cursor_rewind.triggered tenant=<id> template=<id> deleted_job=<id>
+    old_cursor=<iso> new_cursor=<iso> actor=<id>
+```
+
+**Breadcrumbs:** grep `RECURRING-JOBS SAFETY NET` across the repo to locate the service module + all wiring routers.
 
 ---
 
