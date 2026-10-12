@@ -1153,6 +1153,31 @@ async def submit_service_report(
         logger.warning(
             f"[job_timers.auto_close] job={jid} failed: {_tc_exc}",
         )
+    # Feb-2026 · Recurring-jobs on-complete safety net.
+    # Fires on the pending→completed transition only (resubmit of an
+    # already-completed service report is a no-op for the recurring
+    # cadence). If the parent job was recurring and the nightly cron
+    # hasn't materialized the next occurrence yet, insert it here so
+    # the Schedule view never shows a gap. Idempotent via
+    # ``(tenant, template, scheduled_date)`` dedupe inside the helper.
+    # Failures are NON-FATAL — the service-report submit already
+    # succeeded; we must not surface a 500 on a background self-heal.
+    if _prev_status != "completed":
+        try:
+            from services.recurring_jobs_backfill import (
+                materialize_next_from_completed_job,
+            )
+            await materialize_next_from_completed_job(
+                job={**job, **_stop_updates, "id": jid},
+                tenant_id=tenant["id"],
+                actor_user_id=user.get("id"),
+            )
+        except Exception as _sn_exc:                            # noqa: BLE001
+            logger.warning(
+                "recurring_job.on_complete_safety_net.failed "
+                "tenant=%s parent_job=%s error=%s:%s",
+                tenant["id"], jid, type(_sn_exc).__name__, _sn_exc,
+            )
     # Feb-2026 · Door-hanger auto-send on completion transition.
     # ── Phase P45 · Feb-2026 · SUPERSEDED ─────────────────────────
     # The auto ``schedule_auto_send_door_hanger`` call that used to

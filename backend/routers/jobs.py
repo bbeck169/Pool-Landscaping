@@ -1,4 +1,15 @@
 # ruff: noqa: F403,F405
+# ---------------------------------------------------------------------------
+# RECURRING-JOBS SAFETY NET (context-loss resilience breadcrumb)
+# Primary file: this module (Site 1 — PUT /jobs/{jid} status-flip block)
+# Companion service: backend/services/recurring_jobs_backfill.py
+#   → materialize_next_from_completed_job(job=..., tenant_id=..., actor_user_id=...)
+# Companion audit: /app/docs/recurring-jobs-audit.md
+# Nightly cron fix: 54af96872 (cursor advances only on provable progress)
+# Admin backfill endpoint chain: 22164d562, ea54df36b, 9593a8450, 8e691ea4f
+# Infinite recurrence (null end_date): 8e42a1b7f
+# Site 2 (service_reports) idempotency: option (a) — helper internal only.
+# ---------------------------------------------------------------------------
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request, BackgroundTasks
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Any, Dict, List, Optional, Tuple
@@ -3006,6 +3017,29 @@ async def update_job(jid: str, body: JobUpdate,
                 logger.warning(
                     "public_checkin auto-enqueue failed: %s",
                     _enq_exc,
+                )
+            # Feb-2026 · Recurring-jobs on-complete safety net.
+            # If this job came from a recurring template and the
+            # nightly cron hasn't materialized the next occurrence
+            # yet, insert it now so the Schedule view never shows
+            # a gap. Idempotent via (tenant, template, date) dedupe.
+            # Failures are NON-FATAL — the completed-job write
+            # already landed; we must not surface a 500 on a
+            # background self-heal.
+            try:
+                from services.recurring_jobs_backfill import (
+                    materialize_next_from_completed_job,
+                )
+                await materialize_next_from_completed_job(
+                    job={**job, **update, "id": jid},
+                    tenant_id=tenant["id"],
+                    actor_user_id=user.get("id"),
+                )
+            except Exception as _sn_exc:  # noqa: BLE001
+                logger.warning(
+                    "recurring_job.on_complete_safety_net.failed "
+                    "tenant=%s parent_job=%s error=%s:%s",
+                    tenant["id"], jid, type(_sn_exc).__name__, _sn_exc,
                 )
         # job_cancelled — status flip to cancelled.
         if cur_status == "cancelled" and prev_status != "cancelled":

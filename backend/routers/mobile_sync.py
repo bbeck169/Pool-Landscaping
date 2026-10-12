@@ -209,6 +209,37 @@ async def _handle_job_close(op: _SyncOp, tenant_id: str, user_id: str) -> dict:
             schedule_auto_send_door_hanger(op.entity_id, tenant_id)
         except Exception:
             pass
+        # Feb-2026 · Recurring-jobs on-complete safety net.
+        # Mirrors the online submit path (routers/service_reports.py
+        # ~L1156 + routers/jobs.py ~L2988): on the pending→completed
+        # transition from an offline-replayed close, insert the next
+        # expected recurring occurrence if the cron missed it.
+        # Idempotent via (tenant, template, date) dedupe. Non-fatal
+        # — a safety-net failure MUST NOT fail the sync replay.
+        try:
+            from services.recurring_jobs_backfill import (
+                materialize_next_from_completed_job,
+            )
+            # Shape the job doc so the helper has scheduled_date +
+            # recurring_template_id — the mobile op payload doesn't
+            # carry those, so refetch the just-updated row.
+            _refetched = await db.jobs.find_one(
+                {"id": op.entity_id, "tenant_id": tenant_id},
+                {"_id": 0},
+            )
+            if _refetched:
+                await materialize_next_from_completed_job(
+                    job=_refetched,
+                    tenant_id=tenant_id,
+                    actor_user_id=user_id,
+                )
+        except Exception as _sn_exc:                            # noqa: BLE001
+            logger.warning(
+                "recurring_job.on_complete_safety_net.failed "
+                "tenant=%s parent_job=%s error=%s:%s",
+                tenant_id, op.entity_id,
+                type(_sn_exc).__name__, _sn_exc,
+            )
         # Phase P25 · Feb-2026 — Workstream activity-feed event.
         # Uses the SAME emitter helper as the online path
         # (``routers/jobs.py`` PATCH handler) so the event shape
