@@ -50,14 +50,19 @@ describe("CustomersList · H4 Waitlist cohort tab", () => {
     );
   });
 
-  it("fetches the waitlist count via ?waitlisted=true&count_only=true (admin only)", () => {
+  it("hydrates the waitlist count via the consolidated /customers/counts endpoint (admin only)", () => {
+    // CUS-perf v3 (R3=B ruling, Feb-2026) replaced the P31-era
+    // ``promises.push(api.get(/customers?waitlisted=true&count_only=true...))``
+    // fanout + indexed ``results[3]?.count`` read with a single
+    // ``api.get(/customers/counts)`` call returning every bucket
+    // at once. Lock the current unified pattern.
     expect(SRC).toMatch(
-      /promises\.push\(api\.get\(\s*`\/customers\?waitlisted=true&count_only=true\$\{p43Suffix\}`\)\)/,
+      /api\.get\(`\/customers\/counts\$\{qs\s*\?\s*`\?\$\{qs\}`\s*:\s*""\}`\)/,
     );
-    // And the count-populate line must read from the admin batch,
-    // gated by isAdmin so tech does not see a bogus ``0`` badge.
+    // Admin-only gate: the waitlist count must still null-out for
+    // non-admin viewers so no bogus badge renders in a tech session.
     expect(SRC).toMatch(
-      /waitlist:\s*isAdmin\s*\?\s*\(results\[3\]\?\.count\s*\?\?\s*0\)\s*:\s*null/,
+      /waitlist:\s*isAdmin\s*\?\s*\(r\?\.waitlist\s*\?\?\s*0\)\s*:\s*null/,
     );
   });
 

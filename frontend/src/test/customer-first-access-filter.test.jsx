@@ -62,34 +62,33 @@ describe("CustomersList · Never logged in filter (Feb-2026)", () => {
 
   it("participates in load() dependency list so refetch fires on toggle", () => {
     // The load effect's dep array must include neverLoggedIn so the
-    // list refetches every time the operator flips the chip.
-    // Feb-2026 · Round 2 flake fix — additional chips landed between
-    // `neverLoggedIn` and `includeDeleted` (portalInvitedFilter,
-    // signedInFilter). Match by presence of `neverLoggedIn` in the
-    // load() dep list rather than a rigid neighbour tuple.
+    // list refetches every time the operator flips the chip. The
+    // tuple has evolved repeatedly (P43 chips, P44 city, K40 hasCard,
+    // etc.); anchor on neverLoggedIn appearing within the dep tuple
+    // rather than any specific neighbour.
     expect(SRC).toMatch(
-      /noPaymentFilter,\s*neverLoggedIn,/,
+      /\}\s*,\s*\[searchDeb[\s\S]{0,600}?neverLoggedIn[\s\S]{0,400}?\]\);/,
     );
   });
 
   it("resets pagination on toggle (via the shared URL-sync effect deps)", () => {
     // The URL-sync effect's dep array includes neverLoggedIn AND
-    // the effect body calls setPage(1). This keeps the chip's page-
-    // reset invariant identical to the P43/P44 chips.
-    // Feb-2026 · Round 2 flake fix — the URL-sync deps tuple gained
-    // portalInvitedFilter + signedInFilter after this test was
-    // authored. Anchor on `neverLoggedIn` being present in the deps
-    // rather than being the trailing element.
+    // the effect body calls setPage(1). Match on co-occurrence
+    // rather than a rigid neighbour tuple (hasCardFilter now sits
+    // between noPaymentFilter and neverLoggedIn after CUS-perf v3).
     expect(SRC).toMatch(
-      /noPaymentFilter,\s*neverLoggedIn,\s*portalInvitedFilter,\s*signedInFilter\]\);/,
+      /neverLoggedIn,\s*portalInvitedFilter,\s*signedInFilter\]\);/,
     );
   });
 
-  it("fetches the standalone count without composing with other filters", () => {
-    // Badge stability contract: never compose. Match the exact
-    // count_only + first_access-only URL.
+  it("hydrates the never-logged-in count from the consolidated loadCounts() response", () => {
+    // Phase P31 (Feb-2026) consolidated the per-badge count fetches
+    // into a single ``/customers/counts`` call. The pre-P31
+    // standalone ``/customers?count_only=true&first_access=never``
+    // probe is sunsetted — the badge now reads
+    // ``r?.never_logged_in ?? 0`` off the unified envelope.
     expect(SRC).toMatch(
-      /api\.get\(\s*"\/customers\?count_only=true&first_access=never"/,
+      /setNeverLoggedInCount\(r\?\.never_logged_in\s*\?\?\s*0\)/,
     );
   });
 
