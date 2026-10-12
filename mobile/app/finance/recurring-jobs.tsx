@@ -11,10 +11,11 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, Switch, Pressable, Platform,
-  Modal } from "react-native";
+  Modal, ScrollView } from "react-native";
 import { useFocusEffect } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import dayjs from "dayjs";
+import { format as fmtDate } from "date-fns";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
@@ -25,6 +26,8 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 import { useToast } from "@/src/components/ToastProvider";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import MasterServiceCombobox from "@/src/components/services/MasterServiceCombobox";
+// Web parity (52c3eb6fa) · "Next" column date filter — shared presets.
+import { presetByKey } from "@/src/lib/scheduleRangePresets";
 
 type RecurringJob = {
   id: string;
@@ -45,7 +48,29 @@ type RecurringJob = {
   monthly_pattern?: "day_of_month" | "nth_weekday";
   monthly_nth_week?: "first" | "second" | "third" | "fourth" | "last";
   monthly_weekday?: number;
+  /** Server-computed next occurrences, date-only ISO (``YYYY-MM-DD``). */
+  upcoming?: string[];
 };
+
+// Web parity (52c3eb6fa) · 5 of the 7 shared presets, in chip display order.
+const DATE_PRESET_KEYS = ["today", "this_week", "next_7_days", "next_30_days", "this_month"] as const;
+const DATE_PRESETS = DATE_PRESET_KEYS.map((k) => presetByKey(k)!);
+
+type DateFilter = { start: string; end: string; presetKey: string };
+const NO_DATE_FILTER: DateFilter = { start: "", end: "", presetKey: "" };
+
+/** Inclusive string compare on ``upcoming[0]``. Empty range = filter OFF
+ *  (all rows); when active, rows with no upcoming[0] are excluded. */
+function filterByNextDate<T extends { upcoming?: string[] }>(rows: T[], f: DateFilter): T[] {
+  if (!f.start && !f.end) return rows;
+  const lo = f.start || "0000-01-01";
+  const hi = f.end || "9999-12-31";
+  return rows.filter((r) => {
+    const next = (r.upcoming && r.upcoming[0]) || "";
+    if (!next) return false;
+    return next >= lo && next <= hi;
+  });
+}
 
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];  // 0=Mon…6=Sun (matches backend)
 const NTH_WEEK_OPTS: NonNullable<RecurringJob["monthly_nth_week"]>[] =
@@ -172,6 +197,18 @@ export default function RecurringJobsMobile() {
   const [activeTab, setActiveTab] = useState<"active" | "paused">("active");
   const [tabCounts, setTabCounts] = useState({ active: 0, paused: 0 });
   const { showToast } = useToast();
+  // Web parity (52c3eb6fa) · "Next" date filter — local state only,
+  // independent of the Active / Paused tab (composes under AND).
+  const [dateFilter, setDateFilter] = useState<DateFilter>(NO_DATE_FILTER);
+  const dateFilterActive = !!(dateFilter.start || dateFilter.end);
+  const applyDatePreset = useCallback((key: string) => {
+    const entry = presetByKey(key);
+    if (!entry) return;
+    const { start, end } = entry.resolve(new Date());
+    setDateFilter({ start: fmtDate(start, "yyyy-MM-dd"), end: fmtDate(end, "yyyy-MM-dd"), presetKey: key });
+  }, []);
+  const clearDateFilter = useCallback(() => setDateFilter(NO_DATE_FILTER), []);
+  const visibleRows = useMemo(() => filterByNextDate(rows, dateFilter), [rows, dateFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -363,6 +400,53 @@ export default function RecurringJobsMobile() {
           <Text style={s.hint} testID="recurring-hint">
             Auto-generates a rolling 2-week horizon of jobs (nightly at 02:00 UTC).
           </Text>
+          {/* Web parity (52c3eb6fa) · "Next" date filter row. */}
+          <View style={s.dateFilterBox} testID="recurring-jobs-date-filter">
+            <Text style={s.fieldLabel}>Next date</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.filterRow}
+            >
+              {DATE_PRESETS.map((p) => {
+                const active = dateFilter.presetKey === p.key;
+                return (
+                  <Pressable
+                    key={p.key}
+                    onPress={() => applyDatePreset(p.key)}
+                    style={[s.filterChip, active && s.filterChipActive]}
+                    testID={`recurring-jobs-date-preset-${p.key}`}
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[s.filterChipText, active && s.filterChipTextActive]}>{p.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <View style={s.dateRangeRow}>
+              <View style={{ flex: 1 }}>
+                <DateField
+                  label="From"
+                  value={dateFilter.start}
+                  onChange={(iso) => setDateFilter((d) => ({ ...d, start: iso, presetKey: "" }))}
+                  testID="recurring-jobs-date-start"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DateField
+                  label="To"
+                  value={dateFilter.end}
+                  onChange={(iso) => setDateFilter((d) => ({ ...d, end: iso, presetKey: "" }))}
+                  testID="recurring-jobs-date-end"
+                />
+              </View>
+            </View>
+            {dateFilterActive ? (
+              <Pressable onPress={clearDateFilter} hitSlop={8} style={s.clearBtn} testID="recurring-jobs-date-clear">
+                <Text style={s.clearText}>Clear</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <PrimaryButton
             title="+ New recurring job"
             onPress={openCreate}
@@ -371,7 +455,12 @@ export default function RecurringJobsMobile() {
         </View>
       }
     >
-      {rows.map((r) => (
+      {dateFilterActive && visibleRows.length === 0 ? (
+        <Text style={s.hint} testID="recurring-jobs-date-no-match">
+          No recurring jobs have a next date in this range.
+        </Text>
+      ) : null}
+      {visibleRows.map((r) => (
         <View key={r.id} style={s.row} testID={`recurring-row-${r.id}`}>
           <View style={s.rowHead}>
             <Pressable onPress={() => openEdit(r)} style={{ flex: 1 }}
@@ -396,6 +485,9 @@ export default function RecurringJobsMobile() {
             <Text style={s.meta}>{cadenceLabel(r)}</Text>
             <Text style={s.meta}>{money((r.price_cents || 0) / 100)}</Text>
           </View>
+          <Text style={s.meta} testID={`recurring-next-${r.id}`}>
+            Next: {(r.upcoming && r.upcoming[0]) || "—"}
+          </Text>
           {r.recurrence_never_ends ? (
             <Text style={s.meta} testID={`recurring-never-badge-${r.id}`}>
               Ends: Never (runs until manually stopped)
@@ -705,6 +797,20 @@ const s = StyleSheet.create({
   tabText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.muted },
   tabTextActive: { color: "#fff" },
   hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  // Web parity (52c3eb6fa) · date filter — pill chips mirror
+  // app/finance/autobilling-runs.tsx filter chips verbatim.
+  dateFilterBox: { gap: spacing.xs },
+  filterRow: { flexDirection: "row", gap: spacing.xs, paddingRight: spacing.lg },
+  filterChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  filterChipActive: { backgroundColor: colors.brandTertiary, borderColor: colors.brand },
+  filterChipText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
+  filterChipTextActive: { color: colors.brand },
+  dateRangeRow: { flexDirection: "row", gap: spacing.sm },
+  clearBtn: { alignSelf: "flex-start", minHeight: 32, justifyContent: "center" },
+  clearText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, textDecorationLine: "underline" },
   row: {
     padding: spacing.md, borderRadius: radius.md, borderWidth: 1,
     borderColor: colors.border, backgroundColor: colors.surface, gap: spacing.sm,
