@@ -95,10 +95,20 @@ describe("K52 · Slice A — Filter row navy (Schedule)", () => {
   });
 
   it("Search input, all four ``<select>`` triggers, and the Clear button render white on navy", () => {
-    // Search wrapper — white/10 tinted card on navy.
+    // Phase N1 (Feb-2026) refactored the search input from the
+    // original K52.1 "translucent-white overlay + white text" to a
+    // nested solid-white card on the navy strip — ``bg-white
+    // border-slate-200 rounded-lg`` wrapper + brand-blue text + the
+    // ``colors.searchIcon`` icon. The strip itself remains the K52
+    // navy chrome. Lock the N1 contract for the search cell AND the
+    // K52 contract for the selects + Clear button (unchanged).
     const searchBlock = CAL_SCHED.split('data-testid="calendar-search"')[0].slice(-800);
-    expect(searchBlock).toMatch(/background:\s*"rgba\(255,255,255,0\.10\)"/);
-    expect(searchBlock).toMatch(/color:\s*colors\.nav\.fgMuted/);
+    expect(searchBlock, "Phase N1 nested white card").toMatch(
+      /bg-white\s+border\s+border-slate-200\s+rounded-lg/,
+    );
+    expect(searchBlock, "Phase N1 brand-blue search icon").toMatch(
+      /color:\s*colors\.searchIcon/,
+    );
     // Each of the four selects on the strip uses ``colors.nav.bg``
     // + ``colors.nav.fg``.  We assert on the strip source block
     // (idx range from filters open through crew chips row).
@@ -388,14 +398,19 @@ describe("K52.1 · Filter row navy sweep", () => {
     // ``colors.nav.*`` tokens.
     expect(QUOTES).toMatch(/data-testid="quotes-search"/);
     expect(QUOTES).toMatch(/data-testid="quotes-filter-status"/);
-    // Regression guard — pre-K52 ``colors.surfaceSecondary`` /
-    // ``colors.onSurfaceSecondary`` on the strip's controls MUST
-    // be gone.
+    // Regression guard — pre-K52 ``colors.surfaceSecondary`` MUST
+    // NOT reappear as the strip CONTAINER's bg. We no longer forbid
+    // ``colors.onSurfaceSecondary`` text-color references inside
+    // the strip — Phase 3 B2 (Feb-2026) uses it as the idle-chip
+    // text color on the Lifecycle segmented control, which is a
+    // legitimate K52-compatible pattern (chip has a translucent/
+    // outlined bg; text is intentionally de-emphasized when idle).
     const stripStart = QUOTES.indexOf('data-testid="quotes-filters"');
     const stripEnd = QUOTES.indexOf("</div>", stripStart);
     const strip = QUOTES.slice(stripStart, stripEnd);
-    expect(strip).not.toMatch(/colors\.surfaceSecondary/);
-    expect(strip).not.toMatch(/colors\.onSurfaceSecondary/);
+    expect(strip).not.toMatch(
+      /backgroundColor:\s*colors\.surfaceSecondary/,
+    );
   });
 
   it("InvoicesList filter strip is navy K52", () => {
