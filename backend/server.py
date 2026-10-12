@@ -1074,6 +1074,13 @@ api_router.include_router(_invoice_charge_saved_card.router)
 # ``db.recurring_job_templates`` row.
 from routers import recurring_jobs_backfill as _rec_backfill  # noqa: E402
 api_router.include_router(_rec_backfill.router)
+# Feb-2026 · P0 companion — super-admin horizon-backfill HTTP endpoint
+# (``POST /api/admin/recurring-jobs/backfill-horizon``). Shares the
+# idempotent sweep logic in ``services.recurring_jobs_backfill`` with
+# the operator CLI ``scripts/backfill_recurring_jobs_window.py``;
+# used when shell access isn't available during an incident.
+from routers import admin_recurring_jobs_backfill as _admin_rec_backfill  # noqa: E402
+api_router.include_router(_admin_rec_backfill.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating
