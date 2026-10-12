@@ -966,7 +966,24 @@ export default function EstimateView({
                   {!as_customer ? <th className="iv-num">Calc</th> : null}
                   {!as_customer ? <th className="iv-num">Cost/Rate</th> : null}
                   <th className="iv-num">Qty/Hr</th>
-                  <th className="iv-num">Visits</th>
+                  {/* Feb-2026 · Track 3 — customer-facing Unit Price
+                      column.  Placed between Qty/Hr and Total to
+                      match the conventional quote layout (and the
+                      customer PDF renderer's ``Item | Qty | Unit |
+                      Total`` 4-column shape in ``estimate_viewer.py``
+                      is_customer_pdf branch).  Admin surface is
+                      intentionally unchanged — the cost/margin
+                      columns to the right already carry unit-cost
+                      detail. */}
+                  {as_customer ? <th className="iv-num">Unit Price</th> : null}
+                  {/* Feb-2026 · Track 3 — Visits column hidden on the
+                      public surface. ``visits`` is not persisted in
+                      the quote line_items schema; the cell always
+                      fell back to ``1`` (pure noise). Admin keeps the
+                      column during Track 3 so this diff stays
+                      focused on the public bug; admin-side cleanup
+                      is a separate follow-up. */}
+                  {!as_customer ? <th className="iv-num">Visits</th> : null}
                   {!as_customer ? <th className="iv-num">M.Rate</th> : null}
                   {!as_customer ? <th className="iv-num">BH</th> : null}
                   {!as_customer ? <th className="iv-num">T.BH</th> : null}
@@ -1038,13 +1055,37 @@ export default function EstimateView({
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{li.calc || "—"}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.cost_rate)}</td> : null}
                     <td className="iv-num" style={rowStyle} data-mlabel="Qty/Hr">{li.qty_hr || li.quantity || 0}</td>
-                    <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
+                    {/* Feb-2026 · Track 3 — Unit Price cell (customer
+                        surface only). Reuses the existing
+                        ``formatCurrency`` helper so admin + public
+                        money formatting stays identical. */}
+                    {as_customer ? (
+                      <td className="iv-num" style={rowStyle} data-mlabel="Unit Price"
+                           data-testid={`estimate-line-item-unit-price-${i}`}>
+                        {formatCurrency(li.unit_price)}
+                      </td>
+                    ) : null}
+                    {!as_customer ? (
+                      <td className="iv-num" style={rowStyle} data-mlabel="Visits">{li.visits || 1}</td>
+                    ) : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.m_rate)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.bh)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.t_bh)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{formatCurrency(li.t_b_cost)}</td> : null}
                     {!as_customer ? <td className="iv-num" style={rowStyle}>{fmt(li.margin_pct)}</td> : null}
-                    <td className="iv-num" style={rowStyle} data-mlabel="Total">{formatCurrency(li.total)}</td>
+                    {/* Feb-2026 · Track 3 — Total cell. Backend-first,
+                        frontend fallback. ``estimate_viewer._build_payload``
+                        now computes ``total = qty × unit_price`` at the
+                        serializer boundary when the stored value is
+                        null, so ``li.total`` is normally a real number.
+                        The ``??`` fallback is a defense-in-depth guard
+                        so the UI stays correct if the API ever
+                        regresses — do NOT remove the backend compute
+                        thinking the FE handles it. */}
+                    <td className="iv-num" style={rowStyle} data-mlabel="Total"
+                         data-testid={`estimate-line-item-total-${i}`}>
+                      {formatCurrency(li.total ?? (Number(li.quantity || 0) * Number(li.unit_price || 0)))}
+                    </td>
                     {as_customer && actionable && !locked ? (
                       <td className="iv-num">
                         {isDeclined ? (
