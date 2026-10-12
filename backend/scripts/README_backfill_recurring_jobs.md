@@ -163,3 +163,108 @@ grep -E "recurring_job\.(cursor_held|insert_failed)" /var/log/<backend-log>
 ```
 
 Done. The backfill is idempotent; re-running it ANY time is safe.
+
+---
+
+## 7. Prod backfill via admin HTTP endpoint (no-shell fallback)
+
+If pod shell access to prod isn't available, invoke the sweep over HTTP as a super_admin.
+
+**Route:** `POST /api/admin/recurring-jobs/backfill-horizon`
+**Auth:** `super_admin` role (403 for every other role).
+**Audit:** every call writes two rows to `db.audit_logs` (`.invoke` + `.complete`) with actor, payload, result, success, error — queryable for post-incident review.
+**Shared logic:** this endpoint is a thin HTTP wrapper around `backend/services/recurring_jobs_backfill.py::run_horizon_backfill`, the same function the CLI calls. Behavior and idempotency guarantees are identical.
+
+### 7a. Log in as super_admin
+
+```bash
+TOK=$(curl -s -X POST "https://<prod-host>/api/auth/login" \
+    -H "Content-Type: application/json" \
+    -d '{"email":"<super-admin-email>","password":"<super-admin-password>"}' \
+    | python -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+```
+
+### 7b. Dry-run — safe to run ANY time
+
+```bash
+curl -s -X POST "https://<prod-host>/api/admin/recurring-jobs/backfill-horizon" \
+    -H "Authorization: Bearer $TOK" \
+    -H "Content-Type: application/json" \
+    -d '{"days_ahead":14,"dry_run":true,"tenant_id":null}' \
+    | python -m json.tool
+```
+
+### 7c. Interpret the response
+
+```json
+{
+  "mode": "dry_run",
+  "today": "YYYY-MM-DD",
+  "horizon": "YYYY-MM-DD",
+  "days_ahead": 14,
+  "tenant_scope": null,
+  "templates_processed": N,
+  "expected_dates_total": N,
+  "already_present": N,
+  "missing": N,               // dry-run: how many holes WOULD be filled
+  "soft_deleted_present": N,
+  "inserted": 0,              // dry-run always 0
+  "race_dedup": 0,
+  "insert_errors": 0,
+  "errored_templates": [...], // template-level errors (non-fatal)
+  "warnings": [...],          // per-date insert errors (commit mode only)
+  "per_template_detail": [...]
+}
+```
+
+Readiness gate for commit: `missing > 0`, `errored_templates` is empty-or-triaged, `insert_errors=0`.
+
+### 7d. Commit — writes to `db.jobs`
+
+```bash
+curl -s -X POST "https://<prod-host>/api/admin/recurring-jobs/backfill-horizon" \
+    -H "Authorization: Bearer $TOK" \
+    -H "Content-Type: application/json" \
+    -d '{"days_ahead":14,"dry_run":false,"tenant_id":null}' \
+    | python -m json.tool
+```
+
+On success `inserted` should match the dry-run `missing`. Re-running immediately is a no-op (`inserted=0, missing=0`).
+
+### 7e. Per-tenant variant
+
+```bash
+# Dry-run against one tenant
+curl -s -X POST "https://<prod-host>/api/admin/recurring-jobs/backfill-horizon" \
+    -H "Authorization: Bearer $TOK" \
+    -H "Content-Type: application/json" \
+    -d '{"days_ahead":14,"dry_run":true,"tenant_id":"<TENANT_UUID>"}' \
+    | python -m json.tool
+
+# Commit against one tenant
+curl -s -X POST "https://<prod-host>/api/admin/recurring-jobs/backfill-horizon" \
+    -H "Authorization: Bearer $TOK" \
+    -H "Content-Type: application/json" \
+    -d '{"days_ahead":14,"dry_run":false,"tenant_id":"<TENANT_UUID>"}' \
+    | python -m json.tool
+```
+
+### 7f. Audit-row inspection
+
+Every invocation writes `.invoke` on receipt + `.complete` on return. Pull the most recent 10 to review a staged rollout:
+
+```javascript
+// mongo shell
+db.audit_logs.find(
+    { action: { $regex: "backfill_horizon" } }
+).sort({ created_at: -1 }).limit(10)
+```
+
+Each `.complete` row contains the full summary dict under `result` plus `success: true/false` and `error` (set only on top-level 500s). The `tenant_id` on each audit row reflects the request body's `tenant_id` (`null` for all-tenants scope).
+
+### 7g. Operational notes
+
+* **Horizon cap:** `days_ahead` is validated to `[1, 30]` — anything outside returns 422 before touching the DB.
+* **Partial failures:** the HTTP call returns **200** even if some templates error. Check `errored_templates` and `warnings` in the response (and the `.complete` audit row's `result`).
+* **Top-level 500:** returned as `{"error_code": "recurring_backfill_horizon_internal_error", "error": "<repr>"}`. The `.complete` audit row is still written with `success: false` + `error` populated.
+* **Timeout:** the endpoint runs synchronously. Cloudflare's edge timeout is ~100s. A full-tenant sweep on preview (193 templates, 496 expected dates) completed in ~4s, so this is not a concern at current scale; if prod data ever pushes it over the cap, scope by `tenant_id` and run a few sequential calls.
