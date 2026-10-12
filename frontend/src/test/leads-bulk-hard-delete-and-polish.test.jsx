@@ -46,23 +46,38 @@ describe("LeadsDashboardPage · Phase LD1 bulk hard delete", () => {
   });
 
   it("hard-delete confirm button is disabled until the ack is checked", () => {
-    // ``disabled={busy || !hardAcknowledged}`` is the exact guard.
-    expect(SRC).toMatch(/disabled=\{busy \|\| !hardAcknowledged\}/);
+    // Guard: ``disabled={busy || !hardAcknowledged || …}`` with the
+    // optional large-batch DELETE-text gate (F1.3 · Feb-2026).  The
+    // guard is now multi-line in source so the regex allows arbitrary
+    // whitespace between the clauses.
+    expect(SRC).toMatch(
+      /disabled=\{\s*busy[\s\S]{0,80}?!hardAcknowledged/,
+    );
   });
 
   it("hard-delete confirm posts to /leads/bulk-hard-delete with lead_ids", () => {
     expect(SRC).toMatch(/api\.post\(\s*["']\/leads\/bulk-hard-delete["']\s*,\s*\{\s*lead_ids:/);
   });
 
-  it("hard-delete handler consumes {results, summary} response shape", () => {
-    expect(SRC).toMatch(/res\.results\s*\|\|\s*\[\]/);
-    expect(SRC).toMatch(/res\.summary\?\.succeeded/);
-    expect(SRC).toMatch(/res\.summary\?\.failed/);
+  it("hard-delete handler consumes the {requested, deleted, skipped} response shape", () => {
+    // P6 · Feb-2026 — the endpoint response shape was consolidated
+    // from {results[], summary{succeeded, failed}} to the flatter
+    // {requested, deleted, skipped[]} documented in the P6 brief.
+    // Lock the new shape so a future refactor can't silently revert.
+    expect(SRC).toMatch(/res\.requested\s*\?\?\s*0/);
+    expect(SRC).toMatch(/res\.deleted\s*\?\?\s*0/);
+    expect(SRC).toMatch(/Array\.isArray\(res\.skipped\)/);
   });
 
   it("hard-delete handler filters deleted rows out of local state", () => {
-    // Filter uses the results[] `ok` flag to derive the id list.
-    expect(SRC).toMatch(/results\.filter\(\(r\)\s*=>\s*r\.ok\)\.map\(\(r\)\s*=>\s*r\.id\)/);
+    // Filter derives deletedIds by excluding anything the server
+    // reported in ``skipped[].lead_id`` (the P6 safety-lock output).
+    // Previously the test looked for ``results.filter(r => r.ok)``;
+    // that shape is sunsetted — pivot to the current ``skippedIdSet``
+    // semantic (same net effect).
+    expect(SRC).toMatch(/skippedIdSet\s*=\s*new Set\(skipped\.map/);
+    expect(SRC).toMatch(/requestedIds\.filter\(\s*\(id\)\s*=>\s*!skippedIdSet\.has\(id\)/);
+    expect(SRC).toMatch(/prev\.filter\(\(r\)\s*=>\s*!deletedIds\.includes\(r\.id\)\)/);
   });
 });
 
@@ -95,10 +110,12 @@ describe("LeadsDashboardPage · Phase LD1 visual polish", () => {
   });
 
   it("empty state distinguishes 'no leads yet' from 'no leads match'", () => {
-    // rows.length === 0 → onboarding copy;
+    // rows.length === 0 → onboarding copy — Phase P48 now splits
+    // this per-tab ("No active leads yet." vs
+    // "No archived leads yet."), so lock the shared prefix.
     // rows.length > 0 with filtered visible.length === 0 → search
     // empty state + clear filters CTA.
-    expect(SRC).toMatch(/No leads yet/);
+    expect(SRC).toMatch(/No (active|archived) leads yet/);
     expect(SRC).toMatch(/data-testid="admin-leads-empty-search"/);
     expect(SRC).toMatch(/data-testid="admin-leads-clear-filters"/);
     expect(SRC).toMatch(/No leads match your filters/);

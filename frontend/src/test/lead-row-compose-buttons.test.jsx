@@ -11,6 +11,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
@@ -54,7 +55,7 @@ describe("Leads list · row-level compose buttons", () => {
     apiGet.mockResolvedValueOnce({ rows: ROWS, total: 2 });
     const { default: LeadsDashboardPage } =
       await import("@/pages/leads/LeadsDashboardPage");
-    render(<LeadsDashboardPage />);
+    render(<MemoryRouter><LeadsDashboardPage /></MemoryRouter>);
     await tick();
 
     const smsBtn = screen.getByTestId("lead-row-sms-L1");
@@ -72,7 +73,7 @@ describe("Leads list · row-level compose buttons", () => {
     apiGet.mockResolvedValueOnce({ rows: ROWS, total: 2 });
     const { default: LeadsDashboardPage } =
       await import("@/pages/leads/LeadsDashboardPage");
-    render(<LeadsDashboardPage />);
+    render(<MemoryRouter><LeadsDashboardPage /></MemoryRouter>);
     await tick();
 
     const smsBtn = screen.getByTestId("lead-row-sms-L2");
@@ -88,7 +89,7 @@ describe("Leads list · row-level compose buttons", () => {
     apiGet.mockResolvedValueOnce({ rows: ROWS, total: 2 });
     const { default: LeadsDashboardPage } =
       await import("@/pages/leads/LeadsDashboardPage");
-    render(<LeadsDashboardPage />);
+    render(<MemoryRouter><LeadsDashboardPage /></MemoryRouter>);
     await tick();
 
     expect(screen.queryByTestId("lead-row-sms-L1")).toBeNull();

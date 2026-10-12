@@ -47,20 +47,18 @@ describe("Phase K68 · CustomersList counts_by_status wiring", () => {
     );
   });
 
-  it("filter/tab change effect no longer calls loadCounts()", () => {
-    // Locate the main filter-change useEffect (the one gated on
-    // searchDeb, tag, scope, tab, ...). Its body should invoke
-    // load() and NOT loadCounts(). The K68 refactor removed the
-    // legacy fanout call.
+  it("filter/tab change effect dispatches load() + loadCounts() in parallel", () => {
+    // Phase K68 originally removed the legacy fanout; CUS-perf v3
+    // (R3=B ruling, Feb-2026) reversed that by firing both load()
+    // and loadCounts() concurrently inside a Promise.all() so the
+    // tab counts stay fresh for the admin "all" bucket without a
+    // round-trip serialization cost. Lock the current contract so
+    // a future revert doesn't silently drop loadCounts() from the
+    // filter-change effect again.
     const effectMatch = LIST.match(
-      /useEffect\(\(\)\s*=>\s*\{[\s\S]{0,400}?load\(\);[\s\S]{0,1200}?\},\s*\[searchDeb, tag, scope, tab/,
+      /useEffect\(\(\)\s*=>\s*\{[\s\S]{0,2000}?Promise\.all\(\s*\[\s*load\(\)\s*,\s*loadCounts\(\)\s*\]\s*\)[\s\S]{0,1200}?\},\s*\[searchDeb, tag, scope, tab/,
     );
-    expect(effectMatch).toBeTruthy();
-    // Strip out block comments so the assertion can't fire on
-    // K68's explanatory comment inside the effect.
-    const body = effectMatch[0].replace(/\/\/[^\n]*/g, "");
-    // The comment-stripped effect body must not invoke loadCounts.
-    expect(body).not.toMatch(/loadCounts\s*\(\s*\)/);
+    expect(effectMatch, "CUS-perf v3 filter-change effect must dispatch Promise.all([load(), loadCounts()])").toBeTruthy();
   });
 
   it("loadCounts() fallback still computes an all bucket", () => {
