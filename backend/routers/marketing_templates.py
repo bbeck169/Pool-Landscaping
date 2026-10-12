@@ -533,6 +533,23 @@ async def preview_template(
         next_service_type=ctx.get("next_service_type"),
         # ADD_CARD_LINK resolver reads flat ``ctx["add_card_link"]``.
         add_card_link=ctx.get("add_card_link"),
+        # Feb-2026 · Quote/Estimate email preview-fidelity — forward
+        # the caller-supplied quote sub-dict + estimate sub-dict +
+        # the flat ``quote_*`` keys so the Quote template's merge
+        # tags (QUOTE_LABEL / QUOTE_SHORT_ID / QUOTE_TOTAL /
+        # QUOTE_HEADLINE / QUOTE_ADMIN_LINK / QUOTE_LINE_ITEMS_HTML
+        # / ESTIMATE_LINK / ESTIMATE_ACCEPT_URL) resolve in the
+        # composer preview the same way they will at send time.
+        # Backward-compatible: unset keys forward as ``None`` /
+        # empty and the resolver cascade handles the fallback.
+        quote=ctx.get("quote"),
+        estimate=ctx.get("estimate"),
+        quote_label=ctx.get("quote_label"),
+        quote_short_id=ctx.get("quote_short_id"),
+        quote_total=ctx.get("quote_total"),
+        quote_headline=ctx.get("quote_headline"),
+        quote_admin_link=ctx.get("quote_admin_link"),
+        estimate_accept_link=ctx.get("estimate_accept_link"),
         # Feb 2026 · Preview-fidelity fix — flag the render as a
         # preview so the CUSTOMER_PORTAL_LOGIN_LINK / SERVICE_RECORD_LINK
         # resolvers mint tokens with ``preview: True``. Those tokens
