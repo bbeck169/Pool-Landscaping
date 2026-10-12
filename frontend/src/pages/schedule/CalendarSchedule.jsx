@@ -24,6 +24,14 @@ import withDragAndDrop from "react-big-calendar/lib/addons/dragAndDrop";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
 import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay, startOfQuarter, endOfMonth } from "date-fns";
 import { enUS } from "date-fns/locale";
+// Feb-2026 · Shared quick-select resolvers. Extracted from the
+// inlined ``openPreset`` branch below (054633ec0). Byte-equivalent
+// for the 4 keys Schedule consumes — see the equivalence proof in
+// the extract commit's message. Schedule keeps its original visible
+// keys/labels/testids (``7d``, ``30d``, ``90d``, ``q`` / "Next 7
+// days", "This quarter"); the shared module backs each one with
+// the canonical date-math.
+import { presetByKey as _rangePresetByKey } from "@/lib/scheduleRangePresets";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 // Feb-2026 · Schedule polish — amber-accented job-notes chip.
 import JobNotesCallout from "@/components/schedule/JobNotesCallout";
@@ -312,11 +320,15 @@ const STATUS_COLORS = {
   missed:     "#B91C1C",
 };
 
+// Feb-2026 · Each entry's ``sharedKey`` points at the canonical
+// date-math in ``lib/scheduleRangePresets.js``. The visible ``key``
+// / ``label`` / downstream ``data-testid`` are preserved so existing
+// tests + user-facing copy on the Schedule page are unchanged.
 const RANGE_PRESETS = [
-  { key: "7d",   label: "Next 7 days",  daysFromToday: 7 },
-  { key: "30d",  label: "Next 30 days", daysFromToday: 30 },
-  { key: "90d",  label: "Next 90 days", daysFromToday: 90 },
-  { key: "q",    label: "This quarter", isQuarter: true },
+  { key: "7d",   label: "Next 7 days",  sharedKey: "next_7_days" },
+  { key: "30d",  label: "Next 30 days", sharedKey: "next_30_days" },
+  { key: "90d",  label: "Next 90 days", sharedKey: "next_90_days" },
+  { key: "q",    label: "This quarter", sharedKey: "this_quarter" },
 ];
 
 function jobToEvent(job, techColorMap) {
@@ -1067,12 +1079,16 @@ export default function CalendarSchedule() {
   }, [events, range]);
 
   const openPreset = (p) => {
-    const now = startOfDay(new Date());
-    if (p.isQuarter) {
-      setRange({ start: startOfQuarter(now), end: endOfMonth(new Date(now.getFullYear(), now.getMonth() + 2, 1)) });
-    } else {
-      setRange({ start: now, end: endOfDay(addDays(now, p.daysFromToday - 1)) });
-    }
+    // Feb-2026 · Delegates to the shared resolver module so the
+    // date-math is defined in exactly one place
+    // (``lib/scheduleRangePresets.js``). Byte-equivalent to the
+    // prior inlined ``startOfDay``/``addDays``/``startOfQuarter``/
+    // ``endOfMonth`` cascade — see the extract commit (054633ec0)
+    // for the equivalence proof table.
+    const entry = _rangePresetByKey(p.sharedKey);
+    if (!entry) return;
+    const { start, end } = entry.resolve(new Date());
+    setRange({ start, end });
   };
 
   const clearFilters = () => {
