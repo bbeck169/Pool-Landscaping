@@ -32,12 +32,16 @@ export const K50_JOB_STATUS_BG = Object.freeze({
   in_progress: "#FEF3C7",  // light yellow (Tailwind yellow-100)
   // Phase 3 · Feb-2026 — "Bold red" completed treatment (user
   // request).  The soft-pink #FDECEC was indistinguishable from
-  // open jobs at a glance; dramatically bumped to Tailwind red-600
-  // with white text applied via the ``[data-k50-bg="#DC2626"]``
-  // cascade in ``index.css``.  Mobile parity ticket is separate
-  // (``mobile/src/lib/jobStatus.ts`` keeps #FDECEC until that
-  // ticket ships).
-  completed:   "#DC2626",  // Tailwind red-600 — dramatic completed signal
+  // open jobs at a glance; bumped to a bright coral-red with
+  // white text applied via the ``[data-k50-bg="#ff4542"]``
+  // cascade in ``index.css``.  Feb-2026 Schedule polish — the
+  // exact hex is now ``#ff4542`` (contrast against white text
+  // drops from ~5.9:1 at the prior Tailwind red-600 #DC2626 to
+  // ~4.1:1, still AA for large text — recorded for future
+  // auditability).  Mobile parity ticket is separate
+  // (``mobile/src/lib/jobStatus.ts`` keeps the prior hex until
+  // that ticket ships).
+  completed:   "#ff4542",  // bright coral-red — dramatic completed signal
   cancelled:   "#FECACA",  // light red (Tailwind red-200) — deliberately
                            // redder than ``completed`` so day/week views
                            // separate the two at a glance

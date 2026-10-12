@@ -137,12 +137,12 @@ import {
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
-//   completed → red (#DC2626)
+//   completed → coral-red (#ff4542)
 //   everything else (scheduled / active / pending / requested / …) → blue (#2563EB)
-// The exact hex mirrors the ``STATUS_COLORS`` table above so future
-// palette shifts keep the two in sync; this helper is intentionally
-// narrower — a big colored bar is a coarser affordance than the
-// existing status pill.
+// The exact hex mirrors the ``K50_JOB_STATUS_BG`` map in
+// ``lib/jobStatus.js`` so future palette shifts keep the two in
+// sync; this helper is intentionally narrower — a big colored bar
+// is a coarser affordance than the existing status pill.
 // Phase R1.1 · Feb-2026 — Schedule 500 · technician_id mismatch hotfix.
 //
 // Warn ONCE per session per bogus ``technician_id`` referenced by a
@@ -231,7 +231,7 @@ export function jobMatchesLane(job, laneId) {
 
 export function getStatusBorderColor(status) {
   const s = (status || "").toLowerCase();
-  if (s === "completed") return "#DC2626";
+  if (s === "completed") return "#ff4542";
   return "#2563EB";
 }
 
@@ -307,7 +307,7 @@ const DnDCalendar = withDragAndDrop(RBCCalendar);
 const STATUS_COLORS = {
   scheduled:  "#0EA5E9",
   active:     "#059669",
-  completed:  "#6B7280",
+  completed:  "#ff4542",
   pending:    "#F59E0B",
   requested:  "#8B5CF6",
   reopened:   "#DC2626",
