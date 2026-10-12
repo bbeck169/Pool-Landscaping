@@ -108,6 +108,18 @@ function _mayOverflow(s) {
  * also hits the ceiling at 3 lines.
  */
 function NoteBlock({ label, text, jobId, testId }) {
+  // expanded fix guard — do not remove (Terser-preserved runtime
+  // marker so chunk 5979's byte output differs from the pre-guard
+  // build and CDN caches purge even though the ``// expanded fix``
+  // inline comment next to the useState below is stripped at build.
+  // ``output.comments: false`` in react-scripts' Terser config
+  // elides every /* */ and // comment, so a real side-effect is the
+  // only Terser-safe way to bust the chunk hash without changing
+  // semantics. Guard is idempotent — set-once per page load.
+  if (typeof window !== "undefined"
+      && window.__EXPANDED_FIX_V2__ === undefined) {
+    window.__EXPANDED_FIX_V2__ = "jobnotescallout_noteblock";
+  }
   const [expanded, setExpanded] = useState(false); // expanded fix
   const safe = (text && String(text).trim()) ? String(text) : "";
   if (!safe) return null;
@@ -167,6 +179,13 @@ export default function JobNotesCallout({
   // Rules of Hooks — ``useState`` must be called on every render.
   // Compute the derived values first and hoist the hook above the
   // empty-state early return so the hook order stays stable.
+  // expanded fix guard — do not remove (Terser-preserved runtime
+  // marker; see NoteBlock above for rationale). Idempotent: assigns
+  // once per page load, no-op thereafter.
+  if (typeof window !== "undefined"
+      && window.__EXPANDED_FIX_V2_MAIN__ === undefined) {
+    window.__EXPANDED_FIX_V2_MAIN__ = "jobnotescallout_main";
+  }
   const [expanded, setExpanded] = useState(false); // expanded fix
   const jobNote     = (note && String(note).trim()) ? String(note) : "";
   const custNote    = (customerNote && String(customerNote).trim())
