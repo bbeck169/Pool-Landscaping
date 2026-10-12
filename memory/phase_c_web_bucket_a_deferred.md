@@ -17,8 +17,9 @@
 > - **Post α/β/γ (start of C.web dispatch)**: 51 files
 > - **Post Batches 3-6**: 28 files
 > - **Post Residual Batch 7**: 24 files
-> - **Post Residual Batch 8 (now)**: **21 files**
-> - **Net reduction across all dispatches**: **37 files (-64%)**
+> - **Post Residual Batch 8**: 21 files
+> - **Post Group T close-out (now)**: **20 drift-blocked files** (1 cleared · 1 reclassified to product-ruling backlog)
+> - **Net reduction across all dispatches**: **38 files (-66%)**
 
 ---
 
@@ -51,10 +52,11 @@ Original A2.residual bucket had 5 files; Batch 8 cleared 3. Remaining 2 need mul
   - Failure: After the mute PATCH succeeds, `_countCallsFor(/is_muted=true/) >= 1` fails — the current `CustomersList.jsx` does NOT re-fire `/customers?count_only=true&is_muted=true` after a mute action. P40 fix appears to have regressed OR the current source uses optimistic badge updates without a re-fetch.
   - **Needs source audit**: Determine if the mute flow should re-fetch counts (P40 contract) or if the test is semantically stale (optimistic-update path). Non-mechanical.
 
-### Group T — timeout-only — 2 files
-Hangs in 5s waitFor. Likely mock-drift (missing resolver for a specific endpoint, or mocked `useAuth` triggers an infinite loading loop in the component).
-- `QuoteInvoiceNew.pricebook.test.jsx` (already has useAuth mock)
-- `n5-t1-page-header-adoption.test.jsx` (already has useAuth mock)
+### Group T · residual — closed out (post Feb-2026 Group T sweep)
+Original Group T had 2 timeout-only candidates. Investigation outcomes:
+
+- `QuoteInvoiceNew.pricebook.test.jsx` → **CLEARED** in `e8d2f85f3` — `test(baseline-drift): Group T · QuoteInvoiceNew.pricebook — bump waitFor timeout + pivot post-pick assertion to QF-1 Option-B shape`.
+- `n5-t1-page-header-adoption.test.jsx` → **PARKED (product-ruling)** — not a timeout drift. `<PageHeader>` is not mounted in `src/pages/customers/CustomerDetail.jsx`. Could be intentional (Phase 28 identity header owns the top of CustomerDetail) or an unfinished N5-T1 PageHeader-adoption rollout. Product-ruling needed: adopt `<PageHeader>` on CustomerDetail OR confirm Phase 28 identity header owns that slot and delete/skip the test. Reclassified alongside Lane 5 / Lane 7 / Group A4 under product-ruling backlog.
 
 ### Group B3.deferred — Batch 3 skipped — 2 files
 Need multi-assertion flipping, not simple regex-widen.
