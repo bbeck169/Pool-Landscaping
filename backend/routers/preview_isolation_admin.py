@@ -200,8 +200,31 @@ _AUDIT_RULES: List[Dict[str, Any]] = [
      "filter": {"service_lng": {"$exists": True, "$ne": None}}},
     {"coll": "customers", "field": "service_location",
      "filter": {"service_location": {"$exists": True, "$ne": None}}},
+    # 2026-02 · P0 Stage 3 Commit I2 — composite filter. The create
+    # path (`routers/customers.py:1917` → `admin_customer_geocode_
+    # backfill.address_hash`) stamps a SHA-1 of the row's resolved
+    # address AFTER the preview middleware has already synthesized
+    # the body. For a preview POST this means the hash is of
+    # `"<bucket> Preview St"` — a public, deterministic string with
+    # no PII-correlation value (many real customers in the same
+    # bucket collapse to the identical hash). See
+    # `/app/memory/preview_isolation_blocker1_investigation.md`
+    # for the DB-level proof of hash-of-synth across all offenders.
+    # Flag `geocode_address_hash` as PII ONLY when NONE of the row's
+    # address fields match the synthetic `^\d+ Preview\b` signature
+    # — i.e. only when the hash is likely of a real address (legacy
+    # pre-Stage-3 row the synthesizer never touched). This mirrors
+    # the signature the `address_line1` audit rule already uses on
+    # line ~190 above, so the two rules stay in lockstep.
     {"coll": "customers", "field": "geocode_address_hash",
-     "filter": {"geocode_address_hash": {"$exists": True, "$ne": None}}},
+     "filter": {"$and": [
+         {"geocode_address_hash": {"$exists": True, "$ne": None}},
+         {"$nor": [
+             {"address_line1":   {"$regex": r"^\d+ Preview\b", "$options": "i"}},
+             {"address":         {"$regex": r"^\d+ Preview\b", "$options": "i"}},
+             {"service_address": {"$regex": r"^\d+ Preview\b", "$options": "i"}},
+         ]},
+     ]}},
     {"coll": "customers", "field": "home_phone",
      "filter": {"home_phone": {"$exists": True, "$nin": [None, ""]}}},
     {"coll": "customers", "field": "fax",
