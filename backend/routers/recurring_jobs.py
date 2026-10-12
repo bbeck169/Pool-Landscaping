@@ -2078,6 +2078,22 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
     price_dollars = round((tpl.get("price_cents") or 0) / 100.0, 2)
     inserted, skipped = 0, 0
     inserted_dates: List[str] = []
+    # Feb-2026 · P0 · cron cursor-fix.  Historical bug: the final
+    # ``last_generated_through`` update at the bottom of this
+    # function blindly set the cursor to ``dates[-1]`` regardless
+    # of per-date insert outcome.  Any transient insert failure
+    # (Mongo write hiccup, FK validator exception, downstream
+    # service error during hydration) silently advanced the cursor
+    # past the failed date — the template was permanently behind
+    # until manually reset.  Preview repro showed 11/112 active
+    # Monday templates with ``last_generated_through`` set past
+    # 2026-10-12 but no ``db.jobs`` row for 2026-10-12.  Fix:
+    # track dup-skips separately from real-error-skips, advance
+    # the cursor only to ``max(inserted_dates ∪ dup_skipped_dates)``,
+    # and emit a ``cursor_held`` WARN when neither set contains
+    # progress so operators can grep logs for stuck templates.
+    dup_skipped_dates: List[str] = []
+    error_skipped: int = 0
     for d in dates:
         iso = d.isoformat()
         try:
@@ -2114,17 +2130,45 @@ async def _generate_from_template(tpl: Dict[str, Any], through: date) -> Dict[st
             inserted += 1
             inserted_dates.append(iso)
         except Exception as e:
-            # Duplicate key = already exists → idempotent skip.
+            # Duplicate key = already exists → idempotent skip, SAFE to
+            # advance the cursor past this date (the row exists).
             if "duplicate key" in str(e).lower() or "E11000" in str(e):
+                dup_skipped_dates.append(iso)
                 skipped += 1
             else:
-                logger.warning(f"recurring insert skipped: {e}")
+                # Real failure — DO NOT let the cursor cross this
+                # date.  Structured WARN so operators can grep for
+                # stuck templates.
+                logger.warning(
+                    "recurring_job.insert_failed tenant=%s template=%s "
+                    "date=%s customer=%s error=%r",
+                    tenant_id, tpl["id"], iso,
+                    tpl.get("customer_id"), e,
+                )
+                error_skipped += 1
                 skipped += 1
-    await db.recurring_job_templates.update_one(
-        {"id": tpl["id"], "tenant_id": tenant_id},
-        {"$set": {"last_generated_through": dates[-1].isoformat(),
-                    "updated_at": now_iso()}},
-    )
+    # Feb-2026 · P0 · cron cursor-fix (see block comment above).
+    # Only advance ``last_generated_through`` to the max of dates
+    # that are provably present in ``db.jobs`` (freshly inserted OR
+    # already-there via duplicate-key skip).  If both sets are
+    # empty but ``dates`` wasn't, the cursor is HELD so the next
+    # cron run retries from the same anchor.
+    _progress = inserted_dates + dup_skipped_dates
+    if _progress:
+        advanced_through = max(_progress)
+        await db.recurring_job_templates.update_one(
+            {"id": tpl["id"], "tenant_id": tenant_id},
+            {"$set": {"last_generated_through": advanced_through,
+                      "updated_at": now_iso()}},
+        )
+    else:
+        logger.warning(
+            "recurring_job.cursor_held tenant=%s template=%s "
+            "walked_dates=%d error_skipped=%d customer=%s "
+            "reason=no_successful_or_duplicate_inserts",
+            tenant_id, tpl["id"], len(dates), error_skipped,
+            tpl.get("customer_id"),
+        )
     return {"inserted": inserted, "skipped": skipped, "dates": inserted_dates}
 
 
