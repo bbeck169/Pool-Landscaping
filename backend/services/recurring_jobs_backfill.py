@@ -480,6 +480,7 @@ async def rewind_template_cursor_on_job_delete(
     job: Dict[str, Any],
     tenant_id: str,
     actor_user_id: Optional[str] = None,
+    source: str = "hard_delete",
 ) -> Optional[str]:
     """Safety-net: on hard-delete of a job tied to a recurring template,
     rewind the parent template's ``last_generated_through`` cursor so
@@ -524,7 +525,7 @@ async def rewind_template_cursor_on_job_delete(
     precondition short-circuited.
     """
     from config import db
-    from utils import now_iso
+    from utils import new_id, now_iso
 
     # ── Precondition 1 — not recurring ──────────────────────────
     template_id = job.get("recurring_template_id")
@@ -584,11 +585,37 @@ async def rewind_template_cursor_on_job_delete(
         # value already heals this hole + more. No action needed.
         return None
 
+    # Audit row — mirrors the admin backfill endpoint's _write_audit
+    # pattern. Non-fatal: audit write failure must never mask the
+    # successful rewind (the parent delete HTTP response is already
+    # committed, and callers wrap us in their own try/except too).
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "action": "recurring_job.cursor_rewind.triggered",
+            "actor_user_id": actor_user_id,
+            "payload": {
+                "deleted_job_id": deleted_job_id,
+                "template_id": template_id,
+                "old_cursor": cursor_raw,
+                "new_cursor": new_cursor_iso,
+                "source": source,
+            },
+            "created_at": now_iso(),
+        })
+    except Exception as _audit_exc:  # noqa: BLE001
+        logger.warning(
+            "recurring_job.cursor_rewind.audit_write_failed "
+            "tenant=%s template=%s deleted_job=%s error=%r",
+            tenant_id, template_id, deleted_job_id, _audit_exc,
+        )
+
     logger.info(
         "recurring_job.cursor_rewind.triggered "
         "tenant=%s template=%s deleted_job=%s "
-        "old_cursor=%s new_cursor=%s actor=%s",
+        "old_cursor=%s new_cursor=%s actor=%s source=%s",
         tenant_id, template_id, deleted_job_id,
-        cursor_raw, new_cursor_iso, actor_user_id,
+        cursor_raw, new_cursor_iso, actor_user_id, source,
     )
     return new_cursor_iso

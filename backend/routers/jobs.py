@@ -3432,6 +3432,7 @@ async def delete_job(jid: str,
             await rewind_template_cursor_on_job_delete(
                 job=_pre, tenant_id=tenant["id"],
                 actor_user_id=user.get("id"),
+                source="hard_delete_job",
             )
         except Exception as _rw_exc:                            # noqa: BLE001
             logger.warning(

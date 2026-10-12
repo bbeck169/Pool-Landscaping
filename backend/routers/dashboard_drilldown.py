@@ -794,6 +794,7 @@ async def _apply_resolve_item(
                 await rewind_template_cursor_on_job_delete(
                     job=job, tenant_id=row_tenant_id or tenant_id or "",
                     actor_user_id=actor_id,
+                    source="orphan_single_hard_delete",
                 )
             except Exception as _rw_exc:                        # noqa: BLE001
                 logger.warning(
@@ -1121,6 +1122,7 @@ async def data_integrity_resolve_bulk(
                 await rewind_template_cursor_on_job_delete(
                     job=_j, tenant_id=_j.get("tenant_id") or "",
                     actor_user_id=actor_id,
+                    source="orphan_bulk_hard_delete",
                 )
             except Exception as _rw_exc:                        # noqa: BLE001
                 logger.warning(

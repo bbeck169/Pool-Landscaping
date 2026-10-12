@@ -209,3 +209,107 @@ def test_rewind_idempotent_under_race(mongo):
     tpl_after = mongo.recurring_job_templates.find_one(
         {"id": tpl_id}, {"_id": 0, "last_generated_through": 1})
     assert tpl_after["last_generated_through"] == expected_new_cursor
+
+
+
+# ─── 6 · integration — rewind unblocks the next cron walk ───────────
+def test_second_cron_pass_regenerates_deleted_slot(mongo):
+    """End-to-end: delete a materialized recurring job, call the
+    rewind helper, then re-run the shared horizon-backfill service
+    in commit mode. The deleted slot must be re-materialized by the
+    walker (``_next_occurrences`` combined with the backfill
+    classifier/inserter — this is exactly the "second cron pass"
+    path a nightly job would execute).
+    """
+    from services.recurring_jobs_backfill import (
+        run_horizon_backfill,
+    )
+
+    today = date.today()
+    cursor_iso = (today + timedelta(days=14)).isoformat()
+    tpl_id = _seed_template(mongo, cursor_iso=cursor_iso)
+    # Target weekday = today's weekday → walker emits today and
+    # 7/14 days later; pick the +7 slot so it's within horizon
+    # and in the future (walker is anchor-inclusive from today).
+    sched = today + timedelta(days=7)
+    job = _seed_job(mongo, tpl_id=tpl_id, scheduled_date=sched)
+
+    # Hard delete first — then rewind.
+    deleted = mongo.jobs.delete_one({"id": job["id"]})
+    assert deleted.deleted_count == 1
+
+    rewound = asyncio.get_event_loop().run_until_complete(
+        rewind_template_cursor_on_job_delete(
+            job=job, tenant_id=_TENANT_ID, actor_user_id="pytest",
+            source="hard_delete_job"),
+    )
+    assert rewound is not None, "rewind must fire for date <= cursor"
+
+    # Simulate the nightly cron via the shared backfill service in
+    # commit mode. The walker finds the missing slot and inserts it.
+    summary = asyncio.get_event_loop().run_until_complete(
+        run_horizon_backfill(
+            days_ahead=14, commit=True, tenant_id=_TENANT_ID),
+    )
+    # At least this template's missing slot was found + inserted.
+    # (Other preview-seeded templates may contribute to the totals.)
+    rematerialized = mongo.jobs.find_one(
+        {"tenant_id": _TENANT_ID,
+         "recurring_template_id": tpl_id,
+         "scheduled_date": sched.isoformat()},
+        {"_id": 0, "id": 1, "status": 1, "backfilled_by": 1},
+    )
+    assert rematerialized is not None, (
+        f"backfill failed to regenerate deleted slot — summary={summary}")
+    assert rematerialized["status"] == "scheduled"
+
+
+# ─── 7 · bulk-delete across multiple templates — per-template rewind ─
+def test_bulk_delete_rewinds_cursor_per_template_independently(mongo):
+    """Simulate the dashboard_drilldown bulk-orphan hard-delete:
+    multiple templates each have one materialized job hard-deleted
+    in the same batch. The rewind helper is looped per-row; every
+    affected template's cursor must independently rewind to the
+    day before ITS deleted job (templates are not cross-polluted).
+    """
+    today = date.today()
+    # Seed 3 templates with the same cursor far in the future.
+    cursor_iso = (today + timedelta(days=20)).isoformat()
+    tpl_a = _seed_template(mongo, cursor_iso=cursor_iso)
+    tpl_b = _seed_template(mongo, cursor_iso=cursor_iso)
+    tpl_c = _seed_template(mongo, cursor_iso=cursor_iso)
+    # Each template gets a materialized job at a different date.
+    j_a = _seed_job(mongo, tpl_id=tpl_a,
+                     scheduled_date=today + timedelta(days=3))
+    j_b = _seed_job(mongo, tpl_id=tpl_b,
+                     scheduled_date=today + timedelta(days=5))
+    j_c = _seed_job(mongo, tpl_id=tpl_c,
+                     scheduled_date=today + timedelta(days=7))
+
+    # Mirrors the bulk-delete fire path: loop helper over pre_docs.
+    for j in (j_a, j_b, j_c):
+        res = asyncio.get_event_loop().run_until_complete(
+            rewind_template_cursor_on_job_delete(
+                job=j, tenant_id=_TENANT_ID, actor_user_id="pytest",
+                source="orphan_bulk_hard_delete"),
+        )
+        assert res is not None, (
+            f"bulk-delete loop skipped template={j['recurring_template_id']}")
+
+    # Each template's cursor rewound INDEPENDENTLY to its own job's
+    # scheduled_date - 1 day — no cross-pollination.
+    expected = {
+        tpl_a: (today + timedelta(days=2)).isoformat(),
+        tpl_b: (today + timedelta(days=4)).isoformat(),
+        tpl_c: (today + timedelta(days=6)).isoformat(),
+    }
+    for tpl_id_val, expected_cursor in expected.items():
+        tpl_after = mongo.recurring_job_templates.find_one(
+            {"id": tpl_id_val},
+            {"_id": 0, "last_generated_through": 1,
+             "cursor_rewound_deleted_job_id": 1},
+        )
+        assert tpl_after["last_generated_through"] == expected_cursor, (
+            f"template {tpl_id_val} cursor mismatch — "
+            f"expected {expected_cursor}, got "
+            f"{tpl_after['last_generated_through']}")
