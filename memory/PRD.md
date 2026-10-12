@@ -146,3 +146,11 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
 - **MOBILE-SCHEDULE-DAY-VIEW-TIMESTAMP-FILTER-BUG** — P2, separate story. Mobile Schedule Grid/day view filters `j.scheduled_date === focusISO` (exact string), so jobs stored with a full ISO timestamp (e.g. the 15 completed seed jobs on 2026-09-15, `2026-09-15T06:40:46+00:00`) never render, while the WeekStrip still counts them (Sep 15: 28 counted, 14 rendered). File: `mobile/app/(app)/schedule/calendar.tsx`.
 - **MOBILE-MAP-PIN-COMPLETED-COLOR-DRIFT** — completed map-pin colors disagree: `ScheduleMap.native` #16A34A (green), `DailyRouteMap.native` #6B7280 (gray), `DailyRouteMap.web` #22C55E (green). Out of K50 scope.
 - **Mobile RecurringJobs search + category parity** — DONE (30a6a0849 feat, 465d88bea test).
+
+### Recurring Jobs Materializer — P1/P2 follow-ups (Feb-2026)
+
+Fix 54af96872 (cursor-fix) + 6a4dacc61 (backfill) + 80c6c0709 (tests) addressed the P0: existing holes can be plugged, new holes stop forming from silent insert errors. Two defensive follow-ups remain:
+
+- **RECURRING-DELETE-RESETS-CURSOR** (P1): when a materialized job is soft- or hard-deleted, the parent template's `last_generated_through` is NOT rewound. Current fix heals existing holes via the backfill script but does not prevent new holes from forming on delete. Design question: when should auto-rewind trigger (e.g., only hard-delete; skip-this-visit soft-deletes should NOT rewind) vs when should it NOT? Hook sites: `/api/jobs/{id}` DELETE handler + `/api/jobs/bulk-soft-delete` + any auto-soft-delete codepath. Likely implementation: on delete of a job with `recurring_template_id`, if its `scheduled_date` equals template's `last_generated_through`, rewind to `scheduled_date - 1 day` so the next cron re-walks that date.
+
+- **RECURRING-ALL-FAILURE-RETRY-GUARD** (P2): if `recurring_job.cursor_held` fires for the same template N days in a row (e.g., 5), surface an operator alert via audit log or admin dashboard. Prevents an invisible infinite-retry on a permanently-broken template (e.g., template with a corrupt `customer_id` whose insert will always fail validation). Metric to track: `last_cursor_held_at`, `cursor_held_count` on the template. Alert threshold: 5 consecutive cron runs with `cursor_held` and 0 inserts.
