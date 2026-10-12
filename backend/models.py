@@ -58,6 +58,28 @@ class CustomerIn(BaseModel):
     # customer docs without the field read back as empty string.
     home_phone: Optional[str] = ""
     address: Optional[str] = ""
+    # 2026-02 · P0 Stage 3 Commit D — the city/state/zip/postal_code/
+    # country fields were previously undeclared, so Pydantic's default
+    # ``extra="ignore"`` posture SILENTLY DROPPED them from the stored
+    # customer doc. The preview-isolation sanitizer sets them to the
+    # synth sentinel (Testville/AZ/85000/US) but those values never
+    # survived the ``CustomerIn.dict()`` round-trip. Declare the fields
+    # here so POST → GET round-trip preserves them. ``postal_code``
+    # mirrors ``zip`` for international callers; routers that need to
+    # pick one authoritative value should prefer ``postal_code`` when
+    # both are present (the sanitizer sets them identically).
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    zip: Optional[str] = ""
+    postal_code: Optional[str] = ""
+    country: Optional[str] = ""
+    # ``custom_fields`` — arbitrary key/value admin notes (gate codes,
+    # pool quirks, etc.). The decorator preserves the KEY structure
+    # and recursively redacts string VALUES on preview env (pasted-in
+    # emails / phones get the free-text redact pass). Same
+    # pre-Commit-D field-drop story: the field has to be declared or
+    # Pydantic strips it.
+    custom_fields: Optional[Dict[str, Any]] = None
     billing_address: Optional[str] = ""
     gate_code: Optional[str] = ""
     notes: Optional[str] = ""
