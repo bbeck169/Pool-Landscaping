@@ -35,14 +35,18 @@ export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
     scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
     // Phase 3 · Feb-2026 — "Bold red" completed (web parity, 5f89f2588).
-    // Was soft-pink #FDECEC. Cards on this bg flip text/icons to white.
-    completed: "#DC2626",
+    // Was soft-pink #FDECEC → Tailwind red-600 #DC2626. Bumped to bright
+    // coral-red #ff4542 (web parity, 85fd76f17). Cards on this bg flip
+    // text/icons to white (white-on-#ff4542 ≈ 4.1:1 — AA large text).
+    completed: "#ff4542",
     cancelled: "#FECACA",
     skipped: "#FED7AA",
   });
 
-/** Bold-red completed bg + the white foreground used on it. */
-export const K50_BOLD_RED_BG = "#DC2626";
+/** Bold-red completed bg + the white foreground used on it.
+ *  Derived from the map (not a literal) so a future completed-hex bump
+ *  can't silently drop the white-text flip in ``isBoldRedStatus``. */
+export const K50_BOLD_RED_BG = K50_JOB_STATUS_BG.completed;
 export const K50_ON_BOLD_RED_FG = "#FFFFFF";
 
 /** True when the card bg is the bold-red completed treatment. */
