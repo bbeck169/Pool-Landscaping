@@ -69,3 +69,79 @@ Every other UUID observed in the ``tenants`` collection — the
 not real preview tenants. They are PII-scrubbed by the same boot
 scrubber (which iterates the full ``customers`` collection, not a
 per-tenant whitelist) and don't need to be enumerated here.
+
+## Synthetic PII Shapes (reference for testers)
+
+The preview isolation layer rewrites PII fields on ingress to a
+narrow deterministic shape. Testers running regex checks on the
+healthcheck or raw DB rows MUST use the shapes below — common
+first-pass regex guesses (e.g. ``^555-\d{4,5}$``) are too narrow
+and false-fail on legitimate synthetic rows.
+
+### Phones — ``555-0BNNNN`` (10 chars total, 6 digits after ``555-``)
+
+Format: ``555`` + ``-`` + band digit ``0`` + per-channel band digit
+``B`` + 4-digit bucket slug ``NNNN``.
+
+| Channel | Band | Example | Notes |
+|---|---|---|---|
+| Customer `phone` | ``01`` | ``555-012345`` | Primary customer phone. |
+| Customer `mobile` / `phone_mobile` | ``02`` | ``555-029876`` | Mobile companion. |
+| Lead `phone` | ``03`` | ``555-035432`` | Marketing/leads channel. |
+| Subscriber `phone` | ``04`` | ``555-041987`` | Marketing subscribers. |
+
+Compiled regexes used by the healthcheck + scrubber (keep tests in
+lockstep with these):
+
+```
+# Full-strict (used by the healthcheck's non-synthetic detection):
+^555-?0[1-4]\d{4}$
+
+# Hyphen-optional (used by phone_raw / mobile_raw audit — digits-
+# only companion fields):
+^555-?0[1-4]\d{4}$
+```
+
+Reserved NANP namespace: ``555-0100`` through ``555-0199`` is the
+fictional-use block per NANPA — the synthesizer stays well inside
+it (``555-01xx…04xx`` ranges above). Any phone outside this pattern
+on a preview row is PII and MUST be scrubbed.
+
+### Emails — ``preview-<channel><bucket>@preview.local``
+
+Example: ``preview-customer4163@preview.local``. Regex:
+``^preview-(customer|lead|subscriber|portal)\d{4}@preview\.local$``.
+
+### Names — ``Preview <Role><bucket-slug>``
+
+Examples: ``Preview Customer4163``, ``Preview Lead0085``,
+``Preview Subscriber2952``. Regex: ``^Preview (Customer|Lead|
+Subscriber|Co )\s*\d{4}``.
+
+### Addresses — ``<bucket> Preview St, Testville, AZ 85000``
+
+The street number equals the bucket slug (collisions use the
+same ``-ab`` nibble-suffix convention as names). City / state /
+zip are fixed. Regex for the street component:
+``^\d+ Preview\b``.
+
+### Geocode hash — SHA-1 of the synthetic street
+
+``customers.geocode_address_hash`` on preview is a SHA-1 of
+``"<bucket> Preview St"`` (lowercased, whitespace-collapsed). It
+is NOT a hash of the real address. See
+``/app/memory/preview_isolation_blocker1_investigation.md`` for
+the DB-level proof. The healthcheck audit (post-I2) treats a
+non-null hash as benign IF the row's address matches the
+``^\d+ Preview\b`` signature.
+
+### Allowlisted demo-seed emails
+
+Two emails are intentionally exempt from the email audit rule:
+``customer@aquaterra.com`` and ``customer2@aquaterra.com``. These
+are the seeded portal-demo accounts the ``seed_demo_second_
+customer`` boot migration re-creates every start. Preserving the
+exact email string is required for the portal login flow to
+work; see the inline justification at
+``routers/preview_isolation_admin.py:165-174``.
+
