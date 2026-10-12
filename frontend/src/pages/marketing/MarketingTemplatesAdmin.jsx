@@ -34,6 +34,9 @@ const CATEGORY_OPTIONS = [
   // TE-portal-job · Feb-2026 — transactional trigger categories.
   { v: "portal_invite", l: "Portal Invite" },
   { v: "job_completion", l: "Job Completion" },
+  // Feb-2026 · Quote/Estimate email — surfaces the
+  // ``quote_estimate_email`` system default seeded per tenant.
+  { v: "quotes", l: "Quote / Estimate" },
 ];
 
 
