@@ -1597,7 +1597,7 @@ export default function RecurringJobs() {
                   <td className="px-3 py-2.5 text-xs"
                        style={{ color: colors.muted }}
                        data-testid={`recurring-cell-end-date-${r.id}`}>
-                    {r.end_date || "—"}
+                    {r.end_date || "Ongoing"}
                   </td>
                   <td className="px-3 py-2.5 text-right font-semibold" style={{ color: colors.onSurface }}>
                     {fmtMoney(r.price_cents)}
