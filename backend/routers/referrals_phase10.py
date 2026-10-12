@@ -197,34 +197,30 @@ async def adjust_customer_credits(
             "code": "INSUFFICIENT_BALANCE",
             "message": f"Cannot decrement below zero (current ${current/100:.2f}).",
         })
-    from utils import new_id as _new_id
     _reason = (body.reason or "").strip()
-    entry = {
-        "id": _new_id(),
-        "tenant_id": tenant["id"],
-        "customer_id": cid,
-        "delta_cents": body.delta_cents,
-        "source": "manual",
-        "actor_user_id": user.get("id"),
-        "actor_email": user.get("email"),
-        "reason": _reason,
-        "note": _reason,
-        "created_at": now_iso(),
-    }
-    await db.customer_credits.insert_one(entry)
-    await db.customer_credits_balance.update_one(
-        {"tenant_id": tenant["id"], "customer_id": cid},
-        {"$set": {"balance_cents": new_balance,
-                   "balance": new_balance / 100.0,
-                   "updated_at": now_iso()}},
-        upsert=True,
+
+    # P0b Stage 2 S2-1 · Feb-2026 — Route ALL credit mutations through
+    # ``services.customer_balance.mutate_credit`` so the ledger + the
+    # aggregate + the customer-doc denorm field re-stamp in one call.
+    # The business-rule guard (sub-zero / reason / etc.) stays here;
+    # the helper is intentionally rule-free.
+    from services.customer_balance import mutate_credit
+    result = await mutate_credit(
+        db, tenant["id"], cid,
+        delta_cents=body.delta_cents,
+        source="manual",
+        actor=user,
+        reason=_reason,
     )
     return {
         "ok": True,
         "customer_id": cid,
-        "balance_cents": new_balance,
-        "balance_formatted": f"${new_balance/100:.2f}",
-        "ledger_entry": {k: v for k, v in entry.items() if k != "_id"},
+        "balance_cents": result["balance_cents"],
+        "balance_formatted": f"${result['balance_cents']/100:.2f}",
+        "ledger_entry": {"id": result["ledger_entry_id"],
+                           "delta_cents": body.delta_cents,
+                           "source": "manual",
+                           "reason": _reason},
     }
 
 
@@ -339,29 +335,34 @@ async def reverse_customer_credit_entry(
                 403, "only super_admin can force a negative balance",
             )
     # ── Insert reversal row + update balance ────────────────────
-    from utils import new_id as _new_id
+    # P0b Stage 2 S2-1 · Feb-2026 — Route ALL credit mutations through
+    # ``services.customer_balance.mutate_credit`` so the ledger +
+    # aggregate + customer-doc denorm re-stamp in one call.
+    from services.customer_balance import mutate_credit
+    mut = await mutate_credit(
+        db, tenant["id"], cid,
+        delta_cents=reversal_delta,
+        source="revert",
+        actor=user,
+        reason=reason,
+        extra_ledger_fields={
+            "kind": "reversal",
+            "reverted_from_entry_id": entry_id,
+        },
+    )
     reversal_entry = {
-        "id": _new_id(),
+        "id": mut["ledger_entry_id"],
         "tenant_id": tenant["id"],
         "customer_id": cid,
         "delta_cents": reversal_delta,
         "source": "revert",
         "kind": "reversal",
         "reverted_from_entry_id": entry_id,
-        "actor_user_id": user.get("id"),
-        "actor_email": user.get("email"),
         "reason": reason,
         "note": reason,
-        "created_at": now_iso(),
     }
-    await db.customer_credits.insert_one(reversal_entry)
-    await db.customer_credits_balance.update_one(
-        {"tenant_id": tenant["id"], "customer_id": cid},
-        {"$set": {"balance_cents": new_balance,
-                    "balance": new_balance / 100.0,
-                    "updated_at": now_iso()}},
-        upsert=True,
-    )
+    new_balance = mut["balance_cents"]
+    from utils import new_id as _new_id
     # ── Audit ────────────────────────────────────────────────────
     try:
         await db.credit_admin_audit.insert_one({

@@ -442,3 +442,162 @@ async def audit_tenant_customer_balances(
         "customers_fixed":   fixed,
         "mismatches":        mismatches,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0b Stage 2 S2-1 · Feb-2026 — Credit-mutation choke point.
+#
+# ONE function that performs every write that changes a customer's
+# credit balance: inserts the audit-trail ledger entry on
+# ``customer_credits``, upserts the aggregate row on
+# ``customer_credits_balance``, and re-stamps the customer doc's
+# denormalised ``credit_balance_cents`` + ``balance_recomputed_at``
+# fields via ``recompute_customer_balance_denorm``. Every existing
+# mutation site in ``routers/referrals_phase10``,
+# ``routers/referral_rewards``, ``services/referral_watcher``, and
+# ``services/credits_apply`` is refactored to funnel through this
+# helper. See ``services.credit_write_guard`` for the boot-time
+# assertion that fails preview boot (loud WARN on production) when
+# a NEW direct writer slips past the gate.
+#
+# Idempotency: callers that need exactly-once semantics (webhook
+# replays, retried watcher runs) pass an ``idempotency_key``. The
+# helper short-circuits the ledger insert + aggregate update when a
+# prior row carries the same key, and the response payload carries
+# ``status: "skipped_duplicate"`` so operators can audit.
+# ─────────────────────────────────────────────────────────────────────
+async def mutate_credit(
+    db,
+    tenant_id: str,
+    customer_id: str,
+    *,
+    delta_cents: int,
+    source: str,
+    actor: Optional[Dict[str, Any]] = None,
+    reason: str = "",
+    idempotency_key: Optional[str] = None,
+    extra_ledger_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """ONLY-writer entry point for customer credit.
+
+    Args:
+      tenant_id, customer_id: scope.
+      delta_cents: positive to grant, negative to revoke / apply.
+      source: ledger-row ``source`` tag (``manual`` / ``referral_reward``
+        / ``referral_reward_revoke`` / ``referral_credit`` / ``redeemed``
+        / ``revert`` / ...).
+      actor: dict with ``id`` / ``email`` / ``role`` (optional — for
+        the ledger ``actor_user_id`` + ``actor_email`` columns).
+      reason: audit-trail free-text (empty allowed for automated
+        paths).
+      idempotency_key: if present, a ledger row with the matching
+        key short-circuits the mutation. Required for Stripe-webhook
+        + replayable watcher paths.
+      extra_ledger_fields: optional per-source metadata merged into
+        the ledger row (e.g. ``referral_id``, ``promo_code_id``,
+        ``invoice_id``, ``reverted_from_entry_id``). Keys that
+        collide with reserved columns are silently dropped so a
+        caller can't overwrite ``id`` / ``delta_cents`` / etc.
+
+    Returns::
+
+      {
+        "status":          "applied" | "skipped_duplicate",
+        "ledger_entry_id": str,
+        "balance_cents":   int,     # post-mutation aggregate
+        "customer_id":     str,
+        "idempotency_key": str | None,
+        "mutated_at":      str,     # ISO
+      }
+
+    Semantics:
+      · The three writes (ledger insert, aggregate upsert, denorm
+        recompute) are issued in order. A failure after the ledger
+        insert leaves the aggregate / denorm temporarily behind;
+        the next read-side `compute_customer_balance` picks the
+        aggregate up (because the aggregate upsert is idempotent)
+        and the next profile read triggers a denorm recompute.
+      · Caller must have already validated the business rule
+        (eg. no-sub-zero without ``force_negative``). This helper
+        is intentionally rule-free — one chokepoint, one
+        responsibility.
+    """
+    from utils import new_id as _new_id
+
+    _reserved = {
+        "id", "tenant_id", "customer_id", "delta_cents", "source",
+        "actor_user_id", "actor_email", "reason", "note",
+        "created_at", "idempotency_key",
+    }
+
+    if idempotency_key:
+        existing = await db.customer_credits.find_one(
+            {"tenant_id": tenant_id,
+              "customer_id": customer_id,
+              "idempotency_key": idempotency_key},
+            {"_id": 0, "id": 1, "delta_cents": 1},
+        )
+        if existing:
+            # Short-circuit — don't double-apply. Re-read the
+            # aggregate so the caller still gets the current balance.
+            agg = await db.customer_credits_balance.find_one(
+                {"tenant_id": tenant_id, "customer_id": customer_id},
+                {"_id": 0, "balance_cents": 1},
+            ) or {}
+            return {
+                "status": "skipped_duplicate",
+                "ledger_entry_id": existing.get("id"),
+                "balance_cents": int(agg.get("balance_cents") or 0),
+                "customer_id": customer_id,
+                "idempotency_key": idempotency_key,
+                "mutated_at": _now_iso(),
+            }
+
+    now_iso = _now_iso()
+    entry_id = _new_id()
+    entry: Dict[str, Any] = {
+        "id": entry_id,
+        "tenant_id": tenant_id,
+        "customer_id": customer_id,
+        "delta_cents": int(delta_cents),
+        "source": source,
+        "actor_user_id": (actor or {}).get("id"),
+        "actor_email":   (actor or {}).get("email"),
+        "reason":        reason or "",
+        "note":          reason or "",
+        "created_at":    now_iso,
+    }
+    if idempotency_key:
+        entry["idempotency_key"] = idempotency_key
+    for k, v in (extra_ledger_fields or {}).items():
+        if k not in _reserved:
+            entry[k] = v
+
+    # 1) Ledger history row.
+    await db.customer_credits.insert_one(entry)
+
+    # 2) Aggregate upsert — $inc so concurrent mutations commute.
+    await db.customer_credits_balance.update_one(
+        {"tenant_id": tenant_id, "customer_id": customer_id},
+        {"$inc": {"balance_cents": int(delta_cents),
+                   "balance": int(delta_cents) / 100.0},
+          "$set": {"updated_at": now_iso}},
+        upsert=True,
+    )
+
+    # 3) Re-stamp the denorm on the customer doc so admin profile +
+    #    portal /summary + any other canonical read surface converges
+    #    on the fresh value immediately (no 60s lazy-backfill lag).
+    computed = await recompute_customer_balance_denorm(
+        db, tenant_id, customer_id,
+    )
+
+    return {
+        "status":          "applied",
+        "ledger_entry_id": entry_id,
+        "balance_cents":   int(computed.get("credit_balance_cents") or 0),
+        "customer_id":     customer_id,
+        "idempotency_key": idempotency_key,
+        "mutated_at":      now_iso,
+    }
+

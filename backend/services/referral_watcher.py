@@ -213,32 +213,32 @@ async def _try_credit_referral(
                                           or referral.get("referred_customer_id"),
             },
         )
-        # Add ledger row on customer_credits + roll balance forward.
-        from utils import new_id, now_iso
-        ledger_id = new_id()
-        await db.customer_credits.insert_one({
-            "id": ledger_id,
-            "tenant_id": tenant_id,
-            "customer_id": referral["referrer_customer_id"],
-            "delta_cents": credit_cents,
-            "source": "referral_credit",
-            "promo_code_id": promo["id"],
-            "referral_id": ref_id,
-            "note": (
-                f"Referral credit — {referral.get('friend_name') or 'friend'} "
+        # P0b Stage 2 S2-1 · Feb-2026 — Route watcher-granted credit
+        # through the choke point. Idempotency keyed on the referral
+        # id + ``watcher`` suffix so a retried watcher run (which is
+        # safe-by-design via the ``credited`` status short-circuit
+        # at the top of this method) still can't double-apply.
+        from services.customer_balance import mutate_credit
+        from utils import now_iso
+        _mut = await mutate_credit(
+            db, tenant_id, referral["referrer_customer_id"],
+            delta_cents=int(credit_cents),
+            source="referral_credit",
+            actor={"id": "referral_watcher"},
+            reason=(
+                f"Referral credit — "
+                f"{referral.get('friend_name') or 'friend'} "
                 f"paid on {_fmt_pretty(first_paid)}, "
                 f"eligible {_fmt_pretty(eligible_at_dt.isoformat())}"
             ),
-            "created_at": now_iso(),
-            "created_by": "referral_watcher",
-        })
-        await db.customer_credits_balance.update_one(
-            {"tenant_id": tenant_id,
-              "customer_id": referral["referrer_customer_id"]},
-            {"$inc": {"balance_cents": credit_cents, "balance": credit_cents / 100.0},
-              "$set": {"updated_at": now_iso()}},
-            upsert=True,
+            idempotency_key=f"referral_credit:watcher:{ref_id}",
+            extra_ledger_fields={
+                "promo_code_id": promo["id"],
+                "referral_id": ref_id,
+                "created_by": "referral_watcher",
+            },
         )
+        ledger_id = _mut["ledger_entry_id"]
         # Finalise referral row.
         await db.referrals.update_one(
             {"id": ref_id},

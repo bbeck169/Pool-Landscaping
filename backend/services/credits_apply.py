@@ -239,16 +239,19 @@ async def apply_and_persist(db, tenant_id: str, invoice: dict) -> dict:
     res = apply_credits_to_invoice(invoice, synth_customer)
     if res["credits_applied_cents"] <= 0:
         return res["updated_invoice"]
-    new_balance = int(res["updated_customer"]["credits_balance_cents"])
-    ledger_entry = dict(res["ledger_entry"])
-    ledger_entry["tenant_id"] = tenant_id
-    ledger_entry["customer_id"] = cid
-    await db.customer_credits.insert_one(ledger_entry)
-    await db.customer_credits_balance.update_one(
-        {"tenant_id": tenant_id, "customer_id": cid},
-        {"$set": {"balance_cents": new_balance,
-                    "balance": new_balance / 100.0,
-                    "updated_at": _now_iso()}},
-        upsert=True,
+    # P0b Stage 2 S2-1 · Feb-2026 — Route invoice-redeem credit
+    # mutation through the choke point. Idempotency keyed on
+    # ``invoice_id`` + ``redeem`` so a double-save on the invoice
+    # (preview + commit) can't double-redeem the customer's credit.
+    applied_cents = int(res["credits_applied_cents"])
+    from services.customer_balance import mutate_credit
+    _mut = await mutate_credit(
+        db, tenant_id, cid,
+        delta_cents=-applied_cents,
+        source="redeemed",
+        actor=None,
+        reason=f"Auto-applied to invoice {invoice.get('id') or ''}".strip(),
+        idempotency_key=f"invoice_redeem:{invoice.get('id') or ''}",
+        extra_ledger_fields={"invoice_id": invoice.get("id")},
     )
     return res["updated_invoice"]

@@ -1848,6 +1848,22 @@ async def _preview_isolation_boot_audit():
     except Exception as e:  # pragma: no cover — defensive
         logger.error(f"[stripe-boot-check] crashed: {e}")
 
+    # P0b Stage 2 S2-1 · Feb-2026 — Credit-write-guard static scan.
+    # Fails preview boot loud if any orphan writer sneaks past the
+    # ``services.customer_balance.mutate_credit`` choke point.
+    # On production, logs ERROR but doesn't fail boot (static-
+    # analysis false-positives shouldn't black-hole prod).
+    try:
+        from services.credit_write_guard import assert_no_orphan_credit_writes
+        assert_no_orphan_credit_writes()
+    except AssertionError as e:
+        # Preview-env hard fail. Let it propagate so the test
+        # harness + CI catch it.
+        logger.error(f"[credit-write-guard] FAILED: {e}")
+        raise
+    except Exception as e:  # pragma: no cover — defensive
+        logger.error(f"[credit-write-guard] crashed: {e}")
+
 
 scheduler = AsyncIOScheduler(timezone="UTC")
 

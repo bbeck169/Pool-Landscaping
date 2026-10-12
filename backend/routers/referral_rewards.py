@@ -178,34 +178,33 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
 
     if legacy_immediate and cfg["referral_reward_enabled"] and cfg["referral_reward_amount"] > 0:
         reward_amount = cfg["referral_reward_amount"]
-        # Ledger row — idempotency guarded by the ``reward_applied_at``
-        # short-circuit above, but we also namespace the row via
-        # ``referral_id`` for reporting.
         reward_tx_id = new_id()
-        await db.customer_credits.insert_one({
-            "id": reward_tx_id,
-            "tenant_id": tenant_id,
-            "customer_id": referral["referrer_customer_id"],
-            "delta": reward_amount,
-            "currency": cfg["referral_reward_currency"],
-            "source": "referral_reward",
-            "referral_id": referral["id"],
-            "note": f"Referral reward — {referral.get('friend_name') or 'friend'} converted",
-            "created_at": now,
-            "created_by": "referral_hook",
-        })
-        # Roll balance forward on the ``customer_credits_balance`` row
-        # if present (some tenants keep a rolled cache). Non-fatal.
-        try:
-            await db.customer_credits_balance.update_one(
-                {"tenant_id": tenant_id,
-                 "customer_id": referral["referrer_customer_id"]},
-                {"$inc": {"balance": reward_amount},
-                 "$set": {"updated_at": now}},
-                upsert=True,
-            )
-        except Exception as exc:  # pragma: no cover
-            logger.warning("[o2] balance rollup failed: %s", exc)
+        # P0b Stage 2 S2-1 · Feb-2026 — Route credit mutation through
+        # the choke point so the ledger + aggregate + customer-doc
+        # denorm re-stamp atomically. Idempotency keyed on the
+        # referral id so a retried reward issuance (double-fire
+        # from an invoice-paid webhook retry) short-circuits
+        # cleanly. The legacy ``_inc`` call on the aggregate was
+        # racy and never re-stamped the customer doc.
+        from services.customer_balance import mutate_credit
+        _reward_cents = int(round(reward_amount * 100))
+        _mut = await mutate_credit(
+            db, tenant_id, referral["referrer_customer_id"],
+            delta_cents=_reward_cents,
+            source="referral_reward",
+            actor={"id": "referral_hook"},
+            reason=(f"Referral reward — "
+                     f"{referral.get('friend_name') or 'friend'} converted"),
+            idempotency_key=f"referral_reward:{referral['id']}",
+            extra_ledger_fields={
+                "id": reward_tx_id,              # ignored (reserved) but kept for shape
+                "referral_id": referral["id"],
+                "currency": cfg["referral_reward_currency"],
+                "delta": reward_amount,          # legacy dollar field
+                "created_by": "referral_hook",
+            },
+        )
+        reward_tx_id = _mut["ledger_entry_id"]
         upd["reward_amount"] = reward_amount
         upd["reward_applied_at"] = now
         upd["reward_transaction_id"] = reward_tx_id
@@ -356,27 +355,25 @@ async def revoke_reward(rid: str,
     amount = float(referral.get("reward_amount") or 0)
     tx_id = new_id()
     now = now_iso()
-    await db.customer_credits.insert_one({
-        "id": tx_id,
-        "tenant_id": tenant["id"],
-        "customer_id": referral["referrer_customer_id"],
-        "delta": -amount,
-        "currency": referral.get("reward_currency") or "USD",
-        "source": "referral_reward_revoke",
-        "referral_id": referral["id"],
-        "note": f"Referral reward revoked by {user.get('email')}",
-        "created_at": now,
-        "created_by": user.get("id"),
-    })
-    try:
-        await db.customer_credits_balance.update_one(
-            {"tenant_id": tenant["id"],
-             "customer_id": referral["referrer_customer_id"]},
-            {"$inc": {"balance": -amount}, "$set": {"updated_at": now}},
-            upsert=True,
-        )
-    except Exception as exc:  # pragma: no cover
-        logger.warning("[o2] balance rollback failed: %s", exc)
+    # P0b Stage 2 S2-1 · Feb-2026 — Route clawback through the choke
+    # point. Idempotency keyed on the referral id + ``revoke`` suffix
+    # so a double-click on the Revoke button doesn't double-apply.
+    from services.customer_balance import mutate_credit
+    _mut = await mutate_credit(
+        db, tenant["id"], referral["referrer_customer_id"],
+        delta_cents=-int(round(amount * 100)),
+        source="referral_reward_revoke",
+        actor=user,
+        reason=f"Referral reward revoked by {user.get('email')}",
+        idempotency_key=f"referral_reward_revoke:{referral['id']}",
+        extra_ledger_fields={
+            "referral_id": referral["id"],
+            "currency": referral.get("reward_currency") or "USD",
+            "delta": -amount,                 # legacy dollar field
+            "created_by": user.get("id"),
+        },
+    )
+    tx_id = _mut["ledger_entry_id"]
     await db.referrals.update_one(
         {"id": rid, "tenant_id": tenant["id"]},
         {"$set": {"reward_revoked_at": now, "reward_revoked_tx_id": tx_id,
