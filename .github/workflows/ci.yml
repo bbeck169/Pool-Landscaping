@@ -138,3 +138,28 @@ jobs:
       - name: Run jest
         working-directory: mobile
         run: yarn test --ci --forceExit
+
+  jsx-undeclared-identifier-guard:
+    name: jsx-undeclared-identifier-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Feb-2026 · Hard gate preventing a recurrence of the
+    # /schedule 7th-recurrence class of bug (ReferenceError on a
+    # JSX identifier that isn't imported / declared in the file).
+    # Scans production ``.jsx`` files under frontend/src/ and
+    # mobile/app/ + mobile/src/, excluding test harnesses
+    # (``--prod-only``) because vitest / jest already cover those
+    # and the scanner cannot track vi.mock-injected names. Fails
+    # the workflow on exit code 1 so the orphan is caught at PR
+    # time instead of at user-visible runtime.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run undeclared-JSX-identifier scan (production code only)
+        run: python3 scripts/check_jsx_imports.py --prod-only
