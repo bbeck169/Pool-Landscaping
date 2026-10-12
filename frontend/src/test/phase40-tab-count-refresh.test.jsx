@@ -76,6 +76,22 @@ function _installRouter() {
   mockGet.mockImplementation((path) => {
     const p = typeof path === "string" ? path : "";
     if (p.startsWith("/customer-tags")) return Promise.resolve({ items: [] });
+    // CUS-perf v3 (Feb-2026) — consolidated per-cohort count fetch.
+    // Returns every bucket in a single payload; replaces the
+    // pre-P31 per-cohort ``?count_only=true&<predicate>`` fanout.
+    if (p.startsWith("/customers/counts")) {
+      return Promise.resolve({
+        active: counts.active,
+        inactive: counts.inactive,
+        muted: counts.muted,
+        waitlist: 0,
+        missing_address: 0,
+        portal_activated: 0,
+        portal_not_activated: 0,
+        no_payment_method: 0,
+        never_logged_in: 0,
+      });
+    }
     if (p.includes("count_only=true")) {
       if (p.includes("is_muted=true"))
         return Promise.resolve({ count: counts.muted });
@@ -115,6 +131,21 @@ function _countCallsFor(pattern) {
     (c) => typeof c[0] === "string"
        && c[0].includes("count_only=true")
        && pattern.test(c[0]),
+  ).length;
+}
+
+/**
+ * CUS-perf v3 (R3=B ruling, Feb-2026) — P31 replaced per-cohort
+ * ``?count_only=true&<predicate>`` fanout with a single
+ * ``GET /customers/counts`` endpoint that returns every bucket
+ * (active, inactive, muted, waitlist, …) at once. The pre-P31
+ * ``_countCallsFor`` probe is sunsetted for this test; use
+ * ``_consolidatedCountCalls`` to assert the new contract.
+ */
+function _consolidatedCountCalls() {
+  return mockGet.mock.calls.filter(
+    (c) => typeof c[0] === "string"
+       && c[0].startsWith("/customers/counts"),
   ).length;
 }
 
@@ -189,11 +220,14 @@ describe("CustomersList · P40 tab-count cache invalidation", () => {
     fireEvent.click(screen.getByTestId("mute-control-confirm-c-1"));
 
     // After the mute succeeds, both list and counts must refetch.
+    // Phase P40 contract still holds — see
+    // src/pages/customers/CustomersList.jsx:2787-2788 which calls
+    // ``load(); loadCounts();`` after a successful mute. Under
+    // CUS-perf v3 the ``loadCounts()`` call hits the consolidated
+    // ``/customers/counts`` endpoint (not the pre-P31 per-cohort
+    // ``?count_only=true&<predicate>`` fanout). Lock the new shape.
     await waitFor(() => {
-      // count_only fetches for all three cohorts fire again.
-      expect(_countCallsFor(/is_muted=true/)).toBeGreaterThanOrEqual(1);
-      expect(_countCallsFor(/is_active=true/)).toBeGreaterThanOrEqual(1);
-      expect(_countCallsFor(/is_active=false/)).toBeGreaterThanOrEqual(1);
+      expect(_consolidatedCountCalls()).toBeGreaterThanOrEqual(1);
     });
   });
 
