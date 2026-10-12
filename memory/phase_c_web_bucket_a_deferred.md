@@ -118,3 +118,53 @@ Cleared via regex widen / mock widen / baseline additions (test-only edits).
 ## Phase 20/22/23/24/26b/27/28/28b/30/31/32/33/34/35 regression locks
 
 All verified green via targeted spot-checks during each batch. Residual Batches 7-8 ran the Phase 33 (`pdfImportUnifiedUI` + `pdfi-upload-sidepanel`) and Phase 34 (`revenue-date-range-year-presets`) suites as a sanity gate — green post-sweep. No regression-lock drift introduced by any of the 8 commits shipped across this + prior dispatches.
+
+---
+
+## Feb-2026 FRONTEND-BASELINE-DRIFT-RESIDUAL dispatch — 5 batches shipped
+
+**Entry state:** 21 failing files. **Exit state:** 16 failing files cleared is wrong — see tally below. Reset of the file-level counts.
+
+### Batches landed
+
+| Batch | SHA | Scope | Files cleared | Vitest result |
+| ----- | --- | ----- | ------------- | ------------- |
+| 1 | `a85c44c9c` | Lane 2 — Phase N2 search-icon theme-token sweep | **1** test file (`phase-n2-input-restyle-refinement.test.jsx`) via 10 source call-site fixes across 8 source files | 11/11 passed |
+| 2 | `dea0fdc0b` | Group B4.deferred — leads bulk-hard-delete response shape + MemoryRouter wrap + customer-status-tab counts | **3** test files | 22/22 passed |
+| 3 | `139f9afde` | Group B3.deferred — CUS-perf v3 consolidated-counts endpoint pivots | **2** test files | 24/24 passed |
+| 4 | `a099fe5bf` | K52.1 Slice-A — accept Phase N1 nested white card + K52-compatible idle chip text | **1** test file (`k52-theming.test.js`) | 22/22 passed |
+| 5 | `3f48c6bc8` | Lane 6 — P40 pivot mute-refetch assertion to `/customers/counts` consolidated endpoint | **1** test file (`phase40-tab-count-refresh.test.jsx`) | 1 passed + 3 K78-followup skips preserved |
+
+**Total cleared this dispatch:** 8 test files (one shipped as source-only fix in Batch 1 that cleared `phase-n2-input-restyle-refinement.test.jsx`; the sibling `k52-theming.test.js` did NOT clear as a side-effect and needed Batch 4's targeted rewrite).
+
+### Lane 5 — parked, ruling-needed
+
+`p16-1-1-estimate-combobox-gap.test.jsx` — **DELETE vs REWRITE needs human product input.** The test asserts a visual-gap contract on the Estimate line-item combobox that the P16.1.1 refactor appears to have changed. Not touched this cycle per operator instruction. Status: deferred to a future dispatch gated on a product-decision between (a) delete the obsolete test or (b) rewrite against the new gap contract.
+
+### Lane 6 outcome — test-only rewrite shipped
+
+`phase40-tab-count-refresh.test.jsx` — source audit (read-only) confirmed the P40 contract (`load() + loadCounts()` after mute) is still honored at `CustomersList.jsx:2787-2788` and `:2970`. The test was pinned against the pre-P31 per-cohort `?count_only=true&<predicate>` fanout URL shape; CUS-perf v3 consolidated that into a single `GET /customers/counts` endpoint. Pivoted the test's `_countCallsFor` + 3 cohort assertions to a single `_consolidatedCountCalls() >= 1` check. Zero source edits.
+
+### Final tally
+
+**8 of 12 cleared this dispatch · 4 remaining in the 12-file plan + 5 non-plan residuals from the briefing-doc preamble.**
+
+Full "remaining failing files" breakdown:
+
+| File | Lane | Status |
+| ---- | ---- | ------ |
+| `p16-1-1-estimate-combobox-gap.test.jsx` | 5 | **parked** — ruling-needed (delete vs rewrite) |
+| `customer-detail-navy-command-strip.test.jsx` | 7 | **parked** — Phase 28 identity-header-reposition product ruling |
+| `QuoteInvoiceNew.pricebook.test.jsx` | Group T (timeout-only) | **out-of-plan** — not in the 5-batch dispatch |
+| `n5-t1-page-header-adoption.test.jsx` | Group T (timeout-only) | **out-of-plan** — not in the 5-batch dispatch |
+| Group A4 γ-triaged (7 files) | A4 | **product ruling required** (unchanged from prior dispatch) |
+| Group M (2 mobile files) | M | **mobile deferred** per hard rules — ignored by `/app/mobile` policy |
+
+### Guardrail compliance
+
+- Every batch committed via `git commit --only -- <paths>`. Zero `git commit -a`.
+- `/app/mobile` untouched by any batch.
+- No γ-triaged file touched.
+- No baseline files touched this dispatch.
+- No reverts needed — every batch green on first attempt.
+
