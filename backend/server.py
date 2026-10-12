@@ -854,6 +854,13 @@ api_router.include_router(_f2_data_repair_router.router)
 # the anonymous k8s probes at /health/live and /health/ready.
 from routers import admin_health_check as _i3_admin_health_check  # noqa: E402
 api_router.include_router(_i3_admin_health_check.router)
+# Preview isolation · Feb-2026 P0 — admin healthcheck endpoint
+# ``GET /api/admin/preview-isolation-status`` reports env, mongo
+# host, registry status, PII-shape audit, and last boot-scrub.
+# Returns HTTP 404 on production env (endpoint intentionally
+# doesn't exist in prod).
+from routers import preview_isolation_admin as _preview_iso_admin  # noqa: E402
+api_router.include_router(_preview_iso_admin.router)
 # Feb-2026 · P0/2 recurrence — comms diagnostic endpoints.
 # GET /api/admin/comms-diagnostics  → env + in-mem last-send state
 # POST /api/admin/comms-diagnostics/test → admin-triggered live send
