@@ -156,7 +156,7 @@ describe("Mobile RecurringJobs · 'Next' column date-range filter", () => {
     const r = await mount();
     fireEvent.press(r.getByTestId("recurring-jobs-date-preset-today"));
     expect(visible(r)).toEqual([]);
-    expect(r.getByTestId("recurring-jobs-date-no-match")).toBeTruthy();
+    expect(r.getByTestId("recurring-jobs-empty")).toBeTruthy();
     expect(r.getByTestId("recurring-jobs-date-clear")).toBeTruthy();
   });
 
