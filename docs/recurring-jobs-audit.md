@@ -109,7 +109,7 @@ async def run_horizon_backfill(
 
 ## 6. Infinite-recurrence feature evidence
 
-### Introducing commit: `8e42a1b7f` (prior session)
+### Introducing commit: `43be86e2d` (prior session · "Task B · Infinite recurrence")
 
 ### Backend model — `backend/routers/recurring_jobs.py:50, 78-84, 126`
 

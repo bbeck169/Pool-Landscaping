@@ -83,7 +83,7 @@ from __future__ import annotations
 # Companion audit: /app/docs/recurring-jobs-audit.md
 # Nightly cron fix: 54af96872 (cursor advances only on provable progress)
 # Admin backfill endpoint chain: 22164d562, ea54df36b, 9593a8450, 8e691ea4f
-# Infinite recurrence (null end_date): 8e42a1b7f
+# Infinite recurrence (null end_date): 43be86e2d
 # Site 2 (service_reports) idempotency: option (a) — helper internal only.
 # ---------------------------------------------------------------------------
 
