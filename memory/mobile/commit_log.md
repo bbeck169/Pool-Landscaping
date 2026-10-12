@@ -1788,3 +1788,10 @@
 - **Changes**: `customer-action-issue-credit` steel button in the customer action row (after View-as, before Delete) → `jumpTo("credits")`. Gated admin/super_admin (= mobile Credits section gate; web gate also includes manager/owner but Credits section is hidden for them on mobile). Credits + Equipment blocks byte-identical (sha1 match).
 - **Files modified**: app/customer/[id].tsx (+14), __tests__/phase40-customer-profile-visual-grouping.test.tsx (+33, append-only)
 - **Web files referenced**: pages/customers/CustomerDetail.jsx (canIssueCredit, cd-issue-credit-btn)
+
+## Iteration 120 — Recurring Jobs "Next" date filter (web parity 52c3eb6fa)
+- **Commits**: 664af4aca (src/lib/scheduleRangePresets.ts + test), 88e3938de (finance/recurring-jobs.tsx + test)
+- **Date**: 2026-10-12
+- **Changes**: 7-key preset helper (verified identical to web module, 21k anchors x 3 TZs); 5 pill chips + From/To DateField + Clear; inclusive upcoming[0] filter, AND with Active/Paused tab; "Next: YYYY-MM-DD|—" row meta.
+- **Follow-up backlog**: mobile RecurringJobs search + service-category filter parity (web NavyFilterBar) — not on mobile yet.
+- **Web files referenced**: frontend/src/lib/scheduleRangePresets.js, pages/admin/RecurringJobs.jsx, test/recurring-jobs-date-filter.test.jsx
