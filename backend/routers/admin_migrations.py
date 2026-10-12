@@ -1811,6 +1811,150 @@ async def run_customer_balance_audit(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# P0b Stage 2 S2-2 · Feb-2026
+# POST /admin/customers/credit-parity-audit
+#
+# One-shot backfill + audit focused on the credit-only drift surface.
+# For every non-deleted customer in the caller's tenant, compares the
+# ledger-aggregated truth (``customer_credits_balance.balance_cents``)
+# against the customer-doc denorm (``credit_balance_cents`` singular)
+# AND the legacy plural field (``credits_balance_cents``). Reports
+# counts + up to 50 mismatches with all three columns side-by-side.
+#
+# ``fix=true`` reconciles via the canonical ``mutate_credit`` /
+# ``recompute_customer_balance_denorm`` path — never writes the
+# legacy plural field (it's slated for removal; see
+# /app/memory/deprecations.md).
+#
+# Admin/owner/super_admin role gate. WARN-level audit log on fix.
+# ─────────────────────────────────────────────────────────────────────
+@router.post(
+    "/admin/customers/credit-parity-audit",
+    operation_id="admin.customers.credit_parity_audit",
+)
+async def run_customer_credit_parity_audit(
+    fix: bool = Query(
+        False,
+        description=(
+            "Dry-run default. ``true`` reconciles the customer-doc "
+            "``credit_balance_cents`` singular denorm against the "
+            "ledger via ``recompute_customer_balance_denorm``. "
+            "Idempotent — repeated calls converge."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        description=(
+            "Optional cap on customers scanned. Omit to scan every "
+            "non-deleted customer in the tenant."
+        ),
+    ),
+    user: Dict[str, Any] = Depends(get_current_user),
+    tenant: Dict[str, Any] = Depends(get_current_tenant),
+):
+    role = (user or {}).get("role")
+    if role not in ("admin", "owner", "super_admin"):
+        raise HTTPException(403, "admin_only")
+
+    log_line = (
+        f"[credit-parity-audit] user={user.get('id')} "
+        f"email={user.get('email')} tenant={tenant.get('id')} "
+        f"fix={fix} limit={limit}"
+    )
+    if fix:
+        logger.warning(log_line)
+    else:
+        logger.info(log_line)
+
+    from services.customer_balance import recompute_customer_balance_denorm
+
+    scanned = 0
+    matched = 0
+    drifted_singular = 0  # ledger != singular field
+    drifted_plural = 0    # ledger != plural field (always drift today)
+    fixed = 0
+    mismatches: list = []
+    _CAP = 50
+
+    cursor = db.customers.find(
+        {"tenant_id": tenant["id"], "deleted_at": {"$in": [None]}},
+        {"_id": 0, "id": 1, "credit_balance_cents": 1,
+          "credits_balance_cents": 1},
+    )
+    if limit:
+        cursor = cursor.limit(int(limit))
+
+    async for cust in cursor:
+        scanned += 1
+        cid = cust.get("id")
+        if not cid:
+            continue
+        ledger_row = await db.customer_credits_balance.find_one(
+            {"tenant_id": tenant["id"], "customer_id": cid},
+            {"_id": 0, "balance_cents": 1},
+        ) or {}
+        ledger_cents = int(ledger_row.get("balance_cents") or 0)
+        singular = int(cust.get("credit_balance_cents") or 0)
+        plural = int(cust.get("credits_balance_cents") or 0)
+
+        _single_ok = ledger_cents == singular
+        _plural_ok = ledger_cents == plural
+
+        if _single_ok and _plural_ok:
+            matched += 1
+            continue
+        if not _single_ok:
+            drifted_singular += 1
+        if not _plural_ok and plural != 0:
+            # Only count plural drift when it's non-zero AND disagrees.
+            # Every row has plural absent/0 after S2-1 so this will
+            # typically be 0 on preview — but production legacy data
+            # may still have historical plural values.
+            drifted_plural += 1
+
+        if len(mismatches) < _CAP:
+            mismatches.append({
+                "customer_id": cid,
+                "ledger_cents": ledger_cents,
+                "singular_doc_cents": singular,
+                "plural_doc_cents": plural,
+                "singular_drift": ledger_cents - singular,
+                "plural_drift": ledger_cents - plural,
+            })
+
+        if fix and not _single_ok:
+            await recompute_customer_balance_denorm(
+                db, tenant["id"], cid,
+            )
+            fixed += 1
+
+    report = {
+        "ok": True,
+        "fix": fix,
+        "tenant_id": tenant["id"],
+        "customers_scanned": scanned,
+        "customers_matched": matched,
+        "customers_drifted_singular": drifted_singular,
+        "customers_drifted_plural_nonzero": drifted_plural,
+        "customers_fixed": fixed,
+        "mismatches": mismatches,
+        "note": (
+            "Plural ``credits_balance_cents`` is DEPRECATED (see "
+            "/app/memory/deprecations.md). ``fix=true`` reconciles "
+            "the singular field only; the plural field is left "
+            "untouched and will be dropped in the removal pass."
+        ),
+    }
+    logger.info(
+        "[credit-parity-audit] complete · tenant=%s fix=%s scanned=%s "
+        "matched=%s single_drift=%s plural_drift=%s fixed=%s",
+        tenant["id"], fix, scanned, matched,
+        drifted_singular, drifted_plural, fixed,
+    )
+    return report
+
+
+# ─────────────────────────────────────────────────────────────────────
 # DATA-PARITY-C3 · Feb-2026
 # POST /admin/customers/media-audit
 #

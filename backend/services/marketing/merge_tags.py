@@ -1010,8 +1010,19 @@ def _referral_eligible_date(ctx: Dict[str, Any]) -> str:
 
 
 def _customer_credit_balance(ctx: Dict[str, Any]) -> str:
+    # P0b Stage 2 S2-2 · Feb-2026 — Accept either the canonical
+    # SINGULAR key ``credit_balance_cents`` (preferred, written by
+    # the ``mutate_credit`` choke point via ``recompute_customer_
+    # balance_denorm``) or the legacy PLURAL key ``credits_balance_
+    # cents`` (deprecated — one caller in services/referral_watcher
+    # still builds a ctx with it for the referral-credit email
+    # template; left behind for one deprecation window). Both resolve
+    # to the same cents value when the caller is honest about the
+    # customer's current balance.
     c = ctx.get("customer") or {}
-    cents = c.get("credits_balance_cents")
+    cents = c.get("credit_balance_cents")
+    if cents is None:
+        cents = c.get("credits_balance_cents")
     if cents is None:
         return ""
     try:

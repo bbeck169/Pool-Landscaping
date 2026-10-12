@@ -323,16 +323,22 @@ async def _fire_credit_notifications(
               "tenant_id": tenant["id"]},
             {"_id": 0},
         ) or {}
-        # Build canonical merge ctx.
+        # P0b Stage 2 S2-2 · Feb-2026 — Build the merge ctx using
+        # the canonical SINGULAR denorm field (now re-stamped on
+        # every mutation by the ``mutate_credit`` choke point).
+        # The legacy plural read here would have been zero for any
+        # customer whose only credit came from the admin-grant /
+        # referral-reward / watcher paths — which is exactly the
+        # cohort receiving THIS referral notification. See
+        # /app/memory/credit_parity_rca.md for the recurrence.
+        _canonical_credit = int(cust.get("credit_balance_cents") or 0) + credit_cents
         from services.marketing.merge_tags import render_context
         ctx = render_context(
             customer={
                 "name": cust.get("name") or "",
                 "email": cust.get("email"),
                 "phone": cust.get("phone"),
-                "credits_balance_cents": (
-                    int(cust.get("credits_balance_cents") or 0) + credit_cents
-                ),
+                "credit_balance_cents": _canonical_credit,
             },
             tenant={
                 "name": tenant.get("name"),

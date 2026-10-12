@@ -849,9 +849,24 @@ async def send_customer_message(
 
 # ═══════════════════════════════════════════════════════════════════
 # Task RR/SS Phase 2 · Feb 2026 — Customer-scoped credit balance
-# endpoint. Powers the Portal Home CREDIT stat tile. Returns dollars
-# and cents; the balance lives on the customer doc as
-# ``credits_balance_cents`` (Phase 10 wire).
+# endpoint. Powers the Portal Home CREDIT stat tile.
+#
+# P0b Stage 2 S2-2 · Feb-2026 — ROUTE REWRITTEN. Previously this
+# endpoint read ``customers.credits_balance_cents`` (PLURAL legacy
+# field) directly off the customer doc. That field is NEVER
+# re-stamped by the canonical mutation choke point
+# (``services.customer_balance.mutate_credit``), so every customer
+# whose credit was granted via the admin "Issue Credit" button, a
+# referral reward, or the referral-watcher saw $0 on the portal
+# tile even though admin profile showed the correct balance. 3rd
+# recurrence of this bug (see /app/memory/credit_parity_rca.md).
+#
+# The response shape stays identical to the pre-fix wire so the
+# current frontend doesn't break during the deprecation window —
+# only the SOURCE of the number changes, from the stale plural
+# field to the canonical ``compute_customer_balance`` compute.
+# The ``canonical: true`` flag is added so clients that want to
+# verify can introspect without re-fetching.
 # ═══════════════════════════════════════════════════════════════════
 @router.get("/customer-portal/credits/balance")
 async def get_own_credit_balance(
@@ -859,14 +874,13 @@ async def get_own_credit_balance(
     tenant: dict = Depends(get_current_tenant),
 ):
     cid = _require_customer(user)
-    cust = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]},
-        {"_id": 0, "credits_balance_cents": 1},
-    )
-    balance_cents = int((cust or {}).get("credits_balance_cents") or 0)
+    from services.customer_balance import compute_customer_balance
+    canonical = await compute_customer_balance(db, tenant["id"], cid)
+    balance_cents = int(canonical.get("credit_balance_cents") or 0)
     return {
         "balance_cents": balance_cents,
         "balance_dollars": round(balance_cents / 100.0, 2),
+        "canonical": True,
     }
 
 

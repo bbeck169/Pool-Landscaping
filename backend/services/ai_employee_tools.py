@@ -338,14 +338,18 @@ async def _t_lookup_balance(tenant_id: str, *, customer_id: str) -> Any:
                     oldest_days = days
         except (TypeError, ValueError):
             pass
-    cust = await db.customers.find_one(
-        {"tenant_id": tenant_id, "id": customer_id},
-        {"_id": 0, "credits_balance_cents": 1},
-    ) or {}
+    # P0b Stage 2 S2-2 · Feb-2026 — Replace stale ``credits_balance_
+    # cents`` plural-field read with the canonical compute. See the
+    # root-cause write-up at /app/memory/credit_parity_rca.md for
+    # the recurrence history. AI employees must never quote the
+    # legacy plural field to a customer — it drifts the moment any
+    # admin-granted or referral credit lands.
+    from services.customer_balance import compute_customer_balance
+    _canonical = await compute_customer_balance(db, tenant_id, customer_id)
     return {
         "unpaid_total_cents": int(round(unpaid_total * 100)),
         "past_due_cents": int(round(past_due * 100)),
-        "credit_balance_cents": int(cust.get("credits_balance_cents") or 0),
+        "credit_balance_cents": int(_canonical.get("credit_balance_cents") or 0),
         "oldest_unpaid_days": oldest_days,
         "count_unpaid_invoices": unpaid_count,
     }

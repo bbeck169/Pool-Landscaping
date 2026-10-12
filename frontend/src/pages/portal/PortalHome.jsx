@@ -45,12 +45,21 @@ export default function PortalHome() {
   const [data, setData] = useState(null);
   const [_tosStatus, setTosStatus] = useState(null);
   const [summary, setSummary] = useState(null);
-  // Task RR/SS Phase 2 · Feb 2026 — live credit balance via the new
-  // customer-portal endpoint. Runs in parallel with /summary so the
-  // tile flips from stale (from /summary payload) → live once the
-  // dedicated read resolves. Falls back to whatever /summary
-  // reported if the new endpoint 404s (deploy race).
-  const [creditBalanceDollars, setCreditBalanceDollars] = useState(null);
+  // P0b Stage 2 S2-3 · Feb-2026 — ``creditBalanceDollars`` is
+  // RETAINED as a state slot (null) only for the existing tile-
+  // display conditional at line ~326 so no JSX branches need
+  // flipping during this commit. The paired
+  // ``api.get("/customer-portal/credits/balance")`` call was the
+  // drift surface — it hit a legacy field that was never
+  // re-stamped on credit mutations. After S2-2 the backend
+  // endpoint reads the canonical ledger, but the two-endpoint
+  // pattern itself was the recurrence vector: future refactors
+  // could easily point either endpoint at a different source and
+  // reintroduce drift. The tile now sources credit EXCLUSIVELY
+  // from ``summary.credit`` (which comes through
+  // ``compute_customer_balance``). The slot stays as ``null``
+  // forever; the fallback branch is the live path.
+  const [creditBalanceDollars] = useState(null);
   // Feb-2026 · Slice 3D — Quick service-request modal.
   const [requestOpen, setRequestOpen] = useState(false);
   // Feb-2026 · Slice 5 — customer AI carve-out (Skedra + Billy).
@@ -75,13 +84,13 @@ export default function PortalHome() {
 
   const loadSummary = () => {
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
-    api.get("/customer-portal/credits/balance")
-      .then((r) => {
-        if (r && typeof r.balance_dollars === "number") {
-          setCreditBalanceDollars(r.balance_dollars);
-        }
-      })
-      .catch(() => {});
+    // P0b Stage 2 S2-3 · Feb-2026 — The paired
+    // ``/customer-portal/credits/balance`` call was removed. The
+    // CREDIT tile now sources value exclusively from
+    // ``summary.credit`` which comes through the canonical
+    // ``compute_customer_balance`` path on the server. See
+    // /app/memory/credit_parity_rca.md for the recurrence vector
+    // the two-endpoint pattern enabled.
   };
 
   useEffect(() => {
