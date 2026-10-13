@@ -2616,20 +2616,52 @@ export function RecentDocsSection({ customerId, api: apiProp }) {
     let cancelled = false;
     setInvoicesLoading(true);
     setEstimatesLoading(true);
+    // P1 PERF-HOTFIX · Feb-2026 — opt-in Shape-A pagination +
+    // slim projection on ``GET /quotes``. Pre-hotfix we fetched
+    // the FULL customer history (up to 1000 docs including
+    // ``line_items`` / ``pdf_cache``) and sliced to 5 client-
+    // side.  On preview with 263 quotes that's 118KB per call;
+    // on prod with 500-2000 quotes/customer that's 2.5-20 MB
+    // per call × two parallel calls — the suspected root cause
+    // of the >60s customer-profile regression.
+    //
+    // The new call pattern passes ``limit=5&slim=1`` so:
+    //   * server returns the Shape-A envelope
+    //     ``{rows, limit, offset, has_more, total_count}``
+    //     with exactly the 5 rows we render.
+    //   * ``line_items`` / ``pdf_cache`` / ``pdf_url_cache`` /
+    //     ``legacy_payload`` are dropped from the projection —
+    //     payload drops ~30x (preview: 118KB → 3.2KB).
+    // Response is destructured on ``.rows`` with a defensive
+    // fallback to a bare array (keeps the client working if an
+    // upstream proxy somehow strips the envelope).
     Promise.allSettled([
-      client.get(`/quotes?doc_type=invoice&customer_id=${customerId}`),
-      client.get(`/quotes?doc_type=quote&customer_id=${customerId}`),
+      client.get(
+        `/quotes?doc_type=invoice&customer_id=${customerId}`
+        + `&limit=5&slim=1`,
+      ),
+      client.get(
+        `/quotes?doc_type=quote&customer_id=${customerId}`
+        + `&limit=5&slim=1`,
+      ),
     ]).then(([inv, est]) => {
       if (cancelled) return;
+      const _extract = (payload) => {
+        if (Array.isArray(payload)) return payload;         // legacy bare array
+        if (payload && Array.isArray(payload.rows)) {
+          return payload.rows;                              // Shape-A envelope
+        }
+        return [];
+      };
       if (inv.status === "fulfilled") {
-        setInvoices(Array.isArray(inv.value) ? inv.value.slice(0, 5) : []);
+        setInvoices(_extract(inv.value));
       } else {
         // eslint-disable-next-line no-console
         console.warn("[cp-2] recent invoices fetch failed", inv.reason);
         setInvoices([]);
       }
       if (est.status === "fulfilled") {
-        setEstimates(Array.isArray(est.value) ? est.value.slice(0, 5) : []);
+        setEstimates(_extract(est.value));
       } else {
         // eslint-disable-next-line no-console
         console.warn("[cp-2] recent estimates fetch failed", est.reason);
