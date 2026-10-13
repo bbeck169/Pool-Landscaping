@@ -33,9 +33,8 @@ import {
   BulkActionBar,
 } from "@/components/bulk-select/BulkSelectToolkit";
 import { Input } from "@/components/ui/input";
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
+import CommunicationDetailModal
+  from "@/components/communications/CommunicationDetailModal";
 
 // ── Pill color scheme (single source of truth) ─────────────────
 const STATUS_TONES = {
@@ -518,114 +517,14 @@ export default function CommunicationsLogPage() {
         ) : null}
       </div>
 
-      {/* Side sheet detail */}
-      <Sheet open={!!selected} onOpenChange={(v) => !v && setSelected(null)}>
-        <SheetContent
-          className="w-full sm:max-w-lg overflow-y-auto"
-          data-testid="comm-log-detail-sheet"
-        >
-          {selected ? (
-            <>
-              <SheetHeader>
-                <SheetTitle>
-                  {selected.subject || (selected.channel === "sms" ? "SMS message" : "Message detail")}
-                </SheetTitle>
-              </SheetHeader>
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <StatusPill
-                    status={selected.status_derived}
-                    channel={selected.channel}
-                    smsFinal={selected.sms_status_final}
-                  />
-                  <span className="text-xs" style={{ color: colors.muted }}>
-                    {selected.channel.toUpperCase()} · via {selected.provider || "unknown"}
-                  </span>
-                </div>
-                <div className="text-xs" style={{ color: colors.muted }}>
-                  To: <b style={{ color: colors.onSurface }}>
-                    {selected.recipient_email || selected.recipient_phone || "—"}
-                  </b>
-                  {selected.customer_name ? (
-                    <span> · Customer: {selected.customer_name}</span>
-                  ) : null}
-                </div>
-                {/* Timeline */}
-                <div
-                  className="rounded-lg p-3"
-                  style={{
-                    background: colors.surfaceSecondary,
-                    border: `1px solid ${colors.border}`,
-                  }}
-                  data-testid="comm-log-detail-timeline"
-                >
-                  <div
-                    className="text-[10px] font-bold uppercase mb-2"
-                    style={{ color: colors.muted }}
-                  >
-                    Delivery timeline
-                  </div>
-                  <ul className="text-xs space-y-1"
-                      style={{ color: colors.onSurface }}>
-                    <li>· Created — {selected.created_at || "?"}</li>
-                    {selected.delivered_at ? (
-                      <li>· Delivered — {selected.delivered_at}</li>
-                    ) : null}
-                    {selected.opened_at ? (
-                      <li>· Opened — {selected.opened_at}</li>
-                    ) : null}
-                    {selected.clicked_at ? (
-                      <li>· Clicked — {selected.clicked_at}</li>
-                    ) : null}
-                    {selected.bounced_at ? (
-                      <li>· Bounced — {selected.bounced_at}</li>
-                    ) : null}
-                    {selected.sms_status_at ? (
-                      <li>· SMS carrier: {selected.sms_status_final} — {selected.sms_status_at}</li>
-                    ) : null}
-                  </ul>
-                </div>
-
-                {/* Body */}
-                {selected.subject && selected.body_preview ? (
-                  <div className="text-xs mt-1"
-                       style={{ color: colors.muted }}>
-                    Body preview:
-                  </div>
-                ) : null}
-                <div
-                  className="text-sm rounded-lg p-3"
-                  style={{
-                    background: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                    color: colors.onSurface,
-                    whiteSpace: "pre-wrap",
-                  }}
-                  data-testid="comm-log-detail-body"
-                >
-                  {selected.body_preview || "(empty)"}
-                </div>
-
-                {selected.trigger_entity ? (
-                  <div className="text-[11px]"
-                       style={{ color: colors.muted }}>
-                    Trigger: <b>{selected.trigger_entity.kind}</b>
-                    {selected.trigger_entity.id
-                      ? <> · <code>{selected.trigger_entity.id}</code></>
-                      : null}
-                  </div>
-                ) : null}
-                {selected.provider_response_id ? (
-                  <div className="text-[11px]"
-                       style={{ color: colors.muted }}>
-                    Provider id: <code>{selected.provider_response_id}</code>
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      {/* P2 #5 · Feb-2026 — row click opens the shared Dialog modal
+          via GET /communications-detail/{id}.  Replaces the previous
+          right-side Sheet which only showed body_preview (100 chars). */}
+      <CommunicationDetailModal
+        open={!!selected}
+        rowId={selected?.id || null}
+        onClose={() => setSelected(null)}
+      />
 
       {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — comms bulk-action bar.
           No delete (per spec) — archive + mark-read only. */}

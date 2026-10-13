@@ -8,8 +8,11 @@
  *   with a "Load more" cursor. Each row shows a channel icon, subject
  *   (email) or body preview (SMS), sent-at (relative + absolute
  *   tooltip), sent-by user, and colored status badges. Clicking a
- *   row opens a right-side sheet with the full delivery timeline —
- *   matching the shape used on `/admin/communications-log`.
+ *   row opens the shared CommunicationDetailModal (Dialog) which
+ *   fetches full email/SMS detail via GET /api/communications-detail
+ *   /{id}.  P2 #5 · Feb-2026 replaced the previous right-side Sheet
+ *   with the Dialog so every admin timeline surface uses the same
+ *   modal primitive.
  */
 import React, { useEffect, useState } from "react";
 import {
@@ -17,9 +20,8 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
+import CommunicationDetailModal
+  from "@/components/communications/CommunicationDetailModal";
 
 const STATUS_TONES = {
   sent:      { bg: "#E5E7EB", fg: "#374151", label: "Sent" },
@@ -203,81 +205,15 @@ export default function CustomerCommunicationsTimeline({ customerId }) {
         </>
       )}
 
-      {/* Detail side sheet — mirrors the shape used on the
-          Communications Log page for consistency. */}
-      <Sheet open={!!selected} onOpenChange={(v) => !v && setSelected(null)}>
-        <SheetContent
-          className="w-full sm:max-w-lg overflow-y-auto"
-          data-testid="customer-comm-detail-sheet"
-        >
-          {selected ? (
-            <>
-              <SheetHeader>
-                <SheetTitle>
-                  {selected.subject || (selected.channel === "sms"
-                    ? "SMS message" : "Message detail")}
-                </SheetTitle>
-              </SheetHeader>
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <StatusBadge row={selected} />
-                  <span className="text-xs" style={{ color: colors.muted }}>
-                    {selected.channel.toUpperCase()}
-                    {" · via "}{selected.provider || "unknown"}
-                  </span>
-                </div>
-                <div className="text-xs" style={{ color: colors.muted }}>
-                  To: <b style={{ color: colors.onSurface }}>
-                    {selected.recipient_email || selected.recipient_phone || "—"}
-                  </b>
-                </div>
-                <div
-                  className="rounded-lg p-3"
-                  style={{
-                    background: colors.surfaceSecondary,
-                    border: `1px solid ${colors.border}`,
-                  }}
-                >
-                  <div className="text-[10px] font-bold uppercase mb-2"
-                       style={{ color: colors.muted }}>
-                    Delivery timeline
-                  </div>
-                  <ul className="text-xs space-y-1"
-                      style={{ color: colors.onSurface }}>
-                    <li>· Created — {selected.created_at || "?"}</li>
-                    {selected.delivered_at ? (
-                      <li>· Delivered — {selected.delivered_at}</li>
-                    ) : null}
-                    {selected.opened_at ? (
-                      <li>· Opened — {selected.opened_at}</li>
-                    ) : null}
-                    {selected.clicked_at ? (
-                      <li>· Clicked — {selected.clicked_at}</li>
-                    ) : null}
-                    {selected.bounced_at ? (
-                      <li>· Bounced — {selected.bounced_at}</li>
-                    ) : null}
-                    {selected.sms_status_at ? (
-                      <li>· SMS carrier: {selected.sms_status_final} — {selected.sms_status_at}</li>
-                    ) : null}
-                  </ul>
-                </div>
-                <div
-                  className="text-sm rounded-lg p-3"
-                  style={{
-                    background: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                    color: colors.onSurface,
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {selected.body_preview || "(empty)"}
-                </div>
-              </div>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      {/* P2 #5 · Feb-2026 — row click opens the shared Dialog modal
+          via GET /communications-detail/{id}.  Previously rendered a
+          local Sheet with body_preview truncated at 100 chars; the
+          shared Dialog fetches the full body_rendered. */}
+      <CommunicationDetailModal
+        open={!!selected}
+        rowId={selected?.id || null}
+        onClose={() => setSelected(null)}
+      />
     </section>
   );
 }
