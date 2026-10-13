@@ -178,6 +178,74 @@ async def list_merge_tags_flat(user: dict = Depends(get_current_user)):
     return {"tags": merge_tags_catalog_flat()}
 
 
+# P2 #10c · Feb-2026 — Transactional-template editor endpoints.
+# Companion backend for ``/settings/notifications/templates``. Uses
+# the ``code`` field as the discriminator (per P2 #10 audit Flag 4
+# ruling). Both endpoints are admin-only + tenant-scoped. The reset
+# endpoint uses soft-reset semantics via ``active: false`` so the
+# existing hardcoded-fallback branch in each caller resumes without
+# needing a separate "null the row" migration.
+@router.get("/marketing/transactional-registry")
+async def transactional_registry(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the canonical transactional-template registry — slug
+    list + per-slug metadata. Served to the admin editor UI's docs
+    panel so each row knows which merge tags its ``PATCH`` validator
+    will enforce."""
+    from services.transactional_templates_registry import all_slugs
+    return {"templates": all_slugs()}
+
+
+@router.post("/marketing/templates/by-code/{code}/reset")
+async def reset_transactional_template(
+    code: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Soft-reset the tenant's override for ``code``: flip
+    ``active=False`` so the caller's hardcoded fallback resumes.
+    404 if no override exists. 400 if ``code`` is not in the
+    registry."""
+    from services.transactional_templates_registry import get_slug
+    if not get_slug(code):
+        raise HTTPException(400, {
+            "code": "UNKNOWN_TRANSACTIONAL_SLUG",
+            "slug": code,
+        })
+    row = await db.marketing_templates.find_one(
+        {"tenant_id": tenant["id"], "code": code}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, {
+            "code": "NO_TENANT_OVERRIDE",
+            "slug": code,
+            "message": "No tenant override exists for this slug — "
+                        "hardcoded fallback is already in effect.",
+        })
+    await db.marketing_templates.update_one(
+        {"id": row["id"]},
+        {"$set": {"active": False, "updated_at": now_iso(),
+                   "updated_by": user.get("id")}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "action": "tenant.transactional_template_reset",
+            "actor_user_id": user.get("id"),
+            "payload": {"slug": code, "template_id": row["id"]},
+            "created_at": now_iso(),
+        })
+    except Exception as _exc:  # pragma: no cover
+        logger.warning(
+            "[transactional-reset] audit_logs insert failed: %s", _exc,
+        )
+    return {"ok": True, "slug": code, "template_id": row["id"]}
+
+
+
 @router.post("/marketing/templates/{tid}/revert")
 async def revert_template(
     tid: str,

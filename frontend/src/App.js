@@ -408,6 +408,7 @@ const SaltCellTrackerListPage = React.lazy(() => import(/* webpackChunkName: "p-
 const SaltCellTrackerManagePage = React.lazy(() => import(/* webpackChunkName: "p-tracking-equipmenttrackerpages" */ "@/pages/tracking/EquipmentTrackerPages").then(m => ({ default: m.SaltCellTrackerManagePage })));
 const NotificationsPage = React.lazy(() => import(/* webpackChunkName: "p-notifications-notificationspage" */ "@/pages/notifications/NotificationsPage"));
 const NotificationPrefs = React.lazy(() => import(/* webpackChunkName: "p-settings-notificationprefs" */ "@/pages/settings/NotificationPrefs"));
+const TransactionalTemplates = React.lazy(() => import(/* webpackChunkName: "p-settings-transactionaltemplates" */ "@/pages/settings/TransactionalTemplates"));
 const LeadAlertsSettings = React.lazy(() => import(/* webpackChunkName: "p-settings-leadalertssettings" */ "@/pages/settings/LeadAlertsSettings"));
 // StripeReconciliation page removed in Phase LZ4 (Feb 2026);
 // Stripe SDK is retired. Import + route deleted.
@@ -1179,6 +1180,7 @@ export default function App() {
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationPrefs />} />
+            <Route path="settings/notifications/templates" element={<TransactionalTemplates />} />
             <Route path="settings/notifications/lead-alerts" element={<AdminOnly><LeadAlertsSettings /></AdminOnly>} />
             {/* Stripe reconciliation route removed in Phase LZ4 (Feb 2026). */}
 
