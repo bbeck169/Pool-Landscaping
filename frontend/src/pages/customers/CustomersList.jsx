@@ -13,6 +13,7 @@ import MuteControl from "@/components/customers/MuteControl";
 import CustomersPager from "@/components/customers/CustomersPager";
 import ImportCsvModalP41 from "@/pages/customers/ImportCsvModalP41";
 import MergeCustomersModal from "@/components/customers/MergeCustomersModal";
+import { MergeDialog } from "@/components/customers/MergeDialog";
 import PortalOnboardingHealthTile from "@/components/customers/PortalOnboardingHealthTile";
 import BulkPortalInviteConfirm from "@/components/customers/BulkPortalInviteConfirm";
 import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
@@ -191,6 +192,16 @@ export default function CustomersList() {
     return "active";
   })();
   const [tab, setTab] = useState(initialTab);
+  // Feb-2026 · duplicate-management feature — Duplicates tab
+  // state.  The groups array is fetched lazily (only when the
+  // tab becomes active) via ``GET /api/customers/duplicates``.
+  // ``mergeDialogGroup`` holds the group whose "Merge" button
+  // was clicked so the shared ``MergeDialog`` can hydrate.
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
+  const [duplicateGroupCount, setDuplicateGroupCount] = useState(null);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
+  const [duplicatesError, setDuplicatesError] = useState(null);
+  const [mergeDialogGroup, setMergeDialogGroup] = useState(null);
   // Guard so the mount-time useEffect below doesn't stomp on an
   // initial ``?page=N`` query param — we only want to reset page
   // when the operator ACTIVELY changes the tab.
@@ -1563,6 +1574,42 @@ export default function CustomersList() {
     }
   };
 
+  // Feb-2026 · duplicate-management feature — lazy fetch of
+  // duplicate groups when the Duplicates tab becomes active OR
+  // when the tab's count badge is uninitialised and the user
+  // is an admin/manager who's about to see the pill.
+  useEffect(() => {
+    const shouldFetch = tab === "duplicates"
+      || (duplicateGroupCount === null && isAdminOrManager);
+    if (!shouldFetch || duplicatesLoading) return;
+    let cancelled = false;
+    (async () => {
+      setDuplicatesLoading(true);
+      setDuplicatesError(null);
+      try {
+        const resp = await api.get("/customers/duplicates");
+        if (cancelled) return;
+        const groups = Array.isArray(resp?.groups) ? resp.groups : [];
+        setDuplicateGroups(groups);
+        setDuplicateGroupCount(
+          resp?.summary?.group_count ?? groups.length,
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setDuplicatesError(
+            err?.data?.detail?.message
+            || err?.message
+            || "Failed to load duplicates.",
+          );
+          setDuplicateGroupCount(0);
+        }
+      } finally {
+        if (!cancelled) setDuplicatesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, duplicateGroupCount, isAdminOrManager]);
+
   const TAB_DEFS = [
     { k: "active", label: "Active", count: counts.active, testid: "tab-active" },
     { k: "inactive", label: "Inactive", count: counts.inactive, testid: "tab-inactive", adminOnly: true },
@@ -1573,6 +1620,13 @@ export default function CustomersList() {
     // as intersection with the G4a portal-activation filter.
     { k: "waitlist", label: "Waitlist", count: counts.waitlist, testid: "tab-waitlist", adminOnly: true },
     { k: "all", label: "All", count: counts.all, testid: "tab-all", adminOnly: true },
+    // Feb-2026 · duplicate-management feature (BE SHAs 98b5a4f0b,
+    // 74f90991a, d8dd7eb49) — Duplicates tab.  Admin + manager
+    // can see duplicates (manager cannot execute merge; the
+    // MergeDialog hides its submit button for them).
+    { k: "duplicates", label: "Duplicates",
+       count: duplicateGroupCount, testid: "tab-duplicates",
+       adminOnly: false },
   ];
 
   return (
@@ -1687,6 +1741,141 @@ export default function CustomersList() {
         ))}
       </div>
 
+      {/* Feb-2026 · duplicate-management feature — Duplicates
+          tab short-circuit.  When active, we render the grouped
+          view in place of the filter row + table + pager so
+          the layout stays focused on duplicate resolution.
+          Rest of the page (search / filters / table) stays
+          mounted below but is hidden via the surrounding
+          ``tab === "duplicates" ? null : (…)`` guard added
+          where the main content starts. */}
+      {tab === "duplicates" ? (
+        <div data-testid="customers-duplicates-panel">
+          {duplicatesLoading ? (
+            <div className="rounded-xl p-6 text-sm text-gray-600"
+                  style={{ backgroundColor: colors.surface,
+                             border: `1px solid ${colors.border}` }}
+                  data-testid="customers-duplicates-loading">
+              Scanning for duplicates…
+            </div>
+          ) : duplicatesError ? (
+            <div className="rounded-xl p-4 text-sm text-red-700"
+                  style={{ backgroundColor: "#FEF2F2",
+                             border: "1px solid #FCA5A5" }}
+                  data-testid="customers-duplicates-error">
+              {duplicatesError}
+            </div>
+          ) : duplicateGroups.length === 0 ? (
+            <div className="rounded-xl p-6 text-sm text-gray-600"
+                  style={{ backgroundColor: colors.surface,
+                             border: `1px solid ${colors.border}` }}
+                  data-testid="customers-duplicates-empty">
+              No duplicate groups detected.  🎉
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {duplicateGroups.map((g) => (
+                <div
+                  key={g.group_id}
+                  className="rounded-xl border overflow-hidden"
+                  style={{ borderColor: colors.border,
+                             backgroundColor: colors.surface }}
+                  data-testid={`customers-dup-group-${g.group_id}`}
+                >
+                  <div
+                    className="flex items-center justify-between gap-3 px-4 py-2 border-b"
+                    style={{
+                      backgroundColor: colors.surfaceSecondary,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <div className="text-xs">
+                      <span className="font-semibold">
+                        Possible duplicate — {g.customers.length}{" "}
+                        customers
+                      </span>
+                      {g.match_reasons?.length ? (
+                        <span className="ml-2 text-gray-600">
+                          match reasons:{" "}
+                          {g.match_reasons.join(", ")}
+                        </span>
+                      ) : null}
+                    </div>
+                    {isAdmin ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => setMergeDialogGroup(g)}
+                        testid={`customers-dup-merge-btn-${g.group_id}`}
+                      >
+                        Merge
+                      </Button>
+                    ) : (
+                      <span
+                        className="text-[10px] uppercase tracking-wider text-gray-500"
+                        data-testid={`customers-dup-merge-manager-${g.group_id}`}
+                      >
+                        Admin-only
+                      </span>
+                    )}
+                  </div>
+                  <table className="w-full text-xs"
+                           data-testid={`customers-dup-group-table-${g.group_id}`}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#F9FAFB" }}>
+                        <th className="text-left px-3 py-1.5">Name</th>
+                        <th className="text-left px-3 py-1.5">Email</th>
+                        <th className="text-left px-3 py-1.5">Phone</th>
+                        <th className="text-left px-3 py-1.5">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.customers.map((c) => (
+                        <tr key={c.id}
+                             className="border-t"
+                             style={{ borderColor: colors.border }}
+                             data-testid={`customers-dup-row-${c.id}`}>
+                          <td className="px-3 py-1.5">
+                            <CustomerLink
+                              customer={{ id: c.id, name: c.name }}
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {c.email || "—"}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {c.phone || "—"}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <span className="text-[10px] uppercase tracking-wider">
+                              {c.status || "active"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+          {mergeDialogGroup ? (
+            <MergeDialog
+              open={true}
+              onClose={() => setMergeDialogGroup(null)}
+              onMerged={() => {
+                setMergeDialogGroup(null);
+                // Refresh the groups list so the merged row
+                // disappears from the panel.
+                setDuplicateGroupCount(null);
+              }}
+              customers={mergeDialogGroup.customers}
+              matchReasons={mergeDialogGroup.match_reasons || []}
+              canExecute={isAdmin}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Phase I2 · Feb-2026 — "Send portal invite to entire
           Waitlist" cohort action. Only visible on the Waitlist
           tab, admin+ only. Reuses the H1 bulk-invite endpoint;
@@ -1766,6 +1955,11 @@ export default function CustomersList() {
           (per Task E spec decision #1); the City select loses its
           light-legacy exception and joins the uniform navy palette
           (decision #5). */}
+      {/* Feb-2026 · duplicate-management feature — hide the
+          filter row + search + table + pager + bulk actions
+          when the Duplicates tab is active.  The duplicates
+          panel above is the full view in that mode. */}
+      {tab !== "duplicates" ? (
       <NavyFilterBar
         data-testid="customers-filters"
         data-k52-navy-strip="true"
@@ -3160,6 +3354,7 @@ export default function CustomersList() {
           </>
         )}
       </div>
+      ) : null}
 
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); loadCounts(); }} setToast={setToast} />
       <ImportCsvModalP41

@@ -30,6 +30,7 @@ import { AlertTriangle, ExternalLink } from "lucide-react";
 import { Button, Modal, TextInput } from "@/components/ui-kit";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { MergeDialog } from "@/components/customers/MergeDialog";
 
 
 function _collapseWs(s) {
@@ -159,6 +160,36 @@ export default function ResolveDuplicateDialog({
   const [confirmChecked, setConfirmChecked] = useState(false);
   const [typedName, setTypedName] = useState("");
   const [busy, setBusy] = useState(false);
+  // Feb-2026 · merge-dialog Phase 2 — opens the shared merge
+  // UI backed by ``POST /customers/{w}/merge-from/{l}``.  The
+  // ``mergeCustomers`` array mirrors the two profile columns
+  // above so the dialog's defaulting (oldest → winner) matches
+  // the operator's visual expectation.
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const conflictCustomer = conflict || {};
+  const mergeCustomers = useMemo(() => {
+    const cur = currentCustomer || {};
+    const con = conflictCustomer;
+    const a = {
+      id: cur.id || "",
+      name: cur.name || "",
+      email: cur.portal_email || cur.email || "",
+      phone: cur.phone || "",
+      status: cur.is_muted ? "muted"
+        : (cur.is_active === false ? "inactive" : "active"),
+      stripe_customer_id: cur.stripe_customer_id || "",
+    };
+    const b = {
+      id: con.customer_id || "",
+      name: con.customer_name || "",
+      email: con.portal_email || con.email || "",
+      phone: con.phone || "",
+      status: con.is_muted ? "muted"
+        : (con.is_active === false ? "inactive" : "active"),
+      stripe_customer_id: con.stripe_customer_id || "",
+    };
+    return a.id && b.id ? [a, b] : [];
+  }, [currentCustomer, conflictCustomer]);
 
   const conflictName = conflict?.customer_name || "";
   const conflictCid = conflict?.customer_id || "";
@@ -378,41 +409,73 @@ export default function ResolveDuplicateDialog({
           </div>
         </div>
 
-        {/* Option B — merge records (Phase 2, DISABLED) */}
+        {/* Option B — merge records.  Feb-2026 Phase 2 ship
+             (greenfield at ``services/customers/merge.py``,
+             BE SHAs 74f90991a + d8dd7eb49).  Opens the shared
+             ``MergeDialog``; on successful merge, this dialog
+             closes AND the ``onResolved`` callback fires with
+             the released email so the caller can auto-retry
+             the original invite. */}
         <div
-          className="rounded-xl p-3 space-y-1 opacity-60 cursor-not-allowed"
+          className="rounded-xl p-3 space-y-1"
           style={{
-            border: `1px dashed ${colors.border}`,
+            border: `1px solid ${colors.border}`,
             backgroundColor: colors.surfaceSecondary,
           }}
-          title="Coming soon — contact support for merges today."
           data-testid="resolve-duplicate-option-b"
         >
           <div
             className="text-sm font-bold flex items-center gap-2"
-            style={{ color: colors.muted }}
+            style={{ color: colors.onSurface }}
           >
             Option B · Merge both records into one
-            <span
-              className="text-xs px-2 py-0.5 rounded-full"
-              style={{
-                backgroundColor: colors.brandTertiary,
-                color: colors.onBrandTertiary,
-              }}
-              data-testid="resolve-duplicate-option-b-coming-soon"
-            >
-              Coming soon
-            </span>
           </div>
           <div
             className="text-xs"
             style={{ color: colors.muted }}
           >
-            Contact support for merges today — the self-serve merge
-            workflow ships in Phase 2.
+            Opens the full merge dialog — admin picks the
+            winner column + resolves conflicting fields.
+            Child records (jobs, invoices, payments, and 9
+            more collections) move to the winner.  Soft-
+            deleted with a 90-day rollback window.
           </div>
+          <Button
+            variant="secondary"
+            onClick={() => setMergeDialogOpen(true)}
+            testid="resolve-duplicate-option-b-open-merge"
+          >
+            Open merge dialog
+          </Button>
         </div>
       </div>
+      {mergeDialogOpen && mergeCustomers.length === 2 ? (
+        <MergeDialog
+          open={mergeDialogOpen}
+          onClose={() => setMergeDialogOpen(false)}
+          onMerged={(envelope) => {
+            // The merge succeeded on the backend — the loser
+            // customer is soft-deleted and its email is now
+            // free.  Surface the released email upstream so
+            // the invite auto-retries.
+            setMergeDialogOpen(false);
+            try {
+              toast?.success?.(
+                "Merged.  Rollback available for 90 days.",
+              );
+            } catch { /* noop */ }
+            if (typeof onResolved === "function") {
+              // The conflict customer (loser) carried the
+              // bound email; after merge it's released.
+              onResolved(conflictCustomer?.portal_email
+                || conflictCustomer?.email || null);
+            }
+          }}
+          customers={mergeCustomers}
+          matchReasons={["email"]}
+          canExecute
+        />
+      ) : null}
     </Modal>
   );
 }
