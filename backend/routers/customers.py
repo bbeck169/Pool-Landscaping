@@ -968,6 +968,186 @@ async def merge_customer_from(
     }
 
 
+# ═════════════════════════════════════════════════════════════
+# Feb-2026 · merge history + rollback endpoints (Commit 3).
+# ═════════════════════════════════════════════════════════════
+@router.get(
+    "/customers/{customer_id}/merge-history",
+    summary="List every ``customer_merge_audit`` row where this "
+             "customer is the winner or loser",
+    tags=["customers"],
+    operation_id="customers.merge_history",
+)
+async def get_customer_merge_history(
+    customer_id: str,
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return every merge audit row touching ``customer_id`` —
+    whether this customer was the winner (merged INTO) or the
+    loser (merged AWAY).  Admin + manager role (same gate as
+    the Duplicates tab).
+
+    Each entry carries the counterpart customer's id + name
+    + role + ``merged_at`` + ``expires_at`` + ``remaining_
+    rollback_days`` + ``rolled_back_at`` so the FE's merge-
+    history panel can render the rollback-availability
+    affordance.
+    """
+    # Verify the customer exists in this tenant first — a 404
+    # here is more useful than returning an empty list for a
+    # bogus id.
+    row = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "customer_not_found",
+                "message": f"Customer {customer_id!r} not found.",
+            },
+        )
+    cursor = db.customer_merge_audit.find(
+        {
+            "tenant_id": tenant["id"],
+            "$or": [
+                {"winner_id": customer_id},
+                {"loser_id": customer_id},
+            ],
+        },
+        {"_id": 0},
+    )
+    rows: List[Dict[str, Any]] = []
+    async for r in cursor:
+        rows.append(r)
+    # Sort newest-first so the panel shows the most recent merge
+    # at the top of the rollback list.
+    rows.sort(key=lambda r: (r.get("merged_at") or ""), reverse=True)
+
+    from datetime import datetime as _dt, timezone as _tz
+    now_iso = _dt.now(_tz.utc).isoformat()
+
+    def _days_remaining(expires_at: Any) -> int:
+        s = (expires_at.isoformat() if hasattr(expires_at, "isoformat")
+             else str(expires_at or ""))
+        if not s or s <= now_iso:
+            return 0
+        try:
+            exp = _dt.fromisoformat(s.replace("Z", "+00:00"))
+            delta = exp - _dt.now(_tz.utc)
+            return max(0, int(delta.total_seconds() // 86400))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        role = ("winner" if r.get("winner_id") == customer_id
+                 else "loser")
+        counterpart_id = (
+            r.get("loser_id") if role == "winner"
+            else r.get("winner_id")
+        )
+        counterpart_snap = (
+            r.get("loser_snapshot") if role == "winner"
+            else r.get("winner_snapshot")
+        ) or {}
+        rolled_back_at = r.get("rolled_back_at")
+        out.append({
+            "audit_id": r.get("id"),
+            "role": role,
+            "counterpart_customer_id": counterpart_id,
+            "counterpart_customer_name": counterpart_snap.get("name") or "",
+            "merged_at": r.get("merged_at"),
+            "expires_at": r.get("expires_at"),
+            "rolled_back_at": rolled_back_at,
+            "rolled_back_by": r.get("rolled_back_by"),
+            "actor_id": r.get("actor_id"),
+            "remaining_rollback_days": (
+                0 if rolled_back_at else _days_remaining(
+                    r.get("expires_at"),
+                )
+            ),
+            "child_record_counts": r.get("child_record_counts") or {},
+            "credit_merged_cents": r.get("credit_merged_cents") or 0,
+        })
+    return {"entries": out, "summary": {"count": len(out)}}
+
+
+class _CustomerMergeRollbackIn(BaseModel):
+    """Body for ``POST /api/customer-merges/{audit_id}/rollback``.
+
+    * ``confirm`` — must be ``True``.  Guards against an
+      accidental one-click rollback from an admin-elevated
+      API client.
+    """
+    confirm: bool = False
+
+
+@router.post(
+    "/customer-merges/{audit_id}/rollback",
+    summary="Rollback a merge within the 90-day retention window",
+    tags=["customers"],
+    operation_id="customers.merge_rollback",
+)
+async def rollback_customer_merge(
+    audit_id: str,
+    body: Optional[_CustomerMergeRollbackIn] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Reverse a prior merge.  Admin only.  Delegates to
+    :func:`services.customers.merge.rollback_merge`.
+
+    HTTP codes per operator ruling:
+      * 400 ``rollback_not_confirmed`` — body ``confirm`` != True.
+      * 404 ``merge_rollback_not_found`` — audit id not in tenant.
+      * 409 ``merge_rollback_already_done`` — audit already rolled back.
+      * 403 ``merge_rollback_expired``   — past the 90-day window.
+    """
+    opts = body or _CustomerMergeRollbackIn()
+    if not opts.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "rollback_not_confirmed",
+                "message": "Rollback requires body {\"confirm\": true}.",
+            },
+        )
+    from services.customers.merge import MergeError, rollback_merge
+    try:
+        result = await rollback_merge(
+            db=db, tenant_id=tenant["id"],
+            audit_id=audit_id, actor=user,
+        )
+    except MergeError as exc:
+        code_to_status = {
+            "merge_rollback_not_found": 404,
+            "merge_rollback_already_done": 409,
+            "merge_rollback_expired": 403,
+        }
+        raise HTTPException(
+            status_code=code_to_status.get(exc.error_code, 400),
+            detail={
+                "error_code": exc.error_code,
+                "message": str(exc),
+                **exc.detail,
+            },
+        )
+    return {
+        "audit_id": result.audit_id,
+        "winner_id": result.winner_id,
+        "loser_id": result.loser_id,
+        "reversed_child_record_counts": result.reversed_child_record_counts,
+        "credit_restored_cents": result.credit_restored_cents,
+        "stripe_payment_methods_reverse_remapped":
+            result.stripe_payment_methods_reverse_remapped,
+        "portal_user_restored": result.portal_user_restored,
+        "rolled_back_at": result.rolled_back_at,
+    }
+
+
 @router.get("/customers",
     response_model=Union[List[CustomerListItem], CustomerListCount,
                             CustomerListPage],

@@ -810,6 +810,344 @@ async def merge_customers(
 __all__ = [
     "MergeError",
     "MergeResult",
+    "RollbackResult",
     "ensure_merge_audit_indexes",
     "merge_customers",
+    "rollback_merge",
 ]
+
+
+# ═════════════════════════════════════════════════════════════
+# Feb-2026 · merge rollback — reverses a prior merge within the
+# 90-day retention window.  Reads the ``customer_merge_audit``
+# snapshot captured by :func:`merge_customers` and reverse-flips
+# every mutation it recorded.
+#
+# Operator-locked edge case: ONLY the ids captured in the
+# ``child_record_ids`` snapshot are reverse-rewired.  Any new
+# activity assigned to the winner AFTER the merge (e.g. a new
+# invoice created for the merged customer's property between
+# the merge and the rollback) stays on the winner — the snapshot
+# predates it and never saw its id.
+# ═════════════════════════════════════════════════════════════
+@dataclass
+class RollbackResult:
+    audit_id: str
+    winner_id: str
+    loser_id: str
+    reversed_child_record_counts: Dict[str, int] = field(default_factory=dict)
+    credit_restored_cents: int = 0
+    stripe_payment_methods_reverse_remapped: List[str] = field(
+        default_factory=list,
+    )
+    portal_user_restored: bool = False
+    rolled_back_at: str = ""
+
+
+async def _restore_loser_customer(
+    db, *, tenant_id: str, audit: Dict[str, Any],
+) -> None:
+    """Clear the loser customer's ``deleted_at`` + merge sentinels
+    so the row returns to the active pool.  Any field overrides
+    the merge applied to the WINNER are restored from the
+    ``winner_snapshot``.
+    """
+    loser_before = audit.get("loser_snapshot") or {}
+    await db.customers.update_one(
+        {"id": audit["loser_id"], "tenant_id": tenant_id},
+        {"$set": {
+            "deleted_at": loser_before.get("deleted_at"),
+            "deleted_by_user_id": loser_before.get("deleted_by_user_id"),
+            "merged_into": None,
+            "merged_at": None,
+            "merged_by": None,
+        }},
+    )
+    winner_before = audit.get("winner_snapshot") or {}
+    applied = audit.get("field_overrides") or {}
+    if applied:
+        # Restore winner's prior scalar values for each override
+        # the merge applied.
+        _METADATA = frozenset({
+            "id", "_id", "tenant_id",
+            "created_at", "updated_at",
+            "deleted_at", "deleted_by_user_id",
+            "merged_into", "merged_at", "merged_by",
+        })
+        restored = {
+            k: winner_before.get(k)
+            for k in applied if k not in _METADATA
+        }
+        if restored:
+            restored["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await db.customers.update_one(
+                {"id": audit["winner_id"], "tenant_id": tenant_id},
+                {"$set": restored},
+            )
+
+
+async def _restore_portal_user(
+    db, *, tenant_id: str, audit: Dict[str, Any],
+) -> bool:
+    """Reverse the loser portal-user soft-delete the merge
+    applied.  No-op if the merge didn't flip a user row.
+    """
+    if not audit.get("portal_user_soft_deleted"):
+        return False
+    res = await db.users.update_many(
+        {
+            "tenant_id": tenant_id,
+            "customer_id": audit["loser_id"],
+            "deleted_by_user_id": "customer_merge",
+        },
+        {"$set": {"deleted_at": None,
+                    "deleted_by_user_id": None}},
+    )
+    return int(getattr(res, "modified_count", 0)) > 0
+
+
+async def _reverse_credit_sum(
+    db, *, tenant_id: str, audit: Dict[str, Any],
+    actor: Optional[Dict[str, Any]],
+) -> int:
+    """Reverse the credit transfer the merge applied.  Returns
+    the cents restored to the loser.  Uses distinct idempotency
+    keys so a retried rollback never double-reverses.
+    """
+    cents = int(audit.get("credit_merged_cents") or 0)
+    if cents == 0:
+        return 0
+    from services.customer_balance import mutate_credit
+    await mutate_credit(
+        db, tenant_id, audit["winner_id"],
+        delta_cents=-cents,
+        source="customer_merge",
+        actor=actor,
+        reason=f"rollback to {audit['loser_id']}",
+        idempotency_key=f"rollback:{audit['id']}:winner-debit",
+    )
+    await mutate_credit(
+        db, tenant_id, audit["loser_id"],
+        delta_cents=cents,
+        source="customer_merge",
+        actor=actor,
+        reason=f"rollback from {audit['winner_id']}",
+        idempotency_key=f"rollback:{audit['id']}:loser-restore",
+    )
+    return cents
+
+
+async def _reverse_stripe_remap(
+    db, *, tenant_id: str, audit: Dict[str, Any],
+) -> List[str]:
+    """Best-effort reverse of the Stripe PaymentMethod remap the
+    merge applied.  Unlike the forward merge (zero-tolerance on
+    Stripe failure), rollback logs + continues on individual
+    PM failures so a transient Stripe outage doesn't strand the
+    DB in a half-rolled-back state.  Operators can replay the
+    Stripe-only portion from the audit snapshot if needed.
+    """
+    remapped = audit.get("stripe_payment_methods_remapped") or []
+    if not remapped:
+        return []
+    loser_before = audit.get("loser_snapshot") or {}
+    loser_sid = loser_before.get("stripe_customer_id")
+    if not loser_sid:
+        logger.warning(
+            "[customer_merge.rollback] audit=%s skipped stripe "
+            "reverse — loser snapshot has no stripe_customer_id",
+            audit.get("id"),
+        )
+        return []
+    try:
+        import stripe as _stripe  # noqa: F401
+        from services.payments.stripe_charge import _to_thread
+    except ImportError:
+        _stripe = None  # type: ignore
+        _to_thread = None  # type: ignore
+    reversed_: List[str] = []
+    for pm_db_id in remapped:
+        row = await db.payment_methods.find_one(
+            {"tenant_id": tenant_id, "id": pm_db_id},
+            {"_id": 0, "id": 1, "stripe_payment_method_id": 1},
+        )
+        if not row:
+            continue
+        pm_stripe_id = row.get("stripe_payment_method_id")
+        if pm_stripe_id and _stripe is not None and _to_thread is not None:
+            try:
+                await _to_thread(
+                    _stripe.PaymentMethod.modify, pm_stripe_id,
+                    customer=loser_sid,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[customer_merge.rollback] audit=%s pm_id=%s "
+                    "stripe reverse failed (continuing): %s",
+                    audit.get("id"), pm_stripe_id, exc,
+                )
+                continue
+        await db.payment_methods.update_one(
+            {"tenant_id": tenant_id, "id": pm_db_id},
+            {"$set": {"customer_id": audit["loser_id"]}},
+        )
+        reversed_.append(pm_db_id)
+    return reversed_
+
+
+async def rollback_merge(
+    *,
+    db,
+    tenant_id: str,
+    audit_id: str,
+    actor: Optional[Dict[str, Any]] = None,
+) -> RollbackResult:
+    """Reverse a prior merge within the 90-day retention window.
+
+    Raises:
+        * ``MergeError(error_code="merge_rollback_not_found")`` —
+          audit id not found for this tenant.
+        * ``MergeError(error_code="merge_rollback_expired")`` —
+          audit row's ``expires_at`` has passed (surfaces as
+          HTTP 403 at the router).
+        * ``MergeError(error_code="merge_rollback_already_done")`` —
+          audit row already carries ``rolled_back_at`` (surfaces
+          as HTTP 409 at the router).
+
+    The operator-locked edge case ("rollback preserves post-
+    merge activity on winner") is satisfied naturally: the
+    reverse-rewire only touches ids in ``audit.child_record_ids``,
+    captured BEFORE the merge.  Any new rows created on the
+    winner after the merge are never in the snapshot and never
+    get flipped.
+    """
+    audit = await db.customer_merge_audit.find_one(
+        {"id": audit_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not audit:
+        raise MergeError(
+            "merge_rollback_not_found",
+            f"Merge audit {audit_id!r} not found in this tenant.",
+            audit_id=audit_id,
+        )
+    if audit.get("rolled_back_at"):
+        raise MergeError(
+            "merge_rollback_already_done",
+            "This merge has already been rolled back.",
+            audit_id=audit_id,
+            rolled_back_at=audit["rolled_back_at"],
+        )
+    expires_at = audit.get("expires_at") or ""
+    expires_str = (
+        expires_at.isoformat() if hasattr(expires_at, "isoformat")
+        else str(expires_at)
+    )
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if expires_str and expires_str <= now_iso:
+        raise MergeError(
+            "merge_rollback_expired",
+            "This merge is older than the 90-day rollback window.",
+            audit_id=audit_id,
+            expires_at=expires_str,
+        )
+
+    snapshot_ids = audit.get("child_record_ids") or {}
+    # Reverse-rewire using the snapshot so post-merge activity
+    # on the winner stays on the winner.
+    reversed_counts: Dict[str, int] = {}
+    for coll_name, _extra in _REWIRE_TARGETS:
+        ids = snapshot_ids.get(coll_name) or []
+        if not ids:
+            reversed_counts[coll_name] = 0
+            continue
+        try:
+            res = await db[coll_name].update_many(
+                {"tenant_id": tenant_id, "id": {"$in": ids}},
+                {"$set": {"customer_id": audit["loser_id"]}},
+            )
+            reversed_counts[coll_name] = int(
+                getattr(res, "modified_count", 0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[customer_merge.rollback] audit=%s coll=%s "
+                "reverse-rewire failed (continuing to maximise "
+                "partial recovery): %s",
+                audit_id, coll_name, exc,
+            )
+            reversed_counts[coll_name] = 0
+    actor_ids = snapshot_ids.get("audit_logs.actor") or []
+    if actor_ids:
+        try:
+            res = await db.audit_logs.update_many(
+                {"tenant_id": tenant_id, "id": {"$in": actor_ids}},
+                {"$set": {_AUDIT_ACTOR_FIELD: audit["loser_id"]}},
+            )
+            reversed_counts["audit_logs.actor"] = int(
+                getattr(res, "modified_count", 0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[customer_merge.rollback] audit=%s "
+                "audit_logs.actor reverse failed: %s",
+                audit_id, exc,
+            )
+            reversed_counts["audit_logs.actor"] = 0
+
+    # Restore loser customer + winner field overrides.
+    await _restore_loser_customer(db, tenant_id=tenant_id, audit=audit)
+
+    # Restore portal user.
+    portal_restored = await _restore_portal_user(
+        db, tenant_id=tenant_id, audit=audit,
+    )
+
+    # Reverse credit sum.
+    credit_cents = await _reverse_credit_sum(
+        db, tenant_id=tenant_id, audit=audit, actor=actor,
+    )
+
+    # Reverse Stripe remap (best-effort).
+    reversed_pm_ids = await _reverse_stripe_remap(
+        db, tenant_id=tenant_id, audit=audit,
+    )
+
+    # Mark the audit row rolled back.
+    await db.customer_merge_audit.update_one(
+        {"id": audit_id, "tenant_id": tenant_id},
+        {"$set": {
+            "rolled_back_at": now_iso,
+            "rolled_back_by": (actor or {}).get("id"),
+        }},
+    )
+
+    # Greppable audit_logs row for the rollback.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "action": "customer_merge.rolled_back",
+            "tenant_id": tenant_id,
+            "actor_id": (actor or {}).get("id"),
+            "audit_id": audit_id,
+            "winner_id": audit["winner_id"],
+            "loser_id": audit["loser_id"],
+            "reversed_child_record_counts": reversed_counts,
+            "credit_restored_cents": credit_cents,
+            "created_at": now_iso,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[customer_merge.rollback] audit_logs insert failed "
+            "(non-fatal, rollback already committed): %s", exc,
+        )
+
+    return RollbackResult(
+        audit_id=audit_id,
+        winner_id=audit["winner_id"],
+        loser_id=audit["loser_id"],
+        reversed_child_record_counts=reversed_counts,
+        credit_restored_cents=credit_cents,
+        stripe_payment_methods_reverse_remapped=reversed_pm_ids,
+        portal_user_restored=portal_restored,
+        rolled_back_at=now_iso,
+    )
