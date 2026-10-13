@@ -17,6 +17,8 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw, Bell, MessageCircle, FileText } from "lucide-react";
 import LeadComposeModal from "./LeadComposeModal";
 import { PhoneLink, AddressLink } from "@/components/customer";
+import CommunicationDetailModal
+  from "@/components/communications/CommunicationDetailModal";
 
 // Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
 // Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.
@@ -227,6 +229,9 @@ export default function LeadDetail() {
   // resolves. Fail-open: fetch error leaves ``linkedQuotes`` null;
   // the panel simply does not render.
   const [linkedQuotes, setLinkedQuotes] = useState(null);
+  // P2 #5 · Feb-2026 — selected row id for the shared Dialog detail
+  // modal. Admin-only (backend 403s customer/technician anyway).
+  const [commDetailId, setCommDetailId] = useState(null);
 
   const loadCommunications = useCallback(async (opts = {}) => {
     setCommLoading(true);
@@ -629,7 +634,11 @@ export default function LeadDetail() {
                 <div className="text-sm text-slate-400">No communications yet.</div>
               ) : (
                 commItems.map((it, i) => (
-                  <CommTimelineItem key={it.id || `${it.type}-${i}`} item={it} />
+                  <CommTimelineItem
+                    key={it.id || `${it.type}-${i}`}
+                    item={it}
+                    onOpenDetail={isAdmin ? setCommDetailId : null}
+                  />
                 ))
               )}
             </div>
@@ -782,13 +791,21 @@ export default function LeadDetail() {
           onSent={() => loadCommunications()}
         />
       )}
+      {/* P2 #5 · Feb-2026 — shared Dialog modal (admin only). */}
+      {isAdmin ? (
+        <CommunicationDetailModal
+          open={!!commDetailId}
+          rowId={commDetailId}
+          onClose={() => setCommDetailId(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
 
 // ─── Phase L3 · communication timeline row ─────────────────────────
-function CommTimelineItem({ item }) {
+function CommTimelineItem({ item, onOpenDetail }) {
   const type = item.type || "status_change";
   const iconMeta = {
     sms:            { bg: "#DCFCE7", fg: "#166534", label: "SMS" },
@@ -828,6 +845,21 @@ function CommTimelineItem({ item }) {
       ) : null}
       {item.error ? (
         <div className="text-xs text-rose-700 mt-1">Error: {item.error}</div>
+      ) : null}
+      {/* P2 #5 · Feb-2026 — "View details" opens shared Dialog modal.
+          Admin-only (parent gates via conditional prop).  item.id
+          required — status_change rows synthesized from leads.timeline[]
+          don't have an id in the detail collections and would 404,
+          so suppress the affordance for them. */}
+      {onOpenDetail && item.id && (type === "sms" || type === "email") ? (
+        <button
+          type="button"
+          className="mt-1 text-xs font-semibold underline text-indigo-600"
+          onClick={() => onOpenDetail(item.id)}
+          data-testid={`lead-comm-view-detail-${item.id}`}
+        >
+          View details
+        </button>
       ) : null}
     </div>
   );

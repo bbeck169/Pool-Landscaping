@@ -21,6 +21,8 @@ import { MessageSquare, Mail, Clock, AlertTriangle }
 
 import { api } from "@/api";
 import { colors } from "@/theme";
+import CommunicationDetailModal
+  from "@/components/communications/CommunicationDetailModal";
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -78,7 +80,7 @@ function StatusPill({ status, testid }) {
 }
 
 
-function Row({ item, isAdmin }) {
+function Row({ item, isAdmin, onOpenDetail }) {
   const [expanded, setExpanded] = useState(false);
   const body = item.body_preview || "";
   const clamp = body.length > 220;
@@ -171,6 +173,23 @@ function Row({ item, isAdmin }) {
           to {item.recipient}
         </div>
       ) : null}
+      {/* P2 #5 · Feb-2026 — "View details" button opens the shared
+          Dialog modal via GET /communications-detail/{item.id}.
+          Admin-only (variant="admin" scoped); portal variant omits
+          the affordance entirely so customer-facing surfaces stay
+          read-only. onOpenDetail falls through as null when the
+          caller did not wire the prop (defensive). */}
+      {isAdmin && onOpenDetail && item.id ? (
+        <button
+          type="button"
+          className="mt-1 text-[11px] font-semibold underline"
+          style={{ color: colors.brand || colors.onSurface }}
+          onClick={() => onOpenDetail(item.id)}
+          data-testid={`timeline-view-detail-${item.id}`}
+        >
+          View details
+        </button>
+      ) : null}
     </li>
   );
 }
@@ -190,6 +209,10 @@ export default function CommunicationTimeline({
   const [nextBefore, setNextBefore] = useState(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // P2 #5 · Feb-2026 — row-click → shared Dialog modal. Admin-only
+  // because the backend 403s role=customer anyway; wiring it on the
+  // portal variant would just surface a 403 toast with no payload.
+  const [detailId, setDetailId] = useState(null);
 
   const isAdmin = variant === "admin";
 
@@ -263,7 +286,12 @@ export default function CommunicationTimeline({
         data-testid="communication-timeline-list"
       >
         {items.map((it) => (
-          <Row key={it.id} item={it} isAdmin={isAdmin} />
+          <Row
+            key={it.id}
+            item={it}
+            isAdmin={isAdmin}
+            onOpenDetail={isAdmin ? setDetailId : null}
+          />
         ))}
       </ol>
       {hasMore ? (
@@ -283,6 +311,14 @@ export default function CommunicationTimeline({
         >
           {loadingMore ? "Loading…" : "Load more"}
         </button>
+      ) : null}
+      {/* P2 #5 · Feb-2026 — detail modal (admin only). */}
+      {isAdmin ? (
+        <CommunicationDetailModal
+          open={!!detailId}
+          rowId={detailId}
+          onClose={() => setDetailId(null)}
+        />
       ) : null}
     </div>
   );
