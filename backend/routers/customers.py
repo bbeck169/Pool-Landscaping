@@ -886,6 +886,88 @@ async def list_customer_duplicates(
     }
 
 
+# ═════════════════════════════════════════════════════════════
+# Feb-2026 · merge execution — greenfield replacement for the
+# Jan-2026 ``POST /api/customers/merge`` surface (now SUPERSEDED;
+# see ``services/customer_merge/__init__.py`` + TD-36 / TD-37 in
+# ``memory/TECH_DEBT.md``).  Admin-only; manager can SEE
+# duplicates via the GET above but cannot execute merge.
+# ═════════════════════════════════════════════════════════════
+class _CustomerMergeIn(BaseModel):
+    """Body for ``POST /api/customers/{winner_id}/merge-from/{loser_id}``.
+
+    * ``field_overrides`` — scalar fields to set on the winner,
+      keyed by field name.  Admin picks each value in the FE
+      merge dialog's radio UI.  Metadata fields (``id`` /
+      ``tenant_id`` / ``created_at`` / ``updated_at`` / etc.) are
+      silently dropped server-side.
+    * ``confirm_name`` — must equal the loser's ``name``
+      (case-insensitive, whitespace-collapsed, ampersand-
+      canonical via ``_canon_name``).  Guards against accidental
+      merges from a misclick.
+    * ``force`` — when ``True``, bypasses the 24h recurring-
+      template pre-flight.  Default ``False``.
+    """
+    field_overrides: Optional[Dict[str, Any]] = None
+    confirm_name: str = ""
+    force: bool = False
+
+
+@router.post(
+    "/customers/{winner_id}/merge-from/{loser_id}",
+    summary="Merge loser customer into winner — admin-pick, "
+             "12-collection rewire, Stripe remap, 90d audit",
+    tags=["customers"],
+    operation_id="customers.merge_from",
+)
+async def merge_customer_from(
+    winner_id: str,
+    loser_id: str,
+    body: Optional[_CustomerMergeIn] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    from services.customers.merge import (
+        MergeError, ensure_merge_audit_indexes, merge_customers,
+    )
+    # Lazy index bootstrap — idempotent, cheap enough to call
+    # every merge rather than wire into the boot migration list.
+    await ensure_merge_audit_indexes(db)
+    opts = body or _CustomerMergeIn()
+    try:
+        result = await merge_customers(
+            db=db, tenant_id=tenant["id"],
+            winner_id=winner_id, loser_id=loser_id,
+            field_overrides=opts.field_overrides,
+            actor=user, confirm_name=opts.confirm_name,
+            force=bool(opts.force),
+        )
+    except MergeError as exc:
+        # Structured error payload — the ``24h block`` case
+        # carries ``blocking_templates`` + ``override_available``
+        # per the operator-locked guardrail.
+        raise HTTPException(
+            status_code=400 if exc.error_code != "merge_customer_not_found"
+                else 404,
+            detail={
+                "error_code": exc.error_code,
+                "message": str(exc),
+                **exc.detail,
+            },
+        )
+    return {
+        "audit_id": result.audit_id,
+        "winner_id": result.winner_id,
+        "loser_id": result.loser_id,
+        "child_record_counts": result.child_record_counts,
+        "credit_merged_cents": result.credit_merged_cents,
+        "stripe_payment_methods_remapped":
+            result.stripe_payment_methods_remapped,
+        "portal_user_soft_deleted": result.portal_user_soft_deleted,
+        "merged_at": result.merged_at,
+    }
+
+
 @router.get("/customers",
     response_model=Union[List[CustomerListItem], CustomerListCount,
                             CustomerListPage],
