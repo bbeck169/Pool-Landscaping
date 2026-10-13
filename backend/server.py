@@ -898,6 +898,12 @@ api_router.include_router(_p0_comms_diag.router)
 # (count_documents / aggregate / find only — no writes).
 from routers import admin_recurring_jobs_audit as _p0_recurring_audit  # noqa: E402
 api_router.include_router(_p0_recurring_audit.router)
+# P1 · Feb-2026 — Read-only mileage audit diagnostic.
+# GET /api/admin/diagnostics/mileage-audit?user_id=<id>&start=&end=
+# Operator-run diagnostic for the "Steven Martinez 0.00 mi" symptom.
+# Admin-gated, strictly read-only (count_documents / find only).
+from routers import admin_mileage_audit as _p1_mileage_audit  # noqa: E402
+api_router.include_router(_p1_mileage_audit.router)
 # Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
 # 202-Accepted job pattern replacing the sync ingest that was
 # timing out on cold crawls (frontend fetch cap 30s vs 60-180s
