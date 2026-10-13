@@ -151,12 +151,19 @@ def _line_item_row_ref(idx: int, li: Dict[str, Any]) -> str:
 
 async def validate_line_item_categories(
     tenant_id: str, line_items: List[Dict[str, Any]],
+    *, strict: bool = True,
 ) -> None:
     """Reject if ANY line item is missing a category or references an
     inactive/foreign one.  Called from create + edit paths.
 
     Accepts EITHER a category **id** (uuid) OR a category **name**
     (string that matches ``income_categories.name`` case-insensitively).
+
+    Feb-2026 · invoice-category hard-block removal — callers from
+    the invoice/quote save path pass ``strict=False`` so missing or
+    inactive categories log + continue instead of raising 400.
+    The job-media line-items path keeps the default ``strict=True``
+    because its UX contract has not changed.
     """
     await ensure_defaults_for_tenant(tenant_id)
     active = await db.income_categories.find(
@@ -191,6 +198,12 @@ async def validate_line_item_categories(
         cat = (li.get("category") or "").strip() if isinstance(
             li.get("category"), str) else li.get("category")
         if not cat:
+            if not strict:
+                logger.info(
+                    "invoices.category_warning kind=missing_legacy "
+                    "line_index=%d tenant_id=%s", idx, tenant_id,
+                )
+                continue
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -218,6 +231,13 @@ async def validate_line_item_categories(
         if archived_cat:
             soft_pass_archived_ref_in_line_item(
                 li=li, archived_cat=archived_cat, axis="income")
+            continue
+        if not strict:
+            logger.info(
+                "invoices.category_warning kind=invalid_legacy "
+                "line_index=%d tenant_id=%s attempted=%r",
+                idx, tenant_id, cat_str,
+            )
             continue
         raise HTTPException(
             status_code=400,
@@ -254,6 +274,7 @@ async def validate_line_item_categories(
 # ═══════════════════════════════════════════════════════════════════
 async def validate_line_item_k71_categories(
     tenant_id: str, line_items: List[Dict[str, Any]],
+    *, strict: bool = True,
 ) -> None:
     """K71 gate — enforces service+income category pairs on NEW/edited
     line items. Legacy items (missing both K71 fields) pass silently.
@@ -263,6 +284,10 @@ async def validate_line_item_k71_categories(
     LineItemsSection retry flow + Income-by-Category upstream cure)
     can render the archived-category picker chip without a second
     round-trip to fetch the active list.
+
+    Feb-2026 · invoice-category hard-block removal — callers from
+    the invoice/quote save path pass ``strict=False`` so missing or
+    inactive categories log + continue instead of raising 400.
     """
     from routers.service_categories import ensure_defaults_for_tenant \
         as _ensure_svc_defaults
@@ -337,6 +362,12 @@ async def validate_line_item_k71_categories(
             continue
 
         if not svc_val:
+            if not strict:
+                logger.info(
+                    "invoices.category_warning kind=missing_service "
+                    "line_index=%d tenant_id=%s", idx, tenant_id,
+                )
+                continue
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -361,6 +392,13 @@ async def validate_line_item_k71_categories(
             if svc_archived_row:
                 soft_pass_archived_ref_in_line_item(
                     li=li, archived_cat=svc_archived_row, axis="service")
+                svc_val = ""   # downstream inc check still runs
+            elif not strict:
+                logger.info(
+                    "invoices.category_warning kind=invalid_service "
+                    "line_index=%d tenant_id=%s attempted=%r",
+                    idx, tenant_id, svc_val,
+                )
                 svc_val = ""   # downstream inc check still runs
             else:
                 raise HTTPException(
@@ -388,6 +426,12 @@ async def validate_line_item_k71_categories(
             # row post-soft-pass and should allow through.
             if li.get("category_auto_mapped") is True:
                 continue
+            if not strict:
+                logger.info(
+                    "invoices.category_warning kind=missing_income "
+                    "line_index=%d tenant_id=%s", idx, tenant_id,
+                )
+                continue
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -412,6 +456,13 @@ async def validate_line_item_k71_categories(
             if inc_archived_row:
                 soft_pass_archived_ref_in_line_item(
                     li=li, archived_cat=inc_archived_row, axis="income")
+                continue
+            if not strict:
+                logger.info(
+                    "invoices.category_warning kind=invalid_income "
+                    "line_index=%d tenant_id=%s attempted=%r",
+                    idx, tenant_id, inc_val,
+                )
                 continue
             raise HTTPException(
                 status_code=400,

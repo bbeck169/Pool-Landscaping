@@ -618,16 +618,27 @@ async def create_quote(body: QuoteIn,
     # Feb-2026 · Income category enforcement — every line item on a
     # NEW invoice must carry a valid category (existing seed data is
     # grandfathered). Enforced only for invoices; quotes remain lenient.
+    #
+    # Feb-2026 · invoice-category hard-block removal — the invoice
+    # save path now surfaces missing/inactive category as a
+    # non-blocking warning + audit row. The validator still runs
+    # for its archived-soft-pass side effect (null-out +
+    # auto-stamp) but ``strict=False`` demotes the 400 raises to
+    # logger.info lines.
     if body.doc_type == "invoice":
         from routers.income_categories import validate_line_item_categories
-        await validate_line_item_categories(tenant["id"], items)
+        await validate_line_item_categories(
+            tenant["id"], items, strict=False,
+        )
     # Phase K71 · Feb-2026 — Two-taxonomy validation for K71 line
     # items (service + income category). Legacy items missing both
     # K71 fields are grandfathered. Applied on both quotes AND
     # invoices — invoices additionally run the legacy income guard
     # above.
     from routers.income_categories import validate_line_item_k71_categories
-    await validate_line_item_k71_categories(tenant["id"], items)
+    await validate_line_item_k71_categories(
+        tenant["id"], items, strict=False,
+    )
     # PB1 · Feb-2026 · Stamp immutable margin snapshots on every line.
     await _stamp_line_snapshots(items, tenant_id=tenant["id"])
     subtotal, tax, total = compute_totals(items, body.tax_rate)
@@ -706,6 +717,49 @@ async def create_quote(body: QuoteIn,
         await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
+    # ── Feb-2026 · invoice-category hard-block removal — ─────
+    # best-effort audit log row when the save landed with
+    # uncategorized or inactive-category line items. Non-fatal:
+    # a failed audit insert never rolls back the parent write.
+    try:
+        from services.invoices.line_item_category_audit import (
+            scan_line_item_category_warnings,
+            write_category_warnings_audit,
+        )
+        _inc_active = await db.income_categories.find(
+            {"tenant_id": tenant["id"], "is_archived": False},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(500)
+        _svc_active = await db.service_categories.find(
+            {"tenant_id": tenant["id"], "is_archived": False},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(500)
+        _scan = scan_line_item_category_warnings(
+            items,
+            inc_active_ids={c["id"] for c in _inc_active},
+            inc_active_names={
+                (c.get("name") or "").strip().lower()
+                for c in _inc_active
+            },
+            svc_active_ids={c["id"] for c in _svc_active},
+            svc_active_names={
+                (c.get("name") or "").strip().lower()
+                for c in _svc_active
+            },
+        )
+        await write_category_warnings_audit(
+            db, tenant_id=tenant["id"],
+            actor_id=(user or {}).get("id"),
+            invoice_id=doc["id"],
+            scan=_scan,
+            source="invoice_create" if body.doc_type == "invoice"
+                else "quote_create",
+        )
+    except Exception as _audit_exc:  # noqa: BLE001
+        logger.warning(
+            "[quote.create] category warnings audit failed id=%s "
+            "(non-fatal): %s", doc.get("id"), _audit_exc,
+        )
     # ─── P2 #4 · Feb-2026 · ``quote.created_from_lead`` audit log ───
     # Fires once per lead-recipient quote birth (quote OR invoice —
     # both share this router). Admin-created only (``require_admin``
@@ -1155,8 +1209,13 @@ async def update_quote(qid: str, body: QuoteUpdate,
         await _enforce_item_type_price_lock(tenant["id"], upd["line_items"])
         # Phase K71 · Feb-2026 — K71 category two-taxonomy validation
         # on every PUT that carries a line_items array.
+        #
+        # Feb-2026 · invoice-category hard-block removal — demoted
+        # to non-blocking warning + audit row (see POST path).
         from routers.income_categories import validate_line_item_k71_categories
-        await validate_line_item_k71_categories(tenant["id"], upd["line_items"])
+        await validate_line_item_k71_categories(
+            tenant["id"], upd["line_items"], strict=False,
+        )
         await _stamp_line_snapshots(upd["line_items"], tenant_id=tenant["id"])
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))
@@ -1200,6 +1259,54 @@ async def update_quote(qid: str, body: QuoteUpdate,
         signature_invalidated=_sig_will_invalidate,
     )
     await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
+    # ── Feb-2026 · invoice-category hard-block removal — audit ──
+    # Non-blocking: fire the category-warnings audit AFTER the
+    # PUT persists so operators can grep for invoices that need
+    # cleanup. No-op when every line item carries a valid
+    # service + income category.
+    if "line_items" in upd:
+        try:
+            from services.invoices.line_item_category_audit import (
+                scan_line_item_category_warnings,
+                write_category_warnings_audit,
+            )
+            _inc_active = await db.income_categories.find(
+                {"tenant_id": tenant["id"], "is_archived": False},
+                {"_id": 0, "id": 1, "name": 1},
+            ).to_list(500)
+            _svc_active = await db.service_categories.find(
+                {"tenant_id": tenant["id"], "is_archived": False},
+                {"_id": 0, "id": 1, "name": 1},
+            ).to_list(500)
+            _scan = scan_line_item_category_warnings(
+                upd["line_items"],
+                inc_active_ids={c["id"] for c in _inc_active},
+                inc_active_names={
+                    (c.get("name") or "").strip().lower()
+                    for c in _inc_active
+                },
+                svc_active_ids={c["id"] for c in _svc_active},
+                svc_active_names={
+                    (c.get("name") or "").strip().lower()
+                    for c in _svc_active
+                },
+            )
+            await write_category_warnings_audit(
+                db, tenant_id=tenant["id"],
+                actor_id=(user or {}).get("id"),
+                invoice_id=qid,
+                scan=_scan,
+                source=(
+                    "invoice_update"
+                    if _doc_type_for_version == "invoice"
+                    else "quote_update"
+                ),
+            )
+        except Exception as _audit_exc:  # noqa: BLE001
+            logger.warning(
+                "[quote.update] category warnings audit failed id=%s "
+                "(non-fatal): %s", qid, _audit_exc,
+            )
     if _sig_will_invalidate:
         await invalidate_signature_if_present(
             doc_type=_doc_type_for_version, doc_id=qid,
@@ -1794,21 +1901,43 @@ async def customer_quote_decision(qid: str,
         raise HTTPException(403, "Not allowed")
     if doc.get("doc_type") != "quote":
         raise HTTPException(400, "Only estimates can be approved or declined")
-    # Phase K71 · Feb-2026 — Save/Send gating on customer approval.
+    # Feb-2026 · invoice-category hard-block removal — approve
+    # no longer rejects when K71 line-item category is missing.
+    # Operators asked that archived-category cleanup workflows
+    # not block customer approvals.  The amber chip in the admin
+    # editor still surfaces the warning; the audit log row is
+    # fired by the invoice save path so ops can grep for
+    # affected invoices later.
     if decision == "approve":
         from routers.income_categories import check_line_items_k71_gaps
-        gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
-        if gaps:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "k71_missing_categories",
-                    "error_code": "k71_missing_categories",
-                    "line_indices": gaps,
-                    "message": ("Set Service + Income category on every "
-                                 "line item before approving."),
-                },
+        _gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
+        if _gaps:
+            logger.info(
+                "invoices.approve_with_category_warnings quote_id=%s "
+                "tenant_id=%s line_indices=%s",
+                qid, tenant["id"], _gaps,
             )
+            try:
+                from services.invoices.line_item_category_audit import (
+                    write_category_warnings_audit,
+                )
+                await write_category_warnings_audit(
+                    db, tenant_id=tenant["id"],
+                    actor_id=(user or {}).get("id"),
+                    invoice_id=qid,
+                    scan={
+                        "uncategorized_count": len(_gaps),
+                        "inactive_category_line_item_count": 0,
+                        "uncategorized_line_indices": _gaps,
+                        "inactive_category_line_indices": [],
+                    },
+                    source="customer_approve",
+                )
+            except Exception as _audit_exc:  # noqa: BLE001
+                logger.warning(
+                    "[quote.customer_approve] category audit failed "
+                    "id=%s (non-fatal): %s", qid, _audit_exc,
+                )
     status = "accepted" if decision == "approve" else "declined"
     upd = {"status": status}
     if status == "accepted":
@@ -1875,24 +2004,44 @@ async def update_quote_status(qid: str, status: str = Query(...),
     # a required category. Invoice send is already covered by the
     # create + PATCH validations upstream; only re-check for quotes
     # here.
+    #
+    # Feb-2026 · invoice-category hard-block removal — send/accept/
+    # approve no longer rejects when K71 line-item category is
+    # missing. Audit log row fires so ops can grep later.
     doc = await db.quotes.find_one(
         {"id": qid, "tenant_id": tenant["id"]},
         {"_id": 0, "doc_type": 1, "line_items": 1},
     )
     if doc and (status or "").lower() in ("sent", "accepted", "approved"):
         from routers.income_categories import check_line_items_k71_gaps
-        gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
-        if gaps:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "k71_missing_categories",
-                    "error_code": "k71_missing_categories",
-                    "line_indices": gaps,
-                    "message": ("Set Service + Income category on every "
-                                 "line item before sending or approving."),
-                },
+        _gaps = check_line_items_k71_gaps(doc.get("line_items") or [])
+        if _gaps:
+            logger.info(
+                "invoices.status_change_with_category_warnings "
+                "quote_id=%s tenant_id=%s status=%s line_indices=%s",
+                qid, tenant["id"], status, _gaps,
             )
+            try:
+                from services.invoices.line_item_category_audit import (
+                    write_category_warnings_audit,
+                )
+                await write_category_warnings_audit(
+                    db, tenant_id=tenant["id"],
+                    actor_id=(user or {}).get("id"),
+                    invoice_id=qid,
+                    scan={
+                        "uncategorized_count": len(_gaps),
+                        "inactive_category_line_item_count": 0,
+                        "uncategorized_line_indices": _gaps,
+                        "inactive_category_line_indices": [],
+                    },
+                    source=f"status_change:{(status or '').lower()}",
+                )
+            except Exception as _audit_exc:  # noqa: BLE001
+                logger.warning(
+                    "[quote.status] category audit failed id=%s "
+                    "(non-fatal): %s", qid, _audit_exc,
+                )
     await db.quotes.update_one(
         {"id": qid, "tenant_id": tenant["id"]}, {"$set": {"status": status}}
     )

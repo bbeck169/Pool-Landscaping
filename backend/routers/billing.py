@@ -125,21 +125,40 @@ async def convert_quote_to_job(qid: str, body: dict,
     if q.get("decision") not in ("approved",) and q.get("status") not in ("approved",):
         # Allow anyway with a warning — some flows mark approval on status.
         pass
-    # Phase K71 · Feb-2026 — Convert-to-job/invoice parity gate. Block
-    # if any K71-touched line item is missing a required category.
+    # Phase K71 · Feb-2026 — Convert-to-job/invoice parity gate.
+    #
+    # Feb-2026 · invoice-category hard-block removal — convert no
+    # longer rejects when K71 line-item category is missing. Fire
+    # an audit log row so ops can grep for jobs that need
+    # category cleanup; the amber chip in the admin editor still
+    # surfaces the warning.
     from routers.income_categories import check_line_items_k71_gaps
-    gaps = check_line_items_k71_gaps(q.get("line_items") or [])
-    if gaps:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "k71_missing_categories",
-                "error_code": "k71_missing_categories",
-                "line_indices": gaps,
-                "message": ("Set Service + Income category on every "
-                             "line item before converting."),
-            },
+    _gaps = check_line_items_k71_gaps(q.get("line_items") or [])
+    if _gaps:
+        import logging as _logging
+        _logging.getLogger("quotes").info(
+            "invoices.convert_with_category_warnings quote_id=%s "
+            "tenant_id=%s line_indices=%s",
+            qid, tenant["id"], _gaps,
         )
+        try:
+            from services.invoices.line_item_category_audit import (
+                write_category_warnings_audit,
+            )
+            await write_category_warnings_audit(
+                db, tenant_id=tenant["id"],
+                actor_id=(user or {}).get("id"),
+                invoice_id=qid,
+                scan={
+                    "uncategorized_count": len(_gaps),
+                    "inactive_category_line_item_count": 0,
+                    "uncategorized_line_indices": _gaps,
+                    "inactive_category_line_indices": [],
+                },
+                source="quote_convert_to_job",
+            )
+        except Exception as _audit_exc:  # noqa: BLE001
+            pass
     cust = await db.customers.find_one(
         {"id": q["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
     ) or {}

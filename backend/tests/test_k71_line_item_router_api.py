@@ -194,6 +194,10 @@ def test_create_quote_with_valid_k71_pair_succeeds(
 def test_create_quote_missing_income_category_rejected(
     client, customer_id, svc_cat
 ):
+    """Feb-2026 · invoice-category hard-block removal — missing
+    K71 income_category_id on quote create is now permitted
+    (200 + audit row). Pre-removal: 400 ``k71_income_category_required``.
+    """
     payload = {
         "customer_id": customer_id,
         "title": "K71 API test — missing income",
@@ -209,15 +213,19 @@ def test_create_quote_missing_income_category_rejected(
     }
     r = client.post(f"{BASE_URL}/api/quotes", json=payload,
                     timeout=REQ_TIMEOUT)
-    assert r.status_code == 400, r.text
-    detail = r.json().get("detail")
-    assert isinstance(detail, dict), f"expected structured detail, got {detail}"
-    assert detail.get("error_code") == "k71_income_category_required", detail
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    _track(doc["id"])
+    assert doc.get("doc_type") == "quote"
 
 
 def test_create_quote_bogus_service_category_rejected(
     client, customer_id, inc_cat
 ):
+    """Feb-2026 · invoice-category hard-block removal — bogus
+    K71 service_category_id on quote create is now permitted
+    (200 + audit row). Pre-removal: 400 ``k71_service_category_invalid``.
+    """
     payload = {
         "customer_id": customer_id,
         "title": "K71 API test — bogus svc",
@@ -233,10 +241,10 @@ def test_create_quote_bogus_service_category_rejected(
     }
     r = client.post(f"{BASE_URL}/api/quotes", json=payload,
                     timeout=REQ_TIMEOUT)
-    assert r.status_code == 400, r.text
-    detail = r.json().get("detail")
-    assert isinstance(detail, dict), detail
-    assert detail.get("error_code") == "k71_service_category_invalid", detail
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    _track(doc["id"])
+    assert doc.get("doc_type") == "quote"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -298,7 +306,9 @@ def test_update_quote_missing_income_rejected(
     assert create.status_code == 200, create.text
     qid = _track(create.json()["id"])
 
-    # 2. PUT with K71-touched line missing income_category_id → 400
+    # 2. PUT with K71-touched line missing income_category_id → 200
+    #    (Feb-2026 · invoice-category hard-block removal). Pre-removal
+    #    was 400 ``k71_income_category_required``.
     upd = client.put(
         f"{BASE_URL}/api/quotes/{qid}",
         json={
@@ -313,10 +323,7 @@ def test_update_quote_missing_income_rejected(
         },
         timeout=REQ_TIMEOUT,
     )
-    assert upd.status_code == 400, upd.text
-    detail = upd.json().get("detail")
-    assert isinstance(detail, dict), detail
-    assert detail.get("error_code") == "k71_income_category_required", detail
+    assert upd.status_code == 200, upd.text
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -30,6 +30,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import pytest
 import requests
 from dotenv import load_dotenv
 from tests._shared_mongo import shared_db as _shared_db
@@ -62,143 +63,31 @@ def _trigger_seed(tok: str) -> None:
 # 1 · 1-based row numbers on validation-required errors
 # ─────────────────────────────────────────────────────────────────
 def test_category_required_error_uses_one_based_row_on_second_row():
-    """Row at ``line_items[1]`` (0-based) must render as
-    ``Line Item 2`` in the human message. Backend-facing keys
-    (``field`` / ``line_index``) stay 0-based."""
-    tid = _seed_isolated_tenant()
-    uid, email, tok = _seed_admin_for(tid)
-    cid = _seed_customer(tid)
-    try:
-        _trigger_seed(tok)
-        # Row 0 valid (has a valid category name from the seed);
-        # row 1 has an explicit empty category so validation
-        # complains about the SECOND row — the row the operator
-        # sees as "Line Item 2" in the editor.
-        payload = {
-            "customer_id": cid,
-            "title": "TEST_row_num_2",
-            "doc_type": "invoice",
-            "tax_rate": 0,
-            "line_items": [
-                {"description": "Weekly pool service",
-                 "quantity": 1, "unit_price": 100,
-                 "category": "Pool"},
-                {"description": "Second row broken",
-                 "quantity": 1, "unit_price": 50,
-                 "category": ""},
-            ],
-        }
-        r = requests.post(
-            f"{API}/quotes", json=payload,
-            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
-        )
-        assert r.status_code == 400, r.text
-        detail = r.json()["detail"]
-        assert detail["error"] == "category_required"
-        # Human-facing message MUST use 1-based row number.
-        assert "Line Item 2" in detail["message"], detail["message"]
-        # Machine-parseable payload MUST stay 0-based.
-        assert detail["field"] == "line_items[1].category"
-        assert detail["line_index"] == 1
-    finally:
-        _db.users.delete_one({"id": uid})
-        _CACHE.pop(f"tok:{email}", None)
-        _cleanup_tenant(tid)
+    """REMOVED (Feb-2026 · invoice-category hard-block removal) —
+    the HTTP invoice-save path no longer raises on missing category.
+    The 1-based + description + Untitled formatting contract is
+    now locked by ``test_line_item_row_ref_helper_formatting_contract``
+    below (direct-call surface) and by the new strict-mode cases in
+    ``tests/test_invoice_category_hard_block_removal.py``."""
+    pytest.skip("superseded by hard-block removal — see docstring")
 
 
 # ─────────────────────────────────────────────────────────────────
 # 2 · description is embedded in the human message
 # ─────────────────────────────────────────────────────────────────
 def test_category_required_error_embeds_description_when_present():
-    """When the offending row has a ``description``, the human
-    message must include it in parentheses so an operator with
-    many line items can pinpoint the exact row."""
-    tid = _seed_isolated_tenant()
-    uid, email, tok = _seed_admin_for(tid)
-    cid = _seed_customer(tid)
-    try:
-        _trigger_seed(tok)
-        payload = {
-            "customer_id": cid,
-            "title": "TEST_desc_in_msg",
-            "doc_type": "invoice",
-            "tax_rate": 0,
-            "line_items": [
-                {"description": "Chlorine tabs delivery",
-                 "quantity": 1, "unit_price": 40,
-                 "category": ""},
-            ],
-        }
-        r = requests.post(
-            f"{API}/quotes", json=payload,
-            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
-        )
-        assert r.status_code == 400, r.text
-        detail = r.json()["detail"]
-        # Row 0 → user-facing "Line Item 1".
-        assert "Line Item 1" in detail["message"], detail["message"]
-        # Description embedded in parentheses.
-        assert "(Chlorine tabs delivery)" in detail["message"], (
-            detail["message"]
-        )
-        # Machine-parseable key stays 0-based.
-        assert detail["field"] == "line_items[0].category"
-        assert detail["line_index"] == 0
-    finally:
-        _db.users.delete_one({"id": uid})
-        _CACHE.pop(f"tok:{email}", None)
-        _cleanup_tenant(tid)
+    """REMOVED (Feb-2026 · invoice-category hard-block removal) —
+    see sibling test above."""
+    pytest.skip("superseded by hard-block removal — see docstring")
 
 
 # ─────────────────────────────────────────────────────────────────
 # 3 · Fallback to "Untitled" when description missing
 # ─────────────────────────────────────────────────────────────────
 def test_archived_category_error_uses_untitled_when_description_blank():
-    """Row with an empty / whitespace-only / missing description
-    falls back to the codebase-standard ``Untitled`` sentinel. Also
-    proves the fallback lands on the archived/unknown-category
-    branch (``error_code=archived_category``), NOT only on the
-    missing-category branch."""
-    tid = _seed_isolated_tenant()
-    uid, email, tok = _seed_admin_for(tid)
-    cid = _seed_customer(tid)
-    try:
-        _trigger_seed(tok)
-        payload = {
-            "customer_id": cid,
-            "title": "TEST_untitled_fallback",
-            "doc_type": "invoice",
-            "tax_rate": 0,
-            "line_items": [
-                # Description explicit blank string → the helper
-                # falls back to ``Untitled``. Category is a
-                # nonsense string so we hit the archived/unknown
-                # branch, not the missing branch.
-                # (An OMITTED description is rejected by the
-                # LineItem Pydantic model with a 422 before our
-                # validator even runs, so the fallback contract is
-                # exercised via the explicit-blank case here.)
-                {"description": "",
-                 "quantity": 1, "unit_price": 50,
-                 "category": "nonsense-category-xyz"},
-            ],
-        }
-        r = requests.post(
-            f"{API}/quotes", json=payload,
-            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
-        )
-        assert r.status_code == 400, r.text
-        detail = r.json()["detail"]
-        assert detail["error_code"] == "archived_category", detail
-        assert "Line Item 1" in detail["message"], detail["message"]
-        assert "(Untitled)" in detail["message"], detail["message"]
-        # Machine-parseable key stays 0-based.
-        assert detail["field"] == "line_items[0].category"
-        assert detail["line_index"] == 0
-    finally:
-        _db.users.delete_one({"id": uid})
-        _CACHE.pop(f"tok:{email}", None)
-        _cleanup_tenant(tid)
+    """REMOVED (Feb-2026 · invoice-category hard-block removal) —
+    see sibling test above."""
+    pytest.skip("superseded by hard-block removal — see docstring")
 
 
 # ─────────────────────────────────────────────────────────────────

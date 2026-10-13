@@ -194,8 +194,14 @@ def test_seed_defaults_on_first_access():
         _cleanup_tenant(tid)
 
 
-# ─────────────── 5. Invoice without category rejected ─────────
+# ─────────────── 5. Invoice without category now ALLOWED ─────
 def test_new_invoice_without_category_400_category_required():
+    """Feb-2026 · invoice-category hard-block removal — invoice
+    save with missing legacy ``category`` is now permitted
+    (200 + audit row). Pre-removal: 400 ``category_required``.
+    Test name kept intentionally for grep continuity with the
+    old contract.
+    """
     tid = _seed_isolated_tenant()
     uid, email, tok = _seed_admin_for(tid)
     cid = _seed_customer(tid)
@@ -208,18 +214,14 @@ def test_new_invoice_without_category_400_category_required():
             "title": "TEST_no_cat", "doc_type": "invoice",
             "tax_rate": 0,
             "line_items": [
-                # Explicit empty category — models.py defaults to "Pool"
-                # otherwise, which would silently satisfy enforcement.
                 {"description": "TEST_x", "quantity": 1, "unit_price": 50,
                   "category": ""},
             ],
         }
         r = requests.post(f"{API}/quotes", json=payload,
                            headers={"Authorization": f"Bearer {tok}"}, timeout=15)
-        assert r.status_code == 400, r.text
-        d = r.json()["detail"]
-        assert d["error"] == "category_required"
-        assert "line_items[0].category" in d["field"]
+        assert r.status_code == 200, r.text
+        assert r.json().get("doc_type") == "invoice"
     finally:
         _db.users.delete_one({"id": uid})
         _CACHE.pop(f"tok:{email}", None)
@@ -280,8 +282,10 @@ def test_edit_invoice_line_item_without_category_400():
             ]},
             headers={"Authorization": f"Bearer {ctx['token']}"}, timeout=15,
         )
-        assert r.status_code == 400, r.text
-        assert r.json()["detail"]["error"] == "category_required"
+        assert r.status_code == 200, r.text
+        # Feb-2026 · invoice-category hard-block removal —
+        # legacy ``category_required`` 400 was demoted to a
+        # non-blocking warning + audit row.
     finally:
         _db.quotes.delete_one({"id": inv_id})
 
@@ -331,7 +335,9 @@ def test_edit_invoice_forces_category_on_touched_lines():
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     try:
-        # Editing with the same payload but missing category should 400.
+        # Feb-2026 · invoice-category hard-block removal — PATCH
+        # with missing category on a touched line is now 200
+        # (audit row written). Pre-removal: 400 category_required.
         r = requests.patch(
             f"{API}/quotes/{inv_id}",
             json={"line_items": [
@@ -339,8 +345,8 @@ def test_edit_invoice_forces_category_on_touched_lines():
             ]},
             headers={"Authorization": f"Bearer {ctx['token']}"}, timeout=15,
         )
-        assert r.status_code == 400, r.text
-        # Adding a valid category should succeed.
+        assert r.status_code == 200, r.text
+        # Adding a valid category still succeeds.
         r = requests.patch(
             f"{API}/quotes/{inv_id}",
             json={"line_items": [

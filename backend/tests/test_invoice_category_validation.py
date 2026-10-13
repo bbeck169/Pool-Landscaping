@@ -55,6 +55,12 @@ def _seed_customer(tenant_id: str) -> str:
 
 
 def test_archived_category_returns_structured_error():
+    """Feb-2026 · invoice-category hard-block removal — invoice
+    save with an archived/unknown legacy ``category`` value now
+    returns 200 with an audit row written. Pre-removal behaviour
+    was 400 ``archived_category``; the hard block was removed per
+    operator request so cleanup workflows don't stall invoices.
+    """
     tok = _login("admin@aquaterra.com")
     tenant = _me(tok)["tenant_id"]
     cust_id = _seed_customer(tenant)
@@ -72,18 +78,18 @@ def test_archived_category_returns_structured_error():
         r = requests.post(f"{API}/quotes", json=payload,
                           headers={"Authorization": f"Bearer {tok}"},
                           timeout=15)
-        assert r.status_code == 400, r.text
-        detail = r.json()["detail"]
-        assert detail["error_code"] == "archived_category"
-        assert detail["line_index"] == 1
-        assert detail["attempted_category"].startswith("TEST_ARCHIVED_")
-        assert "available_categories" in detail
-        assert detail["field"] == "line_items[1].category"
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("doc_type") == "invoice"
     finally:
         _sync.customers.delete_one({"id": cust_id})
 
 
 def test_missing_category_returns_category_required():
+    """Feb-2026 · invoice-category hard-block removal — missing
+    legacy ``category`` on an invoice line item is now permitted
+    with an audit row written. Pre-removal: 400 category_required.
+    """
     tok = _login("admin@aquaterra.com")
     tenant = _me(tok)["tenant_id"]
     cust_id = _seed_customer(tenant)
@@ -98,10 +104,8 @@ def test_missing_category_returns_category_required():
         r = requests.post(f"{API}/quotes", json=payload,
                           headers={"Authorization": f"Bearer {tok}"},
                           timeout=15)
-        assert r.status_code == 400, r.text
-        detail = r.json()["detail"]
-        assert detail["error_code"] == "category_required"
-        assert detail["line_index"] == 0
-        assert detail["field"] == "line_items[0].category"
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("doc_type") == "invoice"
     finally:
         _sync.customers.delete_one({"id": cust_id})

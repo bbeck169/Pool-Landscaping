@@ -409,15 +409,24 @@ async def patch_invoice(
         provided["line_items"] = _validate_line_items(provided["line_items"])
         # Feb-2026 · Income category enforcement — every touched line
         # item must resolve to an active income_categories row.
+        #
+        # Feb-2026 · invoice-category hard-block removal — the PATCH
+        # edit path matches the POST/PUT contract: missing or
+        # inactive line-item category no longer raises 400. Audit
+        # row is written below after the write persists.
         from routers.income_categories import validate_line_item_categories
-        await validate_line_item_categories(inv.get("tenant_id") or "",
-                                              provided["line_items"])
+        await validate_line_item_categories(
+            inv.get("tenant_id") or "",
+            provided["line_items"],
+            strict=False,
+        )
         # Phase K71 · Feb-2026 — Two-taxonomy validation for K71 line
         # items. Legacy items grandfathered (skipped when neither
         # K71 field is present).
         from routers.income_categories import validate_line_item_k71_categories
         await validate_line_item_k71_categories(
             inv.get("tenant_id") or "", provided["line_items"],
+            strict=False,
         )
 
     # ── Invoice number uniqueness within tenant ──────────────────
