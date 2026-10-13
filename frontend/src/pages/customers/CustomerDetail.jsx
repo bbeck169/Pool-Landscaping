@@ -309,6 +309,221 @@ function _fmtMoney(cents) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+// CUSTOMER-DETAIL-NEXT-SERVICE · Feb-2026 — admin "Next Service" tile.
+// ═══════════════════════════════════════════════════════════════════
+// Standalone card between the Phase 27 KPI tile grid (above) and
+// the Phase 27 Quick Actions tile grid (below).  Phase 27 locks
+// preserved — this does NOT touch either adjacent grid.  Chassis
+// matches the adjacent Phase 27 dark-navy chassis
+// (``CD_TILE_CLASSES`` + ``CD_FINANCIAL_NEUTRAL_BG`` +
+// ``CD_DARK_CARD_BORDER``) so the three-row stack reads as a
+// single visual block — honouring the "same chassis as the
+// adjacent grids" directive. (Spec parenthetical mentioned
+// ``colors.surface`` / ``colors.border`` but those don't match
+// what the adjacent grids actually render; chose adjacency match.)
+//
+// Fields rendered when a job is present:
+//   • Formatted date + time (locale-formatted, e.g.
+//     "Thu, Nov 7 · 10:00 AM").
+//   • service_type (or ``title`` fallback).
+//   • ``technician_name`` denorm (admin side has this baked in
+//     per jobs.py read-time cascade — line 1684).
+//   • ``<StatusPill status={job.status} />`` from
+//     ``@/components/ui-kit`` — reuses JobDetail's convention
+//     (JobDetail.jsx line 572).
+//   • Entire card click → ``navigate(`/jobs/${job.id}`)`` — the
+//     canonical schedule-row destination (TodaySchedule.jsx:786,
+//     CalendarSchedule.jsx:14).
+//
+// Empty state ("No upcoming services"):
+//   • "Schedule a job" CTA → ``/jobs/new?customer_id=${customerId}``
+//     — the canonical new-job route (JobNew.jsx:50; CustomerDetail
+//     itself already uses this at line ~1985).
+// ═══════════════════════════════════════════════════════════════════
+function NextServiceTile({ customerId }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState({ loading: true, job: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ loading: true, job: null });
+    (async () => {
+      try {
+        const res = await api.get(
+          `/customers/${customerId}/next-service`,
+        );
+        if (cancelled) return;
+        setState({ loading: false, job: res?.next_service || null });
+      } catch (_err) {
+        // Tile is non-critical; swallow errors silently and show
+        // the empty state so the operator can still schedule.
+        if (cancelled) return;
+        setState({ loading: false, job: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [customerId]);
+
+  const { loading, job } = state;
+
+  // Date-time formatting — mirrors Schedule row conventions
+  // (locale-default; tenant tz is handled on the write side).
+  const formatted = useMemo(() => {
+    if (!job) return null;
+    const raw = job.scheduled_start || job.scheduled_date;
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    const datePart = d.toLocaleDateString(undefined, {
+      weekday: "short", month: "short", day: "numeric",
+    });
+    const timePart = job.scheduled_start
+      ? d.toLocaleTimeString(undefined, {
+          hour: "numeric", minute: "2-digit",
+        })
+      : null;
+    return timePart ? `${datePart} · ${timePart}` : datePart;
+  }, [job]);
+
+  const onCardClick = () => {
+    if (job?.id) navigate(`/jobs/${job.id}`);
+  };
+
+  const onScheduleCta = (e) => {
+    e.stopPropagation();
+    navigate(`/jobs/new?customer_id=${customerId}`);
+  };
+
+  // Shared chassis — matches the adjacent Phase 27 grids so the
+  // three-row stack reads as one block.
+  const chassisStyle = {
+    backgroundColor: CD_FINANCIAL_NEUTRAL_BG,
+    border: `1px solid ${CD_DARK_CARD_BORDER}`,
+  };
+
+  if (loading) {
+    return (
+      <div
+        className={`${CD_TILE_CLASSES} mb-4`}
+        style={chassisStyle}
+        data-testid="cd-next-service-tile"
+        data-state="loading"
+      >
+        <div
+          className="flex items-center gap-1.5"
+          style={{ color: CD_FINANCIAL_NEUTRAL_LABEL }}
+        >
+          <Clock size={13} />
+          <span className="text-xs font-semibold uppercase tracking-wide">
+            Next Service
+          </span>
+        </div>
+        <div className="text-sm mt-2" style={{ color: "#F1F5F9" }}>
+          Loading…
+        </div>
+      </div>
+    );
+  }
+
+  if (!job) {
+    return (
+      <div
+        className={`${CD_TILE_CLASSES} mb-4`}
+        style={chassisStyle}
+        data-testid="cd-next-service-tile"
+        data-state="empty"
+      >
+        <div
+          className="flex items-center gap-1.5"
+          style={{ color: CD_FINANCIAL_NEUTRAL_LABEL }}
+        >
+          <Clock size={13} />
+          <span className="text-xs font-semibold uppercase tracking-wide">
+            Next Service
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+          <div
+            className="text-sm"
+            style={{ color: "#F1F5F9" }}
+            data-testid="cd-next-service-empty"
+          >
+            No upcoming services
+          </div>
+          <Button
+            variant="ghost"
+            onClick={onScheduleCta}
+            testid="cd-next-service-schedule-cta"
+          >
+            Schedule a job
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const title = job.service_type || job.title || "Service visit";
+  const techName = job.technician_name || null;
+
+  return (
+    <button
+      type="button"
+      onClick={onCardClick}
+      className={`${CD_TILE_CLASSES} mb-4 w-full`}
+      style={chassisStyle}
+      data-testid="cd-next-service-tile"
+      data-state="has-job"
+    >
+      <div
+        className="flex items-center gap-1.5"
+        style={{ color: CD_FINANCIAL_NEUTRAL_LABEL }}
+      >
+        <Clock size={13} />
+        <span className="text-xs font-semibold uppercase tracking-wide">
+          Next Service
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+        <div className="flex-1 min-w-0">
+          <div
+            className="text-base md:text-lg font-semibold truncate"
+            style={{ color: "#F1F5F9" }}
+            data-testid="cd-next-service-date"
+          >
+            {formatted || "—"}
+          </div>
+          <div
+            className="text-sm truncate"
+            style={{ color: "#F1F5F9" }}
+            data-testid="cd-next-service-service-type"
+          >
+            {title}
+          </div>
+          {techName ? (
+            <div
+              className="text-xs mt-0.5 truncate"
+              style={{ color: CD_FINANCIAL_NEUTRAL_LABEL }}
+              data-testid="cd-next-service-tech"
+            >
+              {techName}
+            </div>
+          ) : null}
+        </div>
+        <div
+          className="shrink-0"
+          data-testid="cd-next-service-status-pill"
+        >
+          <StatusPill status={job.status} />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+
+
+
 // Phase 27 · Feb-2026 — six-tile KPI grid rendered immediately
 // below the Phase-20 command-strip tabs row.  Fields consumed:
 //   balance_due_cents | past_due_cents | credit_cents
@@ -1673,6 +1888,15 @@ export default function CustomerDetail() {
               decision #3 — Phase 23/24 regression locks on
               PortalHome.jsx are byte-for-byte preserved. */}
           <KPITileGrid kpi={kpi} testidPrefix="cd" />
+
+          {/* CUSTOMER-DETAIL-NEXT-SERVICE · Feb-2026 — admin "Next
+              Service" tile.  Standalone card between the Phase 27
+              KPI grid (above) and the Phase 27 Quick Actions grid
+              (below).  Both adjacent grids are untouched — their
+              Phase 27 regression locks remain byte-for-byte.  See
+              the ``NextServiceTile`` component definition above
+              for chassis + wire-contract notes. */}
+          <NextServiceTile customerId={id} />
 
           {/* Phase 27 · Feb-2026 — Quick Actions tile grid.
               Primary nav surface replacing the role of the
