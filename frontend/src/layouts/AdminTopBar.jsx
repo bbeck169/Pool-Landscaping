@@ -755,7 +755,21 @@ export default function AdminTopBar() {
             {/* Phase BANNER-RELOCATE · Feb-2026 — see narrow branch
                 above; the visible search bar was relocated to the
                 admin-hero-banner slot in AppLayout. */}
-            <div className="shrink-0 flex items-center gap-2">
+            {/* Phase NAV-RIGHT-JUSTIFY · Feb-2026 — ``ml-auto`` on
+                the right-cluster container pushes the Add Job /
+                Add Customer / Mic / Settings / Bell / Sign Out
+                group to the far right of the wide-branch strip
+                rather than letting it sit immediately after the
+                last nav category. The narrow branch is already
+                right-aligned via ``justify-between`` + the right
+                cluster is the only child on that side, so this
+                change is wide-only. ``flex-shrink-0`` prevents the
+                cluster from being squeezed when the categories
+                overflow (``overflow-x-auto`` on the parent then
+                scrolls the categories, keeping the cluster
+                pinned). */}
+            <div className="ml-auto shrink-0 flex items-center gap-2"
+                 data-testid="admin-topbar-right-cluster">
               {/* Phase U1 · Feb-2026 — mirror mount on the wide
                   branch. Order + styling match the narrow branch. */}
               <AddJobButton />
