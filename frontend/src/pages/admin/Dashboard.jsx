@@ -23,6 +23,7 @@ import {
   ChevronRight,
   Waves,
   Droplet,
+  TreePine,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients, money } from "@/theme";
@@ -634,9 +635,41 @@ export default function AdminDashboard() {
               testId="kpi-inactive-customers"
               tone="emerald"
             />
+            {/* Feb-2026 - Pool + Landscaping customer tiles.
+                Sit directly below Active / Inactive in the same
+                KPI grid (same card component, same width, same
+                row alignment).  Union semantics (P2 #6, commit
+                615339ab5): a customer with
+                ``service_category == "both"`` is counted on BOTH
+                tiles - matches the ``?service_category=pool``
+                list filter so tile totals equal deep-linked list
+                totals exactly.  Deep-links use the P2 #6 filter
+                verbatim (do NOT invent a new one) + ``?is_active=true``
+                so the operator lands on the active cohort tab
+                (CustomersList.jsx:188 accepts the alias).  */}
+            <KpiCard
+              icon={Waves}
+              label="Pool Customers"
+              value={data.pool_customers_count}
+              onClick={() => navigate(
+                "/customers?is_active=true&service_category=pool",
+              )}
+              testId="kpi-pool-customers"
+              tone="sky"
+            />
+            <KpiCard
+              icon={TreePine}
+              label="Landscaping Customers"
+              value={data.landscaping_customers_count}
+              onClick={() => navigate(
+                "/customers?is_active=true&service_category=landscaping",
+              )}
+              testId="kpi-landscaping-customers"
+              tone="emerald"
+            />
           </>
         ) : (
-          [0, 1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
+          [0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
         )}
       </div>
 
