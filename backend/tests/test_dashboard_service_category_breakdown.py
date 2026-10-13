@@ -137,10 +137,49 @@ def test_customer_counts_per_bucket():
     _run(_seed_cust(f"{PREFIX}-c-u1", None))
     _run(_seed_cust(f"{PREFIX}-c-u2"))
     out = _run(_call(ADMIN))
-    assert out["pool"]["customers"] == 2
-    assert out["landscaping"]["customers"] == 1
+    # Feb-2026 behavior correction: ``both``-customers union into
+    # pool AND landscaping AND both. 2 pool + 1 both = 3 pool.
+    # 1 landscaping + 1 both = 2 landscaping. 1 both. 2 unset.
+    assert out["pool"]["customers"] == 3
+    assert out["landscaping"]["customers"] == 2
     assert out["both"]["customers"] == 1
     assert out["unset"]["customers"] == 2
+
+
+def test_both_customer_unions_into_pool_landscaping_and_both_tiles():
+    """Behavior correction: a single ``both``-customer MUST be
+    counted in all three enum tiles' ``customers`` field."""
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-only-both", "both"))
+    out = _run(_call(ADMIN))
+    assert out["pool"]["customers"] == 1
+    assert out["landscaping"]["customers"] == 1
+    assert out["both"]["customers"] == 1
+    assert out["unset"]["customers"] == 0
+    # Confirm the three enum tiles reference the SAME physical
+    # customer (counts align — no accidental triple-insertion
+    # of distinct rows).
+
+
+def test_both_customer_active_jobs_and_mtd_revenue_union_into_pool_and_landscaping():
+    """Behavior correction extends to active-jobs + MTD-revenue:
+    a both-customer's single active job + single paid invoice
+    MUST increment pool AND landscaping AND both tiles — same
+    delta on each, no double-counting the increment."""
+    _run(_seed_tenant())
+    _run(_seed_cust(f"{PREFIX}-c-both-only", "both"))
+    _run(_seed_job(f"{PREFIX}-j-sched",
+                      f"{PREFIX}-c-both-only", status="scheduled"))
+    _run(_seed_invoice(f"{PREFIX}-inv-both-mtd",
+                           f"{PREFIX}-c-both-only",
+                           75.25, _month_start_iso()))
+    out = _run(_call(ADMIN))
+    assert out["pool"]["active_jobs"] == 1
+    assert out["landscaping"]["active_jobs"] == 1
+    assert out["both"]["active_jobs"] == 1
+    assert out["pool"]["mtd_revenue"] == 75.25
+    assert out["landscaping"]["mtd_revenue"] == 75.25
+    assert out["both"]["mtd_revenue"] == 75.25
 
 
 def test_active_jobs_aggregate_only_valid_statuses_and_bucketed_customers():
