@@ -341,7 +341,13 @@ function _fmtMoney(cents) {
 //     — the canonical new-job route (JobNew.jsx:50; CustomerDetail
 //     itself already uses this at line ~1985).
 // ═══════════════════════════════════════════════════════════════════
-function NextServiceTile({ customerId }) {
+// Exported so the dedicated vitest spec
+// (``__tests__/CustomerDetail.nextService.test.jsx``) can mount the
+// tile in isolation without rendering the full CustomerDetail page.
+// Named export only — the default export of this module is
+// unchanged; the inline usage inside the page still references the
+// in-scope function reference.
+export function NextServiceTile({ customerId }) {
   const navigate = useNavigate();
   const [state, setState] = useState({ loading: true, job: null });
 
