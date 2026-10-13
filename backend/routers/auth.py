@@ -542,6 +542,100 @@ async def login(request: Request, body: LoginRequest):
     # 4) Exactly 1 match (or 2+ matches with the SAME role — treated
     # as an already-deduplicated record, first wins).  Runs the
     # existing single-record success flow verbatim.
+    #
+    # ─── P2 interrupt · Feb-2026 · Option A-smart+log duplicate-user
+    # login-selection patch. ────────────────────────────────────────
+    # Pre-existing duplicate role=customer rows (from before the
+    # P0 ``_upsert_customer_user`` collision guard shipped) can still
+    # slip through row enumeration if an operator never ran the
+    # remediation runbook.  When ≥2 matches share role=customer with
+    # DISTINCT customer_ids, we:
+    #   1. Drop candidates whose customer_id does NOT resolve to a
+    #      live (non-deleted / non-merged) customer doc.
+    #   2. If any live-cid rows remain → sort them by
+    #      ``temp_password_issued_at`` DESC (null → oldest) and let
+    #      the first one win.  (``matches`` has already run
+    #      ``verify_password`` on every row, so the sort just picks
+    #      WHICH matching row to return as the authenticated user.)
+    #   3. If 0 rows remain after the live-cid filter → fall through
+    #      to the original ``matches[0]`` so an all-orphan candidate
+    #      list never locks the user out.
+    # Also writes a structured WARN log on orphan-drop AND a
+    # ``auth.login.duplicate_resolved`` audit row (payload uses
+    # ``email_sha8`` — SHA-256 first 8 hex chars — never raw email).
+    # Complements, does NOT replace, the human-gated remediation
+    # plan (orphan soft-delete + fresh invite).
+    _p2int_resolved_meta: Optional[Dict[str, int]] = None
+    if len(matches) >= 2:
+        _p2int_cust_matches = [
+            m for m in matches
+            if (m.get("role") or "").strip().lower() == "customer"
+            and m.get("customer_id")
+        ]
+        _p2int_distinct_cids = {m["customer_id"] for m in _p2int_cust_matches}
+        if len(_p2int_cust_matches) >= 2 and len(_p2int_distinct_cids) >= 2:
+            # 1) Live-cid filter.  A customer row counts as live when
+            # ``deleted_at`` is null OR missing AND ``merged_into_id``
+            # is null OR missing — mirrors the shape used by the
+            # customer-list endpoint's default exclusion.
+            _live_cids: set = set()
+            async for _c in db.customers.find(
+                {"id": {"$in": list(_p2int_distinct_cids)}},
+                {"_id": 0, "id": 1, "deleted_at": 1, "merged_into_id": 1},
+            ):
+                if _c.get("deleted_at"):
+                    continue
+                if _c.get("merged_into_id"):
+                    continue
+                _live_cids.add(_c["id"])
+            _live_matches = [
+                m for m in _p2int_cust_matches
+                if m.get("customer_id") in _live_cids
+            ]
+            _orphan_dropped = len(_p2int_cust_matches) - len(_live_matches)
+            # 2) Live-match sort by temp_password_issued_at DESC.  Null
+            # or missing values sort LAST (treated as oldest).
+            def _temp_pw_key(m):
+                v = m.get("temp_password_issued_at")
+                return v if isinstance(v, str) and v else ""
+            _live_sorted = sorted(
+                _live_matches,
+                key=_temp_pw_key,
+                reverse=True,
+            )
+            _chosen = _live_sorted[0] if _live_sorted else None
+            if _chosen is not None:
+                import hashlib as _hl
+                _email_sha8 = _hl.sha256(
+                    (email or "").encode("utf-8"),
+                ).hexdigest()[:8]
+                _p2int_resolved_meta = {
+                    "orphan_count_dropped": _orphan_dropped,
+                    "customer_id": _chosen.get("customer_id") or "",
+                    "user_id": _chosen.get("id") or "",
+                    "tenant_id": _chosen.get("tenant_id") or "",
+                }
+                logger.warning(
+                    "[auth] duplicate_customer_resolution — "
+                    "email_sha8=%s candidate_count=%d "
+                    "orphan_count_dropped=%d "
+                    "selected_user_id_prefix=%s "
+                    "selection_source=%s",
+                    _email_sha8, len(_p2int_cust_matches),
+                    _orphan_dropped,
+                    (_chosen.get("id") or "")[:8],
+                    "temp_password_issued_at",
+                )
+                # Promote the chosen row to the front of ``matches`` so
+                # the downstream ``user = matches[0]`` picks it; keep
+                # the full match list intact so the sibling observability
+                # warning on lines 546-583 still sees the duplicate
+                # structure.
+                matches = [_chosen] + [
+                    m for m in matches if m is not _chosen
+                ]
+            # else: _live_sorted empty → fall through to original
+            # matches[0] (no lockout, no WARN, no audit).
     user = matches[0]
     if len(matches) > 1:
         # 2+ matches, same role — the pre-Task-4 code would have
@@ -643,6 +737,34 @@ async def login(request: Request, body: LoginRequest):
     # founder are no-ops (one-time promotion + audit row).
     await _maybe_promote_founder(user, ip)
     await _audit_auth("login", email, ip, "success")
+    # P2 interrupt · Feb-2026 — ``auth.login.duplicate_resolved`` audit
+    # row.  Fires ONLY when the Option A-smart selection block actually
+    # resolved a duplicate (``_p2int_resolved_meta`` is populated); on
+    # single-candidate logins (99.x%) this is a no-op.  Payload uses
+    # the chosen row's customer_id / user_id — never the raw email —
+    # matching the P0 observability discipline.
+    if _p2int_resolved_meta is not None:
+        try:
+            import hashlib as _hl2
+            _email_sha8_audit = _hl2.sha256(
+                (email or "").encode("utf-8"),
+            ).hexdigest()[:8]
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": _p2int_resolved_meta["tenant_id"],
+                "event": "auth.login.duplicate_resolved",
+                "customer_id": _p2int_resolved_meta["customer_id"],
+                "user_id": _p2int_resolved_meta["user_id"],
+                "orphan_count_dropped": _p2int_resolved_meta["orphan_count_dropped"],
+                "email_sha8": _email_sha8_audit,
+                "actor": "login_handler",
+                "created_at": now_iso(),
+            })
+        except Exception as _audit_exc:  # noqa: BLE001
+            logger.warning(
+                "auth.login.duplicate_resolved audit insert failed: %s",
+                _audit_exc,
+            )
     # Feb-2026 Portal Access ship — stamp the customer doc with the
     # last portal login timestamp/IP + write a dedicated ``portal_login``
     # audit row so the admin Portal Access panel can show the customer's
