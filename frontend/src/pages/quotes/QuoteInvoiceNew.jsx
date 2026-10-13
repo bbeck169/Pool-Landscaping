@@ -140,6 +140,21 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
         return hit ? { ...prev, name: hit.name || "" } : prev;
       });
     }).catch(() => {});
+    // P2 #4 · Feb-2026 — hydrate the lead display name when the URL
+    // preselected a Lead recipient. Powers the "Linked to lead: <name>"
+    // chip rendered above the recipient picker. Fail-open: on fetch
+    // error the chip renders with the fallback label "lead".
+    if (preselectRecipientType === "lead" && preselectRecipientId) {
+      api.get(`/leads/${preselectRecipientId}`).then((lead) => {
+        setRecipient((prev) => {
+          if (!prev || prev.type !== "lead" || prev.id !== preselectRecipientId) {
+            return prev;
+          }
+          if (prev.name) return prev;
+          return { ...prev, name: lead?.name || "" };
+        });
+      }).catch(() => {});
+    }
     // Phase P16.1.1 · Feb-2026 — the legacy ``/items`` datalist
     // fetch was retired when the description field flipped to
     // ``MasterServiceCombobox``, which pulls active rows from
@@ -149,7 +164,7 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
       setTermsDefault(def || "");
       setForm((f) => (f.terms ? f : { ...f, terms: def || "" }));
     }).catch(() => {});
-  }, [docType]);
+  }, [docType, preselectRecipientType, preselectRecipientId]);
 
   const totals = useMemo(() => {
     const subtotal = form.line_items.reduce(
@@ -212,10 +227,20 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
       //     {recipient_type:"lead", recipient_id}. Backend B1 will
       //     NOT auto-promote the lead to a customer.
       const _isLeadRecipient = _effectiveRecipient.type === "lead";
+      // P2 #4 · Feb-2026 — attribution for the backend
+      // ``quote.created_from_lead`` audit row. URL-preselected lead
+      // ⇒ "from_lead_button"; mid-form-picked lead ⇒ "attached_in_form".
+      // Non-lead recipients omit the field (backend ignores).
+      const _leadAttachSource = _isLeadRecipient
+        ? (preselectRecipientType === "lead" && preselectRecipientId === _effectiveRecipient.id
+            ? "from_lead_button"
+            : "attached_in_form")
+        : undefined;
       const payload = {
         ...(_isLeadRecipient ? {} : { customer_id: _effectiveRecipient.id }),
         recipient_type: _effectiveRecipient.type,
         recipient_id: _effectiveRecipient.id,
+        ...(_leadAttachSource ? { lead_attach_source: _leadAttachSource } : {}),
         title: form.title || (docType === "invoice" ? "Invoice" : "Estimate"),
         doc_type: form.doc_type,
         tax_rate: Number(form.tax_rate) || 0,
@@ -309,6 +334,45 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
               <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
                 RECIPIENT *
               </label>
+              {/* P2 #4 · Feb-2026 — "Linked to lead" chip renders ONLY
+                  when the URL preselected a Lead recipient. Mid-form
+                  picks surface via the picker's own selected state;
+                  the chip is strictly for the from-lead-button nav
+                  so the operator can see (and sever) the deep-link
+                  provenance before saving. Clicking Unlink clears
+                  the recipient and strips the lead-attach query
+                  params so a reload after Unlink lands on a clean
+                  /quotes/new. */}
+              {recipient && recipient.type === "lead"
+                && preselectRecipientType === "lead"
+                && preselectRecipientId === recipient.id ? (
+                <div
+                  className="mb-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border"
+                  style={{ background: "#FEF3C7", borderColor: "#FCD34D", color: "#92400E" }}
+                  data-testid="qf-linked-lead-chip"
+                >
+                  <span className="text-xs font-semibold uppercase tracking-wide">Linked to lead:</span>
+                  <span className="text-sm font-medium" data-testid="qf-linked-lead-name">
+                    {recipient.name || "lead"}
+                  </span>
+                  <button
+                    type="button"
+                    className="ml-1 inline-flex items-center text-xs font-semibold hover:underline"
+                    style={{ color: "#92400E" }}
+                    onClick={() => {
+                      setRecipient(null);
+                      setForm((f) => ({ ...f, customer_id: "" }));
+                      navigate(
+                        docType === "invoice" ? "/invoices/new" : "/quotes/new",
+                        { replace: true },
+                      );
+                    }}
+                    data-testid="qf-linked-lead-unlink"
+                  >
+                    <X size={12} className="mr-0.5" /> Unlink
+                  </button>
+                </div>
+              ) : null}
               {/* Phase 2 B2 · Feb-2026 — unified Customer/Lead
                   picker. Keeps ``form.customer_id`` wired for
                   Customer picks so legacy inline reads continue
