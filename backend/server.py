@@ -5500,6 +5500,39 @@ async def _run_boot_sequence():
             logger.warning(f"k65_service_reports_indexes migration crashed: {e}")
     asyncio.create_task(_bg_k65_service_reports_indexes())
 
+    # PCPM · Feb-2026 · P1 PERF-HOTFIX — Customer-profile mount
+    # index safety net. Idempotent + sentinel-guarded. Pins the 8
+    # critical compound indexes consumed by the CustomerDetail
+    # overview mount (jobs, quotes, properties, service_reports,
+    # messages, customers). All targets already exist on preview;
+    # this exists purely as a prod safety net for any shard /
+    # replica that's missing a compound.
+    async def _bg_pcpm_customer_profile_indexes():
+        try:
+            from services.migrations.perf_customer_profile_mount import (
+                run_perf_customer_profile_mount_migration,
+            )
+            _pcpm_boot = await run_perf_customer_profile_mount_migration()
+            if _pcpm_boot.get("status") == "skipped":
+                logger.info(
+                    "[migration] pcpm_customer_profile_mount: "
+                    "skipped · sentinel present",
+                )
+            else:
+                _s = _pcpm_boot.get("summary") or {}
+                logger.info(
+                    "[migration] pcpm_customer_profile_mount: created=%s "
+                    "already_present=%s covered_by_prefix=%s errors=%s",
+                    _s.get("created"), _s.get("already_present"),
+                    _s.get("already_covered_by_prefix"),
+                    len(_s.get("errors") or []),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"pcpm_customer_profile_mount migration crashed: {e}",
+            )
+    asyncio.create_task(_bg_pcpm_customer_profile_indexes())
+
     # K21 · Feb-2026 — Customer + Schedule web hot-path perf indexes.
     # Idempotent + sentinel-guarded.
     async def _bg_k21_perf_indexes():
