@@ -115,6 +115,14 @@ Last updated: **Phase O4 · Feb-2026** (Offline Sync Backend Idempotency Sprint 
 
 - **TD-11 · Cron-failure alerting bridge (push notification surface)** — the P2 #8 halt guard mints an `audit_logs` row with `action="recurring_job.cron.batch_failure_halt"` on cross-tenant cron batch failure, but there is no push-notification bridge today (email/Slack/webhook). Ops currently discovers a halted run by querying `GET /admin/audit-log` for the action prefix. **When to ship:** if/when a general cron-failure alerting surface is built (not scoped to this ticket because it opens a new infra question — recipient routing, severity dedup, cooldown — that no single feature should own). The P2 #8 audit row would be a first-class consumer of such a bridge. Pattern-match the existing `services/notifications` dispatcher. **Priority:** P3.
 
+## P2 #10 follow-ups (Feb-2026, added during Transactional-template editor rollout)
+
+- **TD-16 · Transactional-template wiring sweep — 2 remaining unwired slugs** — `password_reset_email` (`routers/auth.py` reset flow) and `portal_chat_admin_notify_sms` (`services/portal_chat_sms_bridge.py:147`) still render from hardcoded strings; migrate both to `get_template_by_code(..., tenant_id)` with hardcoded fallback intact. **When to ship:** next natural touch of either file, or as a follow-up P2 #10b ticket. **Priority:** P2.
+
+- **TD-17 · Transactional template test-send endpoint + UI button** — rate-limited `POST /marketing/templates/{tid}/test-send`, admin-facing "Send to me" button on the editor, K72 real-tenant block aware. **Priority:** P2 (medium-value admin verification UX).
+
+- **TD-18 · Multi-locale transactional templates** — extend `marketing_templates` row with `locale: 'en' | 'es' | 'fr'` + resolver prefers tenant-locale match → en fallback. D5 locale resolution is already live. **Priority:** P3 (post-launch, demand-driven).
+
 ## P2 #9 follow-ups (Oct-2026, added during MOBILE-SCHEDULE-DAY-VIEW-TIMESTAMP-FILTER-BUG)
 
 - **TD-12 · Web tenant TZ missing from `/auth/me`** — web falls back to America/Phoenix regardless of actual tenant TZ. Priority: P2 (affects start-time-only job placement near midnight for non-Phoenix tenants). Evidence: `GET /api/auth/me` returns neither `tenant_timezone` nor `tenant.timezone`; `GET /api/tenants/mine/settings` returns `America/New_York` for the preview tenant. Web reads `user?.tenant?.timezone || user?.tenant_timezone || TENANT_TZ_FALLBACK` (`CalendarSchedule.jsx` L437-440).
