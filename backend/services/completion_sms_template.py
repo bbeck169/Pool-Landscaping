@@ -1,5 +1,16 @@
 """Phase COMM1 · Feb-2026 — Completion SMS template.
 
+P2 #10e · Feb-2026 — pre-send gate helper
+    :func:`should_send_completion_followup_sms` is the async
+    tenant-wide kill-switch used by ``routers/service_reports.py::
+    _bg_send_completion_sms`` to short-circuit the completion-SMS
+    background task when the tenant admin flipped
+    ``completion_followup_sms_enabled`` to False. Default True on
+    unset (opt-out posture, matches the sibling P2 #10d
+    ``lead_conversion_welcome_enabled`` wire in
+    ``services/lead_conversion_notifications.py``).
+
+
 Builds the concise SMS sent to the customer when a tech submits a
 service report. Pure function; no I/O.
 
@@ -185,3 +196,23 @@ def build_completion_sms_body(
             f"Hi {first}, your {title} with {business} is complete! "
             f"View your full report and photos here: {portal_link}"
         )
+
+
+# ─── P2 #10e · Feb-2026 — tenant-wide kill-switch pre-send gate ──
+async def should_send_completion_followup_sms(tenant_id: str) -> bool:
+    """Return True iff the tenant has not opted out of the
+    completion-follow-up SMS. Default True on unset / absent-tenant
+    (opt-out posture).
+
+    Thin wrapper around
+    :func:`services.tenant_automation_gates.automation_enabled` with
+    the flag slug fixed to ``completion_followup_sms_enabled``.
+    Lives on the SMS-template module so the call site in
+    ``routers/service_reports.py::_bg_send_completion_sms`` reads
+    naturally as a template-level gate (the body builder and the
+    gate are the two public surfaces of this module).
+    """
+    from services.tenant_automation_gates import automation_enabled
+    return await automation_enabled(
+        tenant_id, "completion_followup_sms_enabled",
+    )

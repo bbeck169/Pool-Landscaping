@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Mail, MessageSquare, Save, Smartphone, Undo2 } from "lucide-react";
+import { ArrowLeft, Bell, Mail, MessageSquare, Save, Smartphone, Undo2, Sparkles, ChevronRight } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
@@ -154,6 +154,15 @@ export default function NotificationPrefs() {
           Admin-only. When enabled, customers cannot approve a
           quote/estimate until they've captured a signature. */}
       {isAdmin ? <TenantRequireSignatureBeforeApproveToggle /> : null}
+
+      {/* P2 #10e · Feb-2026 — tenant-wide automation kill switches.
+          The 4 flags below correspond to the P2 #10d transactional-
+          template automations (lead-conversion welcome,
+          completion-follow-up SMS, invoice past-due, estimate
+          reminder). Default True on unset. Pair with the
+          "Customize templates →" link that routes to the
+          per-slug body/subject editor. Admin-only. */}
+      {isAdmin ? <TenantAutomationTogglesSection /> : null}
 
       <div className="rounded-2xl overflow-hidden"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
@@ -820,6 +829,222 @@ export function TenantWelcomeOnFirstAcceptToggle() {
           />
         </button>
       </div>
+    </div>
+  );
+}
+
+
+
+/**
+ * P2 #10e · Feb-2026 — tenant-wide automation kill switches section.
+ *
+ * Reads / writes the 4 P2 #10d automation flags on the tenant
+ * settings doc via the existing ``/api/tenants/mine/settings``
+ * GET+PATCH:
+ *   * ``lead_conversion_welcome_enabled``
+ *   * ``completion_followup_sms_enabled``
+ *   * ``invoice_past_due_enabled``
+ *   * ``estimate_reminder_enabled``
+ *
+ * All default True on unset (opt-out posture). Pairs with the
+ * "Customize templates →" link that routes to the per-slug
+ * body/subject editor at ``/settings/notifications/templates``.
+ */
+const _P2_10E_FLAGS = [
+  {
+    key: "lead_conversion_welcome_enabled",
+    testidSuffix: "lead-conversion-welcome-enabled",
+    label: "Send welcome email + SMS when a lead is converted",
+    description:
+      "Fires on admin-initiated lead conversion. Email + SMS go " +
+      "to the new customer. Default on; flip off to silence both " +
+      "channels at the tenant boundary.",
+  },
+  {
+    key: "completion_followup_sms_enabled",
+    testidSuffix: "completion-followup-sms-enabled",
+    label: "Send completion follow-up SMS after a service report submits",
+    description:
+      "Short text with a portal link to the full report + photos. " +
+      "Email summary is sent separately and not affected by this " +
+      "toggle. Default on.",
+  },
+  {
+    key: "invoice_past_due_enabled",
+    testidSuffix: "invoice-past-due-enabled",
+    label: "Send past-due reminder email on outstanding invoices",
+    description:
+      "Fires from the invoice reminder flow. Pay-link + outstanding " +
+      "balance. Does not affect estimate reminders (see below). " +
+      "Default on.",
+  },
+  {
+    key: "estimate_reminder_enabled",
+    testidSuffix: "estimate-reminder-enabled",
+    label: "Send review reminder email on pending estimates / quotes",
+    description:
+      "Fires from the estimate reminder flow with a review CTA. " +
+      "Never mentions balance or Pay Now. Default on.",
+  },
+];
+
+export function TenantAutomationTogglesSection() {
+  const nav = useNavigate();
+  // Single shared GET for all 4 flags — one round-trip on mount.
+  const [values, setValues] = useState(null);  // null while loading
+  const [saving, setSaving] = useState({});
+  const [toasts, setToasts] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/tenants/mine/settings");
+        const v = {};
+        for (const f of _P2_10E_FLAGS) {
+          v[f.key] = Boolean(r?.[f.key] ?? true);
+        }
+        setValues(v);
+      } catch {
+        const v = {};
+        for (const f of _P2_10E_FLAGS) v[f.key] = true;
+        setValues(v);
+      }
+    })();
+  }, []);
+
+  const flip = async (flagKey) => {
+    if (!values || saving[flagKey]) return;
+    const next = !values[flagKey];
+    setSaving((s) => ({ ...s, [flagKey]: true }));
+    setValues((v) => ({ ...v, [flagKey]: next }));  // optimistic
+    try {
+      const r = await api.patch(
+        "/tenants/mine/settings",
+        { [flagKey]: next },
+      );
+      setValues((v) => ({
+        ...v, [flagKey]: Boolean(r?.[flagKey] ?? next),
+      }));
+      setToasts((t) => ({ ...t, [flagKey]: "Saved" }));
+    } catch (e) {
+      // Rollback.
+      setValues((v) => ({ ...v, [flagKey]: !next }));
+      setToasts((t) => ({ ...t, [flagKey]: e?.message || "Save failed" }));
+    } finally {
+      setSaving((s) => ({ ...s, [flagKey]: false }));
+      setTimeout(
+        () => setToasts((t) => ({ ...t, [flagKey]: "" })),
+        2000,
+      );
+    }
+  };
+
+  const loading = values === null;
+
+  return (
+    <div
+      className="rounded-2xl mb-4 overflow-hidden"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="tenant-automation-toggles-section"
+    >
+      <div
+        className="px-4 py-3 border-b flex items-center justify-between gap-3 flex-wrap"
+        style={{
+          borderColor: colors.border,
+          backgroundColor: colors.surfaceSecondary,
+        }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Sparkles size={14} style={{ color: colors.brand }} />
+          <div
+            className="text-sm font-bold"
+            style={{ color: colors.onSurface }}
+          >
+            Automated customer notifications
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => nav("/settings/notifications/templates")}
+          className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg"
+          style={{
+            color: colors.brand,
+            backgroundColor: colors.brandTertiary || "transparent",
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="tenant-automation-customize-templates-link"
+        >
+          Customize templates <ChevronRight size={12} />
+        </button>
+      </div>
+      {_P2_10E_FLAGS.map((f) => {
+        const on = Boolean(values?.[f.key]);
+        const isSaving = Boolean(saving[f.key]);
+        const toast = toasts[f.key] || "";
+        return (
+          <div
+            key={f.key}
+            className="px-4 py-3 border-b flex items-center justify-between gap-3"
+            style={{ borderColor: colors.border }}
+            data-testid={`tenant-toggle-${f.testidSuffix}-row`}
+          >
+            <div className="min-w-0">
+              <div
+                className="text-sm font-semibold"
+                style={{ color: colors.onSurface }}
+              >
+                {f.label}
+              </div>
+              <p
+                className="text-xs mt-0.5"
+                style={{ color: colors.muted }}
+              >
+                {f.description}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {toast ? (
+                <span
+                  className="text-[10px] font-semibold px-2 py-1 rounded"
+                  style={{
+                    backgroundColor:
+                      toast === "Saved" ? "#DCFCE7" : "#FEE2E2",
+                    color:
+                      toast === "Saved" ? "#166534" : "#991B1B",
+                  }}
+                  data-testid={`tenant-toggle-${f.testidSuffix}-toast`}
+                >
+                  {toast}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                onClick={() => flip(f.key)}
+                disabled={loading || isSaving}
+                className="relative inline-flex items-center h-6 w-11 rounded-full transition-colors"
+                style={{
+                  backgroundColor: on ? colors.brand : "#D1D5DB",
+                  opacity: loading ? 0.5 : 1,
+                  cursor: loading ? "wait" : "pointer",
+                }}
+                data-testid={`tenant-toggle-${f.testidSuffix}`}
+              >
+                <span
+                  className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"
+                  style={{
+                    transform: `translateX(${on ? 22 : 2}px)`,
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

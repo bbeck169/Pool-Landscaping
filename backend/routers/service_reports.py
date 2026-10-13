@@ -1698,6 +1698,30 @@ async def submit_service_report(
         # ``test_sms_body_contains_no_html_or_image_references`` in
         # ``test_p45_visit_summary_dedup_and_absolute_urls.py``.
         # ──────────────────────────────────────────────────────────
+        # ── P2 #10e · Feb-2026 — tenant-wide kill switch ──────────
+        # Default True on unset; admin opts out via
+        # ``PATCH /tenants/mine/settings {completion_followup_sms_enabled: false}``.
+        # When False, the background task returns before any DB
+        # work, deny-list scan, or RC send — mirrors the gate posture
+        # of ``services.lead_conversion_notifications::_send_welcome_email``.
+        try:
+            from services.completion_sms_template import (
+                should_send_completion_followup_sms,
+            )
+            if not await should_send_completion_followup_sms(_tid):
+                await db.service_reports.update_one(
+                    {"tenant_id": _tid, "job_id": _jid, "tech_id": _uid},
+                    {"$set": {"customer_notified.sms_status":
+                                "tenant_disabled"}},
+                )
+                return
+        except Exception as _gate_exc:  # noqa: BLE001
+            # Fail-open posture — a gate-helper failure must never
+            # blank the SMS. Log + fall through to the normal path.
+            logger.warning(
+                "[task-u] completion-sms gate helper failed, falling "
+                "through to send: %s", _gate_exc,
+            )
         try:
             customer = await db.customers.find_one(
                 {"id": _job.get("customer_id"), "tenant_id": _tid},

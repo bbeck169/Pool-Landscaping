@@ -550,6 +550,17 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
             doc_type, inv.get("id"),
         )
         return False
+    # ── P2 #10e · Feb-2026 — tenant-wide kill switch ──────────────
+    # Default True on unset; admin opts out via
+    # ``PATCH /tenants/mine/settings {invoice_past_due_enabled: false}``.
+    # When False, we return before any Resend call, deny-list scan,
+    # or customer lookup — mirrors the gate posture of
+    # ``services.lead_conversion_notifications::_send_welcome_email``.
+    _tid = inv.get("tenant_id")
+    if _tid:
+        from services.tenant_automation_gates import automation_enabled
+        if not await automation_enabled(_tid, "invoice_past_due_enabled"):
+            return False
     if not RESEND_API_KEY:
         logger.info("Resend not configured — skipping invoice reminder email.")
         return False
@@ -743,6 +754,17 @@ async def send_estimate_reminder_email(inv: dict, tenant: dict,
             doc_type, inv.get("id"),
         )
         return False
+    # ── P2 #10e · Feb-2026 — tenant-wide kill switch ──────────────
+    # Default True on unset; admin opts out via
+    # ``PATCH /tenants/mine/settings {estimate_reminder_enabled: false}``.
+    # When False, we return before any Resend call, deny-list scan,
+    # or customer lookup — mirrors the gate posture of
+    # ``services.lead_conversion_notifications::_send_welcome_email``.
+    _tid = inv.get("tenant_id")
+    if _tid:
+        from services.tenant_automation_gates import automation_enabled
+        if not await automation_enabled(_tid, "estimate_reminder_enabled"):
+            return False
     if not RESEND_API_KEY:
         logger.info(
             "Resend not configured — skipping estimate reminder email.",
