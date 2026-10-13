@@ -556,6 +556,40 @@ async def _handle_invoice_create(op: _SyncOp, tenant_id: str, user_id: str) -> d
         logger.warning(
             "[mobile_sync] invoice.create numbering fallback: %s", e)
         await db.quotes.insert_one(doc)
+    # TD-22 · Feb-2026 — long-tail wire-in for credit auto-apply.
+    # Mobile sync processes a batch of ops serially; adding a
+    # synchronous credit-sweep (hundreds of ms per invoice × N
+    # invoices in a batch) would noticeably increase sync time
+    # for techs on flaky networks. Fire-and-forget via
+    # ``asyncio.create_task`` so the mobile client gets its
+    # response immediately. The sweep runs inside the request
+    # loop so logs still correlate; failures are swallowed via
+    # the task's inner try/except.
+    async def _credit_apply_task(_tid, _cid, _iid):
+        try:
+            from services.credit_apply import (
+                apply_credit_to_customer_open_invoices,
+            )
+            await apply_credit_to_customer_open_invoices(
+                db, _tid, _cid, exclude_invoice_ids=[_iid],
+            )
+        except Exception as _ca_exc:  # noqa: BLE001
+            logger.warning(
+                "credit_apply.failed site=mobile_sync.invoice_create "
+                "tenant=%s invoice=%s error=%r",
+                _tid, _iid, _ca_exc,
+            )
+    try:
+        import asyncio as _asyncio
+        _asyncio.create_task(_credit_apply_task(
+            tenant_id, doc.get("customer_id"), doc.get("id"),
+        ))
+    except Exception as _sched_exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.schedule_failed site=mobile_sync.invoice_create "
+            "tenant=%s invoice=%s error=%r",
+            tenant_id, doc.get("id"), _sched_exc,
+        )
     return {"server_id": op.entity_id, "server_ts": now_iso(),
               "invoice_number": doc.get("invoice_number")}
 

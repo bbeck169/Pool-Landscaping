@@ -193,6 +193,33 @@ async def run_monthly_chem_billing():
                 await db.quotes.delete_one({"id": inv["id"]})
                 continue
             await db.quotes.update_one({"id": inv["id"]}, {"$set": {"status": "sent", "due_date": due}})
+            # TD-22 · Feb-2026 — long-tail wire-in for credit
+            # auto-apply.  ``run_monthly_chem_billing`` promotes
+            # chemistry drafts (status=draft → sent) that were
+            # accrued over the month. Credit-apply would no-op on
+            # drafts (status in _BLOCKED_INVOICE_STATUSES), so we
+            # fire the sweep NOW — right after the promotion —
+            # when the invoice becomes a live open balance that
+            # can legitimately absorb credit. Inline + non-
+            # blocking try/except; cron context so latency is
+            # not user-facing. Excludes the just-promoted invoice
+            # from the sweep so creation-time credit and the
+            # pre-existing-opens sweep stay orthogonal.
+            try:
+                from services.credit_apply import (
+                    apply_credit_to_customer_open_invoices,
+                )
+                await apply_credit_to_customer_open_invoices(
+                    db, inv.get("tenant_id"),
+                    inv.get("customer_id"),
+                    exclude_invoice_ids=[inv.get("id")],
+                )
+            except Exception as _ca_exc:  # noqa: BLE001
+                logger.warning(
+                    "credit_apply.failed site=run_monthly_chem_billing "
+                    "tenant=%s invoice=%s error=%r",
+                    inv.get("tenant_id"), inv.get("id"), _ca_exc,
+                )
             cid = inv.get("customer_id")
             total = inv.get("total", 0)
             # Fully hands-off: charge the card/ACH on file if present, else send a payable invoice.

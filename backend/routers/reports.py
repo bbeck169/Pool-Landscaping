@@ -700,6 +700,29 @@ async def run_all_due_billing_plans(user: dict = Depends(require_admin)):
                 await db.quotes.insert_one(invoice)
         else:
             await db.quotes.insert_one(invoice)
+        # TD-22 · Feb-2026 — long-tail wire-in for credit auto-apply.
+        # ``run_all_due_billing_plans`` is a cron that iterates every
+        # due plan and creates one invoice per plan. Fire the credit
+        # sweep inline (cron context, latency is not user-facing).
+        # Non-blocking try/except — a credit-apply failure must never
+        # halt the cron. The freshly-created invoice is excluded so
+        # creation-time credit (Phase 10 ``apply_and_persist``) and
+        # the sweep don't double-fire on the same row.
+        try:
+            from services.credit_apply import (
+                apply_credit_to_customer_open_invoices,
+            )
+            await apply_credit_to_customer_open_invoices(
+                db, invoice.get("tenant_id"),
+                invoice.get("customer_id"),
+                exclude_invoice_ids=[invoice.get("id")],
+            )
+        except Exception as _ca_exc:  # noqa: BLE001
+            logger.warning(
+                "credit_apply.failed site=run_all_due_billing_plans "
+                "tenant=%s invoice=%s error=%r",
+                invoice.get("tenant_id"), invoice.get("id"), _ca_exc,
+            )
         new_next = advance_date(p.get("next_run") or now_iso(), p.get("frequency", "monthly"))
         await db.billing_plans.update_one(
             {"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}},
