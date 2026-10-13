@@ -687,12 +687,37 @@ async def _mark_changes_requested(est: dict, tenant_id: str,
 async def accept_estimate(qid: str,
                             user: dict = Depends(get_current_user),
                             tenant: dict = Depends(get_current_tenant)):
+    # PRE-EXISTING COLLISION FLAG · Feb-2026 — this handler shares
+    # the path ``POST /quotes/{qid}/accept`` with an admin-only
+    # handler at ``routers/quotes.py`` (``require_admin_or_manager``).
+    # FastAPI matches whichever router registered first;
+    # ``estimate_viewer`` wins under the current ``main.py``
+    # include order.  Out of scope for
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE — breadcrumb only.
+    # Mirror of the identical note at ``decline_estimate`` (line
+    # ~718) added by P2 #2.
     est = await _authorised_estimate(qid, user, tenant)
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
     # Feb-2026 · Phase C — signature-before-approve gate (tenant opt-in).
     await _phase_c_assert_signature_gate(est, tenant["id"])
     await _mark_accepted(est, tenant["id"], user.get("id"))
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — fire the
+    # one-off welcome email ONLY for customer-triggered accepts.
+    # Admin "mark accepted on behalf" is intentionally NOT wired
+    # (behavioral-automation exclusion matches the decline-reason
+    # enforcement precedent).  Role gate at the caller, not inside
+    # the helper — see services/customer_welcome_email.py.
+    role_lc = (user.get("role") or "").lower()
+    if role_lc == "customer":
+        from services.customer_welcome_email import (
+            maybe_fire_welcome_on_first_accepted_quote,
+        )
+        await maybe_fire_welcome_on_first_accepted_quote(
+            tenant_id=tenant["id"],
+            customer_id=est.get("customer_id") or "",
+            quote_id=qid, source="authed_customer",
+        )
     await _notify_admins(
         tenant["id"], kind="quote_accepted",
         title=f"Estimate accepted by {est.get('customer_name') or 'customer'}",
@@ -1034,6 +1059,16 @@ async def accept_via_token(token: str = Query(...)):
     # Feb-2026 · Phase C — signature-before-approve gate.
     await _phase_c_assert_signature_gate(est, ctx["tenant"]["id"])
     await _mark_accepted(est, ctx["tenant"]["id"], f"token:{ctx['cid']}")
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — fire from
+    # the legacy query-string magic-link accept too.
+    from services.customer_welcome_email import (
+        maybe_fire_welcome_on_first_accepted_quote,
+    )
+    await maybe_fire_welcome_on_first_accepted_quote(
+        tenant_id=ctx["tenant"]["id"],
+        customer_id=est.get("customer_id") or ctx["cid"],
+        quote_id=est["id"], source="portal_token_legacy",
+    )
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_accepted",
         title="Estimate accepted via link",
@@ -1318,6 +1353,17 @@ async def phase_a_approve_via_token(token: str):
     # Feb-2026 · Phase C — signature-before-approve gate.
     await _phase_c_assert_signature_gate(est, ctx["tenant"]["id"])
     await _mark_accepted(est, ctx["tenant"]["id"], f"token:{ctx['cid']}")
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — primary
+    # customer-portal accept path (Phase A path-based).  Fires the
+    # one-off welcome email on first ever accept.
+    from services.customer_welcome_email import (
+        maybe_fire_welcome_on_first_accepted_quote,
+    )
+    await maybe_fire_welcome_on_first_accepted_quote(
+        tenant_id=ctx["tenant"]["id"],
+        customer_id=est.get("customer_id") or ctx["cid"],
+        quote_id=est["id"], source="portal",
+    )
     # Refresh + recompute so the response reflects the accepted state
     # AND the adjusted-total block (in case the customer had declined
     # some lines before approving).
