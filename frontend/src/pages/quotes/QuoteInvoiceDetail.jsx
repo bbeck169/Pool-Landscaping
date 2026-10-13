@@ -67,6 +67,11 @@ import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/c
 import { getTenantLogoUrl, DEFAULT_LOGO_ALT } from "@/lib/tenantLogo";
 // Feb-2026 · N5-T1 · PageHeader adoption sweep (Option A: replace).
 import PageHeader from "@/components/layout/PageHeader";
+// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — admin DeclineReasonBlock
+// renders ``decline_reason_category`` using the shared label map so the
+// snake_case stored value never leaks into the admin UI.  Sibling file:
+// ``backend/services/quote_decline_reasons.py``.
+import { declineReasonLabel } from "@/pages/portal/quoteDeclineReasons";
 
 // ─── Pure helpers · exported for Vitest ────────────────────────────────
 // Feb 2026 · P0/P0.5a/P1 — draft-transition fix. These are pulled out
@@ -897,6 +902,15 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
           <AdminDeclinedLinesBanner doc={doc} />
         </DeclinedLinesErrorBoundary>
       ) : null}
+
+      {/* PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — admin
+          visibility for the TOP-LEVEL decline reason (as opposed
+          to the per-line declines surfaced by
+          AdminDeclinedLinesBanner above).  Renders only when the
+          customer has declined the whole doc from the portal; the
+          structured category + text + relative-time render land
+          here so the admin sees context immediately on open. */}
+      <DeclineReasonBlock doc={doc} />
 
       {/* Feb-2026 · Theme Refresh — brand-driven header band. Mirrors
           the customer-facing shell + PDF so the admin surface reads
@@ -2410,6 +2424,89 @@ export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
   const days = Math.round(hrs / 24);
   return `Declined ${days} day${days === 1 ? "" : "s"} ago`;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — admin top-level
+// decline reason block.  Mirrors the ``admin-declined-lines-list``
+// treatment (soft-red card, red-900 text) so the two surfaces read
+// as a single visual family.  Only renders when the TOP-LEVEL quote
+// has been declined (``status === "declined"`` or ``decision ===
+// "declined"``).  Per-line declines continue to use the dedicated
+// ``admin-declined-lines-table`` surface below.
+// ═══════════════════════════════════════════════════════════════════
+export function DeclineReasonBlock({ doc }) {
+  if (!doc) return null;
+  const status = String(doc.status || "").toLowerCase();
+  const decision = String(doc.decision || "").toLowerCase();
+  if (status !== "declined" && decision !== "declined") return null;
+  // Prefer the structured pair; fall back to the legacy
+  // ``decline_reason`` so pre-ship rows still render.
+  const text = doc.decline_reason_text || doc.decline_reason || "";
+  const categoryVal = doc.decline_reason_category || "";
+  const categoryLabel = categoryVal ? declineReasonLabel(categoryVal) : "";
+  // If NEITHER a category nor any text is present (legacy admin
+  // "Mark declined" with no reason), still render the block so the
+  // declined_at timestamp surfaces — admin needs context even when
+  // the reason fields are blank.
+  const whenText = formatDeclinedTimestamp(doc.declined_at);
+  return (
+    <div
+      className="rounded-xl p-4 mb-4"
+      style={{
+        background: "#FEF2F2",
+        border: "1px solid #FECACA",
+        color: "#7F1D1D",
+      }}
+      data-testid="admin-top-level-decline-reason-block"
+    >
+      <div
+        className="text-xs uppercase font-bold tracking-wide mb-2"
+        style={{ color: "#B91C1C" }}
+      >
+        Decline Reason
+      </div>
+      <div className="flex flex-wrap items-center gap-2 mb-1">
+        {categoryLabel ? (
+          <span
+            style={{
+              display: "inline-block",
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: "#FEE2E2",
+              color: "#7F1D1D",
+            }}
+            data-testid="admin-top-level-decline-reason-category"
+          >
+            {categoryLabel}
+          </span>
+        ) : null}
+        {whenText ? (
+          <span
+            className="text-xs"
+            style={{ color: "#B91C1C" }}
+            title={doc.declined_at || ""}
+            data-testid="admin-top-level-decline-reason-at"
+          >
+            {whenText}
+          </span>
+        ) : null}
+      </div>
+      {text ? (
+        <div
+          className="text-sm"
+          style={{ color: "#7F1D1D", whiteSpace: "pre-wrap" }}
+          data-testid="admin-top-level-decline-reason-text"
+        >
+          {text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
 
 // Feb-2026 · Phase 2/C-follow-up · Isolated error boundary so a
