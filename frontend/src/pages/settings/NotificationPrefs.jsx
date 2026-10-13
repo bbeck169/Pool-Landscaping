@@ -146,6 +146,9 @@ export default function NotificationPrefs() {
           so a customer decline can be silenced entirely regardless
           of individual admins' preferences). */}
       {isAdmin ? <TenantDeclineNotifyToggle /> : null}
+      {/* WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — admin
+          kill switch for the first-accepted-quote welcome email. */}
+      {isAdmin ? <TenantWelcomeOnFirstAcceptToggle /> : null}
 
       {/* Feb-2026 · Phase C — signature-before-approve tenant gate.
           Admin-only. When enabled, customers cannot approve a
@@ -689,6 +692,125 @@ export function TenantRequireSignatureBeforeApproveToggle() {
             cursor: loading ? "wait" : "pointer",
           }}
           data-testid="tenant-require-signature-toggle"
+        >
+          <span
+            className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"
+            style={{
+              transform: `translateX(${on ? 22 : 2}px)`,
+            }}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — tenant-scoped
+ * kill switch for the one-off welcome email that fires when a
+ * customer accepts their first-ever quote.
+ *
+ * Reads / writes ``welcome_email_on_first_accepted_quote_enabled``
+ * on the tenant settings doc via the existing
+ * ``/api/tenants/mine/settings`` GET+PATCH.  Admin-only (parent
+ * gates the mount).  Mirrors ``<TenantDeclineNotifyToggle>`` + the
+ * sibling signature-required toggle in this file.
+ *
+ * Gating semantics:
+ *   * ``true``  → welcome email fires on the customer's first
+ *                 accepted quote.
+ *   * ``false`` → welcome email is suppressed.  Admin "mark
+ *                 accepted on behalf" was never a trigger.
+ *   * unset    → treated as ``true`` by the backend.
+ */
+export function TenantWelcomeOnFirstAcceptToggle() {
+  const [value, setValue] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/tenants/mine/settings");
+        setValue(Boolean(
+          r?.welcome_email_on_first_accepted_quote_enabled ?? true,
+        ));
+      } catch { setValue(true); }
+    })();
+  }, []);
+
+  const flip = async () => {
+    if (value === null || saving) return;
+    const next = !value;
+    setSaving(true);
+    setValue(next);
+    try {
+      const r = await api.patch(
+        "/tenants/mine/settings",
+        { welcome_email_on_first_accepted_quote_enabled: next },
+      );
+      setValue(Boolean(
+        r?.welcome_email_on_first_accepted_quote_enabled ?? next,
+      ));
+      setToast("Saved");
+    } catch (e) {
+      setValue(!next);
+      setToast(e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(""), 2000);
+    }
+  };
+
+  const on = Boolean(value);
+  const loading = value === null;
+
+  return (
+    <div
+      className="rounded-2xl px-4 py-3 mb-4 flex items-center justify-between gap-3"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="tenant-welcome-first-accept-row"
+    >
+      <div className="min-w-0">
+        <div
+          className="text-sm font-semibold"
+          style={{ color: colors.onSurface }}
+        >
+          Send welcome email on a customer's first accepted quote
+        </div>
+        <p className="text-xs mt-0.5" style={{ color: colors.muted }}>
+          Fires exactly once per customer, on the first ever
+          customer-triggered accept.  Admin "mark accepted on
+          behalf" never triggers this email.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {toast ? (
+          <span
+            className="text-[10px] font-semibold px-2 py-1 rounded"
+            style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+            data-testid="tenant-welcome-first-accept-toast"
+          >
+            {toast}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          onClick={flip}
+          disabled={loading || saving}
+          className="relative inline-flex items-center h-6 w-11 rounded-full transition-colors"
+          style={{
+            backgroundColor: on ? colors.brand : "#D1D5DB",
+            opacity: loading ? 0.5 : 1,
+            cursor: loading ? "wait" : "pointer",
+          }}
+          data-testid="tenant-welcome-first-accept-toggle"
         >
           <span
             className="inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform"
