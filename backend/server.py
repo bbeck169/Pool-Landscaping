@@ -891,6 +891,13 @@ if not _preview_iso_is_prod():
 # POST /api/admin/comms-diagnostics/test → admin-triggered live send
 from routers import admin_comms_diagnostics as _p0_comms_diag  # noqa: E402
 api_router.include_router(_p0_comms_diag.router)
+# P0 · Feb-2026 — Read-only recurring-jobs cadence audit endpoint.
+# GET /api/admin/diagnostics/recurring-jobs-audit?date=YYYY-MM-DD
+# Operator-run diagnostic for the "active Tue templates but no
+# jobs on the schedule" symptom. Admin-gated, strictly read-only
+# (count_documents / aggregate / find only — no writes).
+from routers import admin_recurring_jobs_audit as _p0_recurring_audit  # noqa: E402
+api_router.include_router(_p0_recurring_audit.router)
 # Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
 # 202-Accepted job pattern replacing the sync ingest that was
 # timing out on cold crawls (frontend fetch cap 30s vs 60-180s
