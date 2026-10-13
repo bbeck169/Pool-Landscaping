@@ -24,6 +24,8 @@ import {
   Waves,
   Droplet,
   TreePine,
+  Home,
+  Building2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, gradients, money } from "@/theme";
@@ -666,6 +668,58 @@ export default function AdminDashboard() {
               )}
               testId="kpi-landscaping-customers"
               tone="emerald"
+            />
+            {/* Feb-2026 · P2 #6 property pivot — property-level
+                tiles.  Render BELOW the customer-count tiles so
+                operators see customer-count THEN property-count
+                in the KPI grid.  Deep-links point to the Commit-3
+                Properties list page with the matching ``service_category``
+                filter + ``is_active=true`` so the operator lands
+                on the active cohort directly.  "Active Accounts" =
+                count of active properties across the tenant (a
+                customer with 3 active properties contributes 3).
+                These tiles ADD alongside the customer-count tiles
+                above — the customer-count semantics are preserved
+                exactly (ruling #5 from the dispatch, locked). */}
+            <KpiCard
+              icon={Building2}
+              label="Active Accounts"
+              value={data.active_accounts_count}
+              onClick={() => navigate(
+                "/properties?is_active=true",
+              )}
+              testId="kpi-active-accounts"
+              tone="violet"
+            />
+            <KpiCard
+              icon={Home}
+              label="Pool Properties"
+              value={data.pool_properties_count}
+              onClick={() => navigate(
+                "/properties?is_active=true&service_category=pool",
+              )}
+              testId="kpi-pool-properties"
+              tone="sky"
+            />
+            <KpiCard
+              icon={Home}
+              label="Landscaping Properties"
+              value={data.landscaping_properties_count}
+              onClick={() => navigate(
+                "/properties?is_active=true&service_category=landscaping",
+              )}
+              testId="kpi-landscaping-properties"
+              tone="emerald"
+            />
+            <KpiCard
+              icon={Home}
+              label="Both Services Properties"
+              value={data.both_properties_count}
+              onClick={() => navigate(
+                "/properties?is_active=true&service_category=both",
+              )}
+              testId="kpi-both-properties"
+              tone="amber"
             />
           </>
         ) : (
