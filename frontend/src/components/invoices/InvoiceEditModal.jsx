@@ -122,9 +122,15 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // Feb-2026 · Invoice inline edit sprint — per-row error state so
-  // backend category errors surface inline on the offending row.
-  const [rowErrors, setRowErrors] = useState({});
+  // Feb-2026 · invoice-category hard-block removal (parent SHA
+  // ec88141ea + FE SHA 222350ab9) — ``rowErrors`` state was the
+  // red-row-highlight + inline red-text handler for the backend's
+  // ``category_required`` / ``archived_category`` 400s on
+  // ``PATCH /quotes/{id}``.  The backend now soft-passes those two
+  // codes (``strict=False`` on ``validate_line_item_categories`` +
+  // ``validate_line_item_k71_categories``), so the branch is dead
+  // and removed.  Any non-category save error still surfaces via
+  // the shared ``error`` setter in the catch below.
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -180,7 +186,6 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
   const doSubmit = async () => {
     setBusy(true);
     setError("");
-    setRowErrors({});
     try {
       const payload = { ...form };
       // Coerce numeric strings back to numbers for the backend.
@@ -217,32 +222,23 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
       const res = await api.patch(`/quotes/${invoice.id}`, payload);
       onSaved?.(res);
     } catch (e) {
-      // Feb-2026 · Invoice inline edit sprint — parse structured
-      // category error and surface INLINE on the offending row.
-      const detail = e?.data?.detail || {};
-      const code = detail?.error_code || detail?.error;
-      const idx = typeof detail?.line_index === "number" ? detail.line_index : null;
-      if (idx !== null && (code === "archived_category"
-                            || code === "category_invalid"
-                            || code === "category_required")) {
-        setRowErrors({
-          [idx]: {
-            reason: code === "category_required" ? "category_required" : "archived_category",
-            attempted: detail?.attempted_category || form.line_items[idx]?.category,
-          },
-        });
-        setError(code === "category_required"
-          ? "Category is required on every line. Fix the highlighted row."
-          : `Category '${detail?.attempted_category || ""}' is archived. Choose an active category on the highlighted row.`);
-      } else {
-        const legacyCode = e?.data?.detail?.error || e?.data?.error;
-        const msg = legacyCode === "invoice_number_conflict"
-          ? "That invoice number is already in use. Pick a different one."
-          : legacyCode === "requires_confirmation"
-          ? "This invoice was sent — please acknowledge the confirmation dialog."
-          : e?.message || "Save failed. Please try again.";
-        setError(msg);
-      }
+      // Feb-2026 · invoice-category hard-block removal (parent SHA
+      // ec88141ea + FE SHA 222350ab9) — the ``category_required``
+      // / ``archived_category`` / ``category_invalid`` branch that
+      // used to live here (setRowErrors + "Category is required on
+      // every line. Fix the highlighted row.") is removed because
+      // the backend now soft-passes those codes on
+      // ``PATCH /quotes/{id}``.  Any surviving non-category save
+      // failure still falls through to the legacy-code handler
+      // below (invoice_number_conflict, requires_confirmation,
+      // generic Error.message).
+      const legacyCode = e?.data?.detail?.error || e?.data?.error;
+      const msg = legacyCode === "invoice_number_conflict"
+        ? "That invoice number is already in use. Pick a different one."
+        : legacyCode === "requires_confirmation"
+        ? "This invoice was sent — please acknowledge the confirmation dialog."
+        : e?.message || "Save failed. Please try again.";
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -428,11 +424,9 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                 </thead>
                 <tbody data-testid="invoice-edit-line-items">
                   {(form.line_items || []).map((li, i) => {
-                    const rowErr = rowErrors[i];
                     return (
                     <tr key={i} data-testid={`invoice-edit-line-${i}`}
-                        style={{ borderTop: `1px solid ${colors.border}`,
-                                  background: rowErr ? "#FEF2F2" : undefined }}>
+                        style={{ borderTop: `1px solid ${colors.border}` }}>
                       <td className="px-2 py-1">
                         {/* Phase P16.1 · Feb-2026 — Master Service
                              combobox in place of the raw description
@@ -478,33 +472,25 @@ export default function InvoiceEditModal({ invoice, signInfo, onClose, onSaved }
                               : "Also add to pricebook"}
                           </span>
                         </label>
-                        {rowErr ? (
-                          <div className="text-[11px] font-semibold mt-1"
-                                style={{ color: "#7F1D1D" }}
-                                data-testid={`invoice-edit-line-${i}-row-error`}>
-                            {rowErr.reason === "category_required"
-                              ? "Category required on this line."
-                              : `Category '${rowErr.attempted || ""}' is archived — pick an active one.`}
-                          </div>
-                        ) : null}
+                        {/* Feb-2026 · invoice-category hard-block
+                             removal (parent SHA ec88141ea + FE SHA
+                             222350ab9) — the inline red
+                             ``invoice-edit-line-${i}-row-error``
+                             div used to live here. Removed because
+                             the backend no longer returns
+                             ``category_required`` /
+                             ``archived_category`` 400s. Yellow
+                             soft-warning chips still render via
+                             the CategoryPicker's own ``required``
+                             prop. */}
                       </td>
                       <td className="px-2 py-1">
                         <CategoryPicker
                           value={li.category}
-                          onChange={(v) => {
-                            patchItem(i, { category: v });
-                            setRowErrors((prev) => {
-                              if (!prev[i]) return prev;
-                              const next = { ...prev };
-                              delete next[i];
-                              return next;
-                            });
-                          }}
+                          onChange={(v) => patchItem(i, { category: v })}
                           required
                           testid={`invoice-edit-line-${i}-cat`}
                           placeholder="Choose…"
-                          invalidReason={rowErr?.reason || null}
-                          autoFocus={!!rowErr}
                         />
                       </td>
                       <td className="px-2 py-1 text-right">
