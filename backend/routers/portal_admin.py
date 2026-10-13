@@ -187,14 +187,44 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
                 {"deleted_at": False},
             ],
         },
-        {"_id": 0, "id": 1, "customer_id": 1},
+        {"_id": 0, "id": 1, "customer_id": 1, "active": 1,
+          "password_hash": 1, "last_portal_login_at": 1,
+          "created_at": 1},
     )
     if collision:
         other_uid = (collision.get("id") or "")
         other_cid = (collision.get("customer_id") or "")
+        # Phase 1 resolve-duplicate · Feb-2026 — enrich the 409
+        # response with a ``conflict`` object so the admin UI can
+        # offer a "View conflicting customer" link + the unbind
+        # workflow.  Legacy fields (``code``, ``message``,
+        # ``existing_*_prefix``) are preserved verbatim so
+        # pre-FE-update consumers continue to work.
+        other_cust = await db.customers.find_one(
+            {"id": other_cid, "tenant_id": tenant_id},
+            {"_id": 0, "name": 1, "email": 1},
+        ) or {}
+        has_portal_pw = bool((collision.get("password_hash") or "").strip())
+        has_active_session = bool(
+            collision.get("active", True)
+            and not collision.get("deleted_at")
+        )
+        conflict_payload = {
+            "customer_id": other_cid,
+            "customer_name": other_cust.get("name") or "",
+            # ``email_bound_at`` is not tracked historically on the
+            # users doc — fall back to ``created_at`` which stamps
+            # the row's INSERT (first portal-invite send).
+            "email_bound_at": collision.get("created_at") or None,
+            "has_active_portal_session": has_active_session,
+            "has_portal_password_set": has_portal_pw,
+        }
         raise HTTPException(
             status_code=409,
             detail={
+                # New canonical error code (Phase 1 resolve-dup).
+                "error_code": "email_bound_to_other_customer",
+                # Legacy — pre-FE-update consumers.
                 "code": "portal_user_email_collision",
                 "message": (
                     "This email is already linked to another "
@@ -203,6 +233,7 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
                 ),
                 "existing_user_id_prefix": other_uid[:8],
                 "existing_customer_id_prefix": other_cid[:8],
+                "conflict": conflict_payload,
             },
         )
     if existing:
@@ -1116,6 +1147,164 @@ async def portal_revoke(cid: str, user: dict = Depends(require_admin),
     except Exception:
         pass
     return {"ok": True, "revoked": res.modified_count}
+
+
+# ══════════════════════════════════════════════════════════════════
+# Resolve-duplicate · Phase 1 · Feb-2026 — admin unbind-portal-email.
+#
+# Companion to the ``_upsert_customer_user`` 409 guard above.  When
+# a portal-invite send blows up with
+# ``error_code=email_bound_to_other_customer``, the admin UI drives
+# the resolution via two paths:
+#
+#   • Option A (THIS endpoint) — remove the email from the
+#     CONFLICTING customer's record so the invite target can claim
+#     it on retry.
+#   • Option B (deferred to Phase 2) — merge both records.
+#
+# Session invalidation path:
+#   This app's auth is stateless-JWT (``backend/utils.py:105``).
+#   ``get_current_user`` hard-401s on any user with
+#   ``deleted_at`` set (``utils.py:135``), so soft-deleting the
+#   ``users`` row IS the invalidation mechanism — existing tokens
+#   stop working on the very next request.  No separate
+#   ``db.sessions`` / ``db.revoked_tokens`` collection needed.
+# ══════════════════════════════════════════════════════════════════
+
+
+class _UnbindPortalEmailBody(BaseModel):
+    confirmation_name: str
+
+
+def _collapse_ws(s: str) -> str:
+    return " ".join((s or "").split()).strip().lower()
+
+
+@router.post("/customers/{cid}/unbind-portal-email")
+async def unbind_portal_email(
+    cid: str,
+    body: _UnbindPortalEmailBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 1 resolve-duplicate — admin unbinds the portal email
+    from a conflicting customer so the original invite target can
+    claim the email on retry.
+
+    Behavior:
+      1. Tenant-scope guard — cross-tenant ``cid`` → 404.
+      2. ``confirmation_name`` must match the conflicting
+         customer's name (case-insensitive, whitespace-collapsed);
+         mismatch → 400 ``confirmation_name_mismatch``.
+      3. Soft-delete the portal ``users`` row (sets ``deleted_at``
+         + ``deleted_reason`` + ``active=False``).  Any live JWT
+         for that user 401's on the very next request thanks to
+         ``get_current_user``'s deleted_at check.
+      4. Null the ``customers.email`` denorm + append the previous
+         binding to ``customers._portal_email_history`` for
+         forensics.
+      5. Audit-log the action under
+         ``event=portal_email.unbound_by_admin``.
+    """
+    tid = tenant["id"]
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tid},
+        {"_id": 0, "id": 1, "name": 1, "email": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+
+    expected = _collapse_ws(cust.get("name") or "")
+    supplied = _collapse_ws(body.confirmation_name or "")
+    if not expected or supplied != expected:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "confirmation_name_mismatch",
+                "message": (
+                    "The typed name does not match the conflicting "
+                    "customer's name. Type the name exactly as "
+                    "shown to confirm."
+                ),
+            },
+        )
+
+    released_email = (cust.get("email") or "").strip().lower()
+
+    # 1. Soft-delete the portal users row(s) for this customer.
+    #    Scope: role=customer, same tenant, not already deleted.
+    now_s = now_iso()
+    users_match = {
+        "customer_id": cid,
+        "tenant_id": tid,
+        "role": "customer",
+        "$or": [
+            {"deleted_at": None},
+            {"deleted_at": {"$exists": False}},
+            {"deleted_at": False},
+        ],
+    }
+    users_before = await db.users.find(
+        users_match,
+        {"_id": 0, "id": 1, "active": 1, "last_portal_login_at": 1},
+    ).to_list(50)
+    sessions_candidates = sum(
+        1 for u in users_before if bool(u.get("active", True))
+    )
+    upd = await db.users.update_many(
+        users_match,
+        {"$set": {
+            "deleted_at": now_s,
+            "deleted_reason": (
+                "admin_unbind_portal_email_resolve_duplicate"
+            ),
+            "active": False,
+        }},
+    )
+
+    # 2. Clear email on customers doc + archive to history.
+    history_entry = {
+        "email": released_email or None,
+        "unbound_at": now_s,
+        "unbound_by": (user or {}).get("id"),
+        "reason": "resolve_duplicate_portal_invite",
+    }
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tid},
+        {
+            "$set": {"email": None, "has_login": False},
+            "$push": {"_portal_email_history": history_entry},
+        },
+    )
+
+    # 3. Audit log.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tid,
+            "event": "portal_email.unbound_by_admin",
+            "action": "portal_email.unbound_by_admin",
+            "actor_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "target_customer_id": cid,
+            "released_email": released_email or None,
+            "session_invalidated": bool(sessions_candidates),
+            "users_soft_deleted": int(upd.modified_count or 0),
+            "created_at": now_s,
+        })
+    except Exception:
+        logger.exception(
+            "[unbind-portal-email] audit log insert failed for "
+            "tenant=%s cid=%s", tid, cid,
+        )
+
+    return {
+        "status": "ok",
+        "released_email": released_email or None,
+        "conflicting_customer_id": cid,
+        "portal_sessions_invalidated": sessions_candidates,
+        "users_soft_deleted": int(upd.modified_count or 0),
+    }
 
 
 # ─── Feb-2026 Portal Access ship ──────────────────────────────────────
