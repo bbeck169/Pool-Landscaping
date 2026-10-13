@@ -70,11 +70,22 @@ module.exports = {
           to: {
             height: '0'
           }
+        },
+        // Feb-2026 P2 interrupt · Quick Access long-press → edit-mode
+        // UX. Ultra-subtle ±1.5° jiggle signals the mode is on
+        // without aping the iOS home-screen aesthetic. Honored
+        // automatically under ``prefers-reduced-motion: reduce`` via
+        // the ``motion-reduce:animate-none`` Tailwind utility applied
+        // at the component layer in QuickPinsRail.jsx.
+        'pin-jiggle': {
+          '0%, 100%': { transform: 'rotate(-1.5deg)' },
+          '50%':       { transform: 'rotate(1.5deg)' }
         }
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
-        'accordion-up': 'accordion-up 0.2s ease-out'
+        'accordion-up': 'accordion-up 0.2s ease-out',
+        'pin-jiggle': 'pin-jiggle 0.6s ease-in-out infinite'
       }
     }
   },
