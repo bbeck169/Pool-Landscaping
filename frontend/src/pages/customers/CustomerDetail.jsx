@@ -42,6 +42,8 @@ import NotesHistoryList from "@/components/customers/NotesHistoryList";
 import { PhoneLink, AddressLink } from "@/components/customer";
 import CustomerMultiContactEditor from "@/components/customers/CustomerMultiContactEditor";
 import HardDeleteModal from "@/components/hard_delete/HardDeleteModal";
+import ResolveDuplicateDialog
+  from "@/components/customers/ResolveDuplicateDialog";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
 import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
@@ -75,9 +77,25 @@ import { CustomerCreditsPanel, AdjustDialog } from "./CustomerCreditsPage";
 // Exported so the dedicated vitest spec for the 409 collision
 // handler (``PortalInvite.collision.test.jsx``) can mount the
 // button in isolation without the full CustomerDetail tree.
+// Phase 1 resolve-duplicate · Feb-2026 — cap the auto-retry chain so
+// a pathological N-customer email collision can't infinite-loop the
+// admin. The dialog re-opens with the NEXT conflicting record on
+// subsequent 409s up to this bound; after that we surface a plain
+// error and hand control back to the admin.
+const _RESOLVE_DUP_MAX_AUTO_RETRIES = 2;
+
 export function PortalInviteQuickAction({ customer, onToast }) {
   const [busy, setBusy] = React.useState(false);
   const [payload, setPayload] = React.useState(null);
+  // Phase 1 resolve-duplicate · Feb-2026 — enriched 409 state.
+  // ``conflict`` holds the ``conflict`` object from the backend
+  // 409 payload; when non-null the component renders the rich
+  // error UI (two buttons) under the primary action instead of a
+  // bare toast.  ``dialogOpen`` + ``retryCount`` back the auto-
+  // retry flow seeded off the ResolveDuplicateDialog callback.
+  const [conflict, setConflict] = React.useState(null);
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const retryCountRef = React.useRef(0);
   const email = (
     (customer.emails || []).find((e) => e && e.address)?.address
     || customer.email
@@ -85,32 +103,54 @@ export function PortalInviteQuickAction({ customer, onToast }) {
   );
   const hasEmail = !!email.trim();
 
+  const _sendInvite = React.useCallback(async () => {
+    // Returns ``{ok: true}`` on success (toast + payload side-
+    // effects handled here), or ``{ok: false, conflict}`` on 409
+    // collision so callers (initial send + auto-retry) can decide
+    // what to render.  Any other error throws.
+    const r = await api.post(`/customers/${customer.id}/portal-invite`);
+    if (r?.emailed) {
+      onToast?.({ tone: "success",
+                   message: `Portal invite email sent to ${r.email}` });
+      setPayload(null);
+    } else if (r?.password) {
+      setPayload({ link: r.login_url, email: r.email, password: r.password });
+      onToast?.({ tone: "info",
+                   message: "Portal invite link ready — share it manually" });
+    } else {
+      onToast?.({ tone: "success", message: "Portal invite sent" });
+      setPayload(null);
+    }
+    return { ok: true };
+  }, [customer.id, onToast]);
+
   const send = async () => {
     setBusy(true);
     setPayload(null);
+    setConflict(null);
+    retryCountRef.current = 0;
     try {
-      const r = await api.post(`/customers/${customer.id}/portal-invite`);
-      if (r?.emailed) {
-        onToast?.({ tone: "success",
-                     message: `Portal invite email sent to ${r.email}` });
-      } else if (r?.password) {
-        setPayload({ link: r.login_url, email: r.email, password: r.password });
-        onToast?.({ tone: "info",
-                     message: "Portal invite link ready — share it manually" });
-      } else {
-        onToast?.({ tone: "success", message: "Portal invite sent" });
-      }
+      await _sendInvite();
     } catch (e) {
-      // PORTAL-INVITE-EMAIL-COLLISION-FIX · Feb-2026 (P0 #1 + #2).
+      // PORTAL-INVITE-EMAIL-COLLISION-FIX · Feb-2026 (P0 #1 + #2) +
+      // Phase 1 resolve-duplicate · Feb-2026.
       // The backend ``_upsert_customer_user`` guard raises 409 with
-      // ``detail.code === "portal_user_email_collision"`` when the
-      // customer's email is already linked to a DIFFERENT customer
-      // record in the same tenant.  Surface a human-readable
-      // message so the admin can act (merge/delete the duplicate
-      // customer record) instead of staring at a generic error toast.
+      // the new canonical ``detail.error_code=email_bound_to_other
+      // _customer`` AND the legacy ``detail.code=portal_user_email
+      // _collision`` (kept for pre-FE-update consumers).  Either
+      // marker triggers the rich conflict UI; the new ``conflict``
+      // object (if present) powers the ResolveDuplicateDialog.
       const detail = e?.data?.detail;
-      if (e?.status === 409 && detail?.code === "portal_user_email_collision") {
-        const existingCidPrefix = detail.existing_customer_id_prefix || "";
+      const isCollision =
+        e?.status === 409
+        && detail && (
+          detail.error_code === "email_bound_to_other_customer"
+          || detail.code === "portal_user_email_collision"
+        );
+      if (isCollision) {
+        const existingCidPrefix =
+          detail.existing_customer_id_prefix || "";
+        setConflict(detail.conflict || null);
         onToast?.({
           tone: "error",
           message:
@@ -127,6 +167,59 @@ export function PortalInviteQuickAction({ customer, onToast }) {
       setBusy(false);
     }
   };
+
+  const handleResolved = React.useCallback(async (releasedEmail) => {
+    // The dialog has just unbound the conflicting customer's email.
+    // Auto-retry the invite — if it lands in another collision
+    // (a third customer in the chain) re-open the dialog with the
+    // new conflict, up to _RESOLVE_DUP_MAX_AUTO_RETRIES times.
+    setDialogOpen(false);
+    retryCountRef.current += 1;
+    setBusy(true);
+    try {
+      await _sendInvite();
+      onToast?.({
+        tone: "success",
+        message: `Email released and invite sent to ${releasedEmail || email}.`,
+        testid: "resolve-duplicate-auto-retry-success-toast",
+      });
+      setConflict(null);
+    } catch (e) {
+      const detail = e?.data?.detail;
+      const isCollision =
+        e?.status === 409
+        && detail && (
+          detail.error_code === "email_bound_to_other_customer"
+          || detail.code === "portal_user_email_collision"
+        );
+      if (
+        isCollision
+        && retryCountRef.current < _RESOLVE_DUP_MAX_AUTO_RETRIES
+      ) {
+        // Chain: open dialog on the NEXT conflicting record.
+        setConflict(detail.conflict || null);
+        setDialogOpen(true);
+      } else if (isCollision) {
+        onToast?.({
+          tone: "error",
+          message:
+            "Email released, but another customer still has it. "
+            + "Click 'Resend invite' to retry manually.",
+          testid: "resolve-duplicate-retry-cap-toast",
+        });
+        setConflict(detail.conflict || null);
+      } else {
+        onToast?.({
+          tone: "error",
+          message:
+            "Email released. Click 'Resend invite' to retry — "
+            + (e?.message || "the auto-retry failed."),
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [_sendInvite, email, onToast]);
 
   return (
     <div data-testid="cd-portal-invite-quick-action">
@@ -156,6 +249,47 @@ export function PortalInviteQuickAction({ customer, onToast }) {
           {busy ? "Sending…" : "Send Portal Invite"}
         </Button>
       </div>
+      {conflict ? (
+        <div
+          className="mt-2 rounded-xl p-3 space-y-2"
+          style={{
+            backgroundColor: "#FEF2F2",
+            color: "#7F1D1D",
+            border: "1px solid #FECACA",
+          }}
+          data-testid="portal-invite-collision-panel"
+        >
+          <div className="text-sm font-semibold">
+            This email is already linked to another customer:
+            {" "}<span data-testid="portal-invite-collision-name">
+              {conflict.customer_name || "(unknown)"}
+            </span>.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={`/customers/${conflict.customer_id}`}
+              className="inline-flex items-center text-sm font-semibold px-3 py-1.5 rounded-lg"
+              style={{
+                backgroundColor: colors.brand,
+                color: "#fff",
+              }}
+              data-testid="portal-invite-view-conflicting-btn"
+            >
+              View conflicting customer →
+            </Link>
+            <Button
+              variant="ghost"
+              onClick={() => setDialogOpen(true)}
+              testid="portal-invite-resolve-duplicate-btn"
+            >
+              Resolve duplicate…
+            </Button>
+          </div>
+          <div className="text-xs opacity-80">
+            This invite is blocked until the duplicate is resolved.
+          </div>
+        </div>
+      ) : null}
       {payload ? (
         <div className="mt-2 rounded-lg p-3 text-sm"
              style={{ backgroundColor: colors.brandTertiary,
@@ -172,6 +306,23 @@ export function PortalInviteQuickAction({ customer, onToast }) {
           <div>Temp password: <code>{payload.password}</code></div>
         </div>
       ) : null}
+      <ResolveDuplicateDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        currentCustomer={{
+          id: customer.id,
+          name: customer.name,
+          email,
+          phone:
+            (customer.phones && customer.phones[0]?.number)
+            || customer.phone
+            || "",
+          address: customer.address || "",
+          created_at: customer.created_at || "",
+        }}
+        conflict={conflict}
+        onResolved={handleResolved}
+      />
     </div>
   );
 }
