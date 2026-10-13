@@ -37,6 +37,7 @@ const TenantPicker = React.lazy(() => import(/* webpackChunkName: "p-tenantpicke
 const AdminDashboard = React.lazy(() => import(/* webpackChunkName: "p-admin-dashboard" */ "@/pages/admin/Dashboard"));
 import Placeholder from "@/pages/Placeholder";
 const CustomersList = React.lazy(() => import(/* webpackChunkName: "p-customers-customerslist" */ "@/pages/customers/CustomersList"));
+const PropertiesListPage = React.lazy(() => import(/* webpackChunkName: "p-admin-properties-propertieslistpage" */ "@/pages/admin/properties/PropertiesListPage"));
 const CustomerForm = React.lazy(() => import(/* webpackChunkName: "p-customers-customerform" */ "@/pages/customers/CustomerForm"));
 const CustomerDetail = React.lazy(() => import(/* webpackChunkName: "p-customers-customerdetail" */ "@/pages/customers/CustomerDetail"));
 const CustomerChemistry = React.lazy(() => import(/* webpackChunkName: "p-customers-customerchemistry" */ "@/pages/customers/CustomerChemistry"));
@@ -924,6 +925,7 @@ export default function App() {
 
             {/* Customers (Phase 2 / Phase 56.2 cohorts) */}
             <Route path="customers" element={<NoTech><CustomersList /></NoTech>} />
+            <Route path="properties" element={<NoTech><PropertiesListPage /></NoTech>} />
             <Route path="customers/active" element={<NoTech><CustomersList /></NoTech>} />
             <Route path="customers/inactive" element={<NoTech><CustomersList /></NoTech>} />
             <Route path="customers/new" element={<NoTech><CustomerForm /></NoTech>} />
