@@ -445,6 +445,33 @@ async def _run_pipeline(
             {"id": batch_id, "tenant_id": tenant_id},
             {"$set": {"stage": "persisting"}},
         )
+        # Feb-2026 · PDF Import Hub bug-fixes · see
+        # ``services/imports/pdf_preview_post.py`` module header.
+        # Three defensive concerns run over every mapper report
+        # before the preview envelope is persisted:
+        #   • Bug 1 — force ``quote_in.doc_type`` to the operator's
+        #     explicit ``hint_doc_kind`` when provided (classifier
+        #     output stashed on ``auto_detected_doc_type`` for
+        #     forensics).
+        #   • Bug 3 — null ``customer_name`` + flag low-confidence
+        #     when it looks like the document number.
+        #   • Bug 2 defensive — WARN on line_total/subtotal
+        #     mismatch > $0.01 and stamp the delta on quote_in so
+        #     the FE expand panel surfaces the amber warning.
+        try:
+            from services.imports.pdf_preview_post import (
+                apply_preview_post_processing,
+            )
+            apply_preview_post_processing(
+                mapper_previews,
+                hint_doc_kind=hint_doc_kind,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[pdf-import] preview post-processing failed — "
+                "proceeding with raw mapper output; tenant=%s "
+                "batch=%s", tenant_id, batch_id,
+            )
         duration_ms = int((time.perf_counter() - start_ms) * 1000)
         await db.import_batches.update_one(
             {"id": batch_id, "tenant_id": tenant_id},
