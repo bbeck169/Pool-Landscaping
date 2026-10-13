@@ -377,6 +377,15 @@ async def backfill_orphans(
     ``last_generated_through`` is set to the cluster's last
     pre-materialized occurrence so the nightly generator won't
     double-book any occurrence already in ``db.jobs``.
+
+    P2 #8 · Feb-2026 — Deliberately NOT gated by the nightly cron's
+    ``recurring_job.cron.batch_failure_halt`` guard. Admin backfill
+    is an operator-triggered recovery flow; honoring the halt here
+    would create a chicken-and-egg trap where ops can't backfill
+    the same window that originally tripped the halt. The parallel
+    service-level walker (``services.recurring_jobs_backfill.
+    run_horizon_backfill``) already tracks ``errored_templates`` in
+    its response payload for per-run visibility.
     """
     tenant_id = tenant["id"]
     orphans = await _scan_orphans(tenant_id)
