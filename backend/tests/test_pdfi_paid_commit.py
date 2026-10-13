@@ -266,9 +266,12 @@ def test_b_unpaid_invoice_commits_with_no_payment_row(
 
 
 # ═════════════════════════════════════════════════════════════
-# (c) is_paid=True + paid_at=None → 422 paid_without_date
+# (c) is_paid=True + paid_at=None → auto-healed from doc_date
+#     (PDFI-PAID-C · Feb-2026). Prior semantics (hard 422) is
+#     preserved only when BOTH doc_date and created_at are also
+#     missing — see test_c2_paid_without_any_date_source_still_422.
 # ═════════════════════════════════════════════════════════════
-def test_c_paid_without_date_returns_422_and_no_writes(
+def test_c_paid_without_date_autoheals_from_doc_date(
     dbc, aquaterra_id, admin_h, customer_id,
 ):
     doc_number = f"PAID-C-{uuid.uuid4().hex[:6]}"
@@ -282,12 +285,67 @@ def test_c_paid_without_date_returns_422_and_no_writes(
             f"{API}/imports/pdf-invoice/{batch_id}/commit",
             headers=admin_h, json={"on_duplicate": "skip"}, timeout=20,
         )
+        # Auto-heal fires — commit succeeds.
+        assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
+        body = r.json()
+        assert body.get("quotes_created") == 1
+        qid = body["quote_ids"][0]
+        inv = dbc.quotes.find_one({"id": qid}, {"_id": 0})
+        # Invoice committed with paid_at healed from doc_date.
+        assert inv.get("paid_at") == "2026-08-28"
+        # Provenance recorded on the persisted doc.
+        meta = inv.get("_import_metadata") or {}
+        assert "paid_at" in (meta.get("auto_healed_fields") or [])
+        # Downstream payment row also carries the healed paid_at.
+        pay = dbc.payments.find_one(
+            {"tenant_id": aquaterra_id, "import_batch_id": batch_id},
+            {"_id": 0},
+        )
+        assert pay is not None
+        assert pay.get("paid_at") == "2026-08-28"
+        # Reconciler-driven terminal state.
+        assert inv.get("payment_status") == "paid"
+    finally:
+        _cleanup(dbc, aquaterra_id, batch_id)
+
+
+# ═════════════════════════════════════════════════════════════
+# (c2) PDFI-PAID-C unhealable — is_paid=True + no paid_at + no
+#      doc_date + no created_at → structured 422.
+# ═════════════════════════════════════════════════════════════
+def test_c2_paid_without_any_date_source_returns_structured_422(
+    dbc, aquaterra_id, admin_h, customer_id,
+):
+    doc_number = f"PAID-C2-{uuid.uuid4().hex[:6]}"
+    preview = _preview_paid_invoice(
+        source_doc_index=0, customer_id=customer_id,
+        doc_number=doc_number, is_paid=True, paid_at=None,
+    )
+    # Strip BOTH date sources so auto-heal has nothing to pull from.
+    preview["quote_in"].pop("doc_date", None)
+    preview["quote_in"].pop("created_at", None)
+    batch_id = _seed_batch(dbc, tenant_id=aquaterra_id, previews=[preview])
+    try:
+        r = requests.post(
+            f"{API}/imports/pdf-invoice/{batch_id}/commit",
+            headers=admin_h, json={"on_duplicate": "skip"}, timeout=20,
+        )
         assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
         err = r.json().get("detail", {})
+        # PDFI-PAID-C structured 422 envelope.
+        assert err.get("error_code") == "pdf_import_row_validation"
+        # Legacy ``error`` alias preserved for FE back-compat.
         assert err.get("error") == "paid_without_date"
         assert err.get("batch_id") == batch_id
         assert err.get("doc_indices") == [0]
-        # Verify no writes.
+        rows = err.get("rows") or []
+        assert len(rows) == 1
+        assert rows[0]["row_index"] == 0
+        assert rows[0]["field"] == "paid_at"
+        assert rows[0]["reason"] == "missing_and_unhealed"
+        assert rows[0]["is_paid"] is True
+        assert rows[0]["invoice_number"] == doc_number
+        # No partial writes.
         assert dbc.quotes.count_documents(
             {"tenant_id": aquaterra_id, "import_batch_id": batch_id},
         ) == 0
@@ -302,9 +360,12 @@ def test_c_paid_without_date_returns_422_and_no_writes(
 
 
 # ═════════════════════════════════════════════════════════════
-# (d) is_paid=True + amount_paid=0 → 422 paid_without_amount
+# (d) is_paid=True + amount_paid=0 → auto-healed from grand_total
+#     (PDFI-PAID-C · Feb-2026). Prior semantics (hard 422) is
+#     preserved only when BOTH grand_total and total_due are also
+#     missing/zero — see test_d2_paid_without_any_amount_source.
 # ═════════════════════════════════════════════════════════════
-def test_d_paid_without_amount_returns_422_and_no_writes(
+def test_d_paid_without_amount_autoheals_from_grand_total(
     dbc, aquaterra_id, admin_h, customer_id,
 ):
     doc_number = f"PAID-D-{uuid.uuid4().hex[:6]}"
@@ -319,10 +380,57 @@ def test_d_paid_without_amount_returns_422_and_no_writes(
             f"{API}/imports/pdf-invoice/{batch_id}/commit",
             headers=admin_h, json={"on_duplicate": "skip"}, timeout=20,
         )
+        assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
+        body = r.json()
+        assert body.get("quotes_created") == 1
+        qid = body["quote_ids"][0]
+        inv = dbc.quotes.find_one({"id": qid}, {"_id": 0})
+        # amount_paid healed from grand_total (140.0).
+        assert float(inv.get("amount_paid") or 0.0) == 140.0
+        meta = inv.get("_import_metadata") or {}
+        assert "amount_paid" in (meta.get("auto_healed_fields") or [])
+        # Downstream payment row also carries the healed amount.
+        pay = dbc.payments.find_one(
+            {"tenant_id": aquaterra_id, "import_batch_id": batch_id},
+            {"_id": 0},
+        )
+        assert pay is not None
+        assert float(pay.get("amount") or 0.0) == 140.0
+    finally:
+        _cleanup(dbc, aquaterra_id, batch_id)
+
+
+# ═════════════════════════════════════════════════════════════
+# (d2) PDFI-PAID-C unhealable amount — is_paid=True + amount_paid=0
+#      + grand_total=0 + total_due=0 → structured 422.
+# ═════════════════════════════════════════════════════════════
+def test_d2_paid_without_any_amount_source_returns_structured_422(
+    dbc, aquaterra_id, admin_h, customer_id,
+):
+    doc_number = f"PAID-D2-{uuid.uuid4().hex[:6]}"
+    preview = _preview_paid_invoice(
+        source_doc_index=0, customer_id=customer_id,
+        doc_number=doc_number, is_paid=True, paid_at="2026-08-28",
+        amount_paid=0.0,
+    )
+    # Strip all amount sources so auto-heal has nothing to pull.
+    preview["quote_in"]["grand_total"] = 0.0
+    preview["quote_in"]["total_due"] = 0.0
+    batch_id = _seed_batch(dbc, tenant_id=aquaterra_id, previews=[preview])
+    try:
+        r = requests.post(
+            f"{API}/imports/pdf-invoice/{batch_id}/commit",
+            headers=admin_h, json={"on_duplicate": "skip"}, timeout=20,
+        )
         assert r.status_code == 422
         err = r.json().get("detail", {})
+        assert err.get("error_code") == "pdf_import_row_validation"
         assert err.get("error") == "paid_without_amount"
         assert err.get("doc_indices") == [0]
+        rows = err.get("rows") or []
+        assert len(rows) == 1
+        assert rows[0]["field"] == "amount_paid"
+        assert rows[0]["reason"] == "missing_and_unhealed"
         assert dbc.quotes.count_documents(
             {"tenant_id": aquaterra_id, "import_batch_id": batch_id},
         ) == 0

@@ -413,7 +413,118 @@ async def classify_pending_for_preview(
 
 # ═════════════════════════════════════════════════════════════
 # PDFI-PAID-B · Feb-2026 — paid-status validation helper.
+# PDFI-PAID-C · Feb-2026 — auto-heal preamble.
 # ═════════════════════════════════════════════════════════════
+def _autoheal_paid_status(
+    previews: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Auto-fill ``paid_at`` + ``amount_paid`` for ``is_paid=True``
+    previews that are missing those fields but have a sensible
+    fallback source available.
+
+    Fallback sources (first-match-wins):
+      * ``paid_at`` ← ``quote_in.doc_date`` → else ``quote_in.created_at``.
+      * ``amount_paid`` ← ``quote_in.grand_total`` → else
+        ``quote_in.total_due``.
+
+    Rationale: historical paid invoices often carry a visible
+    ``PAID`` watermark but no explicit payment-date / amount-paid
+    line. The extractor is contractually allowed to return
+    ``paid_at=None`` / ``amount_paid=None`` for such rows (prompt
+    rule in ``pdf_invoice_extractor.py`` lines 215-219). Prior to
+    this helper, commit rejected those rows with a hard 422 that
+    the operator had to resolve one at a time via PATCH /preview.
+    Auto-heal preserves operator intent (the invoice IS paid) and
+    stamps the invoice's own ``doc_date`` as the payment date +
+    the ``grand_total`` as the paid amount — the canonical
+    historical-import interpretation.
+
+    Mutates each healed preview's ``quote_in`` in place:
+      * Writes the healed value onto ``paid_at`` / ``amount_paid``.
+      * Appends to ``quote_in["_import_metadata"]["auto_healed_fields"]``
+        (list of field names actually touched).
+      * Mirrors the healed values onto the preview's
+        ``payment_in`` dict (built by the mapper during preview)
+        so the downstream ``db.payments`` write uses the healed
+        values too.
+
+    Returns the list of (preview, healed_fields) pairs for the
+    audit log + the enriched 422 payload the router consumes
+    when a row remains unhealable.
+    """
+    healed: List[Dict[str, Any]] = []
+    for p in previews:
+        qi = p.get("quote_in") or {}
+        if qi.get("is_paid") is not True:
+            continue
+        row_healed: List[str] = []
+        # paid_at — prefer doc_date → created_at
+        if not qi.get("paid_at"):
+            fallback = qi.get("doc_date") or qi.get("created_at")
+            if fallback:
+                fallback_iso = str(fallback)[:10]  # YYYY-MM-DD slice
+                qi["paid_at"] = fallback_iso
+                row_healed.append("paid_at")
+                # Keep payment_in in sync so pdf_commit's payment
+                # loop writes the healed value too.
+                pi = p.get("payment_in") or None
+                if isinstance(pi, dict) and not pi.get("paid_at"):
+                    pi["paid_at"] = fallback_iso
+                logger.info(
+                    "pdf_import.commit.autoheal paid_at row=%s "
+                    "source=%s value=%s",
+                    p.get("source_doc_index"),
+                    "doc_date" if qi.get("doc_date") else "created_at",
+                    fallback_iso,
+                )
+        # amount_paid — prefer grand_total → total_due
+        amt = qi.get("amount_paid")
+        if amt in (None, 0, 0.0):
+            fallback_amt = qi.get("grand_total")
+            fallback_source = "grand_total"
+            if fallback_amt in (None, 0, 0.0):
+                fallback_amt = qi.get("total_due")
+                fallback_source = "total_due"
+            try:
+                fallback_amt_f = (
+                    float(fallback_amt) if fallback_amt is not None else 0.0
+                )
+            except (TypeError, ValueError):
+                fallback_amt_f = 0.0
+            if fallback_amt_f > 0:
+                qi["amount_paid"] = fallback_amt_f
+                row_healed.append("amount_paid")
+                pi = p.get("payment_in") or None
+                if isinstance(pi, dict) and (
+                    pi.get("amount_paid") in (None, 0, 0.0)
+                ):
+                    pi["amount_paid"] = fallback_amt_f
+                logger.info(
+                    "pdf_import.commit.autoheal amount_paid row=%s "
+                    "source=%s value=%s",
+                    p.get("source_doc_index"), fallback_source,
+                    fallback_amt_f,
+                )
+        if row_healed:
+            # Attach provenance metadata — this surfaces on the
+            # persisted invoice/payment doc so operators can audit
+            # which rows the commit healed vs honored verbatim.
+            meta = qi.setdefault("_import_metadata", {})
+            prior = list(meta.get("auto_healed_fields") or [])
+            # dedupe while preserving order
+            seen = set(prior)
+            for f in row_healed:
+                if f not in seen:
+                    prior.append(f)
+                    seen.add(f)
+            meta["auto_healed_fields"] = prior
+            healed.append({
+                "source_doc_index": p.get("source_doc_index"),
+                "fields": list(row_healed),
+            })
+    return healed
+
+
 def _validate_paid_status(
     previews: List[Dict[str, Any]],
 ) -> Optional[Tuple[str, List[int]]]:
@@ -427,6 +538,12 @@ def _validate_paid_status(
 
     All indices for ONE error code are aggregated so the
     operator sees every offending row in a single 422 reply.
+
+    PDFI-PAID-C · Feb-2026 — this gate now runs AFTER
+    ``_autoheal_paid_status`` has had a chance to backfill
+    ``paid_at`` + ``amount_paid`` from the row's own
+    ``doc_date`` + ``grand_total``. Only rows the auto-heal
+    pass could not rescue reach this error path.
     """
     without_date: List[int] = []
     without_amount: List[int] = []
@@ -446,6 +563,36 @@ def _validate_paid_status(
     if without_amount:
         return ("paid_without_amount", without_amount)
     return None
+
+
+def _build_paid_status_row_details(
+    previews: List[Dict[str, Any]],
+    err_code: str,
+    idxs: List[int],
+) -> List[Dict[str, Any]]:
+    """Build the per-row details list for the structured 422
+    payload. One row per offending doc_index with the specific
+    field + reason + value + is_paid + invoice_number so the FE
+    can render actionable per-row error UX without having to
+    cross-reference the preview array.
+    """
+    _field = "paid_at" if err_code == "paid_without_date" else "amount_paid"
+    idx_set = set(idxs)
+    rows: List[Dict[str, Any]] = []
+    for p in previews:
+        src = int(p.get("source_doc_index", -1))
+        if src not in idx_set:
+            continue
+        qi = p.get("quote_in") or {}
+        rows.append({
+            "row_index": src,
+            "field": _field,
+            "reason": "missing_and_unhealed",
+            "value": qi.get(_field),
+            "is_paid": qi.get("is_paid") is True,
+            "invoice_number": qi.get("doc_number"),
+        })
+    return rows
 
 
 # ═════════════════════════════════════════════════════════════
@@ -546,6 +693,11 @@ async def commit_batch(
     # to be skipped (duplicate + on_duplicate=skip, or already
     # inserted via idempotency) BEFORE validating so skip-selected
     # rows no longer trigger 422.
+    #
+    # PDFI-PAID-C · Feb-2026 — auto-heal pass runs first so
+    # ``paid_at`` + ``amount_paid`` get backfilled from
+    # ``doc_date`` + ``grand_total`` where available. Only
+    # unhealable rows reach the validation error.
     skip_idx_set = set(already_inserted_indexes)
     if on_duplicate == _DUP_SKIP:
         skip_idx_set.update(dup_by_idx.keys())
@@ -553,10 +705,21 @@ async def commit_batch(
         p for p in previews
         if int(p.get("source_doc_index", -1)) not in skip_idx_set
     ]
+    _healed_summary = _autoheal_paid_status(_validation_targets)
+    if _healed_summary:
+        logger.info(
+            "pdf_import.commit.autoheal.summary batch=%s healed_count=%d "
+            "details=%r",
+            batch.get("id") or batch.get("batch_id"),
+            len(_healed_summary), _healed_summary,
+        )
     paid_err = _validate_paid_status(_validation_targets)
     if paid_err is not None:
         err_code, idxs = paid_err
-        raise PaidStatusValidationError(err_code, idxs)
+        row_details = _build_paid_status_row_details(
+            _validation_targets, err_code, idxs,
+        )
+        raise PaidStatusValidationError(err_code, idxs, row_details)
 
     # ── Build the doc list ────────────────────────────────
     to_insert: List[Dict[str, Any]] = []
@@ -947,6 +1110,14 @@ def _build_quote_doc_from_preview(
     if paid_at_iso is not None:
         doc["paid_at"] = paid_at_iso
 
+    # PDFI-PAID-C · Feb-2026 — propagate auto-heal provenance
+    # from the preview onto the persisted invoice doc so admin
+    # audit + operator UX can see which rows the commit path
+    # healed (vs. honored verbatim).
+    _ih_meta = qi.get("_import_metadata")
+    if isinstance(_ih_meta, dict) and _ih_meta:
+        doc["_import_metadata"] = dict(_ih_meta)
+
     return doc
 
 
@@ -1113,6 +1284,16 @@ async def _commit_payment_previews(
             "imported_by_user_id": (operator or {}).get("id"),
             "source": "pdf_import",
         }
+
+        # PDFI-PAID-C · Feb-2026 — propagate auto-heal provenance
+        # onto the persisted payment doc. The payment row is the
+        # customer-visible artifact in the portal payment feed, so
+        # the ``_import_metadata.auto_healed_fields`` list travels
+        # with it alongside the invoice.
+        _qi_for_meta = preview.get("quote_in") or {}
+        _pi_meta = _qi_for_meta.get("_import_metadata")
+        if isinstance(_pi_meta, dict) and _pi_meta:
+            payment_doc["_import_metadata"] = dict(_pi_meta)
 
         try:
             if existing:
@@ -1485,13 +1666,25 @@ class PaidStatusValidationError(Exception):
     ``quote_in.is_paid=True`` previews missing required
     paid-status fields (``paid_at`` or ``amount_paid``).
 
+    PDFI-PAID-C · Feb-2026 — now carries a per-row ``rows``
+    list (``row_index``, ``field``, ``reason``, ``value``,
+    ``is_paid``, ``invoice_number``) so the router can rewrap
+    into a structured 422 the frontend can render per-row
+    without a cross-reference pass.
+
     Caught in ``routers.imports.commit_pdf_invoice_batch`` and
-    rewrapped as HTTP 422 with error_code + doc_indices in
-    the detail body. Batch resets to ``preview_complete`` so
+    rewrapped as HTTP 422 with error_code + doc_indices + rows
+    in the detail body. Batch resets to ``preview_complete`` so
     the operator can patch via PATCH /preview and rerun commit.
     """
 
-    def __init__(self, error_code: str, doc_indices: List[int]) -> None:
+    def __init__(
+        self,
+        error_code: str,
+        doc_indices: List[int],
+        rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         self.error_code = error_code
         self.doc_indices = doc_indices
+        self.rows = rows or []
         super().__init__(f"{error_code}: doc_indices={doc_indices}")

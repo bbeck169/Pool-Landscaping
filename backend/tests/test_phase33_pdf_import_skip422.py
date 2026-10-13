@@ -203,13 +203,20 @@ def test_skip422_duplicate_with_invalid_paid_data_does_not_422(
         _cleanup(dbc, aquaterra_id, batch_id)
 
 
-def test_skip422_non_skipped_invalid_paid_still_422(
+def test_skip422_non_skipped_invalid_paid_now_autoheals(
     dbc, aquaterra_id, admin_h, customer_id,
 ):
-    """Negative control — the paid-status validator must STILL
-    fire when a non-skipped, non-duplicate preview carries invalid
-    paid data. The fix must only loosen for skipped rows, not for
-    the general validation surface.
+    """PDFI-PAID-C · Feb-2026 — the paid-status validator now has
+    an auto-heal preamble that backfills ``amount_paid`` from
+    ``grand_total`` (and ``paid_at`` from ``doc_date``) for rows
+    with ``is_paid=True``. A non-skipped, non-duplicate preview
+    with missing ``amount_paid`` but a valid ``grand_total`` is
+    now a 200 (commit succeeds, provenance recorded) — not a 422.
+
+    See ``test_pdf_import_phase_c_autoheal_and_fidelity.py::
+    test_s5_unhealable_row_returns_structured_422`` for the
+    negative control that locks the 422 path once auto-heal
+    exhausts its fallbacks.
     """
     bad_doc = f"BAD-{uuid.uuid4().hex[:6]}"
     previews = [
@@ -223,21 +230,17 @@ def test_skip422_non_skipped_invalid_paid_still_422(
             f"{API}/imports/pdf-invoice/{batch_id}/commit",
             headers=admin_h, json={"on_duplicate": "skip"}, timeout=20,
         )
-        assert r.status_code == 422, (
-            f"Expected 422 for non-skipped non-duplicate invalid paid "
-            f"data (data-integrity guarantee), got "
+        assert r.status_code == 200, (
+            f"Expected 200 after PDFI-PAID-C auto-heal, got "
             f"{r.status_code}: {r.text}"
         )
-        detail = r.json().get("detail") or {}
-        assert detail.get("error") == "paid_without_amount", (
-            f"Expected error=paid_without_amount, got {detail}"
-        )
-        # Batch rolled back to preview_complete so operator can PATCH.
-        row = dbc.import_batches.find_one(
-            {"id": batch_id}, {"_id": 0, "status": 1},
-        )
-        assert row and row["status"] == "preview_complete", (
-            f"Expected batch rolled back to preview_complete, got {row}"
-        )
+        body = r.json()
+        assert body.get("quotes_created") == 1
+        qid = body["quote_ids"][0]
+        inv = dbc.quotes.find_one({"id": qid}, {"_id": 0})
+        meta = inv.get("_import_metadata") or {}
+        assert "amount_paid" in (meta.get("auto_healed_fields") or [])
     finally:
+        dbc.quotes.delete_many({"tenant_id": aquaterra_id,
+                                "doc_number": bad_doc})
         _cleanup(dbc, aquaterra_id, batch_id)

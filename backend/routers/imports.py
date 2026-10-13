@@ -1001,12 +1001,15 @@ async def commit_pdf_invoice_batch(
         raise HTTPException(
             status_code=422,
             detail={
-                "error": exc.error_code,
-                "message": _PAID_ERR_MSG.get(
-                    exc.error_code, exc.error_code,
+                "error_code": "pdf_import_row_validation",
+                "error": exc.error_code,  # legacy alias — kept for FE back-compat
+                "message": (
+                    "One or more rows failed commit validation. "
+                    + _PAID_ERR_MSG.get(exc.error_code, exc.error_code)
                 ),
                 "batch_id": batch_id,
                 "doc_indices": exc.doc_indices,
+                "rows": list(exc.rows or []),
             },
         )
     except DuplicateBatchError as exc:
