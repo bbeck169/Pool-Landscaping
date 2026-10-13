@@ -698,6 +698,103 @@ async def customer_counts(
     )
 
 
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · Customers list — Service Category distinct-values.
+#
+# Powers the Customers-list Category filter dropdown: fetches the
+# distinct ``customers.service_category`` values actually in use
+# within the caller's tenant, with per-value counts so operators
+# see "Pool (142)" style labels instead of a bare option list.
+#
+# Legacy ``?service_category=`` filter on ``/customers`` is NOT
+# touched — its pool∪both / landscaping∪both union semantics
+# backing the dashboard-tile deep-links stay verbatim. This
+# endpoint is read-only metadata; the dropdown reads it for
+# option labels + custom-category discovery.
+#
+# Tenant-scoped, non-deleted-only. Auth gate matches the companion
+# ``list_customers`` endpoint (``get_current_user`` — role filter
+# happens inside the search ladder).
+# ══════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/customers/service-categories",
+    summary="Distinct service_category values + counts for the "
+             "Customers list filter dropdown",
+    tags=["customers"],
+    operation_id="customers.service_categories",
+)
+async def list_customer_service_categories(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the distinct in-use ``service_category`` values for
+    the caller's tenant plus a separate ``uncategorized_count`` for
+    null / missing / empty-string / whitespace-only buckets.
+
+    Response shape::
+
+        {
+          "categories": [
+            {"value": "pool",        "count": 142},
+            {"value": "landscaping", "count": 38},
+            {"value": "both",        "count": 11}
+          ],
+          "uncategorized_count": 5
+        }
+
+    Sort order: count desc, value asc. Soft-deleted customers are
+    excluded (``deleted_at`` filter) so the counts align with what
+    the operator sees in the list.
+    """
+    from utils import not_deleted_filter as _nd
+
+    tid = tenant["id"]
+    pipeline = [
+        {"$match": {"tenant_id": tid, **_nd()}},
+        {"$group": {
+            "_id": {
+                "$cond": [
+                    {"$or": [
+                        {"$eq": [
+                            {"$type": "$service_category"}, "missing",
+                        ]},
+                        {"$eq": ["$service_category", None]},
+                        {"$eq": [
+                            {"$trim": {"input": {"$ifNull": [
+                                "$service_category", ""]}}},
+                            "",
+                        ]},
+                    ]},
+                    None,
+                    "$service_category",
+                ],
+            },
+            "count": {"$sum": 1},
+        }},
+    ]
+    uncategorized_count = 0
+    categories: list[dict] = []
+    async for row in db.customers.aggregate(pipeline):
+        bucket = row.get("_id")
+        count = int(row.get("count") or 0)
+        if bucket is None:
+            uncategorized_count = count
+            continue
+        if not isinstance(bucket, str):
+            # Defensive — a legacy row may have stashed a non-
+            # string value. Coerce to string for the response so
+            # the FE renders predictably.
+            bucket = str(bucket)
+        categories.append({"value": bucket, "count": count})
+
+    categories.sort(key=lambda r: (-r["count"], r["value"].lower()))
+    return {
+        "categories": categories,
+        "uncategorized_count": uncategorized_count,
+    }
+
+
 @router.get("/customers",
     response_model=Union[List[CustomerListItem], CustomerListCount,
                             CustomerListPage],
