@@ -950,6 +950,12 @@ class TenantSettingsUpdate(BaseModel):
     # Admin notifications ALWAYS remain English regardless of this
     # value — see ``services.i18n_notifications.resolve_recipient_locale``.
     default_locale: Optional[str] = None
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — tenant-wide
+    # kill switch for the one-off welcome email fired when a
+    # customer accepts their first quote.  Default True (unset
+    # tenants send the welcome).  Mirror of the ``notify_admin_on_decline``
+    # pattern above.
+    welcome_email_on_first_accepted_quote_enabled: Optional[bool] = None
 
 
 @router.get(
@@ -990,6 +996,14 @@ async def get_own_settings(user: dict = Depends(get_current_user),
         # behaviour (no signature required).
         "require_signature_before_approve": bool(
             tenant.get("require_signature_before_approve", False)),
+        # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 —
+        # tenant-wide kill switch for the first-accept welcome
+        # email.  Default True (unset tenants send the welcome).
+        "welcome_email_on_first_accepted_quote_enabled": bool(
+            tenant.get(
+                "welcome_email_on_first_accepted_quote_enabled",
+                True,
+            )),
         # Phase 11 · equipment tracker digest
         "equipment_service_customer_reminders_enabled": bool(
             tenant.get("equipment_service_customer_reminders_enabled", False)),

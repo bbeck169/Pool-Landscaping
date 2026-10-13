@@ -131,6 +131,12 @@ _REBOUND_MODULES = (
     # ``test_wingman_escalation_email_absolute_url.py`` can drive
     # the dispatcher in-process.
     "services.notifications",
+    # WELCOME-EMAIL-ON-FIRST-ACCEPTED-QUOTE · Feb-2026 — the welcome
+    # email helper reads ``db.customers``/``db.quotes``/``db.tenants``/
+    # ``db.audit_logs`` off its own module-level ``db`` binding; add
+    # here so the pytest can drive it in-process without triggering
+    # 'Event loop is closed' between test cases.
+    "services.customer_welcome_email",
     "services.telematics",
     "services.telematics.registry",
     "services.telematics._helpers",
