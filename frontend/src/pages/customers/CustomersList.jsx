@@ -407,6 +407,43 @@ export default function CustomersList() {
   // ``?service_category=<key>``.
   const [serviceCategoryFilter, setServiceCategoryFilter] = useState(
     () => searchParams.get("service_category") || "all");
+  // Feb-2026 · Customers-list Category-filter enhancement —
+  // ``GET /api/customers/service-categories`` returns the distinct
+  // in-use ``service_category`` values + counts so the dropdown
+  // can show "Pool (142)" labels + surface any custom categories
+  // that aren't in the canonical pool/landscaping/both enum.
+  // ``null`` state = loading (dropdown stays enabled with the
+  // canonical labels; counts fill in once the fetch resolves).
+  const [serviceCategoryMeta, setServiceCategoryMeta] = useState(null);
+  const [serviceCategoryMetaLoading, setServiceCategoryMetaLoading] =
+    useState(true);
+  useEffect(() => {
+    let alive = true;
+    setServiceCategoryMetaLoading(true);
+    api
+      .get("/customers/service-categories")
+      .then((res) => {
+        if (!alive) return;
+        setServiceCategoryMeta(res || {
+          categories: [], uncategorized_count: 0,
+        });
+      })
+      .catch(() => {
+        if (!alive) return;
+        // On failure, hide counts rather than block the dropdown —
+        // the main list fetch still works with the canonical values.
+        setServiceCategoryMeta({
+          categories: [], uncategorized_count: 0,
+        });
+      })
+      .finally(() => {
+        if (!alive) return;
+        setServiceCategoryMetaLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [signedInFilter, setSignedInFilter] = useState(
     () => searchParams.get("first_access") === "any");
   const [signedInCount, setSignedInCount] = useState(null);
@@ -2186,7 +2223,15 @@ export default function CustomersList() {
             {/* P2 #6 · Feb-2026 — Service Category filter group.
                 Dropdown select; URL-hydrated as ``?service_category=
                 pool|landscaping|both|unset``.  Dashboard "By Service
-                Category" tile row deep-links land here directly. */}
+                Category" tile row deep-links land here directly.
+                Feb-2026 · Category-filter enhancement — option labels
+                show per-value counts (fetched from
+                ``/customers/service-categories``) and any CUSTOM
+                in-tenant categories outside the canonical enum append
+                as additional options.  The canonical 5 option values
+                stay verbatim so existing deep-links + the
+                ``CustomersListServiceCategoryFilter`` vitest keep
+                passing. */}
             <div className="mb-3">
               <label
                 className="text-[10px] font-bold uppercase mb-1.5 block"
@@ -2201,6 +2246,8 @@ export default function CustomersList() {
                 value={serviceCategoryFilter}
                 onChange={(e) =>
                   setServiceCategoryFilter(e.target.value)}
+                disabled={serviceCategoryMetaLoading
+                          && !serviceCategoryMeta}
                 className="w-full text-xs font-semibold px-2 py-1.5 rounded border"
                 style={{
                   background: "transparent",
@@ -2208,11 +2255,73 @@ export default function CustomersList() {
                   borderColor: colors.border,
                 }}
               >
-                <option value="all">All categories</option>
-                <option value="pool">Pool</option>
-                <option value="landscaping">Landscaping</option>
-                <option value="both">Both</option>
-                <option value="unset">Not set</option>
+                {(() => {
+                  // Build the option list from meta so counts fill
+                  // in once the categories endpoint resolves. Keep
+                  // the canonical option VALUES verbatim; only
+                  // labels change.
+                  const meta = serviceCategoryMeta || {
+                    categories: [], uncategorized_count: 0,
+                  };
+                  const loading = serviceCategoryMetaLoading
+                                    && !serviceCategoryMeta;
+                  const byValue = Object.fromEntries(
+                    (meta.categories || []).map(
+                      (c) => [String(c.value).toLowerCase(), c.count],
+                    ),
+                  );
+                  const _label = (base, countKey) => {
+                    if (loading) return `${base} (…)`;
+                    const n = byValue[countKey];
+                    return typeof n === "number"
+                      ? `${base} (${n})`
+                      : base;
+                  };
+                  const uncategorizedLabel = loading
+                    ? "Uncategorized (…)"
+                    : (meta.uncategorized_count > 0
+                        ? `Uncategorized (${meta.uncategorized_count})`
+                        : "Not set");
+                  const canonicalKeys = new Set(
+                    ["pool", "landscaping", "both"],
+                  );
+                  // Custom categories = in-use values that aren't
+                  // in the canonical set. Append at the bottom in
+                  // the backend-provided order (count desc, value
+                  // asc) so the dropdown surfaces them without
+                  // breaking the canonical option prefix.
+                  const customOptions = (meta.categories || [])
+                    .filter(
+                      (c) => !canonicalKeys.has(
+                        String(c.value).toLowerCase(),
+                      ),
+                    );
+                  return (
+                    <>
+                      <option value="all">All categories</option>
+                      <option value="pool">{_label("Pool", "pool")}</option>
+                      <option value="landscaping">
+                        {_label("Landscaping", "landscaping")}
+                      </option>
+                      <option value="both">{_label("Both", "both")}</option>
+                      <option value="unset">{uncategorizedLabel}</option>
+                      {customOptions.map((c) => (
+                        <option
+                          key={`custom-${c.value}`}
+                          value={c.value}
+                          data-testid={
+                            `filter-service-category-custom-${
+                              String(c.value).toLowerCase()
+                                .replace(/\s+/g, "-")
+                            }`
+                          }
+                        >
+                          {c.value} ({c.count})
+                        </option>
+                      ))}
+                    </>
+                  );
+                })()}
               </select>
             </div>
 
