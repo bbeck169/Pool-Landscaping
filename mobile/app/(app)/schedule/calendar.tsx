@@ -95,10 +95,15 @@ import AppTextInput from "@/src/components/ui/AppTextInput";
 import GpsConsentModal from "@/src/components/gps/GpsConsentModal";
 import { AddressLink } from "@/src/components/customer";
 import { resolveTechnicianId } from "@/lib/technicianResolver";
+// P2 #9 · day-view timestamp filter — mirrors web P13 day bucketing.
+import { jobDayKey, localDateKey } from "@/src/utils/scheduleDayKey";
+import { tenantTz } from "@/src/utils/tenantTime";
 
 type Job = {
   id: string;
   scheduled_date?: string | null;
+  /** Full ISO datetime; P13 fallback day key when scheduled_date is empty. */
+  scheduled_start?: string | null;
   scheduled_time?: string | null;
   service_type?: string;
   status?: string;
@@ -129,7 +134,10 @@ const MODE_KEY = "aq-schedule-mode-v1";
 const MAP_VISIBLE_KEY = "schedule.mapVisible";
 const TECH_FILTER_KEY = "schedule.tech_filter";
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+// P2 #9 · device-local calendar key (was ``d.toISOString().slice(0, 10)`` —
+// the UTC date, which put US devices on tomorrow after ~8 pm and east-of-UTC
+// devices on yesterday after every strip tap). All 11 call sites route here.
+const iso = (d: Date) => localDateKey(d);
 const addDays = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
 const dayLabel = (d: Date) =>
   d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "short", day: "numeric" });
@@ -510,7 +518,10 @@ function ScheduleCalendarInner() {
 
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
-    const list = visibleJobs.filter((j) => j.scheduled_date === focusISO);
+    // P2 #9 · web P13 rule — scheduled_date prefix, else tenant-local
+    // scheduled_start (was exact ``scheduled_date === focusISO``).
+    const tz = tenantTz();
+    const list = visibleJobs.filter((j) => jobDayKey(j, tz) === focusISO);
     list.sort((a, b) => (a.route_index ?? a.route_order ?? 999) - (b.route_index ?? b.route_order ?? 999));
     // Phase 30X · schedule is per-day; no time-of-day tiebreaker.
     return list;
@@ -519,8 +530,10 @@ function ScheduleCalendarInner() {
   /** Job-count map for the 7 visible WeekStrip days (client-side). */
   const weekCounts = useMemo(() => {
     const counts: Record<string, number> = {};
+    // P2 #9 · same jobDayKey rule as dayJobs (was scheduled_date.slice).
+    const tz = tenantTz();
     for (const j of visibleJobs) {
-      const d = j.scheduled_date?.slice(0, 10);
+      const d = jobDayKey(j, tz);
       if (d) counts[d] = (counts[d] || 0) + 1;
     }
     return counts;
@@ -687,8 +700,11 @@ function ScheduleCalendarInner() {
   );
   const jobsByDay = useMemo(() => {
     const m: Record<string, Job[]> = {};
+    // P2 #9 · jobDayKey (was the raw, unsliced scheduled_date string).
+    const tz = tenantTz();
     for (const j of visibleJobs) {
-      const d = j.scheduled_date || "";
+      const d = jobDayKey(j, tz);
+      if (!d) continue;
       (m[d] = m[d] || []).push(j);
     }
     return m;

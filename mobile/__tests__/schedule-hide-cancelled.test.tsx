@@ -20,7 +20,10 @@ describe("schedule hide-cancelled toggle", () => {
   });
 
   it("boundary: every rendered list reads visibleJobs, never raw filteredJobs", () => {
-    for (const re of [/visibleJobs\.filter\(\(j\) => j\.scheduled_date === focusISO\)/, /for \(const j of visibleJobs\)[\s\S]{0,80}counts\[d\]/, /for \(const j of visibleJobs\)[\s\S]{0,80}\(m\[d\] = m\[d\]/]) {
+    // P2 #9 · dayJobs now keys via jobDayKey (web P13) — the exact
+    // ``j.scheduled_date === focusISO`` text was the bug; intent unchanged:
+    // the list must read visibleJobs.
+    for (const re of [/visibleJobs\.filter\(\(j\) => jobDayKey\(j, tz\) === focusISO\)/, /for \(const j of visibleJobs\)[\s\S]{0,80}counts\[d\]/, /for \(const j of visibleJobs\)[\s\S]{0,80}\(m\[d\] = m\[d\]/]) {
       expect(SRC).toMatch(re);
     }
     expect(SRC).not.toMatch(/for \(const j of filteredJobs\)/);
