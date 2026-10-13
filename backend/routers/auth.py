@@ -546,12 +546,48 @@ async def login(request: Request, body: LoginRequest):
     if len(matches) > 1:
         # 2+ matches, same role — the pre-Task-4 code would have
         # picked one silently too; keep behaviour but audit it.
-        logger.warning(
-            "[auth] multi-record same-role login — email=%s role=%s "
-            "picked user_id=%s (%d parallel records; consider "
-            "consolidation)",
-            email, user.get("role"), user["id"], len(matches),
-        )
+        #
+        # PORTAL-INVITE-EMAIL-COLLISION-FIX · Feb-2026 (P0 #1 + #2)
+        # observability add-on.  When the same email resolves to
+        # multiple role=customer rows with DISTINCT customer_ids,
+        # log the structural details — a single email mapping to
+        # multiple customer records in one tenant is the exact
+        # duplicate-user pattern the Commit-1 collision guard
+        # (``_upsert_customer_user``) prevents for NEW invites.
+        # Pre-existing duplicates (from before the guard shipped)
+        # still slip through login row-selection; this warning
+        # gives ops the signal to trigger the duplicate-user
+        # remediation runbook.  No PII beyond user_id/customer_id
+        # prefixes in the structured log — the ``email`` arg
+        # mirrors the existing warning on the line above so grep
+        # behaviour is unchanged.
+        role_lc = (user.get("role") or "").strip().lower()
+        distinct_customer_ids = {
+            (m.get("customer_id") or "") for m in matches
+            if m.get("customer_id")
+        }
+        if role_lc == "customer" and len(distinct_customer_ids) >= 2:
+            logger.warning(
+                "[auth] PORTAL-INVITE-EMAIL-COLLISION-FIX observability "
+                "— duplicate role=customer rows with distinct customer_ids "
+                "detected on login — email=%s match_count=%d "
+                "distinct_customer_id_count=%d "
+                "user_id_prefixes=%s customer_id_prefixes=%s "
+                "picked_user_id_prefix=%s picked_customer_id_prefix=%s "
+                "action=run_duplicate_user_remediation_runbook",
+                email, len(matches), len(distinct_customer_ids),
+                sorted({(m.get("id") or "")[:8] for m in matches}),
+                sorted({c[:8] for c in distinct_customer_ids}),
+                (user.get("id") or "")[:8],
+                (user.get("customer_id") or "")[:8],
+            )
+        else:
+            logger.warning(
+                "[auth] multi-record same-role login — email=%s role=%s "
+                "picked user_id=%s (%d parallel records; consider "
+                "consolidation)",
+                email, user.get("role"), user["id"], len(matches),
+            )
     # Success -> reset counters
     if user.get("failed_login_attempts") or user.get("lockout_until"):
         await db.users.update_one({"id": user["id"]}, {"$set": {"failed_login_attempts": 0, "lockout_until": None}})
