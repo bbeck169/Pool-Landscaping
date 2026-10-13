@@ -784,9 +784,23 @@ class _CommitOptions(BaseModel):
       ``"insert_anyway"`` | ``"fail"``.
     * ``notes`` — optional operator note surfaced on the
       ``import_audit`` row (max 500 chars).
+    * ``customer_match_overrides`` — Feb-2026 match-ladder
+      expansion.  Per-pending-id overrides keyed by the
+      ``pending_customer_id`` (uuid portion of the ``PENDING::<uuid>``
+      sentinel).  Current action vocabulary:
+
+        * ``"reject_fuzzy"`` — operator rejected the dry-run
+          fuzzy match surfaced on ``pending_customer_classification
+          .will_match_existing``.  Backend skips the fuzzy tier
+          for that pending; exact tiers still run; falls through
+          to auto-create if exact tiers also miss.
+
+      Empty dict / omitted = no overrides, ladder runs with
+      default fuzzy ceiling.
     """
     on_duplicate: Optional[str] = _DUP_SKIP
     notes: Optional[str] = None
+    customer_match_overrides: Optional[Dict[str, str]] = None
 
 
 class _PreviewPatchIn(BaseModel):
@@ -982,6 +996,7 @@ async def commit_pdf_invoice_batch(
             operator=user,
             on_duplicate=on_duplicate,
             db=db,
+            customer_match_overrides=opts.customer_match_overrides,
         )
     except UnresolvedCustomersError as exc:
         # Phase 33 Step C.1 · Feb-2026 — residuals here are rows

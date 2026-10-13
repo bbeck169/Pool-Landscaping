@@ -115,12 +115,51 @@ class ManualReviewPreview:
     pending_customer_id: Optional[str]
     extracted_name: Optional[str]
     reason: str = "no_identifying_info"
+    # Feb-2026 · match-ladder expansion — populated when the
+    # ladder's fuzzy tier found 2+ candidates at the minimum
+    # distance so the FE can render the inline picker.  Each
+    # entry is a dict with keys ``customer_id`` /
+    # ``customer_name`` / ``customer_status`` / ``fuzzy_distance``.
+    candidates: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class MatchedExistingCustomer:
+    """Feb-2026 · match-ladder expansion — one preview whose
+    pending row resolved to an EXISTING customer via the ladder
+    (any tier: active / inactive / muted / fuzzy).  No new
+    customer row is inserted; the preview's ``customer_id`` is
+    rewritten to the matched row's id, same mutation shape as
+    :class:`AutoCreatedCustomer` with ``action="deduped_db"``.
+
+    Distinct from :class:`AutoCreatedCustomer` because downstream
+    audit + preview UI need to distinguish "attached to active"
+    from "attached to inactive / muted / fuzzy" — the latter
+    three are forensically interesting (operator should confirm
+    the match post-commit).
+    """
+    source_doc_index: int
+    pending_customer_id: str
+    extracted_name: Optional[str]
+    extracted_address: Optional[str]
+    extracted_phone: Optional[str]
+    matched_customer_id: str
+    matched_customer_name: str
+    matched_customer_status: str   # "active" | "inactive" | "muted"
+    match_method: str              # "exact" | "fuzzy"
+    match_confidence: float
+    fuzzy_distance: Optional[int] = None
 
 
 @dataclass
 class AutoCreateResult:
     auto_created: List[AutoCreatedCustomer] = field(default_factory=list)
     manual_review_needed: List[ManualReviewPreview] = field(default_factory=list)
+    # Feb-2026 · match-ladder expansion — populated when the
+    # ladder resolved a pending row to an existing customer
+    # (any tier).  Caller audit path reads this to emit the
+    # ``customers_matched_{inactive,muted,fuzzy}`` lists.
+    matched_existing: List[MatchedExistingCustomer] = field(default_factory=list)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -157,6 +196,7 @@ async def auto_create_pending_customers(
     tenant_id: str,
     operator: Dict[str, Any],
     db,
+    customer_match_overrides: Optional[Dict[str, str]] = None,
 ) -> AutoCreateResult:
     """Resolve every ``PENDING::<uuid>`` sentinel in ``previews``
     by either (a) matching to an existing ``db.customers`` row
@@ -171,9 +211,28 @@ async def auto_create_pending_customers(
     ``reason="customer_extraction_confidence_low"`` instead of
     being auto-created.  Hard rule: low-confidence extractions
     cannot mint real customer rows.
+
+    Feb-2026 · match-ladder expansion — before falling through
+    to insert, run :func:`run_match_ladder` for the extracted
+    name/address/phone and attach to the matched existing
+    customer when the ladder returns a hit.  ``customer_match_
+    overrides`` is a per-pending-id dict mapping pending ids
+    to override actions:
+
+      * ``"reject_fuzzy"`` — operator reviewed the dry-run
+        fuzzy match and rejected it.  Skip the fuzzy tier for
+        this pending; still try exact tiers (dispatch spec:
+        "backend honors it — does NOT attach to the fuzzy-
+        matched customer").  If exact tiers also miss, falls
+        through to auto-create.
+
+    Ambiguous fuzzy matches (ladder returns ``requires_manual_
+    resolution``) are added to ``manual_review_needed`` with
+    ``candidates`` populated so the FE can render the picker.
     """
     batch_id = batch.get("id") or batch.get("batch_id")
     result = AutoCreateResult()
+    overrides = customer_match_overrides or {}
 
     # Collect low-confidence pending ids FIRST so we never
     # auto-create for a row Bug 3 demoted.
@@ -311,25 +370,72 @@ async def auto_create_pending_customers(
             ))
             continue
 
-        # Tier 2: DB-side dedupe against existing customers.
-        existing = await _find_existing_customer(
-            db=db, tenant_id=tenant_id,
-            norm_name=norm_name, norm_addr=norm_addr,
-            norm_phone=norm_phone,
+        # Tier 2: DB-side ladder — exact (per status) then fuzzy.
+        # Feb-2026 · match-ladder expansion — the previous
+        # ``_find_existing_customer`` scanned the full not-soft-
+        # deleted pool with normalized name/address/phone equality
+        # and did NOT partition by ``is_active`` / ``is_muted``.
+        # The ladder now surfaces the matched row's status
+        # (active / inactive / muted / fuzzy) + method so the
+        # audit payload + preview UI can distinguish forensically-
+        # interesting attachments ("inactive" / "muted" / "fuzzy")
+        # from the common active-exact case.  Rejected-fuzzy
+        # overrides from the FE are honoured by cycling the
+        # fuzzy ceiling down to 0 for just this pending.
+        from services.imports.customer_match_ladder import (
+            run_match_ladder, _FUZZY_MAX_DIST,
         )
-        if existing:
-            resolved_id = existing["id"]
+        reject_fuzzy = (overrides.get(pending_id) == "reject_fuzzy")
+        ladder = await run_match_ladder(
+            db=db, tenant_id=tenant_id,
+            extracted_name=name,
+            extracted_address=address,
+            extracted_phone=phone,
+            # Lower the ceiling to -1 so fuzzy tier never fires
+            # when the operator rejected the dry-run fuzzy match.
+            # Negative ceiling makes every candidate's distance >
+            # ceiling, so the fuzzy branch is a no-op.  Tiers 1-3
+            # (exact per status) still run.
+            max_fuzzy_distance=(-1 if reject_fuzzy else _FUZZY_MAX_DIST),
+        )
+        if ladder.match_status in {"active", "inactive", "muted",
+                                     "fuzzy_match"}:
+            resolved_id = ladder.matched_customer_id or ""
+            resolved_name = ladder.matched_customer_name or name
             batch_dedupe[dedupe_key] = resolved_id
             _apply_resolution_to_previews(
                 previews=previews, refs=refs,
                 resolved_customer_id=resolved_id,
-                resolved_name=existing.get("name") or name,
+                resolved_name=resolved_name,
             )
             await _stamp_pending_resolved(
                 db=db, tenant_id=tenant_id,
                 pending_id=pending_id, resolved_id=resolved_id,
                 at_iso=now_iso,
             )
+            # The caller distinguishes "matched existing" from
+            # "auto-created" via the ``matched_existing`` list.
+            # The legacy ``auto_created`` list still carries
+            # ``action="deduped_db"`` for back-compat with the
+            # pre-ladder commit path's audit shape — any
+            # consumer that already walks ``auto_created`` with
+            # ``action == "deduped_db"`` still sees these rows.
+            matched = MatchedExistingCustomer(
+                source_doc_index=first_doc_idx,
+                pending_customer_id=pending_id,
+                extracted_name=name,
+                extracted_address=address,
+                extracted_phone=phone,
+                matched_customer_id=resolved_id,
+                matched_customer_name=resolved_name,
+                matched_customer_status=(
+                    ladder.matched_customer_status or "active"
+                ),
+                match_method=ladder.match_method or "exact",
+                match_confidence=ladder.match_confidence or 1.0,
+                fuzzy_distance=ladder.fuzzy_distance,
+            )
+            result.matched_existing.append(matched)
             result.auto_created.append(AutoCreatedCustomer(
                 source_doc_index=first_doc_idx,
                 pending_customer_id=pending_id,
@@ -338,6 +444,25 @@ async def auto_create_pending_customers(
                 extracted_phone=phone,
                 resolved_customer_id=resolved_id,
                 action="deduped_db",
+            ))
+            continue
+        if ladder.match_status == "requires_manual_resolution":
+            # Fuzzy ambiguity (2+ candidates at min distance) —
+            # the ladder never silently attaches to the wrong
+            # customer.  Operator picks via inline picker.
+            result.manual_review_needed.append(ManualReviewPreview(
+                source_doc_index=first_doc_idx,
+                pending_customer_id=pending_id,
+                extracted_name=name or None,
+                reason="fuzzy_match_ambiguous",
+                candidates=[
+                    {
+                        "customer_id": c.customer_id,
+                        "customer_name": c.customer_name,
+                        "customer_status": c.customer_status,
+                        "fuzzy_distance": c.fuzzy_distance,
+                    } for c in ladder.candidates
+                ],
             ))
             continue
 

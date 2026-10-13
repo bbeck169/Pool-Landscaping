@@ -386,8 +386,14 @@ async def classify_pending_for_preview(
         return {
             "will_auto_create": [],
             "will_require_manual_review": [],
+            "will_match_existing": [],
             "summary": {"will_auto_create_count": 0,
-                        "manual_review_count": 0},
+                        "manual_review_count": 0,
+                        "will_match_existing_count": 0,
+                        "match_breakdown": {
+                            "active": 0, "inactive": 0,
+                            "muted": 0, "fuzzy": 0,
+                        }},
         }
 
     # Collect low-confidence pending ids — share the helper the
@@ -411,6 +417,19 @@ async def classify_pending_for_preview(
 
     will_auto: List[Dict[str, Any]] = []
     manual: List[Dict[str, Any]] = []
+    # Feb-2026 · match-ladder expansion — rows that will attach
+    # to an EXISTING customer at commit time (any tier: active /
+    # inactive / muted / fuzzy).  Distinct from
+    # ``will_auto_create`` so the FE banner reads "N auto-create,
+    # M matched to existing" and the operator can click a
+    # fuzzy chip to reject the match before clicking Commit.
+    will_match_existing: List[Dict[str, Any]] = []
+    match_breakdown = {"active": 0, "inactive": 0, "muted": 0, "fuzzy": 0}
+    # Lazy-import the ladder — module-level import would pull
+    # ``customer_match_ladder`` → ``customer_autocreate`` into
+    # this file's import graph and we want ``pdf_commit`` to
+    # stay cycle-free with the preview module too.
+    from services.imports.customer_match_ladder import run_match_ladder
     distinct_dedup_groups: set = set()
     for pending_id, source_doc_index in ref_order:
         # Low-confidence gate — Bug 3 demoted this preview; never
@@ -473,6 +492,70 @@ async def classify_pending_for_preview(
             distinct_dedup_groups.add(payload["dedup_group_id"])
             will_auto.append(payload)
         elif has_signal:
+            # Feb-2026 · match-ladder expansion — before counting
+            # this row as ``will_auto_create``, run the ladder
+            # dry-run to see if it will actually attach to an
+            # existing customer at commit time.  Keeps the
+            # banner count honest.
+            try:
+                ladder = await run_match_ladder(
+                    db=db, tenant_id=tenant_id,
+                    extracted_name=name,
+                    extracted_address=address,
+                    extracted_phone=phone,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Classification is a UI convenience — if the
+                # ladder blows up, fall back to the pre-ladder
+                # behaviour (count as will_auto_create) so the
+                # banner stays stable.  Commit path's real
+                # ladder call is the source of truth.
+                logger.warning(
+                    "[pdf-import.classify] ladder dry-run failed "
+                    "pending=%s tenant=%s (non-fatal): %s",
+                    pending_id, tenant_id, exc,
+                )
+                ladder = None
+            if ladder is not None and ladder.match_status in {
+                "active", "inactive", "muted", "fuzzy_match",
+            }:
+                match_breakdown[
+                    "fuzzy" if ladder.match_method == "fuzzy"
+                    else ladder.matched_customer_status
+                ] += 1
+                will_match_existing.append({
+                    "source_doc_index": source_doc_index,
+                    "pending_customer_id": pending_id,
+                    "extracted_name": name or None,
+                    "match_status": ladder.match_status,
+                    "matched_customer_id": ladder.matched_customer_id,
+                    "matched_customer_name": ladder.matched_customer_name,
+                    "matched_customer_status": ladder.matched_customer_status,
+                    "match_method": ladder.match_method,
+                    "match_confidence": ladder.match_confidence,
+                    "fuzzy_distance": ladder.fuzzy_distance,
+                })
+                continue
+            if ladder is not None and \
+                    ladder.match_status == "requires_manual_resolution":
+                manual.append({
+                    "source_doc_index": source_doc_index,
+                    "pending_customer_id": pending_id,
+                    "extracted_name": name or None,
+                    "extracted_address": address or None,
+                    "extracted_phone": phone or None,
+                    "reason": "fuzzy_match_ambiguous",
+                    "fuzzy_distance": ladder.fuzzy_distance,
+                    "candidates": [
+                        {
+                            "customer_id": c.customer_id,
+                            "customer_name": c.customer_name,
+                            "customer_status": c.customer_status,
+                            "fuzzy_distance": c.fuzzy_distance,
+                        } for c in ladder.candidates
+                    ],
+                })
+                continue
             payload["dedup_group_id"] = compute_dedup_group_id(
                 name=name or None,
                 address=address or None,
@@ -495,9 +578,18 @@ async def classify_pending_for_preview(
     return {
         "will_auto_create": will_auto,
         "will_require_manual_review": manual,
+        # Feb-2026 · match-ladder expansion — rows that will
+        # attach to an existing customer at commit time, with
+        # the ladder tier + matched customer info surfaced.
+        "will_match_existing": will_match_existing,
         "summary": {
             "will_auto_create_count": len(distinct_dedup_groups),
             "manual_review_count": len(manual),
+            # Count of pending rows (not distinct customers) that
+            # will attach to an existing row at commit.  Banner
+            # reads "N auto-create, M matched".
+            "will_match_existing_count": len(will_match_existing),
+            "match_breakdown": match_breakdown,
         },
     }
 
@@ -753,6 +845,7 @@ async def commit_batch(
     operator: Dict[str, Any],
     on_duplicate: str = _DUP_SKIP,
     db,
+    customer_match_overrides: Optional[Dict[str, str]] = None,
 ) -> CommitResult:
     """Materialise every eligible preview into ``db.quotes``.
 
@@ -766,6 +859,19 @@ async def commit_batch(
     Caller is responsible for flipping status → ``committed``
     on success or ``commit_failed`` on exception AFTER this
     function returns.
+
+    Feb-2026 · match-ladder expansion — ``customer_match_
+    overrides`` is a per-pending-id dict (keyed by the pending
+    customer uuid portion of the ``PENDING::<uuid>`` sentinel)
+    mapping to override actions.  Current action vocabulary:
+
+      * ``"reject_fuzzy"`` — operator reviewed the dry-run
+        fuzzy match surfaced in ``classify_pending_for_preview``
+        and rejected it.  Backend skips the fuzzy tier for that
+        pending; exact tiers still run.  If exact tiers also
+        miss, falls through to auto-create.
+
+    Passed through unchanged to :func:`auto_create_pending_customers`.
     """
     if on_duplicate not in _DUP_VALID:
         raise ValueError(
@@ -792,6 +898,7 @@ async def commit_batch(
     autocreate_result = await auto_create_pending_customers(
         previews=previews, batch=batch, tenant_id=tenant_id,
         operator=operator, db=db,
+        customer_match_overrides=customer_match_overrides,
     )
 
     # ── Feb-2026 · auto-create UX ticket — audit log row ──
@@ -801,11 +908,51 @@ async def commit_batch(
     # ``db.customers`` by provenance sentinel. Deduped matches
     # (``action in {deduped_db, deduped_batch}``) are excluded —
     # they didn't create a new row.
+    #
+    # Feb-2026 · match-ladder expansion — the audit payload now
+    # also carries three parallel lists so operators can review
+    # which pending rows were attached to forensically-interesting
+    # existing customers (inactive / muted / fuzzy) without
+    # replaying the ladder.
     created_customer_ids = [
         c.resolved_customer_id for c in autocreate_result.auto_created
         if c.action == "created"
     ]
-    if created_customer_ids:
+    matched_inactive = [
+        {
+            "pending_customer_id": m.pending_customer_id,
+            "matched_customer_id": m.matched_customer_id,
+            "extracted_name": m.extracted_name,
+        }
+        for m in autocreate_result.matched_existing
+        if m.matched_customer_status == "inactive"
+        and m.match_method == "exact"
+    ]
+    matched_muted = [
+        {
+            "pending_customer_id": m.pending_customer_id,
+            "matched_customer_id": m.matched_customer_id,
+            "extracted_name": m.extracted_name,
+        }
+        for m in autocreate_result.matched_existing
+        if m.matched_customer_status == "muted"
+        and m.match_method == "exact"
+    ]
+    matched_fuzzy = [
+        {
+            "pending_customer_id": m.pending_customer_id,
+            "matched_customer_id": m.matched_customer_id,
+            "matched_customer_name": m.matched_customer_name,
+            "matched_customer_status": m.matched_customer_status,
+            "fuzzy_distance": m.fuzzy_distance,
+            "match_confidence": m.match_confidence,
+            "extracted_name": m.extracted_name,
+        }
+        for m in autocreate_result.matched_existing
+        if m.match_method == "fuzzy"
+    ]
+    if created_customer_ids or matched_inactive or matched_muted \
+            or matched_fuzzy:
         try:
             await db.audit_logs.insert_one({
                 "id": new_id(),
@@ -814,6 +961,9 @@ async def commit_batch(
                 "actor_id": (operator or {}).get("id"),
                 "batch_id": batch_id,
                 "created_customer_ids": created_customer_ids,
+                "customers_matched_inactive": matched_inactive,
+                "customers_matched_muted": matched_muted,
+                "customers_matched_fuzzy": matched_fuzzy,
                 "source": "pdf_import",
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
