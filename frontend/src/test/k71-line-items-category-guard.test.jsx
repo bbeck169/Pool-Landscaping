@@ -2,21 +2,28 @@
  * Phase P40 · Feb-2026 — K71LineItemsEditor category guard (upstream
  * cure for the "UUIDs in Income by Category" bug).
  *
- * A row whose ``service_category_id`` or ``income_category_id`` no
- * longer maps to an ACTIVE tenant category (archived / deleted /
- * legacy stale-id) is highlighted the same way as the empty-string
- * gap: red border on the read row, ``aria-invalid="true"``, inline
- * error copy under the row, plus a form-level guard message. The
- * fetch of active ids is cache-shared with ``CategoryPicker`` so a
- * page with N pickers still emits a single round-trip.
+ * Feb-2026 · invoice-category hard-block removal update:
+ *   Operators asked to be able to save / send / approve / convert
+ *   invoices whose line items are missing or point at an inactive
+ *   Service / Income category.  The three red UI blockers (top
+ *   "Missing categories" banner, mid "Inactive categories" banner,
+ *   and bottom form-level alert) were collapsed into a SINGLE
+ *   amber soft-warning banner (``k71-category-soft-warning-banner``,
+ *   role="status") that renders when ANY row is flagged — missing
+ *   OR stale.  Per-row aria-invalid + inline chip + stale-badge
+ *   assertions are kept exactly as-is because the row-level
+ *   affordance is still the operator's cue to clean up later.
+ *   The backend writes an ``invoices.saved_with_category_warnings``
+ *   audit row for ops reporting; see
+ *   ``backend/tests/test_invoice_category_hard_block_removal.py``.
  *
  * Coverage:
  *   1. Prefilled row with an unresolvable id → row marked invalid.
- *   2. Prefilled row with a valid id → no highlight, no form message.
- *   3. Fetch error → fail-open (form message hidden, backend
+ *   2. Prefilled row with a valid id → no highlight, no soft banner.
+ *   3. Fetch error → fail-open (soft banner hidden, backend
  *      validator is the durable guard).
- *   4. Form-level message renders when ANY row is flagged.
- *   5. Multiple rows — one valid, one stale — form message present +
+ *   4. Soft banner renders when ANY row is flagged.
+ *   5. Multiple rows — one valid, one stale — soft banner present +
  *      only the stale row carries aria-invalid.
  */
 import React from "react";
@@ -100,8 +107,18 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
     expect(screen.getByTestId(`k71-stale-error-0`).textContent).toContain(
       "This category is no longer active"
     );
-    expect(screen.getByTestId("k71-stale-category-banner")).toBeTruthy();
-    expect(screen.getByTestId("k71-form-invalid-message")).toBeTruthy();
+    // Feb-2026 · invoice-category hard-block removal — the two red
+    // ``k71-stale-category-banner`` + ``k71-form-invalid-message``
+    // blockers collapsed into one amber soft-warning banner.
+    const soft = screen.getByTestId("k71-category-soft-warning-banner");
+    expect(soft).toBeTruthy();
+    expect(soft.getAttribute("role")).toBe("status");
+    expect(soft.textContent).toContain(
+      "You can categorize them later - saving is not blocked"
+    );
+    // Legacy red blockers must be gone.
+    expect(screen.queryByTestId("k71-stale-category-banner")).toBeNull();
+    expect(screen.queryByTestId("k71-form-invalid-message")).toBeNull();
   });
 
   it("test_prefilled_valid_category_no_highlight", async () => {
@@ -116,6 +133,11 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
       .toBeNull();
     expect(screen.queryByTestId("k71-stale-badge-0")).toBeNull();
     expect(screen.queryByTestId("k71-stale-error-0")).toBeNull();
+    // Feb-2026 · invoice-category hard-block removal — amber soft
+    // banner must stay hidden when no row is flagged. Legacy red
+    // blockers must also stay hidden.
+    expect(screen.queryByTestId("k71-category-soft-warning-banner"))
+      .toBeNull();
     expect(screen.queryByTestId("k71-stale-category-banner")).toBeNull();
     expect(screen.queryByTestId("k71-form-invalid-message")).toBeNull();
   });
@@ -130,7 +152,10 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
     // Wait for the async effect to settle. Since we can't easily
     // detect a "settled" state, wait a tick + re-assert.
     await new Promise((r) => setTimeout(r, 0));
-    // No form-level guard message rendered.
+    // No soft-warning banner rendered (nothing to flag because the
+    // fetch failed-open). Legacy red blockers must also stay hidden.
+    expect(screen.queryByTestId("k71-category-soft-warning-banner"))
+      .toBeNull();
     expect(screen.queryByTestId("k71-form-invalid-message")).toBeNull();
     // Row does NOT carry aria-invalid — the client-side guard is
     // disabled, and the row otherwise looks normal.
@@ -138,7 +163,7 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
       .toBeNull();
   });
 
-  it("test_save_button_shows_form_level_message_when_any_row_invalid",
+  it("test_save_button_shows_soft_warning_when_any_row_invalid",
       async () => {
         const doc = { line_items: [validLine, staleLine], status: "draft" };
         render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
@@ -149,18 +174,29 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
         );
         expect(screen.getByTestId("k71-row-0").getAttribute("aria-invalid"))
           .toBeNull();
-        // Form-level guard message rendered as an alert.
-        const msg = screen.getByTestId("k71-form-invalid-message");
-        expect(msg).toBeTruthy();
-        expect(msg.getAttribute("role")).toBe("alert");
-        expect(msg.textContent).toContain(
-          "One or more line items has an inactive or missing category"
+        // Feb-2026 · invoice-category hard-block removal — the
+        // old red ``role="alert"`` form-level block was replaced
+        // with a single amber ``role="status"`` soft-warning
+        // banner. Save is NOT blocked; this is just a heads-up.
+        const soft = screen.getByTestId("k71-category-soft-warning-banner");
+        expect(soft).toBeTruthy();
+        expect(soft.getAttribute("role")).toBe("status");
+        expect(soft.textContent).toContain(
+          "line item is missing or has an inactive Service / Income category"
         );
+        expect(soft.textContent).toContain(
+          "You can categorize them later - saving is not blocked"
+        );
+        // Legacy red blockers must be gone.
+        expect(screen.queryByTestId("k71-form-invalid-message")).toBeNull();
       });
 
   it("test_missing_category_row_still_caught_alongside_stale", async () => {
     // Belt-and-braces: an empty income_category_id row and a stale
-    // row together — form message counts both.
+    // row together — the single amber soft-warning banner counts
+    // both (its copy still says "N line items are missing or have
+    // an inactive Service / Income category") and the per-row
+    // chips/badges differentiate between gap vs stale.
     const missingLine = {
       description: "Missing income",
       quantity: 1,
@@ -172,13 +208,20 @@ describe("Phase P40 · K71LineItemsEditor category guard", () => {
       line_items: [missingLine, staleLine], status: "draft",
     };
     render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
-    // Missing-categories banner (empty-string gap).
+    // Soft-warning banner renders once; its copy counts BOTH rows.
     await waitFor(() =>
-      expect(screen.getByTestId("k71-gap-banner")).toBeTruthy()
+      expect(screen.getByTestId("k71-category-soft-warning-banner"))
+        .toBeTruthy()
     );
-    // Stale-categories banner (unresolvable id) — separate banner.
-    expect(screen.getByTestId("k71-stale-category-banner")).toBeTruthy();
-    // Form-level guard message.
-    expect(screen.getByTestId("k71-form-invalid-message")).toBeTruthy();
+    const soft = screen.getByTestId("k71-category-soft-warning-banner");
+    expect(soft.textContent).toContain(
+      "2 line items are missing or have an inactive Service / Income category"
+    );
+    // Per-row stale badge for the stale row (idx 1).
+    expect(screen.getByTestId("k71-stale-badge-1")).toBeTruthy();
+    // Legacy red blockers must stay hidden.
+    expect(screen.queryByTestId("k71-gap-banner")).toBeNull();
+    expect(screen.queryByTestId("k71-stale-category-banner")).toBeNull();
+    expect(screen.queryByTestId("k71-form-invalid-message")).toBeNull();
   });
 });

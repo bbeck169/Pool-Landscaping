@@ -421,7 +421,7 @@ function EditableRow({ line, index, onSave, onCancel }) {
             />
             {attempted && !serviceCategoryId ? (
               <div className="text-[11px] mt-1"
-                    style={{ color: "#DC2626" }}
+                    style={{ color: "#D97706" }}
                     data-testid={`k71-error-service-${index}`}>
                 Service category is required.
               </div>
@@ -1126,36 +1126,31 @@ export default function K71LineItemsEditor({
 
   return (
     <div>
-      {gaps.length && canEdit ? (
+      {/* Feb-2026 · invoice-category hard-block removal — the two
+          red full-width banners that used to live here (``Missing
+          categories: … You must set them before sending …`` and the
+          per-row-flagged ``Fix highlighted rows to save``) were
+          removed per operator request.  Admins can now save, send,
+          approve, and convert invoices with uncategorized or
+          inactive-category line items; the backend writes an
+          ``invoices.saved_with_category_warnings`` audit row for
+          ops reporting.  Per-row amber chips still render below so
+          the operator can see which lines still need cleanup. */}
+      {hasInvalidRows && canEdit ? (
         <div
           className="rounded-xl p-3 mb-3 text-sm flex items-start gap-2"
-          style={{ background: "#FEE2E2", color: "#7F1D1D",
-                    border: "1px solid #FCA5A5" }}
-          data-testid="k71-gap-banner"
-        >
-          <span className="font-semibold">Missing categories:</span>
-          <span>
-            {gaps.length === 1
-              ? "1 line item is missing a Service or Income category."
-              : `${gaps.length} line items are missing a Service or Income category.`}{" "}
-            You must set them before sending, approving or converting.
-          </span>
-        </div>
-      ) : null}
-      {staleIndices.size > 0 && canEdit ? (
-        <div
-          className="rounded-xl p-3 mb-3 text-sm flex items-start gap-2"
-          style={{ background: "#FEE2E2", color: "#7F1D1D",
-                    border: "1px solid #FCA5A5" }}
-          data-testid="k71-stale-category-banner"
+          style={{ background: "#FFFBEB", color: "#78350F",
+                    border: "1px solid #F59E0B" }}
+          data-testid="k71-category-soft-warning-banner"
+          role="status"
         >
           <AlertCircle size={14} className="mt-0.5 shrink-0" />
           <div>
-            <span className="font-semibold">Inactive categories:</span>{" "}
-            {staleIndices.size === 1
-              ? "1 line item references a category that is no longer active."
-              : `${staleIndices.size} line items reference categories that are no longer active.`}{" "}
-            Pick a valid category from the list on each highlighted row.
+            <span className="font-semibold">Heads up:</span>{" "}
+            {invalidCount === 1
+              ? "1 line item is missing or has an inactive Service / Income category."
+              : `${invalidCount} line items are missing or have an inactive Service / Income category.`}{" "}
+            You can categorize them later - saving is not blocked.
           </div>
         </div>
       ) : null}
@@ -1259,29 +1254,17 @@ export default function K71LineItemsEditor({
         <UndoToast onUndo={handleUndo} testid="k71-undo-toast" />
       ) : null}
 
-      {/* Phase P40 · Feb-2026 — form-level guard message. Rendered
-          whenever ANY row is flagged (missing OR stale category).
-          This is the "one or more line items has an inactive
-          category — fix highlighted rows to save" copy the caller
-          spec asks for. Doc-level Save buttons (send/approve/
-          convert) already gate on ``check_line_items_k71_gaps``
-          server-side; this banner exists so the operator sees the
-          problem BEFORE clicking Send / Approve. */}
-      {hasInvalidRows && canEdit ? (
-        <div
-          className="rounded-xl p-3 mt-3 text-sm flex items-start gap-2"
-          role="alert"
-          style={{ background: "#FEE2E2", color: "#7F1D1D",
-                    border: "1px solid #FCA5A5" }}
-          data-testid="k71-form-invalid-message"
-        >
-          <AlertCircle size={14} className="mt-0.5 shrink-0" />
-          <span>
-            One or more line items has an inactive or missing category.
-            Fix highlighted rows to save.
-          </span>
-        </div>
-      ) : null}
+      {/* Feb-2026 · invoice-category hard-block removal — the
+          form-level ``One or more line items has an inactive or
+          missing category. Fix highlighted rows to save.`` red
+          banner used to live here. Replaced by the single amber
+          soft-warning banner above the table + per-row amber
+          chips. Buttons stay enabled; backend writes an audit
+          row for ops reporting.
+          
+          If you need to resurrect for a specific tenant / role,
+          wrap the former block in a feature flag read instead
+          of a role gate. */}
     </div>
   );
 }

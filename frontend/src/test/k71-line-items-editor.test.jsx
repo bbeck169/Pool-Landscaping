@@ -112,14 +112,28 @@ describe("Phase K71 · K71LineItemsEditor", () => {
     );
   });
 
-  it("shows the missing-categories banner when a K71 line is incomplete", () => {
+  it("shows the missing-categories soft-warning banner when a K71 line is incomplete", () => {
     const doc = {
       line_items: [k71LineComplete, k71LineMissingIncome], status: "draft",
     };
     render(<K71LineItemsEditor doc={doc} canEdit onLinesUpdated={vi.fn()} />);
-    expect(screen.getByTestId("k71-gap-banner")).toBeTruthy();
-    expect(screen.getByTestId("k71-gap-banner").textContent)
-      .toContain("Missing categories");
+    // Feb-2026 · invoice-category hard-block removal — the old red
+    // ``k71-gap-banner`` ("Missing categories: … You must set them
+    // before sending …") was collapsed into a single amber
+    // ``k71-category-soft-warning-banner`` (role="status", "Heads
+    // up:" copy, non-blocking).
+    const soft = screen.getByTestId("k71-category-soft-warning-banner");
+    expect(soft).toBeTruthy();
+    expect(soft.getAttribute("role")).toBe("status");
+    expect(soft.textContent).toContain("Heads up");
+    expect(soft.textContent).toContain(
+      "line item is missing or has an inactive Service / Income category"
+    );
+    expect(soft.textContent).toContain(
+      "You can categorize them later - saving is not blocked"
+    );
+    // Legacy red blocker must be gone.
+    expect(screen.queryByTestId("k71-gap-banner")).toBeNull();
   });
 
   it("hides the pencil button when canEdit is false", () => {
