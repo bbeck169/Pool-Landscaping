@@ -108,6 +108,17 @@ class CustomerIn(BaseModel):
     # flips back to False (see routers/customers.py::_apply_vip_stamp).
     vip_since: Optional[str] = None
     vip_note: Optional[str] = None
+    # P2 #6 · Feb-2026 — Service-category designation. Admin-set
+    # categorical label used by:
+    #   * admin Dashboard "By Service Category" tile row
+    #   * CustomerList ?service_category=<key> filter chip
+    #   * CustomerDetail header dropdown (dedicated PATCH endpoint)
+    # Enum: "pool" | "landscaping" | "both" | null (unset).
+    # DO NOT confuse with the heavily-overloaded ``service_type``
+    # free-text field on Job / Quote / ServiceRequest etc. — that
+    # one holds free-text labels like "Pool Cleaning"; THIS one is
+    # a strict customer-level enum.
+    service_category: Optional[str] = None
     # Feb-2026 service-notes ship — two long-form notes per customer,
     # surfaced on the schedule view based on the assigned tech's
     # specialty or the job's ``service_type`` field. Admin-editable

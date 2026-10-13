@@ -683,6 +683,19 @@ async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
     now = now_iso()
     lead_timeline = lead.get("timeline") or []
     lead_notes = (lead.get("notes") or "").strip()
+    # ───────── P2 #6 · Feb-2026 — Service-category inheritance.
+    # Normalize lead.service_interest ("Pool" / "Landscape" / "Both",
+    # case-insensitive, trimmed) → customer.service_category
+    # ("pool" / "landscaping" / "both").  First-write-wins at the
+    # customer level: this stamp only lands when the receiving
+    # customer row has no service_category set.  Values outside the
+    # whitelist (free-text or legacy casings not in the map) silently
+    # fall through to no stamp — the customer stays "unset" and an
+    # admin can set it later via PATCH /customers/{cid}/service-category.
+    _p26_interest = (lead.get("service_interest") or "").strip().lower()
+    _p26_map = {"pool": "pool", "landscape": "landscaping",
+                 "landscaping": "landscaping", "both": "both"}
+    _p26_cat_from_lead = _p26_map.get(_p26_interest)
     # ─────────── Merge branch
     if existing:
         cid = existing["id"]
@@ -693,6 +706,10 @@ async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
         ):
             if not existing.get(dst_key) and lead.get(src_key):
                 set_ops[dst_key] = lead[src_key]
+        # P2 #6 — stamp inherited category only when the receiving
+        # customer row has no service_category set (first-write-wins).
+        if _p26_cat_from_lead and not existing.get("service_category"):
+            set_ops["service_category"] = _p26_cat_from_lead
         push_events: List[Dict[str, Any]] = []
         if lead_notes:
             push_events.append({
@@ -741,6 +758,14 @@ async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
             "address": lead.get("service_address") or lead.get("address") or "",
             "gate_code": "", "notes": lead_notes,
             "created_at": now, "timeline": events,
+            # P2 #6 · Feb-2026 — inherited service_category from
+            # lead.service_interest (silent fallback: null). The
+            # existing conversion audit emission below is the
+            # single audit event for the conversion; the inherited
+            # category rides along in the response payload so an
+            # operator can see what was stamped without a separate
+            # audit_logs trip.
+            "service_category": _p26_cat_from_lead,
         }
         await db.customers.insert_one(customer_doc)
         existing = customer_doc
@@ -839,6 +864,13 @@ async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
     return {"customer_id": cid, "was_merged": was_merged,
              "notifications": {"email": email_id, "sms": sms_id,
                                  "drip_enrollment_id": drip_id},
+             # P2 #6 · Feb-2026 — surface the stamp that landed on
+             # the customer row (or ``None`` when the lead had no
+             # recognizable service_interest).  The operator-approved
+             # audit choice is to tag the EXISTING conversion payload
+             # rather than emit a second standalone audit row — this
+             # key is that tag.
+             "inherited_service_category": _p26_cat_from_lead,
              "idempotent": False}
 
 

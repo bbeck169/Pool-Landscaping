@@ -826,6 +826,23 @@ async def list_customers(
         ),
     ),
     is_muted: Optional[bool] = Query(None, description="Feb-2026 · P28 admin/super_admin only — filter to muted (true) or non-muted (false); absent = no filter"),
+    # P2 #6 · Feb-2026 — service-category filter chip.  Accepts
+    #   ``pool`` / ``landscaping`` / ``both``   → exact match
+    #   ``unset``                                → null OR missing field
+    # Omitted / empty → no filter.  Composes as intersection with
+    # every other filter (search, is_active, tags, etc.).  Values
+    # outside the enum are silently ignored (no 400) to keep the
+    # list endpoint tolerant of bookmarked legacy URLs.
+    service_category: Optional[str] = Query(
+        None,
+        description=(
+            "P2 #6 · Feb-2026 — filter by customer service category. "
+            "Values: ``pool`` / ``landscaping`` / ``both`` for exact "
+            "match; ``unset`` for null-or-missing. Values outside this "
+            "set are ignored. Composes as intersection with every "
+            "other filter."
+        ),
+    ),
     # Feb-2026 · P44 — "No payment on file" data-quality chip.
     #   ``has_payment_method=false`` → customer has ZERO saved
     #     payment methods (no card AND no us_bank_account). Uses the
@@ -1096,6 +1113,18 @@ async def list_customers(
         q["$and"] = q.get("$and", []) + [
             {"$or": [{"is_muted": {"$ne": True}}, {"is_muted": {"$exists": False}}]}
         ]
+    # P2 #6 · Feb-2026 — service-category chip. Normalized to lowercase
+    # against the P2 #6 enum.  Values outside the whitelist silently
+    # pass through to a no-op (list behavior unchanged) so bookmarked
+    # legacy URLs don't 400.
+    _p26_cat = (service_category or "").strip().lower() if service_category else None
+    if _p26_cat in ("pool", "landscaping", "both"):
+        q["service_category"] = _p26_cat
+    elif _p26_cat == "unset":
+        q["$and"] = q.get("$and", []) + [{
+            "$or": [{"service_category": None},
+                        {"service_category": {"$exists": False}}],
+        }]
     # Feb-2026 · P43 — "No email" / "No phone number" data-quality
     # chips. Null, missing key, empty string, and whitespace-only all
     # count as missing. Predicates compose into ``$and`` so they
@@ -5133,6 +5162,78 @@ async def _emit_vip_flagged(tenant_id: str, actor: dict, customer: dict) -> None
         )
     except Exception as e:
         logger.warning(f"[customers] vip notification failed: {e}")
+
+
+# ─── P2 #6 · Feb-2026 — Service-category PATCH ────────────────────
+_P2_6_VALID_CATEGORIES = ("pool", "landscaping", "both")
+
+
+class _ServiceCategoryPatch(BaseModel):
+    """Body for ``PATCH /api/customers/{cid}/service-category``.
+
+    Whitelisted to ``pool`` / ``landscaping`` / ``both``.  ``None``
+    explicitly clears the field (customer category is "unset").
+    """
+    service_category: Optional[str] = None
+
+
+@router.patch("/customers/{cid}/service-category")
+async def patch_customer_service_category(
+    cid: str, body: _ServiceCategoryPatch,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """P2 #6 · Feb-2026 — set / clear the customer's service category.
+
+    Admin-only (``require_admin`` dep).  Values are lowercased before
+    validation so a casual ``"Pool"`` from a legacy client still lands.
+    Emits exactly one ``audit_logs`` row
+    ``event="customer.service_category_changed"`` on each transition;
+    no-op PATCH requests (same value in and out) are silent — matches
+    the audit contract used on the sibling P2 #4 ticket.
+    """
+    raw = body.service_category
+    if raw is not None:
+        normalized = (raw or "").strip().lower() or None
+        if normalized is not None and normalized not in _P2_6_VALID_CATEGORIES:
+            raise HTTPException(400, (
+                f"service_category must be one of {_P2_6_VALID_CATEGORIES} "
+                "or null to clear"
+            ))
+    else:
+        normalized = None
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    before = existing.get("service_category")
+    if before == normalized:
+        return existing  # idempotent — no audit, no write
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"service_category": normalized}},
+    )
+    try:
+        await db.audit_logs.insert_one({
+            "event": "customer.service_category_changed",
+            "entity_kind": "customer",
+            "entity_id": cid,
+            "customer_id": cid,
+            "from": before,
+            "to": normalized,
+            "actor_user_id": user.get("id"),
+            "tenant_id": tenant["id"],
+            "created_at": now_iso(),
+        })
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(
+            "customer.service_category_changed audit_logs insert failed: %s",
+            _e,
+        )
+    return await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
 
 
 @router.patch("/customers/{cid}/vip")
