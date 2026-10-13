@@ -156,6 +156,25 @@ async def dashboard(user: dict = Depends(get_current_user),
         db=db, tenant_id=tenant["id"],
     )
 
+    # ── Feb-2026 · P2 #6 property pivot — property-level counts ──
+    # Four additional fields consumed by the Active Accounts + Pool /
+    # Landscaping / Both-services property tiles that render BELOW
+    # the customer-count tiles above.  Intentionally keeps the
+    # customer-count fields exactly as-is: new tiles ADD, don't
+    # replace.
+    #
+    # Active property gate (ruling #3): ``property.active != False``
+    # AND ``property.deleted_at`` unset AND parent
+    # ``customer.is_active != False`` AND parent ``customer.deleted_at``
+    # unset. Union semantics (``both`` counts on BOTH Pool +
+    # Landscaping) mirror the customer-level pattern.
+    from services.dashboard_property_category_counts import (
+        compute_property_counts,
+    )
+    _property_counts = await compute_property_counts(
+        db=db, tenant_id=tenant["id"],
+    )
+
     recent = await db.jobs.find(tenant_q, {"_id": 0, "photos.data": 0}).sort("created_at", -1).to_list(6)
 
     now = datetime.now(timezone.utc)
@@ -354,6 +373,25 @@ async def dashboard(user: dict = Depends(get_current_user),
         # totals exactly.
         "pool_customers_count": pool_customers_count,
         "landscaping_customers_count": landscaping_customers_count,
+        # ── Feb-2026 · P2 #6 property pivot — property-level counts ──
+        # Rendered as the Active Accounts + Pool / Landscaping /
+        # Both-services property tiles BELOW the customer-count
+        # tiles above.  "Active property" definition (ruling #3,
+        # locked): property.active != False AND no soft-delete AND
+        # parent customer.is_active != False AND parent not
+        # soft-deleted.  Customer ``is_muted == True`` does NOT
+        # disqualify its properties.  Union semantics mirror the
+        # customer-level: a property with
+        # ``service_category == "both"`` counts on BOTH Pool and
+        # Landscaping tiles.  Properties with no category pinned
+        # count toward Active Accounts but NOT toward any category
+        # tile.  Backing helper:
+        # ``services/dashboard_property_category_counts.compute_property_counts``.
+        "active_accounts_count": _property_counts["active_accounts_count"],
+        "pool_properties_count": _property_counts["pool_properties_count"],
+        "landscaping_properties_count":
+            _property_counts["landscaping_properties_count"],
+        "both_properties_count": _property_counts["both_properties_count"],
         # deprecated 2026-02, remove 2026-05-01 — replaced by the
         # Active/Inactive Customers pair above. The Technicians KPI
         # tile was retired from the dashboard on the same date but
