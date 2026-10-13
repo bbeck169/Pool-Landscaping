@@ -392,6 +392,7 @@ export async function fetchDuplicates(batchId, { baseUrl, token } = {}) {
 export async function commitBatch(batchId, {
   onDuplicate = DEFAULT_ON_DUPLICATE,
   notes = null,
+  customerMatchOverrides = null,
   baseUrl,
   token,
 } = {}) {
@@ -403,6 +404,16 @@ export async function commitBatch(batchId, {
   );
   const body = { on_duplicate: onDuplicate };
   if (notes) body.notes = notes;
+  // Feb-2026 · match-ladder expansion — per-pending-id override
+  // map (``{<pending_customer_id>: "reject_fuzzy"}``) wired
+  // through to ``routers/imports._CommitOptions``. Omit the key
+  // entirely when the operator didn't reject anything so the
+  // commit payload stays minimal.
+  if (customerMatchOverrides
+      && typeof customerMatchOverrides === "object"
+      && Object.keys(customerMatchOverrides).length > 0) {
+    body.customer_match_overrides = customerMatchOverrides;
+  }
   const res = await fetch(
     `${BASE}/api/imports/pdf-invoice/${encodeURIComponent(batchId)}/commit`,
     {
@@ -1374,6 +1385,26 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
 
   const [needsReviewAcked, setNeedsReviewAcked] = useState(false);
 
+  // Feb-2026 · match-ladder expansion — operator can click
+  // "Reject match" next to a fuzzy chip to opt out of the
+  // dry-run's fuzzy attachment.  Map keyed by
+  // ``pending_customer_id`` → ``"reject_fuzzy"``; threaded into
+  // the commit payload as ``customer_match_overrides``.
+  const [customerMatchOverrides, setCustomerMatchOverrides] =
+    useState({});
+  const toggleRejectFuzzy = useCallback((pendingCustomerId) => {
+    if (!pendingCustomerId) return;
+    setCustomerMatchOverrides((prev) => {
+      const next = { ...(prev || {}) };
+      if (next[pendingCustomerId] === "reject_fuzzy") {
+        delete next[pendingCustomerId];
+      } else {
+        next[pendingCustomerId] = "reject_fuzzy";
+      }
+      return next;
+    });
+  }, []);
+
   const isCommitting = fileStatus === FILE_STATUS.COMMITTING;
   const isCommitted  = fileStatus === FILE_STATUS.COMMITTED;
   const isRollingBack = fileStatus === FILE_STATUS.ROLLING_BACK;
@@ -1387,6 +1418,7 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
     try {
       const envelope = await commitBatch(batch.id || batch.batch_id, {
         onDuplicate,
+        customerMatchOverrides,
       });
       setCommitOutcome(envelope);
       onCommitSuccess?.(fileId, envelope);
@@ -1395,8 +1427,8 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
       setCommitErrorStatus(err?.status || null);
       onCommitFailure?.(fileId, err);
     }
-  }, [batch, fileId, onDuplicate, onCommitStart,
-      onCommitSuccess, onCommitFailure]);
+  }, [batch, fileId, onDuplicate, customerMatchOverrides,
+      onCommitStart, onCommitSuccess, onCommitFailure]);
 
   const handleRollback = useCallback(async () => {
     onRollbackStart?.(fileId);
@@ -1492,6 +1524,8 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
           <WillAutoCreateCustomersBanner
             fileId={fileId}
             classification={batch.pending_customer_classification}
+            customerMatchOverrides={customerMatchOverrides}
+            onToggleRejectFuzzy={toggleRejectFuzzy}
           />
 
           {/* PDF-MIRROR · Feb-2026 — Needs Review banner. Renders
@@ -2392,11 +2426,24 @@ export function WarningsBanner({ fileId, warnings }) {
  *     batches without PENDING sentinels)
  *   * both buckets empty (nothing to communicate)
  */
-export function WillAutoCreateCustomersBanner({ fileId, classification }) {
+export function WillAutoCreateCustomersBanner({
+  fileId, classification,
+  customerMatchOverrides = null,
+  onToggleRejectFuzzy = null,
+}) {
   const willAuto = Array.isArray(classification?.will_auto_create)
     ? classification.will_auto_create : [];
   const manual = Array.isArray(classification?.will_require_manual_review)
     ? classification.will_require_manual_review : [];
+  // Feb-2026 · match-ladder expansion — rows that will attach
+  // to an existing customer at commit time (any tier).  Shape
+  // per entry: ``{source_doc_index, pending_customer_id,
+  // extracted_name, match_status, matched_customer_id,
+  // matched_customer_name, matched_customer_status, match_method,
+  // match_confidence, fuzzy_distance}``.
+  const willMatchExisting = Array.isArray(
+    classification?.will_match_existing,
+  ) ? classification.will_match_existing : [];
   // Feb-2026 · auto-create UX ticket — the backend summary block
   // computes the DISTINCT-dedup-group count the commit path will
   // actually produce.  Falls back to the raw array length for
@@ -2405,10 +2452,26 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
   const autoCreateCount = (typeof _summaryCount === "number")
     ? _summaryCount
     : willAuto.length;
+  const _matchExistingCount =
+    classification?.summary?.will_match_existing_count;
+  const matchExistingCount = (typeof _matchExistingCount === "number")
+    ? _matchExistingCount
+    : willMatchExisting.length;
+  // Feb-2026 · match-ladder expansion — operator rejections
+  // locally flip a fuzzy row into the manual-review visual state
+  // without blocking the Commit button; the backend honours the
+  // override by routing the row through auto-create instead of
+  // the fuzzy match.  The resulting ``match_status`` is still
+  // ``fuzzy_match`` server-side; the FE just renders it with a
+  // rejected-match treatment.
+  const overrides = (customerMatchOverrides
+                      && typeof customerMatchOverrides === "object")
+    ? customerMatchOverrides : {};
   const lowConfRows = manual.filter(
     (r) => r?.reason === "customer_extraction_confidence_low",
   );
-  if (willAuto.length === 0 && manual.length === 0) return null;
+  if (willAuto.length === 0 && manual.length === 0
+      && willMatchExisting.length === 0) return null;
 
   // Scroll-into-view affordance that reuses the existing per-row
   // customer picker (``pdf-import-preview-row-${idx}-customer-low-confidence``
@@ -2450,6 +2513,15 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
           ) : (
             <>No customers to auto-create</>
           )}
+          {matchExistingCount > 0 ? (
+            <span
+              className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+              data-testid={`pdf-import-will-match-existing-count-${fileId}`}
+            >
+              {matchExistingCount} matched to existing
+            </span>
+          ) : null}
           {manual.length > 0 ? (
             <span
               className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
@@ -2461,6 +2533,14 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
             </span>
           ) : null}
         </div>
+        {willMatchExisting.length > 0 ? (
+          <MatchExistingChips
+            fileId={fileId}
+            rows={willMatchExisting}
+            overrides={overrides}
+            onToggleRejectFuzzy={onToggleRejectFuzzy}
+          />
+        ) : null}
         {willAuto.length > 0 ? (
           <details className="mt-1 group">
             <summary
@@ -2530,6 +2610,114 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Feb-2026 · match-ladder expansion — per-row chip list for the
+ * ``will_match_existing`` bucket surfaced by the Phase 33 Step C.1
+ * classifier.  One chip per pending row, color-coded by the
+ * matched customer's bucket (``active`` / ``inactive`` / ``muted``)
+ * or by the match method (``fuzzy``):
+ *
+ *   * ``active``        → green chip "Matched: <name> (Active)"
+ *   * ``inactive``      → amber chip "Matched: <name> (Inactive — will
+ *                                      attach to this customer)"
+ *   * ``muted``         → amber chip "Matched: <name> (Muted — will
+ *                                      attach to this customer)"
+ *   * ``fuzzy_match``   → amber chip "Matched: <name> (Fuzzy, distance N)"
+ *                        + "Reject match" link that calls
+ *                        ``onToggleRejectFuzzy(pending_customer_id)``
+ *                        → payload grows ``customer_match_overrides``
+ *                        so the backend routes this row through
+ *                        auto-create instead of the fuzzy match.
+ *
+ * Rows the operator rejected locally render with a strike-through
+ * + an "Undo reject" link so the override is reversible.
+ */
+function MatchExistingChips({
+  fileId, rows, overrides, onToggleRejectFuzzy,
+}) {
+  return (
+    <div
+      className="mt-2 flex flex-col gap-1.5"
+      data-testid={`pdf-import-match-existing-chips-${fileId}`}
+    >
+      {rows.map((row) => {
+        const pid = row?.pending_customer_id;
+        const rejected = pid && overrides?.[pid] === "reject_fuzzy";
+        const status = row?.match_status;
+        // Status → chip palette.  Active uses green; inactive /
+        // muted / fuzzy all use amber (operator should look twice).
+        const bg = status === "active" ? "#DCFCE7" : "#FEF3C7";
+        const fg = status === "active" ? "#166534" : "#78350F";
+        const border = status === "active" ? "#86EFAC" : "#FBBF24";
+        const matchedName = row?.matched_customer_name
+          || row?.extracted_name || "(unnamed)";
+        let suffix;
+        if (status === "active") {
+          suffix = "(Active)";
+        } else if (status === "inactive") {
+          suffix = "(Inactive — will attach to this customer)";
+        } else if (status === "muted") {
+          suffix = "(Muted — will attach to this customer)";
+        } else if (status === "fuzzy_match") {
+          const d = row?.fuzzy_distance;
+          suffix = d != null
+            ? `(Fuzzy, distance ${d})`
+            : "(Fuzzy match)";
+        } else {
+          suffix = "";
+        }
+        return (
+          <div
+            key={pid || row.source_doc_index}
+            className="flex items-center gap-2 text-xs"
+            data-testid={
+              `pdf-import-match-existing-row-${fileId}-${row.source_doc_index}`
+            }
+          >
+            <span className="font-mono text-[11px] opacity-60"
+                   style={{ color: "#1E3A8A" }}>
+              #{row.source_doc_index}
+            </span>
+            <span
+              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium"
+              style={{
+                backgroundColor: bg,
+                color: fg,
+                borderColor: border,
+                textDecoration: rejected ? "line-through" : "none",
+                opacity: rejected ? 0.6 : 1,
+              }}
+              title={status === "fuzzy_match"
+                ? "Levenshtein distance from extracted name"
+                : undefined}
+              data-testid={
+                `pdf-import-match-chip-${fileId}-${row.source_doc_index}`
+              }
+              data-match-status={status || ""}
+            >
+              Matched: {matchedName} {suffix}
+            </span>
+            {status === "fuzzy_match" && onToggleRejectFuzzy ? (
+              <button
+                type="button"
+                onClick={() => onToggleRejectFuzzy(pid)}
+                className="underline underline-offset-2 text-[11px] hover:brightness-110"
+                style={{ color: "#B45309" }}
+                data-testid={
+                  `pdf-import-reject-fuzzy-btn-${fileId}-${row.source_doc_index}`
+                }
+              >
+                {rejected ? "Undo reject" : "Reject match"}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
