@@ -7,6 +7,8 @@ import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
 import { CustomerLink } from "@/components/customer";
 import BulkChargeModal from "@/components/invoices/BulkChargeModal";
+import BulkApplyCreditModal
+  from "@/components/invoices/BulkApplyCreditModal";
 // PDFI-IV · Feb-2026 — sidepanel upload flow for native PDFs.
 import PdfInvoiceUploadSidePanel from "@/components/invoices/PdfInvoiceUploadSidePanel";
 import CustomerFilterBar from "@/components/customers/CustomerFilterBar";
@@ -168,6 +170,11 @@ export default function InvoicesList() {
   const [bulkChargeOpen, setBulkChargeOpen] = useState(false);
   // Phase K38 · Feb-2026 — separate flag for the ACH-on-file bulk modal.
   const [bulkChargeAchOpen, setBulkChargeAchOpen] = useState(false);
+  // Feb-2026 · Bulk Apply Credit — Phase 1 bulk action (sibling to
+  // the Stripe-based bulk-charge buttons above). State flow:
+  //   open → confirm → fire → results → close → clearSelection +
+  //   loadRows.
+  const [bulkApplyCreditOpen, setBulkApplyCreditOpen] = useState(false);
 
   const setStatus = (v) => {
     // FIN-PARITY-B · Feb-2026 — dropdown writes to
@@ -965,6 +972,23 @@ export default function InvoicesList() {
           >
             <Landmark size={12} /> Charge ACH on file
           </button>
+          {/* Feb-2026 · Bulk Apply Credit — Phase 1. Uses
+              ``services/credit_apply.py`` under the hood via the
+              new ``/invoices/bulk-apply-credit`` endpoint. Max 500
+              per batch (DOS guard enforced BE-side). */}
+          <button
+            type="button"
+            onClick={() => setBulkApplyCreditOpen(true)}
+            disabled={busy || selectedCount === 0 || selectedCount > 500}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+            style={{ backgroundColor: "#7C3AED", color: "#FFFFFF" }}
+            data-testid="bulk-apply-credit-button"
+            title={selectedCount > 500
+              ? "Max 500 invoices per batch"
+              : ""}
+          >
+            <CreditCard size={12} /> Apply Credit ({selectedCount})
+          </button>
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
@@ -1071,6 +1095,19 @@ export default function InvoicesList() {
           onClose={(runId) => {
             setBulkChargeAchOpen(false);
             if (runId) {
+              clearSelection();
+              loadRows();
+            }
+          }}
+        />
+      ) : null}
+      {/* Feb-2026 · Bulk Apply Credit modal. */}
+      {bulkApplyCreditOpen ? (
+        <BulkApplyCreditModal
+          invoiceIds={Array.from(selected)}
+          onClose={(didApply) => {
+            setBulkApplyCreditOpen(false);
+            if (didApply) {
               clearSelection();
               loadRows();
             }
