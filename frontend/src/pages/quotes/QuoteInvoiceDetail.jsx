@@ -1021,25 +1021,69 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
               {/* Phase 2 B2 · Feb-2026 — recipient-type pill.
                   Renders on every quote/invoice; "Lead" when the
                   recipient is a Lead row, "Customer" otherwise
-                  (including legacy docs with no recipient_type). */}
-              <span
-                data-testid="quote-recipient-type-badge"
-                data-recipient-type={doc.recipient_type === "lead" ? "lead" : "customer"}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  padding: "2px 8px",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: 0.4,
-                  borderRadius: 999,
-                  background: doc.recipient_type === "lead" ? "#FEF3C7" : "#DBEAFE",
-                  color: doc.recipient_type === "lead" ? "#92400E" : "#1E40AF",
-                  textTransform: "uppercase",
-                }}
-              >
-                {doc.recipient_type === "lead" ? "Lead" : "Customer"}
-              </span>
+                  (including legacy docs with no recipient_type).
+                  P2 #4 · Feb-2026 — the pill is click-through to the
+                  Lead detail when either (a) the recipient is still
+                  a Lead, or (b) the doc was reparented from a Lead
+                  (``converted_from_lead_id`` set).  In case (b) the
+                  copy flips from "Lead" to "Converted from Lead" so
+                  the operator can tell the live-link state from the
+                  post-conversion provenance at a glance. */}
+              {(() => {
+                const _isLiveLead = doc.recipient_type === "lead";
+                const _isConvFromLead = !!doc.converted_from_lead_id;
+                const _leadId = _isLiveLead
+                  ? doc.recipient_id
+                  : (_isConvFromLead ? doc.converted_from_lead_id : null);
+                const _clickable = !!_leadId;
+                const _label = _isLiveLead
+                  ? "Lead"
+                  : (_isConvFromLead ? "Converted from Lead" : "Customer");
+                const _bg = _isLiveLead
+                  ? "#FEF3C7"
+                  : (_isConvFromLead ? "#FEF3C7" : "#DBEAFE");
+                const _fg = _isLiveLead
+                  ? "#92400E"
+                  : (_isConvFromLead ? "#92400E" : "#1E40AF");
+                return (
+                  <span
+                    data-testid="quote-recipient-type-badge"
+                    data-recipient-type={_isLiveLead ? "lead" : "customer"}
+                    data-lead-link={_isConvFromLead ? "converted" : (_isLiveLead ? "live" : "none")}
+                    title={_clickable
+                      ? `Linked to Lead: ${doc.customer_name || ""}`
+                      : undefined}
+                    role={_clickable ? "button" : undefined}
+                    tabIndex={_clickable ? 0 : undefined}
+                    onClick={_clickable
+                      ? () => navigate(`/leads/${_leadId}`)
+                      : undefined}
+                    onKeyDown={_clickable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            navigate(`/leads/${_leadId}`);
+                          }
+                        }
+                      : undefined}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "2px 8px",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: 0.4,
+                      borderRadius: 999,
+                      background: _bg,
+                      color: _fg,
+                      textTransform: "uppercase",
+                      cursor: _clickable ? "pointer" : "default",
+                    }}
+                  >
+                    {_label}
+                  </span>
+                );
+              })()}
             </div>
             <h1 className="sr-only" data-testid="quote-invoice-detail-inline-h1">
               {doc.title}

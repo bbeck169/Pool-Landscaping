@@ -55,6 +55,32 @@ function StatusPill({ status }) {
   );
 }
 
+// P2 #4 · Feb-2026 — Lightweight status pill for the Linked Quotes
+// mini-list. Mirrors the quote-status vocabulary used across the admin
+// quote-detail header pill (draft / sent / accepted / declined / etc.).
+// Unknown values fall through to a neutral slate pill.
+const _QUOTE_STATUS_COLORS = {
+  draft: "bg-slate-100 text-slate-700",
+  sent: "bg-sky-100 text-sky-800",
+  accepted: "bg-emerald-100 text-emerald-800",
+  declined: "bg-rose-100 text-rose-800",
+  paid: "bg-emerald-100 text-emerald-800",
+  unpaid: "bg-amber-100 text-amber-800",
+  overdue: "bg-rose-100 text-rose-800",
+};
+function QuoteStatusPill({ status }) {
+  const normalized = (status || "").toLowerCase();
+  const cls = _QUOTE_STATUS_COLORS[normalized] || "bg-slate-100 text-slate-700";
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}
+      data-testid={`lead-linked-quote-status-${normalized || "unknown"}`}
+    >
+      {normalized ? normalized.replace(/_/g, " ") : "—"}
+    </span>
+  );
+}
+
 function TimelineEntry({ ev }) {
   const label = {
     created: "Lead created",
@@ -196,6 +222,11 @@ export default function LeadDetail() {
   const [commCursor, setCommCursor] = useState(null);
   const [commHasMore, setCommHasMore] = useState(false);
   const [commLoading, setCommLoading] = useState(false);
+  // P2 #4 · Feb-2026 — Linked quotes mini-list (admin-only panel).
+  // Populated lazily from GET /leads/<id>/quotes once the lead itself
+  // resolves. Fail-open: fetch error leaves ``linkedQuotes`` null;
+  // the panel simply does not render.
+  const [linkedQuotes, setLinkedQuotes] = useState(null);
 
   const loadCommunications = useCallback(async (opts = {}) => {
     setCommLoading(true);
@@ -237,6 +268,20 @@ export default function LeadDetail() {
     if (lead?.id) loadCommunications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?.id]);
+
+  // P2 #4 · Feb-2026 — fetch linked-quotes mini-list after the lead
+  // resolves AND only when the quotes_count badge indicates there's
+  // something to show (avoids an empty network call for brand-new leads).
+  useEffect(() => {
+    if (!lead?.id) return;
+    if (!(lead.quotes_count > 0)) {
+      setLinkedQuotes(null);
+      return;
+    }
+    api.get(`/leads/${lead.id}/quotes?limit=10`).then((res) => {
+      setLinkedQuotes(res || { items: [], total: 0, limit: 10 });
+    }).catch(() => { setLinkedQuotes(null); });
+  }, [lead?.id, lead?.quotes_count]);
 
   const setStatus = async (status) => {
     setBusy(true);
@@ -666,6 +711,63 @@ export default function LeadDetail() {
               ))}
             </div>
           </div>
+
+          {/* P2 #4 · Feb-2026 — Linked Quotes mini-list. Renders only
+              when the backend has non-empty quotes_count AND the lazy
+              fetch succeeded. Admin-only (matches the Create Quote
+              button gate). Status pills + click-through to the quote
+              detail. "View all" link visible when total > rendered. */}
+          {isAdmin && linkedQuotes && (linkedQuotes.items || []).length > 0 ? (
+            <div
+              className="rounded-xl border border-slate-200 bg-white p-4"
+              data-testid="lead-linked-quotes-panel"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold">
+                  Linked Quote{linkedQuotes.total === 1 ? "" : "s"}
+                </div>
+                <span
+                  className="text-xs text-slate-500"
+                  data-testid="lead-linked-quotes-count"
+                >
+                  {linkedQuotes.total}
+                </span>
+              </div>
+              <ul className="space-y-2">
+                {(linkedQuotes.items || []).map((q) => (
+                  <li key={q.id}>
+                    <button
+                      type="button"
+                      onClick={() => nav(`/quotes/${q.id}`)}
+                      className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:bg-slate-50 flex items-center justify-between gap-2"
+                      data-testid={`lead-linked-quote-row-${q.id}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium truncate">
+                          {q.title || "(untitled)"}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          ${Number(q.total || 0).toFixed(2)}
+                          {q.reparented ? " · reparented" : ""}
+                        </div>
+                      </div>
+                      <QuoteStatusPill status={q.status} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {linkedQuotes.total > (linkedQuotes.items || []).length ? (
+                <button
+                  type="button"
+                  onClick={() => nav(`/quotes?lead=${lead.id}`)}
+                  className="mt-3 w-full text-xs font-semibold text-indigo-600 hover:underline"
+                  data-testid="lead-linked-quotes-view-all"
+                >
+                  View all {linkedQuotes.total} →
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 

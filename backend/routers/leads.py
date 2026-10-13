@@ -304,6 +304,63 @@ async def get_lead(lid: str,
     return row
 
 
+# P2 #4 · Feb-2026 — lead-detail "Linked Quote(s)" mini-list source.
+# Returns up to ``limit`` of the most-recent lead-recipient quotes for
+# the given lead (both open AND post-conversion reparented docs are
+# surfaced — the reparented docs retain ``converted_from_lead_id=lid``
+# so they stay discoverable from the Lead side). Status values are
+# normalized to a lowercase string so the UI can render consistent
+# status pills regardless of legacy casing.
+_LEAD_LINKED_QUOTES_LIMIT_MAX = 50
+
+
+@router.get("/leads/{lid}/quotes")
+async def list_linked_quotes(lid: str,
+                               limit: int = 10,
+                               user: dict = Depends(get_current_user),
+                               tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    _lim = max(1, min(int(limit or 10), _LEAD_LINKED_QUOTES_LIMIT_MAX))
+    # Confirm the lead exists + is in-tenant (same 404 contract as
+    # GET /leads/{lid}). Prevents the endpoint from being used as a
+    # cross-tenant quote probe.
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+    )
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    # Match both pre-conversion (recipient_type/_id) and post-conversion
+    # (converted_from_lead_id) linkage so operators keep visibility
+    # after the lead is closed-won + quotes are reparented.
+    _filter = {
+        "tenant_id": tenant["id"],
+        "$or": [
+            {"recipient_type": "lead", "recipient_id": lid},
+            {"converted_from_lead_id": lid},
+        ],
+    }
+    total = await db.quotes.count_documents(_filter)
+    cursor = db.quotes.find(_filter, {
+        "_id": 0, "id": 1, "title": 1, "status": 1, "total": 1,
+        "doc_type": 1, "created_at": 1, "recipient_type": 1,
+        "converted_from_lead_id": 1, "converted_invoice_id": 1,
+    }).sort("created_at", -1).limit(_lim)
+    items = []
+    async for row in cursor:
+        items.append({
+            "id": row.get("id"),
+            "title": row.get("title") or "",
+            "status": (row.get("status") or "").strip().lower(),
+            "total": float(row.get("total") or 0.0),
+            "doc_type": row.get("doc_type") or "quote",
+            "created_at": row.get("created_at"),
+            "reparented": bool(row.get("converted_from_lead_id") == lid
+                                 and (row.get("recipient_type") or "") == "customer"),
+            "converted_invoice_id": row.get("converted_invoice_id") or None,
+        })
+    return {"items": items, "total": total, "limit": _lim}
+
+
 # Feb-2026 · Lead detail drawer · Raw form submission lazy-load.
 # The detail drawer fetches this on-demand when ``lead.meta.submission_id``
 # exists so admins can inspect every question the visitor answered
