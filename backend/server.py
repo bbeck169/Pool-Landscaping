@@ -5707,6 +5707,33 @@ async def _run_boot_sequence():
     except Exception as e:
         logger.warning(f"mp1 properties migration crashed: {e}")
 
+    # Feb-2026 · P2 #6 property pivot — Idempotent one-time stamp of
+    # ``service_category`` on existing property rows, inheriting the
+    # value from the parent customer. Sentinel-gated via
+    # ``feb2026_property_service_category_inheritance_v1`` in
+    # ``db.migrations``. Runs AFTER ``migrate_customers_to_properties``
+    # so freshly-seeded "Main" rows also inherit (lazy seed also
+    # sets the field on create, but the migration catches rows
+    # created BEFORE this ship).
+    async def _bg_property_service_category_inheritance():
+        try:
+            from services.migrations.seed_property_service_category_from_customer import (
+                run_property_service_category_inheritance,
+            )
+            res = await run_property_service_category_inheritance()
+            if res.get("already_ran"):
+                logger.info(
+                    "[migration.property_service_category] sentinel "
+                    "present · ran_at=%s · skipping",
+                    res.get("ran_at"),
+                )
+        except Exception as exc:
+            logger.warning(
+                "property_service_category inheritance migration "
+                "crashed: %s", exc,
+            )
+    asyncio.create_task(_bg_property_service_category_inheritance())
+
     # Feb-2026 MP1.5 — Multi-property invoice plumbing. Idempotent:
     # backfills ``property_id`` on legacy invoices/estimates whose
     # linked jobs already carry a property. Skipped silently when a

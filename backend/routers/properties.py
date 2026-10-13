@@ -87,6 +87,11 @@ class PropertyIn(BaseModel):
     service_notes: Optional[Dict[str, Optional[str]]] = None
     photo_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
+    # Feb-2026 · P2 #6 property pivot — per-property service category.
+    # Values: ``pool`` / ``landscaping`` / ``both``. Null / missing /
+    # ``unset`` = inherit-at-write-time from the parent customer
+    # (see ``create_property`` ladder).
+    service_category: Optional[str] = None
     # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; enables
     # per-batch rollback via ``delete_many({import_batch_id: X})``.
     import_batch_id: Optional[str] = None
@@ -106,6 +111,8 @@ class PropertyPatch(BaseModel):
     photo_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
     active: Optional[bool] = None
+    # Feb-2026 · P2 #6 property pivot — admin override.
+    service_category: Optional[str] = None
 
 
 class MasterBillingIn(BaseModel):
@@ -120,6 +127,23 @@ class ReorderIn(BaseModel):
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────
+
+_VALID_SERVICE_CATEGORIES = frozenset({"pool", "landscaping", "both"})
+
+
+def _canonical_service_category(raw: Any) -> Optional[str]:
+    """Return the lowercase canonical ``service_category`` or ``None``
+    for unset / invalid. Case-insensitive — legacy ``"Pool"`` /
+    ``"POOL"`` land as ``"pool"``. Matches the migration helper in
+    ``services/migrations/seed_property_service_category_from_customer``.
+    """
+    if raw is None or not isinstance(raw, str):
+        return None
+    low = raw.strip().lower()
+    if low in _VALID_SERVICE_CATEGORIES:
+        return low
+    return None
+
 
 def _strip(doc: Optional[dict]) -> Optional[dict]:
     if doc:
@@ -230,6 +254,24 @@ async def _lazy_backfill_from_customer(tenant_id: str, customer_id: str) -> Opti
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    # Feb-2026 · P2 #6 property pivot — lazy backfill inherits
+    # ``service_category`` from the customer doc that triggered the
+    # seed. Keeps parity with ``create_property`` + the one-time
+    # migration.
+    cust_full = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant_id},
+        {"_id": 0, "service_category": 1},
+    ) or {}
+    inherited = _canonical_service_category(
+        cust_full.get("service_category"),
+    )
+    if inherited:
+        doc["service_category"] = inherited
+        doc["service_category_source"] = "inherited_from_customer"
+    else:
+        doc["service_category"] = None
+        doc["service_category_source"] = "unset"
+    doc["service_category_set_at"] = now_iso()
     await db.properties.insert_one(doc)
     return _strip(doc)
 
@@ -287,6 +329,134 @@ async def migrate_customers_to_properties() -> int:
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────
+
+# Feb-2026 · P2 #6 property pivot — tenant-wide Properties list.
+# Powers the new Properties list page + dashboard tile deep-links.
+# Admin-only (same bar as /customers list). Techs can't see
+# cross-customer property rolls.
+_PROPERTY_CATEGORY_UNION = {
+    "pool": {"$regex": r"^(pool|both)$", "$options": "i"},
+    "landscaping": {"$regex": r"^(landscaping|both)$", "$options": "i"},
+    "both": {"$regex": r"^both$", "$options": "i"},
+    "unset": {"$in": [None, ""]},
+}
+
+
+@router.get("/properties")
+async def list_properties(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+    is_active: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by active state. ``true`` = ``active != False`` + "
+            "parent customer active + no soft-deletes; ``false`` = "
+            "``active == False`` only; ``all`` or omitted = no gate."
+        ),
+    ),
+    service_category: Optional[str] = Query(
+        None,
+        description=(
+            "P2 #6 union semantics — ``pool`` matches "
+            "``{pool, both}``; ``landscaping`` matches "
+            "``{landscaping, both}``; ``both`` matches exact "
+            "``both``; ``unset`` matches null/missing. Values "
+            "outside this enum are silently ignored."
+        ),
+    ),
+    customer_id: Optional[str] = Query(
+        None,
+        description="Scope to a single customer id.",
+    ),
+    search: Optional[str] = Query(
+        None,
+        description=(
+            "Case-insensitive substring over ``label`` + "
+            "``address.line1`` + ``address.city``."
+        ),
+    ),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    """Tenant-wide property list. Deep-link target for the dashboard
+    property-count tiles + the Properties list page.
+
+    Active-filter semantics (ruling #3 from the P2 #6 property-pivot
+    dispatch):
+
+      * ``property.active != False`` AND
+      * ``property.deleted_at`` not set AND
+      * parent ``customer.is_active != False`` AND
+      * parent ``customer.deleted_at`` not set.
+
+    A ``customer.is_muted == True`` row does NOT disqualify its
+    properties — mute is a comms-suppression signal, not an
+    account-deactivation signal.
+    """
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    # Property-level active + soft-delete filter.
+    if is_active == "true":
+        q["active"] = {"$ne": False}
+        q["$or"] = [
+            {"deleted_at": {"$exists": False}},
+            {"deleted_at": None},
+        ]
+    elif is_active == "false":
+        q["active"] = False
+    # Property-level category filter.
+    cat_key = (service_category or "").strip().lower()
+    if cat_key in _PROPERTY_CATEGORY_UNION:
+        q["service_category"] = _PROPERTY_CATEGORY_UNION[cat_key]
+    if customer_id:
+        q["customer_id"] = customer_id
+    if search:
+        esc = search.strip()
+        if esc:
+            q["$or" if "$or" not in q else "$and"] = (
+                [{"label": {"$regex": esc, "$options": "i"}},
+                 {"address.line1": {"$regex": esc, "$options": "i"}},
+                 {"address.city": {"$regex": esc, "$options": "i"}}]
+                if "$or" not in q
+                else [{"$or": q.pop("$or")},
+                      {"$or": [
+                          {"label": {"$regex": esc, "$options": "i"}},
+                          {"address.line1": {"$regex": esc,
+                                               "$options": "i"}},
+                          {"address.city": {"$regex": esc,
+                                             "$options": "i"}},
+                      ]}]
+            )
+    # First pass — pull candidate property rows (over-fetch when
+    # ``is_active=true`` so parent-customer filtering doesn't
+    # under-return; cap at 4x limit to keep worst-case response
+    # bounded on degenerate inputs).
+    prelim = await db.properties.find(q, {"_id": 0}).to_list(
+        limit * 4 if is_active == "true" else limit + offset,
+    )
+    rows: List[Dict[str, Any]] = prelim
+    # Second pass — parent-customer gating when ``is_active=true``.
+    if is_active == "true" and rows:
+        cust_ids = list({r.get("customer_id") for r in rows
+                           if r.get("customer_id")})
+        if cust_ids:
+            cust_cursor = db.customers.find(
+                {"id": {"$in": cust_ids}, "tenant_id": tenant["id"],
+                 "$and": [
+                     {"$or": [{"is_active": True},
+                               {"is_active": None},
+                               {"is_active": {"$exists": False}}]},
+                     {"$or": [{"deleted_at": {"$exists": False}},
+                               {"deleted_at": None}]},
+                 ]},
+                {"_id": 0, "id": 1},
+            )
+            allowed = {c["id"] async for c in cust_cursor}
+            rows = [r for r in rows
+                    if r.get("customer_id") in allowed]
+    rows = rows[offset:offset + limit]
+    return {"items": rows, "limit": limit, "offset": offset,
+             "returned": len(rows)}
+
 
 @router.get("/customers/{cid}/properties")
 async def list_customer_properties(
@@ -346,6 +516,32 @@ async def create_property(cid: str, body: PropertyIn,
         "updated_at": now_iso(),
         **body.dict(exclude_unset=False),
     }
+    # Feb-2026 · P2 #6 property pivot — inherit ``service_category``
+    # from the parent customer at write time when the caller did not
+    # supply one (or passed an invalid/unset value). Admin can flip
+    # per-property later via PATCH. Mirrors the inheritance migration
+    # in ``services/migrations/seed_property_service_category_from_customer``.
+    cat = _canonical_service_category(doc.get("service_category"))
+    if cat:
+        doc["service_category"] = cat
+        doc["service_category_source"] = "explicit"
+    else:
+        cust_cat_doc = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]},
+            {"_id": 0, "service_category": 1},
+        ) or {}
+        inherited = _canonical_service_category(
+            cust_cat_doc.get("service_category"),
+        )
+        if inherited:
+            doc["service_category"] = inherited
+            doc["service_category_source"] = "inherited_from_customer"
+        else:
+            # Leave unset — tiles that filter by category skip this
+            # row until an admin pins a value.
+            doc["service_category"] = None
+            doc["service_category_source"] = "unset"
+    doc["service_category_set_at"] = now_iso()
     # Normalize nested dicts.
     if isinstance(doc.get("address"), _AddressIn):
         doc["address"] = doc["address"].dict()
@@ -385,6 +581,29 @@ async def patch_property(pid: str, body: PropertyPatch,
     if isinstance(addr, dict):
         addr.pop("address_line1", None)
         addr.pop("address_line2", None)
+    # Feb-2026 · P2 #6 property pivot — canonicalise ``service_category``
+    # on PATCH. Admin-override intent: ``"unset"`` or empty string
+    # explicitly clears the field (stamped as ``source=admin_cleared``);
+    # a valid enum value stamps ``source=admin_override``; anything
+    # outside the enum is silently dropped (same tolerance as the
+    # customer-level filter).
+    if "service_category" in updates:
+        raw = updates["service_category"]
+        if raw is None or (isinstance(raw, str)
+                             and raw.strip().lower() in ("", "unset")):
+            updates["service_category"] = None
+            updates["service_category_source"] = "admin_cleared"
+            updates["service_category_set_at"] = now_iso()
+        else:
+            canon = _canonical_service_category(raw)
+            if canon:
+                updates["service_category"] = canon
+                updates["service_category_source"] = "admin_override"
+                updates["service_category_set_at"] = now_iso()
+            else:
+                # Out-of-enum — drop silently to match the P2 #6
+                # list-filter tolerance.
+                updates.pop("service_category", None)
     if not updates:
         return await db.properties.find_one(
             {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0},
