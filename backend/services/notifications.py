@@ -439,6 +439,18 @@ async def emit(
 async def _dispatch_email(tenant_id: Optional[str], user_id: str, subject: str,
                           body: str, kind: str, href: Optional[str]) -> None:
     from utils import now_iso as _n
+    # WINGMAN-ESCALATION-EMAIL-FIX · Feb-2026 — pre-ship, this
+    # dispatcher emitted ``<a href="{href}">Open</a>`` with the
+    # ``href`` kwarg as a RELATIVE path (e.g. ``/communication/<cid>``
+    # from ``routers/customer_ai.py``).  Mail clients with no base
+    # URL in context fell back to ``file:///communication/<cid>``.
+    # Fix: normalise the href through the shared absolute-URL
+    # helper so missing-env misconfigs log loudly instead of
+    # silently emitting a broken link.
+    from services.email_urls import absolute_portal_url
+    absolute_href = absolute_portal_url(
+        href, template_name=f"admin_notification_fanout:{kind}",
+    )
     resend_key = os.environ.get("RESEND_API_KEY")
     u = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1}) or {}
     to_addr = u.get("email")
@@ -493,7 +505,10 @@ async def _dispatch_email(tenant_id: Optional[str], user_id: str, subject: str,
             "from": os.environ.get("RESEND_FROM", "onboarding@resend.dev"),
             "to": [to_addr],
             "subject": subject,
-            "html": f"<p>{body}</p>" + (f'<p><a href="{href}">Open</a></p>' if href else ""),
+            "html": f"<p>{body}</p>" + (
+                f'<p><a href="{absolute_href}">Open</a></p>'
+                if absolute_href else ""
+            ),
         })
         await db.email_delivery_log.insert_one({
             "id": new_id(),

@@ -124,6 +124,13 @@ _REBOUND_MODULES = (
     # which lives in ``routers.invoice_viewer`` and reads
     # ``db.tenants`` + ``db.customers`` off its own module-level ``db``.
     "routers.invoice_viewer",
+    # WINGMAN-ESCALATION-EMAIL-FIX · Feb-2026 — the admin notification
+    # fan-out at ``services.notifications._dispatch_email`` reads
+    # ``db.users``/``db.email_delivery_log`` directly off its own
+    # module-level ``db`` binding.  Added so
+    # ``test_wingman_escalation_email_absolute_url.py`` can drive
+    # the dispatcher in-process.
+    "services.notifications",
     "services.telematics",
     "services.telematics.registry",
     "services.telematics._helpers",
