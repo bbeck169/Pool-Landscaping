@@ -6134,6 +6134,268 @@ async def least_profitable_services(
              "total_evaluated": len(services)}
 
 
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · Pool Service Report — service-name regrouping.
+#
+# Spec note (user ticket Feb-2026): the primary row grouping on the
+# Pool Service Report now pivots on the job's SERVICE NAME (the
+# JOB column in the drill-down modal — the ``service_type`` field
+# on ``db.jobs``) instead of the pre-existing ``work_class`` split.
+# ``job_type`` is intentionally NOT a grouping key here — it stays
+# on job docs for other consumers but no longer gates this report.
+#
+# This is ADDITIVE: ``compute_pool_service`` continues to return
+# every pre-existing field (``maintenance`` / ``repairs`` / ``other``
+# arrays, ``by_technician``, etc.) so the weekly email, CSV legacy
+# consumers, and drill-down modal keep working. The new
+# ``service_type_breakdown`` section powers the regrouped primary
+# view on the admin surface.
+#
+# "Known" buckets land in their own row verbatim; everything else
+# falls into an expandable "Other" bucket with a per-service-name
+# sub-breakdown so an admin can see WHICH service_names are
+# falling through (equipment repair, chemical-only, inspection…).
+#
+# Unassigned bucket: jobs whose attribution ladder cannot land on
+# an ACTIVE user — missing ``technician_id`` + name/crew rescue
+# failed, OR the resolved user has ``deleted_at`` set — surface at
+# the TOP of the FE row list with an amber accent so they are
+# never silently dropped.
+# ══════════════════════════════════════════════════════════════════
+
+_POOL_SERVICE_NAME_KNOWN_BUCKETS = (
+    "Weekly Pool Cleaning",
+    "Maintenance",
+)
+
+
+def _normalize_service_name(raw: Any) -> str:
+    """Canonicalize a job's service name for bucketing.
+
+    Rules:
+      * ``None`` / empty / whitespace-only → ``""``.
+      * Collapse internal whitespace to single spaces + strip.
+      * Case normalization is DEFERRED to the bucket matcher so the
+        label we surface back in the response preserves the admin-
+        entered casing (``Weekly Pool Cleaning``, not
+        ``weekly pool cleaning``).
+    """
+    if not isinstance(raw, str):
+        return ""
+    return " ".join(raw.split())
+
+
+def _service_name_bucket_key(service_name: str) -> str:
+    """Map a normalized service name to its bucket key.
+
+    Case-insensitive membership check against
+    ``_POOL_SERVICE_NAME_KNOWN_BUCKETS``; everything else → ``"Other"``.
+    """
+    if not service_name:
+        return "Other"
+    low = service_name.lower()
+    for known in _POOL_SERVICE_NAME_KNOWN_BUCKETS:
+        if known.lower() == low:
+            return known
+    return "Other"
+
+
+async def _compute_service_name_breakdown(
+    jobs: list,
+    tenant_id: str,
+    tmap: dict,
+    name_to_uid: dict,
+    crew_to_uid: dict,
+    week_start: str,
+    week_end: str,
+) -> dict:
+    """Regroup the already-pool-filtered jobs by SERVICE NAME.
+
+    Shares the attribution ladder with ``compute_pool_service`` so
+    an "assigned" classification in one view matches the other.
+    Soft-deleted user → Unassigned (ticket spec).
+
+    Response shape::
+
+        {
+          "buckets": [
+            {
+              "name": "Weekly Pool Cleaning",
+              "count": 42,
+              "techs": [
+                {"technician_id": "...", "technician_name": "...",
+                  "count": 12},
+                ...
+              ],
+            },
+            ...,
+            {
+              "name": "Other",
+              "count": 10,
+              "techs": [...],
+              "other_breakdown": [
+                {"service_name": "Filter Change", "count": 5},
+                ...
+              ],
+            },
+          ],
+          "unassigned": {"count": N},
+          "total_pool_jobs": N,
+          "reconciliation_delta": 0,  # total - sum(buckets) - unassigned
+        }
+    """
+    # Preload the active-flag for every resolver-rescued id so we
+    # can treat soft-deleted users as Unassigned per the spec.
+    resolved_ids = list(set(
+        [t for t in (tmap or {}).keys() if t]
+        + [v for v in (name_to_uid or {}).values() if v]
+        + [v for v in (crew_to_uid or {}).values() if v]
+    ))
+    soft_deleted_ids: set = set()
+    if resolved_ids:
+        async for u in db.users.find(
+            {"tenant_id": tenant_id,
+              "$or": [
+                  {"technician_id": {"$in": resolved_ids}},
+                  {"id": {"$in": resolved_ids}},
+              ],
+              "deleted_at": {"$nin": [None, False]}},
+            {"_id": 0, "id": 1, "technician_id": 1, "deleted_at": 1},
+        ):
+            if u.get("technician_id") in resolved_ids:
+                soft_deleted_ids.add(u["technician_id"])
+            if u.get("id") in resolved_ids:
+                soft_deleted_ids.add(u["id"])
+
+    # Bucket -> {count, per_tid: {tid: count}, other_breakdown: {sv: count}}
+    buckets: dict = {}
+    unassigned_count = 0
+    other_breakdown_counts: dict = {}
+
+    for j in jobs:
+        # Replicate the attribution ladder EXACTLY (do not refactor
+        # into a helper that compute_pool_service would also use —
+        # that invites risky cross-feature coupling on a mature
+        # report. Kept in-sync via a shared test fixture).
+        tid = j.get("technician_id")
+        if not tid:
+            nm = (j.get("technician_name") or "").strip()
+            if nm:
+                tid = name_to_uid.get(nm)
+        if not tid:
+            _cid = j.get("crew_id") or ""
+            if _cid:
+                tid = crew_to_uid.get(_cid)
+        # Soft-deleted user → Unassigned.
+        if tid in soft_deleted_ids:
+            tid = None
+
+        service_name = _normalize_service_name(j.get("service_type"))
+        bucket_key = _service_name_bucket_key(service_name)
+
+        if not tid:
+            unassigned_count += 1
+            if bucket_key == "Other" and service_name:
+                other_breakdown_counts[service_name] = (
+                    other_breakdown_counts.get(service_name, 0) + 1
+                )
+            continue
+
+        b = buckets.setdefault(
+            bucket_key,
+            {"count": 0, "per_tid": {}, "other_breakdown": {}},
+        )
+        b["count"] += 1
+        b["per_tid"][tid] = b["per_tid"].get(tid, 0) + 1
+        if bucket_key == "Other" and service_name:
+            b["other_breakdown"][service_name] = (
+                b["other_breakdown"].get(service_name, 0) + 1
+            )
+            other_breakdown_counts[service_name] = (
+                other_breakdown_counts.get(service_name, 0) + 1
+            )
+
+    # Serialize deterministically: known buckets first (in declared
+    # order), then "Other" at the tail. Tech-arrays sorted by count
+    # desc, name asc.
+    def _tech_label(tid: str) -> str:
+        info = (tmap or {}).get(tid) or {}
+        nm = info.get("name") or ""
+        active = info.get("active", True)
+        if nm and active:
+            return nm
+        if nm and not active:
+            return f"{nm} (deactivated)"
+        return f"Unknown tech ({(tid or '')[:8]})"
+
+    ordered_keys = list(_POOL_SERVICE_NAME_KNOWN_BUCKETS)
+    if "Other" in buckets or other_breakdown_counts:
+        ordered_keys.append("Other")
+
+    serialized = []
+    for key in ordered_keys:
+        b = buckets.get(key)
+        if not b and key != "Other":
+            # Preserve empty known buckets at zero so the FE can
+            # render a stable row set even on a quiet week.
+            serialized.append({"name": key, "count": 0, "techs": []})
+            continue
+        if not b and key == "Other":
+            if not other_breakdown_counts:
+                continue
+            # Other bucket got all its jobs via unassigned path.
+            serialized.append({
+                "name": "Other",
+                "count": 0,
+                "techs": [],
+                "other_breakdown": sorted(
+                    [{"service_name": k, "count": v}
+                      for k, v in other_breakdown_counts.items()],
+                    key=lambda r: (-r["count"], r["service_name"]),
+                ),
+            })
+            continue
+        techs = [
+            {
+                "technician_id": tid,
+                "technician_name": _tech_label(tid),
+                "count": cnt,
+            }
+            for tid, cnt in b["per_tid"].items()
+        ]
+        techs.sort(key=lambda r: (-r["count"], r["technician_name"]))
+        row = {"name": key, "count": b["count"], "techs": techs}
+        if key == "Other":
+            # Union of assigned + unassigned Other breakdowns so the
+            # expandable sub-row reflects every service_name landing
+            # in Other for the window.
+            row["other_breakdown"] = sorted(
+                [{"service_name": k, "count": v}
+                  for k, v in other_breakdown_counts.items()],
+                key=lambda r: (-r["count"], r["service_name"]),
+            )
+        serialized.append(row)
+
+    total_pool_jobs = len(jobs)
+    counted = sum(b["count"] for b in serialized) + unassigned_count
+    delta = total_pool_jobs - counted
+    if delta != 0:
+        logger.warning(
+            "[pool-service] service_name reconciliation delta=%d "
+            "total=%d counted=%d unassigned=%d tenant=%s "
+            "week=%s..%s",
+            delta, total_pool_jobs, counted - unassigned_count,
+            unassigned_count, tenant_id, week_start, week_end,
+        )
+
+    return {
+        "buckets": serialized,
+        "unassigned": {"count": unassigned_count},
+        "total_pool_jobs": total_pool_jobs,
+        "reconciliation_delta": delta,
+    }
+
+
 async def compute_pool_service(tenant_id: str,
                                date_from: Optional[str] = None,
                                date_to: Optional[str] = None):
@@ -6654,6 +6916,21 @@ async def compute_pool_service(tenant_id: str,
         "dropped_sample": _dropped_sample,
     }
 
+    # Feb-2026 · Service-name regrouping — see
+    # ``_compute_service_name_breakdown`` module docstring. Additive;
+    # does not touch any pre-existing field above. Shares the same
+    # ``jobs`` + attribution maps so bucketing is consistent with
+    # the per-tech ``rows`` above.
+    service_name_breakdown = await _compute_service_name_breakdown(
+        jobs=jobs,
+        tenant_id=tenant_id,
+        tmap=tmap,
+        name_to_uid=name_to_uid,
+        crew_to_uid=crew_to_uid,
+        week_start=week_start,
+        week_end=week_end,
+    )
+
     return {
         # ─── Legacy fields — preserved shape ─────────────────────
         "week_start": week_start,
@@ -6722,6 +6999,16 @@ async def compute_pool_service(tenant_id: str,
             "crew_id→crews.tech_ids[0]",
             "Unassigned",
         ],
+
+        # ─── Feb-2026 · Service-name regrouping ─────────────────
+        # Primary grouping key for the admin surface is now the
+        # job's SERVICE NAME (``service_type`` on the job doc).
+        # ``job_type`` is intentionally omitted here — it remains
+        # on job docs for other consumers but no longer gates this
+        # report. See ``_compute_service_name_breakdown`` for the
+        # bucket matrix, Other-breakdown computation, and the
+        # Unassigned (missing / soft-deleted-tech) semantics.
+        "service_name_breakdown": service_name_breakdown,
     }
 
 
