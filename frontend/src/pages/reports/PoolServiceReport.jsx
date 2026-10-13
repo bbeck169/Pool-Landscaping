@@ -68,6 +68,47 @@ function toCsv(rows) {
     .join("\n");
 }
 
+
+/**
+ * Feb-2026 · Service-name regrouping — CSV generator for the new
+ * primary view. One row per {service_name × tech} pairing plus a
+ * leading "Unassigned" row when the backend reports any. Keeps
+ * ``toCsv`` above untouched so the legacy work_class-flavored CSV
+ * is still available for consumers that haven't migrated.
+ */
+function serviceNameCsv(breakdown) {
+  const header = ["Service Name", "Tech Name", "Count"];
+  const rows = [];
+  const unassignedCount = breakdown?.unassigned?.count || 0;
+  if (unassignedCount > 0) {
+    rows.push(["Unassigned", "—", unassignedCount]);
+  }
+  for (const b of (breakdown?.buckets || [])) {
+    for (const t of (b.techs || [])) {
+      rows.push([b.name, t.technician_name, t.count]);
+    }
+    // "Other" sub-breakdown — one summary row per service_name
+    // under Other so an admin opening the CSV sees the same
+    // grouping that the expandable UI reveals.
+    if (b.name === "Other"
+        && Array.isArray(b.other_breakdown)
+        && b.other_breakdown.length > 0) {
+      for (const sub of b.other_breakdown) {
+        rows.push([
+          `Other › ${sub.service_name}`,
+          "—",
+          sub.count,
+        ]);
+      }
+    }
+  }
+  return [header, ...rows]
+    .map((line) =>
+      line.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","),
+    )
+    .join("\n");
+}
+
 /**
  * Single shared tech-row renderer — one implementation used by both
  * the Maintenance and Repairs tables so the row markup is never
@@ -313,8 +354,45 @@ export default function PoolServiceReport() {
     : 0;
   const reconciliation = data?.reconciliation || null;
   const otherLabel = data?.other_label || "Other";
+  // Feb-2026 · Service-name regrouping — the primary row grouping
+  // on this page is now driven off ``service_name_breakdown`` from
+  // the backend. The pre-existing per-tech ``work_class`` tables
+  // below stay rendered for admins who prefer that view; the new
+  // section is the first the admin sees after the summary chips.
+  const serviceNameBreakdown = data?.service_name_breakdown || null;
+  const serviceNameDelta =
+    typeof serviceNameBreakdown?.reconciliation_delta === "number"
+      ? serviceNameBreakdown.reconciliation_delta
+      : null;
+  // ``shouldShowReconciliationBanner`` gates the old
+  // "could-not-be-attributed" yellow banner. Post-regrouping, the
+  // service-name section accounts for every pool job in the window
+  // via Unassigned (missing / soft-deleted tech), so when
+  // ``reconciliation_delta === 0`` the banner MUST hide — the
+  // report is self-consistent. Legacy ``reconciliation.matches``
+  // check remains as a defensive fallback for backends that pre-
+  // date the service-name regrouping (older preview envs mid-roll).
+  const shouldShowReconciliationBanner = (() => {
+    if (serviceNameDelta !== null) return serviceNameDelta !== 0;
+    return reconciliation && !reconciliation.matches;
+  })();
 
   const downloadCsv = () => {
+    // Feb-2026 · Service-name regrouping — prefer the new primary
+    // grouping when the backend returns ``service_name_breakdown``;
+    // fall through to the legacy per-tech export on older backends.
+    if (serviceNameBreakdown
+        && Array.isArray(serviceNameBreakdown.buckets)) {
+      const csv = serviceNameCsv(serviceNameBreakdown);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pool-service-report_${data?.week_start || week}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
     // Union of maintenance + repairs, deduped by technician_id so a
     // tech with both counts appears once.  Falls back to
     // ``by_technician`` when either array is missing.
@@ -461,8 +539,11 @@ export default function PoolServiceReport() {
               first-N dropped jobs (``dropped_sample``) so admins
               can click "View details" to inspect without
               opening logs. */}
-          {reconciliation && !reconciliation.matches && (
-            <ReconciliationBanner reconciliation={reconciliation} />
+          {shouldShowReconciliationBanner && (
+            <ReconciliationBanner
+              reconciliation={reconciliation}
+              serviceNameBreakdown={serviceNameBreakdown}
+            />
           )}
 
           {/* Summary strip — counts + total. All chips are now
@@ -513,6 +594,21 @@ export default function PoolServiceReport() {
             )}
             <Chip label="Total" value={totalAll} tone="neutral" testid="pool-report-total-all" />
           </div>
+
+          {/* ─── Feb-2026 · Service-name regrouping — primary view ──
+              Groups the window's pool jobs by SERVICE NAME (the
+              job's ``service_type``) with an Unassigned row at the
+              top (jobs with missing / soft-deleted tech) and an
+              expandable "Other" row that reveals the per-service-
+              name sub-breakdown. The pre-existing per-tech
+              maintenance / repairs tables below stay rendered as a
+              secondary view for admins who prefer the work_class
+              split. */}
+          {serviceNameBreakdown && (
+            <ServiceNameBreakdownSection
+              breakdown={serviceNameBreakdown}
+            />
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* ─── Maintenance Visits ────────────────────────── */}
@@ -898,17 +994,206 @@ export default function PoolServiceReport() {
 }
 
 /**
+ * Feb-2026 · Service-name regrouping — primary view component.
+ *
+ * Renders:
+ *   • "Unassigned" row AT TOP (amber accent) when the backend
+ *     reports non-zero unassigned.count.
+ *   • One row per known service-name bucket (currently
+ *     "Weekly Pool Cleaning" + "Maintenance") — count on the right.
+ *   • "Other" row with a chevron — click to expand the per-service-
+ *     name sub-breakdown. Sorted by count desc, service_name asc.
+ *
+ * Reads the backend's ``service_name_breakdown`` payload verbatim;
+ * no FE-side bucket computation so a backend bucket-list change
+ * never requires a FE deploy.
+ */
+function ServiceNameBreakdownSection({ breakdown }) {
+  const [otherExpanded, setOtherExpanded] = React.useState(false);
+  const unassignedCount = breakdown?.unassigned?.count || 0;
+  const buckets = Array.isArray(breakdown?.buckets)
+    ? breakdown.buckets : [];
+  return (
+    <div
+      className="rounded-2xl mb-4 overflow-hidden"
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="pool-report-service-name-section"
+    >
+      <div
+        className="px-4 py-3 text-xs font-semibold flex items-center justify-between"
+        style={{
+          background: colors.surfaceSecondary,
+          color: colors.muted,
+          borderBottom: `1px solid ${colors.border}`,
+        }}
+      >
+        <span className="uppercase">
+          By service name
+        </span>
+        <span
+          className="text-[11px]"
+          style={{ color: colors.muted }}
+          data-testid="pool-report-service-name-total"
+        >
+          {breakdown?.total_pool_jobs || 0} pool jobs this window
+        </span>
+      </div>
+      <ul className="divide-y" style={{ borderColor: colors.border }}>
+        {unassignedCount > 0 && (
+          <li
+            className="flex items-center justify-between px-4 py-3"
+            style={{
+              background: "#FEF3C7",
+              borderLeft: "4px solid #F59E0B",
+            }}
+            data-testid="pool-report-service-name-unassigned-row"
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className="text-xs font-bold uppercase px-2 py-0.5 rounded-full"
+                style={{
+                  background: "#F59E0B",
+                  color: "#78350F",
+                }}
+              >
+                Unassigned
+              </span>
+              <span
+                className="text-sm"
+                style={{ color: "#92400E" }}
+              >
+                Jobs with no active tech attributed
+              </span>
+            </div>
+            <span
+              className="text-base font-bold tabular-nums"
+              style={{ color: "#92400E" }}
+              data-testid="pool-report-service-name-unassigned-count"
+            >
+              {unassignedCount}
+            </span>
+          </li>
+        )}
+        {buckets.map((b) => {
+          const isOther = b.name === "Other";
+          const breakdownRows = Array.isArray(b.other_breakdown)
+            ? b.other_breakdown : [];
+          return (
+            <li
+              key={b.name}
+              className="px-4 py-2.5"
+              data-testid={`pool-report-service-name-row-${b.name
+                .toLowerCase().replace(/\s+/g, "-")}`}
+            >
+              <button
+                type="button"
+                onClick={isOther
+                  ? () => setOtherExpanded((v) => !v)
+                  : undefined}
+                disabled={!isOther}
+                className="w-full flex items-center justify-between"
+                style={{
+                  background: "transparent",
+                  padding: 0,
+                  cursor: isOther ? "pointer" : "default",
+                  color: colors.onSurface,
+                }}
+                data-testid={isOther
+                  ? "pool-report-service-name-other-toggle"
+                  : undefined}
+                aria-expanded={isOther ? otherExpanded : undefined}
+              >
+                <span className="flex items-center gap-2">
+                  {isOther ? (
+                    otherExpanded
+                      ? <ChevronUp size={14} />
+                      : <ChevronDown size={14} />
+                  ) : (
+                    <span style={{ width: 14 }} />
+                  )}
+                  <span className="text-sm font-semibold">
+                    {b.name}
+                  </span>
+                </span>
+                <span className="text-sm font-bold tabular-nums">
+                  {b.count}
+                </span>
+              </button>
+              {isOther && otherExpanded && breakdownRows.length > 0 && (
+                <ul
+                  className="mt-2 ml-6 space-y-1"
+                  data-testid="pool-report-service-name-other-breakdown"
+                >
+                  {breakdownRows.map((sub) => (
+                    <li
+                      key={sub.service_name}
+                      className="flex items-center justify-between text-xs"
+                      style={{ color: colors.muted }}
+                      data-testid={`pool-report-service-name-other-sub-${
+                        sub.service_name.toLowerCase()
+                          .replace(/\s+/g, "-")
+                      }`}
+                    >
+                      <span>{sub.service_name}</span>
+                      <span className="tabular-nums font-semibold">
+                        {sub.count}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {isOther && otherExpanded && breakdownRows.length === 0 && (
+                <div
+                  className="mt-2 ml-6 text-xs italic"
+                  style={{ color: colors.muted }}
+                  data-testid="pool-report-service-name-other-empty"
+                >
+                  No per-service-name breakdown available.
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+
+/**
  * Feb-2026 · Fix 2 — Reconciliation banner with inline dropped-
  * jobs sample. Keeps the (compact) collapsed shape by default
  * and expands a small inline list when the admin clicks "View
  * details". Lives at module scope so vitest can mount it in
  * isolation + the main page body stays readable.
  */
-function ReconciliationBanner({ reconciliation }) {
+function ReconciliationBanner({ reconciliation, serviceNameBreakdown }) {
   const [expanded, setExpanded] = React.useState(false);
   const sample = Array.isArray(reconciliation?.dropped_sample)
     ? reconciliation.dropped_sample : [];
   const droppedCount = reconciliation?.dropped_count || 0;
+  // Feb-2026 · Service-name regrouping — when the backend returns
+  // the new ``service_name_breakdown`` section, prefer its signed
+  // ``reconciliation_delta`` (post-regrouping Unassigned captures
+  // every missing / soft-deleted-tech job) over the legacy
+  // ``reconciliation.delta``.  Falls back verbatim on older
+  // backends.
+  const svcDelta =
+    typeof serviceNameBreakdown?.reconciliation_delta === "number"
+      ? serviceNameBreakdown.reconciliation_delta
+      : null;
+  const effectiveDelta = svcDelta !== null
+    ? svcDelta
+    : (reconciliation?.delta || 0);
+  const effectiveCounted = svcDelta !== null
+    ? ((serviceNameBreakdown?.total_pool_jobs || 0) - svcDelta)
+    : (reconciliation?.counted_total || 0);
+  const effectiveActual = svcDelta !== null
+    ? (serviceNameBreakdown?.total_pool_jobs || 0)
+    : (reconciliation?.actual_total || 0);
   return (
     <div
       className="rounded-2xl mb-3 px-4 py-3 text-sm"
@@ -921,17 +1206,17 @@ function ReconciliationBanner({ reconciliation }) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <strong>Reconciliation off by{" "}
           <span data-testid="pool-report-reconciliation-delta">
-            {reconciliation.delta}
+            {effectiveDelta}
           </span>:
         </strong>
         <span>
           rendered rows sum to{" "}
           <span data-testid="pool-report-reconciliation-counted">
-            {reconciliation.counted_total}
+            {effectiveCounted}
           </span>{" "}
           but the window has{" "}
           <span data-testid="pool-report-reconciliation-actual">
-            {reconciliation.actual_total}
+            {effectiveActual}
           </span>{" "}
           pool jobs
           {droppedCount > 0 && (
