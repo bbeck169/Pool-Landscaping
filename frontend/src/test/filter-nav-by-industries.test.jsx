@@ -130,8 +130,11 @@ describe("filterNavByIndustries · nav-tree integration · pool tenant", () => {
     const ops = ADMIN_NAV_V2.find((g) => g.key === "operations");
     expect(ops).toBeTruthy();
     const kept = filterNavByIndustries(ops.entries, ["pool"]);
+    // OPS-NAV-FLATTEN · Feb-2026 — trackers now live under
+    // ``subsection: "Specialty Services"`` (was ``nested`` pre-
+    // flatten).  Same two routes, same industry gating.
     const trackers = kept.filter(
-      (e) => e.nested === "Specialty Services",
+      (e) => e.subsection === "Specialty Services",
     );
     expect(trackers.map((e) => e.to).sort()).toEqual([
       "/tracking/filter",
@@ -144,7 +147,7 @@ describe("filterNavByIndustries · nav-tree integration · pool tenant", () => {
     const ops = ADMIN_NAV_V2.find((g) => g.key === "operations");
     const kept = filterNavByIndustries(ops.entries, ["pools"]);
     const trackers = kept.filter(
-      (e) => e.nested === "Specialty Services",
+      (e) => e.subsection === "Specialty Services",
     );
     expect(trackers.length).toBe(2);
   });
@@ -154,7 +157,7 @@ describe("filterNavByIndustries · nav-tree integration · pool tenant", () => {
     const ops = ADMIN_NAV_V2.find((g) => g.key === "operations");
     const kept = filterNavByIndustries(ops.entries, ["hvac"]);
     const trackers = kept.filter(
-      (e) => e.nested === "Specialty Services",
+      (e) => e.subsection === "Specialty Services",
     );
     expect(trackers.length).toBe(0);
   });

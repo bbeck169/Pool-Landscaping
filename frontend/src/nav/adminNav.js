@@ -91,12 +91,11 @@ export const ADMIN_NAV_V2 = [
 
   // TOP-NAV-RESTRUCTURE · Feb-2026 — the former top-level
   // ``ai_employees`` group was folded INTO the ``operations``
-  // group as the nested "AI Operations" submenu (first item,
-  // see below). Every ex-``ai_employees`` entry is preserved
-  // byte-for-byte on the ``operations`` list with
-  // ``nested: "AI Operations"`` added so the dropdown renderer
-  // emits a nested submenu instead of a flat subsection.
-  // Routes unchanged — only placement.
+  // group as a flat subsection (see below). Every ex-
+  // ``ai_employees`` entry is preserved byte-for-byte on the
+  // ``operations`` list with ``subsection: "AI Operations"``
+  // after the OPS-NAV-FLATTEN walk-back of the earlier
+  // nested-flyout design. Routes unchanged — only placement.
 
   { key: "marketing", label: "Marketing", icon: Megaphone, entries: [
     // Studio
@@ -168,39 +167,38 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "operations", label: "Operations", icon: Wrench, entries: [
-    // TOP-NAV-RESTRUCTURE · Feb-2026 — nested "AI Operations"
-    // submenu (first row inside Operations).  Merges the
-    // former top-level ``ai_employees`` group (8 rows) with
-    // the four pre-existing ``subsection: "AI Operations"``
-    // governance rows (AI Access Scope, AI Tool Audit, AI
-    // Rules, Soshie Moderation) — the row carrying
-    // ``nestedDivider: true`` marks the subtle "Governance"
-    // separator between the two historical origins so the
-    // merged menu reads as one surface without losing the
-    // workflow / governance distinction.  Routes unchanged.
-    { to: "/ai-employees",       label: "AI Employees Hub",    icon: Bot,          feature: "ai_employees",                        nested: "AI Operations" },
-    { to: "/admin/copilot",      label: "AI Copilot",          icon: Sparkles,     feature: "settings",     hard_rule: "admin_only", nested: "AI Operations" },
-    { to: "/settings/ai-brain",  label: "AI Brain",            icon: Sparkles,     feature: "settings",     hard_rule: "admin_only", nested: "AI Operations" },
-    { to: "/os/lana",            label: "Lana AI Assistant",   icon: Sparkles,     feature: "settings",                            nested: "AI Operations" },
-    { to: "/admin/seo/atlas",    label: "Atlas SEO Agent",     icon: SearchIcon,   feature: "seo",                                 nested: "AI Operations" },
-    { to: "/admin/communications-log",     label: "Communications",      icon: MessageSquare, feature: "marketing",                           nested: "AI Operations" },
-    { to: "/admin/portal-inbox", label: "Portal Inbox",        icon: MessageSquare, feature: "marketing",                           nested: "AI Operations" },
-    { to: "/marketing/gbp-posts", label: "GBP Post Drafter",    icon: Sparkles,     feature: "marketing",    hard_rule: "admin_only", nested: "AI Operations" },
-    // -- Governance separator (first governance row carries
-    // ``nestedDivider: true`` so the dropdown emits a subtle
-    // "Governance" sub-header above the four rows below) --
-    { to: "/admin/ai-personas-scope", label: "AI Access Scope",   icon: History, nested: "AI Operations", nestedDivider: true },
-    { to: "/admin/ai-tool-audit",     label: "AI Tool Audit",     icon: History, nested: "AI Operations" },
-    { to: "/admin/ai-rules",          label: "AI Rules",          icon: Wrench,  nested: "AI Operations" },
-    { to: "/admin/soshie/moderation", label: "Soshie Moderation", icon: History, nested: "AI Operations" },
-    // TOP-NAV-RESTRUCTURE · Feb-2026 — nested "Specialty
-    // Services" submenu (second row inside Operations).
-    // Replaces the former top-level ``specialty_services``
-    // group.  Both tracker entries preserved byte-for-byte
-    // (route / icon / feature / industry / aliases) with
-    // only ``nested: "Specialty Services"`` added.
-    { to: "/tracking/filter",    label: "Filter Tracker",    icon: FilterFunnelIcon, feature: "jobs", industry: "pool", aliases: ["Filter Cleaning", "Filter Cleanings", "Cartridge Cleanings"],              nested: "Specialty Services" },
-    { to: "/tracking/salt-cell", label: "Salt Cell Tracker", icon: Droplets,         feature: "jobs", industry: "pool", aliases: ["Salt Cell Replacements", "Salt Cell Cleanings", "Cell Replacements"], nested: "Specialty Services" },
+    // TOP-NAV-RESTRUCTURE · Feb-2026 — originally shipped as a
+    // nested "AI Operations" submenu (12 rows · 8 ex-AI-Employees
+    // workflow + 4 governance). OPS-NAV-FLATTEN · Feb-2026 walks
+    // back the flyout and renders the 12 rows as a flat
+    // ``subsection: "AI Operations"`` block at the top of
+    // Operations — matching the "Schedule & Dispatch" / "Service
+    // Log" treatment below.  Routes / icons / feature-flags /
+    // auth gates unchanged; only ``nested`` → ``subsection``.
+    { to: "/ai-employees",       label: "AI Employees Hub",    icon: Bot,          feature: "ai_employees",                        subsection: "AI Operations" },
+    { to: "/admin/copilot",      label: "AI Copilot",          icon: Sparkles,     feature: "settings",     hard_rule: "admin_only", subsection: "AI Operations" },
+    { to: "/settings/ai-brain",  label: "AI Brain",            icon: Sparkles,     feature: "settings",     hard_rule: "admin_only", subsection: "AI Operations" },
+    { to: "/os/lana",            label: "Lana AI Assistant",   icon: Sparkles,     feature: "settings",                            subsection: "AI Operations" },
+    { to: "/admin/seo/atlas",    label: "Atlas SEO Agent",     icon: SearchIcon,   feature: "seo",                                 subsection: "AI Operations" },
+    { to: "/admin/communications-log",     label: "Communications",      icon: MessageSquare, feature: "marketing",                           subsection: "AI Operations" },
+    { to: "/admin/portal-inbox", label: "Portal Inbox",        icon: MessageSquare, feature: "marketing",                           subsection: "AI Operations" },
+    { to: "/marketing/gbp-posts", label: "GBP Post Drafter",    icon: Sparkles,     feature: "marketing",    hard_rule: "admin_only", subsection: "AI Operations" },
+    // Governance rows preserved in-place; the flyout-era
+    // ``nestedDivider`` sentinel (``true`` flag that painted a
+    // mid-menu divider in the old nested design) is dropped since
+    // the flat section renderer doesn't surface mid-section
+    // dividers — visual separation now comes from the next
+    // section header.
+    { to: "/admin/ai-personas-scope", label: "AI Access Scope",   icon: History, subsection: "AI Operations" },
+    { to: "/admin/ai-tool-audit",     label: "AI Tool Audit",     icon: History, subsection: "AI Operations" },
+    { to: "/admin/ai-rules",          label: "AI Rules",          icon: Wrench,  subsection: "AI Operations" },
+    { to: "/admin/soshie/moderation", label: "Soshie Moderation", icon: History, subsection: "AI Operations" },
+    // OPS-NAV-FLATTEN · Feb-2026 — "Specialty Services" also
+    // flattened from a nested submenu into a flat
+    // ``subsection: "Specialty Services"`` block.  Both
+    // tracker rows preserved byte-for-byte.
+    { to: "/tracking/filter",    label: "Filter Tracker",    icon: FilterFunnelIcon, feature: "jobs", industry: "pool", aliases: ["Filter Cleaning", "Filter Cleanings", "Cartridge Cleanings"],              subsection: "Specialty Services" },
+    { to: "/tracking/salt-cell", label: "Salt Cell Tracker", icon: Droplets,         feature: "jobs", industry: "pool", aliases: ["Salt Cell Replacements", "Salt Cell Cleanings", "Cell Replacements"], subsection: "Specialty Services" },
     // Schedule & dispatch
     { to: "/schedule",               label: "Schedule",           icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch", aliases: ["Calendar", "Bookings", "Jobs Calendar", "Appointments"] },
     { to: "/admin/jobs",             label: "Jobs (admin)",       icon: ListChecks,   feature: "jobs", subsection: "Schedule & Dispatch" },
@@ -500,7 +498,11 @@ export const ADMIN_NAV_V2 = [
 // for the former top-level entries rather than collapsing them
 // under the broader "Operations" bucket.
 export const NAV_FLAT = ADMIN_NAV_V2.flatMap((g) =>
-  g.entries.map((e) => ({ ...e, group: e.nested || g.label }))
+  // OPS-NAV-FLATTEN · Feb-2026 — command-palette grouping now
+  // prefers ``subsection`` (post-flatten) → ``nested`` (legacy;
+  // retained for any surface still using the pre-flatten key) →
+  // group label as the final fallback.
+  g.entries.map((e) => ({ ...e, group: e.subsection || e.nested || g.label }))
 );
 
 // ─── Phase Feb-2026 · Multi-industry Phase C helper ────────────────
