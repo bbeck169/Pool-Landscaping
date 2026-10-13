@@ -671,6 +671,13 @@ async def create_quote(body: QuoteIn,
         "due_date": due_date,
         "status": "draft",
         "payment_status": "unpaid",
+        # Feb-2026 · Automation suppression — native invoice writes
+        # explicitly stamp ``False`` so legacy / live traffic keeps
+        # firing automations through the shared eligibility gate
+        # (see ``services.automations.eligibility``).  PDF-imported
+        # invoices flip this to ``True`` at
+        # ``services.imports.pdf_commit._build_quote_doc_from_preview``.
+        "automations_suppressed": False,
         "notes": body.notes,
         "terms": terms,
         # Task H0 · Feb-2026 — resolve the optional admin-only
@@ -848,8 +855,28 @@ async def create_quote(body: QuoteIn,
     # Feb-2026 · Marketing Slice M5c — drip event bus (invoice_sent).
     # P0 Fix 2a — pass the invoice id so the event ledger's unique
     # index dedupes retries against the same document.
+    #
+    # Feb-2026 · Automation suppression gate — PDF-imported invoices
+    # (``automations_suppressed=True``) skip ALL invoice-sent fan-out.
+    # The native write path above stamped ``False`` so this gate is
+    # a no-op for freshly-created invoices.
     try:
-        if body.doc_type == "invoice" and doc.get("customer_id"):
+        from services.automations.eligibility import (
+            is_invoice_eligible_for_automation,
+        )
+        _elig_sent, _skip_sent = is_invoice_eligible_for_automation(
+            doc, automation_kind="invoice_sent",
+        )
+    except Exception:
+        _elig_sent, _skip_sent = True, None
+    if not _elig_sent:
+        logger.info(
+            "automation.skipped kind=invoice_sent invoice_id=%s reason=%s",
+            doc.get("id"), _skip_sent,
+        )
+    try:
+        if (body.doc_type == "invoice" and doc.get("customer_id")
+                and _elig_sent):
             from services.marketing.drip_events import on_event as _drip_on_event
             await _drip_on_event(
                 "invoice_sent", tenant["id"], doc.get("customer_id"),
@@ -860,7 +887,8 @@ async def create_quote(body: QuoteIn,
     # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
     # Correlation key = invoice id so replays dedupe.
     try:
-        if body.doc_type == "invoice" and doc.get("customer_id"):
+        if (body.doc_type == "invoice" and doc.get("customer_id")
+                and _elig_sent):
             from services.marketing.event_dispatcher import emit_event
             await emit_event(
                 event="invoice_sent",
@@ -2375,11 +2403,24 @@ async def record_payment(qid: str, body: RecordPaymentIn,
         except Exception:
             pass
         # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
+        # Feb-2026 · Automation suppression gate — PDF-imported
+        # invoices skip the fan-out even when the payment lands.
         try:
             from services.marketing.event_dispatcher import emit_event
+            from services.automations.eligibility import (
+                is_invoice_eligible_for_automation,
+            )
             fresh = await db.quotes.find_one(
                 {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
-            if fresh.get("customer_id"):
+            _elig_paid, _skip_paid = is_invoice_eligible_for_automation(
+                fresh, automation_kind="invoice_paid",
+            )
+            if not _elig_paid:
+                logger.info(
+                    "automation.skipped kind=invoice_paid "
+                    "invoice_id=%s reason=%s", qid, _skip_paid,
+                )
+            if fresh.get("customer_id") and _elig_paid:
                 await emit_event(
                     event="invoice_paid",
                     tenant_id=tenant["id"],
@@ -2447,11 +2488,24 @@ async def pay_quote(qid: str,
     except Exception:
         pass
     # Feb 2026 · Phase 1 Custom Trigger Builder — schema-v2 emission.
+    # Feb-2026 · Automation suppression gate — PDF-imported
+    # invoices skip the fan-out even on manual payment.
     try:
         from services.marketing.event_dispatcher import emit_event
+        from services.automations.eligibility import (
+            is_invoice_eligible_for_automation,
+        )
         fresh = await db.quotes.find_one(
             {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
-        if fresh.get("customer_id"):
+        _elig_paid2, _skip_paid2 = is_invoice_eligible_for_automation(
+            fresh, automation_kind="invoice_paid",
+        )
+        if not _elig_paid2:
+            logger.info(
+                "automation.skipped kind=invoice_paid "
+                "invoice_id=%s reason=%s", qid, _skip_paid2,
+            )
+        if fresh.get("customer_id") and _elig_paid2:
             await emit_event(
                 event="invoice_paid",
                 tenant_id=tenant["id"],

@@ -631,10 +631,26 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     if not settings.get("enabled"):
         return {"tenant": tenant["id"], "skipped": "disabled",
                  "fired": 0, "escalated": 0}
+    # Feb-2026 · Automation suppression gate — PDF-imported invoices
+    # and invoices whose ``payment_status`` is no longer ``unpaid``
+    # skip the dunning path entirely (no state mutations, no
+    # reminder sends). First-pass Mongo filter + authoritative
+    # per-row helper. Operator audit row is written at the end.
+    from services.automations.eligibility import (
+        is_invoice_eligible_for_automation,
+        log_batch_skipped,
+    )
+    from utils import new_id as _new_run_id
+
+    run_id = _new_run_id()
+    reason_breakdown: Dict[str, int] = {}
+    skipped_total = 0
     invoices = await db.quotes.find(
         {"tenant_id": tenant["id"], "doc_type": "invoice",
           "status": {"$in": ["sent", "past_due", "draft"]},
-          "payment_status": {"$ne": "paid"}},
+          "payment_status": {"$ne": "paid"},
+          # First-pass perf filter — authoritative gate below.
+          "automations_suppressed": {"$ne": True}},
         {"_id": 0},
     ).to_list(5000)
     esc = settings.get("escalation") or DEFAULT_ESCALATION
@@ -643,6 +659,17 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     escalated_total = 0
     for inv in invoices:
         if inv.get("dunning_paused"):
+            continue
+        eligible, reason = is_invoice_eligible_for_automation(
+            inv, automation_kind="dunning",
+        )
+        if not eligible:
+            skipped_total += 1
+            reason_breakdown[reason] = reason_breakdown.get(reason, 0) + 1
+            logger.info(
+                "automation.skipped kind=dunning invoice_id=%s reason=%s",
+                inv.get("id"), reason,
+            )
             continue
         due = _due_date_utc(inv)
         if not due:
@@ -688,6 +715,13 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"scanner reminder failed for "
                                 f"{inv['id']}/{stage['id']}: {e}")
+    await log_batch_skipped(
+        tenant_id=tenant["id"],
+        automation_kind="dunning",
+        run_id=run_id,
+        reason_breakdown=reason_breakdown,
+        total_skipped=skipped_total,
+    )
     return {"tenant": tenant["id"], "invoices": len(invoices),
              "fired": fired_total, "escalated": escalated_total}
 

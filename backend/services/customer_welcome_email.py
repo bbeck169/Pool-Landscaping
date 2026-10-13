@@ -99,6 +99,34 @@ async def maybe_fire_welcome_on_first_accepted_quote(
     this notification.
     """
     try:
+        # Feb-2026 · Automation suppression gate — if the
+        # triggering quote came from the PDF importer (or any
+        # future suppressed path), bail before sending.  Keep
+        # cheap: lookup first, then run the rest of the pipeline.
+        try:
+            from services.automations.eligibility import (
+                is_invoice_eligible_for_automation,
+            )
+            _trigger_doc = await db.quotes.find_one(
+                {"id": quote_id, "tenant_id": tenant_id},
+                {"_id": 0, "automations_suppressed": 1,
+                 "deleted_at": 1, "status": 1,
+                 "payment_status": 1},
+            ) or {}
+            _elig_w, _reason_w = is_invoice_eligible_for_automation(
+                _trigger_doc, automation_kind="welcome_email",
+            )
+            if not _elig_w:
+                logger.info(
+                    "automation.skipped kind=welcome_email "
+                    "invoice_id=%s reason=%s",
+                    quote_id, _reason_w,
+                )
+                return
+        except Exception:  # noqa: BLE001 — defensive
+            # Gate failure must not block a legitimate welcome send;
+            # fall through to the existing precheck ladder.
+            pass
         # ── Step 1 · pre-check (fast short-circuit) ───────────────
         customer = await db.customers.find_one(
             {"id": customer_id, "tenant_id": tenant_id},

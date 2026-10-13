@@ -315,7 +315,18 @@ async def _sweep_past_due(tenant_id: str) -> int:
     window TODAY.  Window is exactly one day wide to avoid
     re-enrolment on subsequent sweeps (the dedupe guard in
     :func:`enrol_customer_into_sequence` catches re-runs on the same
-    day too)."""
+    day too).
+
+    Feb-2026 · Automation suppression gate — PDF-imported invoices
+    + non-unpaid invoices are filtered out via a Mongo first-pass
+    filter + a per-row authoritative check.
+    """
+    from services.automations.eligibility import (
+        is_invoice_eligible_for_automation,
+        log_batch_skipped,
+    )
+    from utils import new_id as _new_run_id
+
     seqs = await db.marketing_sequences.find(
         {"tenant_id": tenant_id, "active": True,
          "trigger_type": "invoice_past_due_N_days"},
@@ -323,6 +334,9 @@ async def _sweep_past_due(tenant_id: str) -> int:
     ).to_list(200)
     if not seqs:
         return 0
+    run_id = _new_run_id()
+    reason_breakdown: Dict[str, int] = {}
+    skipped_total = 0
     now = datetime.now(timezone.utc)
     enrolled = 0
     for s in seqs:
@@ -333,24 +347,55 @@ async def _sweep_past_due(tenant_id: str) -> int:
         invoices = await db.quotes.find(
             {"tenant_id": tenant_id, "doc_type": "invoice",
              "payment_status": {"$ne": "paid"},
-             "due_date": {"$gte": lower, "$lte": upper}},
-            {"_id": 0, "customer_id": 1},
+             "due_date": {"$gte": lower, "$lte": upper},
+             # First-pass perf filter — authoritative gate below.
+             "automations_suppressed": {"$ne": True}},
+            {"_id": 0, "customer_id": 1, "id": 1,
+             "payment_status": 1, "status": 1,
+             "automations_suppressed": 1, "deleted_at": 1},
         ).to_list(1000)
         # Legacy invoices use ``status`` instead of ``payment_status``.
         legacy = await db.quotes.find(
             {"tenant_id": tenant_id, "doc_type": "invoice",
              "amount_paid": {"$lt": 1},
-             "due_date": {"$gte": lower, "$lte": upper}},
-            {"_id": 0, "customer_id": 1},
+             "due_date": {"$gte": lower, "$lte": upper},
+             "automations_suppressed": {"$ne": True}},
+            {"_id": 0, "customer_id": 1, "id": 1,
+             "payment_status": 1, "status": 1,
+             "automations_suppressed": 1, "deleted_at": 1},
         ).to_list(1000)
-        seen_cids = {i.get("customer_id") for i in invoices + legacy
-                     if i.get("customer_id")}
-        for cid in seen_cids:
+        eligible_cids = set()
+        for inv in invoices + legacy:
+            cid = inv.get("customer_id")
+            if not cid:
+                continue
+            eligible, reason = is_invoice_eligible_for_automation(
+                inv, automation_kind="payment_reminder",
+            )
+            if not eligible:
+                skipped_total += 1
+                reason_breakdown[reason] = (
+                    reason_breakdown.get(reason, 0) + 1
+                )
+                logger.info(
+                    "automation.skipped kind=payment_reminder "
+                    "invoice_id=%s reason=%s", inv.get("id"), reason,
+                )
+                continue
+            eligible_cids.add(cid)
+        for cid in eligible_cids:
             eid = await enrol_customer_into_sequence(
                 tenant_id, s["id"], cid, trigger_source="invoice_past_due_N_days",
             )
             if eid:
                 enrolled += 1
+    await log_batch_skipped(
+        tenant_id=tenant_id,
+        automation_kind="payment_reminder",
+        run_id=run_id,
+        reason_breakdown=reason_breakdown,
+        total_skipped=skipped_total,
+    )
     return enrolled
 
 

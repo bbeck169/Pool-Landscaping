@@ -153,6 +153,10 @@ async def build_invoice_doc_from_source(
         "due_date": due_date,
         "status": "draft",
         "payment_status": "unpaid",
+        # Feb-2026 · Automation suppression — convert-from-quote
+        # produces a native invoice; stamp False explicitly so
+        # the eligibility gate reads a deterministic value.
+        "automations_suppressed": False,
         "notes": notes,
         "terms": terms,
         "created_at": now_iso(),

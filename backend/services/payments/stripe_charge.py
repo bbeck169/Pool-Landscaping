@@ -2167,34 +2167,67 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
             # emissions. Correlation key = payment_intent id so a
             # replayed webhook dedupes. Ledger ALSO dedupes across
             # the manual invoice.paid path (same event_key format).
+            #
+            # Feb-2026 · Automation suppression gate — PDF-imported
+            # invoices skip the webhook-driven fan-out as well.
             try:
                 from services.marketing.event_dispatcher import emit_event
+                from services.automations.eligibility import (
+                    is_invoice_eligible_for_automation,
+                )
                 if status_final == "succeeded":
                     _fresh = await db.quotes.find_one(
                         {"id": pi_invoice, "tenant_id": pi_tenant},
                         {"_id": 0},
                     ) or {}
-                    await emit_event(
-                        event="invoice_paid",
-                        tenant_id=pi_tenant,
-                        entity_id=pi_invoice,
-                        customer_id=_fresh.get("customer_id")
-                            or meta.get("crm_customer_id"),
-                        payload_extras={"invoice": _fresh,
-                                          "correlation_id": pi_invoice},
+                    _elig_pi, _skip_pi = is_invoice_eligible_for_automation(
+                        _fresh, automation_kind="invoice_paid",
                     )
+                    if not _elig_pi:
+                        logger.info(
+                            "automation.skipped kind=invoice_paid "
+                            "invoice_id=%s reason=%s",
+                            pi_invoice, _skip_pi,
+                        )
+                    if _elig_pi:
+                        await emit_event(
+                            event="invoice_paid",
+                            tenant_id=pi_tenant,
+                            entity_id=pi_invoice,
+                            customer_id=_fresh.get("customer_id")
+                                or meta.get("crm_customer_id"),
+                            payload_extras={"invoice": _fresh,
+                                              "correlation_id": pi_invoice},
+                        )
                 else:
-                    await emit_event(
-                        event="payment_failed",
-                        tenant_id=pi_tenant,
-                        entity_id=pi_invoice,
-                        customer_id=meta.get("crm_customer_id"),
-                        payload_extras={
-                            "invoice_id": pi_invoice,
-                            "failure_reason": err or "failed",
-                            "correlation_id": f"{pi_invoice}:pf:{pi_id}",
-                        },
+                    # payment_failed emission is diagnostic only;
+                    # suppress for PDF-imported invoices as well so
+                    # audit volume stays scoped to native traffic.
+                    _fresh_pf = await db.quotes.find_one(
+                        {"id": pi_invoice, "tenant_id": pi_tenant},
+                        {"_id": 0},
+                    ) or {}
+                    _elig_pf, _skip_pf = is_invoice_eligible_for_automation(
+                        _fresh_pf, automation_kind="payment_failed",
                     )
+                    if not _elig_pf:
+                        logger.info(
+                            "automation.skipped kind=payment_failed "
+                            "invoice_id=%s reason=%s",
+                            pi_invoice, _skip_pf,
+                        )
+                    if _elig_pf:
+                        await emit_event(
+                            event="payment_failed",
+                            tenant_id=pi_tenant,
+                            entity_id=pi_invoice,
+                            customer_id=meta.get("crm_customer_id"),
+                            payload_extras={
+                                "invoice_id": pi_invoice,
+                                "failure_reason": err or "failed",
+                                "correlation_id": f"{pi_invoice}:pf:{pi_id}",
+                            },
+                        )
             except Exception as _phase1_exc:  # pragma: no cover
                 logger.warning(
                     "[phase1] stripe webhook emit failed: %s", _phase1_exc,

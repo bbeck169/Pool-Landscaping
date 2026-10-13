@@ -64,10 +64,26 @@ async def _sweep_invoice_overdue(tenant_id: str) -> int:
 
     Only invoices that actually have a ``customer_id`` participate —
     dashboard-created invoices without a linked customer skip.
+
+    Feb-2026 · Automation suppression gate — PDF-imported invoices
+    (``automations_suppressed=True``) + non-unpaid invoices skip
+    emission here. We also push the suppression predicate into the
+    Mongo query as a first-pass filter so large PDF-imported
+    archives don't dominate the per-tenant scan.  The per-row
+    eligibility helper remains the authoritative gate.
     """
+    from services.automations.eligibility import (
+        is_invoice_eligible_for_automation,
+        log_batch_skipped,
+    )
+    from utils import new_id as _new_run_id
+
+    run_id = _new_run_id()
     now = _today_utc()
     today = _iso_date(now)
     fired = 0
+    reason_breakdown: Dict[str, int] = {}
+    skipped_total = 0
     cursor = db.quotes.find(
         {
             "tenant_id": tenant_id,
@@ -76,11 +92,26 @@ async def _sweep_invoice_overdue(tenant_id: str) -> int:
             "payment_status": {"$nin": ["paid", "refunded",
                                              "partially_refunded"]},
             "customer_id": {"$exists": True, "$nin": [None, ""]},
+            # First-pass perf filter — authoritative gate is the
+            # per-row helper below.
+            "automations_suppressed": {"$ne": True},
         },
         {"_id": 0, "id": 1, "customer_id": 1, "due_date": 1,
-         "total": 1, "amount_paid": 1},
+         "total": 1, "amount_paid": 1, "payment_status": 1,
+         "status": 1, "automations_suppressed": 1, "deleted_at": 1},
     )
     async for inv in cursor:
+        eligible, reason = is_invoice_eligible_for_automation(
+            inv, automation_kind="payment_reminder",
+        )
+        if not eligible:
+            skipped_total += 1
+            reason_breakdown[reason] = reason_breakdown.get(reason, 0) + 1
+            logger.info(
+                "automation.skipped kind=payment_reminder "
+                "invoice_id=%s reason=%s", inv.get("id"), reason,
+            )
+            continue
         out = await emit_event(
             event="invoice_overdue",
             tenant_id=tenant_id,
@@ -95,6 +126,13 @@ async def _sweep_invoice_overdue(tenant_id: str) -> int:
         # useful.
         if out.get("enrolled") or out.get("matched_sequences"):
             fired += 1
+    await log_batch_skipped(
+        tenant_id=tenant_id,
+        automation_kind="payment_reminder",
+        run_id=run_id,
+        reason_breakdown=reason_breakdown,
+        total_skipped=skipped_total,
+    )
     return fired
 
 

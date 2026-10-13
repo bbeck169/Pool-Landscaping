@@ -1404,6 +1404,17 @@ def _build_quote_doc_from_preview(
         "status": qi.get("status") or "sent",
         # §A ruling: preserve extracted payment_status if present.
         "payment_status": qi.get("payment_status") or "unpaid",
+        # Feb-2026 · Automation suppression — PDF-imported invoices
+        # are irreversibly suppressed from ALL automations
+        # (welcome, invoice-sent, invoice-paid, overdue, payment
+        # reminders, dunning). Set once at write time; every
+        # automation trigger site reads this flag via
+        # ``services.automations.eligibility.is_invoice_eligible_for_automation``.
+        # Canonical ``source="pdf_import"`` goes with it so audit
+        # queries can filter by provenance without joining to the
+        # import_batch doc.
+        "automations_suppressed": True,
+        "source": "pdf_import",
         "notes": qi.get("notes") or "",
         "terms": qi.get("terms"),
         # created_at was resolved by pdf_mapper via

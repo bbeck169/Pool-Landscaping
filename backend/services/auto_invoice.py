@@ -252,6 +252,10 @@ async def create_invoice_from_job(job_id: str, tenant_id: str
             "payment_status": "unpaid",
             "status": "issued",
             "source": "auto_invoice_on_job_complete",
+            # Feb-2026 · Automation suppression — auto-invoice is
+            # a native write path; stamp False so the eligibility
+            # gate reads a deterministic value.
+            "automations_suppressed": False,
             "created_at": now_iso(),
             "issued_at": now_iso(),
         }
