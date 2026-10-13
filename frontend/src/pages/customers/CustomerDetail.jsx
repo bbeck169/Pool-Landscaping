@@ -71,7 +71,10 @@ import { CustomerCreditsPanel, AdjustDialog } from "./CustomerCreditsPage";
  *   * No email on file → button disabled with a helpful tooltip.
  *   * Send in flight   → button labelled "Sending…" and disabled.
  */
-function PortalInviteQuickAction({ customer, onToast }) {
+// Exported so the dedicated vitest spec for the 409 collision
+// handler (``PortalInvite.collision.test.jsx``) can mount the
+// button in isolation without the full CustomerDetail tree.
+export function PortalInviteQuickAction({ customer, onToast }) {
   const [busy, setBusy] = React.useState(false);
   const [payload, setPayload] = React.useState(null);
   const email = (
@@ -97,7 +100,28 @@ function PortalInviteQuickAction({ customer, onToast }) {
         onToast?.({ tone: "success", message: "Portal invite sent" });
       }
     } catch (e) {
-      onToast?.({ tone: "error", message: e.message || "Portal invite failed" });
+      // PORTAL-INVITE-EMAIL-COLLISION-FIX · Feb-2026 (P0 #1 + #2).
+      // The backend ``_upsert_customer_user`` guard raises 409 with
+      // ``detail.code === "portal_user_email_collision"`` when the
+      // customer's email is already linked to a DIFFERENT customer
+      // record in the same tenant.  Surface a human-readable
+      // message so the admin can act (merge/delete the duplicate
+      // customer record) instead of staring at a generic error toast.
+      const detail = e?.data?.detail;
+      if (e?.status === 409 && detail?.code === "portal_user_email_collision") {
+        const existingCidPrefix = detail.existing_customer_id_prefix || "";
+        onToast?.({
+          tone: "error",
+          message:
+            "This email is already linked to another customer in this "
+            + "tenant"
+            + (existingCidPrefix ? ` (ID: ${existingCidPrefix}…)` : "")
+            + ". Resolve the duplicate before re-inviting.",
+          testid: "portal-invite-email-collision-toast",
+        });
+      } else {
+        onToast?.({ tone: "error", message: e.message || "Portal invite failed" });
+      }
     } finally {
       setBusy(false);
     }

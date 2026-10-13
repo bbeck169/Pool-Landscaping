@@ -158,6 +158,53 @@ async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: 
     # (see ``auth.py``) so the reset consummation flip is idempotent.
     hashed = hash_password(password)
     existing = await db.users.find_one({"customer_id": cid, "tenant_id": tenant_id}, {"_id": 0})
+    # ═════════════════════════════════════════════════════════════
+    # PORTAL-INVITE-EMAIL-COLLISION-FIX · Feb-2026 (P0 #1 + #2).
+    # Pre-ship, this function queried ONLY ``(customer_id, tenant_id)``
+    # when deciding INSERT vs UPDATE.  If a different ``users`` row
+    # already existed with the SAME email + tenant but a DIFFERENT
+    # ``customer_id``, the function silently created a DUPLICATE
+    # row.  Two concurrent user rows for one email in one tenant
+    # broke downstream login row-selection + portal data scoping:
+    #   • P0 #1 (temp-password login broken): login resolved to the
+    #     wrong row's ``password_hash`` and 401'd.
+    #   • P0 #2 (empty portal data after login): login resolved to
+    #     an orphan ``customer_id`` with no jobs/invoices.
+    # Fix is forward-only: fail loudly with 409 on new collisions.
+    # Existing duplicates handled via the gated remediation runbook
+    # (see /app/memory/PRD.md and the gating prompts in the fix
+    # ticket receipt).
+    # ═════════════════════════════════════════════════════════════
+    collision = await db.users.find_one(
+        {
+            "email": email.lower(),
+            "tenant_id": tenant_id,
+            "role": "customer",
+            "customer_id": {"$ne": cid},
+            "$or": [
+                {"deleted_at": None},
+                {"deleted_at": {"$exists": False}},
+                {"deleted_at": False},
+            ],
+        },
+        {"_id": 0, "id": 1, "customer_id": 1},
+    )
+    if collision:
+        other_uid = (collision.get("id") or "")
+        other_cid = (collision.get("customer_id") or "")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "portal_user_email_collision",
+                "message": (
+                    "This email is already linked to another "
+                    "customer in this tenant. Resolve the duplicate "
+                    "before re-inviting."
+                ),
+                "existing_user_id_prefix": other_uid[:8],
+                "existing_customer_id_prefix": other_cid[:8],
+            },
+        )
     if existing:
         await db.users.update_one(
             {"id": existing["id"]},
