@@ -1309,6 +1309,13 @@ api_router.include_router(_p14a_stripe_router.webhook_alias_router)
 from routers import invoices_bulk_charge as _p14b_bulk_charge  # noqa: E402
 api_router.include_router(_p14b_bulk_charge.router)
 
+# ── Feb-2026 · Bulk Apply Credit — new Phase 1 bulk action on
+#    the Invoices list.  Reuses ``services/credit_apply.py`` for
+#    the per-invoice apply so it inherits the shipped guard +
+#    idempotency + rollback semantics.
+from routers import invoices_bulk_apply_credit as _bulk_apply_credit  # noqa: E402
+api_router.include_router(_bulk_apply_credit.router)
+
 # Phase 17 · Feb-2026 — QuickBooks Online read-sync router.
 # Endpoints under /api/qbo/*: oauth, sync, entity reads, match links.
 # Zero write-back to Intuit — display-only mirror in db.qbo_*.
