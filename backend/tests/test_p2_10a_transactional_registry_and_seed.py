@@ -40,16 +40,16 @@ def test_transactional_slugs_enumeration_pin():
         "TRANSACTIONAL_SLUGS must stay alphabetical for grep stability"
     )
     assert TRANSACTIONAL_SLUGS == [
-        "completion_followup_sms",
         "estimate_reminder_email",
         "invoice_past_due_email",
+        "job_completion_sms",
         "lead_conversion_welcome_email",
         "lead_conversion_welcome_sms",
         "password_reset_email",
         "portal_chat_admin_notify_sms",
         "portal_invite_email",
-        "quote_decline_admin_email",
         "quote_decline_admin_sms",
+        "quote_declined_owner_email",
         "welcome_on_first_accept_email",
     ]
 
@@ -157,10 +157,11 @@ def test_seed_transactional_templates_for_tenant_clean():
         "seed_transactional_templates_for_tenant", "t-clean",
     )
     assert result["tenant_id"] == "t-clean"
-    # All 3 MVP slugs inserted on a clean tenant.
+    # 2 MVP slugs inserted on a clean tenant (Commit 1b correction:
+    # ``quote_decline_admin_email`` was removed in favor of the
+    # already-seeded ``quote_declined_owner_email``).
     assert sorted(result["inserted"]) == sorted([
         "welcome_on_first_accept_email",
-        "quote_decline_admin_email",
         "quote_decline_admin_sms",
     ])
     assert result["skipped"] == []
@@ -185,16 +186,16 @@ def test_seed_transactional_templates_for_tenant_idempotent():
             "services.migrations.seed_transactional_templates_v1"
         )
         importlib.reload(mod)
-        # First run — all 3 inserted.
+        # First run — both 2 inserted.
         r1 = _run(mod.seed_transactional_templates_for_tenant("t-idem"))
-        assert len(r1["inserted"]) == 3
+        assert len(r1["inserted"]) == 2
         assert len(r1["skipped"]) == 0
-        # Second run — all 3 skipped, zero new inserts.
+        # Second run — both skipped, zero new inserts.
         r2 = _run(mod.seed_transactional_templates_for_tenant("t-idem"))
         assert len(r2["inserted"]) == 0
-        assert len(r2["skipped"]) == 3
-        # Collection size unchanged (still exactly 3 rows).
-        assert len(fake.marketing_templates._docs) == 3
+        assert len(r2["skipped"]) == 2
+        # Collection size unchanged (still exactly 2 rows).
+        assert len(fake.marketing_templates._docs) == 2
     finally:
         config.db = orig
 
@@ -219,8 +220,8 @@ def test_seed_all_tenants_boot_sentinel_fires_once():
         r1 = _run(mod.seed_transactional_templates_all_tenants())
         assert r1.get("skipped") is not True
         assert r1["tenants_processed"] == 2
-        assert r1["total_inserted"] == 6, (
-            "2 tenants × 3 slugs each = 6 inserts on first run"
+        assert r1["total_inserted"] == 4, (
+            "2 tenants × 2 slugs each = 4 inserts on first run"
         )
         # Sentinel stamped.
         s = _run(fake.migrations.find_one({"id": r1["sentinel_id"]}))
@@ -230,7 +231,7 @@ def test_seed_all_tenants_boot_sentinel_fires_once():
         assert r2.get("skipped") is True
         assert r2["reason"] == "sentinel_already_stamped"
         # No new rows inserted on second call.
-        assert len(fake.marketing_templates._docs) == 6
+        assert len(fake.marketing_templates._docs) == 4
     finally:
         config.db = orig
 

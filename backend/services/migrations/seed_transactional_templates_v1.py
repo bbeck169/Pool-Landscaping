@@ -1,53 +1,47 @@
-"""P2 #10a · Feb-2026 — Seed migration for the 3 MVP transactional
-template slugs that are NOT already present in production tenants.
+"""P2 #10a (+1b corrective) · Feb-2026 — Seed migration for the 2
+MVP transactional-template slugs that are genuinely net-new (no
+prior global or per-tenant seed migration).
 
 Scope
 ─────
-The P2 #10 audit (Flag 1) enumerated 11 transactional slugs. 8 of
-those are already written to ``db.marketing_templates`` across one
-or more tenants by prior migrations (``te_portal_job_templates_seed``,
-``seed_lead_conversion_welcome_template``, etc.). The 3 slugs below
-are the net-new MVP additions wired in Commit 2 (``P2 #10b``):
+The P2 #10 audit (Flag 1) enumerated 11 transactional slugs. 9 are
+already seeded by prior migrations:
+
+  * ``job_completion_sms`` ← ``migrations/te_portal_job_templates_seed.py``
+    (1780+ tenant rows at Commit 1b landing)
+  * ``quote_declined_owner_email`` ← ``migrations/seed_quote_accepted_declined_templates.py``
+  * ``quote_accepted_owner_email`` (not in our registry; sibling)
+  * ``portal_invite_email`` ← ``migrations/te_portal_job_templates_seed.py``
+  * ``lead_conversion_welcome_email`` / ``_sms`` ← ``migrations/seed_lead_conversion_welcome_template.py``
+  * ``invoice_past_due_email`` / ``estimate_reminder_email`` ← pre-K72 seed path
+  * ``password_reset_email`` + ``portal_chat_admin_notify_sms`` are
+    hardcoded-only (TD-16 covers migrating them to DB; seed will
+    happen when those slugs are first wired).
+
+The 2 slugs below are the genuinely net-new MVP additions wired in
+Commit 2 (``P2 #10b``):
 
   * ``welcome_on_first_accept_email``
-  * ``quote_decline_admin_email``
   * ``quote_decline_admin_sms``
 
-For each active tenant missing one of these ``(tenant_id, code)``
-pairs, this migration inserts a seed row with:
-
-  * ``active: true``         — ready to use (admin can disable via
-    the Commit-3 editor if they'd rather fall back to the hardcoded
-    body)
-  * ``system: true``         — matches the shape of
-    ``seed_system_templates.py`` so the DELETE guard already in
-    place (409 → "deactivate instead") protects these too.
-  * ``code: "<slug>"``        — the discriminator that makes the row
-    show up in the transactional editor UI (per audit Flag 4).
-
-Fallback body text is INTENTIONALLY MINIMAL — the seed row carries
-a short "safe default" that gets admin's eyes on the editor. The
-richer production bodies live in the hardcoded fallback branches
-in ``services/customer_welcome_email.py`` +
-``services/quote_notifications.py``; those remain the source of
-truth for text until an admin edits the DB row.
+(Commit 1 originally included ``quote_decline_admin_email`` here but
+the subsequent 1b correction removed it — a prior migration already
+seeds ``quote_declined_owner_email``, which is the wire-level code
+``services/quote_notifications.py::render_email`` reads today. No
+split-brain slug.)
 
 Idempotency
 ───────────
 * **Boot sentinel** — ``db.migrations`` doc with ``id =
   feb2026_seed_transactional_templates_v1``. First run scans all
-  tenants + stamps the sentinel. Second boot returns ``skipped=True``
-  immediately.
-* **Per-tenant, per-slug secondary guard** — even when the sentinel
-  hasn't fired for a brand-new tenant, ``find_one({tenant_id, code})``
-  before every insert prevents double-writes.
-* Pytest-covered: ``test_p2_10a_transactional_registry_and_seed.py``
-  pins the idempotency + per-slug seed insertion behaviour.
+  tenants + stamps the sentinel. Second boot returns ``skipped=True``.
+* **Per-tenant, per-slug secondary guard** — ``find_one({tenant_id,
+  code})`` before every insert.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 from config import db
 from utils import new_id, now_iso
@@ -61,10 +55,10 @@ _SENTINEL_ID = "feb2026_seed_transactional_templates_v1"
 
 # Minimal seed bodies — kept purposely short so the admin sees the
 # editor as "my tenant has a visible default I can polish" rather
-# than "the system shipped with a wall of boilerplate text I need
-# to understand". Admins editing these REPLACES the body entirely;
-# the hardcoded production fallback branch is a sibling path that
-# only fires when the DB row is absent / inactive.
+# than "the system shipped with a wall of boilerplate text." The
+# richer production fallbacks live in the hardcoded branches in
+# ``services/customer_welcome_email.py`` +
+# ``services/quote_notifications.py::render_sms``.
 _MVP_SEEDS: List[Dict[str, Any]] = [
     {
         "code": "welcome_on_first_accept_email",
@@ -80,23 +74,12 @@ _MVP_SEEDS: List[Dict[str, Any]] = [
         ),
     },
     {
-        "code": "quote_decline_admin_email",
-        "channel": "email",
-        "name": "Quote declined · Admin notification",
-        "category": "quotes",
-        "subject": "Quote #{{quote_number}} declined by {{customer_name}}",
-        "body": (
-            "{{customer_name}} declined quote #{{quote_number}}.\n\n"
-            "Reason: {{decline_reason}}"
-        ),
-    },
-    {
         "code": "quote_decline_admin_sms",
         "channel": "sms",
         "name": "Quote declined · Admin SMS",
         "category": "quotes",
         "subject": None,
-        "body": "Quote #{{quote_number}} declined by {{customer_name}}.",
+        "body": "{{customer_name}} declined quote #{{quote_short_id}}.",
     },
 ]
 

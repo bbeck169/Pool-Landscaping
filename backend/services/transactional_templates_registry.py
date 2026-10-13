@@ -51,17 +51,23 @@ from typing import Any, Dict, List, Optional
 # ─── Slug enumeration ────────────────────────────────────────────
 # Alphabetical for grep stability. Any addition to this list MUST
 # be accompanied by an entry in ``REGISTRY`` below.
+#
+# Slug names match the WIRE-LEVEL ``code`` values written by the
+# individual seed migrations (``migrations/te_portal_job_templates_seed.py``,
+# ``migrations/seed_quote_accepted_declined_templates.py``, etc.). No
+# admin-facing aliases — one slug, one wire-level code, one editor
+# row. See the P2 #10 Commit 1b receipt for the alignment history.
 TRANSACTIONAL_SLUGS: List[str] = [
-    "completion_followup_sms",
     "estimate_reminder_email",
     "invoice_past_due_email",
+    "job_completion_sms",
     "lead_conversion_welcome_email",
     "lead_conversion_welcome_sms",
     "password_reset_email",            # TD-16: send-site still hardcoded
     "portal_chat_admin_notify_sms",    # TD-16: send-site still hardcoded
     "portal_invite_email",
-    "quote_decline_admin_email",       # MVP — wired in Commit 2
     "quote_decline_admin_sms",         # MVP — wired in Commit 2
+    "quote_declined_owner_email",
     "welcome_on_first_accept_email",   # MVP — wired in Commit 2
 ]
 
@@ -78,25 +84,28 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             "(default True). Fires from ``services/customer_welcome_email.py``."
         ),
     },
-    "quote_decline_admin_email": {
+    "quote_declined_owner_email": {
         "channel": "email",
-        "required_tags": ["customer_name", "quote_number"],
-        "optional_tags": ["decline_reason", "quote_total", "quote_url"],
+        "required_tags": ["customer_name"],
+        "optional_tags": ["quote_headline", "quote_total", "quote_short_id", "quote_admin_link"],
         "description": (
             "Email notification to tenant admins when a customer "
-            "declines a quote. Gated by ``tenant.notify_admin_on_decline`` "
-            "(default True). Fires from "
-            "``routers/estimate_viewer.py::_notify_admins_email_sms``."
+            "declines a quote. Already wired in "
+            "``services/quote_notifications.py::render_email`` via "
+            "``get_template_with_global_fallback``. Global seed "
+            "migration lives at "
+            "``backend/migrations/seed_quote_accepted_declined_templates.py``."
         ),
     },
     "quote_decline_admin_sms": {
         "channel": "sms",
-        "required_tags": ["customer_name", "quote_number"],
+        "required_tags": ["customer_name", "quote_short_id"],
         "optional_tags": ["decline_reason"],
         "description": (
             "SMS notification to tenant admins when a customer declines "
-            "a quote. Same gating + fire path as "
-            "``quote_decline_admin_email`` (always paired)."
+            "a quote. Pairs with ``quote_declined_owner_email``. Wired "
+            "in Commit 2 of P2 #10 from "
+            "``services/quote_notifications.py::render_sms``."
         ),
     },
     "lead_conversion_welcome_email": {
@@ -119,21 +128,17 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
             "Already wired."
         ),
     },
-    "completion_followup_sms": {
+    "job_completion_sms": {
         "channel": "sms",
         "required_tags": ["company_name", "customer_first_name"],
         "optional_tags": ["review_url"],
         "description": (
             "Service-complete follow-up SMS asking for a review. Already "
-            "wired through ``get_template_by_code('job_completion_sms')`` "
-            "in ``services/completion_sms_template.py``. **Legacy slug "
-            "name on-disk: ``job_completion_sms`` — the registry uses "
-            "the business-meaningful ``completion_followup_sms`` alias "
-            "for the admin UI; the wire-level code remains "
-            "``job_completion_sms`` for backward compat with the "
-            "6 existing seeded tenants.**"
+            "wired via ``get_template_by_code('job_completion_sms')`` in "
+            "``services/completion_sms_template.py``. Globally seeded by "
+            "``migrations/te_portal_job_templates_seed.py`` (1780+ tenant "
+            "rows at time of this registry's introduction)."
         ),
-        "legacy_code_alias": "job_completion_sms",
     },
     "invoice_past_due_email": {
         "channel": "email",
