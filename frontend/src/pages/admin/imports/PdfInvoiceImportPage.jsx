@@ -1321,6 +1321,22 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
   const totalCount = invoicePreviews.length;
   const dupCount = dupIndex.size;
 
+  // Feb-2026 · auto-create UX ticket — number of DISTINCT new
+  // customer rows the backend commit path would mint. Backed
+  // by ``classification.summary.will_auto_create_count`` which
+  // the Step C.1 ``classify_pending_for_preview`` now computes
+  // as ``len(distinct dedup_group_ids)``. Falls back to the
+  // raw array length for pre-upgrade response payloads.
+  const _classification = batch.pending_customer_classification;
+  const willAutoCreateCount = (() => {
+    const s = _classification?.summary;
+    if (s && typeof s.will_auto_create_count === "number") {
+      return s.will_auto_create_count;
+    }
+    return Array.isArray(_classification?.will_auto_create)
+      ? _classification.will_auto_create.length : 0;
+  })();
+
   // PDF-MIRROR · Feb-2026 — needs_review derivation.  A preview
   // is flagged when the extractor produced no grand_total AND
   // the line-item recompute also came up $0.00 (see
@@ -1708,6 +1724,16 @@ function PreviewSurface({ fileId, batch, onCommitStart, onCommitSuccess, onCommi
                           <Loader2 size={14} className="animate-spin" />
                           Committing…
                         </span>
+                      ) : willAutoCreateCount > 0 ? (
+                        // Feb-2026 · auto-create UX ticket — surface
+                        // the auto-create fan-out so Commit never
+                        // feels like a surprise mint. Count comes
+                        // from the summary block the Step C.1
+                        // classifier populates (distinct dedup
+                        // groups, not raw pending-row count).
+                        `Commit ${totalCount} invoice${totalCount === 1 ? "" : "s"} `
+                        + `and auto-create ${willAutoCreateCount} customer`
+                        + `${willAutoCreateCount === 1 ? "" : "s"}`
                       ) : (
                         `Commit ${totalCount} invoice${totalCount === 1 ? "" : "s"}`
                       )}
@@ -2371,7 +2397,39 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
     ? classification.will_auto_create : [];
   const manual = Array.isArray(classification?.will_require_manual_review)
     ? classification.will_require_manual_review : [];
+  // Feb-2026 · auto-create UX ticket — the backend summary block
+  // computes the DISTINCT-dedup-group count the commit path will
+  // actually produce.  Falls back to the raw array length for
+  // pre-upgrade response payloads.
+  const _summaryCount = classification?.summary?.will_auto_create_count;
+  const autoCreateCount = (typeof _summaryCount === "number")
+    ? _summaryCount
+    : willAuto.length;
+  const lowConfRows = manual.filter(
+    (r) => r?.reason === "customer_extraction_confidence_low",
+  );
   if (willAuto.length === 0 && manual.length === 0) return null;
+
+  // Scroll-into-view affordance that reuses the existing per-row
+  // customer picker (``pdf-import-preview-row-${idx}-customer-low-confidence``
+  // or the row-level ``CustomerCell``).  Keeps the picker single-
+  // sourced -- no duplicate state in the banner.
+  const _onResolveLowConfidence = (sourceDocIndex) => {
+    try {
+      const sel = `[data-testid="pdf-import-preview-row-`
+        + `${sourceDocIndex}-customer-low-confidence"]`;
+      const el = document.querySelector(sel);
+      if (el && typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Flash the row so the operator notices the jump.
+        el.classList.add("ring-2", "ring-amber-500");
+        setTimeout(() => {
+          el.classList.remove("ring-2", "ring-amber-500");
+        }, 1500);
+      }
+    } catch { /* non-fatal UX helper */ }
+  };
+
   return (
     <div
       className="mb-3 rounded-md border p-3 flex items-start gap-3"
@@ -2384,10 +2442,10 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
           className="font-semibold"
           data-testid={`pdf-import-will-auto-create-count-${fileId}`}
         >
-          {willAuto.length > 0 ? (
+          {autoCreateCount > 0 ? (
             <>
-              Will auto-create {willAuto.length} customer
-              {willAuto.length === 1 ? "" : "s"} on commit
+              Will auto-create {autoCreateCount} customer
+              {autoCreateCount === 1 ? "" : "s"} on commit
             </>
           ) : (
             <>No customers to auto-create</>
@@ -2412,31 +2470,179 @@ export function WillAutoCreateCustomersBanner({ fileId, classification }) {
               <span className="group-open:hidden">Show details</span>
               <span className="hidden group-open:inline">Hide details</span>
             </summary>
+            <AutoCreateCandidatesTable fileId={fileId} rows={willAuto} />
+          </details>
+        ) : null}
+        {lowConfRows.length > 0 ? (
+          <div
+            className="mt-2 rounded-md border p-2 flex flex-col gap-1.5"
+            style={{
+              borderColor: "#F59E0B", backgroundColor: "#FFFBEB",
+            }}
+            data-testid={`pdf-import-low-confidence-section-${fileId}`}
+          >
+            <div
+              className="text-xs font-semibold flex items-center gap-1"
+              style={{ color: "#78350F" }}
+            >
+              <AlertTriangle size={12} />
+              {lowConfRows.length} row
+              {lowConfRows.length === 1 ? "" : "s"} with low-confidence
+              customer extraction
+            </div>
             <ul className="flex flex-col gap-1 text-xs">
-              {willAuto.map((row, idx) => (
+              {lowConfRows.map((row, idx) => (
                 <li
                   key={row.pending_customer_id || idx}
-                  className="flex gap-2"
-                  data-testid={`pdf-import-will-auto-create-item-${fileId}`}
+                  className="flex items-center justify-between gap-2"
+                  data-testid={`pdf-import-low-confidence-row-${fileId}-${row.source_doc_index}`}
                 >
-                  <span className="font-mono text-[11px] opacity-70">
-                    #{row.source_doc_index}
+                  <span className="truncate" style={{ color: "#78350F" }}>
+                    <span className="font-mono text-[11px] opacity-70">
+                      #{row.source_doc_index}
+                    </span>
+                    {" "}
+                    {row.extracted_name
+                      ? (
+                        <span className="italic">
+                          “{row.extracted_name}” looks like a doc number
+                        </span>
+                      )
+                      : <span>Customer not confidently extracted</span>}
                   </span>
-                  <span>
-                    {row.extracted_name || "(unnamed)"}
-                    {row.extracted_address
-                      ? ` · ${row.extracted_address}`
-                      : ""}
-                    {row.prior_resolved_customer_id
-                      ? " · (resolved on prior commit attempt)"
-                      : ""}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => _onResolveLowConfidence(
+                      row.source_doc_index,
+                    )}
+                    className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium hover:brightness-105"
+                    style={{
+                      borderColor: "#D97706", color: "#78350F",
+                      backgroundColor: "#FEF3C7",
+                    }}
+                    data-testid={`pdf-import-low-confidence-resolve-btn-${fileId}-${row.source_doc_index}`}
+                  >
+                    Resolve customer
+                  </button>
                 </li>
               ))}
             </ul>
-          </details>
+          </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Feb-2026 · auto-create UX ticket — per-dedup-group candidate
+ * table. Replaces the pre-ticket raw list ``<ul>`` with columns
+ * for Name / Email / Phone / Address and a trailing fields chip
+ * ("3 of 4 extracted").  Missing fields render as "—" with a
+ * tooltip "Not extracted from PDF" so the operator can tell
+ * ahead of commit that TD-30 harder extraction would be needed.
+ */
+function AutoCreateCandidatesTable({ fileId, rows }) {
+  // Collapse rows by dedup_group_id so one new customer renders
+  // once even when 2 PDFs in the batch resolve to the same
+  // candidate. First-wins source_doc_index + merged fields.
+  const grouped = (() => {
+    const by = new Map();
+    for (const row of rows || []) {
+      const key = row.dedup_group_id
+        || row.pending_customer_id || row.source_doc_index;
+      if (!by.has(key)) {
+        by.set(key, row);
+      }
+    }
+    return Array.from(by.values());
+  })();
+  const _notExtracted = (
+    <span
+      className="opacity-60"
+      title="Not extracted from PDF"
+    >
+      —
+    </span>
+  );
+  const _addressString = (addr) => {
+    if (!addr) return null;
+    if (typeof addr === "string") return addr;
+    const parts = [addr.street, addr.city, addr.state, addr.zip]
+      .filter(Boolean);
+    return parts.join(", ") || null;
+  };
+  return (
+    <div
+      className="overflow-x-auto"
+      data-testid={`pdf-import-auto-create-table-${fileId}`}
+    >
+      <table className="min-w-full text-left text-xs">
+        <thead>
+          <tr style={{ color: "#1E3A8A" }}>
+            <th className="pr-3 py-1 font-semibold">Row</th>
+            <th className="pr-3 py-1 font-semibold">Name</th>
+            <th className="pr-3 py-1 font-semibold">Email</th>
+            <th className="pr-3 py-1 font-semibold">Phone</th>
+            <th className="pr-3 py-1 font-semibold">Address</th>
+            <th className="pr-3 py-1 font-semibold">Fields</th>
+          </tr>
+        </thead>
+        <tbody>
+          {grouped.map((row, idx) => {
+            const cand = row.auto_create_candidate || {};
+            const addr = _addressString(cand.mailing_address);
+            const extracted = Array.isArray(row.fields_extracted)
+              ? row.fields_extracted : [];
+            const missing = Array.isArray(row.fields_missing)
+              ? row.fields_missing : [];
+            const total = extracted.length + missing.length;
+            return (
+              <tr
+                key={row.dedup_group_id || row.pending_customer_id || idx}
+                className="border-t"
+                style={{ borderColor: "#BFDBFE" }}
+                data-testid={`pdf-import-will-auto-create-item-${fileId}`}
+              >
+                <td className="pr-3 py-1 font-mono text-[11px] opacity-70">
+                  #{row.source_doc_index}
+                </td>
+                <td className="pr-3 py-1">
+                  {cand.name || row.extracted_name || _notExtracted}
+                </td>
+                <td className="pr-3 py-1">
+                  {cand.email || _notExtracted}
+                </td>
+                <td className="pr-3 py-1">
+                  {cand.phone || row.extracted_phone || _notExtracted}
+                </td>
+                <td className="pr-3 py-1">
+                  {addr || row.extracted_address || _notExtracted}
+                </td>
+                <td className="pr-3 py-1">
+                  {total > 0 ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                      style={missing.length === 0 ? {
+                        backgroundColor: "#DCFCE7", color: "#166534",
+                      } : {
+                        backgroundColor: "#FEF3C7", color: "#78350F",
+                      }}
+                      title={missing.length === 0
+                        ? "All candidate fields extracted"
+                        : `Missing: ${missing.join(", ")}`}
+                      data-testid={`pdf-import-will-auto-create-fields-chip-${fileId}-${row.source_doc_index}`}
+                    >
+                      {extracted.length} of {total} extracted
+                    </span>
+                  ) : _notExtracted}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
