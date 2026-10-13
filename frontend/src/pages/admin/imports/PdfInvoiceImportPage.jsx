@@ -524,12 +524,30 @@ export function formatIsoDate(dateStr) {
 // user-facing label collapses that to "Payment" so the column
 // header + copy stay concise. Exported so the vitest suite can
 // mount + assert on it without spinning up the whole PreviewRow.
-export function DocKindPill({ docKind, testid }) {
+//
+// Feb-2026 · PDF Import Hub Bug 1 fix — accepts an optional
+// ``autoDetectedDocKind`` so the pill can render an "AI said: X"
+// secondary chip when the operator's explicit Document Type
+// selection overrode the classifier output. Backend stamps
+// ``quote_in.auto_detected_doc_type`` + ``quote_in.doc_type_user
+// _override`` via ``services/imports/pdf_preview_post.py``.
+const _DOC_KIND_LABEL = {
+  invoice: "Invoice",
+  estimate: "Estimate",
+  quote: "Estimate",
+  payment_receipt: "Payment",
+  payment: "Payment",
+};
+function _docKindToLabel(k) {
+  return _DOC_KIND_LABEL[k] || (k ? String(k) : "Unknown");
+}
+export function DocKindPill({ docKind, testid, autoDetectedDocKind }) {
   const spec = (() => {
     switch (docKind) {
       case "invoice":
         return { label: "Invoice", cls: "bg-blue-100 text-blue-800" };
       case "estimate":
+      case "quote":
         return { label: "Estimate", cls: "bg-emerald-100 text-emerald-800" };
       case "payment_receipt":
       case "payment":
@@ -538,13 +556,29 @@ export function DocKindPill({ docKind, testid }) {
         return { label: "Unknown", cls: "bg-slate-100 text-slate-700" };
     }
   })();
+  const autoLabel = autoDetectedDocKind
+    ? _docKindToLabel(autoDetectedDocKind)
+    : null;
+  const showAutoBadge =
+    autoLabel && autoLabel !== spec.label;
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${spec.cls}`}
-      data-testid={testid}
-      data-doc-kind={docKind || "unknown"}
-    >
-      {spec.label}
+    <span className="inline-flex items-center gap-1">
+      <span
+        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${spec.cls}`}
+        data-testid={testid}
+        data-doc-kind={docKind || "unknown"}
+      >
+        {spec.label}
+      </span>
+      {showAutoBadge ? (
+        <span
+          className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600"
+          data-testid={testid ? `${testid}-ai-said` : undefined}
+          title={`Classifier auto-detected ${autoLabel}; overridden by your Document Type selection.`}
+        >
+          AI said: {autoLabel}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -1734,11 +1768,23 @@ export function PreviewRow({
             the button screenreader-labelled per the same pattern. */}
         <button
           type="button"
-          onClick={() => onToggle(sourceIdx)}
-          className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded hover:bg-black/5"
-          aria-label={expanded ? "Collapse line items" : "Expand line items"}
+          onClick={() => renderableItems.length > 0 && onToggle(sourceIdx)}
+          disabled={renderableItems.length === 0}
+          className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={
+            renderableItems.length === 0
+              ? "No line items extracted"
+              : (expanded ? "Collapse line items" : "Expand line items")
+          }
           aria-expanded={expanded ? "true" : "false"}
+          aria-disabled={renderableItems.length === 0 ? "true" : "false"}
+          title={
+            renderableItems.length === 0
+              ? "No line items extracted"
+              : undefined
+          }
           data-testid={`pdf-import-line-items-toggle-${fileId}-${sourceIdx}`}
+          data-no-line-items={renderableItems.length === 0 ? "true" : "false"}
         >
           {expanded ? (
             <ChevronUp size={14} style={{ color: colors.muted }} />
@@ -1752,13 +1798,23 @@ export function PreviewRow({
           the AI-classified ``doc_kind`` field on the preview
           MapperReport. Blue = Invoice, Green = Estimate, Purple
           = Payment (payment_receipt). Unknown falls back to
-          neutral slate so the column never renders blank. */}
+          neutral slate so the column never renders blank.
+          Feb-2026 · Bug 1 fix — when the operator's explicit
+          Document Type selection overrode the classifier, prefer
+          ``quote_in.doc_type`` for the pill + pass the auto-
+          detected value through so the "AI said: X" secondary
+          chip renders. */}
       <td
         className="px-3 py-2"
         data-testid={`pdf-import-preview-row-${fileId}-${sourceIdx}-type-cell`}
       >
         <DocKindPill
-          docKind={preview.doc_kind}
+          docKind={q.doc_type || preview.doc_kind}
+          autoDetectedDocKind={
+            q.doc_type_user_override
+              ? q.auto_detected_doc_type
+              : undefined
+          }
           testid={`pdf-import-preview-row-${fileId}-${sourceIdx}-type-pill`}
         />
       </td>
@@ -1851,6 +1907,31 @@ export function PreviewRow({
         style={{ borderTop: `1px solid ${colors.border}` }}
       >
         <td colSpan={6} className="px-3 py-3" style={{ backgroundColor: colors.surfaceSecondary }}>
+          {/* Feb-2026 · PDF Import Hub Bug 2 defensive — amber
+              banner inside the expand panel when
+              ``Σ line_item.line_total`` disagrees with the stated
+              ``subtotal`` by more than $0.01. Backend post-
+              processor at ``services/imports/pdf_preview_post.py``
+              stamps the signed delta on
+              ``quote_in.line_total_subtotal_mismatch_cents``. */}
+          {Math.abs(Number(q.line_total_subtotal_mismatch_cents) || 0) > 1 ? (
+            <div
+              className="mb-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900"
+              data-testid={`pdf-import-line-items-subtotal-mismatch-${fileId}-${sourceIdx}`}
+            >
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>
+                Line-item total does not match the stated
+                subtotal by{" "}
+                <strong>
+                  {formatCurrency(
+                    Math.abs(Number(q.line_total_subtotal_mismatch_cents) || 0) / 100,
+                  )}
+                </strong>
+                . Review before commit.
+              </span>
+            </div>
+          ) : null}
           {renderableItems.length === 0 ? (
             <div
               className="text-sm italic"
@@ -1938,10 +2019,35 @@ function CustomerCell({ preview }) {
   const q = preview.quote_in || {};
   const name = q.customer_name || "—";
   const resolution = preview.customer_resolution;
+  // Feb-2026 · PDF Import Hub Bug 3 fix — low-confidence
+  // customer-name extraction (backend post-processor nulled a
+  // suspect value that looked like a doc number) shows a warning
+  // triangle so the operator reviews before commit.
+  const lowConfidence = q.customer_extraction_confidence === "low";
+  const warningBadge = lowConfidence ? (
+    <span
+      className="ml-1.5 inline-flex items-center text-amber-700"
+      title={
+        "Customer could not be confidently extracted — review "
+        + "before commit."
+        + (q.customer_name_suspect_value
+            ? ` (Extractor returned "${q.customer_name_suspect_value}", `
+              + "which looks like a document number.)"
+            : "")
+      }
+      data-testid={
+        `pdf-import-preview-row-${preview.source_doc_index}-`
+        + `customer-low-confidence`
+      }
+    >
+      <AlertTriangle size={12} />
+    </span>
+  ) : null;
   if (resolution === "matched") {
     return (
       <span className="text-sm" style={{ color: colors.onSurface }}>
         {name}
+        {warningBadge}
       </span>
     );
   }
@@ -1949,6 +2055,7 @@ function CustomerCell({ preview }) {
     return (
       <span className="text-sm text-slate-600">
         {name}
+        {warningBadge}
         <span
           className="ml-1.5 inline-flex items-center rounded-full bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-700"
         >
@@ -1960,6 +2067,7 @@ function CustomerCell({ preview }) {
   return (
     <span className="text-sm text-red-700">
       {name}
+      {warningBadge}
       <span
         className="ml-1.5 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0 text-[10px] font-medium text-red-800"
       >
