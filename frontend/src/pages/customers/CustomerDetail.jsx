@@ -16,6 +16,7 @@ import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import { MediaLibraryPicker } from "@/components/marketing/MediaLibraryPicker";
 import { ActivationControl } from "@/components/customers/ActivationControl";
+import { ServiceCategoryControl } from "@/components/customers/ServiceCategoryControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerWarrantiesLibrary from "@/components/customers/CustomerWarrantiesLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
@@ -1355,6 +1356,16 @@ export default function CustomerDetail() {
                   Inactive
                 </span>
               ) : null}
+              {/* P2 #6 · Feb-2026 — Service Category dropdown. Admin-
+                  only edit affordance; PATCH /customers/{cid}/service-
+                  category.  Values "pool"/"landscaping"/"both" + the
+                  "Not set" clear option.  Toast on success/error. */}
+              <ServiceCategoryControl
+                customer={customer}
+                onOptimisticSet={(next) =>
+                  setCustomer((c) => ({ ...c, service_category: next }))
+                }
+              />
               <ActivationControl
                 customer={customer}
                 onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}

@@ -401,6 +401,12 @@ export default function CustomersList() {
   const [portalInvitedFilter, setPortalInvitedFilter] = useState(
     () => searchParams.get("portal_invited") === "any");
   const [portalInvitedCount, setPortalInvitedCount] = useState(null);
+  // P2 #6 · Feb-2026 — service-category filter chip.  URL-hydrated.
+  // Values: "all" (default) / "pool" / "landscaping" / "both" / "unset".
+  // Deep-links from the Dashboard tile row land here via
+  // ``?service_category=<key>``.
+  const [serviceCategoryFilter, setServiceCategoryFilter] = useState(
+    () => searchParams.get("service_category") || "all");
   const [signedInFilter, setSignedInFilter] = useState(
     () => searchParams.get("first_access") === "any");
   const [signedInCount, setSignedInCount] = useState(null);
@@ -622,6 +628,10 @@ export default function CustomersList() {
     // through so the backend sees the intended predicate.
     else if (signedInFilter) params.set("first_access", "any");
     if (portalInvitedFilter) params.set("portal_invited", "any");
+    // P2 #6 · Feb-2026 — service-category chip (pool/landscaping/both/unset).
+    if (serviceCategoryFilter && serviceCategoryFilter !== "all") {
+      params.set("service_category", serviceCategoryFilter);
+    }
     // Feb-2026 · P46 — city + multi-tag now flow through the backend
     // so pagination + tab counts stay honest. Repeat the ``tags``
     // key per selected value so backend gets a proper list.
@@ -814,10 +824,16 @@ export default function CustomersList() {
     // Feb-2026 · Onboarding-tile clickable ship — Invited chip.
     if (portalInvitedFilter) next.set("portal_invited", "any");
     else next.delete("portal_invited");
+    // P2 #6 · Feb-2026 — service-category chip URL sync.
+    if (serviceCategoryFilter && serviceCategoryFilter !== "all") {
+      next.set("service_category", serviceCategoryFilter);
+    } else {
+      next.delete("service_category");
+    }
     setSearchParams(next, { replace: true });
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter]);
+  }, [missingEmail, missingPhone, missingAddress, portalStatusFilter, noPaymentFilter, hasCardFilter, neverLoggedIn, portalInvitedFilter, signedInFilter, serviceCategoryFilter]);
 
   // Feb-2026 · P43b — Fetch the total "missing address" count once
   // on mount (and whenever the tenant scope changes) so the chip
@@ -2165,6 +2181,39 @@ export default function CustomersList() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* P2 #6 · Feb-2026 — Service Category filter group.
+                Dropdown select; URL-hydrated as ``?service_category=
+                pool|landscaping|both|unset``.  Dashboard "By Service
+                Category" tile row deep-links land here directly. */}
+            <div className="mb-3">
+              <label
+                className="text-[10px] font-bold uppercase mb-1.5 block"
+                style={{ color: colors.muted }}
+                htmlFor="filter-service-category-select"
+              >
+                Service Category
+              </label>
+              <select
+                id="filter-service-category-select"
+                data-testid="filter-service-category-select"
+                value={serviceCategoryFilter}
+                onChange={(e) =>
+                  setServiceCategoryFilter(e.target.value)}
+                className="w-full text-xs font-semibold px-2 py-1.5 rounded border"
+                style={{
+                  background: "transparent",
+                  color: colors.onSurface,
+                  borderColor: colors.border,
+                }}
+              >
+                <option value="all">All categories</option>
+                <option value="pool">Pool</option>
+                <option value="landscaping">Landscaping</option>
+                <option value="both">Both</option>
+                <option value="unset">Not set</option>
+              </select>
             </div>
 
             {/* Group: First-time sign-in (Feb-2026 · Customer temp password) */}

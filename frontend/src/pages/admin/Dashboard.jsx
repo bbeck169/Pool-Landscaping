@@ -35,6 +35,7 @@ import RevenueDateRangeFilter from "@/components/dashboard/RevenueDateRangeFilte
 import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile";
 import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
+import ServiceCategoryTileRow from "@/components/dashboard/ServiceCategoryTileRow";
 import EbitTile from "@/components/dashboard/EbitTile";
 // Phase GLOBAL-SEARCH-UNIFY · Feb-2026 — the previous
 // Feb-2026 · Restore visible universal search bar — the Dashboard
@@ -638,6 +639,16 @@ export default function AdminDashboard() {
           [0, 1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
         )}
       </div>
+
+      {/* P2 #6 · Feb-2026 — Customers by Service Category. Four
+          clickable KpiCards: Pool / Landscaping / Both / Not set.
+          Each tile deep-links the customers list via the P2 #6
+          ``?service_category=`` filter chip.  "Not set" uses the
+          synthetic ``unset`` key the backend returns + the
+          frontend list filter honors.  Null endpoint response
+          falls through to skeletons (same pattern as the sibling
+          KPI grid above). */}
+      <ServiceCategoryTileRow />
 
       {/* Feb-2026 · Revenue Forecast + EBIT topline tiles. Sit below
           the Mass Messaging card, Global Search Bar, Revenue-insights
