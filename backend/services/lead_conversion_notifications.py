@@ -60,6 +60,11 @@ async def _record_delivery(*, tenant_id: str, channel: str,
 
 async def _send_welcome_email(*, tenant_id: str, customer: Dict[str, Any],
                                  lead_id: str) -> Optional[str]:
+    # P2 #10d · Feb-2026 — tenant-wide kill switch. Default True on
+    # unset; admin opts out via ``PATCH /tenants/mine/settings``.
+    from services.tenant_automation_gates import automation_enabled
+    if not await automation_enabled(tenant_id, "lead_conversion_welcome_enabled"):
+        return None
     # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
     # Admin-initiated lead conversion — bypasses customer-level mute
     # (the customer just expressed intent; admin action confirms).
@@ -206,6 +211,12 @@ async def _send_welcome_email(*, tenant_id: str, customer: Dict[str, Any],
 
 async def _send_welcome_sms(*, tenant_id: str, customer: Dict[str, Any],
                                lead_id: str) -> Optional[str]:
+    # P2 #10d · Feb-2026 — same tenant kill switch gates the SMS half
+    # of the lead-conversion automation (email + SMS share one flag
+    # per audit Flag 2 approved shape).
+    from services.tenant_automation_gates import automation_enabled
+    if not await automation_enabled(tenant_id, "lead_conversion_welcome_enabled"):
+        return None
     # Feb-2026 · Multi-Contact Phase 2 · fan-out (manual).
     from services.customer_multi_contact import active_phone_recipients
     recipients = active_phone_recipients(customer, context="manual")

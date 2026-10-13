@@ -123,6 +123,8 @@ Last updated: **Phase O4 · Feb-2026** (Offline Sync Backend Idempotency Sprint 
 
 - **TD-18 · Multi-locale transactional templates** — extend `marketing_templates` row with `locale: 'en' | 'es' | 'fr'` + resolver prefers tenant-locale match → en fallback. D5 locale resolution is already live. **Priority:** P3 (post-launch, demand-driven).
 
+- **TD-19 · P2 #10d automation-gate wiring sweep — 3 remaining service entry points** — `completion_followup_sms_enabled` (`services/completion_sms_template.py`), `invoice_past_due_enabled` + `estimate_reminder_enabled` (both in `emailer.py`) still fire regardless of their tenant flag. The schema (`TenantSettingsUpdate`), read path (`GET /tenants/mine/settings`), and the shared helper (`services/tenant_automation_gates.py::automation_enabled`) are all in place from Commit 4; this ticket is purely wire the `if not await automation_enabled(...)` one-liner at the top of each entry point. **Priority:** P2 (functional parity with Commit 4's existing `lead_conversion_welcome_enabled` wire).
+
 ## P2 #9 follow-ups (Oct-2026, added during MOBILE-SCHEDULE-DAY-VIEW-TIMESTAMP-FILTER-BUG)
 
 - **TD-12 · Web tenant TZ missing from `/auth/me`** — web falls back to America/Phoenix regardless of actual tenant TZ. Priority: P2 (affects start-time-only job placement near midnight for non-Phoenix tenants). Evidence: `GET /api/auth/me` returns neither `tenant_timezone` nor `tenant.timezone`; `GET /api/tenants/mine/settings` returns `America/New_York` for the preview tenant. Web reads `user?.tenant?.timezone || user?.tenant_timezone || TENANT_TZ_FALLBACK` (`CalendarSchedule.jsx` L437-440).

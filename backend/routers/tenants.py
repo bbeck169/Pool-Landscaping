@@ -956,6 +956,17 @@ class TenantSettingsUpdate(BaseModel):
     # tenants send the welcome).  Mirror of the ``notify_admin_on_decline``
     # pattern above.
     welcome_email_on_first_accepted_quote_enabled: Optional[bool] = None
+    # P2 #10d · Feb-2026 — tenant-wide kill switches for the four
+    # P2 #10 scope automations. All default True (unset tenants
+    # preserve legacy behavior — opt-out, not opt-in). Mirror the
+    # ``notify_admin_on_decline`` / ``welcome_email_on_first_accepted_quote_enabled``
+    # pattern. Pair with the Commit-3 ``TransactionalTemplates``
+    # editor — a tenant can both customize the body AND disable the
+    # fire from Settings → Notifications.
+    lead_conversion_welcome_enabled: Optional[bool] = None
+    completion_followup_sms_enabled: Optional[bool] = None
+    invoice_past_due_enabled: Optional[bool] = None
+    estimate_reminder_enabled: Optional[bool] = None
 
 
 @router.get(
@@ -1004,6 +1015,17 @@ async def get_own_settings(user: dict = Depends(get_current_user),
                 "welcome_email_on_first_accepted_quote_enabled",
                 True,
             )),
+        # P2 #10d · Feb-2026 — 4 automation kill switches, all
+        # defaulting True on unset (opt-out posture, mirrors the
+        # welcome + decline flags above).
+        "lead_conversion_welcome_enabled": bool(
+            tenant.get("lead_conversion_welcome_enabled", True)),
+        "completion_followup_sms_enabled": bool(
+            tenant.get("completion_followup_sms_enabled", True)),
+        "invoice_past_due_enabled": bool(
+            tenant.get("invoice_past_due_enabled", True)),
+        "estimate_reminder_enabled": bool(
+            tenant.get("estimate_reminder_enabled", True)),
         # Phase 11 · equipment tracker digest
         "equipment_service_customer_reminders_enabled": bool(
             tenant.get("equipment_service_customer_reminders_enabled", False)),
