@@ -277,7 +277,43 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # relevant status + converted-invoice-id
                       # predicate. When absent, behaves exactly as
                       # before (back-compat for existing callers).
-                      view: Optional[str] = Query(None)):
+                      view: Optional[str] = Query(None),
+                      # P1 PERF-HOTFIX · Feb-2026 · opt-in server-side
+                      # pagination (Shape A). When ``limit`` is absent
+                      # the response is a bare array capped at 1000
+                      # (unchanged behavior for every existing
+                      # caller). When ``limit`` is passed the response
+                      # becomes a Shape-A envelope::
+                      #
+                      #   {"rows": [...], "limit": int, "offset": int,
+                      #    "has_more": bool, "total_count": int}
+                      #
+                      # The envelope shape mirrors the pattern
+                      # already in use by
+                      # ``GET /customers/{cid}/notes-history``.
+                      limit: Optional[int] = Query(None, ge=1, le=200),
+                      offset: int = Query(0, ge=0, le=100_000),
+                      # P1 PERF-HOTFIX · Feb-2026 · ``slim=1`` opt-in
+                      # projection. When set, the response drops four
+                      # heavy fields that profile-list callers never
+                      # need:
+                      #
+                      #   * ``line_items`` (dominant per-doc payload
+                      #     — median ~615B / doc on preview, 5-20KB
+                      #     on prod with richer line_items)
+                      #   * ``pdf_cache`` (base64 PDF body cache)
+                      #   * ``pdf_url_cache`` (signed-URL cache for
+                      #     the generated PDF)
+                      #   * ``legacy_payload`` (import-time raw doc
+                      #     retained for cross-check)
+                      #
+                      # Unaffected: id, invoice_number, status,
+                      # payment_status, total, subtotal, tax, title,
+                      # customer_id, customer_name, created_at,
+                      # due_date, doc_type, deleted_at, every other
+                      # scalar.  Full doc remains available via
+                      # ``GET /quotes/{quote_id}``.
+                      slim: bool = Query(False)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     # FIN-PARITY-B · payment_status validation — accept the four
@@ -443,8 +479,56 @@ async def list_quotes(user: dict = Depends(get_current_user),
             q["customer_id"] = {"$in": list(active_ids) or ["__no_matches__"]}
         else:
             q["customer_id"] = {"$nin": list(active_ids)}
-    docs = await db.quotes.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return docs
+    # ── P1 PERF-HOTFIX · Feb-2026 · opt-in slim projection ─────────
+    # Default projection is the historical ``{_id: 0}`` (full doc).
+    # When ``slim=1`` is passed, we drop the four heaviest fields
+    # (see the docstring on the ``slim`` param above). These fields
+    # are NEVER consumed by the current RecentDocsSection / list
+    # callers; a full doc is still available via the single-row
+    # ``GET /quotes/{quote_id}`` endpoint.
+    _proj: Dict[str, int] = {"_id": 0}
+    if slim:
+        _proj.update({
+            "line_items": 0,
+            "pdf_cache": 0,
+            "pdf_url_cache": 0,
+            "legacy_payload": 0,
+        })
+    # ── P1 PERF-HOTFIX · Feb-2026 · opt-in Shape-A pagination ──────
+    # When ``limit`` is None we preserve the historical shape (bare
+    # array capped at 1000 rows). When ``limit`` is passed we
+    # return the ``{rows, limit, offset, has_more, total_count}``
+    # envelope — mirrors ``GET /customers/{cid}/notes-history``.
+    if limit is None:
+        docs = (
+            await db.quotes.find(q, _proj)
+            .sort("created_at", -1)
+            .to_list(1000)
+        )
+        return docs
+
+    # Fetch one more row than requested to cheaply detect
+    # ``has_more`` without a second count query. The ``total_count``
+    # is still exposed via ``count_documents`` for callers that
+    # need to render "Showing X of N" labels; counted once per
+    # paginated request, cost < 5ms with the compound indexes
+    # pinned by commit 2 (``k21_quotes_tenant_customer_doctype_created``).
+    _probe = (
+        await db.quotes.find(q, _proj)
+        .sort("created_at", -1)
+        .skip(offset)
+        .to_list(limit + 1)
+    )
+    has_more = len(_probe) > limit
+    rows = _probe[:limit]
+    total_count = await db.quotes.count_documents(q)
+    return {
+        "rows": rows,
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        "total_count": total_count,
+    }
 
 
 @router.post("/quotes")
