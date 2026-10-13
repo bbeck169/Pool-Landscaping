@@ -533,6 +533,11 @@ api_router.include_router(_p2_quote_recipients.router)
 # ``routers/communications_detail.py`` for the resolver + RBAC.
 from routers import communications_detail as _p25_comms_detail  # noqa: E402
 api_router.include_router(_p25_comms_detail.router)
+# P2 #6 · Feb-2026 — Dashboard "By Service Category" tile-row data
+# source.  Serves ``GET /api/dashboard/service-category-breakdown``
+# (admin + manager only).  See ``routers/dashboard_service_category.py``.
+from routers import dashboard_service_category as _p26_sc_dash  # noqa: E402
+api_router.include_router(_p26_sc_dash.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)
