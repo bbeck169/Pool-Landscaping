@@ -1768,7 +1768,17 @@ class _ServerTimingMiddleware(BaseHTTPMiddleware):
         # Slow-request log. Method + bucketed path only (no query
         # string, no body). Bucket UUID / numeric path segments so
         # cardinality stays bounded.
-        if dur_ms > 5000 or resp.status_code == 504:
+        #
+        # P1 PERF-HOTFIX · Feb-2026 — threshold lowered from 5000ms
+        # to 1500ms. The 5s floor hid every 2-5s regression in the
+        # critical customer-profile mount path (jobs/quotes/kpi
+        # endpoints that must land under 500ms server-side per the
+        # audit). Also attaches the FastAPI matched route pattern
+        # (``/api/customers/{cid}/kpi-summary``) to the warning so
+        # operators can group by route without parsing the bucketed
+        # ``path=`` field. Route pattern is bounded-cardinality by
+        # construction (one entry per registered FastAPI endpoint).
+        if dur_ms > 1500 or resp.status_code == 504:
             try:
                 import re as _re
                 raw_path = request.url.path
@@ -1778,6 +1788,14 @@ class _ServerTimingMiddleware(BaseHTTPMiddleware):
                     "/:uuid", raw_path,
                 )
                 bucketed = _re.sub(r"/\d{2,}", "/:num", bucketed)
+                # Pull the matched FastAPI route pattern directly
+                # from the ASGI scope. Falls back to the bucketed
+                # path when the route isn't matched (404s, auth
+                # bail-outs). ``path_format`` is the attribute
+                # FastAPI/Starlette sets on APIRoute match; present
+                # since Starlette 0.14. Guarded for robustness.
+                _route = request.scope.get("route")
+                _route_pattern = getattr(_route, "path", None) or bucketed
                 user = getattr(request.state, "auth_user", None) or {}
                 tenant = getattr(request.state, "tenant", None) or {}
                 level = (
@@ -1787,6 +1805,7 @@ class _ServerTimingMiddleware(BaseHTTPMiddleware):
                 )
                 msg = (
                     f"slow_request method={request.method} "
+                    f"route={_route_pattern} "
                     f"path={bucketed} tenant={tenant.get('id') or '-'} "
                     f"user={user.get('id') or '-'} "
                     f"role={user.get('role') or '-'} "
