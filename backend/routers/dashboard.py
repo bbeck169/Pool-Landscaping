@@ -130,6 +130,32 @@ async def dashboard(user: dict = Depends(get_current_user),
         "$and": [_not_deleted, _not_muted],
     })
 
+    # ── Feb-2026 · Pool + Landscaping customer tiles ──────
+    # Two additional count buckets rendered as sibling KPI tiles
+    # directly below Active / Inactive. Shares the ``is_active !=
+    # False`` + ``not soft-deleted`` filter above so the three
+    # customer-count tiles tell a consistent "active roster" story.
+    #
+    # Union semantics (P2 #6 · ``615339ab5``): a customer with
+    # ``service_category == "both"`` is counted on BOTH tiles —
+    # mirrors the ``?service_category=pool`` list filter so the
+    # tile total matches the deep-linked list total exactly.
+    #
+    # Case-insensitive match: legacy rows with ``"Pool"`` /
+    # ``"POOL"`` land in the same bucket as the canonical lowercase
+    # enum (``routers/customers.py`` already normalises on write
+    # but legacy historical data varies).
+    from services.dashboard_customer_category_counts import (
+        count_pool_customers,
+        count_landscaping_customers,
+    )
+    pool_customers_count = await count_pool_customers(
+        db=db, tenant_id=tenant["id"],
+    )
+    landscaping_customers_count = await count_landscaping_customers(
+        db=db, tenant_id=tenant["id"],
+    )
+
     recent = await db.jobs.find(tenant_q, {"_id": 0, "photos.data": 0}).sort("created_at", -1).to_list(6)
 
     now = datetime.now(timezone.utc)
@@ -317,6 +343,17 @@ async def dashboard(user: dict = Depends(get_current_user),
         # and soft-deleted rows are excluded from both buckets.
         "active_customers_count": active_customers_count,
         "inactive_customers_count": inactive_customers_count,
+        # ── Feb-2026 · Pool + Landscaping customer tiles ──
+        # Additive fields alongside the Active/Inactive pair
+        # above. Both apply the same ``is_active != False`` +
+        # not-soft-deleted gate so the three customer-count
+        # tiles tell a consistent "active roster" story.
+        # Union semantics (P2 #6): a ``both`` customer is counted
+        # on BOTH tiles — matches the ``?service_category=pool``
+        # list filter so tile totals equal deep-linked list
+        # totals exactly.
+        "pool_customers_count": pool_customers_count,
+        "landscaping_customers_count": landscaping_customers_count,
         # deprecated 2026-02, remove 2026-05-01 — replaced by the
         # Active/Inactive Customers pair above. The Technicians KPI
         # tile was retired from the dashboard on the same date but
