@@ -1,3 +1,0 @@
-event: ready
-data: {"tenant_id": "3814833a-dd0d-4bd9-90ea-351c24924649", "subscriber_count": 1}
-

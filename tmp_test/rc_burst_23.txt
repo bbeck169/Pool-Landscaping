@@ -1,1 +1,0 @@
-{"detail":"Rate limit — max 20 calls / minute"}

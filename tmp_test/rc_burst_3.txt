@@ -1,1 +1,0 @@
-{"status":"queued","ringout_id":"s-a78cc4318bc62z19f8bcf3a54z61748ef0000","from_number":"+16028874400","to_number":"+15555550100"}
