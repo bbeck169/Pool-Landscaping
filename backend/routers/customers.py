@@ -2994,6 +2994,97 @@ async def mute_automations(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════
+# CUSTOMER-DETAIL-NEXT-SERVICE · Feb-2026 — admin "Next Service" tile.
+# ═══════════════════════════════════════════════════════════════════
+# Mirrors the Phase P47 portal next-service query shape verbatim so
+# the admin tile on ``CustomerDetail.jsx`` and the customer-facing
+# tile on PortalHome stay in sync forever.  Query shape (lifted from
+# ``routers/customer_portal.py`` lines 191-227):
+#
+#   status ∈ {scheduled, active, pending, requested}
+#   AND deleted_at ∈ {null, missing}
+#   AND (
+#       scheduled_start >= now_iso                  (rung 1)
+#       OR
+#       scheduled_start ∈ {null, "", missing}       (rung 2)
+#         AND scheduled_date >= today_ymd
+#   )
+#   sort: scheduled_start ASC, scheduled_date ASC
+#   limit: 1
+#
+# Rung-2 catches rows that only carry a bare ``YYYY-MM-DD``.  The P47
+# commit (``customer_portal.py``) documents why the pre-P47 single-
+# sort + Python-post-filter path failed on BSON null-sort-first
+# ordering — DO NOT regress to a Python post-filter here.
+#
+# Response: ``{"next_service": <job doc> | None}``.  Full canonical
+# job object (``{_id: 0}`` only) so the FE tile reuses the existing
+# ``<StatusPill status={job.status}>`` shape and the ``/jobs/:id``
+# link path from ``TodaySchedule.jsx``.  Admin-role gated + tenant-
+# scoped identically to ``/kpi-summary``.
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/customers/{cid}/next-service")
+async def get_customer_next_service(
+    cid: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    role = (user.get("role") or "").lower()
+    if role not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "insufficient_role_for_next_service")
+
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    if cust.get("deleted_at"):
+        if role == "super_admin":
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": "customer_soft_deleted",
+                          "message": "Customer is soft-deleted; restore first."},
+            )
+        raise HTTPException(404, "Customer not found")
+
+    now_iso_ts = datetime.now(timezone.utc).isoformat()
+    today_ymd = datetime.now(timezone.utc).date().isoformat()
+
+    doc = await db.jobs.find_one(
+        {
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "status": {"$in": ["scheduled", "active", "pending",
+                                 "requested"]},
+            "$and": [
+                {"$or": [
+                    {"deleted_at": None},
+                    {"deleted_at": {"$exists": False}},
+                ]},
+                {"$or": [
+                    # Rung 1 — has a real scheduled_start ≥ now.
+                    {"scheduled_start": {"$gte": now_iso_ts}},
+                    # Rung 2 — no scheduled_start; date ≥ today.
+                    {"$and": [
+                        {"$or": [
+                            {"scheduled_start": None},
+                            {"scheduled_start": ""},
+                            {"scheduled_start": {"$exists": False}},
+                        ]},
+                        {"scheduled_date": {"$gte": today_ymd}},
+                    ]},
+                ]},
+            ],
+        },
+        {"_id": 0},
+        sort=[("scheduled_start", 1), ("scheduled_date", 1)],
+    )
+    return {"next_service": doc}
+
+
+
 @router.get("/customers/{cid}/deactivation-preview")
 async def deactivation_preview(cid: str,
                                 user: dict = Depends(require_admin),
