@@ -2,6 +2,7 @@ from fastapi import HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+import hashlib
 import os
 import uuid
 import jwt
@@ -18,6 +19,40 @@ def now_iso() -> str:
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+# ══════════════════════════════════════════════════════════════════
+# TD-09 · Feb-2026 — PII-safe email identifier for log lines.
+#
+# Replaces raw ``email=<alice@example.com>`` log output across the
+# auth hot path with a short deterministic fingerprint
+# ``email_sha8=<8-hex>`` that preserves cross-line correlation
+# without exposing the actual email address to log aggregation /
+# monitoring tools.
+#
+# ``services/comms_hardening/dispatch_guard.py:hash_email`` already
+# ships a 16-hex variant used by the messaging pipeline. The 8-hex
+# variant here is log-line specific (shorter → cleaner greps) and
+# has a ``"none"`` sentinel for falsy inputs so log formatters can
+# never fail on a missing email.
+# ══════════════════════════════════════════════════════════════════
+def email_sha8(email) -> str:
+    """Return an 8-hex-char SHA256 fingerprint for a canonicalized
+    email, or the ``"none"`` sentinel for ``None`` / empty /
+    whitespace-only input. Case-insensitive, whitespace-trimmed.
+
+    Operators can trace a specific user across log lines by running
+    ``email_sha8("<their-email>")`` locally and grepping the match.
+    """
+    if email is None:
+        return "none"
+    try:
+        s = str(email).strip().lower()
+    except Exception:  # noqa: BLE001 — never raise from a log helper
+        return "none"
+    if not s:
+        return "none"
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:8]
 
 
 def not_deleted_filter() -> dict:

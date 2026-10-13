@@ -8,7 +8,8 @@ import jwt
 
 from config import db, logger, EMERGENT_LLM_KEY, JWT_SECRET, JWT_ALGO
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+                   get_current_user, require_admin, send_sms, notify_customer, auth_response,
+                   email_sha8)
 from routers.tenants import _ensure_default_tenant
 from models import LoginRequest, SignupRequest
 
@@ -499,10 +500,11 @@ async def login(request: Request, body: LoginRequest):
         # the migrations tool if they want to consolidate — but do
         # NOT force it.  Option A is designed to work indefinitely
         # with parallel records.
+        # TD-09 · Feb-2026 — PII redaction: ``email`` → ``email_sha8``.
         logger.warning(
-            "[auth] multi-record chooser served — email=%s roles=%s "
-            "user_ids=%s",
-            email, sorted(distinct_roles),
+            "[auth] multi-record chooser served — email_sha8=%s "
+            "roles=%s user_ids=%s",
+            email_sha8(email), sorted(distinct_roles),
             [m["id"] for m in matches],
         )
         # Reset any failed-attempt counters on records that matched;
@@ -605,10 +607,13 @@ async def login(request: Request, body: LoginRequest):
             )
             _chosen = _live_sorted[0] if _live_sorted else None
             if _chosen is not None:
-                import hashlib as _hl
-                _email_sha8 = _hl.sha256(
-                    (email or "").encode("utf-8"),
-                ).hexdigest()[:8]
+                # TD-09 · Feb-2026 — use the shared ``email_sha8``
+                # helper from ``utils``.  The old inline hashlib
+                # computation was case-sensitive + whitespace-naive;
+                # the helper canonicalizes before hashing so the
+                # same user hits the same sha8 across log lines
+                # regardless of how they typed their email.
+                _email_sha8 = email_sha8(email)
                 _p2int_resolved_meta = {
                     "orphan_count_dropped": _orphan_dropped,
                     "customer_id": _chosen.get("customer_id") or "",
@@ -661,26 +666,28 @@ async def login(request: Request, body: LoginRequest):
             if m.get("customer_id")
         }
         if role_lc == "customer" and len(distinct_customer_ids) >= 2:
+            # TD-09 · Feb-2026 — PII redaction: ``email`` → ``email_sha8``.
             logger.warning(
                 "[auth] PORTAL-INVITE-EMAIL-COLLISION-FIX observability "
                 "— duplicate role=customer rows with distinct customer_ids "
-                "detected on login — email=%s match_count=%d "
+                "detected on login — email_sha8=%s match_count=%d "
                 "distinct_customer_id_count=%d "
                 "user_id_prefixes=%s customer_id_prefixes=%s "
                 "picked_user_id_prefix=%s picked_customer_id_prefix=%s "
                 "action=run_duplicate_user_remediation_runbook",
-                email, len(matches), len(distinct_customer_ids),
+                email_sha8(email), len(matches), len(distinct_customer_ids),
                 sorted({(m.get("id") or "")[:8] for m in matches}),
                 sorted({c[:8] for c in distinct_customer_ids}),
                 (user.get("id") or "")[:8],
                 (user.get("customer_id") or "")[:8],
             )
         else:
+            # TD-09 · Feb-2026 — PII redaction: ``email`` → ``email_sha8``.
             logger.warning(
-                "[auth] multi-record same-role login — email=%s role=%s "
+                "[auth] multi-record same-role login — email_sha8=%s role=%s "
                 "picked user_id=%s (%d parallel records; consider "
                 "consolidation)",
-                email, user.get("role"), user["id"], len(matches),
+                email_sha8(email), user.get("role"), user["id"], len(matches),
             )
     # Success -> reset counters
     if user.get("failed_login_attempts") or user.get("lockout_until"):
