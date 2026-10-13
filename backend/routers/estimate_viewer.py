@@ -55,6 +55,15 @@ from pydantic import BaseModel
 from config import db, logger, JWT_SECRET, JWT_ALGO, APP_PUBLIC_URL
 from utils import get_current_user, now_iso, new_id
 from routers.tenants import get_current_tenant
+# PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — canonical enum +
+# bounds for the customer-portal required decline reason.  See the
+# module docstring for the FE sibling file that MUST stay in sync.
+from services.quote_decline_reasons import (
+    DECLINE_REASON_CATEGORIES,
+    DECLINE_REASON_TEXT_MAX_LEN,
+    DECLINE_REASON_TEXT_MIN_LEN,
+    is_valid_category,
+)
 from routers.invoice_viewer import _resolve_logo_path
 from routers.invoice_viewer import (
     _fmt_addr, _load_company, _load_customer,
@@ -396,6 +405,14 @@ async def get_estimate_full(qid: str,
 # ══════════════════════════════════════════════════════════════════
 class DeclineIn(BaseModel):
     reason: Optional[str] = None
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — new structured
+    # fields.  Optional at the Pydantic layer because the AUTHED
+    # handler (``decline_estimate`` at line ~591) still accepts
+    # admin pass-through with no reason.  The customer-facing path
+    # enforces presence at the handler via
+    # ``_require_customer_decline_fields``.
+    decline_reason_category: Optional[str] = None
+    decline_reason_text: Optional[str] = None
 
 
 class RequestChangesIn(BaseModel):
@@ -533,17 +550,122 @@ async def _mark_accepted(est: dict, tenant_id: str, actor_id: str) -> None:
 
 
 async def _mark_declined(est: dict, tenant_id: str,
-                          actor_id: str, reason: Optional[str]) -> None:
+                          actor_id: str, reason: Optional[str],
+                          *,
+                          decline_reason_category: Optional[str] = None,
+                          decline_reason_text: Optional[str] = None) -> None:
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — the customer-
+    # facing path supplies structured ``decline_reason_category`` +
+    # ``decline_reason_text`` (both validated upstream by
+    # ``_require_customer_decline_fields``).  Admin pass-through
+    # (``decline_estimate`` with ``role != "customer"``) still goes
+    # through this helper with only the legacy ``reason`` arg so
+    # existing admin flows don't regress.
+    #
+    # TODO(deprecate-after-2026-Q1): once the FE stops reading the
+    # legacy ``decline_reason`` field, drop the mirror write below
+    # and keep only the structured pair.  Email templates in
+    # ``services/quote_notifications.py`` still consume the legacy
+    # field as of Feb-2026 — see that module for the deprecation
+    # sweep anchor.
+    legacy_text = (
+        decline_reason_text
+        if decline_reason_text
+        else (reason or "").strip() or None
+    )
     upd = {
         "status": "declined",
         "decision": "declined",
         "declined_at": now_iso(),
         "declined_by": actor_id,
-        "decline_reason": (reason or "").strip() or None,
+        "decline_reason": legacy_text,
     }
+    if decline_reason_category:
+        upd["decline_reason_category"] = decline_reason_category
+    if decline_reason_text:
+        upd["decline_reason_text"] = decline_reason_text
     await db.quotes.update_one(
         {"id": est["id"], "tenant_id": tenant_id}, {"$set": upd},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — helpers.
+# ═══════════════════════════════════════════════════════════════════
+def _require_customer_decline_fields(
+    category: Optional[str], text: Optional[str],
+) -> tuple:
+    """Validate the customer-portal decline payload.  Raises 400
+    with a structured ``detail={"code": ...}`` on any failure.
+    Returns the normalized ``(category, text)`` tuple.
+    """
+    cat = (category or "").strip() if isinstance(category, str) else ""
+    txt = (text or "").strip() if isinstance(text, str) else ""
+    if not cat and not txt:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "decline_reason_required"},
+        )
+    if not is_valid_category(cat):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "decline_reason_category_invalid",
+                "allowed": DECLINE_REASON_CATEGORIES,
+            },
+        )
+    if len(txt) < DECLINE_REASON_TEXT_MIN_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "decline_reason_text_too_short",
+                "min": DECLINE_REASON_TEXT_MIN_LEN,
+            },
+        )
+    if len(txt) > DECLINE_REASON_TEXT_MAX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "decline_reason_text_too_long",
+                "max": DECLINE_REASON_TEXT_MAX_LEN,
+            },
+        )
+    return cat, txt
+
+
+async def _write_portal_decline_audit(
+    *,
+    tenant_id: str,
+    est: dict,
+    actor_id: str,
+    decline_reason_category: str,
+    decline_reason_text: str,
+    previous_status: Optional[str],
+) -> None:
+    """Best-effort audit-log row for a customer-portal decline.
+    Mirrors the shape used by ``routers/quotes.py::decline_quote``
+    (admin "mark declined") so a future reporting view can union
+    both tables on ``event="quote.declined"``.  ``source`` keys the
+    admin vs portal split."""
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "event": "quote.declined",
+            "entity_kind": "quote",
+            "entity_id": est.get("id"),
+            "user_id": actor_id,
+            "customer_id": est.get("customer_id"),
+            "decline_reason_category": decline_reason_category,
+            "decline_reason_text": decline_reason_text,
+            "previous_status": previous_status,
+            "source": "portal",
+            "created_at": now_iso(),
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "[portal-decline] audit_logs insert failed: %s", exc,
+        )
 
 
 async def _mark_changes_requested(est: dict, tenant_id: str,
@@ -593,14 +715,42 @@ async def accept_estimate(qid: str,
 async def decline_estimate(qid: str, body: DeclineIn,
                              user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
+    # PRE-EXISTING COLLISION FLAG · Feb-2026 — this handler shares
+    # the path ``POST /quotes/{qid}/decline`` with an admin-only
+    # handler at ``routers/quotes.py::decline_quote`` (line ~3293,
+    # ``require_admin_or_manager``, no body).  FastAPI matches
+    # whichever router registered first; ``estimate_viewer`` wins
+    # under the current ``main.py`` include order.  Out of scope
+    # for PORTAL-QUOTE-DECLINE-REQUIRE-REASON — breadcrumb only
+    # for future triage.
     est = await _authorised_estimate(qid, user, tenant)
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
-    await _mark_declined(est, tenant["id"], user.get("id"), body.reason)
+    previous_status = (est.get("status") or "").lower() or None
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — the customer
+    # path (``user.role == "customer"``) MUST supply structured
+    # category + text.  Admin pass-through unchanged.
+    role_lc = (user.get("role") or "").lower()
+    if role_lc == "customer":
+        cat, txt = _require_customer_decline_fields(
+            body.decline_reason_category, body.decline_reason_text,
+        )
+        await _mark_declined(
+            est, tenant["id"], user.get("id"), txt,
+            decline_reason_category=cat, decline_reason_text=txt,
+        )
+        await _write_portal_decline_audit(
+            tenant_id=tenant["id"], est=est,
+            actor_id=user.get("id") or "",
+            decline_reason_category=cat, decline_reason_text=txt,
+            previous_status=previous_status,
+        )
+    else:
+        await _mark_declined(est, tenant["id"], user.get("id"), body.reason)
     await _notify_admins(
         tenant["id"], kind="quote_declined",
         title=f"Estimate declined by {est.get('customer_name') or 'customer'}",
-        body=(body.reason or "No reason given")[:200],
+        body=(body.reason or body.decline_reason_text or "No reason given")[:200],
         href=f"/estimates/{qid}",
     )
     # Feb-2026 · Phase B — email + SMS fanout (gated on tenant toggle).
@@ -908,17 +1058,35 @@ async def decline_via_token(body: DeclineIn, token: str = Query(...)):
     est = ctx["est"]
     if est.get("decision") in ("accepted", "declined"):
         raise HTTPException(409, "Estimate is already locked")
-    await _mark_declined(est, ctx["tenant"]["id"], f"token:{ctx['cid']}", body.reason)
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — legacy query-
+    # string surface tightened per the "close the bypass hole"
+    # decision.  Same required contract as the path-based Phase A
+    # endpoint below.
+    cat, txt = _require_customer_decline_fields(
+        body.decline_reason_category, body.decline_reason_text,
+    )
+    previous_status = (est.get("status") or "").lower() or None
+    actor_id = f"token:{ctx['cid']}"
+    await _mark_declined(
+        est, ctx["tenant"]["id"], actor_id, txt,
+        decline_reason_category=cat, decline_reason_text=txt,
+    )
+    await _write_portal_decline_audit(
+        tenant_id=ctx["tenant"]["id"], est=est,
+        actor_id=actor_id,
+        decline_reason_category=cat, decline_reason_text=txt,
+        previous_status=previous_status,
+    )
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_declined",
         title="Estimate declined via link",
-        body=(body.reason or "No reason given")[:200],
+        body=(txt or "No reason given")[:200],
         href=f"/estimates/{est['id']}",
     )
     # Feb-2026 · Phase B — email + SMS fanout (gated on tenant toggle).
     await _notify_admins_email_sms(
         tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
-        event="quote_declined", actor_id=f"token:{ctx['cid']}",
+        event="quote_declined", actor_id=actor_id,
     )
     return await _build_payload(
         await db.quotes.find_one({"id": est["id"]}, {"_id": 0}),
@@ -990,6 +1158,13 @@ class _PhaseALineDeclineIn(BaseModel):
 
 class _PhaseATopLevelDeclineIn(BaseModel):
     reason: Optional[str] = None
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — new structured
+    # fields.  Optional at the schema layer; required-at-runtime via
+    # ``_require_customer_decline_fields`` inside the handler so the
+    # 400 payload carries a structured error code (not a Pydantic
+    # 422 blob).
+    decline_reason_category: Optional[str] = None
+    decline_reason_text: Optional[str] = None
 
 
 # In-memory rate limiter (Phase A minimum viable — replace with a
@@ -1177,8 +1352,25 @@ async def phase_a_decline_via_token(
     if est.get("decision") == "declined":
         return await _build_payload(est, ctx["tenant"], as_customer=True)
     _phase_a_assert_actionable(est)
-    reason = (getattr(body, "reason", None) or "").strip()[:200] if body else ""
-    await _mark_declined(est, ctx["tenant"]["id"], f"token:{ctx['cid']}", reason)
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — enforce
+    # structured category + text unconditionally on the portal
+    # path-based surface.  Rate-limit gate above still runs first.
+    cat, txt = _require_customer_decline_fields(
+        getattr(body, "decline_reason_category", None) if body else None,
+        getattr(body, "decline_reason_text", None) if body else None,
+    )
+    previous_status = (est.get("status") or "").lower() or None
+    actor_id = f"token:{ctx['cid']}"
+    await _mark_declined(
+        est, ctx["tenant"]["id"], actor_id, txt,
+        decline_reason_category=cat, decline_reason_text=txt,
+    )
+    await _write_portal_decline_audit(
+        tenant_id=ctx["tenant"]["id"], est=est,
+        actor_id=actor_id,
+        decline_reason_category=cat, decline_reason_text=txt,
+        previous_status=previous_status,
+    )
     est_fresh = await db.quotes.find_one(
         {"id": est["id"], "tenant_id": ctx["tenant"]["id"]}, {"_id": 0},
     )
@@ -1188,12 +1380,12 @@ async def phase_a_decline_via_token(
     await _notify_admins(
         ctx["tenant"]["id"], kind="quote_declined",
         title="Estimate declined via portal",
-        body=(reason or "No reason given")[:200],
+        body=(txt or "No reason given")[:200],
         href=f"/estimates/{est['id']}",
     )
     await _notify_admins_email_sms(
         tenant_id=ctx["tenant"]["id"], doc_id=est["id"],
-        event="quote_declined", actor_id=f"token:{ctx['cid']}",
+        event="quote_declined", actor_id=actor_id,
     )
     return await _build_payload(est_fresh, ctx["tenant"], as_customer=True)
 

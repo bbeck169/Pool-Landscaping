@@ -114,6 +114,16 @@ _REBOUND_MODULES = (
     "migrations.p38_1_reverse_backfill_scheduled_start",
     "routers.telematics_webhooks",
     "routers.cad",
+    # PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — the portal
+    # decline handler (``phase_a_decline_via_token`` etc.) calls
+    # ``db.quotes``/``db.audit_logs`` directly off the module-level
+    # ``db`` binding.  Add here so ``test_portal_quote_decline_
+    # required_reason.py`` can drive the handler in-process.
+    "routers.estimate_viewer",
+    # ``phase_a_decline_via_token`` ultimately calls ``_build_payload``
+    # which lives in ``routers.invoice_viewer`` and reads
+    # ``db.tenants`` + ``db.customers`` off its own module-level ``db``.
+    "routers.invoice_viewer",
     "services.telematics",
     "services.telematics.registry",
     "services.telematics._helpers",
