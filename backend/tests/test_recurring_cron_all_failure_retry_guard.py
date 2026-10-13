@@ -283,48 +283,73 @@ def test_failure_signatures_aggregate_by_exception_class():
     assert sigs["KeyError"]["sample_template_id"] in {t["id"] for t in tpls[3:]}
 
 
-# ─── Case 8 · audit row payload shape ─────────────────────────────
+# ─── Case 8 · audit row payload shape (per-tenant halt) ──────────
 
 def test_audit_row_payload_shape():
-    """Pin the audit row contract: ``run_id``, ``trigger_rule``,
-    per-tenant breakdown, and the ``failed_template_cursors_held``
-    precision invariant."""
+    """Pin the per-tenant audit row contract. Feb-2026 P0 refinement
+    moved the halt from cross-tenant to per-tenant, so the audit
+    row's ``tenant_id`` is now populated with the halting tenant
+    (not ``None``), and the payload carries the new weekday-pivot
+    forensics (``halted_weekday_counts`` +
+    ``failure_signatures_by_weekday``) alongside the legacy
+    ``failure_signatures`` flat list + ``failed_template_cursors_held``
+    precision invariant.
+    """
     tpls = [
-        _mk_tpl("tenant-A", "tpl-o0"),
-        _mk_tpl("tenant-A", "tpl-o1"),
-        _mk_tpl("tenant-B", "tpl-o2"),
-        _mk_tpl("tenant-B", "tpl-o3"),
-        _mk_tpl("tenant-C", "tpl-o4"),
+        _mk_tpl("tenant-A", f"tpl-o{i}", day_of_week=i % 3)
+        for i in range(5)
     ]
     fail = {t["id"]: RuntimeError for t in tpls}
     r = _run_cron_with_fail_set(tpls, fail)
     assert r["result"]["halted"] is True
+    assert r["result"]["halt_rule"] == "all_fail"
+    assert r["result"]["halted_tenants"] == ["tenant-A"]
+    assert r["result"]["tenants_halted"] == 1
     rows = r["audit"].inserted
-    assert len(rows) == 1
+    # Per-tenant halt → one audit row for tenant-A.
+    assert len(rows) == 1, (
+        "per-tenant halt writes one audit row per halted tenant"
+    )
     row = rows[0]
 
-    # Top-level envelope.
+    # Top-level envelope. tenant_id is now the halting tenant (not
+    # None) — this is the semantic difference between the legacy
+    # cross-tenant halt audit and the Feb-2026 P0 per-tenant halt.
     assert row["action"] == "recurring_job.cron.batch_failure_halt"
     assert row["actor_user_id"] is None
-    assert row["tenant_id"] is None, (
-        "halt audit row is cross-tenant — tenant_id must be None"
+    assert row["tenant_id"] == "tenant-A", (
+        "per-tenant halt audit row carries the halting tenant_id"
     )
     assert "id" in row and row["id"]
     assert "created_at" in row and row["created_at"]
 
-    # Payload.
+    # Payload — legacy fields preserved.
     p = row["payload"]
     assert p["run_id"] == r["result"]["run_id"]
     assert p["trigger_rule"] == "all_fail"
+    assert p["tenant_id"] == "tenant-A"
     assert p["templates_attempted"] == 5
     assert p["templates_failed"] == 5
     assert p["templates_succeeded"] == 0
-    # Per-tenant breakdown — all 3 tenants represented, each with
-    # its attempted + failed counts (A and B stopped mid-flight at
-    # the 5th template; C had 1 attempted + 1 failed).
-    assert set(p["templates_by_tenant"].keys()) == {"tenant-A", "tenant-B", "tenant-C"}
-    assert p["templates_by_tenant"]["tenant-A"] == {"attempted": 2, "failed": 2}
-    assert p["templates_by_tenant"]["tenant-B"] == {"attempted": 2, "failed": 2}
-    assert p["templates_by_tenant"]["tenant-C"] == {"attempted": 1, "failed": 1}
+    # ``templates_by_tenant`` still folds every tenant visited this
+    # run (only one in this fixture).
+    assert set(p["templates_by_tenant"].keys()) == {"tenant-A"}
+    assert p["templates_by_tenant"]["tenant-A"] == {
+        "attempted": 5, "failed": 5,
+    }
+    # Flat failure_signatures preserved.
+    sigs = {s["type"]: s for s in p["failure_signatures"]}
+    assert "RuntimeError" in sigs
+    assert sigs["RuntimeError"]["count"] == 5
+    # New forensics — weekday pivot. String keys per BSON contract.
+    # Weekdays 0, 1, 2 → counts (2, 2, 1) given day_of_week=i%3.
+    assert set(p["halted_weekday_counts"].keys()) == {"0", "1", "2"}
+    assert sum(p["halted_weekday_counts"].values()) == 5
+    assert set(p["halted_weekday_failed_counts"].keys()) == {"0", "1", "2"}
+    assert sum(p["halted_weekday_failed_counts"].values()) == 5
+    # Per-weekday signature pivot — every weekday saw RuntimeError.
+    for dow_key, by_exc in p["failure_signatures_by_weekday"].items():
+        assert "RuntimeError" in by_exc
+        assert by_exc["RuntimeError"] >= 1
     # Precision invariant per user ruling on Flag 4 wording.
     assert p["failed_template_cursors_held"] is True

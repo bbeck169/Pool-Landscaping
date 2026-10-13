@@ -2205,31 +2205,48 @@ async def generate_now(tpl_id: str,
 
 
 # ─── APScheduler nightly cron ────────────────────────────────────────
-# P2 #8 · Feb-2026 — ALL-FAILURE-RETRY-GUARD.
+# P2 #8 · Feb-2026 — ALL-FAILURE-RETRY-GUARD (original cross-tenant
+# halt). Feb-2026 P0 — refined to PER-TENANT halt + weekday-
+# interleaved iteration + outer global safety net.
 #
-# The nightly cron streams across every active template (cross-tenant)
-# and calls ``_generate_from_template`` on each. Date-level cursor
-# safety is already strict (see the Feb-2026 P0 cron cursor-fix at
-# the bottom of ``_generate_from_template``). This guard adds a
-# template-batch-level halt so a systemic failure (bad serializer
-# deploy, degraded DB, tenant-wide config break) short-circuits the
-# iteration + mints a prominent audit row instead of burning
-# ``templates=0 inserted=0 skipped=0`` through 500 silent WARNs.
+# The nightly cron loads every active template (cross-tenant),
+# interleaves iteration across ``(tenant_id, day_of_week)`` cells
+# so a halt-mid-run cannot starve any single weekday cohort, and
+# evaluates the halt guard PER TENANT. When a tenant halts, its
+# remaining templates are skipped for that run but other tenants
+# continue. An outer global safety net still fires when ≥5 tenants
+# halt in a single run OR when the total failure rate crosses 0.5
+# past 50 attempted templates (systemic meltdown signal).
 #
-# Thresholds (evaluated live after each template try/except once
-# ``attempted >= _HALT_MIN_SAMPLE``):
-#   * 100% failure (``failed == attempted``)                 → halt
+# Thresholds (evaluated live per tenant after each template):
+#   * 100% failure (``failed == attempted``) at
+#     ``attempted >= _HALT_MIN_SAMPLE``                      → halt
 #   * ``attempted >= 10`` AND ``failed / attempted >= 0.5``  → halt
 #
-# ``_HALT_MIN_SAMPLE`` prevents one-bad-template false-fire on an
-# otherwise-healthy 500-template run (user ruling: 5 is the balance
-# between short-circuit value and warmup noise). Admin backfill
-# (``POST /admin/recurring-jobs/backfill-orphans``) is explicitly
-# EXEMPT from this guard — see the cross-reference comment at
-# ``routers/recurring_jobs_backfill.py::backfill_orphans``.
+# Global safety net (evaluated after each template, cross-tenant):
+#   * ``len(halted_tenants) >= _GLOBAL_HALT_TENANT_COUNT``   → halt
+#   * ``total_attempted >= _GLOBAL_HALT_MIN_SAMPLE`` AND
+#     ``total_failed / total_attempted >= _GLOBAL_HALT_HALF_RATE``
+#                                                            → halt
+#
+# Admin backfill (``POST /admin/recurring-jobs/backfill-orphans``)
+# is explicitly EXEMPT from this guard — see the cross-reference
+# comment at ``routers/recurring_jobs_backfill.py::backfill_orphans``.
 _HALT_MIN_SAMPLE = 5
 _HALT_BATCH_SIZE_FOR_HALF_RULE = 10
 _HALT_HALF_RATE = 0.5
+# Global safety net — intentionally much higher thresholds than
+# the per-tenant guard. One pathological tenant should NOT short-
+# circuit the entire cron run, only its own templates.
+_GLOBAL_HALT_TENANT_COUNT = 5
+_GLOBAL_HALT_MIN_SAMPLE = 50
+_GLOBAL_HALT_HALF_RATE = 0.5
+# Weekday-interleave safety fallback: if the active-template batch
+# exceeds this count, we skip the in-memory interleave pre-pass and
+# fall back to natural-order streaming (with a prominent WARN). At
+# the current prod scale (~500 active templates) this never fires;
+# it exists so a 10x unexpected growth doesn't OOM the scheduler.
+_LARGE_BATCH_STREAMING_FALLBACK = 10_000
 
 
 def _check_batch_halt(attempted: int, failed: int) -> Optional[str]:
@@ -2244,7 +2261,11 @@ def _check_batch_halt(attempted: int, failed: int) -> Optional[str]:
 
     Below ``_HALT_MIN_SAMPLE`` the function always returns ``None``
     so one bad template at the start of a healthy batch cannot
-    short-circuit the cron.
+    short-circuit the tenant.
+
+    Feb-2026 P0 — this helper is now the PER-TENANT halt check.
+    Original cross-tenant semantics are replaced by the per-tenant
+    + global-safety-net design in ``run_recurring_job_generator``.
     """
     if attempted < _HALT_MIN_SAMPLE:
         return None
@@ -2254,6 +2275,68 @@ def _check_batch_halt(attempted: int, failed: int) -> Optional[str]:
             and (failed / attempted) >= _HALT_HALF_RATE):
         return "half_fail_large_batch"
     return None
+
+
+def _check_global_halt(
+    total_attempted: int, total_failed: int, halted_tenants_count: int,
+) -> Optional[str]:
+    """Outer global safety net. Fires only when the whole-run signal
+    is unambiguous — one bad tenant must NOT reach these thresholds.
+
+    Rules:
+      * ``halted_tenants_threshold`` —
+        ``halted_tenants_count >= _GLOBAL_HALT_TENANT_COUNT``.
+      * ``global_half_fail_large_batch`` —
+        ``total_attempted >= _GLOBAL_HALT_MIN_SAMPLE`` AND
+        ``total_failed / total_attempted >= _GLOBAL_HALT_HALF_RATE``.
+    """
+    if halted_tenants_count >= _GLOBAL_HALT_TENANT_COUNT:
+        return "halted_tenants_threshold"
+    if (total_attempted >= _GLOBAL_HALT_MIN_SAMPLE
+            and (total_failed / total_attempted) >= _GLOBAL_HALT_HALF_RATE):
+        return "global_half_fail_large_batch"
+    return None
+
+
+def _weekday_interleaved_order(
+    templates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Round-robin templates across ``(tenant_id, day_of_week)`` cells.
+
+    Goal: before any per-tenant halt can fire (requires 5 attempts),
+    every weekday-cohort for every tenant has had at least one
+    template visited. This prevents the pre-fix pathology where
+    natural-order iteration landed Mon/Tue templates first, failed,
+    and halted the run before Wed/Thu/Fri were ever reached.
+
+    Ordering is deterministic: tenants sorted ASC, weekdays sorted
+    ASC (``None`` sentinel last), round-robin pops one template per
+    cell per round across ALL cells (both tenants and weekdays).
+    """
+    from collections import defaultdict as _dd
+    # Group → (tenant_id, day_of_week) → ordered list of templates.
+    cells: Dict[tuple, List[Dict[str, Any]]] = _dd(list)
+    for t in templates:
+        tid = t.get("tenant_id") or "<unknown>"
+        dow = t.get("day_of_week")
+        cells[(tid, dow)].append(t)
+    # Deterministic cell order — tenant_id ASC, weekday ASC with
+    # None sentinel last.
+    cell_keys = sorted(
+        cells.keys(),
+        key=lambda k: (k[0], k[1] is None, k[1] if k[1] is not None else 7),
+    )
+    ordered: List[Dict[str, Any]] = []
+    while True:
+        any_remaining = False
+        for key in cell_keys:
+            bucket = cells[key]
+            if bucket:
+                ordered.append(bucket.pop(0))
+                any_remaining = True
+        if not any_remaining:
+            break
+    return ordered
 
 
 async def run_recurring_job_generator() -> Dict[str, Any]:
@@ -2266,11 +2349,8 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
     are still picked up when their ``active`` flag is True, so cron
     behavior stays continuous through the migration window.
 
-    P2 #8 · Feb-2026 — template-batch halt guard (see block comment
-    above). Per-date cursor safety inside ``_generate_from_template``
-    is unchanged; this guard adds run-level failure aggregation +
-    short-circuit + a prominent ``recurring_job.cron.batch_failure_halt``
-    audit row.
+    Feb-2026 P0 refinement — per-tenant halt + weekday-interleaved
+    iteration + outer global safety net (see block comment above).
     """
     await _ensure_indexes()
     today = date.today()
@@ -2282,16 +2362,24 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
     templates_processed = 0
     templates_attempted = 0
     templates_failed = 0
-    # Exception-class signature aggregation. One entry per unique
-    # ``exc.__class__.__name__``; sample_template_id + sample_message
-    # pin the first encounter so the audit row can be acted on
-    # without leaving pytest-style tracebacks in the log.
+    # Flat per-run signature aggregation (kept for backwards compat
+    # with the pre-refinement audit payload consumers + the summary
+    # log line's ``failure_signatures_count``).
     failure_sigs: Dict[str, Dict[str, Any]] = {}
-    # Per-tenant failure breakdown — folded into the audit payload
-    # so ops can see which tenants were affected by a halted run
-    # without needing a separate projection step. Keyed by tenant_id.
+    # Per-tenant counters — now the authoritative halt-eval input.
     templates_by_tenant: Dict[str, Dict[str, int]] = {}
-    halted_rule: Optional[str] = None
+    # Per-tenant per-weekday forensics (Feb-2026 P0). Keys stored
+    # as integers in-memory and normalized to strings only when
+    # written to the audit payload (BSON requires string keys).
+    tenant_weekday_attempted: Dict[str, Dict[Any, int]] = {}
+    tenant_weekday_failed: Dict[str, Dict[Any, int]] = {}
+    tenant_weekday_sigs: Dict[str, Dict[Any, Dict[str, int]]] = {}
+    # Global visited counts across all tenants.
+    visited_weekday_counts: Dict[Any, int] = {}
+    materialized_by_weekday: Dict[Any, int] = {}
+    # Halt bookkeeping.
+    halted_tenants: Dict[str, str] = {}  # tenant_id → rule
+    global_halt_rule: Optional[str] = None
     _filter = {
         "$and": [
             # New is_active OR legacy active (tolerant of pre-
@@ -2304,21 +2392,54 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
             {"start_date": {"$ne": None, "$lte": today_iso}},
         ],
     }
+    # Load all matching templates into memory for the weekday
+    # interleave pre-pass. Falls back to natural-order iteration
+    # (no interleave) with a prominent WARN only if the batch
+    # exceeds the safety cap — at ~500 active templates in prod
+    # this is a non-event.
+    all_tpls: List[Dict[str, Any]] = []
     async for tpl in db.recurring_job_templates.find(_filter, {"_id": 0}):
-        templates_attempted += 1
+        all_tpls.append(tpl)
+    if len(all_tpls) > _LARGE_BATCH_STREAMING_FALLBACK:
+        logger.warning(
+            "recurring_job.cron.large_batch_streaming count=%d "
+            "run_id=%s reason=exceeds_%d_fallback",
+            len(all_tpls), run_id, _LARGE_BATCH_STREAMING_FALLBACK,
+        )
+        ordered: List[Dict[str, Any]] = all_tpls
+    else:
+        ordered = _weekday_interleaved_order(all_tpls)
+
+    for tpl in ordered:
         _tpl_tid = tpl.get("tenant_id") or "<unknown>"
+        # Skip remaining templates for a tenant already halted
+        # this run — cursors untouched, retry next run.
+        if _tpl_tid in halted_tenants:
+            continue
+        _dow = tpl.get("day_of_week")
+        templates_attempted += 1
         _tenant_bucket = templates_by_tenant.setdefault(
             _tpl_tid, {"attempted": 0, "failed": 0}
         )
         _tenant_bucket["attempted"] += 1
+        tenant_weekday_attempted.setdefault(_tpl_tid, {})[_dow] = (
+            tenant_weekday_attempted.setdefault(_tpl_tid, {}).get(_dow, 0) + 1
+        )
+        visited_weekday_counts[_dow] = visited_weekday_counts.get(_dow, 0) + 1
         try:
             result = await _generate_from_template(tpl, horizon)
             total_inserted += result["inserted"]
             total_skipped += result["skipped"]
             templates_processed += 1
+            materialized_by_weekday[_dow] = (
+                materialized_by_weekday.get(_dow, 0) + result["inserted"]
+            )
         except Exception as e:
             templates_failed += 1
             _tenant_bucket["failed"] += 1
+            tenant_weekday_failed.setdefault(_tpl_tid, {})[_dow] = (
+                tenant_weekday_failed.setdefault(_tpl_tid, {}).get(_dow, 0) + 1
+            )
             _exc_name = e.__class__.__name__
             _sig = failure_sigs.setdefault(_exc_name, {
                 "count": 0,
@@ -2327,58 +2448,72 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
                 "sample_message": str(e)[:500],
             })
             _sig["count"] += 1
-            # Per-template WARN carries ``run_id`` so log aggregation
-            # can tie this line to the eventual halt audit row.
+            # Per-tenant per-weekday signature pivot.
+            _tw = tenant_weekday_sigs.setdefault(_tpl_tid, {}).setdefault(_dow, {})
+            _tw[_exc_name] = _tw.get(_exc_name, 0) + 1
             logger.warning(
                 "recurring_job.cron.template_failed "
                 "run_id=%s tenant=%s template=%s exc=%s error=%r",
                 run_id, _tpl_tid, tpl.get("id"), _exc_name, e,
             )
-        # Live-after-each halt evaluation. Below _HALT_MIN_SAMPLE
-        # the check is a no-op; past the sample bound a run that
-        # has crossed either threshold short-circuits HERE — any
-        # unvisited templates are deferred to the next cron run,
-        # with their cursors untouched (per-template cursor safety
-        # is upstream, this guard just stops iterating).
-        halted_rule = _check_batch_halt(templates_attempted,
-                                           templates_failed)
-        if halted_rule is not None:
-            # Prominent ERROR line with structured payload — distinct
-            # severity from the per-template WARN so ops dashboards
-            # separate "one bad template" from "systemic halt".
+
+        # Per-tenant halt evaluation.
+        tenant_rule = _check_batch_halt(
+            _tenant_bucket["attempted"], _tenant_bucket["failed"],
+        )
+        if tenant_rule is not None and _tpl_tid not in halted_tenants:
+            halted_tenants[_tpl_tid] = tenant_rule
             logger.error(
                 "recurring_job.cron.batch_failure_halt "
-                "run_id=%s rule=%s templates_attempted=%d "
-                "templates_failed=%d failure_signatures=%s "
-                "tenants_affected=%d",
-                run_id, halted_rule, templates_attempted,
-                templates_failed,
-                sorted(failure_sigs.keys()),
-                len(templates_by_tenant),
+                "run_id=%s rule=%s tenant=%s templates_attempted=%d "
+                "templates_failed=%d",
+                run_id, tenant_rule, _tpl_tid,
+                _tenant_bucket["attempted"], _tenant_bucket["failed"],
             )
-            # Audit row — one per halted run (cross-tenant, not
-            # per-tenant). ``failed_template_cursors_held`` restates
-            # the pre-existing per-template cursor safety invariant
-            # from ``_generate_from_template`` so a future reader
-            # of the audit row knows the halt did NOT retroactively
-            # rewind the cursors of templates that advanced
-            # successfully earlier in this run.
+            # Per-tenant audit row (Feb-2026 P0 — tenant_id is now
+            # populated with the actual tenant that halted; prior
+            # cross-tenant semantics used None).
+            def _str_keys(d: Dict[Any, int]) -> Dict[str, int]:
+                return {
+                    ("null" if k is None else str(k)): v
+                    for k, v in d.items()
+                }
+            def _str_keys_nested(
+                d: Dict[Any, Dict[str, int]],
+            ) -> Dict[str, Dict[str, int]]:
+                return {
+                    ("null" if k is None else str(k)): dict(v)
+                    for k, v in d.items()
+                }
             try:
                 await db.audit_logs.insert_one({
                     "id": new_id(),
-                    "tenant_id": None,
+                    "tenant_id": _tpl_tid,
                     "action": "recurring_job.cron.batch_failure_halt",
                     "actor_user_id": None,
                     "payload": {
                         "run_id": run_id,
-                        "trigger_rule": halted_rule,
-                        "templates_attempted": templates_attempted,
-                        "templates_failed": templates_failed,
-                        "templates_succeeded": templates_processed,
+                        "trigger_rule": tenant_rule,
+                        "tenant_id": _tpl_tid,
+                        "templates_attempted": _tenant_bucket["attempted"],
+                        "templates_failed": _tenant_bucket["failed"],
+                        "templates_succeeded": (
+                            _tenant_bucket["attempted"]
+                            - _tenant_bucket["failed"]
+                        ),
                         "failure_signatures": [
                             {"type": k, **v}
                             for k, v in failure_sigs.items()
                         ],
+                        "halted_weekday_counts": _str_keys(
+                            tenant_weekday_attempted.get(_tpl_tid, {}),
+                        ),
+                        "halted_weekday_failed_counts": _str_keys(
+                            tenant_weekday_failed.get(_tpl_tid, {}),
+                        ),
+                        "failure_signatures_by_weekday": _str_keys_nested(
+                            tenant_weekday_sigs.get(_tpl_tid, {}),
+                        ),
                         "templates_by_tenant": templates_by_tenant,
                         # Precision wording — see Flag 4 ruling in
                         # the P2 #8 audit. Prior successful templates
@@ -2391,21 +2526,82 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
             except Exception as _audit_exc:  # pragma: no cover
                 logger.warning(
                     "recurring_job.cron.batch_failure_halt.audit_write_failed "
+                    "run_id=%s tenant=%s error=%r",
+                    run_id, _tpl_tid, _audit_exc,
+                )
+
+        # Outer global safety net — only fires on systemic meltdown.
+        global_halt_rule = _check_global_halt(
+            total_attempted=templates_attempted,
+            total_failed=templates_failed,
+            halted_tenants_count=len(halted_tenants),
+        )
+        if global_halt_rule is not None:
+            logger.error(
+                "recurring_job.cron.global_batch_halt "
+                "run_id=%s rule=%s templates_attempted=%d "
+                "templates_failed=%d tenants_halted=%d",
+                run_id, global_halt_rule, templates_attempted,
+                templates_failed, len(halted_tenants),
+            )
+            try:
+                await db.audit_logs.insert_one({
+                    "id": new_id(),
+                    "tenant_id": None,
+                    "action": "recurring_job.cron.global_batch_halt",
+                    "actor_user_id": None,
+                    "payload": {
+                        "run_id": run_id,
+                        "trigger_rule": global_halt_rule,
+                        "templates_attempted": templates_attempted,
+                        "templates_failed": templates_failed,
+                        "templates_succeeded": templates_processed,
+                        "halted_tenants": sorted(halted_tenants.keys()),
+                        "tenants_halted_count": len(halted_tenants),
+                        "templates_by_tenant": templates_by_tenant,
+                        "failure_signatures": [
+                            {"type": k, **v}
+                            for k, v in failure_sigs.items()
+                        ],
+                        "failed_template_cursors_held": True,
+                    },
+                    "created_at": now_iso(),
+                })
+            except Exception as _audit_exc:  # pragma: no cover
+                logger.warning(
+                    "recurring_job.cron.global_batch_halt.audit_write_failed "
                     "run_id=%s error=%r",
                     run_id, _audit_exc,
                 )
             break
+
     # Final INFO log always emits — single grep answers "did any
-    # cron run halt tonight". Includes both halt + run-stats so
-    # dashboards don't need to tail the per-template WARNs.
+    # cron run halt tonight". Enriched with per-weekday + per-tenant
+    # breakdowns so dashboards don't need to tail the per-template
+    # WARNs.
+    def _str_keys_summary(d: Dict[Any, int]) -> Dict[str, int]:
+        return {
+            ("null" if k is None else str(k)): v for k, v in d.items()
+        }
+    _visited = _str_keys_summary(visited_weekday_counts)
+    _materialized = _str_keys_summary(materialized_by_weekday)
+    _any_halt = bool(halted_tenants) or (global_halt_rule is not None)
+    _effective_rule = global_halt_rule or (
+        next(iter(halted_tenants.values()), None)
+        if halted_tenants else None
+    )
     logger.info(
         "recurring_job.cron.summary "
         "run_id=%s halted=%s halt_rule=%s templates_attempted=%d "
         "templates_processed=%d templates_failed=%d inserted=%d "
-        "skipped=%d failure_signatures_count=%d",
-        run_id, halted_rule is not None, halted_rule or "none",
+        "skipped=%d failure_signatures_count=%d tenants_processed=%d "
+        "tenants_halted=%d visited_weekday_counts=%s "
+        "materialized_by_weekday=%s",
+        run_id, _any_halt, _effective_rule or "none",
         templates_attempted, templates_processed, templates_failed,
         total_inserted, total_skipped, len(failure_sigs),
+        len(templates_by_tenant), len(halted_tenants),
+        _visited, _materialized,
     )
     return {
         "run_id": run_id,
@@ -2414,6 +2610,13 @@ async def run_recurring_job_generator() -> Dict[str, Any]:
         "templates_failed": templates_failed,
         "inserted": total_inserted,
         "skipped": total_skipped,
-        "halted": halted_rule is not None,
-        "halt_rule": halted_rule,
+        "halted": _any_halt,
+        "halt_rule": _effective_rule,
+        "halted_tenants": sorted(halted_tenants.keys()),
+        "halted_tenant_rules": dict(halted_tenants),
+        "tenants_processed": len(templates_by_tenant),
+        "tenants_halted": len(halted_tenants),
+        "visited_weekday_counts": _visited,
+        "materialized_by_weekday": _materialized,
+        "global_halt_rule": global_halt_rule,
     }

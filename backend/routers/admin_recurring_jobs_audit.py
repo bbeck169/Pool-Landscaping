@@ -284,3 +284,102 @@ async def recurring_jobs_audit(
         "per_template_sample": sample,
         "classification_hint": classification,
     }
+
+
+# ─── P0 · Feb-2026 — Halt-history diagnostic ─────────────────────
+#
+# Companion to the cadence audit endpoint. Lists recent
+# ``recurring_job.cron.batch_failure_halt`` and
+# ``recurring_job.cron.global_batch_halt`` audit rows so an operator
+# can answer "did H1 (per-tenant halt mid-run) fire in the last N
+# nights?" in a single HTTP call.
+_HALT_HISTORY_DAYS_CAP = 90
+
+
+@router.get("/admin/diagnostics/recurring-jobs-halt-history")
+async def recurring_jobs_halt_history(
+    days: int = Query(
+        14,
+        ge=1,
+        description=(
+            "Window (in days back from now, UTC) to scan "
+            "``audit_logs`` for halt rows. Capped at "
+            f"{_HALT_HISTORY_DAYS_CAP}."
+        ),
+    ),
+    user: dict = Depends(require_admin),
+) -> Dict[str, Any]:
+    """Return recent per-tenant + global halt audit rows.
+
+    Read-only — no writes. Only returns rows with
+    ``action IN {"recurring_job.cron.batch_failure_halt",
+    "recurring_job.cron.global_batch_halt"}``.
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    capped_days = min(days, _HALT_HISTORY_DAYS_CAP)
+    since = (_dt.now(_tz.utc) - _td(days=capped_days)).isoformat()
+    cursor = db.audit_logs.find(
+        {
+            "action": {
+                "$in": [
+                    "recurring_job.cron.batch_failure_halt",
+                    "recurring_job.cron.global_batch_halt",
+                ],
+            },
+            "created_at": {"$gte": since},
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "action": 1,
+            "tenant_id": 1,
+            "created_at": 1,
+            "payload.run_id": 1,
+            "payload.trigger_rule": 1,
+            "payload.tenant_id": 1,
+            "payload.templates_attempted": 1,
+            "payload.templates_failed": 1,
+            "payload.templates_succeeded": 1,
+            "payload.halted_weekday_counts": 1,
+            "payload.halted_weekday_failed_counts": 1,
+            "payload.failure_signatures_by_weekday": 1,
+            "payload.halted_tenants": 1,
+            "payload.tenants_halted_count": 1,
+        },
+    ).sort("created_at", -1).limit(500)
+
+    rows: List[Dict[str, Any]] = []
+    async for r in cursor:
+        _payload = r.get("payload") or {}
+        rows.append({
+            "id": r.get("id"),
+            "action": r.get("action"),
+            "tenant_id": r.get("tenant_id"),
+            "created_at": r.get("created_at"),
+            "run_id": _payload.get("run_id"),
+            "trigger_rule": _payload.get("trigger_rule"),
+            "payload_tenant_id": _payload.get("tenant_id"),
+            "templates_attempted": _payload.get("templates_attempted"),
+            "templates_failed": _payload.get("templates_failed"),
+            "templates_succeeded": _payload.get("templates_succeeded"),
+            "halted_weekday_counts": _payload.get("halted_weekday_counts"),
+            "halted_weekday_failed_counts": _payload.get(
+                "halted_weekday_failed_counts",
+            ),
+            "failure_signatures_by_weekday": _payload.get(
+                "failure_signatures_by_weekday",
+            ),
+            "halted_tenants": _payload.get("halted_tenants"),
+            "tenants_halted_count": _payload.get("tenants_halted_count"),
+        })
+
+    return {
+        "window": {
+            "days_requested": days,
+            "days_applied": capped_days,
+            "since": since,
+            "cap": _HALT_HISTORY_DAYS_CAP,
+        },
+        "count": len(rows),
+        "rows": rows,
+    }
