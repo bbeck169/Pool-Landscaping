@@ -795,6 +795,97 @@ async def list_customer_service_categories(
     }
 
 
+# ═════════════════════════════════════════════════════════════
+# Feb-2026 · Duplicates tab + merge workflow
+#
+# ``GET /api/customers/duplicates`` powers the new Customers-list
+# "Duplicates" tab + the eventual merge dialog.  Detection runs
+# through :mod:`services.customers.duplicate_detection` (shared
+# normalisation helpers with the PDF-import ladder — same canonical
+# name form so the two surfaces agree on "same customer").
+#
+# Role gate: admin + manager can SEE duplicates (per operator
+# ruling); only admin can execute the merge (future commit).
+# ═════════════════════════════════════════════════════════════
+@router.get(
+    "/customers/duplicates",
+    summary="Groups of 2+ customers in this tenant sharing a "
+             "name / phone / email / fuzzy-name match",
+    tags=["customers"],
+    operation_id="customers.duplicates",
+)
+async def list_customer_duplicates(
+    user: dict = Depends(require_admin_or_manager),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the duplicate-customer groups for the caller's
+    tenant.
+
+    Response shape::
+
+        {
+          "groups": [
+            {
+              "group_id": "<root customer id>",
+              "match_reasons": ["email", "name_exact"],
+              "customers": [
+                {"id": "...", "name": "...", "email": "...",
+                 "phone": "...", "status": "active|inactive|muted",
+                 "created_at": "..."}
+              ]
+            }
+          ],
+          "summary": {
+            "group_count": N,
+            "customer_count": M
+          }
+        }
+
+    * Soft-deleted customers are excluded.
+    * Active + inactive + muted customers are all considered.
+    * Fuzzy-name tier is bounded to tenants with <10K customers
+      (see ``_FUZZY_SWEEP_CUSTOMER_CEILING`` on the service);
+      above the ceiling the fuzzy sweep is skipped (a WARN is
+      logged server-side) and only the exact tiers run.
+    """
+    from services.customers.duplicate_detection import (
+        detect_duplicates,
+    )
+    groups = await detect_duplicates(db=db, tenant_id=tenant["id"])
+    customer_count = sum(len(g.customers) for g in groups)
+    return {
+        "groups": [
+            {
+                "group_id": g.group_id,
+                "match_reasons": list(g.match_reasons),
+                "customers": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "email": c.email,
+                        "phone": c.phone,
+                        "status": c.status,
+                        # Coerce datetime → ISO string for the JSON
+                        # response (older rows persisted ``created_at``
+                        # as a native BSON date; newer rows as ISO).
+                        "created_at": (
+                            c.created_at.isoformat()
+                            if hasattr(c.created_at, "isoformat")
+                            else c.created_at
+                        ),
+                    }
+                    for c in g.customers
+                ],
+            }
+            for g in groups
+        ],
+        "summary": {
+            "group_count": len(groups),
+            "customer_count": customer_count,
+        },
+    }
+
+
 @router.get("/customers",
     response_model=Union[List[CustomerListItem], CustomerListCount,
                             CustomerListPage],
