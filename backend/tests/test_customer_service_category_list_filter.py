@@ -1,14 +1,21 @@
 """P2 #6 · Feb-2026 — GET /customers?service_category=<key> pytest.
 
-Locks four invariants on the list-filter chip integration:
-  1. ``?service_category=pool`` returns only customers with
-     service_category=="pool" scoped to tenant.
-  2. ``?service_category=unset`` returns customers with
+Locks six invariants on the list-filter chip integration:
+  1. ``?service_category=pool`` returns customers with
+     service_category=="pool" OR service_category=="both"
+     (Feb-2026 behavior correction — matches the dashboard
+     Pool tile's union-count so deep-link reconciles).
+  2. ``?service_category=landscaping`` returns customers with
+     service_category=="landscaping" OR service_category=="both".
+  3. ``?service_category=both`` returns ONLY customers tagged
+     ``both`` (strict exact-match; semantic: "customers whose
+     services include both pool and landscaping").
+  4. ``?service_category=unset`` returns customers with
      service_category=None OR field-missing.
-  3. ``?service_category=invalid-value`` silently passes (list
+  5. ``?service_category=invalid-value`` silently passes (list
      unchanged — guards against bookmarked legacy URLs 400'ing).
-  4. Composes as AND with existing filters: when combined with
-     ``is_active=True``, only pool+active rows return.
+  6. Composes as AND with existing filters: when combined with
+     ``is_active=True``, only the union-set ∩ active rows return.
 """
 from __future__ import annotations
 
@@ -110,9 +117,34 @@ def _ids(items):
                     for r in items)
 
 
-def test_filter_pool_returns_only_pool_customers():
+def test_filter_pool_returns_pool_and_both_customers():
+    # Behavior correction (Feb-2026): ``service_category=pool``
+    # union-includes customers tagged ``both``. Matches the
+    # dashboard Pool tile count so deep-link reconciles.
     out = _run(_list(service_category="pool"))
-    assert _ids(out) == sorted([f"{PREFIX}-c-pool-1", f"{PREFIX}-c-pool-2"])
+    assert _ids(out) == sorted([
+        f"{PREFIX}-c-pool-1",
+        f"{PREFIX}-c-pool-2",
+        f"{PREFIX}-c-both-1",
+    ])
+
+
+def test_filter_landscaping_returns_landscaping_and_both_customers():
+    # Companion to the pool-union assertion above —
+    # ``service_category=landscaping`` union-includes ``both``.
+    out = _run(_list(service_category="landscaping"))
+    assert _ids(out) == sorted([
+        f"{PREFIX}-c-land-1",
+        f"{PREFIX}-c-both-1",
+    ])
+
+
+def test_filter_both_returns_only_both_customers():
+    # ``service_category=both`` is strict — returns ONLY customers
+    # explicitly tagged ``both``. Semantic: "customers whose
+    # services include both pool and landscaping."
+    out = _run(_list(service_category="both"))
+    assert _ids(out) == [f"{PREFIX}-c-both-1"]
 
 
 def test_filter_unset_returns_null_and_missing():
@@ -127,5 +159,12 @@ def test_filter_invalid_value_silently_passes():
 
 
 def test_composes_with_is_active_and_filter():
+    # Pool-union compose: pool active + both active would be
+    # the full union; here ``both-1`` is active=True too, so
+    # the active+pool list is pool-1 AND both-1 (pool-2 is
+    # is_active=False, excluded).
     out = _run(_list(service_category="pool", is_active=True))
-    assert _ids(out) == [f"{PREFIX}-c-pool-1"]
+    assert _ids(out) == sorted([
+        f"{PREFIX}-c-pool-1",
+        f"{PREFIX}-c-both-1",
+    ])

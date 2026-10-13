@@ -1113,13 +1113,29 @@ async def list_customers(
         q["$and"] = q.get("$and", []) + [
             {"$or": [{"is_muted": {"$ne": True}}, {"is_muted": {"$exists": False}}]}
         ]
-    # P2 #6 · Feb-2026 — service-category chip. Normalized to lowercase
+    # P2 #6 · Feb-2026 — service-category chip.  Normalized to lowercase
     # against the P2 #6 enum.  Values outside the whitelist silently
     # pass through to a no-op (list behavior unchanged) so bookmarked
     # legacy URLs don't 400.
+    #
+    # Behavior correction (Feb-2026): ``?service_category=pool`` and
+    # ``?service_category=landscaping`` BOTH union-include customers
+    # tagged ``both`` — same semantic as the companion tile fix at
+    # ``routers/dashboard_service_category.py``. Rationale: the Pool
+    # dashboard tile deep-links to this list, and mismatched counts
+    # (tile says 15, list shows 12) is immediately user-confusing.
+    # ``?service_category=both`` continues to return ONLY ``both``-
+    # customers; ``?service_category=unset`` continues to return
+    # null-or-missing. Legacy clients passing ``?service_category=pool``
+    # see a slightly larger result set — that's the semantic
+    # correction (not a regression).
     _p26_cat = (service_category or "").strip().lower() if service_category else None
-    if _p26_cat in ("pool", "landscaping", "both"):
-        q["service_category"] = _p26_cat
+    if _p26_cat == "pool":
+        q["service_category"] = {"$in": ["pool", "both"]}
+    elif _p26_cat == "landscaping":
+        q["service_category"] = {"$in": ["landscaping", "both"]}
+    elif _p26_cat == "both":
+        q["service_category"] = "both"
     elif _p26_cat == "unset":
         q["$and"] = q.get("$and", []) + [{
             "$or": [{"service_category": None},
