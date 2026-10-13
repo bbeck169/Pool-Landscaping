@@ -56,7 +56,7 @@ Original A2.residual bucket had 5 files; Batch 8 cleared 3. Remaining 2 need mul
 Original Group T had 2 timeout-only candidates. Investigation outcomes:
 
 - `QuoteInvoiceNew.pricebook.test.jsx` → **CLEARED** in `e8d2f85f3` — `test(baseline-drift): Group T · QuoteInvoiceNew.pricebook — bump waitFor timeout + pivot post-pick assertion to QF-1 Option-B shape`.
-- `n5-t1-page-header-adoption.test.jsx` → **PARKED (product-ruling)** — not a timeout drift. `<PageHeader>` is not mounted in `src/pages/customers/CustomerDetail.jsx`. Could be intentional (Phase 28 identity header owns the top of CustomerDetail) or an unfinished N5-T1 PageHeader-adoption rollout. Product-ruling needed: adopt `<PageHeader>` on CustomerDetail OR confirm Phase 28 identity header owns that slot and delete/skip the test. Reclassified alongside Lane 5 / Lane 7 / Group A4 under product-ruling backlog.
+- `n5-t1-page-header-adoption.test.jsx` → **DELETED · obsolete contract per `CustomerDetail.jsx:54-58`** — Feb-2026 CUSTOMER-DETAIL-NEXT-SERVICE audit surfaced an explicit in-code record of the Phase 28 identity-header reversal: *"the PageHeader import was removed alongside the JSX call site. The customer name now lives INSIDE the identity card (see the inline customer-detail-inline-h1 render near the address line) so a separate page-chrome header is no longer needed."* The test enforced the pre-reversal N5-T1 PageHeader-adoption contract on `CustomerDetail`; promoting parked → deleted since the contract is obsolete. Deletion commit: `<see git log>`.
 
 ### Group B3.deferred — Batch 3 skipped — 2 files
 Need multi-assertion flipping, not simple regex-widen.
