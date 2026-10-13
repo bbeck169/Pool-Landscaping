@@ -268,9 +268,18 @@ async def render_email(*, event: str, doc_type: str, doc: Dict[str, Any],
     return subject, html, text
 
 
-def render_sms(*, event: str, doc_type: str, doc: Dict[str, Any],
-                 frontend_origin: str) -> str:
-    """Return a ≤160-char SMS body."""
+async def render_sms(*, event: str, doc_type: str, doc: Dict[str, Any],
+                 frontend_origin: str,
+                 tenant_id: Optional[str] = None) -> str:
+    """Return a ≤160-char SMS body.
+
+    P2 #10b · Feb-2026 — the ``quote_declined`` branch prefers the
+    tenant's ``quote_decline_admin_sms`` ``marketing_templates`` row
+    over the hardcoded body below. The accepted branch stays
+    hardcoded (no slug for it in the transactional registry yet).
+    Hardcoded fallback is the ``return body[:160]`` branch at the
+    bottom — remains in-file as the source of truth when the DB
+    row is absent / inactive."""
     doc_id = doc.get("id") or ""
     customer_name = doc.get("customer_name") or "customer"
     total = doc.get("total") or 0
@@ -283,7 +292,44 @@ def render_sms(*, event: str, doc_type: str, doc: Dict[str, Any],
     verb = "accepted" if event == "quote_accepted" else "declined"
     href = _admin_href(doc_type=doc_type, doc_id=doc_id,
                          frontend_origin=frontend_origin)
+    # Hardcoded fallback — ``return body[:160]`` at the bottom owns
+    # the final truncation.
     body = f"{customer_name} {verb} {label} #{short} ({total_str}). {href}"
+
+    # P2 #10b · tenant override for the declined branch only. The
+    # try/except follows the same defensive posture as the
+    # ``render_email`` sibling (``quote_notifications.py:238-266``)
+    # — any lookup / render failure logs + falls through to the
+    # hardcoded ``body`` above.
+    if event == "quote_declined" and tenant_id:
+        try:
+            from services.marketing_template_lookup import (
+                get_template_by_code,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_by_code(
+                "quote_decline_admin_sms", tenant_id,
+            )
+            if tpl and tpl.get("body"):
+                _ctx = {
+                    "customer_name": customer_name,
+                    "quote_short_id": short,
+                    "quote_total": total_str,
+                    "quote_label": label,
+                    "quote_admin_link": href,
+                    "decline_reason": (doc.get("decline_reason") or "").strip(),
+                }
+                _rendered, _ = render_template(
+                    tpl["body"], _ctx, missing="empty",
+                )
+                if _rendered:
+                    body = _rendered
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[quote-notify-sms] DB template render failed — "
+                "using hardcoded fallback: %s", exc,
+            )
+
     return body[:160]
 
 
@@ -360,9 +406,10 @@ async def notify_quote_decision(
             "raw html (tenant=%s doc=%s): %s",
             tenant_id, doc_id, _be,
         )
-    sms_body = render_sms(
+    sms_body = await render_sms(
         event=event, doc_type=doc_type, doc=doc,
         frontend_origin=frontend_origin,
+        tenant_id=tenant_id,
     )
 
     # Lazy imports keep the module import graph light for tests that

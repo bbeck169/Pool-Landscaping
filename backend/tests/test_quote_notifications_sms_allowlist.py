@@ -149,7 +149,7 @@ def test_sms_dispatch_never_passes_allow_off_allowlist_kwarg():
                     "hi",
                 ))), \
          patch("services.quote_notifications.render_sms",
-                return_value="Hi — your quote is ready."), \
+                new=AsyncMock(return_value="Hi — your quote is ready.")), \
          patch("services.email.theming.wrap_html_in_shell",
                 return_value="<p>hi</p>"), \
          patch("services.tenants.business_settings.get_effective_business_settings",

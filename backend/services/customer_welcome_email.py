@@ -156,6 +156,11 @@ async def maybe_fire_welcome_on_first_accepted_quote(
         portal_link = absolute_portal_url(
             "/portal/login", template_name=_TEMPLATE_NAME,
         ) or ""
+        # Hardcoded fallback — remains the source of truth when no
+        # tenant override exists. Admins who want to customize edit
+        # the ``marketing_templates`` row with code
+        # ``welcome_on_first_accept_email``; otherwise this body
+        # ships as the sent copy.
         subject = (
             f"Thanks for choosing {company_name} — welcome aboard"
         )
@@ -163,6 +168,47 @@ async def maybe_fire_welcome_on_first_accepted_quote(
             name=name, company_name=company_name,
             company_phone=company_phone, portal_link=portal_link,
         )
+
+        # ── Step 4b · P2 #10b · tenant override lookup ────────────
+        # If the admin has an active DB row for this slug, replace
+        # the subject + body with the rendered DB template. Missing
+        # / inactive row → fall through to the hardcoded fallback
+        # above. Catches any lookup/render failure to protect the
+        # send path (never block a welcome email on a template
+        # editing mistake — the hardcoded fallback saves it).
+        try:
+            from services.marketing_template_lookup import (
+                get_template_by_code,
+            )
+            from services.marketing.merge_tags import render_template
+            tpl = await get_template_by_code(
+                "welcome_on_first_accept_email", tenant_id,
+            )
+            if tpl and tpl.get("body"):
+                _ctx = {
+                    "company_name": company_name,
+                    "customer_first_name": (name or "").split(" ")[0] or name,
+                    "customer_name": name,
+                    "portal_url": portal_link,
+                    "company_phone": company_phone,
+                }
+                _rendered_body, _ = render_template(
+                    tpl["body"], _ctx, missing="empty",
+                )
+                _rendered_subject = (tpl.get("subject") or "").strip()
+                if _rendered_body:
+                    body_html = _rendered_body
+                if _rendered_subject:
+                    _rendered_subject, _ = render_template(
+                        _rendered_subject, _ctx, missing="empty",
+                    )
+                    if _rendered_subject:
+                        subject = _rendered_subject
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[customer-welcome-email] DB template render failed "
+                "— using hardcoded fallback: %s", exc,
+            )
 
         # ── Step 5 · Resend send ──────────────────────────────────
         message_id: Optional[str] = None
