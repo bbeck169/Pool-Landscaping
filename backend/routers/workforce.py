@@ -184,14 +184,38 @@ class RejectReq(BaseModel):
 async def _entry_mileage_miles(tenant_id: str, entry_id: str, user_id: str,
                                 start: Optional[str], end: Optional[str],
                                 settings: dict) -> float:
-    """Sum Haversine hops between successive pings, filtered by speed + hop size."""
+    """Sum Haversine hops between successive pings, filtered by speed + hop size.
+
+    Feb-2026 · P1 fix (Branch 1) — reads from ``db.gps_pings``
+    (the background-safe collection fed by mobile's
+    ``expo-task-manager`` GpsTracker service) instead of the
+    legacy ``db.location_pings`` (fed by a foreground-only JS
+    ``setInterval`` loop that pauses when the phone is locked
+    during a drive, which caused the "0.00 mi" symptom).
+
+    Field names in ``gps_pings`` differ from ``location_pings``:
+    ``captured_at`` (not ``ts``) and ``lon`` (not ``lng``).  The
+    translation lives here so the ``_haversine_m`` helper's
+    ``(a_lng, b_lng)`` signature stays unchanged and downstream
+    callers of ``_haversine_m`` (geofence, routing, etc.) aren't
+    disturbed.
+
+    Preserved contracts
+        * ``len(pings) < 2`` → ``return 0.0`` sentinel.
+        * ``mileage_max_speed_mph`` filter (discard super-fast
+          outliers that look like GPS teleport).
+        * ``mileage_min_hop_m`` filter (ignore sub-25m jitter).
+        * Return rounded to 3 decimals.
+    """
     if not start:
         return 0.0
     q = {"tenant_id": tenant_id, "user_id": user_id,
-         "ts": {"$gte": start}}
+         "captured_at": {"$gte": start}}
     if end:
-        q["ts"]["$lte"] = end
-    pings = await db.location_pings.find(q, {"_id": 0}).sort("ts", 1).to_list(2000)
+        q["captured_at"]["$lte"] = end
+    pings = await db.gps_pings.find(
+        q, {"_id": 0, "captured_at": 1, "lat": 1, "lon": 1},
+    ).sort("captured_at", 1).to_list(2000)
     if len(pings) < 2:
         return 0.0
     max_mps = settings["mileage_max_speed_mph"] * 0.44704  # mph → m/s
@@ -199,11 +223,13 @@ async def _entry_mileage_miles(tenant_id: str, entry_id: str, user_id: str,
     total_m = 0.0
     prev = pings[0]
     for p in pings[1:]:
-        dt = _minutes_between(prev["ts"], p["ts"]) * 60.0
+        dt = _minutes_between(prev["captured_at"], p["captured_at"]) * 60.0
         if dt <= 0:
             prev = p
             continue
-        hop = _haversine_m(prev["lat"], prev["lng"], p["lat"], p["lng"])
+        # ``_haversine_m`` expects ``(lat, lng, lat, lng)``; translate
+        # ``gps_pings.lon`` → the ``lng`` argument.
+        hop = _haversine_m(prev["lat"], prev["lon"], p["lat"], p["lon"])
         speed = hop / dt if dt > 0 else 0
         if hop >= min_hop and speed <= max_mps:
             total_m += hop

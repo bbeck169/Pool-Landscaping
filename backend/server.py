@@ -904,6 +904,13 @@ api_router.include_router(_p0_recurring_audit.router)
 # Admin-gated, strictly read-only (count_documents / find only).
 from routers import admin_mileage_audit as _p1_mileage_audit  # noqa: E402
 api_router.include_router(_p1_mileage_audit.router)
+# P1 · Feb-2026 — Branch 1 fix backfill.
+# POST /api/admin/mileage/backfill-recompute?days=30&dry_run=false
+# Re-runs the (now-fixed) mileage calculator over closed shifts in
+# the lookback window so operators can heal silently-zero
+# ``mileage_miles`` rows without manual Mongo surgery.
+from routers import admin_mileage_backfill as _p1_mileage_backfill  # noqa: E402
+api_router.include_router(_p1_mileage_backfill.router)
 # Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
 # 202-Accepted job pattern replacing the sync ingest that was
 # timing out on cold crawls (frontend fetch cap 30s vs 60-180s
