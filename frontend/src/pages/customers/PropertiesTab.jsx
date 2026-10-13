@@ -276,6 +276,21 @@ function PropertyCard({ property, onOpen, onDuplicate, onDeleteAsk, draggable, o
       </div>
 
       <div className="flex flex-wrap gap-1 mt-1">
+        {property.service_category === "pool" ? (
+          <Chip label="Pool"
+                 tone="sky"
+                 testid={`pc-cat-pool-${property.id}`} />
+        ) : null}
+        {property.service_category === "landscaping" ? (
+          <Chip label="Landscaping"
+                 tone="emerald"
+                 testid={`pc-cat-landscaping-${property.id}`} />
+        ) : null}
+        {property.service_category === "both" ? (
+          <Chip label="Both services"
+                 tone="violet"
+                 testid={`pc-cat-both-${property.id}`} />
+        ) : null}
         {svcTypes.map((s) => (
           <Chip key={s} label={s} tone="brandTertiary" />
         ))}
@@ -303,7 +318,8 @@ function PropertyEditModal({ open, onClose, customer, existing, onSaved, onError
   const [form, setForm] = React.useState({
     label: "", line1: "", city: "", state: "", postal_code: "",
     pool_size_gallons: "", landscape_sq_ft: "", pool_type: "",
-    service_types: [], site_name: "", site_phone: "", site_email: "",
+    service_types: [], service_category: "unset",
+    site_name: "", site_phone: "", site_email: "",
   });
   React.useEffect(() => {
     if (!open) return;
@@ -319,6 +335,7 @@ function PropertyEditModal({ open, onClose, customer, existing, onSaved, onError
         landscape_sq_ft: existing.landscape_sq_ft || "",
         pool_type: existing.pool_type || "",
         service_types: existing.service_types || [],
+        service_category: (existing.service_category || "unset"),
         site_name: contact.name || "",
         site_phone: (contact.mobiles || []).find((m) => m.is_primary)?.number_e164 || "",
         site_email: (contact.emails || []).find((e) => e.is_primary)?.address || "",
@@ -328,6 +345,7 @@ function PropertyEditModal({ open, onClose, customer, existing, onSaved, onError
         label: "", line1: "", city: customer?.city || "", state: customer?.state || "",
         postal_code: customer?.postal_code || "", pool_size_gallons: "",
         landscape_sq_ft: "", pool_type: "", service_types: [],
+        service_category: "unset",
         site_name: "", site_phone: "", site_email: "",
       });
     }
@@ -355,6 +373,13 @@ function PropertyEditModal({ open, onClose, customer, existing, onSaved, onError
         landscape_sq_ft: form.landscape_sq_ft ? Number(form.landscape_sq_ft) : null,
         pool_type: form.pool_type || null,
         service_types: form.service_types,
+        // Feb-2026 · P2 #6 property pivot — per-property category
+        // selector. ``"unset"`` maps to null (cleared) on the API;
+        // the backend normalises the value + stamps provenance.
+        service_category:
+          form.service_category && form.service_category !== "unset"
+            ? form.service_category
+            : null,
         site_contact: {
           name: form.site_name || null,
           emails: form.site_email ? [{ address: form.site_email, is_primary: true, label: "Primary" }] : [],
@@ -398,6 +423,34 @@ function PropertyEditModal({ open, onClose, customer, existing, onSaved, onError
         <div className="grid grid-cols-2 gap-2">
           <TextInput label="POOL SIZE (GAL)" type="number" value={form.pool_size_gallons} onChange={set("pool_size_gallons")} testid="pf-pool-size" />
           <TextInput label="LANDSCAPE (SQ FT)" type="number" value={form.landscape_sq_ft} onChange={set("landscape_sq_ft")} testid="pf-landscape" />
+        </div>
+        <div>
+          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
+            SERVICE CATEGORY
+          </label>
+          <select
+            data-testid="pf-service-category"
+            value={form.service_category}
+            onChange={(e) => setForm((f) => ({
+              ...f, service_category: e.target.value,
+            }))}
+            className="w-full px-2 py-1.5 rounded text-sm"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+          >
+            <option value="unset">Not set — inherit from customer</option>
+            <option value="pool">Pool</option>
+            <option value="landscaping">Landscaping</option>
+            <option value="both">Both services</option>
+          </select>
+          <div className="text-xs mt-1" style={{ color: colors.onSurfaceSecondary }}>
+            Drives the Pool / Landscaping / Both-services property
+            tiles on the dashboard. "Not set" = inherit at save time
+            from the customer's category.
+          </div>
         </div>
         <div>
           <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>

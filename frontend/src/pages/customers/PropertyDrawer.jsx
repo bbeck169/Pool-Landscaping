@@ -156,6 +156,7 @@ function InfoTab({ property, onPatch }) {
     landscape_sq_ft: property.landscape_sq_ft || "",
     pool_type: property.pool_type || "",
     service_types: property.service_types || [],
+    service_category: property.service_category || "unset",
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const toggleService = (s) => setForm((f) => ({
@@ -175,6 +176,13 @@ function InfoTab({ property, onPatch }) {
       landscape_sq_ft: form.landscape_sq_ft ? Number(form.landscape_sq_ft) : null,
       pool_type: form.pool_type || null,
       service_types: form.service_types,
+      // Feb-2026 · P2 #6 property pivot — admin override. ``"unset"``
+      // clears the field server-side; the backend stamps
+      // provenance (``admin_override`` / ``admin_cleared``).
+      service_category:
+        form.service_category && form.service_category !== "unset"
+          ? form.service_category
+          : null,
     }, "Info saved");
   };
 
@@ -192,6 +200,29 @@ function InfoTab({ property, onPatch }) {
         <TextInput label="LANDSCAPE (SQ FT)" type="number" value={form.landscape_sq_ft} onChange={set("landscape_sq_ft")} testid="pd-land" />
       </div>
       <TextInput label="POOL TYPE" value={form.pool_type} onChange={set("pool_type")} placeholder="e.g. Fiberglass" testid="pd-pool-type" />
+      <div>
+        <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
+          SERVICE CATEGORY
+        </label>
+        <select
+          data-testid="pd-service-category"
+          value={form.service_category}
+          onChange={(e) => setForm((f) => ({
+            ...f, service_category: e.target.value,
+          }))}
+          className="w-full px-2 py-1.5 rounded text-sm"
+          style={{
+            backgroundColor: colors.surface,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+        >
+          <option value="unset">Not set — inherit from customer</option>
+          <option value="pool">Pool</option>
+          <option value="landscaping">Landscaping</option>
+          <option value="both">Both services</option>
+        </select>
+      </div>
       <div>
         <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
           SERVICE TYPES
