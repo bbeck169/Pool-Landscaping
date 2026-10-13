@@ -1808,3 +1808,9 @@
 - **Date**: 2026-10-12
 - **Changes**: search (customer name/company/email/phone, 250ms debounce) + category Sheet picker (GET /service-categories, exact service_category_id) AND date AND tab; empty msg → web's "No recurring jobs match your search." (recurring-jobs-empty).
 - **Notes**: test placed in mobile/__tests__/ (not app/finance/__tests__/ — expo-router would register it as a route). Seed data: 0 recurring jobs have service_category_id → any category pick = 0 rows on preview (accepted; not mutated).
+
+## Iteration 123 — P2 #9 MOBILE-SCHEDULE-DAY-VIEW-TIMESTAMP-FILTER-BUG
+- **Commit**: 342b55df7 (single atomic: scheduleDayKey.ts + calendar.tsx + 2 tests + TECH_DEBT TD-12..15)
+- **Date**: 2026-10-12
+- **Changes**: iso() → device-local localDateKey (11 call sites); dayJobs/weekCounts/jobsByDay → jobDayKey (web P13: scheduled_date prefix, else tenant-local scheduled_start).
+- **Notes**: Jest sandboxes process.env → runtime TZ switch does NOT work in-worker; real 5-TZ matrix uses child Jest processes (P2_9_CHILD=1). schedule-hide-cancelled boundary regex updated (it locked the buggy expression text). Schedule sweep: 9 pre-existing failures identical pre/post (baseline @ac7f0ba00).
