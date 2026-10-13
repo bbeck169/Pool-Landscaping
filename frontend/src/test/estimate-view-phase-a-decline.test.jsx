@@ -186,18 +186,34 @@ describe("EstimateView · Phase A · top-level approve / decline", () => {
       .toBe("/portal/quotes/via-token/tok-abc/approve");
   });
 
-  it("Decline fires POST to the new path-based endpoint with reason", async () => {
+  it("Decline fires POST to the new path-based endpoint with structured reason fields", async () => {
+    // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — updated to
+    // the new required-reason modal.  Legacy ``reason`` field is
+    // gone; the handler now sends ``decline_reason_category`` +
+    // ``decline_reason_text``.  Testids migrated to the shared
+    // ``<EstimateDeclineModal>`` scheme.
     postSpy.mockResolvedValue(samplePayload({ decision: "declined",
                                                  status: "declined" }));
     await renderView();
     fireEvent.click(screen.getByTestId("estimate-toolbar-customer-decline"));
-    fireEvent.change(screen.getByTestId("estimate-decline-reason"),
-                       { target: { value: "too pricey" } });
-    fireEvent.click(screen.getByTestId("estimate-decline-confirm"));
+    fireEvent.change(
+      screen.getByTestId("estimate-decline-category-select"),
+      { target: { value: "too_expensive" } },
+    );
+    fireEvent.change(
+      screen.getByTestId("estimate-decline-text"),
+      { target: { value: "This is too pricey for our budget cycle." } },
+    );
+    fireEvent.click(screen.getByTestId("estimate-decline-submit"));
     await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
     expect(postSpy.mock.calls[0][0])
       .toBe("/portal/quotes/via-token/tok-abc/decline");
-    expect(postSpy.mock.calls[0][1].reason).toBe("too pricey");
+    const body = postSpy.mock.calls[0][1];
+    expect(body.decline_reason_category).toBe("too_expensive");
+    expect(body.decline_reason_text).toBe(
+      "This is too pricey for our budget cycle.",
+    );
+    expect(body.reason).toBeUndefined();
   });
 
   it("hides approve/decline once status is off-window (draft)", async () => {

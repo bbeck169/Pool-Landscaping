@@ -28,6 +28,14 @@ import {
 } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import "@/components/InvoiceView.css";
+// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — shared enum +
+// bounds for the required decline-reason contract.  Sibling file:
+// ``backend/services/quote_decline_reasons.py``.
+import {
+  DECLINE_REASON_CATEGORIES,
+  DECLINE_REASON_TEXT_MIN_LEN,
+  DECLINE_REASON_TEXT_MAX_LEN,
+} from "@/pages/portal/quoteDeclineReasons";
 import "./EstimateView.css";
 import "@/components/documents/docMobile.css";
 // Phase 7C · Feb-2026 — runtime template loader + style helper.
@@ -101,6 +109,10 @@ export default function EstimateView({
   const [changesMsg, setChangesMsg] = useState("");
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineMsg, setDeclineMsg] = useState("");
+  // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — new structured
+  // category state; shared across both render surfaces (Flipbook +
+  // classic ModalScrim) via the common ``submitDecline`` handler.
+  const [declineCategory, setDeclineCategory] = useState("");
   const [toast, setToast] = useState("");
   // Feb-2026 · Phase A — per-line decline UX state. Hooks live at
   // the top of the component so they're never conditionally called.
@@ -172,16 +184,31 @@ export default function EstimateView({
     else call(`/quotes/${estimateId}/accept`);
   };
   const submitDecline = () => {
+    // PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — structured
+    // payload only.  Mirror server-side validation client-side so
+    // the submit button stays correctly disabled; redundant trim +
+    // length check here is defense-in-depth against stale state.
+    const cat = (declineCategory || "").trim();
+    const txt = (declineMsg || "").trim();
+    if (!cat) return;
+    if (txt.length < DECLINE_REASON_TEXT_MIN_LEN) return;
+    if (txt.length > DECLINE_REASON_TEXT_MAX_LEN) return;
+    const body = {
+      decline_reason_category: cat,
+      decline_reason_text: txt,
+    };
     if (token) {
       // Phase A path-based token endpoint (no ``?token=`` query).
       call2(
         `/portal/quotes/via-token/${encodeURIComponent(token)}/decline`,
-        { reason: declineMsg },
+        body,
       );
     } else {
-      call(`/quotes/${estimateId}/decline`, { reason: declineMsg });
+      call(`/quotes/${estimateId}/decline`, body);
     }
-    setDeclineOpen(false); setDeclineMsg("");
+    setDeclineOpen(false);
+    setDeclineMsg("");
+    setDeclineCategory("");
   };
   const submitChanges = () => {
     if (!changesMsg.trim()) return;
@@ -423,41 +450,24 @@ export default function EstimateView({
         />
         {/* Decline modal remains owned by the classic
             EstimateView because the flipbook accept page only
-            needs to trigger it. */}
-        {declineOpen ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            role="dialog"
-            data-testid="flipbook-decline-modal"
-          >
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
-              <div className="text-lg font-bold mb-2">Decline proposal</div>
-              <textarea
-                className="w-full h-32 rounded border p-2 text-sm"
-                placeholder="Optional — tell us why so we can improve"
-                value={declineMsg}
-                onChange={(e) => setDeclineMsg(e.target.value)}
-                data-testid="flipbook-decline-reason"
-              />
-              <div className="flex justify-end gap-2 mt-3">
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-full"
-                  style={{ border: "1px solid #cbd5e1" }}
-                  onClick={() => { setDeclineOpen(false); setDeclineMsg(""); }}
-                  data-testid="flipbook-decline-cancel"
-                >Cancel</button>
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-full text-white"
-                  style={{ backgroundColor: "#dc2626" }}
-                  onClick={submitDecline}
-                  data-testid="flipbook-decline-submit"
-                >Decline proposal</button>
-              </div>
-            </div>
-          </div>
-        ) : null}
+            needs to trigger it.  PORTAL-QUOTE-DECLINE-REQUIRE-
+            REASON · Feb-2026 — now rendered via the shared
+            ``<EstimateDeclineModal>`` component so the Flipbook
+            + classic surfaces stay byte-identical in UX. */}
+        <EstimateDeclineModal
+          open={declineOpen}
+          category={declineCategory}
+          text={declineMsg}
+          onCategoryChange={setDeclineCategory}
+          onTextChange={setDeclineMsg}
+          onCancel={() => {
+            setDeclineOpen(false);
+            setDeclineMsg("");
+            setDeclineCategory("");
+          }}
+          onSubmit={submitDecline}
+          busy={busy}
+        />
       </div>
     );
   }
@@ -1424,25 +1434,22 @@ export default function EstimateView({
           </div>
         </ModalScrim>
       ) : null}
-      {declineOpen ? (
-        <ModalScrim onClose={() => setDeclineOpen(false)}>
-          <h3 className="ev-modal-title">Decline this estimate</h3>
-          <p className="ev-modal-help">Optional — let us know why so we can improve.</p>
-          <textarea
-            rows={3}
-            value={declineMsg}
-            onChange={(e) => setDeclineMsg(e.target.value)}
-            className="ev-modal-input"
-            data-testid="estimate-decline-reason"
-          />
-          <div className="ev-modal-actions">
-            <button className="iv-btn" onClick={() => setDeclineOpen(false)}>Cancel</button>
-            <button className="iv-btn ev-btn-decline" onClick={submitDecline} data-testid="estimate-decline-confirm">
-              Decline
-            </button>
-          </div>
-        </ModalScrim>
-      ) : null}
+      {/* PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — classic
+          decline modal now rendered via the shared component. */}
+      <EstimateDeclineModal
+        open={declineOpen}
+        category={declineCategory}
+        text={declineMsg}
+        onCategoryChange={setDeclineCategory}
+        onTextChange={setDeclineMsg}
+        onCancel={() => {
+          setDeclineOpen(false);
+          setDeclineMsg("");
+          setDeclineCategory("");
+        }}
+        onSubmit={submitDecline}
+        busy={busy}
+      />
       {changesOpen ? (
         <ModalScrim onClose={() => setChangesOpen(false)}>
           <h3 className="ev-modal-title">Request changes</h3>
@@ -1549,3 +1556,106 @@ function ModalScrim({ children, onClose }) {
     </div>
   );
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+// PORTAL-QUOTE-DECLINE-REQUIRE-REASON · Feb-2026 — shared decline
+// modal.  Replaces both the raw-Tailwind Flipbook variant (lines
+// 427-460 pre-ship) and the classic ``<ModalScrim>`` variant (lines
+// 1427-1445 pre-ship) with a single ``<EstimateDeclineModal>`` call
+// so the two surfaces stay in UX lock-step.
+//
+// Required inputs (both must be set + valid before submit enables):
+//   • category — one of ``DECLINE_REASON_CATEGORIES`` values.
+//   • text     — 10-500 chars after trim.
+//
+// Testids are stable across surfaces so one vitest covers both.
+// ═══════════════════════════════════════════════════════════════════
+function EstimateDeclineModal({
+  open, category, text,
+  onCategoryChange, onTextChange, onCancel, onSubmit, busy,
+}) {
+  if (!open) return null;
+  const trimmed = (text || "").trim();
+  const tooShort = trimmed.length < DECLINE_REASON_TEXT_MIN_LEN;
+  const tooLong = trimmed.length > DECLINE_REASON_TEXT_MAX_LEN;
+  const canSubmit = Boolean(category) && !tooShort && !tooLong && !busy;
+  return (
+    <ModalScrim onClose={onCancel}>
+      <div data-testid="estimate-decline-modal">
+        <h3 className="ev-modal-title">Decline this estimate</h3>
+        <p className="ev-modal-help">
+          Please share more so we can improve.  Both fields are required.
+        </p>
+        <label
+          className="block text-xs font-semibold mt-2 mb-1"
+          htmlFor="estimate-decline-category-select"
+        >
+          Reason category
+        </label>
+        <select
+          id="estimate-decline-category-select"
+          value={category}
+          onChange={(e) => onCategoryChange(e.target.value)}
+          className="ev-modal-input"
+          data-testid="estimate-decline-category-select"
+        >
+          <option value="">Select a reason…</option>
+          {DECLINE_REASON_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
+        <label
+          className="block text-xs font-semibold mt-3 mb-1"
+          htmlFor="estimate-decline-text"
+        >
+          Please share more
+        </label>
+        <textarea
+          id="estimate-decline-text"
+          rows={4}
+          value={text}
+          onChange={(e) => onTextChange(e.target.value)}
+          placeholder={
+            `Please share a few details (at least `
+            + `${DECLINE_REASON_TEXT_MIN_LEN} characters) `
+            + `so we can improve.`
+          }
+          className="ev-modal-input"
+          maxLength={DECLINE_REASON_TEXT_MAX_LEN}
+          data-testid="estimate-decline-text"
+        />
+        <div
+          className="text-xs mt-1"
+          style={{ color: tooShort || tooLong ? "#B91C1C" : "#64748B" }}
+          data-testid="estimate-decline-char-count"
+        >
+          {trimmed.length} / {DECLINE_REASON_TEXT_MAX_LEN}
+          {tooShort
+            ? ` — ${DECLINE_REASON_TEXT_MIN_LEN - trimmed.length} more required`
+            : ""}
+        </div>
+        <div className="ev-modal-actions">
+          <button
+            type="button"
+            className="iv-btn"
+            onClick={onCancel}
+            data-testid="estimate-decline-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="iv-btn ev-btn-decline"
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            data-testid="estimate-decline-submit"
+          >
+            Decline proposal
+          </button>
+        </div>
+      </div>
+    </ModalScrim>
+  );
+}
+
