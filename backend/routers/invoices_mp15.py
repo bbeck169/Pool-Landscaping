@@ -362,6 +362,25 @@ async def consolidate_customer_invoices(
         }},
     )
 
+    # Feb-2026 · Auto-apply credit balance to this customer's OTHER
+    # open invoices (consolidated parent excluded — Model B).
+    # Non-blocking: a credit-apply failure must never roll back the
+    # consolidation.
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant["id"], parent.get("customer_id"),
+            actor=user,
+            exclude_invoice_ids=[parent_id],
+        )
+    except Exception as _ca_exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.failed tenant=%s invoice=%s error=%r",
+            tenant["id"], parent_id, _ca_exc,
+        )
+
     parent.pop("_id", None)
     return {
         "ok": True,

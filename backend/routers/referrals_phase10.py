@@ -211,6 +211,7 @@ async def adjust_customer_credits(
         source="manual",
         actor=user,
         reason=_reason,
+        apply_to_open_invoices_after=True,
     )
     return {
         "ok": True,

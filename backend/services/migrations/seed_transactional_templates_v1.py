@@ -61,6 +61,20 @@ _SENTINEL_ID = "feb2026_seed_transactional_templates_v1"
 # ``services/quote_notifications.py::render_sms``.
 _MVP_SEEDS: List[Dict[str, Any]] = [
     {
+        "code": "credit_apply_backfill_summary",
+        "channel": "email",
+        "name": "Credit auto-apply · Backfill summary",
+        "category": "admin",
+        "subject": "Credit auto-apply backfill summary · {{run_id}}",
+        "body": (
+            "Credit auto-apply backfill completed.\n\n"
+            "Customers touched: {{customers_touched}}\n"
+            "Invoices updated:  {{invoices_updated}}\n"
+            "Total applied:     ${{total_amount_applied}}\n"
+            "Run id:            {{run_id}}\n"
+        ),
+    },
+    {
         "code": "welcome_on_first_accept_email",
         "channel": "email",
         "name": "Welcome · First-accept",

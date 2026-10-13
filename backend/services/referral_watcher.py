@@ -237,6 +237,7 @@ async def _try_credit_referral(
                 "referral_id": ref_id,
                 "created_by": "referral_watcher",
             },
+            apply_to_open_invoices_after=True,
         )
         ledger_id = _mut["ledger_entry_id"]
         # Finalise referral row.

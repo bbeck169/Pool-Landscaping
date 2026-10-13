@@ -3361,6 +3361,27 @@ async def convert_quote_to_invoice(
         user=user,
     )
 
+    # Feb-2026 · Auto-apply credit balance to this customer's OTHER
+    # open invoices after a conversion. Non-blocking try/except —
+    # a credit-apply failure must never roll back a successful
+    # invoice conversion. The freshly-created invoice is excluded
+    # from the sweep (Model B — the shipped line-item path owns
+    # creation-time credit; this sweep owns pre-existing opens).
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant["id"], invoice_doc.get("customer_id"),
+            actor=user,
+            exclude_invoice_ids=[invoice_doc["id"]],
+        )
+    except Exception as _ca_exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.failed tenant=%s invoice=%s error=%r",
+            tenant["id"], invoice_doc.get("id"), _ca_exc,
+        )
+
     return {
         "invoice_id": invoice_doc["id"],
         "invoice_number": invoice_doc.get("invoice_number"),

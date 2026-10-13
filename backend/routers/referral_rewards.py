@@ -203,6 +203,7 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
                 "delta": reward_amount,          # legacy dollar field
                 "created_by": "referral_hook",
             },
+            apply_to_open_invoices_after=True,
         )
         reward_tx_id = _mut["ledger_entry_id"]
         upd["reward_amount"] = reward_amount

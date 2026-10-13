@@ -543,6 +543,23 @@ async def run_billing_plan(pid: str,
     )
     await notify_customer(plan["customer_id"], "New invoice",
                           f"An invoice for {plan.get('service', 'your service')} was issued.")
+    # Feb-2026 · Auto-apply credit balance to this customer's OTHER
+    # open invoices after autobilling. Non-blocking. The freshly-
+    # created invoice is excluded (Model B — line-item credit for
+    # this invoice already ran above via apply_and_persist).
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant["id"], invoice.get("customer_id"),
+            exclude_invoice_ids=[invoice.get("id")],
+        )
+    except Exception as _ca_exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.failed tenant=%s invoice=%s error=%r",
+            tenant["id"], invoice.get("id"), _ca_exc,
+        )
     invoice.pop("_id", None)
     return {"ok": True, "invoice_id": invoice["id"], "next_run": new_next}
 
@@ -1104,6 +1121,21 @@ async def _fire_billing_plan(plan: dict, tenant: dict, current_month: str,
     from services.credits_apply import apply_and_persist
     invoice = await apply_and_persist(db, tenant["id"], invoice)
     await db.quotes.insert_one(invoice)
+    # Feb-2026 · Auto-apply credit balance to this customer's OTHER
+    # open invoices after monthly billing. Non-blocking.
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant["id"], invoice.get("customer_id"),
+            exclude_invoice_ids=[invoice.get("id")],
+        )
+    except Exception as _ca_exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.failed tenant=%s invoice=%s error=%r",
+            tenant["id"], invoice.get("id"), _ca_exc,
+        )
     await db.billing_plans.update_one(
         {"id": plan["id"], "tenant_id": tenant["id"]},
         {"$set": {"last_run": now_iso(), "last_run_month": current_month}},

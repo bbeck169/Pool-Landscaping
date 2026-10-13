@@ -58,6 +58,7 @@ from typing import Any, Dict, List, Optional
 # admin-facing aliases — one slug, one wire-level code, one editor
 # row. See the P2 #10 Commit 1b receipt for the alignment history.
 TRANSACTIONAL_SLUGS: List[str] = [
+    "credit_apply_backfill_summary",
     "estimate_reminder_email",
     "invoice_past_due_email",
     "job_completion_sms",
@@ -73,6 +74,23 @@ TRANSACTIONAL_SLUGS: List[str] = [
 
 
 REGISTRY: Dict[str, Dict[str, Any]] = {
+    "credit_apply_backfill_summary": {
+        "channel": "email",
+        "required_tags": [
+            "customers_touched", "invoices_updated",
+            "total_amount_applied", "run_id",
+        ],
+        "optional_tags": [],
+        "description": (
+            "One-off admin summary email dispatched after the "
+            "deploy-time ``backfill_credit_apply`` script finishes "
+            "its ``--commit`` run. Sent to the operator identified "
+            "by the ``FOUNDER_SUPER_ADMIN_EMAIL`` env var. The send "
+            "path lives in ``scripts/backfill_credit_apply.py`` and "
+            "falls back to a hardcoded default body when a per-"
+            "tenant template row is absent (cross-tenant one-off)."
+        ),
+    },
     "welcome_on_first_accept_email": {
         "channel": "email",
         "required_tags": ["company_name", "customer_first_name", "portal_url"],

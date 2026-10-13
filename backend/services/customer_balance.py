@@ -477,6 +477,7 @@ async def mutate_credit(
     reason: str = "",
     idempotency_key: Optional[str] = None,
     extra_ledger_fields: Optional[Dict[str, Any]] = None,
+    apply_to_open_invoices_after: bool = False,
 ) -> Dict[str, Any]:
     """ONLY-writer entry point for customer credit.
 
@@ -592,6 +593,15 @@ async def mutate_credit(
         db, tenant_id, customer_id,
     )
 
+    # 4) Opt-in auto-apply hook — fire the credit-apply sweep when
+    #    the caller opts in AND the mutation granted credit. Never
+    #    raises; failures land in ``credit_apply.failed`` WARN and
+    #    the mutation itself stands.
+    if apply_to_open_invoices_after and int(delta_cents) > 0:
+        await _run_auto_apply_after_grant(
+            db, tenant_id, customer_id, actor,
+        )
+
     return {
         "status":          "applied",
         "ledger_entry_id": entry_id,
@@ -600,4 +610,32 @@ async def mutate_credit(
         "idempotency_key": idempotency_key,
         "mutated_at":      now_iso,
     }
+
+
+async def _run_auto_apply_after_grant(
+    db, tenant_id: str, customer_id: str,
+    actor: Optional[Dict[str, Any]],
+) -> None:
+    """Fire-and-forget wrapper around
+    ``services.credit_apply.apply_credit_to_customer_open_invoices``.
+
+    Called from ``mutate_credit`` when the caller opts in via
+    ``apply_to_open_invoices_after=True`` AND the mutation granted
+    credit (positive delta, ``status == "applied"``). Never raises;
+    on failure it logs ``credit_apply.failed`` and the caller's
+    original credit mutation stands.
+    """
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant_id, customer_id,
+            actor=actor, source="auto",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "credit_apply.failed tenant=%s customer=%s error=%r",
+            tenant_id, customer_id, exc,
+        )
 

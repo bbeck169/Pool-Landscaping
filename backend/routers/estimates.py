@@ -553,6 +553,24 @@ async def convert_estimate_to_invoice(
         user=user,
     )
 
+    # Feb-2026 · Auto-apply credit balance to this customer's OTHER
+    # open invoices after estimate→invoice conversion. Non-blocking.
+    try:
+        from services.credit_apply import (
+            apply_credit_to_customer_open_invoices,
+        )
+        await apply_credit_to_customer_open_invoices(
+            db, tenant["id"], invoice_doc.get("customer_id"),
+            actor=user,
+            exclude_invoice_ids=[invoice_doc["id"]],
+        )
+    except Exception as _ca_exc:  # noqa: BLE001
+        from config import logger as _ca_logger
+        _ca_logger.warning(
+            "credit_apply.failed tenant=%s invoice=%s error=%r",
+            tenant["id"], invoice_doc.get("id"), _ca_exc,
+        )
+
     return {
         "invoice_id": invoice_doc["id"],
         "invoice_number": invoice_doc.get("invoice_number"),
