@@ -46,6 +46,7 @@ import ResolveDuplicateDialog
   from "@/components/customers/ResolveDuplicateDialog";
 import PaymentMethodTiles from "@/components/customers/PaymentMethodTiles";
 import CommunicationTimeline from "@/components/customers/CommunicationTimeline";
+import { MergeHistoryPanel } from "@/components/customers/MergeHistoryPanel";
 import CustomerFullTimeline from "@/components/customers/CustomerFullTimeline";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 import CustomerGeocodeInfo from "@/components/customers/CustomerGeocodeInfo";
@@ -2606,6 +2607,18 @@ export default function CustomerDetail() {
               but is no longer mounted here. */}
           <CustomerFullTimeline scope="admin" customerId={id} />
         </section>
+
+        {/* Feb-2026 · duplicate-management feature — merge
+            history + rollback panel.  BE SHA d8dd7eb49.
+            Visible to all admin+manager roles (same gate as
+            the Duplicates tab); Rollback button renders only
+            for admin and only while the audit row's
+            ``remaining_rollback_days > 0 AND rolled_back_at
+            === null``. */}
+        <MergeHistoryPanel
+          customerId={id}
+          canRollback={authUser?.role === "admin"}
+        />
       </div>
 
       <PortalLoginModal
