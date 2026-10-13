@@ -525,6 +525,14 @@ from routers import job_timers as _feb2026_job_timers  # noqa: E402
 from routers import gps_audit_report as _p37d_gps_audit_report  # noqa: E402
 api_router.include_router(_tos_router.router)
 api_router.include_router(_p2_quote_recipients.router)
+# P2 #5 · Feb-2026 — Communication timeline detail resolver.  Serves
+# ``GET /api/communications-detail/{id}`` from a five-collection
+# aggregator (marketing_deliveries, lead_communications, sms_inbound,
+# notification_dispatch_log, communications_log).  Powers the row-
+# click modal across every admin timeline surface.  See
+# ``routers/communications_detail.py`` for the resolver + RBAC.
+from routers import communications_detail as _p25_comms_detail  # noqa: E402
+api_router.include_router(_p25_comms_detail.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)

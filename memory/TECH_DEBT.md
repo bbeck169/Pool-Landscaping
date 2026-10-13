@@ -84,3 +84,11 @@ The Feb-2026 code review also proposed the following, all of which were rejected
 ---
 
 Last updated: **Phase O4 · Feb-2026** (Offline Sync Backend Idempotency Sprint post-triage).
+
+---
+
+## P2 #4 + P2 #5 follow-ups (Feb-2026, added during P2 #5)
+
+- **P2 #4** — `test_lead_create_quote.py::_patch_db_everywhere` omits `routers.income_categories` from its loop re-pin list; running `test_lead_create_quote.py` together with any sibling file that boots its own event loop fails one case with `RuntimeError: Task got Future attached to a different loop` at `routers/income_categories.py:92`. Each file still passes standalone. One-line fix: add `"routers.income_categories"` to the module tuple in that patcher. Priority: P3.
+- **P2 #5** — SMS thread aggregation deferred. Needs cross-collection join (`marketing_deliveries` ∪ `lead_communications` outbound + `sms_inbound`) matched on `(tenant_id, phone number)` within a time window to reconstruct inbound/outbound SMS conversations in the detail modal. Priority: P2.
+- **P2 #5 hardening** — Gate remote-image loads in `CommunicationDetailModal` email iframe behind a user opt-in toggle (default off). Currently the sandboxed iframe will fire tracking pixels / remote `<img>` loads when the modal opens; adding `Content-Security-Policy` meta or stripping remote-src tags server-side would close the privacy gap. Priority: P3.
