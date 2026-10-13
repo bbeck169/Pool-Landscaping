@@ -67,7 +67,19 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
   // Feb-2026 · Item 2 — audience-status segmented control. Resets to
   // "active" on each fresh dialog open (per PRD: safer default).
   const [audienceStatus, setAudienceStatus] = useState("active");
-  useEffect(() => { if (open) setAudienceStatus("active"); }, [open]);
+  // P2 #7 · Feb-2026 — Card-on-file + Portal-login filters. Tri-state
+  // ``null | true`` only (no negation this ticket). ``null`` = no
+  // restriction. Reset to ``null`` on each fresh dialog open to match
+  // the audience-status "safer default" invariant.
+  const [hasCardOnFile, setHasCardOnFile] = useState(null);
+  const [hasPortalLogin, setHasPortalLogin] = useState(null);
+  useEffect(() => {
+    if (open) {
+      setAudienceStatus("active");
+      setHasCardOnFile(null);
+      setHasPortalLogin(null);
+    }
+  }, [open]);
 
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -123,6 +135,15 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
       service_days: serviceDays,
       assigned_tech_user_ids: assignedTechUserIds,
       audience_status: audienceStatus,
+      // P2 #7 · Feb-2026 — ALWAYS include both keys (as true | null,
+      // never omit) so the confirm-token-binding signature hashes
+      // deterministically regardless of whether an admin has
+      // toggled either filter. The backend ``_consume_confirm_token``
+      // guard uses strict equality on these two keys so any
+      // omission → mismatch between preview + send would surface
+      // as CONFIRM_TOKEN_FILTERS_MISMATCH.
+      has_card_on_file: hasCardOnFile,
+      has_portal_login: hasPortalLogin,
       ...(useCustom
         ? { subject: debSubj || null, body: debBody }
         : { template_id: debTpl }),
@@ -139,7 +160,8 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, debChannels, debSubj, debBody, debTpl, useCustom,
-       debCats, debDays, debTechs, audienceStatus]);
+       debCats, debDays, debTechs, audienceStatus,
+       hasCardOnFile, hasPortalLogin]);
 
   const total = (preview?.estimated_recipients?.email || 0)
     + (preview?.estimated_recipients?.sms || 0);
@@ -173,6 +195,12 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
         category_ids: categoryIds,
         service_days: serviceDays,
         assigned_tech_user_ids: assignedTechUserIds,
+        // P2 #7 · Feb-2026 — must be present on send with the SAME
+        // values the preview was issued against. See the matching
+        // comment on the preview payload above; CONFIRM_TOKEN_
+        // FILTERS_MISMATCH surfaces on any drift.
+        has_card_on_file: hasCardOnFile,
+        has_portal_login: hasPortalLogin,
         ...(useCustom
           ? { subject: subject || null, body }
           : { template_id: templateId }),
@@ -296,6 +324,34 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
                   selectedIds={assignedTechUserIds}
                   onChange={setAssignedTechUserIds}
                 />
+              </div>
+              {/* P2 #7 · Feb-2026 — Card-on-file + Portal-login checkbox
+                  pair. Binary semantics (tri-state null|true only —
+                  negation deferred as P3). Both default off; the
+                  state resets to null on each fresh dialog open. */}
+              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-sm"
+                  data-testid="mass-messaging-filter-card-on-file-label"
+                >
+                  <Checkbox
+                    checked={hasCardOnFile === true}
+                    onCheckedChange={(v) => setHasCardOnFile(v ? true : null)}
+                    data-testid="mass-messaging-filter-card-on-file"
+                  />
+                  <span>Has card on file</span>
+                </label>
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-sm"
+                  data-testid="mass-messaging-filter-portal-login-label"
+                >
+                  <Checkbox
+                    checked={hasPortalLogin === true}
+                    onCheckedChange={(v) => setHasPortalLogin(v ? true : null)}
+                    data-testid="mass-messaging-filter-portal-login"
+                  />
+                  <span>Has active portal login</span>
+                </label>
               </div>
             </section>
 

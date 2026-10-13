@@ -63,6 +63,13 @@ class BroadcastBase(BaseModel):
     # Feb-2026 · Item 2 — audience-status selector.
     # ``active`` (default) | ``inactive`` | ``both``.
     audience_status: str = Field("active", pattern="^(active|inactive|both)$")
+    # P2 #7 · Feb-2026 — Card-on-file + Portal-login filters.
+    # ``None`` = no restriction; ``True`` = customer must have it.
+    # ``False`` is NOT supported in this ticket (deferred as P3
+    # negation variant); the normalizer rejects it at the boundary
+    # with 400 so we don't accidentally ship half-wired negation.
+    has_card_on_file: Optional[bool] = None
+    has_portal_login: Optional[bool] = None
 
 
 class BroadcastPreviewIn(BroadcastBase):
@@ -105,10 +112,20 @@ _VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
 
 def _validate_filters(category_ids: List[str], service_days: List[str],
-                       assigned_tech_user_ids: List[str]) -> Dict[str, List[str]]:
-    """Normalize the three filter arrays. Strips + lowercases days,
-    de-dupes each list, drops empties. Rejects unknown day codes with
-    400 so the UI can't silently miss them."""
+                       assigned_tech_user_ids: List[str],
+                       has_card_on_file: Optional[bool] = None,
+                       has_portal_login: Optional[bool] = None,
+                       ) -> Dict[str, Any]:
+    """Normalize the three array filters + the two P2 #7 boolean
+    filters. Strips + lowercases days, de-dupes each list, drops
+    empties. Rejects unknown day codes with 400 so the UI can't
+    silently miss them.
+
+    P2 #7 · Feb-2026 — the two boolean filters are strictly
+    ``True`` | ``None`` only. Any other type (string ``"yes"``,
+    integer ``1``, explicit ``False``) is rejected at the boundary
+    with 400 so negation support doesn't get accidentally shipped
+    through a stray truthy string before the UI opts in."""
     cats = sorted({(c or "").strip() for c in (category_ids or []) if (c or "").strip()})
     days_low = [(d or "").strip().lower() for d in (service_days or []) if (d or "").strip()]
     for d in days_low:
@@ -116,8 +133,24 @@ def _validate_filters(category_ids: List[str], service_days: List[str],
             raise HTTPException(400, f"Unknown service_day: {d}")
     days = sorted(set(days_low))
     techs = sorted({(t or "").strip() for t in (assigned_tech_user_ids or []) if (t or "").strip()})
+    # Reject stray truthy / non-boolean inputs on both P2 #7 flags.
+    # ``None`` (default) + ``True`` are the only accepted shapes.
+    for _name, _val in (("has_card_on_file", has_card_on_file),
+                         ("has_portal_login", has_portal_login)):
+        if _val is None:
+            continue
+        if _val is True:
+            continue
+        raise HTTPException(400, {
+            "code": "INVALID_FILTER_VALUE",
+            "field": _name,
+            "message": "Only null or true are accepted; false / strings / "
+                       "numbers are rejected (negation deferred as P3).",
+        })
     return {"category_ids": cats, "service_days": days,
-             "assigned_tech_user_ids": techs}
+             "assigned_tech_user_ids": techs,
+             "has_card_on_file": has_card_on_file,
+             "has_portal_login": has_portal_login}
 
 
 # ── Audience resolver ─────────────────────────────────────────────
@@ -126,16 +159,30 @@ async def _resolve_audience(tenant_id: str, *,
                               service_days: Optional[List[str]] = None,
                               assigned_tech_user_ids: Optional[List[str]] = None,
                               audience_status: str = "active",
+                              has_card_on_file: Optional[bool] = None,
+                              has_portal_login: Optional[bool] = None,
                               ) -> List[Dict[str, Any]]:
     """Return customers for a tenant, optionally narrowed by the three
-    Phase-16 filters (categories / service days / assigned techs) and
-    the Feb-2026 ``audience_status`` selector (``active`` / ``inactive``
-    / ``both``, default ``active``).
+    Phase-16 filters (categories / service days / assigned techs), the
+    Feb-2026 ``audience_status`` selector (``active`` / ``inactive``
+    / ``both``, default ``active``), and the P2 #7 Card-on-file +
+    Portal-login filters.
 
     Denormalized fields ``customer.category_ids[]`` /
     ``service_days[]`` / ``assigned_tech_ids[]`` are populated by
     ``customer_categories.recompute_customer_denorm`` (idempotent
-    boot backfill + on-save hook)."""
+    boot backfill + on-save hook).
+
+    P2 #7 Feb-2026 — Card-on-file uses the ``customers.has_card_on_file``
+    denorm written by the Stripe setup/detach webhooks (covered by the
+    ``customers_tenant_deleted_saved_payment_methods_count_bg`` compound
+    index; MongoDB will still select it on an equality predicate on
+    the ``has_card_on_file`` sibling field via the ``(tenant_id,
+    deleted_at)`` prefix, no new index needed). Portal-login runs a
+    set-build over ``db.users`` matching the admin's literal
+    business question — "which customers CAN log in to the portal"
+    — pattern-copied from ``routers/quotes.py:415-445``.
+    """
     status = (audience_status or "active").lower()
     if status not in ("active", "inactive", "both"):
         status = "active"
@@ -154,6 +201,39 @@ async def _resolve_audience(tenant_id: str, *,
         q["service_days"] = {"$in": service_days}
     if assigned_tech_user_ids:
         q["assigned_tech_ids"] = {"$in": assigned_tech_user_ids}
+    # P2 #7 · Card-on-file — direct denorm equality. ``None`` on
+    # customers that have never had a PM attached (vs ``False``
+    # which fires when a PM is detached) means we have to match
+    # ``True`` strictly, not ``$ne: False``.
+    if has_card_on_file is True:
+        q["has_card_on_file"] = True
+    # P2 #7 · Portal-login — users-scan set-build. "Active portal
+    # account" = ``role=customer`` user row with a non-empty
+    # ``password_hash`` and ``deleted_at`` null (or absent) and
+    # not explicitly deactivated. Pattern mirrors the card-on-file
+    # cohort build in ``routers/quotes.py``. Preview-time budget
+    # (<300ms) comfortably fits a users-collection scan at expected
+    # prod cardinality — audience cap of 5000 on the customers side
+    # bounds the subsequent find.
+    if has_portal_login is True:
+        active_portal_ids: set = set()
+        async for u in db.users.find(
+            {"tenant_id": tenant_id,
+             "role": "customer",
+             "password_hash": {"$exists": True, "$nin": [None, ""]},
+             "$and": [
+                 {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+                 {"$or": [{"is_active": {"$ne": False}}, {"is_active": {"$exists": False}}]},
+             ]},
+            {"_id": 0, "customer_id": 1},
+        ):
+            cid = u.get("customer_id")
+            if cid:
+                active_portal_ids.add(cid)
+        # Sentinel so the $in survives an empty set — mongo rejects
+        # ``$in: []`` as "match-nothing" which is already correct, but
+        # a sentinel makes the no-match case explicit in audit traces.
+        q["id"] = {"$in": list(active_portal_ids) or ["__no_portal_login_matches__"]}
     return await db.customers.find(q, {"_id": 0}).to_list(_AUDIENCE_CAP + 10)
 
 
@@ -230,7 +310,7 @@ async def _issue_confirm_token(tenant_id: str, user_id: str,
                                 channels: List[str], template_id: Optional[str],
                                 subject: Optional[str], body: Optional[str],
                                 audience: str,
-                                filters: Dict[str, List[str]]) -> str:
+                                filters: Dict[str, Any]) -> str:
     tok = new_id()
     await db.mass_messaging_confirm_tokens.insert_one({
         "token": tok,
@@ -243,7 +323,10 @@ async def _issue_confirm_token(tenant_id: str, user_id: str,
         "audience": audience,
         # Filters bound to the token — a preview issued for filter set A
         # can't authorize a send for filter set B (same protection
-        # already applied to channels + template_id).
+        # already applied to channels + template_id). P2 #7 adds the
+        # ``has_card_on_file`` + ``has_portal_login`` keys to the
+        # bound payload so filter-signature drift on either new flag
+        # also fails the ``_consume_confirm_token`` guard.
         "filters": filters,
         "issued_at": now_iso(),
         "expires_at_epoch": int(time.time()) + _CONFIRM_TOKEN_TTL_SEC,
@@ -256,7 +339,7 @@ async def _consume_confirm_token(tok: str, tenant_id: str,
                                   channels: List[str], template_id: Optional[str],
                                   subject: Optional[str], body: Optional[str],
                                   audience: str,
-                                  filters: Dict[str, List[str]]) -> None:
+                                  filters: Dict[str, Any]) -> None:
     """Consume-once semantics via atomic ``find_one_and_update``. The
     stored payload must match the caller's — otherwise a preview for
     audience A can't authorize a send to audience B."""
@@ -277,10 +360,19 @@ async def _consume_confirm_token(tok: str, tenant_id: str,
         raise HTTPException(400, {"code": "CONFIRM_TOKEN_AUDIENCE_MISMATCH"})
     # Phase 16 · Item 3 — bound filters must match. This defends
     # against "preview A → send B" audience swaps just like the
-    # channels + template_id guards above.
+    # channels + template_id guards above. P2 #7 · Feb-2026 — the
+    # boolean filters (``has_card_on_file``, ``has_portal_login``)
+    # join the per-key equality check: ``None`` and ``True`` are the
+    # only accepted shapes (per ``_validate_filters``), so a strict
+    # ``!=`` comparison is correct and does not need an ``or [] /
+    # sorted`` normalization like the array fields.
     stored_filters = row.get("filters") or {}
     for key in ("category_ids", "service_days", "assigned_tech_user_ids"):
         if sorted(stored_filters.get(key) or []) != sorted(filters.get(key) or []):
+            raise HTTPException(400, {"code": "CONFIRM_TOKEN_FILTERS_MISMATCH",
+                                       "mismatched_field": key})
+    for key in ("has_card_on_file", "has_portal_login"):
+        if stored_filters.get(key) != filters.get(key):
             raise HTTPException(400, {"code": "CONFIRM_TOKEN_FILTERS_MISMATCH",
                                        "mismatched_field": key})
     # Atomic single-consumer flip.
@@ -306,7 +398,9 @@ async def preview_broadcast(
     channels = _validate_channels(body.channels)
     audience_key = _validate_audience(body.audience)
     filters = _validate_filters(body.category_ids, body.service_days,
-                                  body.assigned_tech_user_ids)
+                                  body.assigned_tech_user_ids,
+                                  has_card_on_file=getattr(body, "has_card_on_file", None),
+                                  has_portal_login=getattr(body, "has_portal_login", None))
 
     from services.marketing.render import render_subject_and_body
     from services.marketing.merge_tags import render_context
@@ -340,6 +434,8 @@ async def preview_broadcast(
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
         audience_status=getattr(body, "audience_status", "active"),
+        has_card_on_file=filters["has_card_on_file"],
+        has_portal_login=filters["has_portal_login"],
     )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
@@ -452,6 +548,8 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
                           service_days: Optional[List[str]] = None,
                           assigned_tech_user_ids: Optional[List[str]] = None,
                           audience_status: str = "active",
+                          has_card_on_file: Optional[bool] = None,
+                          has_portal_login: Optional[bool] = None,
                           ) -> None:
     """Background fanout: iterate audience, render, hit the adapter,
     persist a `marketing_deliveries` row per (customer, channel).
@@ -489,6 +587,8 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
         service_days=service_days,
         assigned_tech_user_ids=assigned_tech_user_ids,
         audience_status=audience_status,
+        has_card_on_file=has_card_on_file,
+        has_portal_login=has_portal_login,
     )
     logger.info(
         "[mass-messaging] fanout START batch=%s tenant=%s recipients=%d channels=%s",
@@ -777,7 +877,9 @@ async def send_broadcast(
     channels = _validate_channels(body.channels)
     audience_key = _validate_audience(body.audience)
     filters = _validate_filters(body.category_ids, body.service_days,
-                                  body.assigned_tech_user_ids)
+                                  body.assigned_tech_user_ids,
+                                  has_card_on_file=getattr(body, "has_card_on_file", None),
+                                  has_portal_login=getattr(body, "has_portal_login", None))
 
     # Rate limit before we consume the confirm token — a stale token
     # shouldn't be burned on a 429.
@@ -790,6 +892,8 @@ async def send_broadcast(
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
         audience_status=getattr(body, "audience_status", "active"),
+        has_card_on_file=filters["has_card_on_file"],
+        has_portal_login=filters["has_portal_login"],
     )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
@@ -835,6 +939,11 @@ async def send_broadcast(
             "category_ids": filters["category_ids"],
             "service_days": filters["service_days"],
             "assigned_tech_user_ids": filters["assigned_tech_user_ids"],
+            # P2 #7 · Feb-2026 — persist boolean filters on the audit
+            # row so a later audit can reconstruct exactly which
+            # cohort was targeted. ``None`` encodes "unfiltered".
+            "has_card_on_file": filters["has_card_on_file"],
+            "has_portal_login": filters["has_portal_login"],
         },
         "started_at": now_iso(),
         "completed_at": None,
@@ -857,6 +966,8 @@ async def send_broadcast(
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
         audience_status=getattr(body, "audience_status", "active"),
+        has_card_on_file=filters["has_card_on_file"],
+        has_portal_login=filters["has_portal_login"],
     )
 
     return {
