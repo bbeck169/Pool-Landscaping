@@ -82,10 +82,13 @@ def test_classify_empty_previews_returns_empty_buckets():
     result = asyncio.run(classify_pending_for_preview(
         previews=[], tenant_id="t1", db=db,
     ))
-    assert result == {
-        "will_auto_create": [],
-        "will_require_manual_review": [],
-    }
+    # Feb-2026 · auto-create UX ticket — classify now also
+    # emits a top-level ``summary`` block carrying the
+    # distinct-dedup-group count that drives the FE banner.
+    assert result["will_auto_create"] == []
+    assert result["will_require_manual_review"] == []
+    assert result["summary"]["will_auto_create_count"] == 0
+    assert result["summary"]["manual_review_count"] == 0
 
 
 def test_classify_no_pending_sentinels_returns_empty_buckets():

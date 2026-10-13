@@ -278,9 +278,16 @@ def test_commit_rejects_pending_sentinels(admin_h, aquaterra_id, dbc,
             f"{API}/imports/pdf-invoice/{batch_id}/commit",
             headers=admin_h, json={}, timeout=15,
         )
-        assert r.status_code == 400, r.text
+        assert r.status_code == 422, r.text
         detail = r.json().get("detail") or {}
-        assert detail.get("error") == "unresolved_customers"
+        # Feb-2026 · auto-create UX ticket — primary error_code is
+        # ``customer_requires_manual_resolution``; legacy
+        # top-level ``error`` alias ``manual_review_required``
+        # is preserved for pre-FE-update consumers.
+        assert detail.get("error_code") == (
+            "customer_requires_manual_resolution"
+        ), detail
+        assert detail.get("error") == "manual_review_required", detail
         assert len(detail.get("unresolved") or []) == 1
 
         # Batch status must be reset to preview_complete so the

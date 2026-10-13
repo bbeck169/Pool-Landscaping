@@ -133,6 +133,11 @@ class UnresolvedCustomer:
     source_doc_index: int
     extracted_customer_name: Optional[str]
     pending_customer_id: Optional[str]
+    # Feb-2026 · auto-create UX ticket — distinguishes
+    # low-confidence (Bug 3 demoted) from no-identifying-info
+    # pendings so the FE can route the operator to the right
+    # resolution UX.
+    reason: Optional[str] = None
 
 
 @dataclass
@@ -268,7 +273,23 @@ def collect_unresolved_customers(
 ) -> List[UnresolvedCustomer]:
     """Return every preview still carrying a ``PENDING::``
     customer_id.  Commit refuses to run when this list is
-    non-empty."""
+    non-empty.
+
+    Feb-2026 · auto-create UX ticket — attaches a ``reason``
+    on each unresolved row so the router 422 shape can route
+    the operator to the right resolution UX:
+
+      * ``"customer_extraction_confidence_low"`` — Bug 3
+        post-processor demoted the extracted name (looked like
+        a doc number). Operator must pick / type over before
+        commit.
+      * ``None`` — no-identifying-info / generic pending row.
+        Operator must enter name+address in the admin review UI.
+    """
+    from services.imports.customer_autocreate import (  # local import — avoid cycle at module load
+        collect_low_confidence_pending_ids,
+    )
+    low_conf_pids = collect_low_confidence_pending_ids(previews)
     out: List[UnresolvedCustomer] = []
     for preview in previews:
         if preview.get("mapped_target") != "quote_in":
@@ -277,10 +298,18 @@ def collect_unresolved_customers(
         cid = qi.get("customer_id") or ""
         if not cid.startswith("PENDING::"):
             continue
+        pending_id = cid[len("PENDING::"):]
+        reason = (
+            "customer_extraction_confidence_low"
+            if pending_id in low_conf_pids
+            else None
+        )
         out.append(UnresolvedCustomer(
             source_doc_index=int(preview.get("source_doc_index", -1)),
             extracted_customer_name=qi.get("customer_name"),
-            pending_customer_id=preview.get("pending_customer_id"),
+            pending_customer_id=preview.get("pending_customer_id")
+                or pending_id,
+            reason=reason,
         ))
     return out
 
@@ -293,7 +322,7 @@ async def classify_pending_for_preview(
     previews: List[Dict[str, Any]],
     tenant_id: str,
     db,
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> Dict[str, Any]:
     """Dry-run classify every ``PENDING::<uuid>`` sentinel in a
     preview-complete batch as either ``will_auto_create`` or
     ``will_require_manual_review`` so the operator UI can render
@@ -311,28 +340,29 @@ async def classify_pending_for_preview(
         row has been manually deleted since mapping →
         ``will_require_manual_review`` (the commit path raises
         400 ``manual_review_required`` listing these rows).
+      * Preview is flagged ``customer_extraction_confidence ==
+        "low"`` (Bug 3 post-processor) → ``will_require_manual_review``
+        with ``reason="customer_extraction_confidence_low"``.
+        Hard rule: low-confidence extractions are never
+        auto-created.
 
-    Shape (both arrays carry the same per-row dict shape so the
-    FE can render one unified table)::
+    Feb-2026 · auto-create UX ticket — each ``will_auto_create``
+    row now also carries:
 
-        {
-          "will_auto_create": [
-            {
-              "source_doc_index": 3,
-              "pending_customer_id": "<uuid>",
-              "extracted_name": "Acme Pools LLC",
-              "extracted_address": "123 Pine Dr",
-              "extracted_phone": "555-1234",
-            },
-            ...
-          ],
-          "will_require_manual_review": [
-            {"source_doc_index": 7, "pending_customer_id": "<uuid>",
-              "extracted_name": null, "extracted_address": null,
-              "extracted_phone": null, "reason": "no_identifying_info"},
-            ...
-          ],
-        }
+      * ``auto_create_candidate`` — the fully-shaped payload the
+        commit path would write into ``db.customers`` (name,
+        email, phone, mailing_address, service_category).
+      * ``dedup_group_id`` — stable 8-char hex of the shared
+        dedupe key; two pending rows that will collapse into one
+        new customer at commit time share the same group id.
+      * ``fields_extracted`` / ``fields_missing`` — surface which
+        bill-to fields the mapper captured so the UI can render
+        the "— (not extracted)" tooltip.
+
+    Response also carries a top-level ``summary`` with
+    ``will_auto_create_count`` = ``len(distinct dedup_group_ids)``
+    so the FE banner matches the number of ``db.customers`` rows
+    the commit path will actually create.
     """
     # Walk BOTH quote_in and payment_in — mirror Step B's walk so
     # the dry-run never misses a sentinel the real auto-create
@@ -353,7 +383,21 @@ async def classify_pending_for_preview(
             ref_order.append((pending_id, source_doc_index))
 
     if not ref_order:
-        return {"will_auto_create": [], "will_require_manual_review": []}
+        return {
+            "will_auto_create": [],
+            "will_require_manual_review": [],
+            "summary": {"will_auto_create_count": 0,
+                        "manual_review_count": 0},
+        }
+
+    # Collect low-confidence pending ids — share the helper the
+    # real auto-create path uses so the two decisions stay in
+    # lockstep.
+    from services.imports.customer_autocreate import (  # local import — avoid cycle at module load
+        collect_low_confidence_pending_ids,
+        compute_dedup_group_id,
+    )
+    low_conf_pids = collect_low_confidence_pending_ids(previews)
 
     # One ``find`` with ``$in`` — bounded working set.
     pending_rows: Dict[str, Dict[str, Any]] = {}
@@ -367,7 +411,21 @@ async def classify_pending_for_preview(
 
     will_auto: List[Dict[str, Any]] = []
     manual: List[Dict[str, Any]] = []
+    distinct_dedup_groups: set = set()
     for pending_id, source_doc_index in ref_order:
+        # Low-confidence gate — Bug 3 demoted this preview; never
+        # auto-create.
+        if pending_id in low_conf_pids:
+            row = pending_rows.get(pending_id) or {}
+            manual.append({
+                "source_doc_index": source_doc_index,
+                "pending_customer_id": pending_id,
+                "extracted_name": row.get("extracted_customer_name") or None,
+                "extracted_address": row.get("extracted_address") or None,
+                "extracted_phone": row.get("extracted_phone") or None,
+                "reason": "customer_extraction_confidence_low",
+            })
+            continue
         row = pending_rows.get(pending_id)
         if row is None:
             manual.append({
@@ -382,10 +440,11 @@ async def classify_pending_for_preview(
         name = row.get("extracted_customer_name") or ""
         address = row.get("extracted_address") or ""
         phone = row.get("extracted_phone") or ""
+        email = row.get("extracted_email") or ""
         has_signal = bool((name or "").strip()
                             or (address or "").strip()
                             or (phone or "").strip())
-        payload = {
+        payload: Dict[str, Any] = {
             "source_doc_index": source_doc_index,
             "pending_customer_id": pending_id,
             "extracted_name": name or None,
@@ -398,8 +457,36 @@ async def classify_pending_for_preview(
             payload["prior_resolved_customer_id"] = row[
                 "resolved_customer_id"
             ]
+            payload["dedup_group_id"] = compute_dedup_group_id(
+                name=name or None,
+                address=address or None,
+                phone=phone or None,
+            )
+            payload["auto_create_candidate"] = _build_auto_create_candidate(
+                name=name, email=email, phone=phone, address=address,
+            )
+            payload["fields_extracted"], payload["fields_missing"] = (
+                _candidate_field_coverage(
+                    name=name, email=email, phone=phone, address=address,
+                )
+            )
+            distinct_dedup_groups.add(payload["dedup_group_id"])
             will_auto.append(payload)
         elif has_signal:
+            payload["dedup_group_id"] = compute_dedup_group_id(
+                name=name or None,
+                address=address or None,
+                phone=phone or None,
+            )
+            payload["auto_create_candidate"] = _build_auto_create_candidate(
+                name=name, email=email, phone=phone, address=address,
+            )
+            payload["fields_extracted"], payload["fields_missing"] = (
+                _candidate_field_coverage(
+                    name=name, email=email, phone=phone, address=address,
+                )
+            )
+            distinct_dedup_groups.add(payload["dedup_group_id"])
             will_auto.append(payload)
         else:
             payload["reason"] = "no_identifying_info"
@@ -408,7 +495,68 @@ async def classify_pending_for_preview(
     return {
         "will_auto_create": will_auto,
         "will_require_manual_review": manual,
+        "summary": {
+            "will_auto_create_count": len(distinct_dedup_groups),
+            "manual_review_count": len(manual),
+        },
     }
+
+
+def _build_auto_create_candidate(
+    *,
+    name: Optional[str],
+    email: Optional[str],
+    phone: Optional[str],
+    address: Optional[str],
+) -> Dict[str, Any]:
+    """Shape the candidate payload the commit path would write
+    into ``db.customers`` for one pending row.  Mirrors the field
+    defaults the ``_insert_auto_customer`` helper applies, so the
+    preview UI sees exactly what commit will produce.
+
+    ``mailing_address`` is returned as a dict (``street`` / ``city``
+    / ``state`` / ``zip``) with the raw extracted address stuffed
+    into ``street`` — Feb-2026 ``pending_import_customers`` only
+    carries a flat ``extracted_address`` string.  Harder structured
+    address extraction is tracked as **TD-30**.
+    """
+    mailing_address: Optional[Dict[str, Any]]
+    if (address or "").strip():
+        mailing_address = {
+            "street": address.strip(),
+            "city": None, "state": None, "zip": None,
+        }
+    else:
+        mailing_address = None
+    return {
+        "name": (name or "").strip() or None,
+        "email": (email or "").strip() or None,
+        "phone": (phone or "").strip() or None,
+        "mailing_address": mailing_address,
+        "service_category": "both",
+    }
+
+
+def _candidate_field_coverage(
+    *,
+    name: Optional[str],
+    email: Optional[str],
+    phone: Optional[str],
+    address: Optional[str],
+) -> Tuple[List[str], List[str]]:
+    """Return (fields_extracted, fields_missing) for the FE
+    "— (not extracted)" tooltip.  Fields are enumerated in a
+    stable order so FE renderers and tests can rely on it.
+    """
+    coverage: List[Tuple[str, bool]] = [
+        ("name", bool((name or "").strip())),
+        ("email", bool((email or "").strip())),
+        ("phone", bool((phone or "").strip())),
+        ("mailing_address", bool((address or "").strip())),
+    ]
+    extracted = [k for k, has in coverage if has]
+    missing = [k for k, has in coverage if not has]
+    return extracted, missing
 
 
 # ═════════════════════════════════════════════════════════════
@@ -645,6 +793,38 @@ async def commit_batch(
         previews=previews, batch=batch, tenant_id=tenant_id,
         operator=operator, db=db,
     )
+
+    # ── Feb-2026 · auto-create UX ticket — audit log row ──
+    # Write ONE ``db.audit_logs`` row per commit with the full
+    # list of newly-created customer ids so operators can enumerate
+    # auto-created customers for a given batch without walking
+    # ``db.customers`` by provenance sentinel. Deduped matches
+    # (``action in {deduped_db, deduped_batch}``) are excluded —
+    # they didn't create a new row.
+    created_customer_ids = [
+        c.resolved_customer_id for c in autocreate_result.auto_created
+        if c.action == "created"
+    ]
+    if created_customer_ids:
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "action": "pdf_import.customers_auto_created",
+                "tenant_id": tenant_id,
+                "actor_id": (operator or {}).get("id"),
+                "batch_id": batch_id,
+                "created_customer_ids": created_customer_ids,
+                "source": "pdf_import",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as exc:  # noqa: BLE001
+            # Non-fatal — audit log is forensics, never block
+            # commit on a transient audit insert failure.
+            logger.warning(
+                "[pdf-import] audit_logs insert failed for "
+                "batch=%s tenant=%s (non-fatal): %s",
+                batch_id, tenant_id, exc,
+            )
 
     # ── Pre-flight: unresolved-customer gate ──────────────
     unresolved = collect_unresolved_customers(previews)
@@ -1646,10 +1826,22 @@ async def write_import_audit(
 # Public exception types (rewrapped as HTTPException by router)
 # ═════════════════════════════════════════════════════════════
 class UnresolvedCustomersError(Exception):
-    """Raised when a batch still carries PENDING:: sentinels."""
+    """Raised when a batch still carries PENDING:: sentinels.
 
-    def __init__(self, unresolved: List[UnresolvedCustomer]) -> None:
+    Feb-2026 · auto-create UX ticket — carries an
+    ``error_code`` attribute defaulting to
+    ``"customer_requires_manual_resolution"`` so the router can
+    rewrap as a structured 422 the FE can key off of.
+    """
+
+    def __init__(
+        self,
+        unresolved: List[UnresolvedCustomer],
+        *,
+        error_code: str = "customer_requires_manual_resolution",
+    ) -> None:
         self.unresolved = unresolved
+        self.error_code = error_code
         super().__init__(f"{len(unresolved)} unresolved customers")
 
 

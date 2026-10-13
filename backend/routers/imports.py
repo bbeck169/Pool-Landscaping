@@ -820,8 +820,23 @@ def _serialise_duplicates(dups) -> List[Dict[str, Any]]:
 def _serialise_unresolved(unresolved) -> List[Dict[str, Any]]:
     return [{
         "source_doc_index": u.source_doc_index,
+        # Feb-2026 · auto-create UX ticket — spec alias so FE
+        # consumers can key off ``row_index`` without reaching
+        # into ``source_doc_index``.
+        "row_index": u.source_doc_index,
         "extracted_customer_name": u.extracted_customer_name,
         "pending_customer_id": u.pending_customer_id,
+        "reason": getattr(u, "reason", None),
+        # Per-row error_code so the FE can distinguish
+        # low-confidence (Bug 3 demoted) rows from generic
+        # no-identifying-info pendings when rendering the
+        # resolve-customer picker amber warning.
+        "error_code": (
+            "customer_requires_manual_resolution"
+            if getattr(u, "reason", None)
+                == "customer_extraction_confidence_low"
+            else "customer_requires_manual_resolution"
+        ),
     } for u in unresolved]
 
 
@@ -977,21 +992,30 @@ async def commit_pdf_invoice_batch(
         #
         # Reset batch to preview_complete so the operator can
         # resolve pendings via H.3 UI and retry.
+        #
+        # Feb-2026 · auto-create UX ticket — status flipped from
+        # 400 → 422 with the new primary ``error_code``
+        # ``"customer_requires_manual_resolution"``. Legacy
+        # ``error="manual_review_required"`` + ``unresolved``
+        # aliases are preserved for pre-FE-update consumers.
         await db.import_batches.update_one(
             {"id": batch_id, "tenant_id": tenant_id},
             {"$set": {"status": _STATUS_PREVIEW_COMPLETE},
               "$unset": {"commit_started_at": ""}},
         )
         raise HTTPException(
-            status_code=400,
+            status_code=422,
             detail={
+                "error_code": exc.error_code,
+                # Legacy top-level ``error`` alias — preserved
+                # for pre-FE-update consumers.
                 "error": "manual_review_required",
                 "message": (
                     f"{len(exc.unresolved)} preview(s) carry "
-                    f"customer rows the auto-create helper "
-                    f"could not resolve (no name, address, or "
-                    f"phone captured); resolve via the admin "
-                    f"review UI before commit."
+                    f"customer rows that require manual "
+                    f"resolution before commit. Pick an "
+                    f"existing customer or type over the "
+                    f"extracted name to proceed."
                 ),
                 "manual_review_needed": _serialise_unresolved(
                     exc.unresolved,

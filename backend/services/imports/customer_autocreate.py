@@ -53,11 +53,12 @@ Side effects
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from utils import new_id
 
@@ -163,9 +164,20 @@ async def auto_create_pending_customers(
 
     Mutates ``previews`` in-place. See module docstring for
     the full contract.
+
+    Feb-2026 · auto-create UX ticket — pendings on previews
+    flagged ``customer_extraction_confidence == "low"`` (Bug 3
+    post-processor) are routed to ``manual_review_needed`` with
+    ``reason="customer_extraction_confidence_low"`` instead of
+    being auto-created.  Hard rule: low-confidence extractions
+    cannot mint real customer rows.
     """
     batch_id = batch.get("id") or batch.get("batch_id")
     result = AutoCreateResult()
+
+    # Collect low-confidence pending ids FIRST so we never
+    # auto-create for a row Bug 3 demoted.
+    low_conf_pids = collect_low_confidence_pending_ids(previews)
 
     # ── Phase 1: collect pending ids referenced by previews ──
     # Walk BOTH ``quote_in.customer_id`` AND ``payment_in.customer_id``
@@ -206,6 +218,20 @@ async def auto_create_pending_customers(
     for pending_id, refs in pending_refs.items():
         pending_row = pending_rows.get(pending_id)
         first_doc_idx = refs[0][0]
+
+        # Low-confidence gate — Bug 3 flagged this pending's name
+        # as doc-number-shaped. Never auto-create; route to
+        # manual_review for operator resolution.
+        if pending_id in low_conf_pids:
+            result.manual_review_needed.append(ManualReviewPreview(
+                source_doc_index=first_doc_idx,
+                pending_customer_id=pending_id,
+                extracted_name=(pending_row or {}).get(
+                    "extracted_customer_name"
+                ),
+                reason="customer_extraction_confidence_low",
+            ))
+            continue
 
         if pending_row is None:
             # The sentinel points at a pending row that no longer
@@ -379,6 +405,56 @@ def _build_dedupe_key(
     return f"phone:{norm_phone}"
 
 
+def compute_dedup_group_id(
+    *,
+    name: Optional[str],
+    address: Optional[str],
+    phone: Optional[str],
+) -> str:
+    """Public helper — stable short id for a (name, address, phone)
+    tuple using the same dedupe-key as the commit path. Used by
+    ``classify_pending_for_preview`` so the preview badge count
+    matches what commit actually produces.
+
+    Returns an 8-char hex digest of the dedupe key.  Collisions
+    are astronomically rare for the import-batch cardinality this
+    helper is called on (dozens of pending rows at most).
+    """
+    norm_name = _norm_text(name)
+    norm_addr = _norm_text(address)
+    norm_phone = _norm_phone(phone)
+    if not norm_name and not norm_addr and not norm_phone:
+        # Zero-signal row — caller should not call this; return a
+        # sentinel so collisions are impossible in practice.
+        return "zerosig_" + hashlib.sha256(
+            (name or address or phone or "").encode("utf-8")
+        ).hexdigest()[:8]
+    key = _build_dedupe_key(norm_name, norm_addr, norm_phone)
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
+def collect_low_confidence_pending_ids(
+    previews: List[Dict[str, Any]],
+) -> Set[str]:
+    """Walk previews and collect every ``pending_customer_id`` on
+    a row flagged by Bug 3's post-processor as
+    ``customer_extraction_confidence == "low"``.  Those pendings
+    MUST NOT auto-create — the extracted name is untrustworthy
+    (matched a doc-number pattern) and the operator has to resolve
+    manually before commit.
+    """
+    out: Set[str] = set()
+    for preview in previews or []:
+        for field_name in ("quote_in", "payment_in"):
+            sub = preview.get(field_name) or {}
+            if sub.get("customer_extraction_confidence") != "low":
+                continue
+            cid = sub.get("customer_id") or ""
+            if isinstance(cid, str) and cid.startswith("PENDING::"):
+                out.add(cid[len("PENDING::"):])
+    return out
+
+
 async def _find_existing_customer(
     *, db, tenant_id: str,
     norm_name: str, norm_addr: str, norm_phone: str,
@@ -441,6 +517,17 @@ async def _insert_auto_customer(
         # auto-created customers from operator-created ones.
         "source": "pdf_import",
         "created_via": "pdf_import_auto",
+        # Feb-2026 · auto-create UX ticket — explicit alias +
+        # service_category default. ``created_by`` is a sibling
+        # alias to ``source`` so audit queries that filter on
+        # ``created_by`` land auto-created rows without a schema
+        # migration. ``service_category="both"`` is the safe
+        # default per the ``customers.service_category`` enum
+        # (``pool`` | ``landscaping`` | ``both`` | ``unset``);
+        # operators may refine on the Customer Detail page after
+        # the batch commits.
+        "created_by": "pdf_import",
+        "service_category": "both",
         "created_by_user_id": (operator or {}).get("id"),
         "created_from_import_batch_id": batch_id,
     }
