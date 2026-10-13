@@ -622,6 +622,31 @@ async def create_quote(body: QuoteIn,
         await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
+    # ─── P2 #4 · Feb-2026 · ``quote.created_from_lead`` audit log ───
+    # Fires once per lead-recipient quote birth (quote OR invoice —
+    # both share this router). Admin-created only (``require_admin``
+    # dep above gates the handler). Non-blocking: an audit insert
+    # failure must never roll back a successfully-persisted quote,
+    # mirroring the existing ``quote.duplicated`` / ``quote.mark_sent``
+    # audit pattern upstream in this file.
+    if _rtype == "lead":
+        try:
+            _attach_src = (body.lead_attach_source or "unknown").strip() or "unknown"
+            await db.audit_logs.insert_one({
+                "event": "quote.created_from_lead",
+                "entity_kind": "quote",
+                "entity_id": doc["id"],
+                "quote_id": doc["id"],
+                "lead_id": _rid,
+                "source": _attach_src,
+                "actor_user_id": user.get("id"),
+                "tenant_id": tenant["id"],
+                "created_at": now_iso(),
+            })
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(
+                "quote.created_from_lead audit_logs insert failed: %s", _e,
+            )
     # Feb-2026 · Invoice inline edit + pricebook writeback fan-out.
     # Runs AFTER the invoice save transaction has settled so a
     # later invoice-save failure never mutates the pricebook.

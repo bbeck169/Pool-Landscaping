@@ -502,6 +502,14 @@ class QuoteIn(BaseModel):
     customer_id: Optional[str] = None
     recipient_type: Optional[str] = None  # 'customer' | 'lead'
     recipient_id: Optional[str] = None
+    # P2 #4 · Feb-2026 · Lead attribution for the ``quote.created_from_lead``
+    # audit log. Attribution values:
+    #   * ``from_lead_button``   → Lead-detail "Create Quote" nav (URL preselect)
+    #   * ``attached_in_form``   → operator picked a lead inside QuoteInvoiceNew
+    #   * ``unknown`` (default)  → caller did not pass this field
+    # Only honored when ``recipient_type=="lead"``. Non-blocking; whatever
+    # the frontend sends lands verbatim in the audit row.
+    lead_attach_source: Optional[str] = "unknown"
     title: str
     doc_type: str = "quote"  # quote | invoice
     line_items: List[LineItem] = []

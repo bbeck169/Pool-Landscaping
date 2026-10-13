@@ -519,6 +519,55 @@ async def _mark_accepted(est: dict, tenant_id: str, actor_id: str) -> None:
     await db.quotes.update_one(
         {"id": est["id"], "tenant_id": tenant_id}, {"$set": upd},
     )
+    # ─── P2 #4 · Feb-2026 · Lead auto-convert on quote accept ────────
+    # When the just-accepted doc was addressed to a Lead (Phase-2 B2
+    # Quote-to-Lead Recipient), funnel the lead through the SAME
+    # ``_run_close_won_pipeline`` the manual Close-Won button uses.
+    # Idempotency is inherited:
+    #   * pipeline short-circuits when ``lead.converted_customer_id``
+    #     is already set (returns ``idempotent=True``).
+    #   * reparent filter scopes to ``recipient_type="lead"`` so a
+    #     retry after the first run matches zero docs.
+    # Audit row fires ONLY on the transition (``idempotent is False``
+    # branch); replays are silent — matches the user-approved contract
+    # "we only audit the transition, not no-ops".
+    _rtype = (est.get("recipient_type") or "").lower()
+    _lid = est.get("recipient_id")
+    if _rtype == "lead" and _lid:
+        try:
+            from routers.leads import _run_close_won_pipeline as _lead_cwp
+            _lead = await db.leads.find_one(
+                {"id": _lid, "tenant_id": tenant_id}, {"_id": 0},
+            )
+            if _lead:
+                _result = await _lead_cwp(
+                    _lead, tenant_id, actor_user_id=actor_id,
+                )
+                if not _result.get("idempotent"):
+                    try:
+                        await db.audit_logs.insert_one({
+                            "event": "lead.converted_via_quote",
+                            "entity_kind": "lead",
+                            "entity_id": _lid,
+                            "lead_id": _lid,
+                            "quote_id": est.get("id"),
+                            "actor_user_id": actor_id,
+                            "tenant_id": tenant_id,
+                            "created_at": now_iso(),
+                        })
+                    except Exception as _audit_exc:  # noqa: BLE001
+                        logger.warning(
+                            "lead.converted_via_quote audit_logs insert "
+                            "failed: %s", _audit_exc,
+                        )
+        except Exception as _conv_exc:  # noqa: BLE001
+            # Fail-open: a conversion-pipeline hiccup must NOT roll back
+            # the accept. The accept itself already landed above; the
+            # lead can be re-converted manually via /leads/{id}/close-won.
+            logger.warning(
+                "[p2-4] auto-convert lead %s on quote %s accept failed: %s",
+                _lid, est.get("id"), _conv_exc,
+            )
     # Slice O.2 companion · fire the ``estimate_accepted`` drip event
     # into any active matching sequence. Best-effort — never breaks the
     # accept response.
