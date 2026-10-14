@@ -89,7 +89,8 @@ export default function LandscapeTechClockInGate({ children }: Props) {
         lat,
         lng,
         accuracy_m,
-        source: "mobile_gate",
+        // Backend PunchReq.source is Literal["mobile","web"] (422 otherwise).
+        source: "mobile",
         geo_denied,
       });
       setGeoStatus(null);

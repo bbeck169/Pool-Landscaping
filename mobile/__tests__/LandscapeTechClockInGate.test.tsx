@@ -149,7 +149,7 @@ describe("LandscapeTechClockInGate", () => {
         lat: 33.65,
         lng: -112.01,
         accuracy_m: 12,
-        source: "mobile_gate",
+        source: "mobile",
         geo_denied: false,
       });
     });
@@ -184,7 +184,7 @@ describe("LandscapeTechClockInGate", () => {
         lat: null,
         lng: null,
         accuracy_m: null,
-        source: "mobile_gate",
+        source: "mobile",
         geo_denied: true,
       });
     });
