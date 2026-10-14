@@ -34,24 +34,27 @@ export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
     open: "#EAF7F0",
     scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
-    // Phase 3 · Feb-2026 — "Bold red" completed (web parity, 5f89f2588).
-    // Was soft-pink #FDECEC → Tailwind red-600 #DC2626. Bumped to bright
-    // coral-red #ff4542 (web parity, 85fd76f17). Cards on this bg flip
-    // text/icons to white (white-on-#ff4542 ≈ 4.1:1 — AA large text).
-    completed: "#ff4542",
+    // Oct-2026 mobile hotfix — completed/closed cards RECEDE: soft green
+    // emerald-50 #ECFDF5 (was bold coral-red #ff4542, web 85fd76f17).
+    // Deliberate MOBILE-ONLY divergence from web (operator request: red
+    // was hard to read + visually dominant). Standard dark text stays.
+    completed: "#ECFDF5",
     cancelled: "#FECACA",
     skipped: "#FED7AA",
   });
 
-/** Bold-red completed bg + the white foreground used on it.
- *  Derived from the map (not a literal) so a future completed-hex bump
- *  can't silently drop the white-text flip in ``isBoldRedStatus``. */
-export const K50_BOLD_RED_BG = K50_JOB_STATUS_BG.completed;
-export const K50_ON_BOLD_RED_FG = "#FFFFFF";
+/** Receded completed-card treatment (Oct-2026 mobile hotfix).
+ *  BG derived from the map so the card + helpers can't drift apart.
+ *  On #ECFDF5: primary text #09090B ≈ 19:1, secondary #52525B ≈ 7.3:1
+ *  (replaces the old white flip; service-tag hues like #059669 would
+ *  sit < 4.5:1 on green), ✓ accent dark green #065F46 ≈ 7.3:1. */
+export const K50_COMPLETED_BG = K50_JOB_STATUS_BG.completed;
+export const K50_COMPLETED_MUTED_FG = "#52525B";
+export const K50_COMPLETED_ACCENT = "#065F46";
 
-/** True when the card bg is the bold-red completed treatment. */
-export function isBoldRedStatus(status?: string | null): boolean {
-  return jobStatusColor(status) === K50_BOLD_RED_BG;
+/** True for completed / closed / done (anything resolving to the completed bg). */
+export function isCompletedCardStatus(status?: string | null): boolean {
+  return jobStatusColor(status) === K50_COMPLETED_BG;
 }
 
 const _ALIAS: Readonly<Record<string, string>> = Object.freeze({

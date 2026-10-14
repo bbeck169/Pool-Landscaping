@@ -61,7 +61,7 @@ import JobTrackerTiles from "./JobTrackerTiles";
 import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
 // Web mirror: ``frontend/src/lib/jobStatus.js``.
-import { jobStatusColor as k50JobStatusColor, isBoldRedStatus, K50_ON_BOLD_RED_FG } from "@/src/lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor, isCompletedCardStatus, K50_COMPLETED_MUTED_FG, K50_COMPLETED_ACCENT } from "@/src/lib/jobStatus";
 import NavigateMapsButton from "@/src/components/schedule/NavigateMapsButton";
 // Phase B mobile parity (web 2f14a7ea5 + e5d6fa01e) — Optimize Route modal.
 import OptimizeRouteModal from "@/src/components/schedule/OptimizeRouteModal";
@@ -1566,8 +1566,10 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   const statusBorder = getStatusBorderColor(job.status);
   const k50CardBg = k50JobStatusColor(job.status) || colors.surface;
   // Phase 3 · bold-red completed card → white text/icons (web index.css cascade parity).
-  const onRed = isBoldRedStatus(job.status);
-  const fg = onRed ? { color: K50_ON_BOLD_RED_FG } : null;
+  // Oct-2026 hotfix · completed/closed cards recede (soft-green bg + border,
+  // ✓). Primary text stays standard; secondary text → AA-safe #52525B.
+  const done = isCompletedCardStatus(job.status);
+  const fg = done ? { color: K50_COMPLETED_MUTED_FG } : null;
   const _TERMINAL_STATUS = new Set(["completed", "canceled", "cancelled", "skipped", "could_not_service"]);
   const showOnMyWay = !_TERMINAL_STATUS.has((job.status || "").toLowerCase());
   const showDragHandle = rearrangeMode && isAdminForCard && onDrag;
@@ -1618,7 +1620,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             accessibilityLabel={`Open directions to ${formatCustomerName(job)}`}
             testID={`job-card-name-nav-${job.id}`}
           >
-            <Text style={[gStyles.cust, { flexShrink: 1 }, fg]} numberOfLines={1}>{formatCustomerName(job)}</Text>
+            <Text style={[gStyles.cust, { flexShrink: 1 }]} numberOfLines={1}>{formatCustomerName(job)}</Text>
           </Pressable>
           {job.customer_is_vip ? (
             <View style={gStyles.vipBadgeInline} testID={`job-vip-badge-${job.id}`}>
@@ -1652,7 +1654,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             accessibilityLabel={`Open directions to ${job.address}`}
             testID={`job-card-addr-nav-${job.id}`}
           >
-            <Text style={onRed ? { ...gStyles.addr, color: K50_ON_BOLD_RED_FG } : gStyles.addr} numberOfLines={1} ellipsizeMode="tail" testID={`job-card-addr-${job.id}`}>{job.address}</Text>
+            <Text style={done ? { ...gStyles.addr, color: K50_COMPLETED_MUTED_FG } : gStyles.addr} numberOfLines={1} ellipsizeMode="tail" testID={`job-card-addr-${job.id}`}>{job.address}</Text>
           </Pressable>
         ) : null}
         {job.property_label ? (
@@ -1730,7 +1732,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           <PendingSyncPill testID={`job-pending-sync-${job.id}`} />
         ) : null}
         <View style={gStyles.metaRow}>
-          <Ionicons name="reader-outline" size={12} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
+          <Ionicons name="reader-outline" size={12} color={done ? K50_COMPLETED_MUTED_FG : colors.muted} />
           <Text style={[gStyles.metaText, fg]}>{jobHours(job)}</Text>
           {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
         </View>
@@ -1780,12 +1782,23 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         </View>
       ) : (
         <View style={gStyles.cardRight}>
-          <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
-            <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
+          <View style={gStyles.cardRightTop}>
+            {done ? (
+              <View
+                testID={`job-card-done-check-${job.id}`}
+                accessible
+                accessibilityLabel="Completed"
+              >
+                <Ionicons name="checkmark-circle" size={18} color={K50_COMPLETED_ACCENT} />
+              </View>
+            ) : null}
+            <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
+              <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
+            </View>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <View testID={`grid-open-${job.id}`}>
-              <Ionicons name="chevron-forward" size={20} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
+              <Ionicons name="chevron-forward" size={20} color={done ? K50_COMPLETED_MUTED_FG : colors.muted} />
             </View>
             {isAdminForCard && onEdit ? (
               <Pressable
@@ -1795,7 +1808,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
                 accessibilityLabel="Edit job"
                 style={gStyles.editBtn}
               >
-                <Ionicons name="pencil-outline" size={16} color={onRed ? K50_ON_BOLD_RED_FG : colors.muted} />
+                <Ionicons name="pencil-outline" size={16} color={done ? K50_COMPLETED_MUTED_FG : colors.muted} />
               </Pressable>
             ) : null}
           </View>
@@ -2207,6 +2220,7 @@ const gStyles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1, borderColor: colors.border,
   },
+  cardRightTop: { flexDirection: "row", alignItems: "center", gap: 4 },
   cardRight: {
     alignSelf: "stretch",
     alignItems: "flex-end",
