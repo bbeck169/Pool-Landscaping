@@ -1814,3 +1814,14 @@
 - **Date**: 2026-10-12
 - **Changes**: iso() → device-local localDateKey (11 call sites); dayJobs/weekCounts/jobsByDay → jobDayKey (web P13: scheduled_date prefix, else tenant-local scheduled_start).
 - **Notes**: Jest sandboxes process.env → runtime TZ switch does NOT work in-worker; real 5-TZ matrix uses child Jest processes (P2_9_CHILD=1). schedule-hide-cancelled boundary regex updated (it locked the buggy expression text). Schedule sweep: 9 pre-existing failures identical pre/post (baseline @ac7f0ba00).
+
+## Iteration 124 — Hotfix · Time Clock Gate (pool-tech bypass + punch `source`)
+- **Commits**: 8d52ccb34 (Fix 2 · source) + the Fix 1 commit that includes this entry (`git log -1 -- mobile/src/utils/clockInGate.ts`)
+- **Date**: 2026-10-12
+- **Changes**:
+  - Fix 2: `LandscapeTechClockInGate` POST `/timeclock/punch` sent `source: "mobile_gate"` → backend `PunchIn.source: Literal["mobile","web"]` 422 ("Input should be 'mobile' or 'web'"). Now `"mobile"`. Other punch sites (`LandscapingClockWidget`, `landscape-time-clock`) already sent `"mobile"`; `/workforce/clock-in|out` have no `source` field (untouched). No central wrapper → patched the call site.
+  - Fix 1: discriminator = `users.role === "technician"` + `users.department` (returned by `/auth/login` + `/auth/me`; preview values: pool_tech, landscaping, north, south, null). Added `isPoolTech()` (pool, pools, pool_tech, pool_technician, pool_service; trimmed/lowercased/space+hyphen→_), which wins over `isLandscapeTech()`. `useClockInStatus(enabled)` skips the `/timeclock/mine-status` probe for non-gated users (was probing + 403ing for every user). `both` stays gated (web parity / default gate-ON).
+- **Files modified**: mobile/src/components/LandscapeTechClockInGate.tsx, mobile/src/utils/clockInGate.ts, mobile/__tests__/LandscapeTechClockInGate.test.tsx
+- **Web/backend files referenced (read-only)**: frontend/src/hooks/useClockInGate.jsx, backend/routers/timeclock_landscaping.py, backend/routers/workforce.py
+- **Tests**: gate suite 15/15 (was 6). Clock-related sweep: 3 suites (schedule-map-toggle, k32-tech-scoped-schedule, dashboard-active-inactive-tiles) fail identically at pre-fix baseline ("Cannot read 'bg'" theme-mock drift) — pre-existing.
+- **Note**: Templates Library Phase 3 brief re-dispatched again this turn — already shipped 2026-10-08 (PRD §5); not re-implemented. No external repo cloned.

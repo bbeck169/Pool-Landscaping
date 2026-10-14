@@ -31,13 +31,13 @@ interface Props {
 export default function LandscapeTechClockInGate({ children }: Props) {
   const { user } = useAuth();
   const gated = isLandscapeTech(user as any);
-  const { clockedIn, loading, refetch } = useClockInStatus();
+  const { clockedIn, loading, refetch } = useClockInStatus(gated);
 
   const [punching, setPunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [geoStatus, setGeoStatus] = useState<string | null>(null);
 
-  // Not a landscape tech → pass through immediately
+  // Not a landscape tech (pool tech, admin, …) → pass through immediately
   if (!gated) return <>{children}</>;
 
   // Still loading clock-in status → show a subtle loader, not the gate

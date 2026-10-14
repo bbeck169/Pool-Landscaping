@@ -12,6 +12,7 @@ import React from "react";
 import { Text } from "react-native";
 import { render, fireEvent, waitFor, act } from "@testing-library/react-native";
 import LandscapeTechClockInGate from "@/src/components/LandscapeTechClockInGate";
+import { isLandscapeTech, isPoolTech } from "@/src/utils/clockInGate";
 
 /* ── Mocks ─────────────────────────────────────────────────────── */
 
@@ -188,5 +189,66 @@ describe("LandscapeTechClockInGate", () => {
         geo_denied: true,
       });
     });
+  });
+
+  /* ── Hotfix · pool techs bypass the gate ─────────────────────── */
+  it.each(["pool_tech", "pool", "Pool Tech", "pool-tech", " POOL_TECH "])(
+    "7. pool tech (department=%j) → children render, no mine-status probe",
+    async (department) => {
+      mockUser = { id: "u7", role: "technician", department, name: "Mike" };
+      mockApiGet.mockResolvedValue({ clocked_in: false });
+
+      const { getByTestId, queryByTestId } = renderGate();
+      expect(getByTestId("child-content")).toBeTruthy();
+      expect(queryByTestId("landscape-clock-gate")).toBeNull();
+      await act(async () => {});
+      expect(mockApiGet).not.toHaveBeenCalled();
+      expect(queryByTestId("landscape-clock-gate-in-btn")).toBeNull();
+    },
+  );
+
+  it("8. cross-trained (department=both) + not clocked in → still gated", async () => {
+    mockUser = { id: "u8", role: "technician", department: "both", name: "Carlos" };
+    mockApiGet.mockResolvedValue({ clocked_in: false });
+
+    const { getByTestId, queryByTestId } = renderGate();
+    await waitFor(() => {
+      expect(getByTestId("landscape-clock-gate-in-btn")).toBeTruthy();
+    });
+    expect(queryByTestId("child-content")).toBeNull();
+    expect(mockApiGet).toHaveBeenCalledWith("/timeclock/mine-status");
+  });
+
+  it("9. landscape dept normalisation (\"Landscaping \") → gated", async () => {
+    mockUser = { id: "u9", role: "technician", department: "Landscaping ", name: "Luis" };
+    mockApiGet.mockResolvedValue({ clocked_in: false });
+
+    const { getByTestId } = renderGate();
+    await waitFor(() => {
+      expect(getByTestId("landscape-clock-gate-in-btn")).toBeTruthy();
+    });
+  });
+});
+
+describe("clockInGate discriminator (users.role + users.department)", () => {
+  it("isPoolTech: pool-family depts for technicians only", () => {
+    expect(isPoolTech({ role: "technician", department: "pool_tech" })).toBe(true);
+    expect(isPoolTech({ role: "technician", department: "Pool Technician" })).toBe(true);
+    expect(isPoolTech({ role: "admin", department: "pool_tech" })).toBe(false);
+    expect(isPoolTech({ role: "technician", department: "landscaping" })).toBe(false);
+    expect(isPoolTech({ role: "technician", department: "both" })).toBe(false);
+    expect(isPoolTech(null)).toBe(false);
+  });
+
+  it("isLandscapeTech: pool never gated; landscape family + both gated; others untouched", () => {
+    expect(isLandscapeTech({ role: "technician", department: "pool_tech" })).toBe(false);
+    expect(isLandscapeTech({ role: "technician", department: "pool" })).toBe(false);
+    expect(isLandscapeTech({ role: "technician", department: "landscaping" })).toBe(true);
+    expect(isLandscapeTech({ role: "technician", department: "landscape_tech" })).toBe(true);
+    expect(isLandscapeTech({ role: "technician", department: "landscaper" })).toBe(true);
+    expect(isLandscapeTech({ role: "technician", department: "both" })).toBe(true);
+    expect(isLandscapeTech({ role: "admin", department: "landscaping" })).toBe(false);
+    expect(isLandscapeTech({ role: "technician", department: undefined })).toBe(false);
+    expect(isLandscapeTech({ role: "technician", department: "north" })).toBe(false);
   });
 });
