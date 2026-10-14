@@ -705,6 +705,134 @@ function _SortableBlockCard({
 }
 
 
+// ─── P2 #11 · Phase 2 (TD-42) · Feb-2026 — column nesting controls ───
+//
+// Per-column Flat → Nested one-way migration surface rendered inside
+// the Properties inspector when a ``columns_2`` / ``columns_3`` block
+// is selected.  The backend renderer already walks ``children`` (and
+// falls back to flat ``*_html``) so this UI only has to flip the
+// data shape:
+//
+//     block.props.left_html = "<p>Hi</p>"
+//     block.children[0] = []
+//        → click "Convert left to nested blocks"
+//     block.props.left_html = ""
+//     block.children[0] = [{type:"text", props:{html:"<p>Hi</p>"}}]
+//
+// After conversion the author can add further nested blocks via the
+// "Add text block" affordance.  Reverting back to Flat is NOT offered
+// — it would silently drop any additional children the author
+// added.  See TD-48 for the canvas-side drag-zone follow-up.
+
+const _COLUMN_SLOTS = {
+  columns_2: [
+    { key: "left_html", label: "Left column", idx: 0 },
+    { key: "right_html", label: "Right column", idx: 1 },
+  ],
+  columns_3: [
+    { key: "left_html", label: "Left column", idx: 0 },
+    { key: "middle_html", label: "Middle column", idx: 1 },
+    { key: "right_html", label: "Right column", idx: 2 },
+  ],
+};
+
+
+function _ColumnNestingControls({ block, blockIdx, setBlocks }) {
+  const slots = _COLUMN_SLOTS[block.type] || [];
+  const children = Array.isArray(block.children)
+    ? block.children
+    : slots.map(() => []);
+
+  const migrateToNested = (slot) => {
+    setBlocks((xs) => xs.map((b, i) => {
+      if (i !== blockIdx) return b;
+      const nextChildren = [...(b.children || slots.map(() => []))];
+      // Ensure arrays exist for every slot (schema invariant).
+      while (nextChildren.length < slots.length) nextChildren.push([]);
+      const flat = (b[slot.key] || "").trim();
+      nextChildren[slot.idx] = flat
+        ? [{ type: "text", props: { html: flat } }]
+        : [];
+      const nextProps = { ...b, children: nextChildren };
+      nextProps[slot.key] = "";  // clear the flat value
+      return nextProps;
+    }));
+  };
+
+  const addNestedText = (slot) => {
+    setBlocks((xs) => xs.map((b, i) => {
+      if (i !== blockIdx) return b;
+      const nextChildren = [...(b.children || slots.map(() => []))];
+      while (nextChildren.length < slots.length) nextChildren.push([]);
+      nextChildren[slot.idx] = [
+        ...nextChildren[slot.idx],
+        { type: "text", props: { html: "<p>New text</p>" } },
+      ];
+      return { ...b, children: nextChildren };
+    }));
+  };
+
+  return (
+    <div
+      className="rounded p-2 space-y-2"
+      style={{
+        background: colors.surfaceSecondary,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid={`comms-email-column-nesting-${blockIdx}`}
+    >
+      <div className="text-[11px] font-bold uppercase tracking-wider"
+           style={{ color: colors.muted }}>
+        Column mode
+      </div>
+      {slots.map((slot) => {
+        const kids = children[slot.idx] || [];
+        const isNested = kids.length > 0;
+        return (
+          <div key={slot.key} className="flex items-center justify-between gap-2">
+            <div className="text-xs" style={{ color: colors.onSurface }}>
+              <strong>{slot.label}</strong>
+              <span className="ml-1" style={{ color: colors.muted }}>
+                {isNested ? `nested · ${kids.length} block${kids.length === 1 ? "" : "s"}` : "flat HTML"}
+              </span>
+            </div>
+            {isNested ? (
+              <button
+                type="button"
+                onClick={() => addNestedText(slot)}
+                className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{ background: colors.brand, color: "#fff" }}
+                data-testid={`comms-email-column-add-${blockIdx}-${slot.idx}`}
+              >
+                + Text
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => migrateToNested(slot)}
+                className="text-[10px] font-bold px-2 py-0.5 rounded"
+                style={{
+                  background: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                  color: colors.onSurface,
+                }}
+                data-testid={`comms-email-column-convert-${blockIdx}-${slot.idx}`}
+              >
+                → Nested
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <div className="text-[10px]" style={{ color: colors.muted }}>
+        Nested blocks render inside the column at send time.
+        Columns-inside-columns are not supported.
+      </div>
+    </div>
+  );
+}
+
+
 // Field keys that render as inline WYSIWYG in the Phase 1 inspector.
 // Q3-A: text + heading + footer + columns_* HTML slots. The ``mode``
 // value controls the serialization — plain text for heading.text (to
@@ -726,6 +854,10 @@ export function CommsEmailBuilder() {
   const [code, setCode] = useState(isNew ? "" : routeCode);
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
+  // P2 #11 · Phase 2 (TD-43) — preheader input value.
+  const [previewText, setPreviewText] = useState("");
+  // P2 #11 · Phase 2 (TD-44) — UTM admin modal visibility.
+  const [showUtmModal, setShowUtmModal] = useState(false);
   const [blocks, setBlocks] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(null);
   const [tokenPicker, setTokenPicker] = useState(null); // {onInsert}
@@ -755,6 +887,7 @@ export function CommsEmailBuilder() {
     if (isNew) return;
     getEmailTemplate(routeCode).then((d) => {
       setCode(d.code); setName(d.name || ""); setSubject(d.subject || "");
+      setPreviewText(d.preview_text || "");  // P2 #11 Phase 2 (TD-43)
       setBlocks(Array.isArray(d.blocks_json) ? d.blocks_json : []);
       setIsSystem(!!d.is_system);
     }).catch((e) => setToast({ tone: "error", message: e.message }));
@@ -789,7 +922,16 @@ export function CommsEmailBuilder() {
   const save = async () => {
     if (!code.trim() || !name.trim()) { setToast({ tone: "error", message: "Code and name are required" }); return; }
     setBusy(true);
-    const payload = { code: code.trim(), name: name.trim(), subject, blocks_json: blocks };
+    const payload = {
+      code: code.trim(),
+      name: name.trim(),
+      subject,
+      blocks_json: blocks,
+      // P2 #11 · Phase 2 (TD-43) — Send empty-string on save so the
+      // server's PATCH handler clears the preview_text field to
+      // null (treats "" as explicit clear).
+      preview_text: previewText,
+    };
     try {
       if (isNew) {
         const saved = await createEmailTemplate(payload);
@@ -934,8 +1076,60 @@ export function CommsEmailBuilder() {
                    style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
                    data-testid="comms-email-subject" />
           </label>
+          {/* P2 #11 · Phase 2 (TD-43) — preheader input. 150-char
+               hard cap matches the Pydantic validator at
+               ``routers/comms.py::EmailTemplateIn.preview_text``.
+               Omitted / empty → server stores null + renderer
+               skips the preheader span entirely. */}
+          <label className="block">
+            <div
+              className="text-xs font-bold uppercase tracking-wider mb-1 flex items-center justify-between"
+              style={{ color: colors.muted }}
+            >
+              <span>Preview text</span>
+              <span className="text-[10px] font-normal normal-case tracking-normal"
+                    style={{ color: colors.muted }}
+                    data-testid="comms-email-preview-text-counter">
+                {previewText.length} / 150
+              </span>
+            </div>
+            <input
+              value={previewText}
+              onChange={(e) => setPreviewText(e.target.value.slice(0, 150))}
+              placeholder="Shown in inbox preview under the subject line."
+              className="w-full text-sm px-2 py-1.5 rounded"
+              style={{
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+              }}
+              maxLength={150}
+              data-testid="comms-email-preview-text"
+            />
+          </label>
+          {/* P2 #11 · Phase 2 (TD-44) — UTM admin modal trigger. */}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowUtmModal(true)}
+              className="text-xs underline"
+              style={{ color: colors.muted }}
+              data-testid="comms-email-utm-settings"
+            >
+              UTM link settings
+            </button>
+          </div>
         </div>
       </Card>
+
+      {/* P2 #11 · Phase 2 (TD-44) — UTM admin modal. */}
+      {showUtmModal ? (
+        <_UtmSettingsModal
+          onClose={() => setShowUtmModal(false)}
+          onSaved={(_v) => setToast({ tone: "success",
+                                       message: "UTM settings saved" })}
+        />
+      ) : null}
 
       <div className="grid grid-cols-12 gap-4">
         {/* P2 #11 · Phase 1 · Feb-2026 — DnD-aware palette + canvas.
@@ -1002,6 +1196,21 @@ export function CommsEmailBuilder() {
           ) : (
             <div className="space-y-3">
               <div className="text-sm font-bold" style={{ color: colors.onSurface }}>{selected.type}</div>
+              {/* P2 #11 · Phase 2 (TD-42) · Feb-2026 — Flat ↔ Nested
+                   per-column conversion.  One-way migration: the
+                   per-column ``*_html`` flat string gets wrapped in
+                   a single ``text`` child block and ``*_html`` is
+                   cleared.  Reverse direction is NOT offered (would
+                   silently drop any blocks the author added to
+                   ``children[i]``).  See TD-48 for the canvas-side
+                   drop-zone follow-up. */}
+              {(selected.type === "columns_2" || selected.type === "columns_3") ? (
+                <_ColumnNestingControls
+                  block={selected}
+                  blockIdx={selectedIdx}
+                  setBlocks={setBlocks}
+                />
+              ) : null}
               {selectedSpec.map((f) => {
                 const val = selected[f.k] ?? "";
                 const change = (v) => updateBlockField(selectedIdx, f.k, f.type === "number" ? Number(v) : v);
@@ -1237,6 +1446,165 @@ export function CommsSmsBuilder() {
     </div>
   );
 }
+
+// ─── P2 #11 · Phase 2 (TD-44) · Feb-2026 — UTM admin modal ───────────
+function _UtmSettingsModal({ onClose, onSaved }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const [utm, setUtm] = useState({
+    utm_source: "", utm_medium: "", utm_campaign: "",
+    utm_content: "", utm_term: "",
+  });
+  const [source, setSource] = useState("module_default");
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/comms/tenants/current/email-utm").then((d) => {
+      if (cancelled) return;
+      setEnabled(Boolean(d.link_wrapping_enabled));
+      const vals = d.utm_defaults || {};
+      setUtm({
+        utm_source: vals.utm_source || "",
+        utm_medium: vals.utm_medium || "",
+        utm_campaign: vals.utm_campaign || "",
+        utm_content: vals.utm_content || "",
+        utm_term: vals.utm_term || "",
+      });
+      setSource(d.defaults_source || "module_default");
+    }).catch((e) => setErr(e?.message || "load failed"))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const utm_defaults = {};
+      for (const [k, v] of Object.entries(utm)) {
+        if ((v || "").trim()) utm_defaults[k] = v.trim();
+      }
+      const res = await api.patch(
+        "/comms/tenants/current/email-utm",
+        { utm_defaults, link_wrapping_enabled: enabled },
+      );
+      onSaved?.(res);
+      onClose();
+    } catch (e) {
+      setErr(e?.data?.detail?.msg || e?.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = () => {
+    setUtm({ utm_source: "", utm_medium: "", utm_campaign: "",
+             utm_content: "", utm_term: "" });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(0,0,0,0.55)" }}
+      onClick={onClose}
+      data-testid="comms-email-utm-modal"
+    >
+      <div
+        className="rounded-2xl w-full max-w-xl shadow-xl overflow-hidden"
+        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="px-4 py-3 flex items-center justify-between"
+          style={{ borderBottom: `1px solid ${colors.border}` }}
+        >
+          <div className="font-bold" style={{ color: colors.onSurface }}>
+            UTM link settings
+          </div>
+          <button onClick={onClose}>
+            <XIcon size={18} style={{ color: colors.muted }} />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          {loading ? (
+            <div className="text-xs" style={{ color: colors.muted }}>
+              Loading…
+            </div>
+          ) : (
+            <>
+              <label className="flex items-center gap-2 text-xs"
+                     style={{ color: colors.onSurface }}>
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) => setEnabled(e.target.checked)}
+                  data-testid="comms-email-utm-enabled"
+                />
+                Enable link wrapping on outbound email
+              </label>
+              <div className="text-[11px]" style={{ color: colors.muted }}>
+                Source: <strong>{source}</strong>. Supported placeholders
+                in values: <code>{"{{template.code}}"}</code>.
+              </div>
+              {["utm_source", "utm_medium", "utm_campaign",
+                "utm_content", "utm_term"].map((k) => (
+                <label key={k} className="block">
+                  <div className="text-[11px] font-bold uppercase tracking-wider mb-0.5"
+                       style={{ color: colors.muted }}>
+                    {k}
+                  </div>
+                  <input
+                    value={utm[k]}
+                    onChange={(e) => setUtm((v) => ({ ...v, [k]: e.target.value }))}
+                    className="w-full text-xs px-2 py-1 rounded"
+                    style={{
+                      background: colors.surface,
+                      border: `1px solid ${colors.border}`,
+                      color: colors.onSurface,
+                    }}
+                    data-testid={`comms-email-utm-${k}`}
+                  />
+                </label>
+              ))}
+              {err ? (
+                <div className="text-xs" style={{ color: "#991B1B" }}>
+                  {err}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div
+          className="px-4 py-3 flex items-center justify-between"
+          style={{ borderTop: `1px solid ${colors.border}` }}
+        >
+          <button
+            type="button"
+            onClick={reset}
+            className="text-xs underline"
+            style={{ color: colors.muted }}
+            data-testid="comms-email-utm-reset"
+          >
+            Clear overrides (use module defaults)
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || loading}
+            className="text-xs font-bold px-3 py-1.5 rounded"
+            style={{ background: colors.brand, color: "#fff",
+                     opacity: (saving || loading) ? 0.6 : 1 }}
+            data-testid="comms-email-utm-save"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function PreviewModal({ preview, onClose, kind, viewport = "desktop", onViewportChange }) {
   if (!preview) return null;
