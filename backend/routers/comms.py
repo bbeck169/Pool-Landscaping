@@ -28,6 +28,10 @@ from services.comm_tokens import (
 from services.comms_email_adapter import send_email
 from services.comms_sms_adapter import send_sms, sms_length_stats
 from services.comms_env_guard import CommsContext
+# P2 #11 · Phase 2 (TD-44) · Feb-2026 — UTM link wrapping on
+# outbound email HTML. Applied in ``_deliver_one``, the preview
+# endpoint, and the Phase 1 test-send endpoint.
+from services.email_link_wrapper import wrap_links as _wrap_email_links
 
 
 router = APIRouter(prefix="/comms", tags=["Communications"])
@@ -72,6 +76,24 @@ def _validate_blocks_json(blocks: list) -> None:
             ch = b.get("children")
             if not (isinstance(ch, list) and len(ch) == need and all(isinstance(c, list) for c in ch)):
                 raise HTTPException(422, f"block[{i}] columns require exactly {need} child arrays")
+            # P2 #11 · Phase 2 (TD-42) · Feb-2026 — depth guard.
+            # Columns-inside-columns is NOT supported (renderer
+            # would recurse but the UX blows up and the final HTML
+            # becomes unreadable on narrow viewports). Reject at
+            # the validation boundary with a stable error code so
+            # the FE can show a clean toast.
+            for col_idx, col in enumerate(ch):
+                for child_idx, child in enumerate(col):
+                    if not isinstance(child, dict):
+                        continue
+                    if (child.get("type") in ("columns_2", "columns_3")):
+                        raise HTTPException(
+                            400,
+                            {"code": "nested_columns_unsupported",
+                             "msg": (f"block[{i}].children[{col_idx}]"
+                                      f"[{child_idx}] — columns-inside-"
+                                      "columns is not supported.")},
+                        )
 
 
 def _load_company(tenant: dict) -> Dict[str, Any]:
@@ -84,6 +106,57 @@ def _load_company(tenant: dict) -> Dict[str, Any]:
         "portal_link": tenant.get("portal_link") or tenant.get("portal_url") or "",
         "address": tenant.get("address") or "",
     }
+
+
+# P2 #11 · Phase 2 (TD-44) · Feb-2026 — tenant-scoped UTM defaults.
+
+_DEFAULT_EMAIL_UTM = {
+    "utm_source": "email",
+    "utm_medium": "transactional",
+    "utm_campaign": "{{template.code}}",
+    "utm_content": "{{template.code}}",
+}
+
+
+def _resolve_tenant_utm(tenant: dict) -> Dict[str, str]:
+    """Return the UTM param set to use for this tenant's outbound
+    email links.  Falls back to the module default when the tenant
+    row has no override.
+    """
+    override = tenant.get("email_utm_defaults")
+    if isinstance(override, dict) and override:
+        return {str(k): str(v) for k, v in override.items() if v}
+    return dict(_DEFAULT_EMAIL_UTM)
+
+
+def _tenant_link_wrapping_enabled(tenant: dict) -> bool:
+    """Kill-switch for the UTM wrapper.  Defaults to True — tenants
+    that explicitly disable the feature set
+    ``email_link_wrapping_enabled: False`` on their doc.
+    """
+    val = tenant.get("email_link_wrapping_enabled")
+    if val is None:
+        return True
+    return bool(val)
+
+
+def _wrap_email_html(html: str, tenant: dict, template_code: str,
+                      ctx: Dict[str, Any]) -> str:
+    """Apply the Phase 2 UTM wrapper to a rendered email HTML string.
+
+    ``ctx`` carries the token resolution context; we overlay a
+    ``template.code`` entry so the ``{{template.code}}`` default
+    UTM values resolve correctly without the caller having to
+    plumb it into the base context.
+    """
+    overlay = dict(ctx or {})
+    if template_code and "template.code" not in overlay:
+        overlay["template.code"] = template_code
+    return _wrap_email_links(
+        html, overlay,
+        utm_defaults=_resolve_tenant_utm(tenant),
+        enabled=_tenant_link_wrapping_enabled(tenant),
+    )
 
 
 def _clean_doc(d: dict) -> dict:
@@ -112,6 +185,12 @@ class EmailTemplateIn(BaseModel):
     subject: str
     blocks_json: List[Dict[str, Any]]
     is_customer_facing: bool = True
+    # P2 #11 · Phase 2 (TD-43) — optional preheader shown by inbox
+    # clients beneath the subject.  Max-length matches the standard
+    # 150-char cap (longer values get silently trimmed in the
+    # renderer; the client-side input and this validator both cap
+    # at 150).  Token-substitutable via ``resolve_tokens``.
+    preview_text: Optional[str] = Field(default=None, max_length=150)
 
 
 class EmailTemplatePatch(BaseModel):
@@ -120,6 +199,7 @@ class EmailTemplatePatch(BaseModel):
     subject: Optional[str] = None
     blocks_json: Optional[List[Dict[str, Any]]] = None
     is_customer_facing: Optional[bool] = None
+    preview_text: Optional[str] = Field(default=None, max_length=150)
 
 
 class SmsTemplateIn(BaseModel):
@@ -232,6 +312,7 @@ async def create_email_template(body: EmailTemplateIn,
         "description": body.description or "",
         "subject": body.subject,
         "blocks_json": body.blocks_json,
+        "preview_text": body.preview_text,  # P2 #11 Phase 2 (TD-43)
         "is_system": False,
         "is_customer_facing": bool(body.is_customer_facing),
         "version": 1,
@@ -260,6 +341,10 @@ async def patch_email_template(code: str, body: EmailTemplatePatch,
         updates["blocks_json"] = body.blocks_json
     if body.is_customer_facing is not None:
         updates["is_customer_facing"] = bool(body.is_customer_facing)
+    if body.preview_text is not None:  # P2 #11 Phase 2 (TD-43)
+        # Treat "" as explicit clear (write null so renderer skips
+        # the preheader span).
+        updates["preview_text"] = body.preview_text or None
     if not updates:
         return _clean_doc(existing)
     updates["updated_at"] = now_iso()
@@ -330,7 +415,11 @@ async def preview_email_template(code: str, body: PreviewIn,
     if body.sample_data:
         ctx.update(body.sample_data)
     subject = resolve_email_subject(tpl.get("subject") or "", ctx)
-    html = render_email_html(tpl.get("blocks_json") or [], ctx)
+    html = render_email_html(
+        tpl.get("blocks_json") or [], ctx,
+        preview_text=tpl.get("preview_text"),  # P2 #11 Phase 2 (TD-43)
+    )
+    html = _wrap_email_html(html, tenant, code, ctx)  # P2 #11 Phase 2 (TD-44)
     return {
         "subject": subject,
         "html": html,
@@ -505,7 +594,11 @@ async def test_send_email_template(
 
     subject_raw = resolve_email_subject(tpl.get("subject") or "", ctx)
     subject = f"[TEST] {subject_raw}" if subject_raw else "[TEST]"
-    html = render_email_html(tpl.get("blocks_json") or [], ctx)
+    html = render_email_html(
+        tpl.get("blocks_json") or [], ctx,
+        preview_text=tpl.get("preview_text"),  # P2 #11 Phase 2 (TD-43)
+    )
+    html = _wrap_email_html(html, tenant, code, ctx)  # P2 #11 Phase 2 (TD-44)
 
     try:
         deliver = await send_email(
@@ -543,6 +636,93 @@ async def test_send_email_template(
         "subject": subject,
         "provider_message_id": deliver.get("provider_id"),
         "error": deliver.get("error"),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# P2 #11 · Phase 2 (TD-44) · Feb-2026 — Tenant UTM admin endpoints.
+# ═══════════════════════════════════════════════════════════════════════
+# Admin-only CRUD for the per-tenant UTM override.  The persisted doc
+# lives on the tenant row at ``tenants.email_utm_defaults`` (dict) and
+# ``tenants.email_link_wrapping_enabled`` (bool).  When neither is
+# set, outbound email uses the module-level ``_DEFAULT_EMAIL_UTM``
+# defined above.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class EmailUtmPatchIn(BaseModel):
+    utm_defaults: Optional[Dict[str, str]] = None
+    link_wrapping_enabled: Optional[bool] = None
+
+
+@router.get("/tenants/current/email-utm")
+async def get_tenant_email_utm(
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the tenant's current UTM defaults + wrapping toggle.
+
+    ``utm_defaults`` falls back to the module-level ``_DEFAULT_EMAIL_UTM``
+    when the tenant has no override on file.  ``link_wrapping_enabled``
+    defaults to ``True``.
+    """
+    return {
+        "utm_defaults": _resolve_tenant_utm(tenant),
+        "link_wrapping_enabled": _tenant_link_wrapping_enabled(tenant),
+        "defaults_source": (
+            "tenant_override" if isinstance(tenant.get("email_utm_defaults"), dict)
+            and tenant.get("email_utm_defaults") else "module_default"
+        ),
+    }
+
+
+@router.patch("/tenants/current/email-utm")
+async def patch_tenant_email_utm(
+    body: EmailUtmPatchIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Persist the tenant's UTM override + wrapping toggle.
+
+    Empty ``utm_defaults={}`` clears the override (next read falls
+    back to the module default).  Omitting a field preserves it.
+    """
+    updates: Dict[str, Any] = {}
+    if body.utm_defaults is not None:
+        # Validate: whitelist a safe set of keys.  utm_source /
+        # utm_medium / utm_campaign / utm_content / utm_term are
+        # the Google-standard channel keys; anything else gets
+        # rejected to keep the wire payload small + predictable.
+        allowed = {"utm_source", "utm_medium", "utm_campaign",
+                     "utm_content", "utm_term"}
+        unknown = set(body.utm_defaults.keys()) - allowed
+        if unknown:
+            raise HTTPException(
+                400,
+                {"code": "unknown_utm_key",
+                 "msg": (f"unsupported UTM key(s): {sorted(unknown)}. "
+                          f"Allowed: {sorted(allowed)}")},
+            )
+        # Trim/normalize string values; drop empties.
+        clean = {k: str(v).strip()
+                  for k, v in body.utm_defaults.items()
+                  if str(v or "").strip()}
+        updates["email_utm_defaults"] = clean
+    if body.link_wrapping_enabled is not None:
+        updates["email_link_wrapping_enabled"] = bool(body.link_wrapping_enabled)
+    if not updates:
+        # No-op; mirror the current tenant state.
+        return await get_tenant_email_utm(user=user, tenant=tenant)
+    updates["updated_at"] = now_iso()
+    await db.tenants.update_one({"id": tenant["id"]}, {"$set": updates})
+    merged = {**tenant, **updates}
+    return {
+        "utm_defaults": _resolve_tenant_utm(merged),
+        "link_wrapping_enabled": _tenant_link_wrapping_enabled(merged),
+        "defaults_source": (
+            "tenant_override" if isinstance(merged.get("email_utm_defaults"), dict)
+            and merged.get("email_utm_defaults") else "module_default"
+        ),
     }
 
 
@@ -1318,7 +1498,15 @@ async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
                 company, unsub_url, extras=extras,
             ))
             subject = resolve_email_subject(tpl.get("subject") or "", ctx)
-            html = render_email_html(tpl.get("blocks_json") or [], ctx)
+            html = render_email_html(
+                tpl.get("blocks_json") or [], ctx,
+                preview_text=tpl.get("preview_text"),  # P2 #11 Phase 2 (TD-43)
+            )
+            # P2 #11 · Phase 2 (TD-44) · Feb-2026 — UTM wrap for every
+            # outbound href on this delivery. The wrapper is a passthrough
+            # when the tenant has set ``email_link_wrapping_enabled=False``.
+            tenant_doc = await db.tenants.find_one({"id": tenant_id}) or {}
+            html = _wrap_email_html(html, tenant_doc, template_code, ctx)
             try:
                 deliver = await send_email(tenant_id, contact, subject, html,
                                              from_name=company.get("name") or None,

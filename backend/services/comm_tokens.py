@@ -263,8 +263,28 @@ def _render_block(b: Dict[str, Any]) -> str:  # noqa: C901
         except Exception:
             left_pct, right_pct = 50, 50
         children = b.get("children") or [[], []]
-        left = "".join(_render_block(cb) for cb in (children[0] if len(children) > 0 else []))
-        right = "".join(_render_block(cb) for cb in (children[1] if len(children) > 1 else []))
+        # P2 #11 · Phase 2 (TD-42) · Feb-2026 — flat ``*_html`` fallback.
+        # When a column's ``children`` list is empty but the Phase 1
+        # authoring UI wrote a flat ``left_html`` / ``right_html``
+        # string on the block's props, render that string as a
+        # synthetic ``text``-block body inside the column cell. This
+        # preserves content authored under Phase 1 (which shipped
+        # the flat textarea UI before the renderer learned to walk
+        # ``children``) and gives Phase 2's nested-slot UI a
+        # one-way migration path.  When BOTH ``children`` and
+        # ``*_html`` are empty the cell renders empty — unchanged
+        # from the pre-Phase-2 behavior for seeded templates.
+        def _col(idx: int, flat_key: str) -> str:
+            kids = children[idx] if len(children) > idx else []
+            if kids:
+                return "".join(_render_block(cb) for cb in kids)
+            flat = p.get(flat_key) or ""
+            if flat:
+                return _render_block({"type": "text",
+                                       "props": {"html": flat}})
+            return ""
+        left = _col(0, "left_html")
+        right = _col(1, "right_html")
         return _cell(
             f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">'
             f'<tr><td valign="top" style="width:{left_pct}%;padding-right:8px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{left}</table></td>'
@@ -272,9 +292,20 @@ def _render_block(b: Dict[str, Any]) -> str:  # noqa: C901
             f'</tr></table>', p.get("padding") or "8px 24px")
     if t == "columns_3":
         children = b.get("children") or [[], [], []]
+        # P2 #11 · Phase 2 (TD-42) — same flat ``*_html`` fallback
+        # as columns_2 above. ``left_html`` / ``middle_html`` /
+        # ``right_html`` are the Phase 1 FIELD_SPECS keys.
+        _flat_keys = ("left_html", "middle_html", "right_html")
         cols = []
         for i in range(3):
-            inner = "".join(_render_block(cb) for cb in (children[i] if len(children) > i else []))
+            kids = children[i] if len(children) > i else []
+            if kids:
+                inner = "".join(_render_block(cb) for cb in kids)
+            else:
+                flat = p.get(_flat_keys[i]) or ""
+                inner = (_render_block({"type": "text",
+                                          "props": {"html": flat}})
+                         if flat else "")
             cols.append(
                 f'<td valign="top" style="width:33.33%;padding:0 6px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{inner}</table></td>')
         return _cell(
@@ -343,20 +374,51 @@ def _render_block(b: Dict[str, Any]) -> str:  # noqa: C901
 
 
 def render_email_html(blocks_json: List[Dict[str, Any]],
-                       tokens_context: Dict[str, Any]) -> str:
+                       tokens_context: Dict[str, Any],
+                       preview_text: Optional[str] = None) -> str:
     """Render blocks (already resolved OR raw) to Outlook-safe HTML.
 
     Callers who want token substitution should pass raw ``blocks_json``;
     this function will call ``resolve_email_blocks`` internally when the
     context is non-empty. Callers who've already resolved (e.g. the
     preview endpoint) may pass an empty context.
+
+    P2 #11 · Phase 2 (TD-43) · Feb-2026 — ``preview_text`` is the
+    optional preheader shown by webmail / native clients under the
+    subject line in the inbox list. When provided, we inject a hidden
+    ``<span>`` as the very first child of ``<body>`` + a trailing
+    non-breaking-space padding to push the "...view entire message"
+    bleed out of the preview range. The span is invisible to all
+    rendering email clients (``display:none`` + ``mso-hide:all``
+    for Outlook + ``opacity:0`` + ``font-size:1px`` + transparent
+    color for the hostile remainder). Tokens inside ``preview_text``
+    pass through ``resolve_tokens`` so authors can embed
+    ``{{customer.first_name}}``, etc.  When ``preview_text`` is
+    falsy no span is emitted — rendering is byte-identical to the
+    pre-Phase-2 output.
     """
     resolved = resolve_email_blocks(blocks_json, tokens_context) if tokens_context else (blocks_json or [])
     rows = "".join(_render_block(b) for b in resolved)
+    preheader_html = ""
+    if preview_text and preview_text.strip():
+        pt = resolve_tokens(preview_text, tokens_context or {})
+        if pt and pt.strip():
+            # Trim to 150 chars (standard client cap — enforced
+            # defensively here even though the Pydantic model
+            # also validates at the API boundary).
+            pt = pt[:150]
+            padding = "&#847;&#8203;&nbsp;" * 40  # push "view entire message" bleed
+            preheader_html = (
+                '<span style="display:none !important;max-height:0;'
+                'overflow:hidden;mso-hide:all;visibility:hidden;'
+                'opacity:0;color:transparent;font-size:1px;'
+                f'line-height:1px;">{_H(pt)}{padding}</span>'
+            )
     return (
         f'<!doctype html><html><head><meta charset="utf-8"/>'
         f'<meta name="viewport" content="width=device-width,initial-scale=1"/>'
         f'</head><body style="margin:0;padding:0;{_WRAPPER_STYLE}">'
+        f'{preheader_html}'
         f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">'
         f'<tr><td>'
         f'<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" '
