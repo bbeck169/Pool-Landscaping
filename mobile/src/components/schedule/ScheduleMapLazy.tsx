@@ -33,6 +33,10 @@ interface Job {
   scheduled_time?: string | null;
   location_lat?: number | null;
   location_lng?: number | null;
+  // Phase 4 multi-property pins (web 723e28204).
+  coord_source?: string | null;
+  property_id?: string | null;
+  property_label?: string | null;
 }
 
 interface Props {

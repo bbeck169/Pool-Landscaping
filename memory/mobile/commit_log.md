@@ -1825,3 +1825,12 @@
 - **Web/backend files referenced (read-only)**: frontend/src/hooks/useClockInGate.jsx, backend/routers/timeclock_landscaping.py, backend/routers/workforce.py
 - **Tests**: gate suite 15/15 (was 6). Clock-related sweep: 3 suites (schedule-map-toggle, k32-tech-scoped-schedule, dashboard-active-inactive-tiles) fail identically at pre-fix baseline ("Cannot read 'bg'" theme-mock drift) — pre-existing.
 - **Note**: Templates Library Phase 3 brief re-dispatched again this turn — already shipped 2026-10-08 (PRD §5); not re-implemented. No external repo cloned.
+
+## Iteration 125 — Schedule map parity: Live Tech GPS pins + Multi-Property pins
+- **Commits**: a388d76eb (F1 live tech pins) + the F2 commit containing this entry (`git log -1 -- mobile/src/utils/jobPinCoordSource.ts`)
+- **Date**: 2026-10-14
+- **Web refs**: 6db3c4f57 (useLiveTechLocations.js + ScheduleMap.jsx), 723e28204 (ScheduleMap.jsx approximate + property chip); BE 89d77b370 / bf89d1b99 (read-only)
+- **F1**: `src/hooks/useLiveTechLocations.ts` (GET /workforce/live-locations, 30s poll, AppState pause/resume, AbortController, AsyncStorage `live_tech_overlay.<user_id>` "1"/"0", role gate = BE `_GPS_READ_ROLES` admin/super_admin/owner/manager/dispatcher; non-gps roles: toggle hidden + never poll). `src/components/schedule/LiveTechOverlay.tsx` (toggle chip, staleness dots #22c55e/#eab308/#94a3b8 keyed by staleness so tracksViewChanges=false still recolors, info card). ScheduleMap.native: overlay wired; map frames live techs when no mapped jobs.
+- **F2**: `src/utils/jobPinCoordSource.ts` (jobPinVariant / isApproximatePin = customer+property_id / propertyChipLabel / jobPinWrapStyle dashed+0.7). ScheduleMap.native: pin wrapper View, marker `description` = property_label, info-card "Property: <label>" chip + approximate note. ScheduleMapLazy Job type += coord_source/property_id/property_label.
+- **Map lib**: react-native-maps 1.20.1 via `@/src/lib/maps` (Google adapter). No clustering on mobile Schedule map (nothing to preserve). ScheduleMap.web.tsx is a placeholder — unchanged.
+- **Tests**: new live-tech-locations-mobile (12) + multi-property-map-pins-mobile (9); ScheduleMap + gate suites green. Pre-existing fails unchanged: teardrop-pin-parity (deriveDarker default 0.25 vs 0.28), schedule-map-toggle (inputColors.bg).

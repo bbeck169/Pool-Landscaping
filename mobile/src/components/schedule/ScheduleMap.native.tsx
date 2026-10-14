@@ -21,8 +21,16 @@ import { resolveJobCoords, type JobLikeForCoords } from "@/src/utils/jobCoords";
 // app background, admin-defaulted ON (persisted per user in AsyncStorage).
 import { useLiveTechLocations, type LiveTechPing } from "@/src/hooks/useLiveTechLocations";
 import { LiveTechToggle, LiveTechMarkers, LiveTechCard } from "@/src/components/schedule/LiveTechOverlay";
+// Phase 4 multi-property pins (web parity 723e28204) — approximate signal
+// + property-rung chip, driven by coord_source / property_id / property_label.
+import {
+  isApproximatePin,
+  propertyChipLabel,
+  jobPinWrapStyle,
+  type JobCoordSourceFields,
+} from "@/src/utils/jobPinCoordSource";
 
-interface Job {
+interface Job extends JobCoordSourceFields {
   id: string;
   status?: string;
   customer_name?: string;
@@ -179,14 +187,25 @@ export default function ScheduleMap({ jobs, testID }: Props) {
             coordinate={{ latitude: j.__coords.lat, longitude: j.__coords.lng }}
             anchor={{ x: 0.5, y: 1.0 }}
             title={j.customer_name || "Job"}
+            description={propertyChipLabel(j) ?? undefined}
             onPress={() => selectJob(j)}
             tracksViewChanges={false}
             testID={`schedule-map-pin-${j.id}`}
           >
-            <TeardropPin
-              color={pinColor(j.status)}
-              testID={`schedule-map-teardrop-${j.id}`}
-            />
+            <View
+              style={jobPinWrapStyle(j, pinColor(j.status))}
+              accessibilityLabel={
+                isApproximatePin(j)
+                  ? `Job pin for ${j.customer_name || "job"} (approximate location — property coords missing)`
+                  : `Job pin for ${j.customer_name || "job"}`
+              }
+              testID={`schedule-map-pin-wrap-${j.id}`}
+            >
+              <TeardropPin
+                color={pinColor(j.status)}
+                testID={`schedule-map-teardrop-${j.id}`}
+              />
+            </View>
           </Marker>
         ))}
         {/* Live-tech markers — outside the job-pin loop (web parity). */}
@@ -200,6 +219,19 @@ export default function ScheduleMap({ jobs, testID }: Props) {
           <View style={s.cardHeader}>
             <View style={{ flex: 1 }}>
               <Text style={s.cardName} numberOfLines={1}>{selected.customer_name || "Job"}</Text>
+              {propertyChipLabel(selected) ? (
+                <View style={s.propChip} testID={`schedule-map-info-property-${selected.id}`}>
+                  <View style={s.propDot} />
+                  <Text style={s.propText} numberOfLines={1}>
+                    Property: <Text style={s.propLabel}>{propertyChipLabel(selected)}</Text>
+                  </Text>
+                </View>
+              ) : null}
+              {isApproximatePin(selected) ? (
+                <Text style={s.approxText} testID={`schedule-map-info-approximate-${selected.id}`}>
+                  Approximate location — property has no geocoded coords; showing the customer address.
+                </Text>
+              ) : null}
               {selected.scheduled_time ? (
                 <Text style={s.cardTime}>{selected.scheduled_time}</Text>
               ) : null}
@@ -261,6 +293,15 @@ const s = StyleSheet.create({
   cardTime: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   cardAddr: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, marginTop: 2 },
   cardActions: { flexDirection: "row", gap: spacing.sm },
+  propChip: {
+    flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start", marginTop: 4,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999,
+    backgroundColor: "rgba(14,165,233,0.08)", borderWidth: 1, borderColor: "rgba(14,165,233,0.25)",
+  },
+  propDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#0EA5E9" },
+  propText: { fontFamily: font.regular, fontSize: 11, color: colors.muted, flexShrink: 1 },
+  propLabel: { fontFamily: font.bold, color: colors.onSurface },
+  approxText: { fontFamily: font.regular, fontSize: 11, color: "#B45309", marginTop: 4 },
   actionBtn: {
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
     gap: 4, height: 38, borderRadius: radius.md, backgroundColor: "#059669",
