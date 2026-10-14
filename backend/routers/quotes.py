@@ -314,6 +314,14 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # scalar.  Full doc remains available via
                       # ``GET /quotes/{quote_id}``.
                       slim: bool = Query(False)):
+    # TD-21 · Direct-call tests (e.g. test_fin_parity_b_list_quotes_*) invoke
+    # this handler without FastAPI's dependency resolution, so the ``Query(None)``
+    # default FieldInfo arrives as the raw ``view`` arg instead of ``None``.
+    # FieldInfo is truthy, so the ``(view or "").strip().lower()`` below would
+    # raise ``AttributeError: 'Query' object has no attribute 'strip'``. Coerce
+    # any non-str (incl. the FieldInfo sentinel) back to None.
+    if not isinstance(view, str):
+        view = None
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     # FIN-PARITY-B · payment_status validation — accept the four
