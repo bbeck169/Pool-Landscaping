@@ -94,6 +94,105 @@ function slugify(s) {
 let _rowIdSeq = 0;
 const _nextRowId = () => `row-${++_rowIdSeq}`;
 
+
+// Feb-2026 · Form Builder P2#12 Phase 1 Commit 2 — Version history
+// drawer. Lists every snapshot from
+// ``GET /admin/forms/{fid}/versions`` + wires revert via
+// ``POST /admin/forms/{fid}/revert/{version}``. Mounted inside the
+// editor drawer; the outer drawer still owns ``onClose``.
+function VersionHistoryPanel({ fid, currentVersion, onClose, onReverted }) {
+  const [rows, setRows] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  React.useEffect(() => {
+    (async () => {
+      setBusy(true); setErr("");
+      try {
+        const r = await api.get(`/admin/forms/${fid}/versions`);
+        setRows(Array.isArray(r?.versions) ? r.versions : []);
+      } catch (e) {
+        setErr(e?.message || "Failed to load versions");
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [fid]);
+  const revert = async (version) => {
+    setBusy(true); setErr("");
+    try {
+      const r = await api.post(`/admin/forms/${fid}/revert/${version}`, {});
+      onReverted(r);
+    } catch (e) {
+      setErr(e?.message || "Revert failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mb-4 p-4 rounded-lg"
+         style={{ background: colors.surfaceSecondary,
+                   border: `1px solid ${colors.border}` }}
+         data-testid="form-version-history-panel">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-bold uppercase tracking-wider"
+             style={{ color: colors.muted }}>
+          Version history{currentVersion ? ` · current v${currentVersion}` : ""}
+        </div>
+        <button onClick={onClose} className="text-xs font-semibold"
+                style={{ color: colors.muted }}
+                data-testid="form-version-history-close">
+          ✕ Close
+        </button>
+      </div>
+      {err ? (
+        <div className="text-xs p-2 rounded-lg mb-2"
+             style={{ color: "#991B1B", background: "#FEE2E2" }}>
+          {err}
+        </div>
+      ) : null}
+      {busy && rows.length === 0 ? (
+        <div className="text-xs" style={{ color: colors.muted }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-xs" style={{ color: colors.muted }}
+             data-testid="form-version-history-empty">
+          No prior versions yet.
+        </div>
+      ) : (
+        <ul className="divide-y" style={{ borderColor: colors.border }}>
+          {rows.map((row) => (
+            <li key={row.version}
+                className="py-2 flex items-center gap-3"
+                data-testid={`form-version-row-${row.version}`}>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold"
+                     style={{ color: colors.onSurface }}>
+                  v{row.version} · {row.action}
+                </div>
+                <div className="text-[10px] truncate"
+                     style={{ color: colors.muted }}>
+                  {row.at} · {row.name || "(no name)"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => revert(row.version)}
+                disabled={busy || row.version === currentVersion}
+                className="text-xs px-2 py-1 rounded-lg font-semibold disabled:opacity-40"
+                style={{ background: colors.surface,
+                          color: colors.onSurface,
+                          border: `1px solid ${colors.border}` }}
+                data-testid={`form-version-revert-${row.version}`}
+              >
+                {row.version === currentVersion ? "Current" : "Revert"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const empty_field = () => ({
   _rowId: _nextRowId(),
   id: "",
@@ -275,6 +374,8 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
   const [sequences, setSequences] = useState([]);
   const [publicKey, setPublicKey] = useState("");
   const [saved, setSaved] = useState(!form._new ? form : null);
+  // Feb-2026 · Form Builder P1 C2 — Version history drawer state.
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     api.get("/marketing/templates").then((r) =>
@@ -403,10 +504,27 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
             <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}>
               {form._new ? "New form" : "Edit form"}
             </h2>
-            <button onClick={onClose}
-                    className="text-sm font-semibold"
-                    style={{ color: colors.muted }}
-                    data-testid="form-close-btn">✕ Close</button>
+            <div className="flex items-center gap-3">
+              {/* Feb-2026 · Form Builder P1 C2 — Version history
+                  button. Rendered only when the form has been
+                  saved at least once (``saved?.id`` present) and
+                  thus has an addressable
+                  ``GET /admin/forms/{fid}/versions`` endpoint.
+                  Opens a drawer-child panel that lists snapshots +
+                  wires revert. */}
+              {saved?.id ? (
+                <button onClick={() => setHistoryOpen(true)}
+                        className="text-sm font-semibold inline-flex items-center gap-1"
+                        style={{ color: colors.brand }}
+                        data-testid="form-version-history-btn">
+                  History{saved?.version ? ` · v${saved.version}` : ""}
+                </button>
+              ) : null}
+              <button onClick={onClose}
+                      className="text-sm font-semibold"
+                      style={{ color: colors.muted }}
+                      data-testid="form-close-btn">✕ Close</button>
+            </div>
           </div>
 
           <label className="block text-xs font-bold uppercase tracking-wider mb-1"
@@ -588,6 +706,31 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
               <Save size={14} /> {busy ? "Saving…" : "Save form"}
             </button>
           </div>
+
+          {/* Feb-2026 · Form Builder P1 C2 — Version history panel.
+              Rendered only when the operator has clicked History +
+              the form has been saved. Lists every snapshot in DESC
+              order with a "Revert to this" button per row.
+              Mirrors the ``form_templates`` revert UX: non-
+              destructive — reverting creates a NEW version (so the
+              timeline never loses rows). */}
+          {historyOpen && saved?.id ? (
+            <VersionHistoryPanel
+              fid={saved.id}
+              currentVersion={saved.version}
+              onClose={() => setHistoryOpen(false)}
+              onReverted={(reverted) => {
+                setSaved(reverted);
+                setName(reverted.name || "");
+                setFields(
+                  (reverted.fields || []).map((f) => ({
+                    ...f, _rowId: f._rowId || _nextRowId(),
+                  })),
+                );
+                setHistoryOpen(false);
+              }}
+            />
+          ) : null}
 
           {saved && publicKey && (
             <>

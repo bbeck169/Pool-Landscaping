@@ -400,10 +400,58 @@ async def create_form(body: FormIn,
         # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Untyped
         # dict passthrough. None for legacy / pre-Phase-1 forms.
         "hero": body.hero,
+        # Feb-2026 · Form Builder P2#12 Phase 1 Commit 2 — version
+        # counter. Byte-identical to pre-Phase-1 for callers that
+        # never read it; set to 1 on create. Mutates alongside the
+        # new ``db.marketing_form_versions`` collection via
+        # ``_snapshot_form_version`` below.
+        "version": 1,
     }
     await db.marketing_forms.insert_one(doc)
     doc.pop("_id", None)
+    await _snapshot_form_version(doc, user.get("id") or "", action="create")
     return doc
+
+
+async def _snapshot_form_version(
+    form_doc: dict, actor_id: str, action: str = "update",
+) -> None:
+    """Write a snapshot row to ``db.marketing_form_versions``.
+
+    Pattern mirrors ``routers/form_templates.py:_ensure_seed`` +
+    ``put_template`` but keeps the live ``marketing_forms`` doc as
+    the "current" view — snapshots are a sibling-collection audit
+    trail, not a replacement for the live row. This preserves
+    runtime fields (``slug``, ``submission_count``, ``created_at``,
+    ``active``) on the live doc while making every schema edit
+    rollback-able.
+
+    ``action`` is one of ``"create" | "update" | "revert"`` so the
+    history UI can show operators which versions were rollbacks.
+    """
+    snap = {
+        "id": new_id(),
+        "tenant_id": form_doc["tenant_id"],
+        "form_id": form_doc["id"],
+        "version": form_doc.get("version") or 1,
+        "action": action,
+        "name": form_doc.get("name"),
+        "fields": form_doc.get("fields") or [],
+        "submit_config": form_doc.get("submit_config"),
+        "theme": form_doc.get("theme"),
+        "hero": form_doc.get("hero"),
+        "submit_button_label": form_doc.get("submit_button_label"),
+        "success_message": form_doc.get("success_message"),
+        "actor_id": actor_id,
+        "at": now_iso(),
+    }
+    try:
+        await db.marketing_form_versions.insert_one(snap)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(
+            "[forms-versioning] snapshot insert failed form_id=%s v=%s err=%s",
+            form_doc.get("id"), form_doc.get("version"), _e,
+        )
 
 
 @router.get("/admin/forms")
@@ -452,14 +500,36 @@ async def patch_form(fid: str, body: FormPatch,
         base["admin_bell"] = bool(updates["notify_admin_bell"])
         updates["submit_config"] = base
     updates["updated_at"] = now_iso()
+    # Feb-2026 · Form Builder P2#12 Phase 1 Commit 2 — version bump
+    # on every PATCH that changes any schema-impacting field.
+    # ``slug`` + ``active`` are RUNTIME-level and intentionally
+    # omitted from the trigger set (keeps the version counter from
+    # climbing on operational toggles). Byte-identical response
+    # shape for pre-Phase-1 clients that don't key on ``version``.
+    _VERSIONED_FIELDS = {
+        "name", "fields", "submit_button_label", "success_message",
+        "submit_config", "notify_admin_bell", "theme", "hero",
+    }
+    bump_version = bool(_VERSIONED_FIELDS.intersection(updates.keys()))
+    if bump_version:
+        _cur_doc = await db.marketing_forms.find_one(
+            {"id": fid, "tenant_id": tenant["id"]},
+            {"_id": 0, "version": 1},
+        )
+        updates["version"] = ((_cur_doc or {}).get("version") or 1) + 1
     r = await db.marketing_forms.update_one(
         {"id": fid, "tenant_id": tenant["id"]}, {"$set": updates},
     )
     if r.matched_count == 0:
         raise HTTPException(404, "Form not found")
-    return await db.marketing_forms.find_one(
+    updated_doc = await db.marketing_forms.find_one(
         {"id": fid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
+    if bump_version and updated_doc:
+        await _snapshot_form_version(
+            updated_doc, user.get("id") or "", action="update",
+        )
+    return updated_doc
 
 
 @router.delete("/admin/forms/{fid}")
@@ -470,6 +540,86 @@ async def delete_form(fid: str,
         {"id": fid, "tenant_id": tenant["id"]}
     )
     return {"ok": True, "deleted": r.deleted_count}
+
+
+# ───────────────────────────────────────────────────────────────────
+# Feb-2026 · Form Builder P2#12 Phase 1 Commit 2 — version history
+# + revert.  Sibling collection ``db.marketing_form_versions`` holds
+# a snapshot per schema-impacting edit; runtime fields (``slug``,
+# ``submission_count``, ``active``) stay on the live ``marketing_forms``
+# doc. Admin / super_admin only — mirrors the sensitivity gate on
+# ``routers/form_templates.py:list_versions``.
+# ───────────────────────────────────────────────────────────────────
+
+
+@router.get("/admin/forms/{fid}/versions")
+async def list_form_versions(
+    fid: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cur = await db.marketing_forms.find_one(
+        {"id": fid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1},
+    )
+    if not cur:
+        raise HTTPException(404, "Form not found")
+    rows: List[dict] = []
+    async for doc in db.marketing_form_versions.find(
+        {"tenant_id": tenant["id"], "form_id": fid}, {"_id": 0},
+    ).sort("version", -1):
+        rows.append(doc)
+    return {"versions": rows}
+
+
+@router.post("/admin/forms/{fid}/revert/{version}")
+async def revert_form(
+    fid: str,
+    version: int,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    live = await db.marketing_forms.find_one(
+        {"id": fid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not live:
+        raise HTTPException(404, "Form not found")
+    target = await db.marketing_form_versions.find_one(
+        {"tenant_id": tenant["id"], "form_id": fid, "version": version},
+        {"_id": 0},
+    )
+    if not target:
+        raise HTTPException(404, f"Version {version} not found")
+    # Revert = apply the snapshot's schema fields on top of the live
+    # doc + bump to a NEW version so the history timeline reads
+    # linearly ("v4 reverts to v2 → v5"). This matches the
+    # ``form_templates`` revert pattern: never mutate the historical
+    # row; always append.
+    next_version = (live.get("version") or 1) + 1
+    updates = {
+        "name": target.get("name"),
+        "fields": target.get("fields") or [],
+        "submit_config": target.get("submit_config"),
+        "theme": target.get("theme"),
+        "hero": target.get("hero"),
+        "submit_button_label": target.get("submit_button_label"),
+        "success_message": target.get("success_message"),
+        "updated_at": now_iso(),
+        "version": next_version,
+    }
+    # Keep the legacy mirror in sync.
+    if isinstance(updates.get("submit_config"), dict):
+        updates["notify_admin_bell"] = bool(
+            updates["submit_config"].get("admin_bell"))
+    await db.marketing_forms.update_one(
+        {"id": fid, "tenant_id": tenant["id"]}, {"$set": updates},
+    )
+    reverted = await db.marketing_forms.find_one(
+        {"id": fid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    await _snapshot_form_version(
+        reverted, user.get("id") or "", action="revert",
+    )
+    return reverted
 
 
 @router.get("/admin/forms/{fid}/submissions")
