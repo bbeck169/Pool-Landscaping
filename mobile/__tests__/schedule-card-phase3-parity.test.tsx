@@ -1,7 +1,9 @@
 /**
  * Phase 3 / 3b mobile parity — schedule job card:
  *  F1 NoteBlock + Customer/Pool/Landscape inline notes
- *  F2 bold-red completed card (#ff4542 + white fg; web parity 85fd76f17)
+ *  F2 completed card — Oct-2026 mobile hotfix: receded soft green (#ECFDF5
+ *     bg, #6EE7B7 border, ✓ #065F46, AA-safe #52525B secondary); was bold red
+ *     #ff4542 + white fg (web 85fd76f17, web unchanged)
  *  F3 orange Navigate button (order, encoding, disabled, deep-link fallback)
  */
 import * as fs from "fs";
@@ -12,7 +14,9 @@ import { render, fireEvent } from "@testing-library/react-native";
 import NoteBlock from "@/src/components/schedule/NoteBlock";
 import JobNotesCallout from "@/src/components/schedule/JobNotesCallout";
 import NavigateMapsButton, { resolveNavigateAddress, nativeNavUrl, webDirectionsUrl, openNavigation } from "@/src/components/schedule/NavigateMapsButton";
-import { jobStatusColor, isBoldRedStatus, K50_BOLD_RED_BG, K50_JOB_STATUS_BG } from "@/src/lib/jobStatus";
+import {
+  jobStatusColor, isCompletedCardStatus, K50_COMPLETED_BG, K50_COMPLETED_MUTED_FG, K50_COMPLETED_ACCENT, K50_JOB_STATUS_BG,
+} from "@/src/lib/jobStatus";
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 
 const CAL = fs.readFileSync(path.resolve(__dirname, "../app/(app)/schedule/calendar.tsx"), "utf-8");
@@ -52,31 +56,37 @@ describe("F1 · NoteBlock", () => {
   });
 });
 
-describe("F2 · bold-red completed card", () => {
-  it("completed (+aliases) → #ff4542; others unchanged", () => {
-    expect(jobStatusColor("completed")).toBe("#ff4542");
-    expect(isBoldRedStatus("completed")).toBe(true);
-    expect(isBoldRedStatus("done")).toBe(true);
-    expect(isBoldRedStatus("scheduled")).toBe(false);
+describe("F2 · completed card (receded soft green — Oct-2026 mobile hotfix)", () => {
+  it("completed (+aliases) → #ECFDF5; others unchanged", () => {
+    expect(jobStatusColor("completed")).toBe("#ECFDF5");
+    expect(isCompletedCardStatus("completed")).toBe(true);
+    expect(isCompletedCardStatus("closed")).toBe(true);
+    expect(isCompletedCardStatus("done")).toBe(true);
+    for (const s of ["scheduled", "open", "in_progress", "cancelled", "skipped", "on_hold", "", null]) {
+      expect(isCompletedCardStatus(s as any)).toBe(false);
+    }
     expect([jobStatusColor("scheduled"), jobStatusColor("in_progress"), jobStatusColor("cancelled"), jobStatusColor("skipped")])
       .toEqual(["#EAF7F0", "#FEF3C7", "#FECACA", "#FED7AA"]);
   });
-  it("white-text flip is coupled to the completed bg (K50_BOLD_RED_BG derives from the map)", () => {
-    expect(K50_BOLD_RED_BG).toBe(K50_JOB_STATUS_BG.completed);
-    expect(K50_BOLD_RED_BG).toBe("#ff4542");
+  it("completed treatment tokens derive from the map", () => {
+    expect(K50_COMPLETED_BG).toBe(K50_JOB_STATUS_BG.completed);
+    expect([K50_COMPLETED_BG, K50_COMPLETED_MUTED_FG, K50_COMPLETED_ACCENT]).toEqual(["#ECFDF5", "#52525B", "#065F46"]);
   });
-  it("left-border color: completed → #ff4542, everything else blue", () => {
-    expect(getStatusBorderColor("completed")).toBe("#ff4542");
-    expect(getStatusBorderColor("COMPLETED")).toBe("#ff4542");
-    expect([getStatusBorderColor("scheduled"), getStatusBorderColor(null)]).toEqual(["#2563EB", "#2563EB"]);
+  it("left-border color: completed/closed/done → soft green #6EE7B7, everything else blue", () => {
+    for (const st of ["completed", "COMPLETED", "closed", "done"]) expect(getStatusBorderColor(st)).toBe("#6EE7B7");
+    expect([getStatusBorderColor("scheduled"), getStatusBorderColor("cancelled"), getStatusBorderColor(null)])
+      .toEqual(["#2563EB", "#2563EB", "#2563EB"]);
   });
   it("'Closed' status pill stays green (complementary signal, web parity)", () => {
     expect(CAL).toContain('completed:  { bg: "#DCFCE7", fg: "#166534", label: "Closed" },');
   });
-  it("JobRow flips text + icons to white on bold red", () => {
-    expect(JOB_ROW).toContain("const onRed = isBoldRedStatus(job.status);");
-    for (const re of [/gStyles\.svcTag, \{ color: svc\.tag \}, fg\]/, /gStyles\.cust, \{ flexShrink: 1 \}, fg\]/, /gStyles\.metaText, fg\]/, /reader-outline" size=\{12\} color=\{onRed \?/, /chevron-forward" size=\{20\} color=\{onRed \?/])
+  it("JobRow: secondary text → AA-safe muted on completed; customer name keeps standard color; no white flip", () => {
+    expect(JOB_ROW).toContain("const done = isCompletedCardStatus(job.status);");
+    expect(JOB_ROW).toContain("const fg = done ? { color: K50_COMPLETED_MUTED_FG } : null;");
+    for (const re of [/gStyles\.svcTag, \{ color: svc\.tag \}, fg\]/, /gStyles\.metaText, fg\]/, /reader-outline" size=\{12\} color=\{done \?/, /chevron-forward" size=\{20\} color=\{done \?/])
       expect(JOB_ROW).toMatch(re);
+    expect(JOB_ROW).toMatch(/gStyles\.cust, \{ flexShrink: 1 \}\]/);
+    expect(JOB_ROW).not.toMatch(/onRed|K50_ON_BOLD_RED_FG|isBoldRedStatus|#FFFFFF/);
   });
 });
 

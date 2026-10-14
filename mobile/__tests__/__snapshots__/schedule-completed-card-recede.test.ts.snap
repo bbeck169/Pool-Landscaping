@@ -1,0 +1,96 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`completed card recede · status scope status → treatment table (snapshot) 1`] = `
+{
+  "": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "COMPLETED": {
+    "bg": "#ECFDF5",
+    "border": "#6EE7B7",
+    "completed": true,
+  },
+  "active": {
+    "bg": "#FEF3C7",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "canceled": {
+    "bg": "#FECACA",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "cancelled": {
+    "bg": "#FECACA",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "closed": {
+    "bg": "#ECFDF5",
+    "border": "#6EE7B7",
+    "completed": true,
+  },
+  "completed": {
+    "bg": "#ECFDF5",
+    "border": "#6EE7B7",
+    "completed": true,
+  },
+  "could_not_service": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "done": {
+    "bg": "#ECFDF5",
+    "border": "#6EE7B7",
+    "completed": true,
+  },
+  "in_progress": {
+    "bg": "#FEF3C7",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "null": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "on_hold": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "open": {
+    "bg": "#EAF7F0",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "pending": {
+    "bg": "#EAF7F0",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "reopened": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "requested": {
+    "bg": "surface",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "scheduled": {
+    "bg": "#EAF7F0",
+    "border": "#2563EB",
+    "completed": false,
+  },
+  "skipped": {
+    "bg": "#FED7AA",
+    "border": "#2563EB",
+    "completed": false,
+  },
+}
+`;
