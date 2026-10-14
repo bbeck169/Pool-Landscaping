@@ -51,6 +51,14 @@ import { colors } from "@/theme";
 import TeardropPin from "@/components/maps/TeardropPin";
 import { CustomerLink, AddressLink } from "@/components/customer";
 import { PIN_COLOR_BY_DAY } from "@/pages/dispatch/dispatchColors";
+// P1 Phase 3 · Feb-2026 — Live technician GPS pin overlay.
+// Polls GET /api/workforce/live-locations every 30s, pauses on
+// tab-hide, admin-defaulted ON (persisted in localStorage).
+import {
+  useLiveTechLocations,
+  colorForStaleness,
+  formatAge,
+} from "@/hooks/useLiveTechLocations";
 
 // Deterministic fallback color for jobs whose technician has no
 // ``display_color_hex`` picked (or is unassigned) AND for stops
@@ -340,10 +348,19 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
  */
 export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
   const [activeId, setActiveId] = useState(null);
+  const [activeLiveTechId, setActiveLiveTechId] = useState(null);
   // Feb-2026 · Tech/Day color toggle. Lazy-init from localStorage
   // so the first paint already reflects the operator's saved
   // preference — no post-mount flash from ``tech`` to ``day``.
   const [colorMode, setColorMode] = useState(() => _loadPinColorMode());
+
+  // P1 Phase 3 · live-tech overlay source — polls every 30s,
+  // pauses on tab-hide, admin-defaulted ON.
+  const {
+    pings: livePings,
+    enabled: liveEnabled,
+    setEnabled: setLiveEnabled,
+  } = useLiveTechLocations();
 
   const { pins, missing } = useMemo(() => _buildDedupedPins(jobs), [jobs]);
 
@@ -456,6 +473,36 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
           );
         })}
       </div>
+      {/* P1 Phase 3 · Live-tech overlay toggle. */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={liveEnabled}
+        aria-label="Show live technician locations"
+        data-testid="schedule-map-live-tech-toggle"
+        data-enabled={liveEnabled ? "true" : "false"}
+        onClick={() => setLiveEnabled(!liveEnabled)}
+        style={{
+          position: "absolute", top: 8, left: 120, zIndex: 5,
+          background: liveEnabled ? "#22c55e" : "rgba(255,255,255,0.94)",
+          color: liveEnabled ? "#FFFFFF" : colors.onSurface,
+          border: 0, cursor: "pointer",
+          borderRadius: 999, padding: "4px 10px",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+          fontSize: 11, fontWeight: 600,
+          display: "inline-flex", alignItems: "center", gap: 6,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-block", width: 8, height: 8,
+            borderRadius: "50%",
+            background: liveEnabled ? "#FFFFFF" : "#94a3b8",
+          }}
+          aria-hidden="true"
+        />
+        {liveEnabled ? "Live techs on" : "Show live techs"}
+      </button>
       <Map
         mapId="SCHEDULE_MAP"
         defaultCenter={initialCenter}
@@ -471,6 +518,72 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
           colorMode={colorMode}
           onSelect={onSelect}
         />
+        {/* Live-tech markers — outside the clusterer so a tech
+            standing on top of a job pin is still individually
+            visible. */}
+        {liveEnabled ? livePings.map((p) => (
+          <AdvancedMarker
+            key={`live-${p.user_id}`}
+            position={{ lat: p.lat, lng: p.lon }}
+            onClick={() => setActiveLiveTechId(
+              activeLiveTechId === p.user_id ? null : p.user_id,
+            )}
+            title={`${p.user_name} · ${formatAge(p.age_seconds)}`}
+          >
+            <div
+              data-testid={`schedule-map-live-tech-pin-${p.user_id}`}
+              data-staleness={p.staleness}
+              style={{
+                width: 14, height: 14, borderRadius: "50%",
+                background: colorForStaleness(p.staleness),
+                border: "2px solid #FFFFFF",
+                boxShadow: "0 0 0 1px rgba(0,0,0,0.25), "
+                  + "0 2px 4px rgba(0,0,0,0.3)",
+              }}
+            />
+          </AdvancedMarker>
+        )) : null}
+        {liveEnabled && activeLiveTechId ? (() => {
+          const lp = livePings.find(
+            (x) => x.user_id === activeLiveTechId);
+          if (!lp) return null;
+          return (
+            <InfoWindow
+              position={{ lat: lp.lat, lng: lp.lon }}
+              onCloseClick={() => setActiveLiveTechId(null)}
+            >
+              <div
+                style={{ minWidth: 180, maxWidth: 240 }}
+                data-testid={`schedule-map-live-tech-info-${lp.user_id}`}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13,
+                                color: colors.onSurface }}>
+                  {lp.user_name}
+                </div>
+                <div style={{ fontSize: 12,
+                                color: colors.onSurfaceSecondary,
+                                marginTop: 2 }}>
+                  updated {formatAge(lp.age_seconds)}
+                </div>
+                <div
+                  style={{ fontSize: 11, marginTop: 4,
+                             display: "inline-flex",
+                             alignItems: "center", gap: 4,
+                             color: colorForStaleness(lp.staleness),
+                             textTransform: "capitalize" }}
+                  data-testid={`schedule-map-live-tech-staleness-${lp.user_id}`}
+                >
+                  <span style={{
+                    display: "inline-block", width: 6, height: 6,
+                    borderRadius: "50%",
+                    background: colorForStaleness(lp.staleness),
+                  }} />
+                  {lp.staleness}
+                </div>
+              </div>
+            </InfoWindow>
+          );
+        })() : null}
         {active ? (
           <InfoWindow
             position={{ lat: active.lat, lng: active.lng }}
