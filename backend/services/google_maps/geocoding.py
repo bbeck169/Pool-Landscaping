@@ -349,16 +349,43 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
 async def geocode_and_persist_property(property_id: str,
                                               tenant_id: str) -> bool:
     """Property version of the customer helper. Persists to the
-    canonical ``latitude/longitude`` + ``geocoded_at``."""
+    canonical ``latitude/longitude`` + ``geocoded_at``.
+
+    Feb-2026 · Skip-jobs postmortem — emit a structured trace line on
+    every call outcome so operators can post-verify a backfill run
+    end-to-end. The ``method`` tag disambiguates:
+
+      * ``"google"``   — Google hit + write landed.
+      * ``"cache"``    — within the ``_CACHE_TTL_DAYS`` window; skipped.
+      * ``"no_addr"``  — property had no resolvable address string.
+      * ``"missing"``  — property id didn't match any row.
+      * ``"no_hit"``   — Google returned nothing.
+
+    Reads a `[geocode-property]` prefix so the lines are grep-friendly
+    (`sudo tail -n 2000 /var/log/supervisor/backend.*.log | \\
+      grep '\\[geocode-property\\]'`).
+    """
     prop = await db.properties.find_one(
         {"id": property_id, "tenant_id": tenant_id}, {"_id": 0},
     )
     if not prop:
+        logger.info(
+            "[geocode-property] pid=%s tenant=%s method=missing",
+            property_id, tenant_id,
+        )
         return False
+    old_lat = prop.get("latitude")
+    old_lng = prop.get("longitude")
     if prop.get("geocoded_at"):
         try:
             g = datetime.fromisoformat(prop["geocoded_at"].replace("Z", "+00:00"))
             if datetime.now(timezone.utc) - g < timedelta(days=_CACHE_TTL_DAYS):
+                logger.info(
+                    "[geocode-property] pid=%s tenant=%s method=cache "
+                    "old=(%s, %s) geocoded_at=%s",
+                    property_id, tenant_id, old_lat, old_lng,
+                    prop.get("geocoded_at"),
+                )
                 return False
         except Exception:
             pass
@@ -369,9 +396,19 @@ async def geocode_and_persist_property(property_id: str,
         address_doc.get("zip"),
     ])).strip()
     if not addr:
+        logger.info(
+            "[geocode-property] pid=%s tenant=%s method=no_addr "
+            "old=(%s, %s)",
+            property_id, tenant_id, old_lat, old_lng,
+        )
         return False
     hit = await geocode_address(addr, tenant_id=tenant_id)
     if not hit:
+        logger.info(
+            "[geocode-property] pid=%s tenant=%s method=no_hit "
+            "addr=%r old=(%s, %s)",
+            property_id, tenant_id, addr[:120], old_lat, old_lng,
+        )
         return False
     await db.properties.update_one(
         {"id": property_id, "tenant_id": tenant_id},
@@ -381,5 +418,11 @@ async def geocode_and_persist_property(property_id: str,
             "geocoded_at": datetime.now(timezone.utc).isoformat(),
             "geocode_source": "google",
         }},
+    )
+    logger.info(
+        "[geocode-property] pid=%s tenant=%s method=google "
+        "old=(%s, %s) new=(%s, %s) precision=%s",
+        property_id, tenant_id, old_lat, old_lng,
+        hit["lat"], hit["lng"], hit.get("precision"),
     )
     return True
