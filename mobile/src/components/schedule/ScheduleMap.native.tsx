@@ -29,6 +29,10 @@ import {
   jobPinWrapStyle,
   type JobCoordSourceFields,
 } from "@/src/utils/jobPinCoordSource";
+// Phase B.5 parity (web 9eb08b5c1) — per-tech numbering + color legend.
+import { buildTechColorMap, UNASSIGNED_PIN_COLOR } from "@/src/utils/crewPalette";
+import { buildPerTechSequence, perTechStopCounts } from "@/src/utils/perTechSequence";
+import TechLegend from "@/src/components/schedule/TechLegend";
 
 interface Job extends JobCoordSourceFields {
   id: string;
@@ -36,6 +40,8 @@ interface Job extends JobCoordSourceFields {
   customer_name?: string;
   address?: string;
   scheduled_time?: string | null;
+  technician_id?: string | null;
+  route_index?: number | null;
   // K58 · Feb-2026 — coord fields consumed via ``resolveJobCoords``;
   // the shared helper tolerates the full ladder (location_lat/lng →
   // latitude/longitude → site_lat/lng → property.location.{lat,lng})
@@ -52,6 +58,9 @@ interface Job extends JobCoordSourceFields {
 interface Props {
   jobs: Job[];
   testID?: string;
+  /** Phase B.5 — when provided, pins fill by tech color + legend shows. */
+  techs?: any[];
+  crews?: any[];
 }
 
 const PIN_COLORS: Record<string, string> = {
@@ -86,11 +95,18 @@ function openDirections(address: string) {
   }
 }
 
-export default function ScheduleMap({ jobs, testID }: Props) {
+export default function ScheduleMap({ jobs, testID, techs, crews }: Props) {
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
   const [selected, setSelected] = useState<Job | null>(null);
   const live = useLiveTechLocations();
+  // Per-tech sequence is computed over ALL jobs (count-but-hide for
+  // coord-less ones) and recomputes whenever the filtered list changes.
+  const techColorMap = useMemo(() => (techs ? buildTechColorMap(techs, crews || []) : null), [techs, crews]);
+  const seq = useMemo(() => buildPerTechSequence(jobs), [jobs]);
+  const stopCounts = useMemo(() => perTechStopCounts(jobs), [jobs]);
+  const fillFor = (j: Job) =>
+    techColorMap ? (j.technician_id && techColorMap.get(j.technician_id)) || UNASSIGNED_PIN_COLOR : pinColor(j.status);
   const [liveSelId, setLiveSelId] = useState<string | null>(null);
   const livePings = useMemo(() => (live.enabled ? live.pings : []), [live.enabled, live.pings]);
   const liveSel = liveSelId ? livePings.find((p) => p.user_id === liveSelId) || null : null;
@@ -193,7 +209,7 @@ export default function ScheduleMap({ jobs, testID }: Props) {
             testID={`schedule-map-pin-${j.id}`}
           >
             <View
-              style={jobPinWrapStyle(j, pinColor(j.status))}
+              style={jobPinWrapStyle(j, fillFor(j))}
               accessibilityLabel={
                 isApproximatePin(j)
                   ? `Job pin for ${j.customer_name || "job"} (approximate location — property coords missing)`
@@ -202,7 +218,8 @@ export default function ScheduleMap({ jobs, testID }: Props) {
               testID={`schedule-map-pin-wrap-${j.id}`}
             >
               <TeardropPin
-                color={pinColor(j.status)}
+                color={fillFor(j)}
+                label={seq.get(j.id)}
                 testID={`schedule-map-teardrop-${j.id}`}
               />
             </View>
@@ -212,6 +229,9 @@ export default function ScheduleMap({ jobs, testID }: Props) {
         <LiveTechMarkers pings={livePings} onSelect={selectLive} />
       </MapView>
       {toggle}
+      {techColorMap && !selected && !liveSel ? (
+        <TechLegend counts={stopCounts} colorMap={techColorMap} techs={techs || []} />
+      ) : null}
       {liveSel ? <LiveTechCard ping={liveSel} onClose={() => setLiveSelId(null)} /> : null}
 
       {selected ? (

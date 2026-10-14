@@ -960,6 +960,7 @@ function ScheduleCalendarInner() {
           onToggleRearrange={() => setRearrangeMode((v) => !v)}
           onSaveReorder={saveReorder}
           onOptimizeRoute={() => setOptimizeOpen(true)}
+          mapTechs={allTechs}
           onShift={shift}
           onBulkComplete={bulkComplete}
           onBulkDelete={bulkDelete}
@@ -1152,7 +1153,7 @@ function GridView(props: any) {
   const {
     focus, setFocus, jobs, loading, loadingTimedOut, onLoadRetry, onLoadCancel,
     checked, onToggle, canWrite,
-    rearrangeMode, onToggleRearrange, onSaveReorder, onOptimizeRoute, onShift,
+    rearrangeMode, onToggleRearrange, onSaveReorder, onOptimizeRoute, mapTechs, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, isStrictlyAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
@@ -1393,7 +1394,7 @@ function GridView(props: any) {
       ) : null}
 
       {gridSubMode === "map" && mapVisible ? (
-        <ScheduleMapLazy jobs={dayJobs || jobs} testID="schedule-day-map" />
+        <ScheduleMapLazy jobs={dayJobs || jobs} techs={mapTechs} crews={crews} testID="schedule-day-map" />
       ) : (
         <>
       {moveOpen ? (

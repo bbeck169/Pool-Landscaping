@@ -41,6 +41,9 @@ interface Job {
 
 interface Props {
   jobs: Job[];
+  // Phase B.5 parity (web 9eb08b5c1) — per-tech pin colors + legend.
+  techs?: any[];
+  crews?: any[];
   testID?: string;
 }
 
