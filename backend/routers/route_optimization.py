@@ -306,12 +306,38 @@ async def optimize_route(
         if (j.get("site_lat") is not None or j.get("lat") is not None)
         and (j.get("site_lng") is not None or j.get("lng") is not None)
     ]
+    # Phase B · Feb-2026 — expose jobs that fell out of the geocoded
+    # set so the FE can render an actionable yellow banner in the
+    # Reorder modal ("N jobs skipped: no address coordinates").
+    # ``jobs`` here is the post-skipped_unassigned list, so a job
+    # that lands in ``dropped_no_coords`` has a technician_id AND
+    # survived cross-tenant checks but could not be resolved to a
+    # ``(lat, lng)`` by ``resolve_stop_geo``. Phase A.5's property
+    # geocoding backfill is the usual remediation path.
+    _geo_ids = {j["id"] for j in jobs_with_geo}
+    dropped_no_coords = [j["id"] for j in jobs if j.get("id") not in _geo_ids]
     if len(jobs_with_geo) < 2:
         return _stamp_soft_guard({
             "ordered_job_ids": [j["id"] for j in jobs_with_geo],
             "total_distance_m": 0, "total_duration_s": 0,
             "legs": [], "cached": False, "algorithm": "trivial",
-            "warnings": ["Need at least 2 stops to optimize."],
+            # Phase B · emit the drop list on the canonical trivial
+            # envelope so the Reorder modal can render a banner even
+            # when the optimizer short-circuits. Keyed consistently
+            # with the non-trivial branches below (``dropped_job_ids``
+            # is additive — pre-Phase-B clients ignore it).
+            "dropped_job_ids": dropped_no_coords,
+            "warnings": [
+                (
+                    f"Not enough geocoded stops to optimize ("
+                    f"{len(jobs_with_geo)} with coords, "
+                    f"{len(dropped_no_coords)} without). Visit "
+                    f"Admin → Property Geocoding Health to backfill "
+                    f"missing property coordinates."
+                )
+                if dropped_no_coords
+                else "Need at least 2 stops to optimize."
+            ],
         })
 
     # Feb-2026 · Google Routes API v2 hard cap. Beyond 25 intermediates
@@ -338,7 +364,12 @@ async def optimize_route(
     # Phase P12 · bypass cache when soft-guard flags are active so the
     # freshly-computed warnings / ids always ride the response. The
     # canonical shape stays cached; the transient guard state does not.
-    _has_soft_guard = bool(orphaned_tech_ids or skipped_unassigned)
+    # Phase B · Feb-2026 — also bypass when ``dropped_no_coords`` is
+    # non-empty so a backfill that adds coords flips the dropped set
+    # without a stale hit.
+    _has_soft_guard = bool(
+        orphaned_tech_ids or skipped_unassigned or dropped_no_coords,
+    )
     cached = None
     if not _has_soft_guard:
         cached = await db.route_optimizations.find_one(
@@ -462,6 +493,13 @@ async def optimize_route(
                 # emitted a warning). See docstring above + the
                 # response-contract test suite.
                 "algorithm": "directions_v2+orion_bias",
+                # Phase B · Feb-2026 — surface the geocode-skipped
+                # set on every non-trivial response too, so the
+                # Reorder modal banner stays actionable even on a
+                # successful Google optimization that dropped some
+                # jobs for lack of coords. Pre-Phase-B clients that
+                # key on ``warnings`` keep working.
+                "dropped_job_ids": dropped_no_coords,
                 # Feb-2026 · P0-frontend contract — surface every ORION
                 # heuristic warning + any transport-layer note so the
                 # client can render a yellow banner in the Reorder modal.
@@ -532,6 +570,10 @@ async def optimize_route(
         "legs": legs,
         "cached": False,
         "algorithm": "haversine_fallback",
+        # Phase B · same drop list on the Haversine branch so the
+        # Reorder modal banner behavior is identical regardless of
+        # which optimizer path fired.
+        "dropped_job_ids": dropped_no_coords,
         # Feb-2026 · Optimize Route contract — signal to the client
         # that Google was unavailable so the modal can render the
         # "Directions unavailable — review manually" warning banner.
