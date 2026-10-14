@@ -338,6 +338,214 @@ async def preview_email_template(code: str, body: PreviewIn,
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# P2 #11 · Phase 1 · Feb-2026 — Test-send endpoint for `db.email_templates`.
+# ═══════════════════════════════════════════════════════════════════════
+# Admin-only endpoint that renders an email template with the shared
+# sample context (same path as the ``/preview`` endpoint, same renderer
+# as production ``_deliver_one``) and dispatches ONE Resend call to a
+# tightly allow-listed recipient. The audit trail stamps
+# ``kind="test_send"`` on ``db.sends`` so test-sends can be filtered
+# out of the normal send-history view without losing the receipt.
+#
+# Hardening (per dispatch):
+#   * Allow-list — recipient must be either (a) the caller's own
+#     email, OR (b) another admin/super_admin/owner/manager user in
+#     the SAME tenant. Prevents turning the builder into an
+#     arbitrary-address email relay.
+#   * Rate-limit — 10 sends per rolling hour per (tenant_id, user_id)
+#     with 429 + ``Retry-After`` header. Pattern mirrors the
+#     marketing-templates test-send bucket at
+#     ``routers/marketing_templates.py:663`` but is a SEPARATE module-
+#     level dict so the two surfaces don't share limits.
+#   * Subject prefix — a leading ``"[TEST] "`` marker makes it
+#     impossible for a test recipient to confuse the message with
+#     a real production send.
+#   * Bypasses ``_deliver_one`` — no multi-contact fan-out, no mute
+#     gate, no automation-event write. This is a developer check,
+#     not a customer-facing send.
+#
+# See ``backend/tests/test_comms_email_test_send.py`` for the full
+# coverage matrix (6 cases: self, tenant admin, external 400, non-
+# admin 403, rate-limit 429, audit-trail kind+subject prefix).
+# ═══════════════════════════════════════════════════════════════════════
+
+import asyncio as _p2_11_asyncio
+import time as _p2_11_time
+from collections import defaultdict as _p2_11_dd
+
+_COMMS_TEST_SEND_LIMIT = 10          # per rolling window
+_COMMS_TEST_SEND_WINDOW_S = 3600.0   # 1 hour
+_comms_test_send_hits: Dict[str, List[float]] = _p2_11_dd(list)
+_comms_test_send_lock = _p2_11_asyncio.Lock()
+_COMMS_TEST_ALLOWED_ROLES = {"admin", "super_admin", "owner", "manager"}
+
+
+async def _rate_limit_comms_test_send(bucket_key: str) -> None:
+    """Rolling-window rate-limiter — 10 calls / hour / bucket.
+
+    Raises ``429`` with ``Retry-After`` header equal to the number of
+    seconds remaining until the oldest in-window hit ages out.
+    """
+    now = _p2_11_time.monotonic()
+    async with _comms_test_send_lock:
+        bucket = _comms_test_send_hits[bucket_key]
+        cutoff = now - _COMMS_TEST_SEND_WINDOW_S
+        i = 0
+        while i < len(bucket) and bucket[i] < cutoff:
+            i += 1
+        if i:
+            del bucket[:i]
+        if len(bucket) >= _COMMS_TEST_SEND_LIMIT:
+            retry_after = int(_COMMS_TEST_SEND_WINDOW_S - (now - bucket[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "test_send_rate_limited",
+                    "msg": (f"Rate limit — max {_COMMS_TEST_SEND_LIMIT} test "
+                             f"sends per hour per user."),
+                },
+                headers={"Retry-After": str(max(retry_after, 1))},
+            )
+        bucket.append(now)
+
+
+@router.post("/email-templates/_test-send-rate-reset")
+async def comms_test_send_rate_reset(
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Pytest-only reset — clears the caller's test-send bucket so
+    the ``test_rate_limit_11th_call_within_hour_returns_429`` case
+    can run deterministically without waiting an hour between
+    reruns. Mirrors ``routers/marketing_templates.py:682``.
+    """
+    key = f"{tenant['id']}:{user.get('id') or 'anon'}"
+    async with _comms_test_send_lock:
+        _comms_test_send_hits.pop(key, None)
+    return {"ok": True}
+
+
+class EmailTemplateTestSendIn(BaseModel):
+    to: Optional[str] = None  # None → send to caller's own email
+
+
+async def _resolve_test_recipient(
+    to: Optional[str], user: dict, tenant: dict,
+) -> str:
+    """Enforce the test-send recipient allow-list.
+
+    Returns the normalized recipient email on success, raises 400
+    ``test_recipient_not_allowed`` on any violation.
+    """
+    caller_email = (user.get("email") or "").strip().lower()
+    target = (to or "").strip().lower() or caller_email
+    if not target:
+        raise HTTPException(
+            400,
+            {"code": "test_recipient_missing",
+             "msg": "No recipient on the request and the admin's "
+                    "own email is not set — cannot resolve a "
+                    "safe default."},
+        )
+    # Fast-path: caller sending to themselves.
+    if target == caller_email:
+        return target
+    # Only tenant admins / super_admins / owners / managers may
+    # receive a test send authored by another admin.
+    peer = await db.users.find_one(
+        {"tenant_id": tenant["id"], "email": target},
+        {"_id": 0, "id": 1, "email": 1, "role": 1},
+    )
+    if peer and (peer.get("role") or "").lower() in _COMMS_TEST_ALLOWED_ROLES:
+        return target
+    raise HTTPException(
+        400,
+        {"code": "test_recipient_not_allowed",
+         "msg": ("Test-send recipient must be the caller or another "
+                  "admin/super_admin/owner/manager user in the same "
+                  "tenant.")},
+    )
+
+
+@router.post("/email-templates/{code}/test-send")
+async def test_send_email_template(
+    code: str, body: EmailTemplateTestSendIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only test-send for a block-based email template.
+
+    * Hard-admin gate via ``_require_admin``.
+    * Recipient allow-listed to the caller or an in-tenant
+      admin/super_admin/owner/manager peer.
+    * Rate-limited: 10/hour per (tenant, user).
+    * Subject prefixed ``"[TEST] "``.
+    * Audit trail: ``db.sends`` row with ``kind="test_send"``.
+    """
+    bucket_key = f"{tenant['id']}:{user.get('id') or 'anon'}"
+    await _rate_limit_comms_test_send(bucket_key)
+
+    tpl = await _find_email_template(tenant["id"], code)
+    if not tpl:
+        raise HTTPException(404, "Template not found")
+
+    recipient = await _resolve_test_recipient(body.to, user, tenant)
+
+    # Build context — sample tokens, then company overlay. We do NOT
+    # bind to a specific customer here; this is a developer check of
+    # the rendered output and the Resend wiring, not a customer-
+    # facing send. The ``recipient`` is an admin / peer, so there is
+    # no customer-level unsubscribe URL to resolve.
+    company = _load_company(tenant)
+    ctx = sample_tokens_context()
+    ctx.update({k: v for k, v in build_context_for_customer(
+        {}, {}, {}, company,
+        unsubscribe_url=ctx.get("unsubscribe_url", "")).items() if v})
+
+    subject_raw = resolve_email_subject(tpl.get("subject") or "", ctx)
+    subject = f"[TEST] {subject_raw}" if subject_raw else "[TEST]"
+    html = render_email_html(tpl.get("blocks_json") or [], ctx)
+
+    try:
+        deliver = await send_email(
+            tenant["id"], recipient, subject, html,
+            from_name=company.get("name") or None,
+            context=CommsContext.TEST,
+        )
+    except Exception as e:  # pragma: no cover — defensive, Resend SDK can raise
+        deliver = {"status": "failed", "provider_id": None,
+                    "error": str(e)[:400]}
+
+    send_doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "kind": "test_send",  # filterable out of normal send history
+        "template_code": code,
+        "automation_code": None,
+        "recipient_id": None,
+        "recipient_email": recipient,
+        "recipient_phone": None,
+        "subject": subject,
+        "rendered_body": html,
+        "tokens_resolved": {k: v for k, v in ctx.items() if v},
+        "status": deliver.get("status"),
+        "provider_message_id": deliver.get("provider_id"),
+        "error": deliver.get("error"),
+        "queued_at": now_iso(),
+        "requested_by_user_id": user.get("id"),
+    }
+    await db.sends.insert_one(send_doc)
+    return {
+        "status": deliver.get("status"),
+        "send_id": send_doc["id"],
+        "recipient": recipient,
+        "subject": subject,
+        "provider_message_id": deliver.get("provider_id"),
+        "error": deliver.get("error"),
+    }
+
+
 # --- SMS template endpoints --------------------------------------------
 
 @router.get("/sms-templates")
