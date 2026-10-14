@@ -1503,6 +1503,13 @@ export default function CalendarSchedule() {
         orderedIds: Array.isArray(r?.ordered_job_ids) ? r.ordered_job_ids : [],
         summary,
         warnings: Array.isArray(r?.warnings) ? r.warnings : [],
+        // Phase B · Feb-2026 — thread raw totals + dropped set so
+        // the Reorder modal can recompute the header on drag/reverse
+        // and render the yellow dropped-job banner.
+        totalMeters: totalMeters,
+        totalSeconds: totalSecs,
+        droppedJobIds: Array.isArray(r?.dropped_job_ids)
+          ? r.dropped_job_ids : [],
       });
       // Phase P12 · non-blocking success toast when the backend
       // surfaced orphaned tech ids or unassigned jobs. These are
@@ -2274,6 +2281,9 @@ export default function CalendarSchedule() {
           initialOrder={optimizePayload?.orderedIds || null}
           optimizeSummary={optimizePayload?.summary || null}
           optimizeWarnings={optimizePayload?.warnings || null}
+          optimizeTotalMeters={optimizePayload?.totalMeters ?? null}
+          optimizeTotalSeconds={optimizePayload?.totalSeconds ?? null}
+          droppedJobIds={optimizePayload?.droppedJobIds || null}
           onClose={() => { setBulkReorderOpen(false); setOptimizePayload(null); }}
           onSaved={() => { setOptimizePayload(null); load(); }}
         />

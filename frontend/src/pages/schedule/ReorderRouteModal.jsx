@@ -46,11 +46,71 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import {
-  ChevronDown, ChevronUp, GripVertical, Save as SaveIcon, X,
+  ArrowDownUp, ChevronDown, ChevronUp, GripVertical, Save as SaveIcon, X,
 } from "lucide-react";
 
 import { api } from "@/api";
 import { colors } from "@/theme";
+
+// ─── Phase B · Feb-2026 — client-side haversine recompute helpers ──
+// Lightweight, no external deps. Used to recompute the header
+// "Estimated Xh Ym · M.Mmi · {trivial|short|long}" line whenever the
+// operator drags or hits "Reverse Order" so the summary stays in
+// sync with the in-modal order without a backend round-trip.
+const _EARTH_M = 6371008.8;
+export function haversineMeters(aLat, aLng, bLat, bLng) {
+  if (aLat == null || aLng == null || bLat == null || bLng == null) {
+    return 0;
+  }
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const s =
+    Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat))
+    * Math.sin(dLng / 2) ** 2;
+  return 2 * _EARTH_M * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+function _jobCoord(j) {
+  const lat = j?.location_lat ?? j?.site_lat ?? j?.lat ?? j?.latitude;
+  const lng = j?.location_lng ?? j?.site_lng ?? j?.lng ?? j?.longitude;
+  return (lat != null && lng != null) ? [Number(lat), Number(lng)] : null;
+}
+export function totalHaversineMeters(orderedJobs) {
+  if (!Array.isArray(orderedJobs) || orderedJobs.length < 2) return 0;
+  let total = 0;
+  let prev = null;
+  for (const j of orderedJobs) {
+    const c = _jobCoord(j);
+    if (c && prev) total += haversineMeters(prev[0], prev[1], c[0], c[1]);
+    if (c) prev = c;
+  }
+  return total;
+}
+// Phase B · Feb-2026 — distance classification (dispatch brief §Commit 2):
+//   trivial: < 5 mi · short: 5-20 mi · long: > 20 mi.
+export function classifyMiles(miles) {
+  if (miles < 5) return "trivial";
+  if (miles <= 20) return "short";
+  return "long";
+}
+// ~35 km/h neighborhood driving — matches the server-side
+// `_estimate_duration_s` in `backend/routers/route_optimization.py`.
+function _durationSecondsFromMeters(m) {
+  if (m <= 0) return 0;
+  return Math.round(m / ((35 * 1000) / 3600));
+}
+function _formatHeader(meters, overrideSeconds) {
+  const miles = meters / 1609.344;
+  const secs = overrideSeconds != null
+    ? overrideSeconds : _durationSecondsFromMeters(meters);
+  const h = Math.floor(secs / 3600);
+  const m = Math.round((secs % 3600) / 60);
+  return (
+    `Estimated ~${h}h ${m}m · ${miles.toFixed(1)}mi `
+    + `· ${classifyMiles(miles)}`
+  );
+}
 
 
 function Row({ job, index, total, onMoveUp, onMoveDown, disabled }) {
@@ -174,12 +234,28 @@ function _initialOrderedJobs(jobs, initialOrder) {
 export function ReorderRouteModal({
   jobs, techUserId, date, onClose, onSaved,
   initialOrder = null, optimizeSummary = null, optimizeWarnings = null,
+  // Phase B · Feb-2026 — new props so the modal can recompute the
+  // header line as the operator drags / reverses, and show a
+  // dropped-job yellow banner when the backend indicated some jobs
+  // couldn't be geocoded.
+  optimizeTotalMeters = null,
+  optimizeTotalSeconds = null,
+  droppedJobIds = null,
 }) {
   const [ordered, setOrdered] = useState(
     () => _initialOrderedJobs(jobs, initialOrder),
   );
   const [saving, setSaving] = useState(false);
   const [liveMsg, setLiveMsg] = useState("");
+  // Phase B · track whether the current list order matches the
+  // backend's optimized output. When true, we render the server's
+  // (typically more accurate) total_distance_m / total_duration_s.
+  // When false (operator dragged or reversed), fall back to a
+  // client-side haversine recompute.
+  const [matchesServerOrder, setMatchesServerOrder] = useState(() => {
+    if (!Array.isArray(initialOrder) || initialOrder.length === 0) return false;
+    return true;
+  });
   const overlayRef = useRef(null);
 
   const sensors = useSensors(
@@ -212,6 +288,9 @@ export function ReorderRouteModal({
       announce(label, oldIdx + 1, newIdx + 1, next);
       return next;
     });
+    // Phase B · any drag ejects the server's precomputed totals; the
+    // header switches to a client-side haversine recompute.
+    setMatchesServerOrder(false);
   }, [announce]);
 
   const moveBy = useCallback((jobId, delta) => {
@@ -224,7 +303,23 @@ export function ReorderRouteModal({
       announce(label, i + 1, target + 1, next);
       return next;
     });
+    setMatchesServerOrder(false);
   }, [announce]);
+
+  // Phase B · Feb-2026 — "Reverse Order" button. Non-destructive;
+  // operator still clicks "Save order" to commit. Triggers the same
+  // header-recompute path as drag (switches to client haversine).
+  const reverseOrder = useCallback(() => {
+    setOrdered((cur) => {
+      if (cur.length < 2) return cur;
+      const next = [...cur].reverse();
+      setLiveMsg(
+        `Reversed order. New order: 1 to ${next.length}.`,
+      );
+      return next;
+    });
+    setMatchesServerOrder(false);
+  }, []);
 
   const save = useCallback(async () => {
     if (!ordered.length) return;
@@ -246,6 +341,45 @@ export function ReorderRouteModal({
 
   const empty = ordered.length === 0;
   const jobIds = useMemo(() => ordered.map((j) => j.id), [ordered]);
+
+  // Phase B · Feb-2026 — derive the modal header. ONLY compute a
+  // header when the caller is Phase-B-aware (passed
+  // ``optimizeTotalMeters``) OR when the operator re-drags/reverses
+  // AFTER a Phase-B initialOrder; otherwise fall back to the pre-
+  // Phase-B ``optimizeSummary`` prop (backward compat for callers
+  // that haven't been migrated yet, including TodaySchedule.jsx's
+  // raw-reorder flow which doesn't optimize at all).
+  const headerLine = useMemo(() => {
+    if (empty) return null;
+    // Phase-B-aware path — server totals available.
+    if (Number(optimizeTotalMeters) >= 0
+        && optimizeTotalMeters != null
+        && Number.isFinite(Number(optimizeTotalMeters))) {
+      if (matchesServerOrder
+          && Number.isFinite(Number(optimizeTotalSeconds))) {
+        return _formatHeader(
+          Number(optimizeTotalMeters),
+          Number(optimizeTotalSeconds),
+        );
+      }
+      const m = totalHaversineMeters(ordered);
+      return _formatHeader(m);
+    }
+    return null;
+  }, [empty, matchesServerOrder, ordered,
+      optimizeTotalMeters, optimizeTotalSeconds]);
+
+  // Phase B · dropped-job yellow banner — show when the backend
+  // indicated some jobs couldn't be geocoded. The matching job
+  // objects are hydrated from the ``jobs`` prop for display.
+  const droppedBanner = useMemo(() => {
+    const ids = Array.isArray(droppedJobIds) ? droppedJobIds : [];
+    if (!ids.length) return null;
+    const n = ids.length;
+    return `${n} job${n > 1 ? "s" : ""} skipped: no address `
+      + `coordinates. Visit Admin → Property Geocoding Health to `
+      + `backfill.`;
+  }, [droppedJobIds]);
 
   return (
     <div
@@ -285,7 +419,18 @@ export function ReorderRouteModal({
           </button>
         </header>
 
-        {optimizeSummary ? (
+        {headerLine ? (
+          <div
+            className="px-5 py-2 text-xs font-semibold"
+            style={{
+              background: "#ECFDF5", color: "#065F46",
+              borderBottom: `1px solid ${colors.border}`,
+            }}
+            data-testid="id-optimize-route-summary"
+          >
+            {headerLine}
+          </div>
+        ) : optimizeSummary ? (
           <div
             className="px-5 py-2 text-xs font-semibold"
             style={{
@@ -295,6 +440,18 @@ export function ReorderRouteModal({
             data-testid="id-optimize-route-summary"
           >
             {optimizeSummary}
+          </div>
+        ) : null}
+        {droppedBanner ? (
+          <div
+            className="px-5 py-2 text-xs font-semibold"
+            style={{
+              background: "#FEF3C7", color: "#92400E",
+              borderBottom: `1px solid ${colors.border}`,
+            }}
+            data-testid="reorder-route-dropped-banner"
+          >
+            {droppedBanner}
           </div>
         ) : null}
         {isFallback ? (
@@ -374,6 +531,26 @@ export function ReorderRouteModal({
             data-testid="reorder-route-cancel"
           >
             Cancel
+          </button>
+          {/* Phase B · Feb-2026 — Reverse Order (ghost button). Flips
+              the current in-modal sequence. Non-destructive; operator
+              still clicks "Save order" to commit. Triggers the same
+              client-side haversine recompute path as a drag. */}
+          <button
+            type="button"
+            onClick={reverseOrder}
+            disabled={saving || ordered.length < 2}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-40"
+            style={{
+              background: "transparent",
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="reorder-route-reverse"
+            aria-label="Reverse route order"
+          >
+            <ArrowDownUp size={14} />
+            Reverse Order
           </button>
           <button
             onClick={save}
