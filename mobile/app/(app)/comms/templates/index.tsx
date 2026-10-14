@@ -21,8 +21,19 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { listEmailTemplates, listSmsTemplates } from "@/src/api/comms";
 import ChannelIcon from "@/src/components/comms/ChannelIcon";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
 
+// P2 #11 — admin + super_admin only (backend `_require_admin`). Gate
+// wraps the body so non-admins never fire the list request.
 export default function CommsTemplatesListScreen() {
+  return (
+    <CommsAdminGate title="Comms Templates">
+      <CommsTemplatesListBody />
+    </CommsAdminGate>
+  );
+}
+
+function CommsTemplatesListBody() {
   const router = useRouter();
   const [tab, setTab] = useState<"email" | "sms">("email");
   const [rows, setRows] = useState<any[]>([]);
@@ -66,7 +77,8 @@ export default function CommsTemplatesListScreen() {
     return rows.filter(
       (r: any) =>
         (r.code || "").toLowerCase().includes(s) ||
-        (r.name || "").toLowerCase().includes(s)
+        (r.name || "").toLowerCase().includes(s) ||
+        (r.subject || "").toLowerCase().includes(s)
     );
   }, [rows, q]);
 
@@ -101,9 +113,22 @@ export default function CommsTemplatesListScreen() {
           </View>
         )}
       </View>
-      <Text style={styles.rowCode} numberOfLines={1}>
-        {item.code}
-      </Text>
+      {tab === "email" && item.subject ? (
+        <Text style={styles.rowSubject} numberOfLines={1} testID={`comms-template-subject-${item.code}`}>
+          {item.subject}
+        </Text>
+      ) : null}
+      <View style={styles.rowMeta}>
+        <Text style={styles.rowCode} numberOfLines={1}>
+          {item.code}
+        </Text>
+        {tab === "email" && item.is_customer_facing ? (
+          <View style={styles.customerBadge} testID={`comms-template-customer-facing-${item.code}`}>
+            <Ionicons name="people-outline" size={10} color="#0369A1" />
+            <Text style={styles.customerLabel}>CUSTOMER-FACING</Text>
+          </View>
+        ) : null}
+      </View>
       <Text style={styles.rowDate}>
         Updated {(item.updated_at || item.created_at || "").slice(0, 10)}
       </Text>
@@ -205,6 +230,13 @@ export default function CommsTemplatesListScreen() {
 }
 
 const styles = StyleSheet.create({
+  rowSubject: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface, marginTop: 2 },
+  rowMeta: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  customerBadge: {
+    flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 1,
+    borderRadius: 4, backgroundColor: "#E0F2FE",
+  },
+  customerLabel: { fontFamily: font.bold, fontSize: 9, color: "#0369A1", letterSpacing: 0.4 },
   root: { flex: 1, backgroundColor: colors.surface },
   tabBar: {
     flexDirection: "row",
@@ -308,6 +340,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.muted,
     marginBottom: 2,
+    flexShrink: 1,
   },
   rowDate: {
     fontFamily: font.regular,

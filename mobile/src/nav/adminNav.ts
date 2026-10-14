@@ -249,9 +249,12 @@ export const ADMIN_NAV: NavGroup[] = [
     key: "communications",
     label: "Communications",
     entries: [
-      { label: "Email Builder",      route: "/admin/comms/email",       icon: "mail-open-outline",  tier: "t2", testID: "drawer-nav-comms-email" },
+      // P2 #11 mobile parity — native view + preview + test-send (t1).
+      // Gate = backend `_require_admin` / web `<AdminOnly>`: admin +
+      // super_admin only (managers would just 403).
+      { label: "Email Builder",      route: "/admin/comms/email",       icon: "mail-open-outline",  tier: "t1", roles: ["super_admin", "admin"], testID: "drawer-nav-comms-email" },
       { label: "SMS Builder",        route: "/admin/comms/sms",         icon: "chatbubble-outline", tier: "t2", testID: "drawer-nav-comms-sms" },
-      { label: "Templates",          route: "/admin/comms/templates",   icon: "file-tray-outline",  tier: "t2", testID: "drawer-nav-comms-templates" },
+      { label: "Templates",          route: "/admin/comms/templates",   icon: "file-tray-outline",  tier: "t1", roles: ["super_admin", "admin"], testID: "drawer-nav-comms-templates" },
       { label: "Automations",        route: "/admin/comms/automations", icon: "flash-outline",      tier: "t2", testID: "drawer-nav-comms-automations" },
       { label: "Sends History",      route: "/admin/comms/sends",       icon: "paper-plane-outline",tier: "t2", testID: "drawer-nav-comms-sends" },
     ],

@@ -28,8 +28,19 @@ import {
   previewEmailTemplate,
   previewSmsTemplate,
 } from "@/src/api/comms";
+import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
+import EmailPreviewWebView from "@/src/components/comms/EmailPreviewWebView";
 
+// P2 #11 — admin + super_admin only (backend `_require_admin`).
 export default function CommsTemplateDetailScreen() {
+  return (
+    <CommsAdminGate title="Template">
+      <CommsTemplateDetailBody />
+    </CommsAdminGate>
+  );
+}
+
+function CommsTemplateDetailBody() {
   const { code, channel } = useLocalSearchParams<{
     code: string;
     channel: string;
@@ -43,6 +54,7 @@ export default function CommsTemplateDetailScreen() {
   const [previewData, setPreviewData] = useState<any>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<unknown>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -58,16 +70,20 @@ export default function CommsTemplateDetailScreen() {
     }, [code, isEmail])
   );
 
+  // Modal opens immediately with its own loading / error state — a
+  // preview failure no longer replaces the whole screen.
   const onPreview = async () => {
+    setPreviewVisible(true);
     setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewData(null);
     try {
       const d = isEmail
         ? await previewEmailTemplate(code!)
         : await previewSmsTemplate(code!);
       setPreviewData(d);
-      setPreviewVisible(true);
     } catch (e: any) {
-      setError(e);
+      setPreviewError(e);
     } finally {
       setPreviewLoading(false);
     }
@@ -189,7 +205,14 @@ export default function CommsTemplateDetailScreen() {
         onRequestClose={() => setPreviewVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { paddingBottom: insets.bottom + 16 }]}>
+          <View
+            style={[
+              styles.modalContent,
+              isEmail && styles.modalContentEmail,
+              { paddingBottom: insets.bottom + 16 },
+            ]}
+            testID="comms-preview-modal"
+          >
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Preview</Text>
               <TouchableOpacity
@@ -199,27 +222,44 @@ export default function CommsTemplateDetailScreen() {
                 <Ionicons name="close" size={22} color={colors.muted} />
               </TouchableOpacity>
             </View>
+            {previewLoading ? (
+              <ActivityIndicator
+                testID="comms-preview-loader"
+                style={{ marginVertical: 40 }}
+                color={colors.brand}
+              />
+            ) : previewError ? (
+              <View style={styles.errorWrap} testID="comms-preview-error">
+                <Ionicons
+                  name={errorKindIcon(mapApiError(previewError).kind) as any}
+                  size={28}
+                  color={colors.error}
+                />
+                <Text style={styles.errorText}>{mapApiError(previewError).message}</Text>
+                <TouchableOpacity
+                  testID="comms-preview-retry"
+                  style={styles.previewBtn}
+                  onPress={onPreview}
+                >
+                  <Text style={styles.previewBtnLabel}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : isEmail ? (
+              <View style={styles.emailPreviewWrap}>
+                <Text style={styles.previewSubjectLabel}>Subject</Text>
+                <Text style={styles.previewSubject} testID="comms-preview-subject">
+                  {previewData?.subject ||
+                    previewData?.resolved_subject ||
+                    "(no subject)"}
+                </Text>
+                <View style={styles.previewHtmlBox}>
+                  <EmailPreviewWebView
+                    html={previewData?.body_html || previewData?.html || "<p>(no body)</p>"}
+                  />
+                </View>
+              </View>
+            ) : (
             <ScrollView style={styles.modalBody}>
-              {isEmail ? (
-                <>
-                  <Text style={styles.previewSubjectLabel}>Subject</Text>
-                  <Text style={styles.previewSubject}>
-                    {previewData?.subject ||
-                      previewData?.resolved_subject ||
-                      "(no subject)"}
-                  </Text>
-                  <Text style={styles.previewBodyLabel}>Body (HTML)</Text>
-                  <View style={styles.previewHtmlBox}>
-                    <Text style={styles.previewHtmlText}>
-                      {(
-                        previewData?.body_html ||
-                        previewData?.html ||
-                        "(no body)"
-                      ).replace(/<[^>]*>/g, " ").trim()}
-                    </Text>
-                  </View>
-                </>
-              ) : (
                 <>
                   <Text style={styles.previewBodyLabel}>Body</Text>
                   <View style={styles.previewSmsBox}>
@@ -230,8 +270,8 @@ export default function CommsTemplateDetailScreen() {
                     </Text>
                   </View>
                 </>
-              )}
             </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -403,12 +443,15 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   previewHtmlBox: {
+    flex: 1,
     backgroundColor: "#fff",
     borderRadius: radius.sm,
-    padding: spacing.md,
+    overflow: "hidden",
     borderWidth: 1,
     borderColor: colors.border,
   },
+  modalContentEmail: { height: "85%" },
+  emailPreviewWrap: { flex: 1, paddingHorizontal: spacing.lg },
   previewHtmlText: {
     fontFamily: font.regular,
     fontSize: fontSize.sm,
