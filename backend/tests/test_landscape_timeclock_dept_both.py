@@ -165,3 +165,81 @@ def test_admin_can_punch_regardless_of_department(tenant_id):
     admin = _seed_user(tenant_id, "admin", department=None)
     r = _punch(admin, "in")
     assert r.status_code == 200, r.text
+
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 4 follow-up (Feb-2026) — ``_require_landscaping`` whitelist
+# parity fix.  The guard at ``routers/timeclock_landscaping.py:62``
+# previously accepted only ``("landscaping", "both")`` which 403'd
+# cross-trained techs whose ``users.department`` was
+# ``"landscape_tech"`` or ``"landscaper"``.  Both values are already
+# in the mobile client's ``LANDSCAPE_DEPTS`` set (per hotfix
+# ``59ac2c22a``) and in this file's own ``_LANDSCAPE_DEPTS`` tuple
+# (used by ``admin_summary``'s user-list filter) — the gate was
+# the only place out of lock-step.  The fix references
+# ``_LANDSCAPE_DEPTS`` directly as the single source of truth.
+# ══════════════════════════════════════════════════════════════════
+
+
+def test_require_landscaping_allows_landscape_tech(tenant_id):
+    """``department="landscape_tech"`` must punch IN successfully (200).
+
+    Pre-fix: 403 ``not_landscaping``.  Post-fix: 200.
+    """
+    tech = _seed_user(tenant_id, "technician", department="landscape_tech")
+    r = _punch(tech, "in")
+    assert r.status_code == 200, r.text
+    rows = list(_sync.timeclock_punches.find(
+        {"user_id": tech["id"], "tenant_id": tenant_id},
+    ))
+    assert len(rows) == 1
+    assert rows[0]["punch_type"] == "in"
+
+
+def test_require_landscaping_allows_landscaper(tenant_id):
+    """``department="landscaper"`` must punch IN successfully (200).
+
+    Pre-fix: 403 ``not_landscaping``.  Post-fix: 200.
+    """
+    tech = _seed_user(tenant_id, "technician", department="landscaper")
+    r = _punch(tech, "in")
+    assert r.status_code == 200, r.text
+
+
+def test_require_landscaping_still_blocks_pool_tech(tenant_id):
+    """``department="pool_tech"`` must stay 403 ``not_landscaping``.
+
+    Guardrail — the widened whitelist (now sourced from
+    ``_LANDSCAPE_DEPTS``) must NOT accidentally extend coverage to
+    pool-family departments.  Audit §7 confirms pool techs clock in
+    via ``/api/workforce/clock-in`` (no dept gate), not here.
+    """
+    tech = _seed_user(tenant_id, "technician", department="pool_tech")
+    r = _punch(tech, "in")
+    assert r.status_code == 403, r.text
+    detail = (r.json() or {}).get("detail") or {}
+    if isinstance(detail, dict):
+        assert detail.get("code") == "not_landscaping"
+
+
+def test_require_landscaping_blocks_unknown_dept(tenant_id):
+    """Defensive — an unexpected ``department`` string (typo, stale
+    enum, unseeded user) must still 403 ``not_landscaping``.  Confirms
+    the gate didn't open too wide after sourcing from
+    ``_LANDSCAPE_DEPTS``."""
+    tech = _seed_user(tenant_id, "technician", department="foo_bar")
+    r = _punch(tech, "in")
+    assert r.status_code == 403, r.text
+
+
+def test_require_landscaping_super_admin_bypass_preserved(tenant_id):
+    """``super_admin`` bypass is preserved by the role check, not the
+    department whitelist — any ``department`` value (even
+    ``"pool_tech"`` or ``None``) must still allow the punch.
+
+    This exists alongside the existing admin bypass test above to
+    lock the role-based bypass for both admin ranks after the
+    whitelist widening."""
+    admin = _seed_user(tenant_id, "super_admin", department="pool_tech")
+    r = _punch(admin, "in")
+    assert r.status_code == 200, r.text

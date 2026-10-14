@@ -51,15 +51,31 @@ def _require_landscaping(user: dict) -> None:
 
     Allowed callers:
       • admin / super_admin  (any department, including "both")
-      • technicians with department = "landscaping" or "both"
+      • technicians with ``department`` in ``_LANDSCAPE_DEPTS``
+        (``landscaping``, ``landscape_tech``, ``landscaper``, ``both``)
 
     Pool techs, customers, and unassigned techs → 403.
+
+    Feb-2026 · Phase 4 follow-up — this tech-allow tuple is sourced
+    from the module-level ``_LANDSCAPE_DEPTS`` constant (defined
+    below) so it stays in lock-step with the admin-summary user
+    filter at ``admin_summary``'s MongoDB query. Previously this
+    guard only accepted ``("landscaping", "both")`` which 403'd
+    cross-trained techs whose ``users.department`` was
+    ``"landscape_tech"`` or ``"landscaper"`` even though the mobile
+    client's ``LANDSCAPE_DEPTS`` set (and this file's
+    ``admin_summary`` aggregation at ~L272/L308) already treated
+    those values as landscape-authorized. The forward reference to
+    ``_LANDSCAPE_DEPTS`` is intentional — Python resolves module
+    names at call time, not def time, and keeping the constant at
+    its original location preserves the admin-summary section's
+    local-definition convention.
     """
     role = (user.get("role") or "").lower()
     dept = (user.get("department") or "").lower()
     if role in ("admin", "super_admin"):
         return
-    if dept in ("landscaping", "both"):
+    if dept in _LANDSCAPE_DEPTS:
         return
     raise HTTPException(
         status_code=403,
