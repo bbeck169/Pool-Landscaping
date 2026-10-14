@@ -1065,6 +1065,12 @@ api_router.include_router(_checkin_ai_desc.router)
 # Feb-2026 · Phase — Customer geocoding on save + one-time backfill.
 from routers import admin_customer_geocode_backfill as _admin_geo_backfill  # noqa: E402
 api_router.include_router(_admin_geo_backfill.router)
+# Phase A.5 · Feb-2026 — Property geocoding diagnostics + backfill.
+# Sister router to the customer backfill above. Addresses the
+# 235-property shared-coord cluster surfaced by the Feb-2026 Mongo
+# audit.
+from routers import admin_property_geocode_diagnostics as _admin_prop_geo  # noqa: E402
+api_router.include_router(_admin_prop_geo.router)
 from routers import lumino_backfill as _lumino_backfill  # noqa: E402
 api_router.include_router(_lumino_backfill.router)
 from routers import profit_report as _profit_report  # noqa: E402

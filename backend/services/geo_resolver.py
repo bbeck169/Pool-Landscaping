@@ -40,6 +40,8 @@ tiles) reuse the same rule without dragging an inline block.
 """
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -48,6 +50,53 @@ from typing import Any, Dict, Optional, Tuple
 # and callers stay in sync on the exact string.
 COORD_SOURCE_JOB = "job"
 COORD_SOURCE_CUSTOMER = "customer"
+
+
+# Phase A.5 · Feb-2026 — in-process TTL set used to dedupe the
+# "pin dropped" WARNING log in ``resolve_job_coordinates``. A
+# single scheduled job can resolve to ``None`` dozens of times a
+# day (one per schedule-map poll); without dedup the log blows up.
+# 24h TTL keyed by ``(tenant_id, job_id)``. In-process is fine —
+# the log is operator-facing instrumentation, not a cross-service
+# audit.
+_PIN_DROP_LOG_TTL_S = 24 * 60 * 60
+_pin_drop_log_last: Dict[Tuple[str, str], float] = {}
+_logger = logging.getLogger(__name__)
+
+
+def _log_pin_drop_if_fresh(
+    tenant_id: Optional[str],
+    job_id: Optional[str],
+    job: Dict[str, Any],
+    reason: str,
+) -> None:
+    """Emit a WARNING log for a dropped-pin resolution once per
+    ``(tenant_id, job_id)`` in a rolling 24h window. Operator
+    instrumentation only — never raises.
+    """
+    if not tenant_id or not job_id:
+        return
+    key = (tenant_id, job_id)
+    now = time.time()
+    last = _pin_drop_log_last.get(key)
+    if last is not None and (now - last) < _PIN_DROP_LOG_TTL_S:
+        return
+    _pin_drop_log_last[key] = now
+    # Opportunistic cleanup — prune stale entries when the set
+    # grows unbounded so a long-lived process doesn't leak.
+    if len(_pin_drop_log_last) > 10000:
+        cutoff = now - _PIN_DROP_LOG_TTL_S
+        for k in list(_pin_drop_log_last):
+            if _pin_drop_log_last[k] < cutoff:
+                _pin_drop_log_last.pop(k, None)
+    _logger.warning(
+        "[geo-resolver] pin dropped: "
+        "tenant_id=%s job_id=%s property_id=%s customer_id=%s "
+        "reason=%s",
+        tenant_id, job_id,
+        job.get("property_id"), job.get("customer_id"),
+        reason,
+    )
 
 
 def _coerce_pair(lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
@@ -59,6 +108,18 @@ def _coerce_pair(lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
       2. Empty strings ``""`` (legacy CSV import artifacts).
       3. Strings that look numeric but fail ``float()`` (rare —
          mangled paste-in from spreadsheets).
+
+    Phase A.5 · Feb-2026 — ``(0, 0)`` is also treated as invalid.
+    A February-2026 Mongo audit of the preview tenant surfaced a
+    235-property cluster at a tenant-centroid where a legacy bulk
+    geocode had written identical coords because the input
+    addresses were under-specified. (0, 0) itself — the Gulf-of-
+    Guinea landmark — would be an even more obvious bug. Both
+    cases are now filtered here so the resolver returns ``None``
+    instead of silently pinning jobs to a shared bad point. The
+    ``coord_source`` wire enum (``"job" | "property" | "customer"
+    | null``) does NOT grow — zero coords simply fall through to
+    the next rung and ultimately drop the pin.
     """
     if lat is None or lng is None:
         return None
@@ -67,9 +128,16 @@ def _coerce_pair(lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
     if isinstance(lng, str) and not lng.strip():
         return None
     try:
-        return (float(lat), float(lng))
+        flat = float(lat)
+        flng = float(lng)
     except (TypeError, ValueError):
         return None
+    # Phase A.5 — treat (0, 0) as invalid. Both axes must be zero
+    # to filter; a legitimate equator- or prime-meridian-adjacent
+    # coord (one axis zero, other non-zero) is kept.
+    if flat == 0.0 and flng == 0.0:
+        return None
+    return (flat, flng)
 
 
 def resolve_job_coordinates(
@@ -121,6 +189,43 @@ def resolve_job_coordinates(
                 return (pair[0], pair[1], COORD_SOURCE_CUSTOMER)
 
     # Rung 3 — no coords anywhere. Frontend drops the pin.
+    #
+    # Phase A.5 · Feb-2026 — emit a dedup'd WARNING log so
+    # operators can diagnose silent pin drops. Only fires when
+    # the caller passed a non-empty ``customer_lookup`` (i.e. the
+    # customer rung was actually attempted). ``routers/jobs.py``
+    # calls this helper TWICE per job — once with ``{}`` to try
+    # just the job rung, then again with the full ``cmap`` after
+    # the inline property rung didn't fire. The log should only
+    # emit on the SECOND call (the "I give up" call), so the
+    # empty-lookup first call is skipped here.
+    if customer_lookup:
+        if cust_id:
+            # Determine why the customer rung didn't win so the log
+            # reason is actionable.
+            cust = customer_lookup.get(cust_id)
+            if cust is None:
+                reason = "no_customer_in_lookup"
+            else:
+                raw_lat = cust.get("service_lat")
+                raw_lng = cust.get("service_lng")
+                if raw_lat is None or raw_lng is None:
+                    reason = "no_property_coords_no_customer_coords"
+                else:
+                    # The only remaining path to None here is the
+                    # Phase A.5 (0, 0) filter.
+                    try:
+                        if float(raw_lat) == 0.0 and float(raw_lng) == 0.0:
+                            reason = "customer_zero_coords"
+                        else:
+                            reason = "no_property_coords_no_customer_coords"
+                    except (TypeError, ValueError):
+                        reason = "no_property_coords_no_customer_coords"
+        else:
+            reason = "no_property_coords_no_customer_id"
+        _log_pin_drop_if_fresh(
+            job.get("tenant_id"), job.get("id"), job, reason,
+        )
     return (None, None, None)
 
 
