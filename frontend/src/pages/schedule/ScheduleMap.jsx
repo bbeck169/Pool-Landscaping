@@ -48,7 +48,7 @@ import React, { useMemo, useState, useCallback, useEffect, useRef } from "react"
 import { Map, AdvancedMarker, InfoWindow, useMap } from "../../lib/maps";
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
-import TeardropPin from "@/components/maps/TeardropPin";
+import TeardropPin, { deriveDarker } from "@/components/maps/TeardropPin";
 import { CustomerLink, AddressLink } from "@/components/customer";
 import { PIN_COLOR_BY_DAY } from "@/pages/dispatch/dispatchColors";
 // P1 Phase 3 · Feb-2026 — Live technician GPS pin overlay.
@@ -277,6 +277,21 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
         const pinLabel = Number.isFinite(routeIdx)
           ? routeIdx + 1
           : undefined;
+        // Phase 4 · Feb-2026 — approximate-location signal.
+        // ``property_id`` is set on the job but the K58 coord
+        // resolver ladder in ``backend/routers/jobs.py`` couldn't
+        // find usable coords on the property doc (missing / NaN /
+        // zero-pair) and fell through to the customer's
+        // ``service_lat`` / ``service_lng``. ``coord_source ===
+        // "customer"`` alone is NOT approximate — it's the
+        // legitimate render for single-property customers whose
+        // ``property_id`` is null. The signal fires ONLY when a
+        // property WAS attached but failed to resolve. See
+        // ``backend/tests/test_jobs_map_coord_ladder.py``
+        // ``test_phase4_customer_fallback_preserves_property_id_approximate_signal``.
+        const isApproximate = Boolean(
+          job?.coord_source === "customer" && job?.property_id,
+        );
         return (
           <AdvancedMarker
             key={job.id}
@@ -303,16 +318,42 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(job.id); }}
-              aria-label={`Job pin for ${job.customer_name || "job"}`}
+              aria-label={
+                isApproximate
+                  ? `Job pin for ${job.customer_name || "job"} `
+                    + "(approximate location — property coords missing)"
+                  : `Job pin for ${job.customer_name || "job"}`
+              }
+              title={
+                isApproximate
+                  ? "Approximate location — property has no geocoded "
+                    + "coords; falling back to the customer's service "
+                    + "address. Fix on the property's edit page."
+                  : undefined
+              }
               data-testid={`schedule-map-pin-${job.id}`}
               data-color-mode={colorMode}
+              data-approximate={isApproximate ? "true" : "false"}
+              data-coord-source={job?.coord_source || "none"}
               style={{
                 background: "transparent",
-                border: 0,
-                padding: 0,
+                // Phase 4 · Feb-2026 — approximate pins get a
+                // dashed outline so operators can spot which
+                // pins fell back to the customer address. 1px
+                // transparent border on non-approximate pins so
+                // the layout box height is identical in both
+                // states (no jump when a pin's status flips).
+                border: isApproximate
+                  ? `2px dashed ${deriveDarker(fillHex)}`
+                  : "2px solid transparent",
+                borderRadius: "50%",
+                padding: isApproximate ? 1 : 1,
                 cursor: "pointer",
                 filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
                 transform: "translateY(-24px)",
+                // Lighten the whole pin by 30% so the approximate
+                // state reads as "lower confidence" at a glance.
+                opacity: isApproximate ? 0.7 : 1,
               }}
             >
               {/* Phase M1 · Feb-2026 · Sitewide custom teardrop pin.
@@ -608,6 +649,46 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
                   data-testid={`schedule-map-info-address-${active.job.id}`}
                 >
                   <AddressLink address={active.job.address} />
+                </div>
+              ) : null}
+              {/* Phase 4 · Feb-2026 — property-origin chip. Shows the
+                   property label as a secondary line when the K58 /
+                   P31 coord resolver landed on the property rung so
+                   operators know the pin reflects the property's
+                   address, not the customer's billing address. Only
+                   rendered when ``coord_source === "property"`` AND
+                   a label was stamped server-side. See
+                   backend/routers/jobs.py:1327-1336 for the stamp +
+                   backend/tests/test_jobs_map_coord_ladder.py
+                   ``test_phase4_property_rung_stamps_coord_source_and_label``
+                   for the contract lock. */}
+              {active.job.coord_source === "property"
+                && active.job.property_label ? (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: colors.onSurfaceSecondary,
+                    marginTop: 4,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "2px 6px",
+                    borderRadius: 999,
+                    background: "rgba(14,165,233,0.08)",
+                    border: "1px solid rgba(14,165,233,0.25)",
+                  }}
+                  data-testid={`schedule-map-info-property-${active.job.id}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: "inline-block",
+                      width: 6, height: 6,
+                      borderRadius: "50%",
+                      background: "#0EA5E9",
+                    }}
+                  />
+                  Property: <strong>{active.job.property_label}</strong>
                 </div>
               ) : null}
               {_fmtTime(active.job) ? (
