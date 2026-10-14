@@ -288,6 +288,129 @@ async def test_ladder_returns_none_when_all_rungs_empty(db, admin_token, tenant_
         await _cleanup(db, tenant_id, tag)
 
 
+# ─── Phase 4 · Feb-2026 — Multi-property map pin assertions ───────────
+#
+# These two cases guard the fields the Phase 4 frontend relies on to
+# (a) render a "Property address" chip in the InfoWindow when
+#     ``coord_source === "property"``, and
+# (b) compute the ``isApproximate`` flag on the FE as
+#     ``coord_source === "customer" && job.property_id``.
+#
+# Both ``property_id`` and ``property_label`` have been on the
+# ``GET /api/jobs`` wire since Phase MP2 UI (``jobs.py`` ~L1299-L1336);
+# these tests lock the invariant so a future refactor can't drop
+# either field.
+
+
+@pytest.mark.anyio
+async def test_phase4_property_rung_stamps_coord_source_and_label(
+    db, admin_token, tenant_id,
+):
+    """Rung-3 (property) hits stamp ``coord_source``, ``property_id``,
+    and ``property_label`` on the job payload — the fields the
+    Phase 4 FE needs to render the property-origin InfoWindow line."""
+    tag = f"k58-test-{uuid.uuid4()}"
+    try:
+        job_id = str(uuid.uuid4())
+        prop_id = str(uuid.uuid4())
+        cust_id = str(uuid.uuid4())
+        await db.customers.insert_one({
+            "id": cust_id, "tenant_id": tenant_id, "name": "P4 Cust",
+            "service_lat": 1.0, "service_lng": 1.0, "_k58_test_tag": tag,
+        })
+        await db.properties.insert_one({
+            "id": prop_id, "tenant_id": tenant_id, "label": "P4 Prop Alpha",
+            "latitude": 7.0, "longitude": 8.0, "_k58_test_tag": tag,
+        })
+        await db.jobs.insert_one({
+            "id": job_id, "tenant_id": tenant_id,
+            "customer_id": cust_id, "property_id": prop_id,
+            "status": "scheduled", "service_type": "Pool Service",
+            "scheduled_date": "2026-01-01",
+            "_k58_test_tag": tag,
+        })
+        async with httpx.AsyncClient(timeout=15.0) as ac:
+            r = await ac.get(
+                f"{API_BASE}/jobs",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                params={"customer_id": cust_id},
+            )
+        r.raise_for_status()
+        jobs = r.json() if isinstance(r.json(), list) else (
+            r.json().get("jobs") or r.json().get("items") or []
+        )
+        found = next((j for j in jobs if j.get("id") == job_id), None)
+        assert found
+        # Coord resolution → property rung.
+        assert found["location_lat"] == 7.0
+        assert found["location_lng"] == 8.0
+        assert found["coord_source"] == "property"
+        # Phase 4 FE contract — property_id + property_label present
+        # on the wire so the InfoWindow can render the chip.
+        assert found["property_id"] == prop_id
+        assert found["property_label"] == "P4 Prop Alpha"
+    finally:
+        await _cleanup(db, tenant_id, tag)
+
+
+@pytest.mark.anyio
+async def test_phase4_customer_fallback_preserves_property_id_approximate_signal(
+    db, admin_token, tenant_id,
+):
+    """When ``property_id`` is set but the property has no coords and
+    the ladder falls through to rung 4 (customer), the response
+    still carries ``property_id`` + ``property_label`` so the FE can
+    detect the "approximate" state (``coord_source === "customer"``
+    AND ``property_id`` non-null) and dim the pin."""
+    tag = f"k58-test-{uuid.uuid4()}"
+    try:
+        job_id = str(uuid.uuid4())
+        prop_id = str(uuid.uuid4())
+        cust_id = str(uuid.uuid4())
+        await db.customers.insert_one({
+            "id": cust_id, "tenant_id": tenant_id, "name": "P4 Cust2",
+            # Customer HAS coords — this is the fallback the ladder
+            # will land on.
+            "service_lat": 4.0, "service_lng": 5.0, "_k58_test_tag": tag,
+        })
+        await db.properties.insert_one({
+            # Property exists but has NO coords — rung 3 misses.
+            "id": prop_id, "tenant_id": tenant_id,
+            "label": "P4 Prop NoCoords",
+            "_k58_test_tag": tag,
+        })
+        await db.jobs.insert_one({
+            "id": job_id, "tenant_id": tenant_id,
+            "customer_id": cust_id, "property_id": prop_id,
+            # No job-own coords — rungs 1-2 miss.
+            "status": "scheduled", "service_type": "Pool Service",
+            "scheduled_date": "2026-01-01",
+            "_k58_test_tag": tag,
+        })
+        async with httpx.AsyncClient(timeout=15.0) as ac:
+            r = await ac.get(
+                f"{API_BASE}/jobs",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                params={"customer_id": cust_id},
+            )
+        r.raise_for_status()
+        jobs = r.json() if isinstance(r.json(), list) else (
+            r.json().get("jobs") or r.json().get("items") or []
+        )
+        found = next((j for j in jobs if j.get("id") == job_id), None)
+        assert found
+        # Ladder landed on the customer rung.
+        assert found["location_lat"] == 4.0
+        assert found["location_lng"] == 5.0
+        assert found["coord_source"] == "customer"
+        # Phase 4 FE approximate-signal invariant — property_id still
+        # on the wire even though its coords didn't win.
+        assert found["property_id"] == prop_id
+        assert found["property_label"] == "P4 Prop NoCoords"
+    finally:
+        await _cleanup(db, tenant_id, tag)
+
+
 @pytest.mark.anyio
 async def test_property_lookup_is_batched(db, admin_token, tenant_id, monkeypatch):
     """N jobs across M properties issue exactly ONE properties.find() call."""
