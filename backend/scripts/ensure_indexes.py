@@ -202,6 +202,37 @@ async def _gps_pings_telematics_dedup_index() -> None:
         raise
 
 
+async def _gps_pings_user_captured_at_index() -> None:
+    """P1 Phase 3 · Feb-2026 — compound index on
+    ``gps_pings(tenant_id, user_id, captured_at desc)`` so the
+    live-locations endpoint's per-tech "latest ping" lookup is a
+    single index scan.  Reused by the mileage calculator's
+    per-shift ping sweep + the mileage audit endpoint's
+    histogram scan.
+
+    Non-unique, background build.  Idempotent via the
+    ``code == 85`` (IndexOptionsConflict) escape hatch.
+    """
+    from pymongo import IndexModel
+    from pymongo.errors import OperationFailure
+    try:
+        await db.gps_pings.create_indexes([
+            IndexModel(
+                [
+                    ("tenant_id", 1),
+                    ("user_id", 1),
+                    ("captured_at", -1),
+                ],
+                name="gps_pings_user_captured_at",
+                background=True,
+            ),
+        ])
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 85:
+            return
+        raise
+
+
 
 async def _invitations_indexes() -> None:
     """Phase P32.1 · Feb-2026 — ``invitations`` collection indexes.
@@ -376,6 +407,10 @@ async def main() -> int:
     results.append(await _step(
         "gps_pings_dedup_bg",
         _gps_pings_telematics_dedup_index(),
+    ))
+    results.append(await _step(
+        "gps_pings_user_captured_at",
+        _gps_pings_user_captured_at_index(),
     ))
     # Phase P32.1 · Feb-2026 — invitations collection indexes.
     results.append(await _step(

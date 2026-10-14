@@ -911,6 +911,13 @@ api_router.include_router(_p1_mileage_audit.router)
 # ``mileage_miles`` rows without manual Mongo surgery.
 from routers import admin_mileage_backfill as _p1_mileage_backfill  # noqa: E402
 api_router.include_router(_p1_mileage_backfill.router)
+# P1 Phase 3 · Feb-2026 — Live technician GPS pins for Schedule map.
+# GET /api/workforce/live-locations
+# Read-only overlay source consumed by the admin Schedule page's
+# "Show live techs" toggle (polled every 30s). Reuses the gps_pings
+# collection + require_gps_read role gate.
+from routers import workforce_live_locations as _p1_live_locations  # noqa: E402
+api_router.include_router(_p1_live_locations.router)
 # Phase I4 · Feb-2026 — Soshie brand-brain async ingest endpoints.
 # 202-Accepted job pattern replacing the sync ingest that was
 # timing out on cold crawls (frontend fetch cap 30s vs 60-180s
