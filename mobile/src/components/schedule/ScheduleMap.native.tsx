@@ -17,6 +17,10 @@ import TeardropPin from "@/src/components/maps/TeardropPin";
 // K58 · Feb-2026 — shared coord resolver so ScheduleMap and DailyRouteMap
 // stay in lockstep on which jobs are "mapped".  See PHASE_K58_MAP_COORD_LADDER.md.
 import { resolveJobCoords, type JobLikeForCoords } from "@/src/utils/jobCoords";
+// Live-tech overlay (web parity 6db3c4f57) — polls every 30s, pauses on
+// app background, admin-defaulted ON (persisted per user in AsyncStorage).
+import { useLiveTechLocations, type LiveTechPing } from "@/src/hooks/useLiveTechLocations";
+import { LiveTechToggle, LiveTechMarkers, LiveTechCard } from "@/src/components/schedule/LiveTechOverlay";
 
 interface Job {
   id: string;
@@ -78,6 +82,12 @@ export default function ScheduleMap({ jobs, testID }: Props) {
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
   const [selected, setSelected] = useState<Job | null>(null);
+  const live = useLiveTechLocations();
+  const [liveSelId, setLiveSelId] = useState<string | null>(null);
+  const livePings = useMemo(() => (live.enabled ? live.pings : []), [live.enabled, live.pings]);
+  const liveSel = liveSelId ? livePings.find((p) => p.user_id === liveSelId) || null : null;
+  const selectJob = (j: Job) => { setLiveSelId(null); setSelected(j); };
+  const selectLive = (p: LiveTechPing) => { setSelected(null); setLiveSelId(p.user_id); };
 
   const geocoded = useMemo(
     // K58 · Feb-2026 — filter via the shared ``resolveJobCoords``
@@ -108,10 +118,14 @@ export default function ScheduleMap({ jobs, testID }: Props) {
   }, []);
 
   // Compute initial region from pins
+  // Jobs frame the map; with no mapped jobs, frame the live techs instead.
   const initialRegion: Region | undefined = useMemo(() => {
-    if (geocoded.length === 0) return undefined;
-    const lats = geocoded.map((j) => j.__coords.lat);
-    const lngs = geocoded.map((j) => j.__coords.lng);
+    const pts = geocoded.length
+      ? geocoded.map((j) => j.__coords)
+      : livePings.map((p) => ({ lat: p.lat, lng: p.lon }));
+    if (pts.length === 0) return undefined;
+    const lats = pts.map((p) => p.lat);
+    const lngs = pts.map((p) => p.lng);
     const minLat = Math.min(...lats);
     const maxLat = Math.max(...lats);
     const minLng = Math.min(...lngs);
@@ -122,11 +136,16 @@ export default function ScheduleMap({ jobs, testID }: Props) {
       latitudeDelta: Math.max(maxLat - minLat, 0.01) * 1.5,
       longitudeDelta: Math.max(maxLng - minLng, 0.01) * 1.5,
     };
-  }, [geocoded]);
+  }, [geocoded, livePings]);
 
-  if (geocoded.length === 0) {
+  const toggle = live.canRead ? (
+    <LiveTechToggle enabled={live.enabled} onToggle={() => live.setEnabled(!live.enabled)} />
+  ) : null;
+
+  if (geocoded.length === 0 && livePings.length === 0) {
     return (
       <View style={s.empty} testID="schedule-map-empty">
+        {toggle}
         <Ionicons name="map-outline" size={32} color={colors.muted} />
         <Text style={s.emptyText}>No mapped stops today</Text>
       </View>
@@ -160,7 +179,7 @@ export default function ScheduleMap({ jobs, testID }: Props) {
             coordinate={{ latitude: j.__coords.lat, longitude: j.__coords.lng }}
             anchor={{ x: 0.5, y: 1.0 }}
             title={j.customer_name || "Job"}
-            onPress={() => setSelected(j)}
+            onPress={() => selectJob(j)}
             tracksViewChanges={false}
             testID={`schedule-map-pin-${j.id}`}
           >
@@ -170,7 +189,11 @@ export default function ScheduleMap({ jobs, testID }: Props) {
             />
           </Marker>
         ))}
+        {/* Live-tech markers — outside the job-pin loop (web parity). */}
+        <LiveTechMarkers pings={livePings} onSelect={selectLive} />
       </MapView>
+      {toggle}
+      {liveSel ? <LiveTechCard ping={liveSel} onClose={() => setLiveSelId(null)} /> : null}
 
       {selected ? (
         <View style={s.card} testID="schedule-map-info-card">
