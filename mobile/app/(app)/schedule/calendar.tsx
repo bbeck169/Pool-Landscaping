@@ -63,6 +63,8 @@ import ScheduleJobEditSheet from "@/src/components/schedule/ScheduleJobEditSheet
 // Web mirror: ``frontend/src/lib/jobStatus.js``.
 import { jobStatusColor as k50JobStatusColor, isBoldRedStatus, K50_ON_BOLD_RED_FG } from "@/src/lib/jobStatus";
 import NavigateMapsButton from "@/src/components/schedule/NavigateMapsButton";
+// Phase B mobile parity (web 2f14a7ea5 + e5d6fa01e) — Optimize Route modal.
+import OptimizeRouteModal from "@/src/components/schedule/OptimizeRouteModal";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
 // the schedule grid. Compact 20dp footprint keeps row height
 // invariant vs the pre-Phase-27 layout.
@@ -224,6 +226,7 @@ function ScheduleCalendarInner() {
   const [rearrangeMode, setRearrangeMode] = useState(false);
   const [gridSubMode, setGridSubMode] = useState<"list" | "map">("list");
   const [moveOpen, setMoveOpen] = useState(false);
+  const [optimizeOpen, setOptimizeOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
   const [reassignOpen, setReassignOpen] = useState(false);
   const [techs, setTechs] = useState<{ id: string; name: string }[]>([]);
@@ -929,6 +932,17 @@ function ScheduleCalendarInner() {
         </View>
       ) : null}
 
+      {isAdmin ? (
+        <OptimizeRouteModal
+          visible={optimizeOpen}
+          jobs={dayJobs}
+          date={focusISO}
+          technicianId={techFilter !== "all" ? techFilter : null}
+          onClose={() => setOptimizeOpen(false)}
+          onSaved={() => load(true)}
+        />
+      ) : null}
+
       {mode === "grid" ? (
         <GridView
           focus={focus} setFocus={setFocus}
@@ -945,6 +959,7 @@ function ScheduleCalendarInner() {
           rearrangeMode={rearrangeMode}
           onToggleRearrange={() => setRearrangeMode((v) => !v)}
           onSaveReorder={saveReorder}
+          onOptimizeRoute={() => setOptimizeOpen(true)}
           onShift={shift}
           onBulkComplete={bulkComplete}
           onBulkDelete={bulkDelete}
@@ -1137,7 +1152,7 @@ function GridView(props: any) {
   const {
     focus, setFocus, jobs, loading, loadingTimedOut, onLoadRetry, onLoadCancel,
     checked, onToggle, canWrite,
-    rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
+    rearrangeMode, onToggleRearrange, onSaveReorder, onOptimizeRoute, onShift,
     onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, isStrictlyAdmin, hourlyData, userId,
     weatherWidget, onOpenEdit, onSelectAllInView, onClearSelection, role,
@@ -1283,6 +1298,7 @@ function GridView(props: any) {
                   { key: "move", label: `Move (${checked.size})`, icon: "calendar-outline" as const, color: "#2563EB", onPress: onOpenMove, disabled: busy || checked.size === 0, adminOnly: true },
                   { key: "delete", label: `Delete (${checked.size})`, icon: "trash-outline" as const, color: "#DC2626", onPress: onBulkDelete, disabled: busy || checked.size === 0, adminOnly: true },
                   { key: "assign", label: `Assign (${checked.size})`, icon: "people-outline" as const, color: "#D97706", onPress: onOpenReassign, disabled: busy || checked.size === 0, adminOnly: true },
+                  { key: "optimize-route", label: "Optimize Route", icon: "navigate-outline" as const, color: "#0F766E", onPress: onOptimizeRoute, disabled: busy || rearrangeMode || (dayJobs || jobs).length < 2, adminOnly: true },
                   { key: "rearrange", label: rearrangeMode ? "Save order" : "Rearrange", icon: (rearrangeMode ? "save-outline" : "reorder-three-outline") as const, color: rearrangeMode ? "#059669" : "#7C3AED", onPress: rearrangeMode ? onSaveReorder : onToggleRearrange, disabled: false, adminOnly: true },
                 ] as const).map((act) => {
                   if (act.adminOnly && !isAdmin) return null;
