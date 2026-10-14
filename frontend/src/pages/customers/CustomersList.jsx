@@ -2794,6 +2794,7 @@ export default function CustomersList() {
           )}
         </div>
       </NavyFilterBar>
+      ) : null}
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
       {selected.size > 0 ? (
