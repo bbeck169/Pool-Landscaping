@@ -17,6 +17,9 @@ export const deleteEmailTemplate = (code) => api.del(`/comms/email-templates/${e
 export const duplicateEmailTemplate = (code) => api.post(`/comms/email-templates/${encodeURIComponent(code)}/duplicate`, {});
 export const previewEmailTemplate = (code, customer_id) =>
   api.post(`/comms/email-templates/${encodeURIComponent(code)}/preview`, customer_id ? { customer_id } : {});
+export const testSendEmailTemplate = (code, to) =>
+  api.post(`/comms/email-templates/${encodeURIComponent(code)}/test-send`,
+            to ? { to } : {});
 
 // ─── SMS templates ────────────────────────────────────────────────────
 export const listSmsTemplates = () => api.get("/comms/sms-templates");
