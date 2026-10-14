@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useLocalSearchParams , useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -30,6 +31,7 @@ import {
 } from "@/src/api/comms";
 import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
 import EmailPreviewWebView from "@/src/components/comms/EmailPreviewWebView";
+import EmailTestSendPanel from "@/src/components/comms/EmailTestSendPanel";
 
 // P2 #11 — admin + super_admin only (backend `_require_admin`).
 export default function CommsTemplateDetailScreen() {
@@ -140,12 +142,17 @@ function CommsTemplateDetailBody() {
         }
       />
 
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
       <ScrollView
         contentContainerStyle={[
           styles.content,
           { paddingBottom: insets.bottom + 24 },
         ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Meta */}
         <View style={styles.metaCard}>
@@ -161,6 +168,9 @@ function CommsTemplateDetailBody() {
           />
           {isEmail && <MetaRow label="Subject" value={data.subject} />}
         </View>
+
+        {/* P2 #11 — hardened test-send (admin-only, allow-listed, rate-limited). */}
+        {isEmail ? <EmailTestSendPanel code={data.code || code!} /> : null}
 
         {/* SMS body */}
         {!isEmail && data.body ? (
@@ -196,6 +206,7 @@ function CommsTemplateDetailBody() {
           </View>
         ) : null}
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Preview modal */}
       <Modal

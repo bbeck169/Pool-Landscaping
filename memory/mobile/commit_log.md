@@ -1834,3 +1834,12 @@
 - **F2**: `src/utils/jobPinCoordSource.ts` (jobPinVariant / isApproximatePin = customer+property_id / propertyChipLabel / jobPinWrapStyle dashed+0.7). ScheduleMap.native: pin wrapper View, marker `description` = property_label, info-card "Property: <label>" chip + approximate note. ScheduleMapLazy Job type += coord_source/property_id/property_label.
 - **Map lib**: react-native-maps 1.20.1 via `@/src/lib/maps` (Google adapter). No clustering on mobile Schedule map (nothing to preserve). ScheduleMap.web.tsx is a placeholder — unchanged.
 - **Tests**: new live-tech-locations-mobile (12) + multi-property-map-pins-mobile (9); ScheduleMap + gate suites green. Pre-existing fails unchanged: teardrop-pin-parity (deriveDarker default 0.25 vs 0.28), schedule-map-toggle (inputColors.bg).
+
+## Iteration 126 — P2 #11 Email Builder mobile parity (view + preview + test-send)
+- **Commits**: 69ceb98e4 (C1 drawer wiring + gate + list fields + WebView preview) + the C2 commit containing this entry (`git log -1 -- mobile/src/components/comms/EmailTestSendPanel.tsx`)
+- **Date**: 2026-10-14
+- **Web/BE refs (read-only)**: 965fb3c69 (test-send endpoint), d34aec4e5 (CommsEmailBuilder), backend/routers/comms.py `_require_admin` / `_resolve_test_recipient` / `_rate_limit_comms_test_send`, frontend/src/App.js `AdminOnly`
+- **C1**: drawer "Email Builder" + "Templates" → t1, `roles: ["super_admin","admin"]` (only those 2 rows in src/nav/adminNav.ts; SMS/Automations/Sends untouched); app/admin/comms/{email,templates}.tsx → `<Redirect href="/comms/templates">`; CommsAdminGate (admin+super_admin, wraps list + detail so non-admins never fetch); list rows show subject + CUSTOMER-FACING badge (+subject search); detail preview modal opens immediately with loader / in-modal error + Retry; EmailPreviewWebView (JS off, links → system browser, Expo-web text fallback).
+- **C2**: EmailTestSendPanel on email detail. One-off direct `fetch` (`postTemplateTestSend`) for Retry-After header access — commented. 200 → toast "Sent to <recipient>" (+ delivery status e.g. suppressed_not_demo) + 2s cooldown; 400 → backend msg verbatim; 403 → "Admin access required" (body not echoed); 429 → ceil(Retry-After) countdown, button disabled. TD-48 filed (edit-on-mobile; rich-text dep + web Phase 2 schema; CORS expose_headers note).
+- **Tests**: comms-email-templates-mobile (13) + comms-email-test-send-mobile (12). No prior comms/templates or comms/test-send suites existed.
+- **Deps**: none.
