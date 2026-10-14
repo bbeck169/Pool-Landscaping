@@ -289,6 +289,7 @@ const EnterpriseMapView = React.lazy(() => import(/* webpackChunkName: "p-dispat
 // and get reported to /api/client-errors for admin review.
 import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
 const AdminDiagnosticsErrorsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-admindiagnosticserrorspage" */ "@/pages/admin/AdminDiagnosticsErrorsPage"));
+const AdminPropertyGeocodingHealthPage = React.lazy(() => import(/* webpackChunkName: "p-admin-adminpropertygeocodinghealthpage" */ "@/pages/admin/AdminPropertyGeocodingHealthPage"));
 const DriverActivityPage = React.lazy(() => import(/* webpackChunkName: "p-admin-driveractivitypage" */ "@/pages/admin/DriverActivityPage"));
 const ModerationCheckinsPage = React.lazy(() => import(/* webpackChunkName: "p-admin-moderationcheckinspage" */ "@/pages/admin/ModerationCheckinsPage"));
 const SeoAuditorPage = React.lazy(() => import(/* webpackChunkName: "p-admin-seoauditorpage" */ "@/pages/admin/SeoAuditorPage"));
@@ -1437,6 +1438,7 @@ export default function App() {
             <Route path="dispatch" element={<AdminOnly><DispatchErrorBoundary component="DispatchBoard" componentLabel="Dispatch Board"><DispatchBoardPage /></DispatchErrorBoundary></AdminOnly>} />
             <Route path="dispatch/enterprise-view" element={<AdminOnly><DispatchErrorBoundary component="EnterpriseMapView" componentLabel="Enterprise Map View"><EnterpriseMapView /></DispatchErrorBoundary></AdminOnly>} />
             <Route path="admin/diagnostics/errors" element={<AdminOnly><AdminDiagnosticsErrorsPage /></AdminOnly>} />
+            <Route path="admin/diagnostics/property-geocoding" element={<AdminOnly><AdminPropertyGeocodingHealthPage /></AdminOnly>} />
             <Route path="ops/dispatch" element={<OpsHub />} />
             <Route path="dispatch/map" element={<AdminOnly><DispatchMap /></AdminOnly>} />
             <Route path="schedule" element={<OpsHub />} />
