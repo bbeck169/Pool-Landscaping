@@ -109,27 +109,49 @@ beforeEach(() => {
 
 
 describe("<ScheduleMap /> — numbered pins", () => {
-  it("renders a numeric label for each stop matching route_index + 1", () => {
+  it("renders per-tech-independent 1..N labels (Phase B.5 D.2)", () => {
     render(<ScheduleMap jobs={_mkJobs()} techs={_techs}
                         techColorMap={_techColorMap} />);
-    // formatPinLabel zero-pads single-digit route_index+1 values.
+    // Phase B.5 · Feb-2026 — numbering restarts at 1 for each
+    // technician_id (D.2). Pre-B.5 the labels were a global
+    // 1..N by route_index: tech-b/job-2 was "02" and null-tech/
+    // job-3 was "03". Post-B.5 each tech group starts at 1.
+    //
+    // Tech-a has job-1 (route_index 0) and job-4 (unslotted,
+    // route_index undefined). Per the Phase B.5 D.1-c hybrid
+    // resolver, job-1 wins the slot (route_index present) and
+    // job-4 appends → tech-a sequence [job-1=1, job-4=2].
+    //
+    // Tech-b has only job-2 → sequence [job-2=1].
+    // Unassigned (null technician_id) has only job-3 → [job-3=1].
+    //
+    // ``formatPinLabel`` zero-pads single-digit values so "01" is
+    // the expected textContent regardless of which seq slot a
+    // job lands in.
     expect(
       screen.getByTestId("schedule-map-pin-job-1-svg-label").textContent,
     ).toBe("01");
     expect(
       screen.getByTestId("schedule-map-pin-job-2-svg-label").textContent,
-    ).toBe("02");
+    ).toBe("01");
     expect(
       screen.getByTestId("schedule-map-pin-job-3-svg-label").textContent,
-    ).toBe("03");
+    ).toBe("01");
   });
 
-  it("omits the numeric label when route_index is undefined (unslotted)", () => {
+  it("numbers unslotted jobs by scheduled fallback (Phase B.5 D.1-c)", () => {
+    // Phase B.5 · Feb-2026 — Pre-B.5 behavior: a job with
+    // ``route_index === undefined`` rendered WITHOUT a label.
+    // Post-B.5 the hybrid resolver falls back to scheduled_at
+    // within the tech group so every assigned job gets a label.
+    // Here, tech-a has job-1 (slotted) + job-4 (unslotted). The
+    // hybrid resolver puts job-1 first (slotted wins) and
+    // appends job-4 at sequence 2 → label "02".
     render(<ScheduleMap jobs={_mkJobs()} techs={_techs}
                         techColorMap={_techColorMap} />);
     expect(
-      screen.queryByTestId("schedule-map-pin-job-4-svg-label"),
-    ).toBeNull();
+      screen.getByTestId("schedule-map-pin-job-4-svg-label").textContent,
+    ).toBe("02");
   });
 });
 

@@ -211,13 +211,79 @@ export function _buildDedupedPins(jobs) {
 
 
 /**
+ * Phase B.5 · Feb-2026 — Per-technician stop sequence numbering.
+ *
+ * Returns a ``Map<jobId, number>`` where the number is the 1-based
+ * stop sequence for that job within its ``technician_id`` group for
+ * the day. Numbering restarts at 1 for each tech so a 3-tech day
+ * with 5 stops each shows 1-5 three times (color-differentiated by
+ * the existing ``techColorMap``).
+ *
+ * Ordering rule — hybrid (D.1-c per Phase B.5 dispatch):
+ *   1. ``route_index`` (ASC) when present — operators-committed order.
+ *   2. Fallback: ``scheduled_at`` / ``scheduled_start`` /
+ *      ``scheduled_time`` (ASC) when no route_index.
+ *   3. Final tie-break: ``id`` (stable deterministic).
+ *
+ * Scope rule — count but hide (D.3):
+ *   Every job with a ``technician_id`` is counted — including jobs
+ *   whose coord resolver returned ``none`` (dropped by
+ *   ``_buildDedupedPins``). This keeps the per-tech sequence
+ *   consistent with the operator's mental model: a job sequenced
+ *   #3 shows "3" on its pin even if the preceding stop (sequenced
+ *   #2) was invisible because the property had no geocoded coords.
+ *
+ * Jobs with no ``technician_id`` land in a shared ``null`` bucket
+ * and are numbered among themselves (same rule) so unassigned
+ * stops still get a visible sequence.
+ *
+ * Exported for direct unit testing.
+ */
+export function _buildPerTechSequence(jobs) {
+  const groups = Object.create(null);
+  for (const j of jobs || []) {
+    if (!j || !j.id) continue;
+    const key = j.technician_id || "__unassigned__";
+    (groups[key] = groups[key] || []).push(j);
+  }
+  const _scheduledKey = (j) => (
+    j?.scheduled_at
+    || j?.scheduled_start
+    || j?.scheduled_time
+    || j?.scheduled_date
+    || ""
+  );
+  const seq = new window.Map();
+  for (const key of Object.keys(groups)) {
+    const sorted = groups[key].slice().sort((a, b) => {
+      const ai = Number.isFinite(a?.route_index) ? a.route_index : null;
+      const bi = Number.isFinite(b?.route_index) ? b.route_index : null;
+      if (ai != null && bi != null) return ai - bi;
+      if (ai != null) return -1;
+      if (bi != null) return 1;
+      // Both missing — fall back to scheduled time.
+      const as = _scheduledKey(a);
+      const bs = _scheduledKey(b);
+      if (as && bs && as !== bs) return as < bs ? -1 : 1;
+      // Stable tie-break on id so renders are deterministic across
+      // test runs.
+      return String(a.id).localeCompare(String(b.id));
+    });
+    sorted.forEach((j, i) => seq.set(j.id, i + 1));
+  }
+  return seq;
+}
+
+
+/**
  * Inner component: uses ``useMap`` (only valid inside ``<Map>``)
  * to attach a ``MarkerClusterer`` + drive ``fitBounds`` on payload
  * change. Rendering the AdvancedMarkers themselves happens here so
  * we can hand raw marker refs to the clusterer without React
  * fighting Google Maps for DOM ownership.
  */
-function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
+function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
+                              perTechSequence }) {
   const map = useMap();
   const markersRef = useRef({});
   const clustererRef = useRef(null);
@@ -270,13 +336,25 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
         // Stroke = service-day color → gray fallback when the
         // scheduled_date is missing / unparseable.
         const strokeHex = _dayColorForJob(job) || _UNASSIGNED_COLOR;
-        // Route-index label — 1-based. Undefined / null route_index
-        // means the stop hasn't been slotted into a route yet; we
-        // omit the label rather than showing a misleading ``01``.
+        // Phase B.5 · Feb-2026 — per-tech stop sequence label.
+        //
+        // Pre-B.5 the pin label was ``job.route_index + 1``, so any
+        // stop that hadn't been through the ``POST /api/jobs/reorder``
+        // flow (``route_index == null``) rendered without a number.
+        // Phase B.5 switches to a hybrid resolver: ``route_index``
+        // when present, else the natural scheduled-time order within
+        // the tech group. See ``_buildPerTechSequence`` above for
+        // the full ordering rule + count-but-hide invariant. Jobs
+        // dropped by ``_buildDedupedPins`` (no coords) are still
+        // counted so the visible-pin numbers match the operator's
+        // mental ordering (sequenced #3 shows "3" even if #2 was
+        // invisible). ``perTechSequence`` is a ``Map<jobId, number>``
+        // keyed on the job's id; a miss (job not in map) falls back
+        // to the pre-B.5 route_index path for test safety.
+        const perTechSeq = perTechSequence && perTechSequence.get(job.id);
         const routeIdx = job?.route_index;
-        const pinLabel = Number.isFinite(routeIdx)
-          ? routeIdx + 1
-          : undefined;
+        const pinLabel = perTechSeq
+          || (Number.isFinite(routeIdx) ? routeIdx + 1 : undefined);
         // Phase 4 · Feb-2026 — approximate-location signal.
         // ``property_id`` is set on the job but the K58 coord
         // resolver ladder in ``backend/routers/jobs.py`` couldn't
@@ -335,6 +413,7 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect }) {
               data-color-mode={colorMode}
               data-approximate={isApproximate ? "true" : "false"}
               data-coord-source={job?.coord_source || "none"}
+              data-pin-sequence={pinLabel != null ? String(pinLabel) : ""}
               style={{
                 background: "transparent",
                 // Phase 4 · Feb-2026 — approximate pins get a
@@ -404,6 +483,28 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
   } = useLiveTechLocations();
 
   const { pins, missing } = useMemo(() => _buildDedupedPins(jobs), [jobs]);
+  // Phase B.5 · Feb-2026 — hybrid per-tech sequence numbering.
+  // Computed on the FULL ``jobs`` input (not ``pins``) so that
+  // stops dropped by ``_buildDedupedPins`` still occupy their
+  // sequence slot — a job sequenced #3 shows "3" on its pin even
+  // if #2 was invisible for lack of coords. See
+  // ``_buildPerTechSequence`` for the full ordering + grouping rule.
+  const perTechSequence = useMemo(
+    () => _buildPerTechSequence(jobs),
+    [jobs],
+  );
+  // Phase B.5 · Feb-2026 — per-tech stop counts for the legend.
+  // Counts EVERY job assigned to the tech (including coord drops)
+  // so the legend badge matches the per-tech sequence numbering,
+  // not just what's visible on the map.
+  const perTechStopCounts = useMemo(() => {
+    const counts = new window.Map();
+    for (const j of jobs || []) {
+      if (!j?.technician_id) continue;
+      counts.set(j.technician_id, (counts.get(j.technician_id) || 0) + 1);
+    }
+    return counts;
+  }, [jobs]);
 
   // Log the customer IDs of jobs without map coords so admins can
   // fix the underlying customer record. Once per pin-set change.
@@ -514,6 +615,77 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
           );
         })}
       </div>
+      {/* Phase B.5 · Feb-2026 — per-tech color legend.
+          Shows the mapping between the pin fill color
+          (``techColorMap``) and the technician name, plus the stop
+          count for the current day. One entry per technician with
+          at least one job on the day. Positioned bottom-left so it
+          doesn't collide with the top-left color toggle or the
+          live-tech toggle. In ``colorMode === "day"`` the legend
+          still renders — the fill color on each pin reflects the
+          tech color regardless of the active mode (the mode only
+          dials stroke-vs-fill emphasis per ``_MODE_EMPHASIS``). */}
+      {techColorMap && Array.from(perTechStopCounts.keys()).length > 0 ? (
+        <div
+          data-testid="schedule-map-tech-legend"
+          style={{
+            position: "absolute", bottom: 8, left: 8, zIndex: 5,
+            display: "inline-flex", flexDirection: "column", gap: 2,
+            background: "rgba(255,255,255,0.94)",
+            borderRadius: 10,
+            padding: "6px 10px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+            fontSize: 11,
+            fontWeight: 600,
+            maxWidth: 220,
+            maxHeight: 180,
+            overflowY: "auto",
+          }}
+        >
+          {Array.from(perTechStopCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([tid, count]) => {
+              const color = (techColorMap.get(tid)) || _UNASSIGNED_COLOR;
+              const t = (techs || []).find(
+                (x) => (x.id || x.user_id) === tid);
+              const name = t?.name || t?.display_name
+                || `Tech ${String(tid).slice(0, 6)}…`;
+              return (
+                <div
+                  key={tid}
+                  data-testid={`schedule-map-tech-legend-${tid}`}
+                  style={{
+                    display: "inline-flex", alignItems: "center",
+                    gap: 6, color: colors.onSurface,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: "inline-block", width: 10, height: 10,
+                      borderRadius: "50%", background: color,
+                      border: "1px solid rgba(0,0,0,0.15)",
+                      flex: "0 0 10px",
+                    }}
+                  />
+                  <span style={{
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    whiteSpace: "nowrap", flex: 1,
+                  }}>{name}</span>
+                  <span
+                    data-testid={`schedule-map-tech-legend-count-${tid}`}
+                    style={{
+                      color: colors.muted, fontWeight: 500,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {count} stop{count === 1 ? "" : "s"}
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+      ) : null}
       {/* P1 Phase 3 · Live-tech overlay toggle. */}
       <button
         type="button"
@@ -558,6 +730,7 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
           techColorMap={techColorMap}
           colorMode={colorMode}
           onSelect={onSelect}
+          perTechSequence={perTechSequence}
         />
         {/* Live-tech markers — outside the clusterer so a tech
             standing on top of a job pin is still individually
