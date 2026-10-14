@@ -8,11 +8,24 @@
 //   • Embed snippet section with copy button
 //
 // Backend contract lives in /app/backend/routers/marketing_forms.py.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
-import { Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown, GripVertical,
+} from "lucide-react";
+// Feb-2026 · Form Builder Phase 1 — @dnd-kit for drag-reorder + palette
+// drag-source (same bundle Email Builder P2#11 ships; zero new deps).
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor,
+  useSensor, useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove, SortableContext, sortableKeyboardCoordinates,
+  useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import ThemePanel from "@/components/formBuilder/ThemePanel";
 import HeroEditor from "@/components/formBuilder/HeroEditor";
 import RichTextField from "@/components/formBuilder/RichTextField";
@@ -73,7 +86,16 @@ function slugify(s) {
     .replace(/^_|_$/g, "").slice(0, 60);
 }
 
+// Feb-2026 · Form Builder Phase 1 — stable per-row client id. The
+// server-persisted ``field.id`` is empty on new rows, so dnd-kit
+// needs its own stable handle. Non-persisted; stripped in ``save``
+// before PATCHing the backend. Simple counter is enough (one builder
+// drawer per operator; mounted/unmounted per edit).
+let _rowIdSeq = 0;
+const _nextRowId = () => `row-${++_rowIdSeq}`;
+
 const empty_field = () => ({
+  _rowId: _nextRowId(),
   id: "",
   name: "",
   label: "",
@@ -225,7 +247,13 @@ export default function MarketingFormsPage() {
 
 function FormEditorDrawer({ form, onClose, _onSaved }) {
   const [name, setName] = useState(form.name || "");
-  const [fields, setFields] = useState(form.fields?.length ? form.fields : [empty_field()]);
+  const [fields, setFields] = useState(() => {
+    // Feb-2026 · Form Builder Phase 1 — backfill ``_rowId`` on load
+    // so existing templates have a stable dnd-kit handle. Operator-
+    // facing shape is unchanged.
+    const seed = form.fields?.length ? form.fields : [empty_field()];
+    return seed.map((f) => ({ ...f, _rowId: f._rowId || _nextRowId() }));
+  });
   const [submitBtn, setSubmitBtn] = useState(form.submit_button_label || "Send");
   const [successMsg, setSuccessMsg] = useState(form.success_message || "Thanks! We'll be in touch shortly.");
   const [submitCfg, setSubmitCfg] = useState(form.submit_config || {
@@ -264,6 +292,12 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
     setFields((prev) => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
   };
   const addField = () => setFields((prev) => [...prev, empty_field()]);
+  // Feb-2026 · Form Builder Phase 1 — click-to-add a specific type
+  // from the left-rail palette (keyboard-accessible add path that
+  // doesn't require drag). The default empty-field type is "text";
+  // this helper substitutes the clicked type at insertion time.
+  const addFieldOfType = (type) =>
+    setFields((prev) => [...prev, { ...empty_field(), type }]);
   const delField = (idx) => setFields((prev) => prev.filter((_, i) => i !== idx));
   const moveField = (idx, dir) => {
     setFields((prev) => {
@@ -274,6 +308,29 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
       return next;
     });
   };
+  // Feb-2026 · Form Builder Phase 1 — dnd-kit drag-end handler.
+  // Operates on the sortable row ids (``_rowId``); arrow-key
+  // reorder stays functional via ``moveField`` above.
+  const handleDragEnd = (evt) => {
+    const { active, over } = evt;
+    if (!over || active.id === over.id) return;
+    setFields((prev) => {
+      const oldIdx = prev.findIndex((f) => f._rowId === active.id);
+      const newIdx = prev.findIndex((f) => f._rowId === over.id);
+      if (oldIdx < 0 || newIdx < 0) return prev;
+      return arrayMove(prev, oldIdx, newIdx);
+    });
+  };
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const sortableIds = useMemo(
+    () => fields.map((f) => f._rowId),
+    [fields],
+  );
 
   const save = async () => {
     setBusy(true); setError("");
@@ -284,18 +341,23 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
         // backend contract. Non-layout types still require a fallback
         // name so the submission payload is stable.
         const isLayout = LAYOUT_TYPES.has(f.type);
+        // Feb-2026 · Form Builder Phase 1 — drop the dnd-kit client
+        // handle (``_rowId``) before PATCHing. Server knows nothing
+        // about it; the Pydantic model's ``extra: allow`` would
+        // round-trip it but we prefer a clean payload.
+        const { _rowId: _rid, ...rest } = f;
         return {
-          ...f,
+          ...rest,
           name: isLayout
-            ? (f.name || "")
-            : (f.name || slugify(f.label) || `field_${i + 1}`),
-          label: f.label || f.name || `Field ${i + 1}`,
-          options: OPTION_TYPES.has(f.type)
-            ? (Array.isArray(f.options) ? f.options : String(f.options || "").split(",").map((s) => s.trim()).filter(Boolean))
+            ? (rest.name || "")
+            : (rest.name || slugify(rest.label) || `field_${i + 1}`),
+          label: rest.label || rest.name || `Field ${i + 1}`,
+          options: OPTION_TYPES.has(rest.type)
+            ? (Array.isArray(rest.options) ? rest.options : String(rest.options || "").split(",").map((s) => s.trim()).filter(Boolean))
             : null,
           // Preserve column_span verbatim — backend accepts
           // "full" | "half" | null.
-          column_span: f.column_span || "full",
+          column_span: rest.column_span || "full",
         };
       });
       const payload = {
@@ -374,13 +436,54 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
                 <Plus size={12} /> Add field
               </button>
             </div>
-            {fields.map((f, i) => (
-              <FieldEditorRow key={i} idx={i} f={f}
-                              onChange={(p) => updateField(i, p)}
-                              onDelete={() => delField(i)}
-                              onMove={(d) => moveField(i, d)}
-                              canDelete={fields.length > 1} />
-            ))}
+            {/* Feb-2026 · Form Builder Phase 1 — DnD field reorder +
+                left-rail palette. Palette is keyboard-accessible: each
+                button is a focusable control that click-adds a field of
+                that type at the end of the list (same as "Add field"
+                but typed). Arrow-up / arrow-down buttons on each row
+                stay functional as the a11y reorder fallback — no
+                operator loses functionality when a screen reader is
+                active. */}
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-3"
+                   data-testid="form-field-palette">
+                <div className="text-[10px] font-bold uppercase mb-1"
+                     style={{ color: colors.muted }}>Palette</div>
+                <div className="flex flex-col gap-1">
+                  {FIELD_TYPES.map((t) => (
+                    <button key={t}
+                            type="button"
+                            onClick={() => addFieldOfType(t)}
+                            className="text-left text-xs px-2 py-1.5 rounded-lg"
+                            style={{
+                              border: `1px solid ${colors.border}`,
+                              background: colors.surface,
+                              color: colors.onSurface,
+                            }}
+                            data-testid={`form-field-palette-${t}`}
+                            aria-label={`Add ${FIELD_TYPE_LABELS[t] || t} field`}>
+                      + {FIELD_TYPE_LABELS[t] || t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="col-span-9">
+                <DndContext sensors={dndSensors}
+                              collisionDetection={closestCenter}
+                              onDragEnd={handleDragEnd}>
+                  <SortableContext items={sortableIds}
+                                     strategy={verticalListSortingStrategy}>
+                    {fields.map((f, i) => (
+                      <SortableFieldEditorRow key={f._rowId} idx={i} f={f}
+                                                 onChange={(p) => updateField(i, p)}
+                                                 onDelete={() => delField(i)}
+                                                 onMove={(d) => moveField(i, d)}
+                                                 canDelete={fields.length > 1} />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              </div>
+            </div>
           </div>
 
           <div className="mb-4 p-4 rounded-lg"
@@ -542,7 +645,35 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
 }
 
 
-function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
+// Feb-2026 · Form Builder Phase 1 — dnd-kit sortable wrapper around
+// the existing ``FieldEditorRow``. Pulls transform + listeners from
+// the ``useSortable`` hook keyed on each field's stable ``_rowId``.
+// The drag handle is a dedicated grip icon so operators can still
+// click inside input fields without triggering a drag. Arrow-key
+// reorder stays functional via the ``onMove`` prop on the inner row.
+function SortableFieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: f._rowId });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style}
+         data-testid={`form-field-sortable-${idx}`}>
+      <FieldEditorRow idx={idx} f={f} onChange={onChange}
+                        onDelete={onDelete} onMove={onMove}
+                        canDelete={canDelete}
+                        dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  );
+}
+
+
+function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
+                            dragHandleProps = null }) {
   const isLayout = LAYOUT_TYPES.has(f.type);
   const needsOptions = OPTION_TYPES.has(f.type);
   return (
@@ -604,6 +735,24 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
           )}
         </div>
         <div className="col-span-2 pt-6 flex items-center justify-end gap-1">
+          {/* Feb-2026 · Form Builder Phase 1 — drag handle. ``dragHandleProps``
+              carries dnd-kit's listeners + attributes; it's null when
+              rendered outside the DnD context (used by a few tests +
+              future standalone usage). Keyboard reorder still routes
+              through the ArrowUp/ArrowDown buttons below so operators
+              with assistive tech never lose the reorder path. */}
+          {dragHandleProps ? (
+            <button
+              type="button"
+              title="Drag to reorder"
+              aria-label="Drag field to reorder"
+              className="p-1 cursor-grab active:cursor-grabbing"
+              data-testid={`form-field-drag-${idx}`}
+              {...dragHandleProps}
+            >
+              <GripVertical size={14} color={colors.muted} />
+            </button>
+          ) : null}
           <button onClick={() => onMove(-1)} title="Move up" className="p-1"
                   data-testid={`form-field-up-${idx}`}>
             <ArrowUp size={14} />

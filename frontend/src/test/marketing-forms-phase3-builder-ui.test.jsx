@@ -360,8 +360,13 @@ describe("Phase 3 · MarketingFormsPage source-lint", () => {
     const src = readSrc(MFP_PATH);
     // Selector data-testid mounted for every field row.
     expect(src).toMatch(/data-testid=\{`form-field-column-span-\$\{idx\}`\}/);
-    // Save path preserves column_span (fallback to "full" for legacy fields).
-    expect(src).toMatch(/column_span:\s*f\.column_span\s*\|\|\s*"full"/);
+    // Save path preserves column_span (fallback to "full" for legacy
+    // fields).  Feb-2026 · Form Builder Phase 1 renamed the save-time
+    // destructured var from ``f`` → ``rest`` after dropping the
+    // ``_rowId`` dnd-kit handle; semantics are byte-identical.
+    expect(src).toMatch(
+      /column_span:\s*(?:f|rest)\.column_span\s*\|\|\s*"full"/,
+    );
     // empty_field() defaults column_span.
     expect(src).toMatch(/column_span:\s*["']full["']/);
   });
