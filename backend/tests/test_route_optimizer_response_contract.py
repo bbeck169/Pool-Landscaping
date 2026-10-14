@@ -60,6 +60,26 @@ def _build_app(user, tenant, seeded_jobs, route_opt_cache=None):
                     if q.get("id") == user["id"]:
                         return dict(user)
                     return None
+                def find(self, q=None, *_a, **_k):
+                    # TD-49 · Mirror Motor cursor shape for orphan-tech-ids
+                    # resolver (``async for _u in db.users.find({...}, {...})``
+                    # in routers/route_optimization.py). Matches the single
+                    # in-closure ``user`` against ``{"id": {"$in": [...]},
+                    # "tenant_id": X}``; yields a projection-shaped doc.
+                    _qid = (q or {}).get("id")
+                    _in = _qid.get("$in") if isinstance(_qid, dict) else None
+                    _tid = (q or {}).get("tenant_id")
+                    _rows = ([{"id": user["id"]}]
+                             if (_in is None or user["id"] in _in)
+                             and (_tid in (None, user.get("tenant_id")))
+                             else [])
+                    class _Cur:
+                        def __aiter__(self): self._i = iter(_rows); return self
+                        async def __anext__(self):
+                            try: return next(self._i)
+                            except StopIteration: raise StopAsyncIteration
+                        async def to_list(self, _n): return list(_rows)
+                    return _Cur()
             return _U()
         @property
         def jobs(self):
