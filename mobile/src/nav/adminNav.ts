@@ -106,6 +106,8 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Templates",          route: "/marketing/templates",             icon: "file-tray-full-outline", tier: "t1", testID: "drawer-nav-marketing-templates" },
       { label: "Notifications",      route: "/notifications",                   icon: "notifications-outline",tier: "t1", testID: "drawer-nav-notifications" },
       { label: "Forms",              route: "/forms",                           icon: "clipboard-outline",    tier: "t1", testID: "drawer-nav-forms" },
+      // Form Builder Phases 1+2 mobile parity — read-only (view + versions + submissions). TD-48 for edit.
+      { label: "Marketing Forms",    route: "/admin/marketing/forms",           icon: "document-text-outline", tier: "t1", roles: ["super_admin", "admin"], testID: "drawer-nav-marketing-forms" },
       { label: "SEO Hub",            route: "/seo",                             icon: "search-outline",       tier: "t1", testID: "drawer-nav-seo" },
       { label: "Site Auditor",       route: "/admin/seo/audits",                icon: "shield-checkmark-outline", tier: "t1", testID: "drawer-nav-seo-audits" },
       { label: "Content Scorer",     route: "/admin/seo/content-scorer",        icon: "podium-outline",       tier: "t1", testID: "drawer-nav-content-scorer" },
