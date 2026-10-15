@@ -37,6 +37,7 @@ from services.geo_resolver import (
     COORD_SOURCE_JOB,
     COORD_SOURCE_CUSTOMER,
     resolve_job_coordinates,
+    resolve_job_coordinates_with_property,
 )
 from models import (
     FieldReportUpdate, JobArriveIn, JobIn, JobUpdate,
@@ -1362,20 +1363,19 @@ async def list_jobs(
     # ladder therefore only fires for admin / manager / technician.
     #
     # Phase P31 · Feb-2026 — Coord resolver ladder unified with
-    # ``services.geo_resolver.resolve_job_coordinates`` for parity
-    # with schedule.py + dispatch_board.py. The shared helper
-    # handles two rungs (job → customer); jobs.py preserves an
-    # extra ``property`` rung between them (its geocoded property
-    # coords are a higher-signal fallback than the customer's
-    # billing-address geocode).
+    # ``services.geo_resolver.resolve_job_coordinates_with_property``
+    # for parity with schedule.py + dispatch_board.py. The shared
+    # helper now handles the full 4-rung ladder (job → property →
+    # customer → None); jobs.py no longer inlines the property rung
+    # (TD-39 · Feb-2026 lifted it into the resolver so schedule.py +
+    # dispatch_board.py pick it up too).
     #
     # Priority (highest wins — first hit stops the ladder):
     #   1. job.site_lat/lng OR job.latitude/longitude OR job.lat/lng
-    #      → shared helper, source="job"
+    #      → source="job"
     #   2. property.latitude/longitude (or the flat lat/lng shape)
-    #      → inline, jobs.py-only rung, source="property"
-    #   3. customer.service_lat/lng → shared helper via ``cmap``,
-    #      source="customer"
+    #      → source="property"
+    #   3. customer.service_lat/lng → source="customer"
     #   4. Nothing resolves → (None, None, None); pin dropped.
     #
     # ``coord_source`` is stamped from the resolver output; the FE
@@ -1386,43 +1386,16 @@ async def list_jobs(
     # skipped for role=customer and no coord fields are set. This
     # ladder therefore only fires for admin / manager / technician.
     if user.get("role") != "customer":
-        # ``cmap`` was built upstream (line ~1128); it carries the
-        # tenant-scoped ``service_lat``/``service_lng`` projection
-        # the shared helper needs for the customer fallback.
+        # ``cmap`` was built upstream (line ~1128); ``pmap`` was
+        # built just above. Both carry the tenant-scoped projections
+        # the shared helper needs. (0, 0) property coords fall
+        # through to the customer rung via the resolver's shared
+        # ``_coerce_pair`` guard — identical behavior to the inline
+        # block TD-39 replaced for schedule.py + dispatch_board.py.
         for d in docs:
-            # Rungs 1-3 via shared helper (job's own coords only —
-            # empty customer_lookup so the helper cannot fall to
-            # the customer rung yet, since we need to try the
-            # property rung between them).
-            lat, lng, source = resolve_job_coordinates(d, {})
-            # Rung 3 (jobs.py-specific) — property.latitude/longitude.
-            # Only tried when the job's own rungs didn't win.
-            if source is None:
-                pid = d.get("property_id")
-                p = pmap.get(pid) if pid else None
-                if p:
-                    p_lat = (
-                        p.get("latitude")
-                        if p.get("latitude") is not None
-                        else p.get("lat")
-                    )
-                    p_lng = (
-                        p.get("longitude")
-                        if p.get("longitude") is not None
-                        else p.get("lng")
-                    )
-                    if p_lat is not None and p_lng is not None:
-                        try:
-                            lat = float(p_lat)
-                            lng = float(p_lng)
-                            source = "property"
-                        except (TypeError, ValueError):
-                            # Malformed property coord — fall through
-                            # to customer rung.
-                            pass
-            # Rung 4 via shared helper — customer.service_lat/lng.
-            if source is None:
-                lat, lng, source = resolve_job_coordinates(d, cmap)
+            lat, lng, source = resolve_job_coordinates_with_property(
+                d, cmap, pmap,
+            )
             # Stamp resolved value under BOTH keys.  ``None`` is
             # preserved as ``None`` — no floats-of-null.  K58: dual-
             # key output for mobile shared-helper backfill.

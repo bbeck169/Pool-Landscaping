@@ -349,6 +349,20 @@ async def schedule_today(request: Request,
             cust_map[c["id"]] = c
     _timings.append(f"custs;dur={(_t.perf_counter()-_t_custs)*1000:.1f}")
 
+    # TD-39 · Feb-2026 — property-rung parity with ``routers/jobs.py``.
+    # Batch-fetch tenant-scoped property coords for every job carrying
+    # a ``property_id`` so the resolver below can land on the property
+    # rung (``coord_source = "property"``) before falling to customer.
+    # Pre-TD-39 this endpoint skipped the property rung entirely, so a
+    # tenant whose properties are geocoded but whose customer billing
+    # addresses are not would drop pins on ``/schedule/today`` that
+    # ``/api/jobs`` correctly plotted.
+    from services.geo_resolver import build_property_coord_lookup
+    _t_props = _t.perf_counter()
+    pids = [j.get("property_id") for j in jobs if j.get("property_id")]
+    prop_map: dict = await build_property_coord_lookup(db, tid, pids)
+    _timings.append(f"props;dur={(_t.perf_counter()-_t_props)*1000:.1f}")
+
     # Time entries + break intervals for *today* (by user).
     _t_entries = _t.perf_counter()
     entries = await db.time_entries.find(
@@ -395,15 +409,18 @@ async def schedule_today(request: Request,
         service_note = _resolve_service_note(
             cust, stype_for_resolver, user,
         )
-        # Phase P26 · Feb-2026 — coord fallback: prefer the job's
-        # own coords, fall back to the linked customer's
-        # ``service_lat`` / ``service_lng``, and stamp
-        # ``coord_source`` on the response so the schedule map can
-        # debug why a specific pin is (or isn't) plotted. NEVER
-        # mutates the underlying job doc; this is a
-        # serialization-time enrichment only.
-        from services.geo_resolver import resolve_job_coordinates
-        _lat, _lng, _cs = resolve_job_coordinates(j, cust_map)
+        # TD-39 · Feb-2026 — coord fallback now consults the full
+        # 4-rung ladder (job → property → customer → None), matching
+        # ``routers/jobs.py``. The ``prop_map`` was batch-fetched
+        # above (one tenant-scoped properties ``find`` for N jobs).
+        # Pre-TD-39 this endpoint skipped the property rung and would
+        # drop a pin whenever the job's own coords AND the customer's
+        # billing address were ungeocoded, even if the linked
+        # property had valid coords.
+        from services.geo_resolver import resolve_job_coordinates_with_property
+        _lat, _lng, _cs = resolve_job_coordinates_with_property(
+            j, cust_map, prop_map,
+        )
         # CREW-SCHEDULE-FANOUT · Feb-2026 — tag ``_crew_role`` so the
         # client can render "Crew lead" vs "Crew member" badges. A
         # job is "direct" when any of the ``JOB_TECH_FIELDS`` holds a

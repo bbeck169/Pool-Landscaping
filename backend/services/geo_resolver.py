@@ -49,6 +49,7 @@ from typing import Any, Dict, Optional, Tuple
 # on response payloads. Kept as a module-level constant so tests
 # and callers stay in sync on the exact string.
 COORD_SOURCE_JOB = "job"
+COORD_SOURCE_PROPERTY = "property"
 COORD_SOURCE_CUSTOMER = "customer"
 
 
@@ -258,6 +259,135 @@ async def build_customer_coord_lookup(
     cursor = db.customers.find(
         {"tenant_id": tenant_id, "id": {"$in": unique_ids}},
         {"_id": 0, "id": 1, "service_lat": 1, "service_lng": 1},
+    )
+    rows = await cursor.to_list(len(unique_ids))
+    return {r["id"]: r for r in rows if r.get("id")}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TD-39 · Feb-2026 — Property-rung parity.
+#
+# ``routers/jobs.py`` ships the full 4-rung ladder (job → property →
+# customer → None) with the property rung implemented INLINE between
+# the two shared-helper calls. ``routers/schedule.py`` + ``routers/
+# dispatch_board.py`` both bypass the property rung entirely — they
+# call ``resolve_job_coordinates(job, cust_map)`` directly and have
+# always skipped straight from job to customer. For a tenant whose
+# properties are geocoded but whose customer billing-addresses are
+# NOT, the schedule-map + dispatch-board drop pins that `/api/jobs`
+# correctly plots. The fix lifts the inline rung into this shared
+# module so all three endpoints share one source of truth, and
+# ``jobs.py`` can collapse its inline block.
+#
+# Enum contract (DOES NOT GROW): ``"job" | "property" | "customer" |
+# null`` — same values ``jobs.py`` has emitted since Phase 4. Callers
+# that still hand in only a ``customer_lookup`` (no property
+# lookup) can keep using ``resolve_job_coordinates`` unchanged; it
+# emits the 3-rung ``"job" | "customer" | null`` subset.
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _property_coord_pair(
+    prop: Optional[Dict[str, Any]],
+) -> Optional[Tuple[float, float]]:
+    """Extract ``(lat, lng)`` from a property doc, matching the
+    ``jobs.py`` inline rung's exact precedence:
+
+      * ``latitude`` / ``longitude`` (newer geocoder write path)
+      * fall back to ``lat`` / ``lng`` (flat schema shape)
+
+    Honors ``_coerce_pair`` guards: ``None`` / empty-string / unparse-
+    able / ``(0, 0)`` all resolve to ``None``.
+    """
+    if not prop:
+        return None
+    p_lat = prop.get("latitude")
+    if p_lat is None:
+        p_lat = prop.get("lat")
+    p_lng = prop.get("longitude")
+    if p_lng is None:
+        p_lng = prop.get("lng")
+    return _coerce_pair(p_lat, p_lng)
+
+
+def resolve_job_coordinates_with_property(
+    job: Dict[str, Any],
+    customer_lookup: Dict[str, Dict[str, Any]],
+    property_lookup: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    """Full 4-rung resolver. Priority (higher wins):
+
+      1. Job's own coords (``site_lat/lng`` / ``latitude/longitude``
+         / ``lat/lng`` — first non-null pair wins).
+         Returns ``source = "job"``.
+      2. Linked property's ``latitude`` / ``longitude`` (fallback
+         ``lat`` / ``lng``). Only consulted when the job carries a
+         ``property_id`` present in ``property_lookup``. Caller
+         controls tenant scope by only inserting tenant-scoped
+         property docs into the lookup (identical safety contract
+         to the ``customer_lookup`` rung).
+         Returns ``source = "property"``.
+      3. Linked customer's ``service_lat`` / ``service_lng`` — the
+         pre-K58 baseline.
+         Returns ``source = "customer"``.
+      4. Neither → ``(None, None, None)``.
+
+    Never mutates ``job`` / ``customer_lookup`` / ``property_lookup``.
+    Zero-coord ``(0, 0)`` on ANY rung is filtered via ``_coerce_pair``
+    — the ladder falls through to the next rung instead of pinning
+    the job at the Gulf-of-Guinea landmark. See TECH_DEBT.md · TD-39
+    for the full root-cause story.
+    """
+    # Rung 1 — delegate to the shared helper with an empty customer
+    # lookup so the helper tries ONLY the job's own coords (prevents
+    # it from falling to the customer rung before we've attempted
+    # the property rung).
+    lat, lng, source = resolve_job_coordinates(job, {})
+    if source is not None:
+        return (lat, lng, source)
+
+    # Rung 2 — property fallback.
+    pid = job.get("property_id")
+    if pid:
+        prop = property_lookup.get(pid)
+        pair = _property_coord_pair(prop)
+        if pair is not None:
+            return (pair[0], pair[1], COORD_SOURCE_PROPERTY)
+
+    # Rung 3 — customer fallback. Re-enter the shared helper with
+    # the full customer lookup so the pin-drop dedup WARNING logs
+    # from ``resolve_job_coordinates`` continue to fire exactly once
+    # per ``(tenant_id, job_id)`` 24h window on the "I give up" path.
+    return resolve_job_coordinates(job, customer_lookup)
+
+
+async def build_property_coord_lookup(
+    db,
+    tenant_id: str,
+    property_ids,
+) -> Dict[str, Dict[str, Any]]:
+    """Batch-fetch a tenant-scoped ``properties`` projection keyed by
+    id, mirroring :func:`build_customer_coord_lookup`'s contract.
+
+    Projection includes BOTH coordinate shape variants:
+
+      * ``latitude`` / ``longitude`` — newer geocoder write path.
+      * ``lat`` / ``lng``             — flat/legacy shape.
+
+    Skips the round trip entirely when ``property_ids`` is empty.
+    Dedupes IDs so N jobs sharing a property only cost one ``$in``
+    slot. Tenant_id filter is REQUIRED to prevent cross-tenant coord
+    leaks — same contract as the customer helper.
+    """
+    ids = [pid for pid in (property_ids or []) if pid]
+    if not ids:
+        return {}
+    unique_ids = list({pid for pid in ids})
+    cursor = db.properties.find(
+        {"tenant_id": tenant_id, "id": {"$in": unique_ids}},
+        {"_id": 0, "id": 1,
+         "latitude": 1, "longitude": 1,
+         "lat": 1, "lng": 1},
     )
     rows = await cursor.to_list(len(unique_ids))
     return {r["id"]: r for r in rows if r.get("id")}

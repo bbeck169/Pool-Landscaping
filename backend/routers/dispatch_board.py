@@ -360,6 +360,10 @@ async def get_board(
             job_q,
             {"_id": 0, "id": 1, "customer_id": 1, "customer_name": 1,
              "title": 1, "service_type": 1, "address": 1, "status": 1,
+             # TD-39 · Feb-2026 — ``property_id`` added to projection
+             # so the 4-rung coord resolver below can consult the
+             # property's geocoded coords before falling to customer.
+             "property_id": 1,
              "route_index": 1, "scheduled_start": 1, "scheduled_date": 1},
         ).sort([("route_index", 1), ("scheduled_start", 1)]).to_list(500)
 
@@ -375,6 +379,17 @@ async def get_board(
                      "service_address": 1, "service_lat": 1, "service_lng": 1},
                 ):
                     cmap[c["id"]] = c
+            # TD-39 · Feb-2026 — property-rung parity. Batch-fetch
+            # tenant-scoped property coords so the resolver can land
+            # on ``coord_source = "property"`` before falling to
+            # customer. One ``properties.find`` per board load,
+            # regardless of how many distinct ``property_id`` values
+            # the batch carries.
+            from services.geo_resolver import build_property_coord_lookup
+            pmap: Dict[str, Dict[str, Any]] = await build_property_coord_lookup(
+                db, tenant["id"],
+                [j.get("property_id") for j in jobs if j.get("property_id")],
+            )
 
             # Reset pins so the map + tech_load reflect the fallback
             # set. Skip customers we didn't just look up so we don't
@@ -394,19 +409,19 @@ async def get_board(
                     (cust or {}).get("service_address")
                     or j.get("address") or ""
                 )
-                # Phase P26 · Feb-2026 — routed through the shared
-                # coord resolver so the ``jobs_fallback`` branch
-                # honors the job's own coords when present
-                # (site_lat/lat/latitude), falling back to the
-                # customer's service coords otherwise. Pre-P26 this
-                # branch only ever consulted the customer doc; a
-                # job whose crew already geocoded via the newer
-                # write path but whose linked customer had null
-                # service_lat would render as "not_geocoded" even
-                # though the job itself carried valid coords.
-                from services.geo_resolver import resolve_job_coordinates
-                _lat_p26, _lng_p26, _cs_p26 = resolve_job_coordinates(
-                    j, cmap,
+                # TD-39 · Feb-2026 — coord fallback now consults the
+                # full 4-rung ladder (job → property → customer →
+                # None). ``pmap`` was batch-fetched above. Pre-TD-39
+                # this ``jobs_fallback`` branch skipped the property
+                # rung and would render as ``not_geocoded`` whenever
+                # the job's own coords AND the customer's service
+                # coords were null, even if the linked property had
+                # valid coords.
+                from services.geo_resolver import (
+                    resolve_job_coordinates_with_property,
+                )
+                _lat_p26, _lng_p26, _cs_p26 = (
+                    resolve_job_coordinates_with_property(j, cmap, pmap)
                 )
                 lat = _lat_p26
                 lng = _lng_p26
