@@ -19,6 +19,7 @@ import {
   ChevronUp,
   Copy,
   FilePlus,
+  BellOff,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -1018,6 +1019,20 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
                   testid="signed-chip"
                 />
               ) : null}
+              {/* TD-38 · Feb-2026 — surface the ``automations_suppressed``
+                  server-side flag as a muted warning chip so operators
+                  have a visual signal that reminder emails + automated
+                  workflows won't fire for this doc. Field already lives
+                  on the wire (``services/invoice_builder.py``,
+                  ``routers/dunning.py``, ``services/automations/
+                  eligibility.py`` and 7 other BE sites). Chip is tucked
+                  alongside the existing status pill / payment / signed
+                  cluster so it's visible without scrolling.
+                  Rendered ONLY when the server has explicitly set the
+                  flag; absent / false is a no-op (keeps the header
+                  compact for the vast majority of docs that aren't
+                  suppressed). */}
+              <AutomationsSuppressedChip doc={doc} />
               {/* Phase 2 B2 · Feb-2026 — recipient-type pill.
                   Renders on every quote/invoice; "Lead" when the
                   recipient is a Lead row, "Customer" otherwise
@@ -2467,6 +2482,46 @@ export function formatDeclinedTimestamp(iso, nowMs = Date.now()) {
   if (hrs < 24) return `Declined ${hrs}h ago`;
   const days = Math.round(hrs / 24);
   return `Declined ${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// TD-38 · Feb-2026 — ``AutomationsSuppressedChip``.
+// ═══════════════════════════════════════════════════════════════════
+// Muted warning chip that renders in the header-badge cluster of the
+// admin invoice/quote detail surface when the server-side
+// ``automations_suppressed`` flag is explicitly ``true``. Named-
+// export so a vitest sibling can target the rendering contract
+// without booting the full ``QuoteInvoiceDetail`` page (same pattern
+// as ``DeclineReasonBlock`` below).
+//
+// Rendering rules:
+//   * doc.automations_suppressed === true  → render the chip.
+//   * doc.automations_suppressed === false → render null (silent).
+//   * flag absent / undefined / null       → render null (silent).
+//   * doc is null/undefined                → render null (defensive).
+//
+// The ``=== true`` strict compare keeps the header compact for the
+// vast majority of docs that aren't suppressed and locks the chip to
+// an EXPLICIT backend decision — a stray truthy value (``"yes"``,
+// ``1``, etc.) does NOT flip the chip.
+export function AutomationsSuppressedChip({ doc }) {
+  if (!doc || doc.automations_suppressed !== true) return null;
+  return (
+    <Chip
+      tone="warning"
+      testid="automations-suppressed-chip"
+      label={
+        <span
+          className="inline-flex items-center gap-1"
+          title="Reminder emails and automated workflows won't fire for this invoice."
+        >
+          <BellOff className="w-3 h-3" aria-hidden="true" />
+          Automations suppressed
+        </span>
+      }
+    />
+  );
 }
 
 
