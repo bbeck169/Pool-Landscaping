@@ -1852,3 +1852,12 @@
 - **Port 4 (45b05e41e audit)**: commit has border + tests + snapshot only; jobStatus.ts bg (#ff4542) and calendar.tsx ✓ / text changes were LOST (never committed, worktree reverted). 14 tests red at HEAD (k50, phase3-parity, recede). Awaiting user follow-up dispatch.
 - **Cron guard used for Port 2**: .git/info/exclude for new files + `git update-index --skip-worktree` for edited tracked files; both removed before `git commit --only`.
 - **Deps**: none (lucide-react-native NOT installed → Ionicons).
+
+## Iteration 128–130 — completed-card fix, iOS decimals, Form Builder P1+P2 read-only parity
+- **284bfb114** completed-card recede completion (jobStatus #ECFDF5 + JobRow ✓) — fixed the 14 red tests from phantom 45b05e41e.
+- **09b0bcb78** iOS decimal entry (locale "," → "." sanitizer) on ReadingChipRow / customer chemistry / calculators.
+- **02061f835** Form Builder C1: /admin/marketing/forms list + [id] (Preview with PORTED formShowIf | Versions view-only, no revert, copy desktop link | Settings), drawer admin+super_admin, TD-59 filed (pool-volume comma decimal, OPEN).
+- **C2 (this commit)**: /admin/marketing/forms/submissions inbox (form chips; "All forms" fans out ≤25 forms with submission_count>0 — no cross-form endpoint; date range all/7d/30d) + submissions/[sid] detail (labelled answers, pii_tag / is_customer_facing:false masked, metadata, lead/customer destination). Helpers in src/utils/formSubmissions.ts.
+- Gate: CommsAdminGate (admin+super_admin); backend require_admin also admits owner — mobile stricter per brief.
+- Cron lockout: .git/info/exclude for new paths + skip-worktree on edited tracked files; cleared before `git commit --only`.
+- Deps: none. Edit-on-mobile still TD-48.
