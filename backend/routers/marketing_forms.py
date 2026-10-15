@@ -108,10 +108,32 @@ async def _verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> N
 # as a LAYOUT-ONLY marker: renders a section heading in the public
 # form but collects no submission value. Skips the usual ``name`` /
 # submission-key handling in ``_validate_field_defs``.
+#
+# TD-52 · Feb-2026 — palette expansion. Four new field types land
+# with narrowly-scoped server contracts:
+#   * ``signature``         — submission value is a data URL
+#                             (``data:image/png;base64,…``). Stored
+#                             verbatim; no server-side canvas handling.
+#   * ``address_manual``    — composite 4-input field. Submission
+#                             value is a nested dict
+#                             ``{line1, city, state, zip}``.
+#                             Clients may submit the composite via the
+#                             widget OR flatten to 4 separate keys
+#                             (``<name>_line1`` etc.); both forms are
+#                             accepted by the dispatcher. Any missing
+#                             component is simply omitted.
+#   * ``rating_stars``      — integer 1..5. Enforced at submit time.
+#   * ``file_multi_upload`` — multi-file picker. Submission uses the
+#                             existing ``/widget/form/{fid}/submit-
+#                             multipart`` endpoint; each file lands
+#                             as a separate form-data part keyed on
+#                             the field name.
 _FIELD_TYPES = {
     "text", "email", "phone", "textarea", "number", "url", "date",
     "address_google", "dropdown", "select", "multiselect",
     "checkbox", "radio", "file", "section",
+    # TD-52 palette expansion.
+    "signature", "address_manual", "rating_stars", "file_multi_upload",
 }
 _OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
 # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Layout-only types
@@ -119,6 +141,92 @@ _OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
 # not require ``name`` to be non-empty.
 _LAYOUT_TYPES = {"section"}
 _COLUMN_SPAN_VALUES = {"full", "half"}
+
+# TD-52 · Feb-2026 — subset of the palette that carries extra server-
+# side submission sanity beyond the generic required-check:
+#   * ``rating_stars`` — if a non-null value is submitted it MUST be
+#     an integer in [1, 5].  Numeric strings (``"3"``) are coerced
+#     for operator-friendliness; anything else 422s.
+# ``signature`` / ``address_manual`` / ``file_multi_upload`` are
+# accepted as-is; their shape is loose by design (data URL / nested
+# dict / list of filenames) and clients may legitimately omit any
+# subcomponent.  The required-check elsewhere in this module still
+# applies.
+_RATING_STARS_MIN = 1
+_RATING_STARS_MAX = 5
+
+
+def _coerce_rating_stars(val: Any) -> Optional[int]:
+    """Return the int form of ``val`` if it falls in [1, 5], else
+    ``None``. Accepts ints, bools-as-ints (0/1 only — bool is NOT a
+    valid rating though), and numeric strings. Everything else
+    returns None so the caller can 422."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        # Avoid True/False silently coercing to 1/0 — ratings are
+        # explicitly numeric.
+        return None
+    if isinstance(val, int):
+        return val if _RATING_STARS_MIN <= val <= _RATING_STARS_MAX else None
+    if isinstance(val, float):
+        # NaN / inf are never valid; ``int(float("nan"))`` raises.
+        if val != val or val in (float("inf"), float("-inf")):
+            return None
+        iv = int(val)
+        if iv != val:
+            return None
+        return iv if _RATING_STARS_MIN <= iv <= _RATING_STARS_MAX else None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            iv = int(s)
+        except (TypeError, ValueError):
+            return None
+        return iv if _RATING_STARS_MIN <= iv <= _RATING_STARS_MAX else None
+    return None
+
+
+def _validate_td52_field_values(fields: List[Dict[str, Any]],
+                                 payload: Dict[str, Any]) -> None:
+    """Per-type submission sanity for the TD-52 palette.
+
+    Mutates ``payload`` in-place: when the author submits a numeric
+    string rating (``"4"``) we coerce it to the int ``4`` so
+    downstream lead-extraction / drip templating sees a clean type.
+    Raises 422 on hard violations.
+    """
+    for f in fields:
+        ftype = f.get("type")
+        if ftype != "rating_stars":
+            continue
+        key_name = f.get("name") or f.get("id")
+        if not key_name:
+            continue
+        # Resolve the value under either the ``name`` or ``id`` key.
+        if key_name in payload:
+            raw = payload.get(key_name)
+            payload_key = key_name
+        elif f.get("id") in payload:
+            raw = payload.get(f["id"])
+            payload_key = f["id"]
+        else:
+            # Missing optional rating is fine — required-check runs
+            # before this helper, so a missing REQUIRED rating has
+            # already errored out upstream.
+            continue
+        if raw in (None, "") or (isinstance(raw, str) and not raw.strip()):
+            continue
+        coerced = _coerce_rating_stars(raw)
+        if coerced is None:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f.get('id')}': "
+                f"rating_stars must be an integer in [1, 5]",
+            )
+        payload[payload_key] = coerced
 
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,63})$")
 _FIELD_ID_RE = re.compile(r"[^a-z0-9]+")
@@ -988,6 +1096,11 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         raise HTTPException(
             422, f"missing required fields: {', '.join(missing)}"
         )
+
+    # TD-52 · Feb-2026 — per-type submission sanity for the new
+    # palette entries. Enforced AFTER the required-check so a
+    # missing-value error still wins (clearer operator UX).
+    _validate_td52_field_values(form.get("fields") or [], payload)
 
     # Persist submission.
     sub_id = new_id()
