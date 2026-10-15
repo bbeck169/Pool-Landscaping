@@ -17,6 +17,7 @@ import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 const normalizeKey = (name: string) =>
   String(name || "").toLowerCase().replace(/[\s()]+/g, "_");
@@ -210,7 +211,9 @@ export default function ReadingChipRow({
           keyboardType="decimal-pad"
           editable={!locked && !notTested}
           value={draft}
-          onChangeText={setDraft}
+          // iOS decimal-pad emits the locale separator ("," on many
+          // locales) — normalise to "." and reject a 2nd dot / junk.
+          onChangeText={(t) => setDraft((prev) => sanitizeDecimalInput(t, prev))}
           onEndEditing={commit}
           onBlur={commit}
           onSubmitEditing={commit}

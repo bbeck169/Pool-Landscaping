@@ -11,6 +11,7 @@ import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
 import { Sheet } from "@/src/components/ui";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 type Tool = "dosing" | "volume" | "salt" | "lsi";
 
@@ -30,7 +31,8 @@ function NumInput({ label, unit, value, onChangeText, testID }: any) {
           testID={testID}
           style={styles.input}
           value={value}
-          onChangeText={onChangeText}
+          // iOS locale "," → "."; 2nd dot / junk ignored (parseFloat("7,6") was 7).
+          onChangeText={(t: string) => onChangeText(sanitizeDecimalInput(t, value ?? ""))}
           keyboardType="decimal-pad"
           placeholder="0"
           placeholderTextColor={colors.muted}

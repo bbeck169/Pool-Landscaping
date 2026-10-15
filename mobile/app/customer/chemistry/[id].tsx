@@ -9,6 +9,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 const READINGS = [
   { k: "fc", label: "FC (ppm)", range: "Target 1\u20134" },
@@ -118,7 +119,7 @@ export default function CustomerChemistry() {
                       : {},
                   ]}
                   value={readings[r.k]}
-                  onChangeText={(v) => setReadings((prev) => ({ ...prev, [r.k]: v }))}
+                  onChangeText={(v) => setReadings((prev) => ({ ...prev, [r.k]: sanitizeDecimalInput(v, prev[r.k] ?? "") }))}
                   keyboardType="decimal-pad"
                   placeholder="\u2014"
                   placeholderTextColor={colors.muted}
