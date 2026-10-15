@@ -362,6 +362,209 @@
           style: INPUT_STYLE,
         });
         break;
+      // TD-52 · Feb-2026 — multi-file picker. Reuses the native file
+      // control with ``multiple``; the dispatcher ingresses via the
+      // existing /widget/form/{fid}/submit-multipart endpoint when
+      // any file field is present (handled by submitForm below).
+      case "file_multi_upload":
+        control = el("input", {
+          type: "file",
+          name: name,
+          multiple: "",
+          "data-testid": "form-widget-input-" + name,
+          required: required ? "" : null,
+          style: INPUT_STYLE,
+        });
+        break;
+      // TD-52 · Signature pad. Minimalist canvas-based signature
+      // capture — pointer events draw strokes, the current data URL
+      // is mirrored into a hidden <input> so ``collectAnswers`` can
+      // read it without any special-case code.  "Clear" button
+      // resets both the canvas and the hidden value.
+      case "signature": {
+        var sigWrap = el("div", {
+          "data-testid": "form-widget-signature-wrap-" + name,
+          style: {
+            border: "1px solid #CBD5E1",
+            borderRadius: "8px",
+            padding: "6px",
+            background: "#fff",
+          },
+        });
+        var sigCanvas = el("canvas", {
+          "data-testid": "form-widget-signature-canvas-" + name,
+          width: "480", height: "140",
+          style: {
+            display: "block", width: "100%", height: "140px",
+            cursor: "crosshair", touchAction: "none",
+            background: "#FDFDFE", borderRadius: "6px",
+          },
+        });
+        var sigHidden = el("input", {
+          type: "hidden", name: name,
+          "data-testid": "form-widget-input-" + name,
+          required: required ? "" : null,
+          value: "",
+        });
+        var sigClear = el("button", {
+          type: "button",
+          "data-testid": "form-widget-signature-clear-" + name,
+          style: {
+            marginTop: "6px",
+            padding: "4px 10px",
+            fontSize: "12px",
+            border: "1px solid #CBD5E1",
+            background: "#F8FAFC",
+            borderRadius: "6px",
+            cursor: "pointer",
+          },
+        }, ["Clear"]);
+        // Wire canvas drawing on next tick so the canvas is in the
+        // DOM when we grab its context.
+        setTimeout(function () {
+          var ctx = sigCanvas.getContext && sigCanvas.getContext("2d");
+          if (!ctx) return;
+          ctx.strokeStyle = "#0F172A";
+          ctx.lineWidth = 2;
+          ctx.lineCap = "round";
+          var drawing = false;
+          function pt(ev) {
+            var rect = sigCanvas.getBoundingClientRect();
+            var p = (ev.touches && ev.touches[0]) || ev;
+            return {
+              x: (p.clientX - rect.left) * (sigCanvas.width / rect.width),
+              y: (p.clientY - rect.top) * (sigCanvas.height / rect.height),
+            };
+          }
+          function start(ev) {
+            ev.preventDefault();
+            drawing = true;
+            var p = pt(ev);
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+          }
+          function move(ev) {
+            if (!drawing) return;
+            ev.preventDefault();
+            var p = pt(ev);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+          }
+          function end() {
+            if (!drawing) return;
+            drawing = false;
+            try { sigHidden.value = sigCanvas.toDataURL("image/png"); }
+            catch (e) { /* tainted canvas safeguard — leave blank */ }
+          }
+          sigCanvas.addEventListener("mousedown", start);
+          sigCanvas.addEventListener("mousemove", move);
+          sigCanvas.addEventListener("mouseup", end);
+          sigCanvas.addEventListener("mouseleave", end);
+          sigCanvas.addEventListener("touchstart", start);
+          sigCanvas.addEventListener("touchmove", move);
+          sigCanvas.addEventListener("touchend", end);
+        }, 0);
+        sigClear.addEventListener("click", function () {
+          var ctx2 = sigCanvas.getContext && sigCanvas.getContext("2d");
+          if (ctx2) ctx2.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+          sigHidden.value = "";
+        });
+        sigWrap.appendChild(sigCanvas);
+        sigWrap.appendChild(sigHidden);
+        sigWrap.appendChild(sigClear);
+        control = sigWrap;
+        break;
+      }
+      // TD-52 · Manual address — four stacked inputs. Each sub-field
+      // uses a ``<name>__line1`` / ``__city`` / ``__state`` / ``__zip``
+      // key under the hood; ``collectAnswers`` folds the four back
+      // into a single nested ``answers[name] = {line1, city, state,
+      // zip}`` so the submission wire shape matches the server
+      // contract documented on _FIELD_TYPES.
+      case "address_manual": {
+        var addrWrap = el("div", {
+          "data-testid": "form-widget-input-" + name,
+          "data-field-type": "address_manual",
+          style: { display: "flex", flexDirection: "column", gap: "6px" },
+        });
+        var addrLine1 = el("input", {
+          type: "text", name: name + "__line1",
+          placeholder: "Street address",
+          required: required ? "" : null, style: INPUT_STYLE,
+          "data-testid": "form-widget-input-" + name + "-line1",
+        });
+        var addrCity = el("input", {
+          type: "text", name: name + "__city", placeholder: "City",
+          required: required ? "" : null, style: INPUT_STYLE,
+          "data-testid": "form-widget-input-" + name + "-city",
+        });
+        var addrRow = el("div", {
+          style: { display: "flex", gap: "6px" },
+        });
+        var addrState = el("input", {
+          type: "text", name: name + "__state",
+          placeholder: "State", maxlength: "2",
+          required: required ? "" : null,
+          style: Object.assign({}, INPUT_STYLE, { width: "35%" }),
+          "data-testid": "form-widget-input-" + name + "-state",
+        });
+        var addrZip = el("input", {
+          type: "text", name: name + "__zip", placeholder: "ZIP",
+          required: required ? "" : null,
+          style: Object.assign({}, INPUT_STYLE, { width: "65%" }),
+          "data-testid": "form-widget-input-" + name + "-zip",
+        });
+        addrRow.appendChild(addrState);
+        addrRow.appendChild(addrZip);
+        addrWrap.appendChild(addrLine1);
+        addrWrap.appendChild(addrCity);
+        addrWrap.appendChild(addrRow);
+        control = addrWrap;
+        break;
+      }
+      // TD-52 · 1–5 star rating. Renders five radio buttons styled
+      // as stars; the hidden ``name=<name>`` radio group carries the
+      // selected 1..5 integer. Submission value is a string digit
+      // (coerced server-side via ``_coerce_rating_stars``).
+      case "rating_stars": {
+        var rateWrap = el("div", {
+          "data-testid": "form-widget-input-" + name,
+          "data-field-type": "rating_stars",
+          style: { display: "flex", gap: "4px", alignItems: "center" },
+        });
+        for (var rs = 1; rs <= 5; rs++) {
+          var rsVal = String(rs);
+          var rsLabel = el("label", {
+            style: {
+              fontSize: "22px", cursor: "pointer",
+              color: "#CBD5E1", lineHeight: "1",
+              userSelect: "none",
+            },
+            "data-testid": "form-widget-rating-" + name + "-" + rsVal,
+          }, [
+            el("input", {
+              type: "radio", name: name, value: rsVal,
+              required: required && rs === 1 ? "" : null,
+              style: { position: "absolute", left: "-9999px" },
+            }),
+            "★",
+          ]);
+          rateWrap.appendChild(rsLabel);
+        }
+        // Click highlights every star up to the clicked one so the
+        // operator sees a familiar interaction. Pure DOM, no state.
+        rateWrap.addEventListener("change", function (ev) {
+          if (!ev.target || ev.target.type !== "radio") return;
+          var chosen = parseInt(ev.target.value, 10) || 0;
+          var labels = rateWrap.querySelectorAll("label");
+          for (var li = 0; li < labels.length; li++) {
+            labels[li].style.color =
+              li < chosen ? "#F59E0B" : "#CBD5E1";
+          }
+        });
+        control = rateWrap;
+        break;
+      }
       case "date":
         control = el("input", {
           type: "date", name: name,
@@ -429,6 +632,20 @@
     var out = {};
     Array.prototype.forEach.call(formEl.elements, function (input) {
       if (!input.name) return;
+      // TD-52 · Fold address_manual sub-field names (``<name>__line1``
+      // etc.) back into a single nested object keyed on the parent
+      // ``<name>``. Done inline so the generic branches below never
+      // see the ``__`` sentinel keys.
+      var m = input.name.match(/^(.+)__(line1|city|state|zip)$/);
+      if (m) {
+        var parent = m[1];
+        var slot = m[2];
+        if (!out[parent] || typeof out[parent] !== "object") {
+          out[parent] = {};
+        }
+        out[parent][slot] = input.value;
+        return;
+      }
       if (input.type === "checkbox") {
         out[input.name] = input.checked;
       } else if (input.type === "radio") {
@@ -438,8 +655,21 @@
           .call(input.options, function (o) { return o.selected; })
           .map(function (o) { return o.value; });
       } else if (input.type === "file") {
-        // Skip binary uploads for now — H3 sends the metadata only.
-        out[input.name] = input.files && input.files[0] ? input.files[0].name : "";
+        // TD-52 · Multi-file inputs serialise to an array of names;
+        // single-file inputs keep the legacy scalar-string shape so
+        // pre-TD-52 integrations don't regress.
+        if (input.multiple) {
+          var names = [];
+          if (input.files && input.files.length) {
+            for (var fi = 0; fi < input.files.length; fi++) {
+              names.push(input.files[fi].name);
+            }
+          }
+          out[input.name] = names;
+        } else {
+          out[input.name] = input.files && input.files[0]
+            ? input.files[0].name : "";
+        }
       } else {
         out[input.name] = input.value;
       }

@@ -69,9 +69,18 @@ const FIELD_TYPES = [
   "text", "email", "phone", "textarea", "number", "url", "date",
   "address_google", "dropdown", "multiselect", "checkbox", "radio", "file",
   "section",
+  // TD-52 · Feb-2026 — palette expansion. Four new field types with
+  // widget renderers below in /app/frontend/public/widget/form.js
+  // and a shared default-fields map (FIELD_TYPE_LABELS).
+  "signature", "address_manual", "rating_stars", "file_multi_upload",
 ];
 const FIELD_TYPE_LABELS = {
   section: "Section heading (layout only)",
+  // TD-52 — operator-facing labels.
+  signature: "Signature pad",
+  address_manual: "Address (manual entry)",
+  rating_stars: "Rating (1–5 stars)",
+  file_multi_upload: "File upload (multiple)",
 };
 const OPTION_TYPES = new Set(["dropdown", "multiselect", "radio"]);
 // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout-only
