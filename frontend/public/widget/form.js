@@ -295,6 +295,20 @@
       return section;
     }
 
+    // TD-54 · Feb-2026 — ``page_break`` is a LAYOUT marker used only
+    // by the Prev/Next page-splitting logic in renderForm.  It never
+    // produces a visible row (the paginator reads the field index +
+    // page_title via its own metadata, not via this element) but we
+    // return a zero-footprint marker so the row cursor stays in
+    // alignment with ``fields[i]``.
+    if (f.type === "page_break") {
+      return el("div", {
+        "data-testid": "form-widget-page-break-" + (f.id || i),
+        "data-page-break-index": String(i),
+        style: { display: "none" },
+      });
+    }
+
     var required = !!f.required;
     var opts = f.options || [];
     var labelText = (f.label || name) + (required ? " *" : "");
@@ -789,8 +803,29 @@
     // resolve parent refs on every input change. Row elements are
     // stashed in ``rowEls`` keyed by field id so applyVisibility()
     // can toggle them without re-rendering the whole grid.
+    //
+    // TD-54 · Feb-2026 — multi-step forms. Walk ``fields`` once up
+    // front, record the running page-index for each field so the
+    // Prev/Next paginator can show/hide rows en bloc.  Pages are
+    // 0-indexed; a form with ZERO page_breaks has one page (index 0)
+    // and the paginator short-circuits to the legacy single-page UX
+    // (no Prev/Next buttons, submit always enabled).
     var byId = {};
     fields.forEach(function (f) { if (f && f.id) byId[f.id] = f; });
+    var pageOfField = {};
+    var pageTitles = [""];  // index 0 = first page (unlabeled by default)
+    var _curPage = 0;
+    fields.forEach(function (f) {
+      if (!f) return;
+      if (f.type === "page_break") {
+        _curPage += 1;
+        pageTitles.push(f.page_title || f.label || "");
+      } else {
+        if (f.id) pageOfField[f.id] = _curPage;
+      }
+    });
+    var pageCount = pageTitles.length;
+    var currentPage = 0;  // mutated by Prev/Next handlers
     var rowEls = {};
     var fieldsGrid = el("div", {
       "data-testid": "form-widget-fields-grid",
@@ -808,15 +843,30 @@
     // TD-53 · recompute visibility after every input change. Hides
     // the row via ``display:none`` + strips the ``required`` attr on
     // every input inside so a hidden input doesn't block submit.
+    //
+    // TD-54 · page-aware. A field is only visible when (a) its
+    // ``show_if`` condition is satisfied AND (b) it lives on the
+    // currently-shown page. The ``required`` attr is cleared on
+    // rows outside the current page too, so native HTML5 validation
+    // on Submit doesn't demand focus on a hidden row.
     function applyVisibility() {
       var currentAnswers = collectAnswers(form);
       fields.forEach(function (f) {
         if (!f || !f.id) return;
         var row = rowEls[f.id];
         if (!row) return;
-        var visible = wIsFieldVisible(f, currentAnswers, byId);
+        var showIfVisible = wIsFieldVisible(f, currentAnswers, byId);
+        var onCurrentPage = (
+          !(f.id in pageOfField) ||
+          pageOfField[f.id] === currentPage
+        );
+        var visible = showIfVisible && onCurrentPage;
         row.style.display = visible ? "" : "none";
         row.setAttribute("data-visible", visible ? "true" : "false");
+        row.setAttribute(
+          "data-page-index",
+          String(pageOfField[f.id] != null ? pageOfField[f.id] : 0),
+        );
         // Clear ``required`` on hidden inputs so the browser's own
         // native-required validator can't fire for them.
         var inputs = row.querySelectorAll(
@@ -836,6 +886,7 @@
           }
         });
       });
+      applyPaginatorChrome();
     }
 
     var form = el("form", {
@@ -931,6 +982,136 @@
         marginTop: "14px",
       },
     }, [schema.submit_button_label || "Send"]);
+
+    // TD-54 · Feb-2026 — paginator chrome. Only rendered when the
+    // form has at least one page_break (pageCount > 1); byte-
+    // identical absent-paginator UX for pre-TD-54 forms.
+    var paginatorBar = null;
+    var prevBtn = null;
+    var nextBtn = null;
+    var progressLabel = null;
+    if (pageCount > 1) {
+      paginatorBar = el("div", {
+        "data-testid": "form-widget-paginator",
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "10px",
+          marginTop: "14px",
+        },
+      });
+      prevBtn = el("button", {
+        type: "button",
+        "data-testid": "form-widget-paginator-prev",
+        style: {
+          background: "#fff",
+          color: themePrimary || "#0EA5E9",
+          border: "1px solid " + (themePrimary || "#CBD5E1"),
+          borderRadius: "10px",
+          padding: "8px 14px",
+          fontSize: "13px",
+          fontWeight: "600",
+          cursor: "pointer",
+        },
+      }, ["← Previous"]);
+      nextBtn = el("button", {
+        type: "button",
+        "data-testid": "form-widget-paginator-next",
+        style: {
+          background: themePrimary || "#0EA5E9",
+          color: "#fff",
+          border: "none",
+          borderRadius: "10px",
+          padding: "8px 14px",
+          fontSize: "13px",
+          fontWeight: "600",
+          cursor: "pointer",
+        },
+      }, ["Next →"]);
+      progressLabel = el("div", {
+        "data-testid": "form-widget-paginator-progress",
+        style: {
+          fontSize: "12px",
+          color: "#64748B",
+          fontWeight: "500",
+        },
+      }, [""]);
+      paginatorBar.appendChild(prevBtn);
+      paginatorBar.appendChild(progressLabel);
+      paginatorBar.appendChild(nextBtn);
+    }
+
+    // ``applyPaginatorChrome`` is called from applyVisibility (which
+    // runs after every input change AND on Prev/Next click) to keep
+    // the Prev/Next/Submit visibility + the progress label in sync
+    // with ``currentPage``. Scoped to a closure over ``submitBtn`` /
+    // ``prevBtn`` / ``nextBtn`` / ``progressLabel`` so each call site
+    // is a single-arg state write.
+    function applyPaginatorChrome() {
+      if (pageCount <= 1) {
+        // Legacy single-page form — paginator is absent, submit is
+        // always shown.
+        if (submitBtn) submitBtn.style.display = "";
+        return;
+      }
+      var onLastPage = currentPage >= pageCount - 1;
+      var onFirstPage = currentPage <= 0;
+      prevBtn.disabled = onFirstPage;
+      prevBtn.style.opacity = onFirstPage ? "0.4" : "1";
+      prevBtn.style.cursor = onFirstPage ? "default" : "pointer";
+      nextBtn.style.display = onLastPage ? "none" : "";
+      submitBtn.style.display = onLastPage ? "" : "none";
+      // ``Page N of M · Section title`` when a page_title is set,
+      // otherwise just ``Page N of M``.
+      var title = pageTitles[currentPage] || "";
+      progressLabel.textContent =
+        "Page " + (currentPage + 1) + " of " + pageCount
+          + (title ? "  ·  " + title : "");
+    }
+
+    // ``validateCurrentPage`` — scan every row on the current page
+    // and ask the browser's native validator whether its input is
+    // acceptable (``input.checkValidity()``). Blocks Next if any
+    // visible required input on this page is incomplete. show_if-
+    // hidden inputs already have ``required`` stripped by
+    // ``applyVisibility`` so they are ignored here.
+    function validateCurrentPage() {
+      var ok = true;
+      Object.keys(rowEls).forEach(function (fid) {
+        if (pageOfField[fid] !== currentPage) return;
+        var row = rowEls[fid];
+        if (row.getAttribute("data-visible") === "false") return;
+        var inputs = row.querySelectorAll("input,select,textarea");
+        Array.prototype.forEach.call(inputs, function (input) {
+          if (input.required && !input.checkValidity()) {
+            if (ok) {  // flash the first offender
+              try { input.reportValidity(); } catch (e) {}
+            }
+            ok = false;
+          }
+        });
+      });
+      return ok;
+    }
+
+    if (pageCount > 1) {
+      prevBtn.addEventListener("click", function () {
+        if (currentPage > 0) {
+          currentPage -= 1;
+          applyVisibility();
+        }
+      });
+      nextBtn.addEventListener("click", function () {
+        if (!validateCurrentPage()) return;
+        if (currentPage < pageCount - 1) {
+          currentPage += 1;
+          applyVisibility();
+        }
+      });
+      form.appendChild(paginatorBar);
+    }
+
     form.appendChild(submitBtn);
 
     // TD-53 · wire the show_if evaluator to EVERY input / change

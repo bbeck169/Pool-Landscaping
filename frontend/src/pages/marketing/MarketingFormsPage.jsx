@@ -73,6 +73,10 @@ const FIELD_TYPES = [
   // widget renderers below in /app/frontend/public/widget/form.js
   // and a shared default-fields map (FIELD_TYPE_LABELS).
   "signature", "address_manual", "rating_stars", "file_multi_upload",
+  // TD-54 · Feb-2026 — multi-step forms. page_break is a LAYOUT
+  // marker (sibling of section) that splits the form into pages
+  // for the widget's Prev/Next renderer.
+  "page_break",
 ];
 const FIELD_TYPE_LABELS = {
   section: "Section heading (layout only)",
@@ -81,13 +85,19 @@ const FIELD_TYPE_LABELS = {
   address_manual: "Address (manual entry)",
   rating_stars: "Rating (1–5 stars)",
   file_multi_upload: "File upload (multiple)",
+  // TD-54 — operator-facing label for the pagination marker.
+  page_break: "Page break (multi-step)",
 };
 const OPTION_TYPES = new Set(["dropdown", "multiselect", "radio"]);
 // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout-only
 // field types skip name/placeholder/required/options in the editor
 // row (see FieldEditorRow below) + let the backend accept a missing
 // ``name`` at save time.
-const LAYOUT_TYPES = new Set(["section"]);
+// TD-54 · Feb-2026 — page_break joins section as a layout marker
+// so FieldEditorRow treats it as layout-only (no required toggle,
+// no name input, no column_span control). Mirrors backend's
+// _LAYOUT_TYPES set.
+const LAYOUT_TYPES = new Set(["section", "page_break"]);
 
 // TD-51 · Feb-2026 — per-destination helper copy for the ``creates``
 // select on the submit-config panel. Operator-facing text that
@@ -902,18 +912,48 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
                             allFieldsForShowIfPicker,
                             dragHandleProps = null }) {
   const isLayout = LAYOUT_TYPES.has(f.type);
+  const isPageBreak = f.type === "page_break";
   const needsOptions = OPTION_TYPES.has(f.type);
   return (
     <div className="mb-2 p-3 rounded-lg"
-         style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
-         data-testid={`form-field-${idx}`}>
+         style={{
+           // TD-54 — page_break rows get a visually distinct dashed
+           // divider so authors can see pagination boundaries in the
+           // canvas. Section rows keep the solid border.
+           border: isPageBreak
+             ? `1.5px dashed ${colors.accent || "#2563EB"}`
+             : `1px solid ${colors.border}`,
+           background: isPageBreak ? "#F8FAFF" : "#fff",
+         }}
+         data-testid={`form-field-${idx}`}
+         data-field-type={f.type}>
       <div className="grid grid-cols-12 gap-2 items-start">
         <div className="col-span-5">
           <label className="block text-[10px] font-bold uppercase mb-1"
                  style={{ color: colors.muted }}>
-            {isLayout ? "Section heading" : "Label"}
+            {isPageBreak
+              ? "Page title (optional)"
+              : (isLayout ? "Section heading" : "Label")}
           </label>
-          {isLayout ? (
+          {isPageBreak ? (
+            // TD-54 · Page title is a plain-text input (not rich text)
+            // — it's shown as a step label in the widget's Prev/Next
+            // progress indicator so we need to keep it unformatted.
+            // Writes to BOTH ``page_title`` (the authoritative field
+            // the backend persists) AND ``label`` (so ``FormField``
+            // model's label min_length=1 constraint is satisfied
+            // when the field saves without an explicit page_title).
+            <input value={f.page_title || ""}
+                     onChange={(e) => onChange({
+                       page_title: e.target.value,
+                       label: e.target.value || "Page break",
+                     })}
+                     placeholder="e.g. Contact details"
+                     maxLength={60}
+                     className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                     style={{ border: `1px solid ${colors.border}` }}
+                     data-testid={`form-field-page-title-${idx}`} />
+          ) : isLayout ? (
             // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Section
             // headings persist as rich-text HTML on ``field.label``.
             // Narrow Tiptap extension set caps XSS surface — see
