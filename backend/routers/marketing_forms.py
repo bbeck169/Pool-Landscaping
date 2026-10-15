@@ -752,8 +752,9 @@ async def delete_form(fid: str,
 # + revert.  Sibling collection ``db.marketing_form_versions`` holds
 # a snapshot per schema-impacting edit; runtime fields (``slug``,
 # ``submission_count``, ``active``) stay on the live ``marketing_forms``
-# doc. Admin / super_admin only — mirrors the sensitivity gate on
-# ``routers/form_templates.py:list_versions``.
+# doc. Gated by ``require_admin`` — which admits admin / super_admin /
+# owner (OWNER-ACCESS-MARKETING-FORMS · Feb-2026) — mirrors the
+# sensitivity gate on ``routers/form_templates.py:list_versions``.
 # ───────────────────────────────────────────────────────────────────
 
 
