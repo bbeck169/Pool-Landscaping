@@ -80,6 +80,33 @@ const OPTION_TYPES = new Set(["dropdown", "multiselect", "radio"]);
 // ``name`` at save time.
 const LAYOUT_TYPES = new Set(["section"]);
 
+// TD-51 · Feb-2026 — per-destination helper copy for the ``creates``
+// select on the submit-config panel. Operator-facing text that
+// explains what row each submit will produce + where to triage it.
+// Kept at module scope so it's easy to audit from vitest without
+// mounting the full page. Exported for vitest coverage.
+export const CREATES_HELPER_COPY = {
+  lead:
+    "Creates a Lead in /admin/leads. Default; best for marketing " +
+    "intake forms where follow-up is the next action.",
+  customer:
+    "Creates a Customer in /customers. Use when the form is for " +
+    "existing-relationship intake (e.g. referral capture).",
+  both:
+    "Creates BOTH a Lead and a Customer, cross-linked. Use when the " +
+    "form captures prospects you also want tracked as customers.",
+  booking:
+    "Creates a Booking request in /admin/job-requests for operator " +
+    "triage. Status = pending; convert to a job once reviewed.",
+  service_log:
+    "Creates a Service log entry in /admin/service-reports " +
+    "(source=marketing_form). Appears outside the tech dashboard; " +
+    "use for customer-reported service issues.",
+  quote_request:
+    "Creates a Quote request in /admin/lead-requests for review. " +
+    "Status = new; attach a quote once prepared.",
+};
+
 function slugify(s) {
   return (s || "").toString().toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
@@ -618,16 +645,54 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
             <div className="text-xs font-bold uppercase tracking-wider mb-2"
                  style={{ color: colors.muted }}>Submit action</div>
 
-            <div className="flex items-center gap-4 mb-3 flex-wrap">
-              {["lead", "customer", "both"].map((v) => (
-                <label key={v} className="flex items-center gap-2 text-sm">
-                  <input type="radio" name="creates"
-                         checked={submitCfg.creates === v}
-                         onChange={() => setSubmitCfg({ ...submitCfg, creates: v })}
-                         data-testid={`form-submit-config-creates-${v}`} />
-                  Create {v}
-                </label>
-              ))}
+            {/* TD-51 · Feb-2026 — ``creates`` widened from 3 to 6
+                destinations. Switched from inline radio pills to a
+                select dropdown so the surface stays legible at 6
+                options; each option carries a per-option data-testid
+                matching the pre-TD-51 scheme + a scope-isolated
+                helper-copy caption that explains the selected
+                destination so operators can self-serve. */}
+            <div className="mb-3">
+              <label className="block text-[10px] font-bold uppercase mb-1"
+                     style={{ color: colors.muted }}>
+                Create on submit
+              </label>
+              <select
+                value={submitCfg.creates || "lead"}
+                onChange={(e) => setSubmitCfg({ ...submitCfg, creates: e.target.value })}
+                className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                data-testid="form-submit-config-creates-select">
+                <option value="lead"
+                        data-testid="form-submit-config-creates-lead">
+                  Lead
+                </option>
+                <option value="customer"
+                        data-testid="form-submit-config-creates-customer">
+                  Customer
+                </option>
+                <option value="both"
+                        data-testid="form-submit-config-creates-both">
+                  Both (Lead + Customer)
+                </option>
+                <option value="booking"
+                        data-testid="form-submit-config-creates-booking">
+                  Booking request
+                </option>
+                <option value="service_log"
+                        data-testid="form-submit-config-creates-service_log">
+                  Service log entry
+                </option>
+                <option value="quote_request"
+                        data-testid="form-submit-config-creates-quote_request">
+                  Quote request
+                </option>
+              </select>
+              <div className="mt-1 text-[11px]"
+                   style={{ color: colors.muted }}
+                   data-testid="form-submit-config-creates-helper">
+                {CREATES_HELPER_COPY[submitCfg.creates || "lead"]}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
