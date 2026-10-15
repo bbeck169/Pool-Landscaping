@@ -94,7 +94,7 @@ export default function CustomerChemistry() {
               <AppTextInput
                 style={s.volumeInput}
                 value={volume}
-                onChangeText={setVolume}
+                onChangeText={(v) => setVolume((prev) => sanitizeDecimalInput(v, prev))}
                 keyboardType="decimal-pad"
                 testID="chemistry-volume-input"
               />

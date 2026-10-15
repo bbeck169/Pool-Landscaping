@@ -1868,3 +1868,12 @@
 - **Changes**: none to code. Phase 3 already shipped in 77affb86c; no frontend/backend/mobile templates diffs since. Re-verified Jest 45/45, live API contract (incl. 409 after finalize, PDF), Expo-web offline queue → reconnect flush. PRD §5 re-verification line added.
 - **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
 - **Web files referenced**: none re-read (unchanged since 77affb86c). No external repo cloned.
+
+## Iteration 132 — TD-59 pool-volume comma fix (Fix A owner-role BLOCKED, not shipped)
+- **Commit**: the `fix(mobile-chemistry): TD-59` commit containing this entry (`git log -1 -- mobile/__tests__/td59-pool-volume-decimal.test.tsx`)
+- **Date**: 2026-10-15
+- **Changes**: customer chemistry pool-volume onChangeText → `sanitizeDecimalInput(v, prev)` (Option A: "," = decimal, "20,000" → "20.000"). TD-59 RESOLVED in TECH_DEBT.md (Options B/C noted).
+- **Fix A paused**: web `/admin/marketing/forms` is `AdminOnly` (admin+super_admin, App.js:1144) — owner NOT admitted on web; mobile owners never see the admin drawer (`more.tsx` showAdminSection excludes owner) and `NavRole` lacks owner; screen gate `CommsAdminGate` is shared with Email Builder. Backend `require_admin` does admit owner. Awaiting user decision.
+- **Files modified**: mobile/app/customer/chemistry/[id].tsx, mobile/__tests__/td59-pool-volume-decimal.test.tsx (new), memory/TECH_DEBT.md, memory/mobile/commit_log.md
+- **Tests**: full Jest 2281→2284 passed, 48 failed / 22 skipped unchanged, identical failing-suite set (42).
+- **Deps**: none.
