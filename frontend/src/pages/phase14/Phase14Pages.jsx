@@ -372,6 +372,40 @@ export function FormsList() {
   };
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-4" data-testid="forms-list">
+      {/* TD-50 · Feb-2026 — System C deprecation notice. Non-blocking:
+          operators can keep using this surface, but the Marketing
+          Forms Builder is the recommended path for all new work.
+          Backend migration script copies legacy db.forms rows into
+          db.marketing_forms idempotently (see
+          backend/scripts/migrate_system_c_forms_to_marketing_forms.py).
+          Styled as an info banner — not an error / warning tone — so
+          operators finishing active work aren't alarmed. */}
+      <div
+        className="rounded-xl p-3 flex items-start gap-3 text-sm"
+        style={{
+          background: "#EFF6FF",
+          border: "1px solid #BFDBFE",
+          color: "#1E3A8A",
+        }}
+        data-testid="forms-list-deprecation-banner"
+      >
+        <div className="flex-1">
+          <div className="font-semibold">Legacy Public Forms (System C)</div>
+          <div className="mt-1" style={{ color: "#1E40AF" }}>
+            New forms should use the Marketing Forms Builder — supports
+            conditional logic, multi-step pages, email templates, star
+            ratings, signatures, and more.
+          </div>
+        </div>
+        <Link
+          to="/admin/marketing/forms"
+          data-testid="forms-list-deprecation-banner-cta"
+          className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold"
+          style={{ background: "#1D4ED8", color: "#fff" }}
+        >
+          Open Marketing Forms →
+        </Link>
+      </div>
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Public Forms</h1>
         <button onClick={create} className="px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{ backgroundColor: colors.brand }} data-testid="forms-new">+ New form</button>
