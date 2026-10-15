@@ -9,14 +9,14 @@ import { View, Text, StyleSheet, FlatList, Pressable, ScrollView, RefreshControl
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { Header } from "@/src/components/widgets";
-import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
+import CommsAdminGate, { MARKETING_FORMS_ROLES } from "@/src/components/comms/CommsAdminGate";
 import { listForms, listFormSubmissions, type FormSubmission, type MarketingForm } from "@/src/api/marketingForms";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
 import { ALL_FORMS_FANOUT_CAP, inRange, summaryLine, destinationLabel, type Range } from "@/src/utils/formSubmissions";
 
 export default function FormSubmissionsScreen() {
   return (
-    <CommsAdminGate title="Form Submissions">
+    <CommsAdminGate title="Form Submissions" roles={MARKETING_FORMS_ROLES}>
       <InboxBody />
     </CommsAdminGate>
   );

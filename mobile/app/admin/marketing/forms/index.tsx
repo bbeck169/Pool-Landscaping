@@ -8,13 +8,13 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { Header } from "@/src/components/widgets";
-import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
+import CommsAdminGate, { MARKETING_FORMS_ROLES } from "@/src/components/comms/CommsAdminGate";
 import { listForms, type MarketingForm } from "@/src/api/marketingForms";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
 
 export default function MarketingFormsScreen() {
   return (
-    <CommsAdminGate title="Marketing Forms">
+    <CommsAdminGate title="Marketing Forms" roles={MARKETING_FORMS_ROLES}>
       <MarketingFormsBody />
     </CommsAdminGate>
   );

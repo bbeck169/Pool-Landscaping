@@ -19,19 +19,25 @@ import { colors, font, fontSize, spacing } from "@/src/theme";
 
 export const COMMS_ADMIN_ROLES = ["admin", "super_admin"] as const;
 
-export function isCommsAdmin(role?: string | null): boolean {
-  return (COMMS_ADMIN_ROLES as readonly string[]).includes(String(role || ""));
+// Marketing Forms + submissions inbox ONLY (backend `require_admin` admits
+// owner). Email Builder / comms templates keep the default COMMS_ADMIN_ROLES.
+export const MARKETING_FORMS_ROLES = ["admin", "super_admin", "owner"] as const;
+
+export function isCommsAdmin(role?: string | null, roles: readonly string[] = COMMS_ADMIN_ROLES): boolean {
+  return roles.includes(String(role || ""));
 }
 
 export default function CommsAdminGate({
   title,
+  roles,
   children,
 }: {
   title: string;
+  roles?: readonly string[];
   children: React.ReactNode;
 }) {
   const { user } = useAuth();
-  if (isCommsAdmin(user?.role)) return <>{children}</>;
+  if (isCommsAdmin(user?.role, roles)) return <>{children}</>;
   return (
     <View style={s.root} testID="comms-admin-gate-denied">
       <Header title={title} back />

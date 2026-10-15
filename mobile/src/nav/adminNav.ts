@@ -24,7 +24,7 @@
  */
 
 export type NavTier = "t1" | "t2" | "t3";
-export type NavRole = "super_admin" | "admin" | "manager";
+export type NavRole = "super_admin" | "admin" | "manager" | "owner";
 
 export type NavEntry = {
   label: string;
@@ -107,7 +107,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Notifications",      route: "/notifications",                   icon: "notifications-outline",tier: "t1", testID: "drawer-nav-notifications" },
       { label: "Forms",              route: "/forms",                           icon: "clipboard-outline",    tier: "t1", testID: "drawer-nav-forms" },
       // Form Builder Phases 1+2 mobile parity — read-only (view + versions + submissions). TD-48 for edit.
-      { label: "Marketing Forms",    route: "/admin/marketing/forms",           icon: "document-text-outline", tier: "t1", roles: ["super_admin", "admin"], testID: "drawer-nav-marketing-forms" },
+      { label: "Marketing Forms",    route: "/admin/marketing/forms",           icon: "document-text-outline", tier: "t1", roles: ["super_admin", "admin", "owner"], testID: "drawer-nav-marketing-forms" },
       { label: "SEO Hub",            route: "/seo",                             icon: "search-outline",       tier: "t1", testID: "drawer-nav-seo" },
       { label: "Site Auditor",       route: "/admin/seo/audits",                icon: "shield-checkmark-outline", tier: "t1", testID: "drawer-nav-seo-audits" },
       { label: "Content Scorer",     route: "/admin/seo/content-scorer",        icon: "podium-outline",       tier: "t1", testID: "drawer-nav-content-scorer" },
@@ -279,6 +279,15 @@ export const ADMIN_NAV: NavGroup[] = [
     ],
   },
 ];
+
+// Owners don't get the admin drawer (more.tsx `showAdminSection`); they get
+// only the entries that EXPLICITLY list "owner" in `roles` (Marketing Forms).
+// A_ROLES never includes owner, so untagged entries stay hidden.
+export const OWNER_NAV: NavGroup = {
+  key: "owner_marketing",
+  label: "Marketing",
+  entries: ADMIN_NAV.flatMap((g) => g.entries).filter((e) => e.roles?.includes("owner")),
+};
 
 // ── Phase D — Industry gate helper ─────────────────────────────────
 //

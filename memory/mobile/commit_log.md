@@ -1877,3 +1877,11 @@
 - **Files modified**: mobile/app/customer/chemistry/[id].tsx, mobile/__tests__/td59-pool-volume-decimal.test.tsx (new), memory/TECH_DEBT.md, memory/mobile/commit_log.md
 - **Tests**: full Jest 2281→2284 passed, 48 failed / 22 skipped unchanged, identical failing-suite set (42).
 - **Deps**: none.
+
+## Iteration 133 — Owner access to Marketing Forms + submissions inbox (Phase 1 mobile, parallel to web)
+- **Commit**: the `feat(mobile-forms): owner access` commit containing this entry (`git log -1 -- mobile/__tests__/marketing-forms-owner-access.test.tsx`)
+- **Date**: 2026-10-15
+- **Changes**: `CommsAdminGate` gains optional `roles` prop (default COMMS_ADMIN_ROLES unchanged) + `MARKETING_FORMS_ROLES` (admin, super_admin, owner) used by the 4 forms screens (list, detail, submissions inbox, submission detail). `NavRole` += owner; Marketing Forms nav entry roles += owner; new `OWNER_NAV` group = entries explicitly listing owner. `more.tsx`: `showAdminSection` UNCHANGED; owner gets a separate role-scoped "Marketing" group (pattern = tech-only "Tools" section). Email Builder / comms templates / Templates Library stay blocked for owner.
+- **Files modified**: mobile/src/components/comms/CommsAdminGate.tsx, mobile/src/nav/adminNav.ts, mobile/app/(app)/more.tsx, mobile/app/admin/marketing/forms/{index,[id]}.tsx, mobile/app/admin/marketing/forms/submissions/{index,[sid]}.tsx, mobile/__tests__/marketing-forms-mobile.test.tsx, mobile/__tests__/marketing-form-submissions-mobile.test.tsx, mobile/__tests__/marketing-forms-owner-access.test.tsx (new)
+- **Tests**: new suite 11/11; 2 prior "owner denied" it.each cases flipped. Full Jest 2292 passed / 49 failed / 22 skipped; the +1 fail is phase40-customer-profile-visual-grouping 5s timeout (flaky — passes 15/15 isolated; also timed out in this session's first baseline). Failing-suite set otherwise identical to HEAD (verified by restoring HEAD files and re-running the 43 failing suites → 42 fail, phase40 passes).
+- **Deps**: none. Cron lockout: skip-worktree on tracked edits + .git/info/exclude for the new test, cleared before `git commit --only`.

@@ -103,7 +103,7 @@ describe("forms list", () => {
     expect(mockPush).toHaveBeenCalledWith({ pathname: "/admin/marketing/forms/[id]", params: { id: "f1" } });
   });
 
-  it.each(["manager", "owner", "technician"])("role gate: %s → denied, no fetch", async (role) => {
+  it.each(["manager", "technician"])("role gate: %s → denied, no fetch", async (role) => {
     mockRole = role;
     const q = render(<MarketingFormsScreen />);
     await act(async () => {});
@@ -111,11 +111,11 @@ describe("forms list", () => {
     expect(mockGet).not.toHaveBeenCalled();
   });
 
-  it("drawer entry is admin + super_admin only", () => {
+  it("drawer entry is admin + super_admin + owner", () => {
     const e = ADMIN_NAV.flatMap((g) => g.entries).find((x) => x.route === "/admin/marketing/forms")!;
-    expect(e.roles).toEqual(["super_admin", "admin"]);
-    expect(canSeeEntry("admin", e) && canSeeEntry("super_admin", e)).toBe(true);
-    expect(canSeeEntry("manager", e) || canSeeEntry("owner", e) || canSeeEntry("technician", e)).toBe(false);
+    expect(e.roles).toEqual(["super_admin", "admin", "owner"]);
+    expect(canSeeEntry("admin", e) && canSeeEntry("super_admin", e) && canSeeEntry("owner", e)).toBe(true);
+    expect(canSeeEntry("manager", e) || canSeeEntry("technician", e)).toBe(false);
   });
 });
 

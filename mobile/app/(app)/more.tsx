@@ -21,7 +21,7 @@ import MarcoVoiceSettings from "@/src/components/marco/MarcoVoiceSettings";
 // Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
 // admin groups from a single source of truth so parity edits are a
 // one-file change.
-import { ADMIN_NAV, QUICK_ACCESS, canSeeEntry, filterNavByIndustries, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
+import { ADMIN_NAV, OWNER_NAV, QUICK_ACCESS, canSeeEntry, filterNavByIndustries, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
 import { useIndustries } from "@/src/hooks/useIndustries";
 
 export default function More() {
@@ -171,6 +171,11 @@ export default function More() {
               <DrawerGroup key={g.key} group={g} role={role} router={router} industries={industries} />
             ))}
           </>
+        ) : null}
+
+        {/* Owner — role-scoped entries only (Marketing Forms), not the full admin drawer */}
+        {role === "owner" ? (
+          <DrawerGroup group={OWNER_NAV} role={role} router={router} industries={industries} />
         ) : null}
 
         {false ? (

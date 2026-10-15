@@ -9,7 +9,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 
 import { Header } from "@/src/components/widgets";
-import CommsAdminGate from "@/src/components/comms/CommsAdminGate";
+import CommsAdminGate, { MARKETING_FORMS_ROLES } from "@/src/components/comms/CommsAdminGate";
 import FormSchemaPreview from "@/src/components/forms/FormSchemaPreview";
 import { useToast } from "@/src/components/ToastProvider";
 import { getForm, listFormVersions, type FormVersion, type MarketingForm } from "@/src/api/marketingForms";
@@ -25,7 +25,7 @@ export const desktopFormsUrl = () => `${process.env.EXPO_PUBLIC_BACKEND_URL || "
 
 export default function MarketingFormDetailScreen() {
   return (
-    <CommsAdminGate title="Form">
+    <CommsAdminGate title="Form" roles={MARKETING_FORMS_ROLES}>
       <FormDetailBody />
     </CommsAdminGate>
   );

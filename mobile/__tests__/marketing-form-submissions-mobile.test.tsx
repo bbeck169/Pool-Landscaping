@@ -92,7 +92,7 @@ describe("submissions inbox", () => {
     expect(q.getByTestId("form-sub-row-s3")).toBeTruthy();
   });
 
-  it.each(["manager", "owner", "technician"])("4. role gate: %s blocked, no fetch", async (role) => {
+  it.each(["manager", "technician"])("4. role gate: %s blocked, no fetch", async (role) => {
     mockRole = role;
     const q = render(<FormSubmissionsScreen />);
     await act(async () => {});
