@@ -209,9 +209,45 @@ class FormField(BaseModel):
     show_if: Optional[Dict[str, Any]] = None
 
 
+# TD-51 · Feb-2026 — accepted ``submit_config.creates`` enum.  Lives
+# at module scope so the pydantic validator + the dispatcher both
+# reference ONE source of truth. Order is semantic:
+#   * ``lead`` / ``customer`` / ``both`` — pre-TD-51 shipping set.
+#   * ``booking`` — new row in ``db.job_requests`` (operator triage).
+#   * ``service_log`` — new row in ``db.service_reports`` with
+#     ``source="marketing_form"`` + null ``tech_id`` / ``job_id`` so
+#     the tech post-service dashboards don't surface them.
+#   * ``quote_request`` — new row in ``db.lead_requests`` (quote
+#     triage queue, distinct from the admin-dispatch flow in
+#     ``routers/lead_requests.py`` which uses a different document
+#     shape under ``db.lead_request_dispatches``).
+_CREATES_VALUES = frozenset(
+    ("lead", "customer", "both",
+     "booking", "service_log", "quote_request"),
+)
+# TD-51 · subject_kind values that the drip-enrolment pipeline knows
+# how to handle. New destinations are deliberately NOT enrolled —
+# they are operational triage, not customer-facing cadence surfaces.
+_DRIP_SUBJECT_KINDS = frozenset(("lead", "customer"))
+
+
 class SubmitConfig(BaseModel):
     # GH-Fix: submit_config wired per tester brief.
-    creates: str = Field("lead", description='one of "lead" | "customer" | "both"')
+    # TD-51 · Feb-2026 — ``creates`` widened to admit three new
+    # single-value destinations: ``booking`` (→ ``db.job_requests``
+    # operator-triage queue), ``service_log`` (→ ``db.service_reports``
+    # with ``source="marketing_form"`` marker), ``quote_request``
+    # (→ ``db.lead_requests`` quote-queue). Confirmation-email + drip
+    # plumbing is reused via ``_pick_subject``; drip enrolment is
+    # intentionally SKIPPED for the three new kinds (they are
+    # operational triage entries, not marketing cadence surfaces).
+    creates: str = Field(
+        "lead",
+        description=(
+            'one of "lead" | "customer" | "both" | "booking" | '
+            '"service_log" | "quote_request"'
+        ),
+    )
     confirmation_email_template_id: Optional[str] = None
     drip_sequence_id: Optional[str] = None
     admin_bell: bool = True
@@ -219,8 +255,11 @@ class SubmitConfig(BaseModel):
     @model_validator(mode="after")
     def _check_creates(self):  # noqa: D401
         v = (self.creates or "lead").lower().strip()
-        if v not in ("lead", "customer", "both"):
-            raise ValueError('creates must be one of "lead" | "customer" | "both"')
+        if v not in _CREATES_VALUES:
+            raise ValueError(
+                'creates must be one of "lead" | "customer" | "both" | '
+                '"booking" | "service_log" | "quote_request"'
+            )
         self.creates = v
         return self
 
@@ -1051,7 +1090,55 @@ async def submit_widget_form(fid: str, body: FormSubmit,
             address=address, notes=notes,
         )
 
-    subject_kind, subject_id = _pick_subject(creates, lead_id, customer_id)
+    # TD-51 · Feb-2026 — three new single-value destinations.  Mutually
+    # exclusive with ``lead`` / ``customer`` / ``both`` by the enum
+    # validator on ``SubmitConfig``, so these branches are only
+    # reached when the author explicitly selected one.  Each helper
+    # is tenant-scoped + idempotency-free (brand-new row per submit),
+    # and is wrapped in a try/except so a downstream insert failure
+    # does NOT 500 the public widget submit path — the submission row
+    # is already persisted, and the cross-ref will be null on failure
+    # for operator follow-up.
+    job_request_id: Optional[str] = None
+    service_report_id: Optional[str] = None
+    quote_request_id: Optional[str] = None
+
+    if creates == "booking":
+        try:
+            job_request_id = await _create_job_request_from_submission(
+                tenant_id=tenant["id"], form=form, submission_id=sub_id,
+                name=name, email=email, phone=phone, address=address,
+                notes=notes, service_interest=service_interest,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[td51-booking] insert failed: %s", _e)
+
+    if creates == "service_log":
+        try:
+            service_report_id = await _create_service_log_from_submission(
+                tenant_id=tenant["id"], form=form, submission_id=sub_id,
+                name=name, email=email, phone=phone, address=address,
+                notes=notes,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[td51-service_log] insert failed: %s", _e)
+
+    if creates == "quote_request":
+        try:
+            quote_request_id = await _create_quote_request_from_submission(
+                tenant_id=tenant["id"], form=form, submission_id=sub_id,
+                name=name, email=email, phone=phone, address=address,
+                notes=notes, service_interest=service_interest,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[td51-quote_request] insert failed: %s", _e)
+
+    subject_kind, subject_id = _pick_subject(
+        creates, lead_id, customer_id,
+        job_request_id=job_request_id,
+        service_report_id=service_report_id,
+        quote_request_id=quote_request_id,
+    )
 
     # Confirmation email — mocked delivery reusing the M5/M6 pipeline.
     delivery_id: Optional[str] = None
@@ -1065,8 +1152,15 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         )
 
     # Drip enrolment (M5) — one active enrolment per subject per sequence.
+    # TD-51 · Drip is intentionally skipped for the three new ``creates``
+    # kinds (booking / service_log / quote_request) — those are
+    # operational triage entries, not marketing cadence subjects.
+    # Enforced here via ``subject_kind in _DRIP_SUBJECT_KINDS`` so a
+    # future contract change on ``_enrol_in_sequence`` doesn't silently
+    # start enrolling job-requests.
     enrolment_id: Optional[str] = None
-    if submit_cfg.get("drip_sequence_id") and subject_id:
+    if (submit_cfg.get("drip_sequence_id") and subject_id
+            and subject_kind in _DRIP_SUBJECT_KINDS):
         enrolment_id = await _enrol_in_sequence(
             tenant_id=tenant["id"],
             sequence_id=submit_cfg["drip_sequence_id"],
@@ -1085,6 +1179,21 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         try:
             from services.notifications import enqueue_for_tenant_admins
             display = name or email or phone or "Anonymous"
+            # TD-51 · Pick the richest available href for operator
+            # triage. Priority: lead → customer → job_request →
+            # service_report → quote_request → forms list.
+            if lead_id:
+                _href = f"/leads/{lead_id}"
+            elif customer_id:
+                _href = f"/customers/{customer_id}"
+            elif job_request_id:
+                _href = f"/admin/job-requests?id={job_request_id}"
+            elif service_report_id:
+                _href = f"/admin/service-reports/{service_report_id}"
+            elif quote_request_id:
+                _href = f"/admin/lead-requests/{quote_request_id}"
+            else:
+                _href = "/marketing/forms"
             await enqueue_for_tenant_admins(
                 tenant["id"],
                 kind="form_submission",
@@ -1096,12 +1205,11 @@ async def submit_widget_form(fid: str, body: FormSubmit,
                     "submission_id": sub_id,
                     "lead_id": lead_id,
                     "customer_id": customer_id,
+                    "job_request_id": job_request_id,
+                    "service_report_id": service_report_id,
+                    "quote_request_id": quote_request_id,
                 },
-                href=(
-                    f"/leads/{lead_id}" if lead_id
-                    else (f"/customers/{customer_id}" if customer_id
-                            else "/marketing/forms")
-                ),
+                href=_href,
                 priority="normal",
             )
         except Exception as exc:  # pragma: no cover — logged only
@@ -1115,6 +1223,12 @@ async def submit_widget_form(fid: str, body: FormSubmit,
             "customer_id": customer_id,
             "delivery_id": delivery_id,
             "enrolment_id": enrolment_id,
+            # TD-51 · Feb-2026 — new cross-refs. Always written
+            # (null when the branch didn't run) so operator audit
+            # queries can filter by presence/absence.
+            "job_request_id": job_request_id,
+            "service_report_id": service_report_id,
+            "quote_request_id": quote_request_id,
         }},
     )
     await db.marketing_forms.update_one(
@@ -1130,6 +1244,12 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         "customer_id": customer_id,
         "delivery_id": delivery_id,
         "enrolment_id": enrolment_id,
+        # TD-51 · Feb-2026 — surface the three new cross-refs on the
+        # public widget response so clients can route the post-submit
+        # confirmation screen if they want to.
+        "job_request_id": job_request_id,
+        "service_report_id": service_report_id,
+        "quote_request_id": quote_request_id,
         "success_message": form.get("success_message"),
     }
 
@@ -1138,17 +1258,190 @@ async def submit_widget_form(fid: str, body: FormSubmit,
 
 def _pick_subject(creates: str,
                     lead_id: Optional[str],
-                    customer_id: Optional[str]) -> tuple:
+                    customer_id: Optional[str],
+                    *,
+                    job_request_id: Optional[str] = None,
+                    service_report_id: Optional[str] = None,
+                    quote_request_id: Optional[str] = None) -> tuple:
     """Choose which entity a downstream action (email, drip) is bound
     to. Preference: explicit ``customer`` > ``both``-then-customer >
-    fallback ``lead``."""
+    fallback ``lead``.
+
+    TD-51 · Feb-2026 — new ``creates`` kinds carry a non-``lead``/
+    ``customer`` ``subject_kind`` so the drip-enrolment gate can
+    recognise them and skip; ``_queue_confirmation_email`` is
+    agnostic and reuses the kind as a tag only.  Drip subject
+    kinds that aren't in ``_DRIP_SUBJECT_KINDS`` must therefore
+    NEVER reach ``_enrol_in_sequence``.
+    """
     if creates in ("customer", "both") and customer_id:
         return "customer", customer_id
+    if creates == "booking" and job_request_id:
+        return "job_request", job_request_id
+    if creates == "service_log" and service_report_id:
+        return "service_report", service_report_id
+    if creates == "quote_request" and quote_request_id:
+        return "quote_request", quote_request_id
     if lead_id:
         return "lead", lead_id
     if customer_id:
         return "customer", customer_id
     return "lead", None
+
+
+# ─── TD-51 downstream helpers ────────────────────────────────────────
+#
+# Each helper inserts ONE new row into its target collection with:
+#   * Tenant-scoped ``tenant_id``.
+#   * ``source="marketing_form"`` + ``source_ref`` back to the
+#     submission (so operator UIs can audit the ingress path).
+#   * No idempotency / dedup — each submit is a brand-new row.  If
+#     operators later want dedup, they can add it per-destination
+#     without touching the dispatcher.
+#   * Deliberately NOT fanning out downstream notifications
+#     (``notify_emit`` on job_requests, email-send on lead_requests)
+#     — the form-submission admin bell already fires; firing twice
+#     would be duplicative noise.
+# ────────────────────────────────────────────────────────────────────
+
+
+async def _create_job_request_from_submission(
+    *, tenant_id: str, form: Dict[str, Any], submission_id: str,
+    name: Optional[str], email: Optional[str], phone: Optional[str],
+    address: Optional[str], notes: Optional[str],
+    service_interest: Optional[str],
+) -> str:
+    """TD-51 · ``creates="booking"`` → ``db.job_requests`` queue row.
+
+    Minimum shape: carries the public contact info + the form hint
+    into the operator-triage queue defined by ``routers/job_requests``.
+    ``status="pending"`` matches that router's lifecycle so the row
+    surfaces in the existing admin review UI.
+    """
+    rid = new_id()
+    doc = {
+        "id": rid,
+        "tenant_id": tenant_id,
+        "customer_id": None,
+        "customer_name_hint": name or "",
+        "customer_phone_hint": phone or "",
+        "address_hint": address or "",
+        "service_type": service_interest or "",
+        "scheduled_preference": "asap",
+        "priority": "normal",
+        "notes": (notes or "")[:1000],
+        "photos": [],
+        "requested_by_user_id": None,
+        "requested_by_name": name or email or phone or "Public form",
+        "status": "pending",
+        "created_at": now_iso(),
+        "reviewed_at": None,
+        "reviewed_by_user_id": None,
+        "converted_job_id": None,
+        "rejection_reason": None,
+        # TD-51 markers.
+        "source": "marketing_form",
+        "source_ref": {
+            "kind": "form_submission",
+            "form_id": form.get("id"),
+            "submission_id": submission_id,
+            "contact_email": email or "",
+            "contact_phone": phone or "",
+        },
+    }
+    await db.job_requests.insert_one(doc)
+    return rid
+
+
+async def _create_service_log_from_submission(
+    *, tenant_id: str, form: Dict[str, Any], submission_id: str,
+    name: Optional[str], email: Optional[str], phone: Optional[str],
+    address: Optional[str], notes: Optional[str],
+) -> str:
+    """TD-51 · ``creates="service_log"`` → ``db.service_reports`` row.
+
+    Caveat: ``service_reports`` is the live tech post-service
+    reporting collection (schema shared with the tech dashboard).
+    To avoid shape pollution, the row is seeded with:
+      * ``tech_id = None`` so tech-filtered dashboards exclude it.
+      * ``job_id = None`` so job-pivot queries ignore it.
+      * ``template = "marketing_form_submission"`` so UI can
+        distinguish the ingress path.
+      * Empty chemistry / checklist arrays (schema-valid shape).
+      * ``source = "marketing_form"`` + ``source_ref`` for audit.
+    """
+    rid = new_id()
+    _now = now_iso()
+    doc = {
+        "id": rid,
+        "tenant_id": tenant_id,
+        "job_id": None,
+        "tech_id": None,
+        "template": "marketing_form_submission",
+        "chemical_readings": [],
+        "chemicals_added": [],
+        "checklist_items": [],
+        "not_tested_flags": {},
+        "notes": (notes or "")[:2000],
+        "photos": [],
+        "water_bodies": [],
+        "started_at": _now,
+        "submitted_at": _now,
+        "created_at": _now,
+        "updated_at": _now,
+        # TD-51 markers + contact capture.
+        "source": "marketing_form",
+        "customer_name_hint": name or "",
+        "customer_email_hint": email or "",
+        "customer_phone_hint": phone or "",
+        "address_hint": address or "",
+        "source_ref": {
+            "kind": "form_submission",
+            "form_id": form.get("id"),
+            "submission_id": submission_id,
+        },
+    }
+    await db.service_reports.insert_one(doc)
+    return rid
+
+
+async def _create_quote_request_from_submission(
+    *, tenant_id: str, form: Dict[str, Any], submission_id: str,
+    name: Optional[str], email: Optional[str], phone: Optional[str],
+    address: Optional[str], notes: Optional[str],
+    service_interest: Optional[str],
+) -> str:
+    """TD-51 · ``creates="quote_request"`` → ``db.lead_requests`` row.
+
+    NOTE: distinct from the ``db.lead_request_dispatches`` collection
+    used by ``routers/lead_requests.py`` (the admin-initiated
+    dispatch flow). Those docs have a ``generated_token`` +
+    ``admin_id`` lifecycle; TD-51 writes into the sibling
+    ``db.lead_requests`` collection which was previously empty.
+    """
+    rid = new_id()
+    doc = {
+        "id": rid,
+        "tenant_id": tenant_id,
+        "kind": "quote_request",
+        "status": "new",
+        "name": name or "",
+        "email": email or "",
+        "phone": phone or "",
+        "address": address or "",
+        "service_interest": service_interest or "",
+        "notes": (notes or "")[:2000],
+        "created_at": now_iso(),
+        # TD-51 markers.
+        "source": "marketing_form",
+        "source_ref": {
+            "kind": "form_submission",
+            "form_id": form.get("id"),
+            "submission_id": submission_id,
+        },
+    }
+    await db.lead_requests.insert_one(doc)
+    return rid
 
 
 async def _upsert_lead_from_submission(
