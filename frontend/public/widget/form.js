@@ -447,6 +447,66 @@
     return out;
   }
 
+  // CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53) ·
+  // ``show_if`` client-side evaluator. Mirror of the backend's
+  // ``_is_field_visible`` + ``src/lib/formShowIf.js``'s
+  // ``isFieldVisible`` so the admin preview, the widget, and the
+  // server-side validator agree on EVERY visibility decision.
+  //
+  // Kept inline (not imported) because the widget is a vanilla IIFE
+  // and loads via <script> tag on third-party sites — no module
+  // resolution available. Keep in sync with the shared helper on
+  // every edit.
+  function wCoerce(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === "string") {
+      var s = v.trim();
+      return s === "" ? null : s;
+    }
+    return v;
+  }
+  function wIsFieldVisible(field, answers, byId) {
+    if (!field) return true;
+    var rule = field.show_if;
+    if (!rule || typeof rule !== "object") return true;
+    var parent = byId[rule.field_id];
+    if (!parent) return true;
+    var pv = parent.name && answers ? answers[parent.name] : undefined;
+    if (pv === undefined) pv = answers ? answers[rule.field_id] : undefined;
+    var lhs = wCoerce(pv);
+    var rhs = wCoerce(rule.value);
+    if (rule.operator === "eq") return lhs === rhs;
+    if (rule.operator === "neq") return lhs !== rhs;
+    if (rule.operator === "contains") {
+      if (Object.prototype.toString.call(pv) === "[object Array]") {
+        return pv.indexOf(rule.value) !== -1;
+      }
+      if (typeof pv === "string" && typeof rule.value === "string") {
+        return pv.indexOf(rule.value) !== -1;
+      }
+      return false;
+    }
+    return true;
+  }
+  function wStripHidden(fields, answers) {
+    if (!fields || !fields.length) {
+      var copy = {};
+      for (var k in (answers || {})) copy[k] = answers[k];
+      return copy;
+    }
+    var byId = {};
+    fields.forEach(function (f) { if (f && f.id) byId[f.id] = f; });
+    var out = {};
+    for (var k2 in (answers || {})) out[k2] = answers[k2];
+    fields.forEach(function (f) {
+      if (!wIsFieldVisible(f, out, byId)) {
+        if (f.name) delete out[f.name];
+        if (f.id) delete out[f.id];
+      }
+    });
+    return out;
+  }
+
   function renderThankYou(msg) {
     MOUNT.innerHTML = "";
     MOUNT.appendChild(el("div", {
@@ -493,6 +553,15 @@
     // Build the fields grid — CSS grid so column_span=half fields
     // can pair on the same row. Legacy full-width fields span the
     // entire grid width (span 2).
+    //
+    // CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53).
+    // Build a fields-by-id lookup so the show_if evaluator can
+    // resolve parent refs on every input change. Row elements are
+    // stashed in ``rowEls`` keyed by field id so applyVisibility()
+    // can toggle them without re-rendering the whole grid.
+    var byId = {};
+    fields.forEach(function (f) { if (f && f.id) byId[f.id] = f; });
+    var rowEls = {};
     var fieldsGrid = el("div", {
       "data-testid": "form-widget-fields-grid",
       style: {
@@ -500,7 +569,44 @@
         gridTemplateColumns: "1fr 1fr",
         gap: "14px 12px",
       },
-    }, fields.map(fieldRow));
+    }, fields.map(function (f, i) {
+      var row = fieldRow(f, i);
+      if (f && f.id) rowEls[f.id] = row;
+      return row;
+    }));
+
+    // TD-53 · recompute visibility after every input change. Hides
+    // the row via ``display:none`` + strips the ``required`` attr on
+    // every input inside so a hidden input doesn't block submit.
+    function applyVisibility() {
+      var currentAnswers = collectAnswers(form);
+      fields.forEach(function (f) {
+        if (!f || !f.id) return;
+        var row = rowEls[f.id];
+        if (!row) return;
+        var visible = wIsFieldVisible(f, currentAnswers, byId);
+        row.style.display = visible ? "" : "none";
+        row.setAttribute("data-visible", visible ? "true" : "false");
+        // Clear ``required`` on hidden inputs so the browser's own
+        // native-required validator can't fire for them.
+        var inputs = row.querySelectorAll(
+          "input,select,textarea",
+        );
+        Array.prototype.forEach.call(inputs, function (input) {
+          if (visible) {
+            if (input.getAttribute("data-td53-required-saved") === "true") {
+              input.required = true;
+              input.removeAttribute("data-td53-required-saved");
+            }
+          } else {
+            if (input.required) {
+              input.setAttribute("data-td53-required-saved", "true");
+              input.required = false;
+            }
+          }
+        });
+      });
+    }
 
     var form = el("form", {
       "data-testid": "form-widget-form",
@@ -516,7 +622,14 @@
       },
       onsubmit: function (e) {
         e.preventDefault();
-        var payload = { answers: collectAnswers(form), page_url: location.href };
+        // TD-53 · strip hidden-field answers before posting so the
+        // persisted submission reflects operator-visible state (and
+        // the lead extractor doesn't absorb stale values from
+        // fields the submitter never actually saw).
+        var payload = {
+          answers: wStripHidden(fields, collectAnswers(form)),
+          page_url: location.href,
+        };
         if (TURNSTILE_KEY && window.turnstile && turnstileHolder) {
           try {
             payload.turnstile_token = window.turnstile.getResponse(turnstileHolder) || "";
@@ -589,6 +702,14 @@
       },
     }, [schema.submit_button_label || "Send"]);
     form.appendChild(submitBtn);
+
+    // TD-53 · wire the show_if evaluator to EVERY input / change
+    // event bubbled up through the form. Also fire once on initial
+    // render so fields that start hidden (parent default empty, rule
+    // requires a value) are hidden before the user interacts.
+    form.addEventListener("input", applyVisibility);
+    form.addEventListener("change", applyVisibility);
+    applyVisibility();
 
     // Assemble: hero (optional) → form. Both wrapped in a container
     // that carries the visual rounded corners so the hero and form

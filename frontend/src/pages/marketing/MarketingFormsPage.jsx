@@ -596,7 +596,14 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
                                                  onChange={(p) => updateField(i, p)}
                                                  onDelete={() => delField(i)}
                                                  onMove={(d) => moveField(i, d)}
-                                                 canDelete={fields.length > 1} />
+                                                 canDelete={fields.length > 1}
+                                                 allFieldsForShowIfPicker={
+                                                   fields.filter((other, j) =>
+                                                     j !== i
+                                                     && !LAYOUT_TYPES.has(other.type)
+                                                     && (other.id || other.name)
+                                                   )
+                                                 } />
                     ))}
                   </SortableContext>
                 </DndContext>
@@ -794,7 +801,8 @@ function FormEditorDrawer({ form, onClose, _onSaved }) {
 // The drag handle is a dedicated grip icon so operators can still
 // click inside input fields without triggering a drag. Arrow-key
 // reorder stays functional via the ``onMove`` prop on the inner row.
-function SortableFieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete }) {
+function SortableFieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
+                                   allFieldsForShowIfPicker }) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
   } = useSortable({ id: f._rowId });
@@ -809,6 +817,7 @@ function SortableFieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete 
       <FieldEditorRow idx={idx} f={f} onChange={onChange}
                         onDelete={onDelete} onMove={onMove}
                         canDelete={canDelete}
+                        allFieldsForShowIfPicker={allFieldsForShowIfPicker}
                         dragHandleProps={{ ...attributes, ...listeners }} />
     </div>
   );
@@ -816,6 +825,7 @@ function SortableFieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete 
 
 
 function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
+                            allFieldsForShowIfPicker,
                             dragHandleProps = null }) {
   const isLayout = LAYOUT_TYPES.has(f.type);
   const needsOptions = OPTION_TYPES.has(f.type);
@@ -986,7 +996,156 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
             />
           </div>
         )}
+        {/* CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53).
+            Conditional-logic authoring surface. Collapsible so the
+            vast majority of fields that don't need show_if keep the
+            editor compact. The sibling parent-field picker only
+            lists NON-LAYOUT fields that come BEFORE this one in the
+            fields array (prevents forward-reference cycles at save
+            time; the backend's circular-check still catches other
+            shapes but this keeps the author UX linear). */}
+        <ShowIfEditor
+          field={f}
+          idx={idx}
+          siblings={allFieldsForShowIfPicker || []}
+          onChange={onChange}
+          colors={colors}
+        />
       </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53) ·
+// ``ShowIfEditor`` collapsible panel.
+// ═══════════════════════════════════════════════════════════════
+//
+// Named-export so the vitest sibling can exercise the round-trip
+// (toggle open → set field/op/value → serialize to ``show_if``
+// shape) without booting the full MarketingFormsPage.  Mirrors the
+// extraction pattern already used by ``AutomationsSuppressedChip``
+// in QuoteInvoiceDetail (TD-38, Feb-2026).
+//
+// Props:
+//   * field       — the FormField dict being edited.
+//   * idx         — numeric index for data-testid stability.
+//   * siblings    — array of OTHER non-layout fields that CAN be
+//                   referenced as a show_if parent. The caller
+//                   (FieldEditor's parent) builds this list — typically
+//                   "every non-layout field earlier in the array".
+//   * onChange    — partial-update callback (same shape as the rest
+//                   of the field editor controls).
+//   * colors      — form-builder theme colors (muted / border).
+//
+// Behavior:
+//   * Collapsed by default. Opens when the user clicks the header
+//     OR when the field already has a ``show_if`` rule on first
+//     render (so loading an existing form with conditional-logic
+//     doesn't require clicking into every field to see what's set).
+//   * Clearing all three controls (field + value) nullifies
+//     ``show_if`` (sends ``{show_if: null}`` upstream) — this is the
+//     author's "remove the rule" affordance.  Keeps the state model
+//     simple: there's no second "delete" button.
+export function ShowIfEditor({ field, idx, siblings, onChange, colors }) {
+  const [open, setOpen] = React.useState(!!field.show_if);
+  const rule = field.show_if || {};
+  const parentFid = rule.field_id || "";
+  const operator = rule.operator || "eq";
+  const value = rule.value === undefined ? "" : String(rule.value);
+
+  function pushRule(partial) {
+    const next = {
+      field_id: parentFid,
+      operator,
+      value: value,
+      ...partial,
+    };
+    // Clearing the field_id picks "no rule" — tell the parent to
+    // drop ``show_if`` entirely.  Keeps round-trip identity for
+    // forms that briefly had a rule and then had it cleared.
+    if (!next.field_id) {
+      onChange({ show_if: null });
+      return;
+    }
+    onChange({ show_if: next });
+  }
+
+  return (
+    <div className="col-span-12 mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-[11px] font-semibold uppercase flex items-center gap-1"
+        style={{ color: colors.muted }}
+        data-testid={`form-field-show-if-toggle-${idx}`}
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>Show if…</span>
+        {field.show_if ? (
+          <span
+            className="ml-1 px-1.5 py-0.5 rounded text-[9px]"
+            style={{ background: "#FEF9C3", color: "#A16207" }}
+            data-testid={`form-field-show-if-badge-${idx}`}
+          >
+            conditional
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="grid grid-cols-12 gap-2 mt-1 p-2 rounded"
+          style={{ border: `1px solid ${colors.border}`, background: "#F8FAFC" }}
+          data-testid={`form-field-show-if-panel-${idx}`}
+        >
+          <div className="col-span-5">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Parent field</label>
+            <select
+              value={parentFid}
+              onChange={(e) => pushRule({ field_id: e.target.value })}
+              className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+              style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+              data-testid={`form-field-show-if-parent-${idx}`}
+            >
+              <option value="">— no rule —</option>
+              {siblings.map((s) => (
+                <option key={s.id || s.name} value={s.id || s.name}>
+                  {(s.label || s.name || s.id || "").slice(0, 40)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-3">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Operator</label>
+            <select
+              value={operator}
+              onChange={(e) => pushRule({ operator: e.target.value })}
+              className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+              style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+              data-testid={`form-field-show-if-operator-${idx}`}
+            >
+              <option value="eq">equals</option>
+              <option value="neq">not equals</option>
+              <option value="contains">contains</option>
+            </select>
+          </div>
+          <div className="col-span-4">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>Value</label>
+            <input
+              value={value}
+              onChange={(e) => pushRule({ value: e.target.value })}
+              placeholder="pool"
+              className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+              style={{ border: `1px solid ${colors.border}` }}
+              data-testid={`form-field-show-if-value-${idx}`}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
