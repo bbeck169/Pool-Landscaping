@@ -48,6 +48,29 @@ async def _resolve_public_tenant(request: Request, form: dict | None = None) -> 
 
 
 # ----------------------- Marketing: Form Builder -----------------------
+# TD-50 · Feb-2026 — System C deprecation.
+#
+# The ``/forms*`` endpoints below are the ORIGINAL public-form
+# surface backed by ``db.forms``.  They are superseded by the
+# Marketing Forms Builder path at ``routers/marketing_forms.py``
+# (admin UI: ``/admin/marketing/forms``; public widget:
+# ``/widget/form/{fid}``).  New forms SHOULD be authored through
+# the Marketing Forms Builder.
+#
+# Operators migrating from System C should run::
+#
+#     python backend/scripts/migrate_system_c_forms_to_marketing_forms.py --audit
+#     python backend/scripts/migrate_system_c_forms_to_marketing_forms.py
+#
+# which idempotently copies each ``db.forms`` row into
+# ``db.marketing_forms`` preserving slug + submission linkage
+# (``db.form_submissions.form_id`` is unchanged — both systems
+# have always shared this collection).
+#
+# These endpoints are LEFT FUNCTIONAL for backward compatibility
+# with any production tenant still using the old UI.  A follow-up
+# atomic will physically remove them once operators confirm the
+# migration ran clean on their tenants.
 @router.get("/forms")
 async def list_forms(user: dict = Depends(require_admin),
                      tenant: dict = Depends(get_current_tenant)):
