@@ -551,6 +551,25 @@ async def create_property(cid: str, body: PropertyIn,
         addr.pop("address_line1", None)
         addr.pop("address_line2", None)
     await db.properties.insert_one(doc)
+    # TD-40 · Feb-2026 — fire-and-forget geocode on save so new
+    # properties land on the Schedule Map + Dispatch Board without
+    # waiting for the next job to trigger lazy backfill via
+    # ``services/stop_geo.py``. Mirrors the ``routers/customers.py``
+    # pattern (customers.py:2443-2468). Non-blocking; the helper
+    # silently no-ops when:
+    #   * ``GOOGLE_MAPS_API_KEY`` isn't configured for the tenant.
+    #   * The property has no resolvable address string.
+    #   * The ``geocoded_at`` cache window hasn't expired.
+    # NEVER raises into the caller — we always return the created
+    # doc even if the geocode task failed to schedule.
+    try:
+        import asyncio as _a40
+        from services.google_maps.geocoding import (
+            geocode_and_persist_property as _gp40,
+        )
+        _a40.create_task(_gp40(doc["id"], tenant["id"]))
+    except Exception:
+        pass
     _strip(doc)
     await _emit("property.created", tenant["id"], user, cid, doc)
     return doc
@@ -609,11 +628,51 @@ async def patch_property(pid: str, body: PropertyPatch,
             {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0},
         )
     updates["updated_at"] = now_iso()
+    # TD-40 · Feb-2026 — detect address-changed intent BEFORE the
+    # update so we can clear the stale ``geocoded_at`` cache stamp
+    # (otherwise the helper would short-circuit on the old coord
+    # cache). Only triggers on changes to the geocoding-material
+    # subfields (``line1`` / ``city`` / ``state`` / ``postal_code``);
+    # cosmetic edits like ``label`` or ``access_notes`` do NOT
+    # re-geocode.
+    _addr_changed = False
+    if isinstance(updates.get("address"), dict):
+        _old = await db.properties.find_one(
+            {"id": pid, "tenant_id": tenant["id"]},
+            {"_id": 0, "address": 1},
+        ) or {}
+        _old_addr = _old.get("address") or {}
+        _new_addr = updates["address"]
+        for _k in ("line1", "city", "state", "postal_code"):
+            if _new_addr.get(_k) != _old_addr.get(_k):
+                _addr_changed = True
+                break
+        if _addr_changed:
+            # Clear stale cache stamps so the helper actually runs
+            # (``geocode_and_persist_property`` short-circuits inside
+            # the 30-day ``_CACHE_TTL_DAYS`` window otherwise).
+            updates["geocoded_at"] = None
+            updates["latitude"] = None
+            updates["longitude"] = None
     r = await db.properties.update_one(
         {"id": pid, "tenant_id": tenant["id"]}, {"$set": updates},
     )
     if r.matched_count == 0:
         raise HTTPException(404, "Property not found")
+    # TD-40 · Feb-2026 — fire-and-forget geocode after an address-
+    # changing patch. Non-blocking; same no-op guards as the create
+    # path (no API key / no addr / cache-hit all silently fall
+    # through). Label-only edits skip this entirely so a bulk
+    # label-rename flight doesn't melt the geocoding quota.
+    if _addr_changed:
+        try:
+            import asyncio as _a40
+            from services.google_maps.geocoding import (
+                geocode_and_persist_property as _gp40,
+            )
+            _a40.create_task(_gp40(pid, tenant["id"]))
+        except Exception:
+            pass
     return await db.properties.find_one(
         {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
