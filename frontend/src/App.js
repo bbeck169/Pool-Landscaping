@@ -619,6 +619,33 @@ function AdminOnly({ children }) {
   return children;
 }
 
+// OWNER-ACCESS-MARKETING-FORMS · Feb-2026 — narrowly-scoped gate
+// for the ``/admin/marketing/forms`` route. Admits admin /
+// super_admin / owner, matching the backend's ``require_admin``
+// which already accepts all three (see
+// ``backend/tests/test_phase34_task_x_admin_gate.py`` and the
+// paired ``backend/tests/test_marketing_forms_owner_access.py``).
+// Mirrors the mobile ship pattern (``ec11e5ccd``) where only the
+// four Marketing Forms screens widen to owner — other
+// ``CommsAdminGate``-protected surfaces (Email Builder, Templates
+// Library) stay admin+super_admin so the owner role doesn't
+// silently gain write access across un-audited admin surfaces.
+// Deliberately a NEW wrapper rather than editing ``AdminOnly`` —
+// that wrapper is used across ~80 routes with un-audited
+// owner-safety; a wholesale widen would expose unintended surfaces.
+function AdminOrOwnerForMarketingForms({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role;
+  const allowed =
+    role === "admin" || role === "super_admin" || role === "owner";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // TIMECARDS-BE-WIDEN · Feb-2026 — matches backend
 // ``utils.require_admin_or_manager`` exactly: admit all four of
 // {admin, super_admin, manager, owner}.  Shipped specifically for
@@ -1141,7 +1168,7 @@ export default function App() {
             {/* Phase H6 · Feb-2026 — Monthly analytics dashboard (Soshie moderation, charge-template usage, drift alerts, manual-post conversion). */}
             <Route path="admin/analytics-monthly" element={<AdminOnly><AnalyticsMonthlyPage /></AdminOnly>} />
             <Route path="admin/marketing/suppressions" element={<AdminOnly><MarketingSuppressionsPage /></AdminOnly>} />
-            <Route path="admin/marketing/forms" element={<AdminOnly><MarketingFormsPage /></AdminOnly>} />
+            <Route path="admin/marketing/forms" element={<AdminOrOwnerForMarketingForms><MarketingFormsPage /></AdminOrOwnerForMarketingForms>} />
             <Route path="admin/leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />
             {/* Phase 8 · Feb 2026 — Lead detail (admin + manager) */}
             <Route path="leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
