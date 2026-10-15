@@ -390,10 +390,29 @@ async def geocode_and_persist_property(property_id: str,
         except Exception:
             pass
     address_doc = prop.get("address") or {}
+    # TD-57 · Feb-2026 — accept BOTH address-key schemas. The current
+    # ``routers/properties.py::_AddressIn`` validator persists under
+    # ``address.line1 / line2 / postal_code`` and actively nullifies
+    # the legacy ``address_line1 / address_line2`` keys on every
+    # write; pre-P37-migration docs may still carry the legacy
+    # ``address_line1 / zip`` shape in Mongo. Read both, prefer the
+    # current canonical shape (since any live-writer path emits it),
+    # fall back to legacy for un-migrated rows. ``city`` + ``state``
+    # share the same key under both schemas so no fallback is
+    # needed there. Sibling callers ``services/stop_geo.py::
+    # _fmt_property_address`` and the P37 backfill migration both
+    # use the canonical shape; this helper is the only outlier that
+    # read legacy-only, which made the TD-40 fire-and-forget call a
+    # no-op for every property created via the Pydantic-validated
+    # admin endpoint. See TECH_DEBT.md · TD-57 for the full
+    # reclassification story.
+    _line1 = address_doc.get("line1") or address_doc.get("address_line1")
+    _line2 = address_doc.get("line2") or address_doc.get("address_line2")
+    _postal = address_doc.get("postal_code") or address_doc.get("zip")
     addr = " ".join(filter(None, [
-        address_doc.get("address_line1"), address_doc.get("address_line2"),
+        _line1, _line2,
         address_doc.get("city"), address_doc.get("state"),
-        address_doc.get("zip"),
+        _postal,
     ])).strip()
     if not addr:
         logger.info(
