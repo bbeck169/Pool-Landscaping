@@ -140,6 +140,13 @@ _FIELD_TYPES = {
     # ``answers`` dict on final submit regardless of pagination —
     # pagination is a client concern.
     "page_break",
+    # TD-55 · Feb-2026 — GDPR consent. ``consent_checkbox`` is a
+    # value-carrying field (NOT layout — it participates in the
+    # required-check so an unchecked box blocks submit when
+    # ``required=true``). Submits as a boolean. Carries an optional
+    # ``privacy_policy_url`` metadata field used by the widget
+    # renderer to attach a 'Privacy policy' link beside the label.
+    "consent_checkbox",
 }
 _OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
 # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Layout-only types
@@ -297,6 +304,12 @@ class FormField(BaseModel):
     # on round-trip but not surfaced).  Capped at 60 chars matching
     # ``name`` / ``id``.
     page_title: Optional[str] = Field(None, max_length=_PAGE_TITLE_MAX_LEN)
+    # TD-55 · Feb-2026 — GDPR consent. Optional URL rendered as a
+    # 'Privacy policy' link beside the ``consent_checkbox`` field's
+    # label.  Validated as a plain URL at the pydantic layer; capped
+    # at 500 chars so it survives round-trip through the admin UI
+    # without truncation.  Ignored for every other field type.
+    privacy_policy_url: Optional[str] = Field(None, max_length=500)
     # CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53).
     # Optional conditional-logic rule. When set, the field is hidden
     # (and its ``required`` is suppressed, and its submitted value is
@@ -1107,6 +1120,14 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         if val is None and f.get("id"):
             val = payload.get(f["id"])
         if val is None or (isinstance(val, str) and not val.strip()):
+            missing.append(f["name"])
+            continue
+        # TD-55 · GDPR consent. ``consent_checkbox`` with
+        # ``required=True`` requires a TRUTHY value (an unchecked box
+        # posts ``false``, which otherwise would pass the generic
+        # non-blank check above). Treat falsy consent as missing so
+        # the 422 message is uniform across the required contract.
+        if f.get("type") == "consent_checkbox" and not val:
             missing.append(f["name"])
     if missing:
         raise HTTPException(
@@ -1931,3 +1952,83 @@ async def submit_widget_form_multipart(
     return {"submission_id": sub_id,
              "file_count": len(uploaded),
              "total_bytes": sum(u["size_bytes"] for u in uploaded)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TD-55 · GDPR retention cron
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Prunes ``db.form_submissions`` older than each tenant's
+# ``form_submission_retention_days`` setting on ``db.tenants``.
+# Default is ``None`` (infinite retention) — in that case the
+# tenant's rows are left untouched.  Each pruning operation writes a
+# ``pruned_at`` audit row to ``db.form_submission_prune_audit`` so
+# operators can trace what was deleted and when.
+#
+# Mirrors the pattern in ``routers/gps_settings.py:purge_expired_pings``
+# — a plain async coroutine that the app's APScheduler picks up on
+# boot (future atomic can register it in the scheduler; this ship
+# makes the coroutine callable + unit-tested so the registration
+# wiring is a trivial one-liner).
+async def purge_expired_form_submissions() -> Dict[str, Any]:
+    """Delete rows in ``db.form_submissions`` older than each
+    tenant's ``form_submission_retention_days``. Returns a summary
+    dict suitable for scheduler log output.
+
+    Invariants:
+      * Tenants with ``form_submission_retention_days`` null / unset
+        / <= 0 are SKIPPED (infinite retention is the default).
+      * Deletion uses ``created_at`` as the cutoff field (same ISO
+        string shape every submission row carries).
+      * One audit row per tenant per non-zero run — written to
+        ``db.form_submission_prune_audit`` with ``pruned_at``, the
+        cutoff ISO, the deleted count, and the tenant_id.  Safe to
+        tail for compliance reporting.
+      * Idempotent — a second run minutes later deletes nothing
+        further (the cutoff advances by seconds, not days).
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    total_purged = 0
+    per_tenant: Dict[str, int] = {}
+    async for row in db.tenants.find(
+        {"form_submission_retention_days": {"$exists": True, "$ne": None}},
+        {"_id": 0, "id": 1, "form_submission_retention_days": 1},
+    ):
+        tid = row.get("id")
+        if not tid:
+            continue
+        try:
+            days = int(row.get("form_submission_retention_days") or 0)
+        except (TypeError, ValueError):
+            continue
+        if days <= 0:
+            continue  # infinite retention
+        cutoff_dt = now - timedelta(days=days)
+        cutoff_iso = cutoff_dt.isoformat()
+        try:
+            res = await db.form_submissions.delete_many(
+                {"tenant_id": tid, "created_at": {"$lt": cutoff_iso}},
+            )
+            n = int(res.deleted_count or 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[td55_purge] tenant=%s delete err=%s", tid, exc)
+            continue
+        per_tenant[tid] = n
+        total_purged += n
+        # Always write the audit row — even when ``n == 0`` the
+        # compliance trail benefits from a 'we tried' marker.
+        try:
+            await db.form_submission_prune_audit.insert_one({
+                "id": new_id(),
+                "tenant_id": tid,
+                "retention_days": days,
+                "cutoff_at": cutoff_iso,
+                "deleted_count": n,
+                "pruned_at": now_iso(),
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[td55_purge_audit] tenant=%s err=%s", tid, exc)
+    return {"total_purged": total_purged, "per_tenant": per_tenant,
+             "ran_at": now_iso()}
+
