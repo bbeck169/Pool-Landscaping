@@ -173,6 +173,40 @@ class FormField(BaseModel):
     # (no server-side default coercion) so pre-Phase-1 forms round-
     # trip byte-identical.
     column_span: Optional[Literal["full", "half"]] = None
+    # CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53).
+    # Optional conditional-logic rule. When set, the field is hidden
+    # (and its ``required`` is suppressed, and its submitted value is
+    # dropped before lead-extraction) unless the referenced parent
+    # field's current answer satisfies the operator. Shape:
+    #
+    #   {
+    #     "field_id": "<id of another field on the same form>",
+    #     "operator": "eq" | "neq" | "contains",
+    #     "value":    <string | bool | number | list of strings>
+    #   }
+    #
+    # Semantics:
+    #   * "eq"       — parent answer == value   (case-sensitive)
+    #   * "neq"      — parent answer != value   (case-sensitive)
+    #   * "contains" — list/multiselect parent includes value; OR
+    #                  string parent includes value substring
+    #
+    # Server-side validation (in ``_validate_field_defs``) ensures:
+    #   * ``operator`` is one of the three enum values.
+    #   * ``field_id`` references an existing non-layout field on the
+    #     same form (dangling refs rejected at save time).
+    #   * No circular reference chain (A show_if B, B show_if A, OR
+    #     deeper A→B→C→A loops).
+    #   * A field cannot ``show_if`` itself.
+    #   * ``value`` is accepted free-form; its type is NOT constrained
+    #     at save time — the evaluator coerces/compares at runtime so
+    #     the author can target a number field with a stringified
+    #     value (``"5"`` vs ``5``) and still get the expected result.
+    #
+    # Legacy forms (no ``show_if`` on any field) round-trip byte-
+    # identical — the ``_is_field_visible`` evaluator short-circuits
+    # to True when ``show_if`` is None.
+    show_if: Optional[Dict[str, Any]] = None
 
 
 class SubmitConfig(BaseModel):
@@ -264,6 +298,175 @@ class FormSubmit(BaseModel):
     page_url: Optional[str] = Field(None, max_length=500)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53) ·
+# ``show_if`` conditional-logic engine.
+# ═══════════════════════════════════════════════════════════════════
+
+_SHOW_IF_OPERATORS = frozenset({"eq", "neq", "contains"})
+
+
+def _validate_show_if_rules(
+    normalised: List[Dict[str, Any]],
+) -> None:
+    """Validate every field's ``show_if`` rule AFTER ids have been
+    normalised. Mutates nothing; raises HTTPException(422) on the
+    first violation. Call site: :func:`_validate_field_defs` right
+    before it returns.
+
+    Guards:
+      * ``operator`` must be one of ``_SHOW_IF_OPERATORS``.
+      * ``field_id`` must reference an existing field on the same
+        form (by id). Dangling references rejected.
+      * A field cannot ``show_if`` itself (``field_id`` == own id).
+      * No circular chain: build a dep graph (``child_id →
+        parent_id``) and run a DFS cycle check. Loops are rejected
+        so the renderer evaluator can't infinite-recurse.
+      * Layout markers (``section`` etc.) MAY carry ``show_if`` —
+        hiding a whole section via a parent toggle is a valid UX
+        pattern. The visibility evaluator treats them the same.
+    """
+    ids_by_fid = {f["id"]: f for f in normalised}
+    deps: Dict[str, str] = {}  # child_id -> parent_id
+
+    for f in normalised:
+        rule = f.get("show_if")
+        if rule is None:
+            continue
+        if not isinstance(rule, dict):
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if must be an object",
+            )
+        op = rule.get("operator")
+        if op not in _SHOW_IF_OPERATORS:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if.operator "
+                f"must be one of {sorted(_SHOW_IF_OPERATORS)}",
+            )
+        parent_fid = rule.get("field_id")
+        if not isinstance(parent_fid, str) or not parent_fid:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if.field_id "
+                "is required and must be a non-empty string",
+            )
+        if parent_fid == f["id"]:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if.field_id "
+                "cannot reference itself",
+            )
+        if parent_fid not in ids_by_fid:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if.field_id "
+                f"'{parent_fid}' does not match any field on this form",
+            )
+        # ``value`` is intentionally free-form; the evaluator coerces
+        # at runtime (string vs number vs bool). We only enforce
+        # presence of the key.
+        if "value" not in rule:
+            raise HTTPException(
+                422,
+                f"field '{f.get('name') or f['id']}': show_if.value "
+                "key is required (may be null / empty string / etc.)",
+            )
+        deps[f["id"]] = parent_fid
+
+    # Cycle detection — DFS with path-tracking. ``deps`` is a sparse
+    # child → parent map (each child has at most one parent, so this
+    # is really a forest of upside-down trees + any cycles).
+    for start in deps:
+        seen: set = set()
+        node = start
+        while node in deps:
+            if node in seen:
+                raise HTTPException(
+                    422,
+                    f"show_if circular reference detected starting at "
+                    f"field '{start}' → walked chain: "
+                    f"{' → '.join(list(seen) + [node])}",
+                )
+            seen.add(node)
+            node = deps[node]
+
+
+def _coerce_for_compare(v: Any) -> Any:
+    """Normalize a value for ``show_if`` operator comparison. Strings
+    are stripped; numeric values are left as-is; bools are left as-
+    is. ``None`` + empty-after-strip collapse to ``None`` so a field
+    with "" and a field that was never answered compare equal."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    return v
+
+
+def _is_field_visible(
+    field_dict: Dict[str, Any],
+    answers: Dict[str, Any],
+    fields_by_id: Dict[str, Dict[str, Any]],
+) -> bool:
+    """Evaluate a field's ``show_if`` rule against the submitted
+    answers. Returns True when:
+
+      * ``show_if`` is None (no rule → always visible), OR
+      * The rule evaluates True under the operator semantics.
+
+    Operator semantics (coerced via ``_coerce_for_compare``):
+      * ``"eq"``       — parent_answer == rule.value
+      * ``"neq"``      — parent_answer != rule.value
+      * ``"contains"`` — if parent_answer is a list/tuple: value in it
+                         if parent_answer is a string: value substring
+                         anything else: False (defensive — malformed
+                                        data doesn't fire the rule)
+
+    Looks up the parent field's answer by BOTH ``name`` and ``id``
+    (the widget may post either shape — matches the pattern used by
+    the required-field check elsewhere in this module).
+    """
+    rule = field_dict.get("show_if")
+    if rule is None:
+        return True
+
+    parent_fid = rule.get("field_id")
+    parent = fields_by_id.get(parent_fid or "")
+    if parent is None:
+        # Dangling at runtime (shouldn't happen — save-time validator
+        # catches it, but belt-and-suspenders for forms that
+        # pre-date TD-53).
+        return True
+
+    parent_val = answers.get(parent.get("name") or "") if parent.get("name") else None
+    if parent_val is None:
+        parent_val = answers.get(parent_fid)
+
+    op = rule.get("operator")
+    target = rule.get("value")
+    lhs = _coerce_for_compare(parent_val)
+    rhs = _coerce_for_compare(target)
+
+    if op == "eq":
+        return lhs == rhs
+    if op == "neq":
+        return lhs != rhs
+    if op == "contains":
+        if isinstance(parent_val, (list, tuple)):
+            # Compare against raw list members (don't strip inner
+            # whitespace — authors may legitimately target "  "
+            # answers from a checkbox group).
+            return target in parent_val
+        if isinstance(parent_val, str) and isinstance(target, str):
+            return target in parent_val
+        return False
+    return True  # unknown operator — fail open (save-time validator
+                 # has already rejected these, so this is defensive).
+
+
 def _validate_field_defs(fields: List[FormField]) -> List[Dict[str, Any]]:
     """Validate + normalise. Auto-populates ``id`` and ``order``.
     Returns the plain-dict list ready for persistence.
@@ -325,6 +528,8 @@ def _validate_field_defs(fields: List[FormField]) -> List[Dict[str, Any]]:
         d["id"] = fid
         d["order"] = f.order if isinstance(f.order, int) else idx
         normalised.append(d)
+    # TD-53 · validate show_if rules AFTER ids are stable.
+    _validate_show_if_rules(normalised)
     return normalised
 
 
@@ -691,16 +896,54 @@ async def submit_widget_form(fid: str, body: FormSubmit,
     if not isinstance(payload, dict):
         raise HTTPException(422, "answers/data must be an object")
 
+    # TD-53 · Feb-2026 — Phase 2 ``show_if`` conditional-logic. Build
+    # the field-by-id map once so the visibility evaluator can resolve
+    # parent references, then strip hidden-field values from the
+    # payload BEFORE required-check + lead extraction. This gives:
+    #   * Hidden fields marked ``required=True`` do NOT trigger a 422.
+    #   * Hidden fields' answers do NOT get pulled into the lead row
+    #     (``extract_contact_fields_with_schema`` only sees visible
+    #     answers).
+    # Legacy forms (no ``show_if`` on any field) retain byte-identical
+    # behavior: ``_is_field_visible`` short-circuits to True on
+    # None-rule fields; the ``[]`` loop produces an empty hidden-fid
+    # set; nothing is stripped.
+    _fields_list = form.get("fields") or []
+    _fields_by_id = {
+        f["id"]: f for f in _fields_list if isinstance(f, dict) and f.get("id")
+    }
+    _hidden_fids: set = set()
+    for f in _fields_list:
+        if not isinstance(f, dict):
+            continue
+        if not _is_field_visible(f, payload, _fields_by_id):
+            _hidden_fids.add(f.get("id"))
+            # Strip the field's value from the payload under BOTH
+            # name + id keys so neither the required-check nor the
+            # schema-aware extractor can see it. The original payload
+            # is NOT persisted here (payload is a Python-level mutation
+            # of the submitted body); the sub_doc below will store the
+            # post-strip view, which is the operator-visible truth —
+            # hidden fields should not persist their stale values.
+            if f.get("name"):
+                payload.pop(f["name"], None)
+            if f.get("id"):
+                payload.pop(f["id"], None)
+
     # Required-field validation.
     missing: List[str] = []
     for f in form.get("fields") or []:
-        if f.get("required"):
-            # Accept the value under either the field's ``name`` or ``id``.
-            val = payload.get(f["name"])
-            if val is None and f.get("id"):
-                val = payload.get(f["id"])
-            if val is None or (isinstance(val, str) and not val.strip()):
-                missing.append(f["name"])
+        if not f.get("required"):
+            continue
+        # Skip required-check on hidden fields (TD-53).
+        if f.get("id") in _hidden_fids:
+            continue
+        # Accept the value under either the field's ``name`` or ``id``.
+        val = payload.get(f["name"])
+        if val is None and f.get("id"):
+            val = payload.get(f["id"])
+        if val is None or (isinstance(val, str) and not val.strip()):
+            missing.append(f["name"])
     if missing:
         raise HTTPException(
             422, f"missing required fields: {', '.join(missing)}"
