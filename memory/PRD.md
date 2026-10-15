@@ -86,6 +86,11 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   reachability probe), server title = offline edit → finalize → inputs read-only → PDF downloaded. Landscape tech
   UI path sits behind the existing app-wide Clock-In gate (unchanged). Nav entry is in Tools / More / admin drawer
   (no new bottom tab — the 5-slot tab bar is full). No external repo cloned.
+- **Re-verified 2026-10-15 at f0f5bbe14 (no code changes):** no web/BE/mobile templates commits since 77affb86c.
+  Jest 45/45. API as mike: create → PATCH 200 → finalize 200 → PATCH 409 → `/pdf` 200 `%PDF-` → duplicate draft →
+  delete 200; defs admin 23 / mike 8 / landscaper 8. Expo-web as mike: Library (24 card nodes) → Fill CPO log → title
+  edit offline → "Offline — will sync" + `template_drafts:*` / `template_drafts_pending_sync:*` written → reconnect →
+  queue empty, "Saved HH:MM:SS". Smoke draft deleted. No external repo cloned.
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
 - Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.

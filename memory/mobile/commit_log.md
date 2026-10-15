@@ -1861,3 +1861,10 @@
 - Gate: CommsAdminGate (admin+super_admin); backend require_admin also admits owner — mobile stricter per brief.
 - Cron lockout: .git/info/exclude for new paths + skip-worktree on edited tracked files; cleared before `git commit --only`.
 - Deps: none. Edit-on-mobile still TD-48.
+
+## Iteration 131 — Templates Library Phase 3 re-dispatch (verification only)
+- **Commit**: the docs-only commit containing this entry (base f0f5bbe14)
+- **Date**: 2026-10-15
+- **Changes**: none to code. Phase 3 already shipped in 77affb86c; no frontend/backend/mobile templates diffs since. Re-verified Jest 45/45, live API contract (incl. 409 after finalize, PDF), Expo-web offline queue → reconnect flush. PRD §5 re-verification line added.
+- **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
+- **Web files referenced**: none re-read (unchanged since 77affb86c). No external repo cloned.
