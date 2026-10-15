@@ -134,13 +134,23 @@ _FIELD_TYPES = {
     "checkbox", "radio", "file", "section",
     # TD-52 palette expansion.
     "signature", "address_manual", "rating_stars", "file_multi_upload",
+    # TD-54 · Feb-2026 — multi-step forms. ``page_break`` is a LAYOUT
+    # marker (sibling of ``section``) that splits the form into pages
+    # for the widget's Prev/Next renderer.  Server sees the full
+    # ``answers`` dict on final submit regardless of pagination —
+    # pagination is a client concern.
+    "page_break",
 }
 _OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
 # CUS-Marketing-Form-Builder · Feb-2026 — Phase 1. Layout-only types
 # have no submission value. Skipped for duplicate-name checks + do
 # not require ``name`` to be non-empty.
-_LAYOUT_TYPES = {"section"}
+_LAYOUT_TYPES = {"section", "page_break"}  # TD-54 adds page_break
 _COLUMN_SPAN_VALUES = {"full", "half"}
+# TD-54 · Feb-2026 — ``page_title`` optional metadata on ``page_break``
+# fields.  Shown as the step label in the widget's Prev/Next renderer;
+# capped at 60 chars (same max as other short-form metadata).
+_PAGE_TITLE_MAX_LEN = 60
 
 # TD-52 · Feb-2026 — subset of the palette that carries extra server-
 # side submission sanity beyond the generic required-check:
@@ -281,6 +291,12 @@ class FormField(BaseModel):
     # (no server-side default coercion) so pre-Phase-1 forms round-
     # trip byte-identical.
     column_span: Optional[Literal["full", "half"]] = None
+    # TD-54 · Feb-2026 — multi-step forms. Optional step label shown
+    # on the widget's Prev/Next progress indicator when this field is
+    # a ``page_break``. Ignored for every other field type (preserved
+    # on round-trip but not surfaced).  Capped at 60 chars matching
+    # ``name`` / ``id``.
+    page_title: Optional[str] = Field(None, max_length=_PAGE_TITLE_MAX_LEN)
     # CUS-Marketing-Form-Builder · Feb-2026 — Phase 2 (TD-53).
     # Optional conditional-logic rule. When set, the field is hidden
     # (and its ``required`` is suppressed, and its submitted value is
