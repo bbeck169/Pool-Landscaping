@@ -376,6 +376,66 @@
           style: INPUT_STYLE,
         });
         break;
+      // TD-55 · Feb-2026 — GDPR consent checkbox.  Renders:
+      //   [ ] <label text>   Privacy policy ↗   (optional link)
+      // The checkbox submits as the boolean value ``true`` when
+      // checked, ``false`` otherwise.  Server-side required-check
+      // enforces truthy on required+true (TD-55 BE commit).
+      case "consent_checkbox": {
+        var consentWrap = el("label", {
+          "data-testid": "form-widget-consent-wrap-" + name,
+          style: {
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "8px",
+            fontSize: "13px",
+            cursor: "pointer",
+            userSelect: "none",
+          },
+        });
+        var consentBox = el("input", {
+          type: "checkbox",
+          name: name,
+          value: "true",
+          "data-testid": "form-widget-input-" + name,
+          required: required ? "" : null,
+          style: {
+            marginTop: "3px",
+            width: "16px",
+            height: "16px",
+            flexShrink: "0",
+          },
+        });
+        var consentText = el("span", {
+          "data-testid": "form-widget-consent-text-" + name,
+          style: { lineHeight: "1.4", flex: "1" },
+        });
+        // Label travels verbatim as HTML (short rich-text, same
+        // XSS boundary as the section renderer — admin UI
+        // sanitises via Tiptap on save).
+        consentText.innerHTML = f.label || name;
+        consentWrap.appendChild(consentBox);
+        consentWrap.appendChild(consentText);
+        if (f.privacy_policy_url) {
+          var consentLink = el("a", {
+            href: f.privacy_policy_url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            "data-testid": "form-widget-consent-privacy-link-" + name,
+            style: {
+              marginLeft: "6px",
+              color: "#2563EB",
+              textDecoration: "underline",
+              fontSize: "12px",
+              whiteSpace: "nowrap",
+            },
+            onclick: function (e) { e.stopPropagation(); },
+          }, ["Privacy policy ↗"]);
+          consentText.appendChild(consentLink);
+        }
+        control = consentWrap;
+        break;
+      }
       // TD-52 · Feb-2026 — multi-file picker. Reuses the native file
       // control with ``multiple``; the dispatcher ingresses via the
       // existing /widget/form/{fid}/submit-multipart endpoint when
@@ -637,7 +697,8 @@
       "data-column-span": f.column_span || "full",
       style: { marginBottom: "0", gridColumn: colSpan },
     }, [
-      f.type === "checkbox" ? null : el("label", { style: LABEL_STYLE }, [labelText]),
+      (f.type === "checkbox" || f.type === "consent_checkbox") ? null
+         : el("label", { style: LABEL_STYLE }, [labelText]),
       control,
     ]);
   }

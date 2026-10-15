@@ -77,6 +77,11 @@ const FIELD_TYPES = [
   // marker (sibling of section) that splits the form into pages
   // for the widget's Prev/Next renderer.
   "page_break",
+  // TD-55 · Feb-2026 — GDPR consent. consent_checkbox is a value-
+  // carrying field (participates in required-check with truthy
+  // semantics). Carries optional privacy_policy_url rendered as a
+  // 'Privacy policy' link beside the label.
+  "consent_checkbox",
 ];
 const FIELD_TYPE_LABELS = {
   section: "Section heading (layout only)",
@@ -87,6 +92,8 @@ const FIELD_TYPE_LABELS = {
   file_multi_upload: "File upload (multiple)",
   // TD-54 — operator-facing label for the pagination marker.
   page_break: "Page break (multi-step)",
+  // TD-55 — GDPR consent checkbox with optional privacy policy link.
+  consent_checkbox: "GDPR consent checkbox",
 };
 const OPTION_TYPES = new Set(["dropdown", "multiselect", "radio"]);
 // CUS-Marketing-Form-Builder · Feb-2026 — Phase 3. Layout-only
@@ -1077,6 +1084,29 @@ function FieldEditorRow({ idx, f, onChange, onDelete, onMove, canDelete,
                    className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
                    style={{ border: `1px solid ${colors.border}` }}
                    data-testid={`form-field-placeholder-${idx}`} />
+          </div>
+        )}
+        {/* TD-55 · GDPR consent checkbox — surface the optional
+            privacy_policy_url inspector input only when the field
+            type is consent_checkbox. The widget renders this URL
+            as a 'Privacy policy' link beside the label; the admin
+            UI keeps it on a dedicated row so operators don't
+            accidentally paste it into Placeholder on another type. */}
+        {f.type === "consent_checkbox" && (
+          <div className="col-span-12">
+            <label className="block text-[10px] font-bold uppercase mb-1"
+                   style={{ color: colors.muted }}>
+              Privacy policy URL (optional)
+            </label>
+            <input value={f.privacy_policy_url || ""}
+                   onChange={(e) => onChange({
+                     privacy_policy_url: e.target.value || null,
+                   })}
+                   placeholder="https://example.com/privacy"
+                   maxLength={500}
+                   className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                   style={{ border: `1px solid ${colors.border}` }}
+                   data-testid={`form-field-privacy-policy-url-${idx}`} />
           </div>
         )}
         {needsOptions && (
