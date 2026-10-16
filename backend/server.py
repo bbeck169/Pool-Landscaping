@@ -538,6 +538,12 @@ api_router.include_router(_p25_comms_detail.router)
 # (admin + manager only).  See ``routers/dashboard_service_category.py``.
 from routers import dashboard_service_category as _p26_sc_dash  # noqa: E402
 api_router.include_router(_p26_sc_dash.router)
+# P0-GEOCODE-LEAK-C2 · TD-62 (Feb-2026) — admin diagnostics
+# endpoint exposing a 7-day (default) rollup of
+# ``db.geocode_call_log`` with trigger_reason + outcome +
+# BACKEND vs USER split.  See ``routers/admin_geocode_diagnostics.py``.
+from routers import admin_geocode_diagnostics as _c2_geocode_diag  # noqa: E402
+api_router.include_router(_c2_geocode_diag.router)
 api_router.include_router(_p29_muted_reasons.router)
 api_router.include_router(_p34_quiet_hours.router)
 api_router.include_router(_p37_gps_auto_start.router)
@@ -4550,6 +4556,37 @@ async def _run_boot_sequence():
         )
     except Exception as e:
         logger.warning(f"[phase17] service_location 2dsphere index crashed: {e}")
+    # P0-GEOCODE-LEAK-C2 · TD-62 (Feb-2026) — idempotent index
+    # provisioning for the append-only ``db.geocode_call_log``
+    # collection written by every ``geocode_address`` /
+    # ``geocode_and_persist_*`` call via
+    # ``services.google_maps.geocode_trigger.write_geocode_log``.
+    # TTL on ``called_at`` → 90-day retention (7_776_000 seconds).
+    # Index failures do NOT block boot — they only degrade the
+    # ``/admin/diagnostics/geocode-usage`` endpoint's query speed.
+    try:
+        await db.geocode_call_log.create_index(
+            "called_at", expireAfterSeconds=7_776_000,
+            name="geocode_call_log_ttl_90d",
+        )
+        await db.geocode_call_log.create_index(
+            [("tenant_id", 1), ("called_at", -1)],
+            name="geocode_call_log_by_tenant_recent",
+        )
+        await db.geocode_call_log.create_index(
+            [("trigger_reason", 1), ("called_at", -1)],
+            name="geocode_call_log_by_trigger_recent",
+        )
+        await db.geocode_call_log.create_index(
+            [("address_hash", 1), ("called_at", -1)],
+            name="geocode_call_log_by_addr_recent",
+        )
+        logger.info("[geocode-call-log] indexes ensured (TTL 90d + 3 secondary)")
+    except Exception as e:
+        logger.warning(
+            "[geocode-call-log] index provisioning failed "
+            "(telemetry only, geocode calls unaffected): %s", e,
+        )
     # P0-GEOCODE-LEAK-C1 · TD-62 (Feb-2026).  Google Geocoding API
     # spend spiked +3,422% between Sep 15–30 and Oct 1–16 (operator
     # Google Cloud billing summary).  Phase 1 audit identified the

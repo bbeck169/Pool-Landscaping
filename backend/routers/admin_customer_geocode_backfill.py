@@ -104,13 +104,17 @@ async def _run_backfill(tenant_id: str,
     + ``service_location`` GeoJSON). Sleeps 200 ms between rows.
     """
     from services.google_maps.geocoding import geocode_and_persist_customer
+    from services.google_maps.geocode_trigger import GeocodeTrigger as _GT_C2
 
     counters = {"scanned": 0, "updated": 0, "failed": 0,
                   "skipped_no_address": 0}
     for i, c in enumerate(rows):
         counters["scanned"] += 1
         try:
-            ok = await geocode_and_persist_customer(c["id"], tenant_id)
+            ok = await geocode_and_persist_customer(
+                c["id"], tenant_id,
+                trigger_reason=_GT_C2.ADMIN_BACKFILL,
+            )
             if ok:
                 counters["updated"] += 1
             else:

@@ -1933,10 +1933,17 @@ _public_lock = asyncio.Lock()
 # ``latitude`` + ``longitude`` (widget autocomplete resolved them),
 # so the server never spends a second Places round-trip on a lead
 # whose coordinates are already known.
-async def _run_lead_geocode(lid: str, tenant_id: str, addr: str) -> None:
+async def _run_lead_geocode(lid: str, tenant_id: str, addr: str,
+                              *, trigger_reason: Any = None) -> None:
     try:
         from services.google_maps.geocoding import geocode_address
-        hit = await geocode_address(addr, tenant_id=tenant_id)
+        from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
+        _tr = trigger_reason if trigger_reason is not None else _GT.LEAD_CREATE_PUBLIC
+        hit = await geocode_address(
+            addr, tenant_id=tenant_id,
+            trigger_reason=_tr,
+            entity_type="lead", entity_id=lid,
+        )
         if hit and hit.get("latitude") and hit.get("longitude"):
             await db.leads.update_one(
                 {"id": lid, "tenant_id": tenant_id},
@@ -1949,11 +1956,20 @@ async def _run_lead_geocode(lid: str, tenant_id: str, addr: str) -> None:
 
 
 def _maybe_backfill_lead_geocode(background_tasks: BackgroundTasks,
-                                    lead: Dict[str, Any]) -> None:
+                                    lead: Dict[str, Any],
+                                    *,
+                                    trigger_reason: Any = None) -> None:
     """Fire a background geocode ONLY when the lead is missing
     coordinates. Autocomplete-supplied lat/lng short-circuit the call
     so we don't waste a Google Places round-trip we've already done
-    client-side."""
+    client-side.
+
+    P0-GEOCODE-LEAK-C2: ``trigger_reason`` propagates to the
+    background task so public lead form vs Lead-Sense convert
+    paths are attributable in ``/admin/diagnostics/geocode-usage``.
+    Default is :attr:`GeocodeTrigger.LEAD_CREATE_PUBLIC` when
+    unspecified.
+    """
     if lead.get("latitude") is not None and lead.get("longitude") is not None:
         return
     addr = (lead.get("service_address") or lead.get("address") or "").strip()
@@ -1961,6 +1977,7 @@ def _maybe_backfill_lead_geocode(background_tasks: BackgroundTasks,
         return
     background_tasks.add_task(
         _run_lead_geocode, lead["id"], lead["tenant_id"], addr,
+        trigger_reason=trigger_reason,
     )
 
 

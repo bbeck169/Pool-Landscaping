@@ -27,6 +27,11 @@ from typing import Any, Dict, Optional
 import httpx
 
 from config import db, logger
+from services.google_maps.geocode_trigger import (
+    GeocodeOutcome,
+    GeocodeTrigger,
+    write_geocode_log,
+)
 
 _API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 _CACHE_TTL_DAYS = 30
@@ -142,6 +147,9 @@ async def geocode_address(
     *,
     tenant_id: Optional[str] = None,
     db_conn: Any = None,
+    trigger_reason: GeocodeTrigger = GeocodeTrigger.UNKNOWN,
+    entity_type: str = "unknown",
+    entity_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Return ``{lat, lng, formatted_address, place_id, precision}`` or
     None on ZERO_RESULTS / error. Never raises.
@@ -152,8 +160,37 @@ async def geocode_address(
     flag is off, OR ``tenant_id`` is None, uses
     :func:`_platform_geocode_http` directly — byte-for-byte
     identical to the pre-Chunk-3 code path.
+
+    P0-GEOCODE-LEAK-C2 (Feb-2026): writes exactly ONE row into
+    ``db.geocode_call_log`` per invocation via fail-safe
+    :func:`write_geocode_log`.  ``trigger_reason`` propagates from
+    every caller (routers / lifespan / admin backfill) so the Phase
+    3 ``migration_status`` sentinel + diagnostics endpoint can
+    attribute spend accurately.  Telemetry outage is swallowed —
+    the geocode flow is NEVER blocked by a log-write failure.
     """
+    _started_at = datetime.now(timezone.utc)
+    _trigger_value = (
+        trigger_reason.value
+        if isinstance(trigger_reason, GeocodeTrigger)
+        else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
+    )
+
+    async def _log(outcome: GeocodeOutcome,
+                    *, lat: Optional[float] = None,
+                    lng: Optional[float] = None,
+                    error: Optional[str] = None) -> None:
+        await write_geocode_log(
+            db_conn=db, logger=logger,
+            tenant_id=tenant_id, entity_type=entity_type,
+            entity_id=entity_id, address=address or "",
+            trigger_reason=_trigger_value, outcome=outcome.value,
+            lat=lat, lng=lng, error=error,
+            started_at=_started_at, api_key=_API_KEY,
+        )
+
     if not address:
+        await _log(GeocodeOutcome.NO_ADDR)
         return None
     norm = _normalize(address)
     now = datetime.now(timezone.utc)
@@ -165,6 +202,11 @@ async def geocode_address(
                 cached["cached_at"].replace("Z", "+00:00")
             )
             if now - cached_at < timedelta(days=_CACHE_TTL_DAYS):
+                _res = cached.get("result") or {}
+                await _log(
+                    GeocodeOutcome.SKIPPED_CACHED,
+                    lat=_res.get("lat"), lng=_res.get("lng"),
+                )
                 return cached.get("result")
         except Exception:
             pass
@@ -202,12 +244,30 @@ async def geocode_address(
                 "skipping",
                 tenant_id, cap.provider, cap.used, cap.cap,
             )
+            await _log(
+                GeocodeOutcome.ERROR,
+                error=f"TenantMapsRequestCapExceeded:{cap.provider}:{cap.used}/{cap.cap}",
+            )
             return None
         except Exception as e:  # pragma: no cover — defensive
             logger.warning("[geocode] dispatcher error: %s", e)
             result = None
+            await _log(
+                GeocodeOutcome.ERROR,
+                error=f"{type(e).__name__}:{str(e)[:200]}",
+            )
+            # Still fall through to the cache upsert path for parity
+            # with the pre-C2 contract (we DON'T re-raise).
     else:
-        result = await _platform_geocode_http(address)
+        try:
+            result = await _platform_geocode_http(address)
+        except Exception as e:        # pragma: no cover — defensive
+            logger.warning("[geocode] http path error: %s", e)
+            result = None
+            await _log(
+                GeocodeOutcome.ERROR,
+                error=f"{type(e).__name__}:{str(e)[:200]}",
+            )
 
     await db.geocode_cache.update_one(
         {"key": norm},
@@ -215,23 +275,56 @@ async def geocode_address(
                   "cached_at": now.isoformat()}},
         upsert=True,
     )
+    if result:
+        await _log(
+            GeocodeOutcome.HIT,
+            lat=result.get("lat"), lng=result.get("lng"),
+        )
+    # Error already logged above when applicable; nothing further to
+    # write here (an unlogged ``result=None`` would indicate the
+    # ZERO_RESULTS path through ``_platform_geocode_http``).
+    elif use_dispatcher is False:
+        await _log(GeocodeOutcome.ERROR, error="zero_results_or_no_key")
     return result
 
 
-async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool:
+async def geocode_and_persist_customer(
+    customer_id: str, tenant_id: str,
+    *, trigger_reason: GeocodeTrigger = GeocodeTrigger.UNKNOWN,
+) -> bool:
     """Compose the customer's canonical address from either
     ``service_address`` (free-form) or the structured street/city/state/
     zip fields, geocode it, and write lat/lng + GeoJSON to the doc.
-    Idempotent — skips if ``geocoded_at`` < 30d old."""
+    Idempotent — skips if ``geocoded_at`` < 30d old.
+
+    P0-GEOCODE-LEAK-C2: propagates ``trigger_reason`` to the core
+    :func:`geocode_address` for diagnostics attribution.  When the
+    30-day ``geocoded_at`` short-circuit fires the wrapper writes a
+    ``skipped_cached`` log row directly so the ratio of skipped vs
+    hit calls is visible in ``/admin/diagnostics/geocode-usage``.
+    """
     cust = await db.customers.find_one(
         {"id": customer_id, "tenant_id": tenant_id}, {"_id": 0},
     )
     if not cust:
         return False
+    _trig = trigger_reason.value if isinstance(trigger_reason, GeocodeTrigger) \
+        else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
     if cust.get("geocoded_at"):
         try:
             g = datetime.fromisoformat(cust["geocoded_at"].replace("Z", "+00:00"))
             if datetime.now(timezone.utc) - g < timedelta(days=_CACHE_TTL_DAYS):
+                await write_geocode_log(
+                    db_conn=db, logger=logger,
+                    tenant_id=tenant_id, entity_type="customer",
+                    entity_id=customer_id,
+                    address=resolve_customer_address(cust),
+                    trigger_reason=_trig,
+                    outcome=GeocodeOutcome.SKIPPED_CACHED.value,
+                    lat=cust.get("latitude") or cust.get("service_lat"),
+                    lng=cust.get("longitude") or cust.get("service_lng"),
+                    api_key=_API_KEY,
+                )
                 return False
         except Exception:
             pass
@@ -243,7 +336,11 @@ async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool
     addr = resolve_customer_address(cust)
     if not addr.strip():
         return False
-    hit = await geocode_address(addr, tenant_id=tenant_id)
+    hit = await geocode_address(
+        addr, tenant_id=tenant_id,
+        trigger_reason=trigger_reason,
+        entity_type="customer", entity_id=customer_id,
+    )
     if not hit:
         return False
     await db.customers.update_one(
@@ -272,7 +369,10 @@ async def geocode_and_persist_customer(customer_id: str, tenant_id: str) -> bool
 # ``latitude/longitude`` field pair so downstream callers can pick.
 # ═════════════════════════════════════════════════════════════════
 
-async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
+async def geocode_and_persist_job(
+    job_id: str, tenant_id: str,
+    *, trigger_reason: GeocodeTrigger = GeocodeTrigger.UNKNOWN,
+) -> bool:
     """Compose the job's address from its own ``service_address`` /
     structured fields OR from its linked customer, geocode it, and
     write ``site_lat/lng`` + ``latitude/longitude`` + ``geocoded_at``.
@@ -330,7 +430,11 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
                 ]))).strip()
     if not addr:
         return False
-    hit = await geocode_address(addr, tenant_id=tenant_id)
+    hit = await geocode_address(
+        addr, tenant_id=tenant_id,
+        trigger_reason=trigger_reason,
+        entity_type="job", entity_id=job_id,
+    )
     if not hit:
         return False
     await db.jobs.update_one(
@@ -347,7 +451,10 @@ async def geocode_and_persist_job(job_id: str, tenant_id: str) -> bool:
 
 
 async def geocode_and_persist_property(property_id: str,
-                                              tenant_id: str) -> bool:
+                                              tenant_id: str,
+                                              *,
+                                              trigger_reason: GeocodeTrigger = GeocodeTrigger.UNKNOWN,
+                                              ) -> bool:
     """Property version of the customer helper. Persists to the
     canonical ``latitude/longitude`` + ``geocoded_at``.
 
@@ -386,6 +493,28 @@ async def geocode_and_persist_property(property_id: str,
                     property_id, tenant_id, old_lat, old_lng,
                     prop.get("geocoded_at"),
                 )
+                # P0-GEOCODE-LEAK-C2: log the wrapper-level cache
+                # short-circuit so the diagnostics endpoint can
+                # compare ``skipped_cached`` vs ``hit`` ratios.
+                _trig = trigger_reason.value if isinstance(trigger_reason, GeocodeTrigger) \
+                    else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
+                try:
+                    _addr_doc = prop.get("address") or {}
+                    _addr_str = " ".join(filter(None, [
+                        _addr_doc.get("line1") or _addr_doc.get("address_line1"),
+                        _addr_doc.get("city"), _addr_doc.get("state"),
+                        _addr_doc.get("postal_code") or _addr_doc.get("zip"),
+                    ])).strip()
+                except Exception:
+                    _addr_str = ""
+                await write_geocode_log(
+                    db_conn=db, logger=logger,
+                    tenant_id=tenant_id, entity_type="property",
+                    entity_id=property_id, address=_addr_str,
+                    trigger_reason=_trig,
+                    outcome=GeocodeOutcome.SKIPPED_CACHED.value,
+                    lat=old_lat, lng=old_lng, api_key=_API_KEY,
+                )
                 return False
         except Exception:
             pass
@@ -421,7 +550,11 @@ async def geocode_and_persist_property(property_id: str,
             property_id, tenant_id, old_lat, old_lng,
         )
         return False
-    hit = await geocode_address(addr, tenant_id=tenant_id)
+    hit = await geocode_address(
+        addr, tenant_id=tenant_id,
+        trigger_reason=trigger_reason,
+        entity_type="property", entity_id=property_id,
+    )
     if not hit:
         logger.info(
             "[geocode-property] pid=%s tenant=%s method=no_hit "

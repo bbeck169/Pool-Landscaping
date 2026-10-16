@@ -40,6 +40,7 @@ from pydantic import BaseModel
 from config import db, logger
 from utils import get_current_user
 from services.query_scope import tenant_scoped_filter
+from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -734,7 +735,10 @@ async def geocode_backfill(
             geocoded += 1
             continue
         try:
-            did = await geocode_and_persist_customer(c["id"], tenant["id"])
+            did = await geocode_and_persist_customer(
+                c["id"], tenant["id"],
+                trigger_reason=_GT.MANUAL_REGEOCODE,
+            )
             if did:
                 geocoded += 1
             else:
@@ -830,7 +834,10 @@ async def geocode_backfill_all_tenants_boot() -> None:
             {"_id": 0, "id": 1},
         ):
             try:
-                await geocode_and_persist_customer(c["id"], t["id"])
+                await geocode_and_persist_customer(
+                    c["id"], t["id"],
+                    trigger_reason=_GT.BOOT_SWEEP,
+                )
                 await asyncio.sleep(0.15)
             except Exception:
                 pass

@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 
 from config import db, logger
 from utils import get_current_user, now_iso
+from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -291,7 +292,10 @@ async def backfill_property_geocoding(
     for i, p in enumerate(rows):
         processed += 1
         try:
-            ok = await geocode_and_persist_property(p["id"], tenant_id)
+            ok = await geocode_and_persist_property(
+                p["id"], tenant_id,
+                trigger_reason=_GT.ADMIN_BACKFILL,
+            )
             if ok:
                 updated += 1
             else:

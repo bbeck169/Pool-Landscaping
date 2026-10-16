@@ -567,7 +567,13 @@ async def create_property(cid: str, body: PropertyIn,
         from services.google_maps.geocoding import (
             geocode_and_persist_property as _gp40,
         )
-        _a40.create_task(_gp40(doc["id"], tenant["id"]))
+        from services.google_maps.geocode_trigger import (
+            GeocodeTrigger as _GT40,
+        )
+        _a40.create_task(_gp40(
+            doc["id"], tenant["id"],
+            trigger_reason=_GT40.PROPERTY_CREATE,
+        ))
     except Exception:
         pass
     _strip(doc)
@@ -670,7 +676,13 @@ async def patch_property(pid: str, body: PropertyPatch,
             from services.google_maps.geocoding import (
                 geocode_and_persist_property as _gp40,
             )
-            _a40.create_task(_gp40(pid, tenant["id"]))
+            from services.google_maps.geocode_trigger import (
+                GeocodeTrigger as _GT40,
+            )
+            _a40.create_task(_gp40(
+                pid, tenant["id"],
+                trigger_reason=_GT40.PROPERTY_PATCH_ADDR_CHANGE,
+            ))
         except Exception:
             pass
     return await db.properties.find_one(

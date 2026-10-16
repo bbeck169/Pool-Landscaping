@@ -2453,6 +2453,9 @@ async def create_customer(body: CustomerIn,
             geocode_and_persist_customer as _gp17,
             resolve_customer_address as _resolve_addr17,
         )
+        from services.google_maps.geocode_trigger import (
+            GeocodeTrigger as _GeocodeTrigger17,
+        )
         from routers.admin_customer_geocode_backfill import (
             address_hash as _addr_hash17,
         )
@@ -2463,7 +2466,10 @@ async def create_customer(body: CustomerIn,
                 {"id": doc["id"], "tenant_id": tenant["id"]},
                 {"$set": {"geocode_address_hash": _hash_create}},
             )
-        _a17.create_task(_gp17(doc["id"], tenant["id"]))
+        _a17.create_task(_gp17(
+            doc["id"], tenant["id"],
+            trigger_reason=_GeocodeTrigger17.CUSTOMER_CREATE,
+        ))
     except Exception:
         pass
     # Comms Phase 3 — fire customer.created automation. Never blocks.
@@ -2612,7 +2618,13 @@ async def customer_manual_geocode(
         from services.google_maps.geocoding import (
             geocode_and_persist_customer as _gp,
         )
-        did = await _gp(cid, tenant["id"])
+        from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
+        did = await _gp(
+            cid, tenant["id"],
+            trigger_reason=(
+                _GT.OPERATOR_FORCE if force else _GT.MANUAL_REGEOCODE
+            ),
+        )
     except Exception as exc:
         logger.warning("[manual-geocode] customer=%s err=%s", cid, exc)
         return {"ok": False, "reason": "provider_error", "error": str(exc)}
@@ -4010,12 +4022,18 @@ async def update_customer(cid: str, body: CustomerIn,
             from services.google_maps.geocoding import (
                 geocode_and_persist_customer as _gp17,
             )
+            from services.google_maps.geocode_trigger import (
+                GeocodeTrigger as _GT17,
+            )
             await db.customers.update_one(
                 {"id": cid, "tenant_id": tenant["id"]},
                 {"$unset": {"geocoded_at": ""},
                  "$set": {"geocode_address_hash": _new_hash}},
             )
-            _a17.create_task(_gp17(cid, tenant["id"]))
+            _a17.create_task(_gp17(
+                cid, tenant["id"],
+                trigger_reason=_GT17.CUSTOMER_PATCH_ADDR_CHANGE,
+            ))
         except Exception:
             pass
 
@@ -6709,8 +6727,12 @@ async def _p41_run_geocode(customer_id: str, tenant_id: str,
         from services.google_maps.geocoding import (
             geocode_and_persist_customer as _gp,
         )
+        from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
         async with sem:
-            await _gp(customer_id, tenant_id)
+            await _gp(
+                customer_id, tenant_id,
+                trigger_reason=_GT.CSV_IMPORT,
+            )
     except Exception as exc:  # pragma: no cover — best-effort
         logger.warning("[P41] geocode failed customer=%s err=%s",
                           customer_id, exc)
