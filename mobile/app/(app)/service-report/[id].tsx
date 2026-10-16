@@ -9,7 +9,10 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
-import { api } from "@/src/api";
+import { api, TOKEN_KEY } from "@/src/api";
+import { storage } from "@/src/utils/storage";
+import { useAuth } from "@/src/auth";
+import { clockOutOpenEntryForJob } from "@/src/utils/serviceReportClockOut";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { writeCache, readCache } from "@/src/services/readCache";
@@ -41,6 +44,7 @@ const PHOTO_CAP = 10;
 export default function ServiceReportScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const [report, setReport] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [saveState, setSaveState] = useState<"idle"|"saving"|"saved"|"error">("idle");
@@ -96,8 +100,6 @@ export default function ServiceReportScreen() {
   // Fallback PATCH via fetch since api client doesn't expose patch.
   const patchViaFetch = async (bodyObj: any) => {
     const base = process.env.EXPO_PUBLIC_BACKEND_URL;
-    const { TOKEN_KEY } = await import("@/src/api");
-    const { storage } = await import("@/src/utils/storage");
     const token = await storage.secureGet<string>(TOKEN_KEY, "");
     const r = await fetch(`${base}/api/jobs/${id}/service-report`, {
       method: "PATCH",
@@ -213,14 +215,23 @@ export default function ServiceReportScreen() {
               observations: report.observations,
             });
             const submitted: any = await api.post(`/jobs/${id}/service-report/submit`, {});
-            try { await api.post("/workforce/clock-out", {}); } catch {}
-            if (submitted?.invoice_id) {
-              const iid = String(submitted.invoice_id).slice(0, 8);
-              Alert.alert("Auto-invoiced",
-                          `Report submitted · Invoice #${iid} created`,
-                          [{ text: "OK", onPress: () => router.replace("/(app)/today") }]);
+            // Close the open workforce entry for this job; surface failures
+            // instead of swallowing them (was: POST {} → always 422, ignored).
+            const co = await clockOutOpenEntryForJob(String(id), user?.id);
+            const invoiceLine = submitted?.invoice_id
+              ? `Report submitted · Invoice #${String(submitted.invoice_id).slice(0, 8)} created`
+              : "Report submitted.";
+            const goToday = () => router.replace("/(app)/today");
+            if (co.status === "failed") {
+              Alert.alert(
+                "Clock-out failed",
+                `${invoiceLine}\n\nYou are still clocked in: ${co.message}\nClock out from the Time Clock screen.`,
+                [{ text: "OK", onPress: goToday }],
+              );
+            } else if (submitted?.invoice_id) {
+              Alert.alert("Auto-invoiced", invoiceLine, [{ text: "OK", onPress: goToday }]);
             } else {
-              router.replace("/(app)/today");
+              goToday();
             }
           } catch (e: any) {
             // Feb-2026 · Surface the backend 422 (chemistry gate)

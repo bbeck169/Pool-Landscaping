@@ -1903,3 +1903,12 @@
 - **Files modified**: mobile/src/auth.tsx, mobile/src/utils/clockInGate.ts, mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/clock-gate-stale-user-refresh.test.tsx (new)
 - **Tests**: new 22/22 (3 Ethan-scenario cases fail on pre-fix HEAD — verified). Full Jest 2321 passed / 48 failed / 22 skipped; failing-suite set identical to prior run.
 - **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
+
+## Iteration 136 — Service-report Submit & Clock Out: /workforce/clock-out empty-body fix
+- **Commit**: the `fix(mobile-service-report)` commit containing this entry (`git log -1 -- mobile/src/utils/serviceReportClockOut.ts`)
+- **Date**: 2026-10-16
+- **Contract** (backend/routers/workforce.py:159-163, :311): ClockOutReq `{entry_id: str, lat: float, lng: float, notes?: str}`; 404 "Time entry not found" (id+tenant+user), 400 "Already clocked out". NOT job_id.
+- **Changes**: new `src/utils/serviceReportClockOut.ts::clockOutOpenEntryForJob(jobId, userId)` — GET /workforce/timesheets?status=open → open row where job_id === route id && user_id === auth user (admins get all users' rows) → expo-location fix → POST {entry_id, lat, lng}. Returns closed / none / failed. Screen: replaced `try { await api.post("/workforce/clock-out", {}) } catch {}` with the helper; failure → "Clock-out failed" Alert (report-submitted line + reason + "Clock out from the Time Clock screen") then Today; no open entry → silent (unchanged UX); auto-invoice alert unchanged. patchViaFetch dynamic `await import()` of @/src/api + storage → static imports (same modules, no new cycle; jest can't run dynamic import — submit path was untestable).
+- **Files modified**: mobile/app/(app)/service-report/[id].tsx, mobile/src/utils/serviceReportClockOut.ts (new), mobile/__tests__/service-report-clock-out.test.tsx (new)
+- **Tests**: new 7/7. Full Jest 2328 passed / 48 failed / 22 skipped; failing-suite set identical to prior run.
+- **Deps**: none (expo-location already used by time-clock). Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
