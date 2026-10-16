@@ -578,8 +578,10 @@ export default function EbitPanel() {
     >
       <header className="flex items-center gap-2 flex-wrap">
         <Sparkles size={18} color="#0891B2" />
-        <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}>
-          EBIT
+        <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}
+             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A measure of a company's overall operational profitability and core earning power."
+             data-testid="ebit-panel-title">
+          EBITDA
         </h2>
         {loadedVersion ? (
           <span className="text-xs px-2 py-0.5 rounded-full font-bold"
@@ -750,11 +752,29 @@ export default function EbitPanel() {
               <Percent size={16} color="#22D3EE" />
               <span className="text-xs uppercase font-bold tracking-wide"
                      style={{ color: "#94A3B8" }}>
-                EBIT (effective)
+                EBITDA (effective)
               </span>
             </div>
-            <div className="text-2xl font-black" data-testid="ebit-total-value">
-              {money(effective.ebit || 0)}
+            <div className="flex flex-col items-end gap-1">
+              <div className="text-2xl font-black"
+                     data-testid="ebitda-total-value"
+                     title="EBITDA = EBIT + Depreciation + Amortization">
+                {money(
+                  // EBITDA-SOFT-ADD · Feb-2026 — primary headline.
+                  // Falls back to the derived ``ebit + depreciation``
+                  // so legacy pre-TD-59 payloads (where ``ebitda`` is
+                  // null) still show a number instead of $NaN.
+                  effective.ebitda != null
+                    ? effective.ebitda
+                    : (Number(effective.ebit || 0)
+                        + Number(effective.depreciation || 0))
+                )}
+              </div>
+              <div className="text-[11px] font-medium"
+                     style={{ color: "#94A3B8" }}
+                     data-testid="ebit-total-value">
+                EBIT {money(effective.ebit || 0)}
+              </div>
             </div>
           </div>
 

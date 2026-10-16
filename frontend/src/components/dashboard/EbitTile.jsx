@@ -121,8 +121,21 @@ export default function EbitTile() {
   const series = data?.series || [];
   const cur = series[series.length - 1];
   const prev = series[series.length - 2];
+  // EBITDA-SOFT-ADD · Feb-2026 — headline metric is EBITDA, with
+  // EBIT shown as a secondary chip. Each series bucket from
+  // /ebit/trend carries BOTH fields post-TD-59; legacy payloads
+  // (pre-TD-59 cache or test fixtures) are hydrated via the
+  // ``ebit + depreciation`` fallback so the tile always shows a
+  // number rather than $NaN.
+  const _curEbitda = cur?.ebitda != null
+    ? cur.ebitda
+    : (Number(cur?.ebit || 0) + Number(cur?.depreciation || 0));
+  const _prevEbitda = prev?.ebitda != null
+    ? prev.ebitda
+    : (Number(prev?.ebit || 0) + Number(prev?.depreciation || 0));
+  const curEbitda = _curEbitda || 0;
   const curEbit = cur?.ebit || 0;
-  const delta = pctDelta(curEbit, prev?.ebit);
+  const delta = pctDelta(curEbitda, _prevEbitda);
   const trendIcon = delta == null ? Minus : delta > 0 ? TrendingUp : delta < 0 ? TrendingDown : Minus;
   const TrendIcon = trendIcon;
   const deltaColor = delta == null || delta === 0 ? colors.muted
@@ -136,8 +149,10 @@ export default function EbitTile() {
     >
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs uppercase font-semibold tracking-wide"
-             style={{ color: colors.muted }}>
-          Earnings Before Interest &amp; Taxes
+             style={{ color: colors.muted }}
+             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A measure of a company's overall operational profitability and core earning power."
+             data-testid="dashboard-ebit-tile-label">
+          Earnings Before Interest, Taxes, Depreciation &amp; Amortization
         </div>
         <Link
           to="/admin/reports/profit"
@@ -153,7 +168,7 @@ export default function EbitTile() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm" style={{ color: colors.error }}
                data-testid="dashboard-ebit-tile-error">
-            <AlertTriangle size={16} /> EBIT unavailable
+            <AlertTriangle size={16} /> EBITDA unavailable
           </div>
           <button
             onClick={load}
@@ -167,16 +182,25 @@ export default function EbitTile() {
       ) : !data ? (
         <div className="text-sm" style={{ color: colors.muted }}
              data-testid="dashboard-ebit-tile-loading">
-          Loading current-month EBIT…
+          Loading current-month EBITDA…
         </div>
       ) : (
         <>
           <div className="flex items-baseline gap-3 flex-wrap">
             <div className="text-3xl font-bold"
-                 style={{ color: curEbit >= 0 ? colors.onSurface : "#DC2626" }}
-                 data-testid="dashboard-ebit-tile-value">
-              {fmtUSD(curEbit)}
+                 style={{ color: curEbitda >= 0 ? colors.onSurface : "#DC2626" }}
+                 data-testid="dashboard-ebitda-tile-value">
+              {fmtUSD(curEbitda)}
             </div>
+            {/* EBITDA-SOFT-ADD · secondary EBIT chip. Kept visible
+                 for operators who still track EBIT alongside EBITDA. */}
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                   style={{ color: colors.muted,
+                             backgroundColor: colors.surfaceSecondary }}
+                   data-testid="dashboard-ebit-tile-value"
+                   title="EBIT = EBITDA − Depreciation − Amortization">
+              EBIT {fmtUSD(curEbit)}
+            </span>
             {delta != null && (
               <span
                 className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"

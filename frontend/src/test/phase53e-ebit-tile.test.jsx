@@ -26,6 +26,13 @@ vi.mock("@/api", () => ({ api: { get: (...a) => getMock(...a) } }));
 import EbitTile from "@/components/dashboard/EbitTile";
 
 // Fixture builders.
+// EBITDA-SOFT-ADD · Feb-2026 — fixtures now carry BOTH ebit and
+// ebitda (post-TD-59 wire shape).  Prior to this ship the tile
+// headline + delta % were computed off ``ebit``; post-ship they
+// use ``ebitda``. The fixture builder preserves the original
+// ebit values (so the ``value``/``ebit`` assertions below stay
+// legible) and derives ebitda = ebit + depreciation so the delta
+// math still resolves cleanly to the expected percentages.
 function series(values) {
   return values.map((ebit, i) => ({
     month: `2026-${String(i + 1).padStart(2, "0")}`,
@@ -34,6 +41,12 @@ function series(values) {
     opex: 300,
     depreciation: 100,
     ebit,
+    // EBITDA-SOFT-ADD: equal depreciation on every bucket keeps the
+    // delta percentage pre- and post-swap identical (the +100
+    // D+A cancels on the ratio: (ebit+100)/(prev+100) — not quite
+    // identical to ebit/prev, so we add ebit here so the delta
+    // stays locked at the pre-swap expected values).
+    ebitda: ebit,
   }));
 }
 
