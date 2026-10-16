@@ -6,11 +6,16 @@
  * EBITDA topline row directly between the Revenue Insights section
  * and the KPI grid:
  *
- *   Change 1 — The Jobs-flavoured KPI tiles still render in the
- *     Active Jobs → Pending → Inactive Customers order (asserted
- *     via DOM document ordering).  Note: the "Active Customers"
- *     tile was removed in the P2 Dashboard tile cleanup — the
- *     former 4-tile sequence collapses to 3 here.
+ *   Change 1 — The 7 KPI tiles render in the operator-specified
+ *     order (asserted via DOM document ordering):
+ *       Row 1 (lg:grid-cols-4): Active Jobs → Pending →
+ *         Inactive Customers → Active Accounts
+ *       Row 2:                  Pool Customers →
+ *         Landscaping Customers → Both Service Customers
+ *     Note: "Active Customers" was removed earlier in the P2
+ *     Dashboard tile cleanup; Active Accounts moved from Row 2
+ *     position 4 to Row 1 position 4 in the Feb-2026 Dashboard
+ *     tile reorder.
  *
  *   Change 1b (P2 section reorder) — The Revenue Forecast / EBITDA
  *     topline row sits BETWEEN the Revenue Insights section and the
@@ -152,16 +157,29 @@ async function _renderDashboard() {
 
 
 describe("Admin Dashboard · Feb-2026 KPI reorder + Data Integrity hide", () => {
-  it("renders the 3 Jobs + customer-status KPI tiles in Active Jobs → Pending → Inactive Customers order", async () => {
+  it("renders the KPI tiles in the operator-specified order (Row 1: Active Jobs → Pending → Inactive Customers → Active Accounts; Row 2: Pool Customers → Landscaping Customers → Both Service Customers)", async () => {
     await _renderDashboard();
 
     // Wait for the KPI grid to hydrate.
     await waitFor(() => screen.getByTestId("kpi-active-jobs"));
 
+    // Feb-2026 Dashboard tile reorder (operator spec):
+    //   Row 1 (lg:grid-cols-4, positions 1-4):
+    //     kpi-active-jobs → kpi-pending →
+    //     kpi-inactive-customers → kpi-active-accounts
+    //   Row 2 (positions 5-7):
+    //     kpi-pool-properties → kpi-landscaping-properties →
+    //     kpi-both-properties
+    // Active Accounts moved from Row 2 position 4 (end of grid)
+    // to Row 1 position 4; the three Customers tiles shifted up.
     const expected = [
       "kpi-active-jobs",
       "kpi-pending",
       "kpi-inactive-customers",
+      "kpi-active-accounts",
+      "kpi-pool-properties",
+      "kpi-landscaping-properties",
+      "kpi-both-properties",
     ];
     const nodes = expected.map((id) => screen.getByTestId(id));
 

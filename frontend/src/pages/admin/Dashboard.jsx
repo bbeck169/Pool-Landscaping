@@ -630,18 +630,40 @@ export default function AdminDashboard() {
               testId="kpi-inactive-customers"
               tone="emerald"
             />
+            {/* Feb-2026 · Dashboard tile reorder (operator spec).
+                Active Accounts was moved from the END of this grid
+                (previous "Pool / Landscaping / Both → Active
+                Accounts" tail) to the END of Row 1 so the top row
+                reads:
+                  Active Jobs → Pending → Inactive Customers →
+                  Active Accounts
+                Row 2 is then the three Customers tiles:
+                  Pool Customers → Landscaping Customers →
+                  Both Service Customers
+                Grid is ``grid-cols-2 lg:grid-cols-4`` so 7 tiles
+                produce exactly a 4-tile top row + 3-tile bottom
+                row on desktop. Deep-link + testid + data source
+                are unchanged. */}
+            <KpiCard
+              icon={Building2}
+              label="Active Accounts"
+              value={data.active_accounts_count}
+              onClick={() => navigate(
+                "/properties?is_active=true",
+              )}
+              testId="kpi-active-accounts"
+              tone="violet"
+            />
             {/* Feb-2026 · P2 Dashboard tile cleanup — the previous
                 customer-count tiles ``kpi-pool-customers`` and
                 ``kpi-landscaping-customers`` (showing 18 / 15) were
                 removed by operator request; they duplicated the
                 property-pivot tiles below, which now carry the
                 "<Pool|Landscaping|Both Service> Customers" labels
-                (data source unchanged — still property counts). The
-                Active Accounts tile was moved to the END of this
-                row to match the operator-specified visual order:
-                  Pool Customers → Landscaping Customers →
-                  Both Service Customers → Active Accounts
-                Deep-links are preserved verbatim from the previous
+                (data source unchanged — still property counts).
+                These three tiles form Row 2 after the Feb-2026
+                reorder (see Active Accounts comment above). Deep-
+                links are preserved verbatim from the previous
                 Pool/Landscaping/Both Services Properties tiles. */}
             <KpiCard
               icon={Home}
@@ -672,16 +694,6 @@ export default function AdminDashboard() {
               )}
               testId="kpi-both-properties"
               tone="amber"
-            />
-            <KpiCard
-              icon={Building2}
-              label="Active Accounts"
-              value={data.active_accounts_count}
-              onClick={() => navigate(
-                "/properties?is_active=true",
-              )}
-              testId="kpi-active-accounts"
-              tone="violet"
             />
           </>
         ) : (
