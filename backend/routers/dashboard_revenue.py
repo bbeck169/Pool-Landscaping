@@ -511,9 +511,25 @@ async def revenue_forecast(
     _excluded_ids = [r["id"] for r in _excluded_rows if r.get("id")]
 
     # ── Booked: upcoming jobs in the window ─────────────────────
+    # Feb-2026 · P1 Revenue Forecast under-count fix — expanded the
+    # status filter from the legacy ``{scheduled, confirmed}`` pair
+    # to include ``pending`` (``JobIn.status`` default per
+    # ``models.py:275``), ``requested`` (job-request intake path in
+    # ``routers/jobs.py::job_request`` L2201), and ``in_progress``
+    # (post-arrival, pre-completion). Operator report: one-time
+    # jobs created via the Edit Job modal with the DEFAULT status
+    # (``pending``) carrying a price > 0 were being dropped from
+    # the "Booked" sum. ``completed`` and ``cancelled`` continue to
+    # be excluded (they're not forward-looking bookings).
+    # The in-loop ``effective_price <= 0`` skip enforces the
+    # product-locked ``price > 0`` filter so zero-price shells (no
+    # revenue to forecast) don't inflate the booked job_count.
     booked_q = {
         "tenant_id": tenant_id,
-        "status": {"$in": ["scheduled", "confirmed"]},
+        "status": {"$in": [
+            "scheduled", "confirmed",
+            "pending", "requested", "in_progress",
+        ]},
         "scheduled_date": {"$gte": s_iso, "$lte": e_iso},
     }
     if _excluded_ids:
@@ -525,16 +541,25 @@ async def revenue_forecast(
     booked_amount = 0.0
     booked_count = 0
     async for j in cur:
-        booked_count += 1
-        # Prefer explicit ``price``; fall back to ``total`` / ``quote_total``.
+        # Resolve effective price via the ``price → total → quote_total``
+        # cascade (legacy field-name fallback for records written by
+        # pre-Feb-2026 code paths).  Jobs with no non-null numeric in
+        # the cascade OR a resolved value <= 0 are SKIPPED entirely
+        # (not counted toward ``booked_count`` either) — zero-price
+        # jobs don't contribute to the forward forecast.
+        effective_price: Optional[float] = None
         for key in ("price", "total", "quote_total"):
             v = j.get(key)
             if v is not None:
                 try:
-                    booked_amount += float(v)
+                    effective_price = float(v)
                     break
                 except (TypeError, ValueError):
                     continue
+        if effective_price is None or effective_price <= 0:
+            continue
+        booked_count += 1
+        booked_amount += effective_price
 
     # ── Recurring: active billing plans × cycles in range ───────
     rec_q = {"tenant_id": tenant_id, "active": True}

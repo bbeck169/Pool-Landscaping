@@ -332,3 +332,102 @@ def test_revenue_forecast_recurring_cycles_calculated_correctly():
         _db.users.delete_one({"id": uid})
         _cleanup_tenant(tid)
         _CACHE.pop(f"tok:{email}", None)
+
+
+# ═══════════ 3. P1 Revenue Forecast under-count tests ═══════════
+# Feb-2026 · dispatch "P1 Revenue Forecast Status Filter Expansion"
+# (Option A). Locks that the forecast "Booked" sum includes one-time
+# jobs created with ``pending`` / ``requested`` / ``in_progress``
+# statuses (previously only ``scheduled`` / ``confirmed`` passed),
+# while ``completed`` / ``cancelled`` continue to be excluded.  Also
+# locks the ``price > 0`` filter so zero-price shells don't inflate
+# the booked job_count.
+def test_revenue_forecast_includes_all_five_forward_statuses():
+    """All 5 forward-looking statuses with price > 0 must count."""
+    tid = _seed_isolated_tenant()
+    uid, email, tok = _seed_admin_for_tenant(tid)
+    j_sched = _seed_job(tid, scheduled_date="2027-09-05",
+                         status="scheduled", price=100.0)
+    j_conf = _seed_job(tid, scheduled_date="2027-09-10",
+                        status="confirmed", price=50.0)
+    j_pend = _seed_job(tid, scheduled_date="2027-09-15",
+                        status="pending", price=75.0)
+    j_req = _seed_job(tid, scheduled_date="2027-09-20",
+                       status="requested", price=25.0)
+    j_prog = _seed_job(tid, scheduled_date="2027-09-25",
+                        status="in_progress", price=250.0)
+    try:
+        r = requests.get(
+            f"{API}/admin/dashboard/revenue-forecast"
+            f"?start=2027-09-01&end=2027-09-30",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # 100 + 50 + 75 + 25 + 250 = 500
+        assert body["booked"]["amount"] == 500.0, body
+        assert body["booked"]["job_count"] == 5, body
+    finally:
+        _cleanup([j_sched, j_conf, j_pend, j_req, j_prog])
+        _db.users.delete_one({"id": uid})
+        _cleanup_tenant(tid)
+        _CACHE.pop(f"tok:{email}", None)
+
+
+def test_revenue_forecast_excludes_completed_and_cancelled():
+    """Regression guard: ``completed`` and ``cancelled`` jobs must
+    NOT contribute to the forward Booked sum even when they fall
+    inside the forecast window.  These are backward-looking statuses
+    — the dashboard forecasts future revenue, not historical."""
+    tid = _seed_isolated_tenant()
+    uid, email, tok = _seed_admin_for_tenant(tid)
+    j_done = _seed_job(tid, scheduled_date="2027-10-05",
+                        status="completed", price=400.0)
+    j_canc = _seed_job(tid, scheduled_date="2027-10-15",
+                        status="cancelled", price=300.0)
+    try:
+        r = requests.get(
+            f"{API}/admin/dashboard/revenue-forecast"
+            f"?start=2027-10-01&end=2027-10-31",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["booked"]["amount"] == 0.0, body
+        assert body["booked"]["job_count"] == 0, body
+    finally:
+        _cleanup([j_done, j_canc])
+        _db.users.delete_one({"id": uid})
+        _cleanup_tenant(tid)
+        _CACHE.pop(f"tok:{email}", None)
+
+
+def test_revenue_forecast_excludes_zero_price_jobs():
+    """A ``pending`` job with ``price = 0`` must NOT inflate the
+    booked job_count.  The forecast counts forward-looking REVENUE;
+    a zero-price shell has none to forecast."""
+    tid = _seed_isolated_tenant()
+    uid, email, tok = _seed_admin_for_tenant(tid)
+    j_zero = _seed_job(tid, scheduled_date="2027-11-10",
+                        status="pending", price=0.0)
+    # Also seed a positive-price control to prove the window is
+    # otherwise live — isolates the zero-price exclusion from any
+    # unrelated-404 path.
+    j_pos = _seed_job(tid, scheduled_date="2027-11-20",
+                       status="pending", price=175.0)
+    try:
+        r = requests.get(
+            f"{API}/admin/dashboard/revenue-forecast"
+            f"?start=2027-11-01&end=2027-11-30",
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # Only the positive-price control job counts.
+        assert body["booked"]["amount"] == 175.0, body
+        assert body["booked"]["job_count"] == 1, body
+    finally:
+        _cleanup([j_zero, j_pos])
+        _db.users.delete_one({"id": uid})
+        _cleanup_tenant(tid)
+        _CACHE.pop(f"tok:{email}", None)
