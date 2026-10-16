@@ -11,8 +11,8 @@
  *     who track both.
  *   * Tooltip on the EBITDA label carries the user-provided copy:
  *     "EBITDA: Earnings Before Interest, Taxes, Depreciation, and
- *      Amortization. A measure of a company's overall operational
- *      profitability and core earning power."
+ *      Amortization. A financial metric used to measure a company's
+ *      overall operational profitability and core earning power."
  *   * Legacy payloads where ``ebitda`` is null fall back to
  *     ``ebit + depreciation`` so the UI never shows $NaN.
  *   * Pre-TD-59 testids (ebit-total-value, ebit-panel-title,
@@ -72,8 +72,9 @@ describe("EBITDA-SOFT-ADD · FE source-parse", () => {
   it("EbitPanel header tooltip carries the exact user-provided copy", () => {
     expect(PANEL).toContain(
       "EBITDA: Earnings Before Interest, Taxes, Depreciation, " +
-      "and Amortization. A measure of a company's overall " +
-      "operational profitability and core earning power.",
+      "and Amortization. A financial metric used to measure a " +
+      "company's overall operational profitability and core " +
+      "earning power.",
     );
   });
 

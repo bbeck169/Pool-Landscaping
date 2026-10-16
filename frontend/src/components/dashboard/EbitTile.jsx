@@ -150,7 +150,7 @@ export default function EbitTile() {
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs uppercase font-semibold tracking-wide"
              style={{ color: colors.muted }}
-             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A measure of a company's overall operational profitability and core earning power."
+             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A financial metric used to measure a company's overall operational profitability and core earning power."
              data-testid="dashboard-ebit-tile-label">
           Earnings Before Interest, Taxes, Depreciation &amp; Amortization
         </div>

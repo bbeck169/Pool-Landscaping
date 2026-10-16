@@ -579,7 +579,7 @@ export default function EbitPanel() {
       <header className="flex items-center gap-2 flex-wrap">
         <Sparkles size={18} color="#0891B2" />
         <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}
-             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A measure of a company's overall operational profitability and core earning power."
+             title="EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. A financial metric used to measure a company's overall operational profitability and core earning power."
              data-testid="ebit-panel-title">
           EBITDA
         </h2>
