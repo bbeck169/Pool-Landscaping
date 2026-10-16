@@ -9,10 +9,12 @@ import { useState, useCallback, useEffect } from "react";
 import { api } from "@/src/api";
 
 const LANDSCAPE_DEPTS = new Set([
+  "landscape",
   "landscaping",
   "landscape_tech",
   "landscaper",
   "both",
+  "cross_trained",
 ]);
 
 // Pool-family department values. Pool techs NEVER see the clock-in
@@ -25,30 +27,55 @@ const POOL_DEPTS = new Set([
   "pool_service",
 ]);
 
-type GateUser = { role?: string; department?: string } | null | undefined;
+type GateUser = {
+  role?: string;
+  department?: string | null;
+  service_category?: string | null;
+  service_cat?: string | null;
+  service_cats?: string[] | null;
+} | null | undefined;
 
 /** "Pool Tech" / "pool-tech" / " pool_tech " → "pool_tech". */
-function normDept(user: GateUser): string {
-  return String(user?.department || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-}
-
-/** True for technicians whose `users.department` is a pool-family value. */
-export function isPoolTech(user: GateUser): boolean {
-  if (!user) return false;
-  const role = String(user.role || "").toLowerCase();
-  return role === "technician" && POOL_DEPTS.has(normDept(user));
+function norm(v: unknown): string {
+  return String(v ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
 /**
- * Returns true when the user is a technician whose department is
- * one of the landscape-family values.  Pool techs, admins,
- * super_admins, managers, owners, and customers all return false.
- * Cross-trained ("both") techs stay gated (web parity).
+ * Category from the first populated discriminator, in precedence order
+ * service_category → service_cat → service_cats[] → department.
+ * Canonical backend field is `users.department` (Team PATCH writes it,
+ * /auth/me returns it); the others are tolerated for field drift.
+ * An array holding any landscape value counts as landscape (cross-trained).
+ * Unknown / missing → null (caller keeps its current default).
+ */
+function techCategory(user: GateUser): "pool" | "landscape" | null {
+  if (!user) return null;
+  const arr = Array.isArray(user.service_cats) ? user.service_cats.map(norm).filter(Boolean) : [];
+  const scalar = [user.service_category, user.service_cat].map(norm).find(Boolean);
+  if (scalar) return POOL_DEPTS.has(scalar) ? "pool" : LANDSCAPE_DEPTS.has(scalar) ? "landscape" : null;
+  if (arr.length) {
+    if (arr.some((v) => LANDSCAPE_DEPTS.has(v))) return "landscape";
+    return arr.some((v) => POOL_DEPTS.has(v)) ? "pool" : null;
+  }
+  const d = norm(user.department);
+  return POOL_DEPTS.has(d) ? "pool" : LANDSCAPE_DEPTS.has(d) ? "landscape" : null;
+}
+
+const isTechnician = (user: GateUser) => String(user?.role || "").toLowerCase() === "technician";
+
+/** True for technicians whose category resolves to a pool-family value. */
+export function isPoolTech(user: GateUser): boolean {
+  return isTechnician(user) && techCategory(user) === "pool";
+}
+
+/**
+ * Returns true when the user is a technician whose category resolves to
+ * a landscape-family value.  Pool techs, admins, super_admins, managers,
+ * owners, and customers all return false.  Cross-trained ("both") techs
+ * stay gated (web parity).
  */
 export function isLandscapeTech(user: GateUser): boolean {
-  if (!user || isPoolTech(user)) return false;
-  const role = String(user.role || "").toLowerCase();
-  return role === "technician" && LANDSCAPE_DEPTS.has(normDept(user));
+  return isTechnician(user) && techCategory(user) === "landscape";
 }
 
 /**

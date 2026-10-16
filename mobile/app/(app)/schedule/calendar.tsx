@@ -191,7 +191,7 @@ const LOADING_WATCHDOG_MS = 20_000;
 function ScheduleCalendarInner() {
   const { showToast } = useToast();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const role = (user?.role as string) || "";
   const isAdmin = role === "admin" || role === "super_admin" || role === "manager";
   const isTech = role === "technician" || role === "tech";
@@ -516,8 +516,11 @@ function ScheduleCalendarInner() {
       role: (user?.role as string) || null,
       user_id: user?.id || null,
     });
+    // Clock-in gate re-check on every schedule navigation: re-read
+    // /auth/me so a department change re-evaluates the gate.
+    refreshUser?.();
     load();
-  }, [load, user?.role, user?.id]));
+  }, [load, user?.role, user?.id, refreshUser]));
 
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {

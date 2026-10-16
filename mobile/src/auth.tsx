@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 import { storage } from "@/src/utils/storage";
 import { api, TOKEN_KEY, registerLogoutOn401 } from "@/src/api";
 // Feb-2026 · Phase 1 offline foundation — persist a 24-hour expiry
@@ -35,6 +36,8 @@ type AuthCtx = {
   startImpersonation: (customerId: string) => Promise<void>;
   stopImpersonation: () => Promise<void>;
   finalizeAccountChoice: (choiceToken: string, accountId: string) => Promise<any>;
+  /** Re-reads `/auth/me` and merges it over the cached user (web auth.jsx parity). */
+  refreshUser: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx>({} as AuthCtx);
@@ -46,6 +49,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [impersonatorName, setImpersonatorName] = useState("");
+  const refreshing = useRef<Promise<void> | null>(null);
+  const userRef = useRef<User | null>(null);
+  userRef.current = user;
+
+  // Clock-in gate regression · Oct-2026 — the cached user was never
+  // re-read after login, so a server-side department change (e.g. an
+  // admin moving a tech to `pool_tech`) never reached the gate until
+  // re-login. Mirrors web auth.jsx `/auth/me` self-heal. Network / 5xx
+  // errors keep the cached user (offline-safe); 401 is handled by the
+  // api layer's logout callback.
+  const refreshUser = useCallback(async () => {
+    if (refreshing.current) return refreshing.current;
+    refreshing.current = (async () => {
+      try {
+        const token = await storage.secureGet<string>(TOKEN_KEY, "");
+        if (!token) return;
+        const fresh: any = await api.get("/auth/me");
+        if (!fresh || !fresh.id) return;
+        if (!(await storage.secureGet<string>(TOKEN_KEY, ""))) return; // logged out mid-flight
+        let next: any = null;
+        const prev: any = userRef.current;
+        if (prev && prev.id === fresh.id) {
+          const merged = { ...prev, ...fresh };
+          if (JSON.stringify(merged) !== JSON.stringify(prev)) next = merged;
+        }
+        if (!next) return;
+        userRef.current = next;
+        setUser(next);
+        await storage.setItem(USER_KEY, JSON.stringify(next));
+      } catch {
+        /* keep cached user */
+      } finally {
+        refreshing.current = null;
+      }
+    })();
+    return refreshing.current;
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") refreshUser();
+    });
+    return () => sub.remove();
+  }, [refreshUser]);
 
   useEffect(() => {
     (async () => {
@@ -57,8 +104,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const token = await storage.secureGet<string>(TOKEN_KEY, "");
       if (stored && token) {
         try {
-          setUser(JSON.parse(stored));
+          const parsed = JSON.parse(stored);
+          userRef.current = parsed;
+          setUser(parsed);
         } catch {}
+        // Background self-heal of stale role/department (non-blocking).
+        refreshUser();
         const imp = await storage.getItem<string>(IMP_KEY, "");
         if (imp) {
           try {
@@ -70,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(false);
     })();
-  }, []);
+  }, [refreshUser]);
 
   // JWT soft-delete enforcement: register the 401 logout callback so
   // the API layer can kick the user out when the backend rejects a
@@ -207,7 +258,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider
-      value={{ user, loading, isImpersonating, impersonatorName, login, finalizeAccountChoice, signup, logout, startImpersonation, stopImpersonation }}
+      value={{ user, loading, isImpersonating, impersonatorName, login, finalizeAccountChoice, signup, logout, startImpersonation, stopImpersonation, refreshUser }}
     >
       {children}
     </Ctx.Provider>
