@@ -5,7 +5,7 @@
  */
 export const EBITDA_TOOLTIP =
   "EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. " +
-  "A measure of a company's overall operational profitability and core earning power.";
+  "A financial metric used to measure a company's overall operational profitability and core earning power.";
 
 export const EBITDA_LEGACY_LABEL = "EBIT only (legacy)";
 

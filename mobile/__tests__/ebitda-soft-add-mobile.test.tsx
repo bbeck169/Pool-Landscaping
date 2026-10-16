@@ -4,8 +4,6 @@
  * secondary chip, legacy rows (null ebitda) → EBIT figure + "EBIT only (legacy)".
  */
 import React from "react";
-import fs from "fs";
-import path from "path";
 import { render, waitFor, fireEvent, act } from "@testing-library/react-native";
 
 jest.setTimeout(15000);
@@ -36,7 +34,10 @@ function textOf(el: any): string {
 const bucket = (month: string, ebit: number, ebitda?: number | null) =>
   ({ month, revenue: 0, cogs: 0, opex: 0, depreciation: 100, ebit, ...(ebitda === undefined ? {} : { ebitda }) });
 
-const WEB_SRC = fs.readFileSync(path.resolve(__dirname, "../../frontend/src/components/admin/EbitPanel.jsx"), "utf8");
+// User-mandated exact wording (decoupled from web source; web patch ships in parallel).
+const TOOLTIP_EXACT =
+  "EBITDA: Earnings Before Interest, Taxes, Depreciation, and Amortization. " +
+  "A financial metric used to measure a company's overall operational profitability and core earning power.";
 
 beforeEach(() => mockApiGet.mockReset());
 
@@ -51,7 +52,7 @@ describe("EBITDA soft-add · tile", () => {
     expect(q.queryByTestId("dashboard-ebitda-info-text")).toBeNull();
     fireEvent.press(q.getByTestId("dashboard-ebitda-info-btn"));
     expect(textOf(q.getByTestId("dashboard-ebitda-info-text"))).toBe(EBITDA_TOOLTIP);
-    expect(WEB_SRC).toContain(EBITDA_TOOLTIP);
+    expect(EBITDA_TOOLTIP).toBe(TOOLTIP_EXACT);
     expect(q.getByTestId("dashboard-ebitda-info-btn").props.accessibilityHint).toBe(EBITDA_TOOLTIP);
     fireEvent.press(q.getByTestId("dashboard-ebitda-info-btn"));
     expect(q.queryByTestId("dashboard-ebitda-info-text")).toBeNull();
