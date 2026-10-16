@@ -4550,12 +4550,51 @@ async def _run_boot_sequence():
         )
     except Exception as e:
         logger.warning(f"[phase17] service_location 2dsphere index crashed: {e}")
-    try:
-        from routers.dispatch_board import geocode_backfill_all_tenants_boot
-        asyncio.create_task(geocode_backfill_all_tenants_boot())
-        logger.info("[phase17] geocode backfill scheduled (fire-and-forget)")
-    except Exception as e:
-        logger.warning(f"[phase17] geocode backfill schedule crashed: {e}")
+    # P0-GEOCODE-LEAK-C1 · TD-62 (Feb-2026).  Google Geocoding API
+    # spend spiked +3,422% between Sep 15–30 and Oct 1–16 (operator
+    # Google Cloud billing summary).  Phase 1 audit identified the
+    # ``geocode_backfill_all_tenants_boot`` lifespan task as the
+    # prime suspect — fires on EVERY pod lifespan start, iterates
+    # every tenant × every customer with a ``service_address``, and
+    # only short-circuits on the 30-day ``_CACHE_TTL_DAYS`` inner
+    # guard (so legacy / newly-imported customers with
+    # ``geocoded_at = NULL`` re-fire on every boot).  Preview pod
+    # observes ~125 lifespan starts/day; production is unknown but
+    # likely in the same order of magnitude under K8s HPA +
+    # deploy cadence.
+    #
+    # Emergency kill-switch (default OFF): the sweep is now gated
+    # behind ``ENABLE_BOOT_GEOCODE_BACKFILL``.  Operators who still
+    # need a tenant-wide backfill run can:
+    #   (a) set ``ENABLE_BOOT_GEOCODE_BACKFILL=true`` for one
+    #       deploy cycle (NOT recommended — Phase 2 Commit 3 will
+    #       replace this with a ``migration_status`` sentinel so
+    #       the sweep self-deactivates after one successful pass);
+    #   (b) hit ``POST /admin/customers/geocode-backfill`` from the
+    #       admin UI (``routers/dispatch_board.py:685``) — manual,
+    #       dry-run-defaulted, 30-day TTL preserved.
+    #
+    # The lifespan log signature intentionally keeps the
+    # ``[phase17] geocode backfill`` prefix on BOTH branches so a
+    # ``grep -c '[phase17] geocode backfill'`` sweep-count query
+    # keeps working — only the suffix differs (``scheduled`` vs
+    # ``gated-off``).
+    _boot_sweep_enabled = (
+        os.environ.get("ENABLE_BOOT_GEOCODE_BACKFILL", "")
+        .strip().lower() in ("1", "true", "yes", "on")
+    )
+    if _boot_sweep_enabled:
+        try:
+            from routers.dispatch_board import geocode_backfill_all_tenants_boot
+            asyncio.create_task(geocode_backfill_all_tenants_boot())
+            logger.info("[phase17] geocode backfill scheduled (fire-and-forget)")
+        except Exception as e:
+            logger.warning(f"[phase17] geocode backfill schedule crashed: {e}")
+    else:
+        logger.info(
+            "[phase17] geocode backfill gated-off "
+            "(ENABLE_BOOT_GEOCODE_BACKFILL not set) · TD-62"
+        )
 
     # Phase F5 · Feb-2026 — one-shot Website-Visitor lead backfill.
     # Sentinel-guarded (``migration_status.f5_leads_backfill_v1``);
