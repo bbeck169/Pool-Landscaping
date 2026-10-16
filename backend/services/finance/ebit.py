@@ -394,6 +394,15 @@ async def compute_ebit(
     labor_cost_total_amount = labor_cost_amount + recurring_labor_cost_amount
 
     ebit = revenue - cogs - opex - depreciation - labor_cost_total_amount
+    # TD-59 · Feb-2026 — EBITDA soft-add. Earnings Before Interest,
+    # Taxes, Depreciation, and Amortization is the headline-friendly
+    # cousin of EBIT: it adds back the D+A line that EBIT subtracts.
+    # Since ``depreciation`` here already bundles both the
+    # ``depreciation`` AND ``amortization`` categories (see
+    # ``DEPRECIATION_CATEGORIES`` on this module), the derivation
+    # collapses to ``ebitda = ebit + depreciation``.  Additive on the
+    # wire — ``ebit`` stays byte-identical for backward compat.
+    ebitda = ebit + depreciation
     return {
         "range_from": range_from,
         "range_to": range_to,
@@ -403,6 +412,9 @@ async def compute_ebit(
         "opex": round(opex, 2),
         "depreciation": round(depreciation, 2),
         "ebit": round(ebit, 2),
+        # TD-59 · Feb-2026 — EBITDA headline. See the derivation
+        # comment on ``ebit`` above.
+        "ebitda": round(ebitda, 2),
         # Phase 10 · Feb-2026 — labor cost from technician pay rates.
         # Top-level number for easy consumption; detailed per-tech
         # breakdown lives on ``breakdown.labor_cost_breakdown``.
@@ -510,10 +522,15 @@ def apply_edits(
 
     ebit = (effective["revenue"] - effective["cogs"]
              - effective["opex"] - effective["depreciation"])
+    # TD-59 · EBITDA mirror on the adjustments path. Same additive
+    # derivation as ``compute_ebit`` — ``depreciation`` here already
+    # bundles D+A per the module-level ``DEPRECIATION_CATEGORIES``.
+    ebitda = ebit + effective["depreciation"]
 
     out = dict(live)
     out.update({k: round(effective[k], 2) for k in _LINE_KEYS})
     out["ebit"] = round(ebit, 2)
+    out["ebitda"] = round(ebitda, 2)
     out["line_adjustments"] = adj
     out["line_overrides"] = ovr
     return out

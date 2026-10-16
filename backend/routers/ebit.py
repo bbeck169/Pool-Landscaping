@@ -35,6 +35,42 @@ from services.finance.ebit import (
 )
 from utils import get_current_user
 
+
+def _to_float(v: Any) -> float:
+    """Local tiny coerce — mirrors ``services.finance.ebit._to_float``
+    without pulling an underscore-prefixed export from the service.
+    Used by the TD-59 EBITDA fallback on the trend series."""
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _hydrate_ebitda(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """TD-59 · Feb-2026 — fills ``ebitda`` on legacy pre-TD-59
+    ``ebit_snapshots`` documents on READ. Also hydrates the embedded
+    ``computed_live`` sub-doc if present. Non-destructive: existing
+    ``ebitda`` values pass through untouched; the collection itself
+    is never written on a read path.
+
+    Derivation: ``ebitda = ebit + depreciation`` where ``depreciation``
+    already bundles D+A per ``services.finance.ebit.DEPRECIATION_CATEGORIES``.
+    """
+    if not doc:
+        return doc
+    if "ebitda" not in doc:
+        doc["ebitda"] = round(
+            _to_float(doc.get("ebit")) + _to_float(doc.get("depreciation")),
+            2,
+        )
+    cl = doc.get("computed_live")
+    if isinstance(cl, dict) and "ebitda" not in cl:
+        cl["ebitda"] = round(
+            _to_float(cl.get("ebit")) + _to_float(cl.get("depreciation")),
+            2,
+        )
+    return doc
+
 # Phase 53d · Feb-2026 — OpenAPI contract lock. Exposing the range
 # enum as a ``Literal`` type gives the auto-generated docs the exact
 # accepted values instead of relying on the description string. The
@@ -168,6 +204,58 @@ async def ebit_compute(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 1a. TD-59 · Feb-2026 — path aliases ``/reports/ebit`` + ``/reports/ebitda``
+#
+# The user-facing report rename ships headline-first on the frontend
+# (``EBITDA`` is now the primary metric; EBIT stays visible under a
+# toggle). To let FE / mobile / future API consumers call the report
+# by its headline name, we register two sibling path aliases that
+# share the identical compute pipeline:
+#
+#   * ``GET /api/reports/ebit``    — explicit EBIT-name path, backward-
+#                                    compat with any pre-TD-59 consumer
+#                                    that wants to call by the historical
+#                                    name.  Returns the same payload as
+#                                    ``/api/ebit/compute``, with the
+#                                    additive ``ebitda`` field now
+#                                    included (non-breaking).
+#   * ``GET /api/reports/ebitda``  — primary post-TD-59 path.  Identical
+#                                    payload; headline-friendly URL.
+#
+# Both aliases return the FULL dual-field payload — swapping between
+# them is a pure URL concern.  The original ``/api/ebit/*`` namespace
+# is left intact for the editable snapshot path (adjustments /
+# overrides / versioning) which is EBIT-schema-tied by design.
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/reports/ebit")
+async def report_ebit_alias(
+    range: RangeKind = Query("this_month"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    revenue_basis: RevenueBasis = Query("cash"),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return await ebit_compute(
+        range=range, from_=from_, to=to,
+        revenue_basis=revenue_basis, user=user,
+    )
+
+
+@router.get("/reports/ebitda")
+async def report_ebitda_alias(
+    range: RangeKind = Query("this_month"),
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    revenue_basis: RevenueBasis = Query("cash"),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    return await ebit_compute(
+        range=range, from_=from_, to=to,
+        revenue_basis=revenue_basis, user=user,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 1b. GET /ebit/trend — Phase 53e (dashboard tile support)
 #     Returns N months of EBIT values (default 6, capped 24) in a
 #     single round-trip so dashboards can render a compact sparkline
@@ -225,6 +313,16 @@ async def ebit_trend(
             "recurring_labor_cost": live.get("recurring_labor_cost", 0),
             "labor_cost_total": live.get("labor_cost_total", 0),
             "ebit":    live.get("ebit", 0),
+            # TD-59 · Feb-2026 — additive EBITDA on the trend series.
+            # ``compute_ebit`` now returns ebitda top-level; defaulted
+            # to ``ebit + depreciation`` for safety if a pre-TD-59
+            # compute path is wired here. Clients can expect
+            # ``ebitda >= ebit`` for every bucket.
+            "ebitda": live.get(
+                "ebitda",
+                _to_float(live.get("ebit", 0))
+                + _to_float(live.get("depreciation", 0)),
+            ),
         })
     return {"months": months, "revenue_basis": basis, "series": out}
 
@@ -257,6 +355,8 @@ async def ebit_snapshots_list(
     rows = await db.ebit_snapshots.find(
         q, {"_id": 0},
     ).sort(sort_spec).to_list(limit)
+    # TD-59 · lazy-fill ebitda on pre-TD-59 persisted rows.
+    rows = [_hydrate_ebitda(r) for r in rows]
     return {"snapshots": rows, "count": len(rows)}
 
 
@@ -276,7 +376,8 @@ async def ebit_snapshot_get(
     )
     if not doc:
         raise HTTPException(404, {"error": "snapshot_not_found"})
-    return doc
+    # TD-59 · lazy-fill ebitda on pre-TD-59 persisted rows.
+    return _hydrate_ebitda(doc)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -313,11 +414,22 @@ async def _save_new_version(
         "opex": effective["opex"],
         "depreciation": effective["depreciation"],
         "ebit": effective["ebit"],
+        # TD-59 · Feb-2026 — EBITDA on saved snapshots. Lazy backfill
+        # for legacy pre-TD-59 docs lives in ``_hydrate_ebitda`` on
+        # the read paths; new writes carry the field natively.
+        "ebitda": effective.get(
+            "ebitda", effective["ebit"] + effective["depreciation"]
+        ),
         "breakdown": live["breakdown"],
         "computed_live": {
             "revenue": live["revenue"], "cogs": live["cogs"],
             "opex": live["opex"], "depreciation": live["depreciation"],
             "ebit": live["ebit"],
+            "ebitda": live.get(
+                "ebitda",
+                _to_float(live.get("ebit", 0))
+                + _to_float(live.get("depreciation", 0)),
+            ),
         },
         "line_adjustments": effective["line_adjustments"],
         "line_overrides": effective["line_overrides"],
