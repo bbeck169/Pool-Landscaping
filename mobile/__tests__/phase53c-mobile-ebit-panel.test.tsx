@@ -164,6 +164,8 @@ describe("Mobile · EbitPanel · adjustment mode", () => {
     const { getByTestId } = render(<EbitPanel />);
     await waitFor(() => expect(getByTestId("ebit-total-value")).toBeTruthy());
     expect(textOf(getByTestId("ebit-total-value"))).toContain("100.00");
+    // EBITDA-SOFT-ADD — headline = ebit + depreciation (100 + 200).
+    expect(textOf(getByTestId("ebitda-total-value"))).toContain("300.00");
 
     const input = getByTestId("ebit-row-revenue-adjustment-input");
     await act(async () => {

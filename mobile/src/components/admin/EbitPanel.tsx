@@ -39,6 +39,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { EBITDA_TOOLTIP, EBITDA_LEGACY_LABEL } from "@/src/utils/ebitda";
 
 type LineKey = "revenue" | "cogs" | "opex" | "depreciation";
 const LINE_KEYS: LineKey[] = ["revenue", "cogs", "opex", "depreciation"];
@@ -221,8 +222,13 @@ function EbitVersionsModal(props: {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.versionLine1}>
-                      EBIT {money(s.ebit)} · {s.revenue_basis}
+                      {s.ebitda != null ? `EBITDA ${money(s.ebitda)} · ` : ""}EBIT {money(s.ebit)} · {s.revenue_basis}
                     </Text>
+                    {s.ebitda == null ? (
+                      <View style={styles.legacyChip} testID={`ebit-versions-row-${s.id}-legacy`}>
+                        <Text style={styles.legacyText}>{EBITDA_LEGACY_LABEL}</Text>
+                      </View>
+                    ) : null}
                     <Text style={styles.versionLine2}>
                       {s.saved_at?.slice(0, 19)} · {s.author_user_id?.slice(0, 8) || "anon"}
                     </Text>
@@ -279,6 +285,7 @@ export default function EbitPanel() {
   const [readonly, setReadonly] = useState(false);
 
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [snapshots, setSnapshots] = useState<any[]>([]);
 
   const buildQs = useCallback(() => {
@@ -487,7 +494,18 @@ export default function EbitPanel() {
     <View style={styles.panel} testID="ebit-panel">
       <View style={styles.header}>
         <Ionicons name="sparkles-outline" size={16} color="#0891B2" />
-        <Text style={styles.title}>EBIT</Text>
+        <Pressable
+          testID="ebit-panel-title-info-btn"
+          onPress={() => setShowInfo((v) => !v)}
+          style={styles.titlePress}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="What is EBITDA?"
+          accessibilityHint={EBITDA_TOOLTIP}
+        >
+          <Text style={styles.title} testID="ebit-panel-title">EBITDA</Text>
+          <Ionicons name="information-circle-outline" size={15} color={colors.muted} />
+        </Pressable>
         {loadedVersion ? (
           <View style={styles.versionPill} testID="ebit-panel-loaded-version">
             <Text style={styles.versionPillText}>
@@ -525,6 +543,9 @@ export default function EbitPanel() {
           <Text style={[styles.headerBtnText, { color: "#fff" }]}>PDF</Text>
         </Pressable>
       </View>
+      {showInfo ? (
+        <Text style={styles.titleInfo} testID="ebit-panel-title-info-text">{EBITDA_TOOLTIP}</Text>
+      ) : null}
 
       <View style={styles.pickerRow} testID="ebit-range-picker">
         {RANGE_KINDS.map((r) => (
@@ -625,10 +646,21 @@ export default function EbitPanel() {
           </View>
 
           <View style={styles.totalRow} testID="ebit-total-row">
-            <Text style={styles.totalLabel}>EBIT (effective)</Text>
-            <Text style={styles.totalValue} testID="ebit-total-value">
-              {money(effective.ebit || 0)}
-            </Text>
+            <Text style={styles.totalLabel}>EBITDA (effective)</Text>
+            <View style={styles.totalValues}>
+              <Text style={styles.totalValue} testID="ebitda-total-value">
+                {money(
+                  // EBITDA-SOFT-ADD — web parity: derived ebit + depreciation
+                  // when ebitda is absent (client-computed effective lines).
+                  effective.ebitda != null
+                    ? effective.ebitda
+                    : (Number(effective.ebit || 0) + Number(effective.depreciation || 0))
+                )}
+              </Text>
+              <Text style={styles.totalSub} testID="ebit-total-value">
+                EBIT {money(effective.ebit || 0)}
+              </Text>
+            </View>
           </View>
 
           {canEdit && !readonly ? (
@@ -793,6 +825,13 @@ const styles = StyleSheet.create({
   totalLabel: { fontSize: 11, fontFamily: font.bold, color: "#94A3B8",
                   textTransform: "uppercase" },
   totalValue: { fontSize: fontSize["2xl"], fontFamily: font.bold, color: "#fff" },
+  totalValues: { alignItems: "flex-end", gap: 2 },
+  totalSub: { fontSize: 11, fontFamily: font.medium, color: "#94A3B8" },
+  titlePress: { flexDirection: "row", alignItems: "center", gap: 4 },
+  titleInfo: { fontSize: 12, lineHeight: 17, fontFamily: font.regular, color: colors.muted, marginTop: 4 },
+  legacyChip: { alignSelf: "flex-start", marginTop: 2, paddingHorizontal: 6, paddingVertical: 1,
+    borderRadius: radius.pill, backgroundColor: "#FEF3C7" },
+  legacyText: { fontSize: 10, fontFamily: font.semibold, color: "#92400E" },
   saveRow: { flexDirection: "row", gap: spacing.xs, alignItems: "center" },
   noteInput: {
     flex: 1, borderWidth: 1, borderColor: colors.border,

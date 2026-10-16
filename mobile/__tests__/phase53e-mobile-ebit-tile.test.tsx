@@ -48,6 +48,9 @@ function series(values: number[]) {
     opex: 300,
     depreciation: 100,
     ebit,
+    // EBITDA-SOFT-ADD — post-TD-59 wire shape carries ebitda too (web
+    // 892e4c38e uses ebitda = ebit so delta % stays locked).
+    ebitda: ebit,
   }));
 }
 
@@ -84,6 +87,9 @@ describe("Phase 53e · Mobile · EbitTile", () => {
     const { getByTestId } = render(<EbitTile />);
     await waitFor(() => getByTestId("dashboard-ebit-tile-value"));
     expect(textOf(getByTestId("dashboard-ebit-tile-value"))).toContain("$200");
+    // EBITDA-SOFT-ADD — headline is EBITDA; EBIT moved to the secondary chip.
+    expect(textOf(getByTestId("dashboard-ebitda-tile-value"))).toBe("$200");
+    expect(textOf(getByTestId("dashboard-ebit-tile-value"))).toBe("EBIT $200");
     const chip = getByTestId("dashboard-ebit-tile-delta");
     expect(textOf(chip)).toContain("100.0%");
     // The chip background is green (#DCFCE7) on positive delta.

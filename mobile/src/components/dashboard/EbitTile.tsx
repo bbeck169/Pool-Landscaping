@@ -23,6 +23,7 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { mapApiError, errorKindIcon } from "@/src/utils/mapApiError";
+import { EBITDA_TOOLTIP, EBITDA_LEGACY_LABEL, resolveEbitda } from "@/src/utils/ebitda";
 
 // Phase 53f · Feb-2026 — drill-down helpers. Convert a "YYYY-MM"
 // bucket into a ``{from, to}`` ISO range that the mobile
@@ -43,7 +44,7 @@ function monthLabel(monthStr: string | undefined): string {
     .toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-type TrendPoint = { month: string; ebit: number };
+type TrendPoint = { month: string; ebit: number; ebitda?: number | null };
 type TrendResponse = { months: number; revenue_basis: string; series: TrendPoint[] };
 
 function fmtUSD(n: number): string {
@@ -61,6 +62,7 @@ export default function EbitTile() {
   const router = useRouter();
   const [data, setData] = useState<TrendResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [showInfo, setShowInfo] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -75,8 +77,15 @@ export default function EbitTile() {
   const series = data?.series || [];
   const cur = series[series.length - 1];
   const prev = series[series.length - 2];
+  // EBITDA-SOFT-ADD — headline + delta use EBITDA; a legacy bucket
+  // (null ebitda) on either side falls back to EBIT-vs-EBIT.
+  const curR = resolveEbitda(cur);
+  const prevR = resolveEbitda(prev);
+  const legacy = curR.legacy;
   const curEbit = cur?.ebit || 0;
-  const delta = pctDelta(curEbit, prev?.ebit);
+  const delta = (legacy || prevR.legacy)
+    ? pctDelta(curEbit, prev?.ebit)
+    : pctDelta(curR.value, prevR.value);
   const trendIconName =
     delta == null ? "remove-outline"
     : delta > 0 ? "trending-up"
@@ -94,7 +103,18 @@ export default function EbitTile() {
   return (
     <View style={styles.card} testID="dashboard-ebit-tile">
       <View style={styles.header}>
-        <Text style={styles.label}>EBIT · This month</Text>
+        <Pressable
+          testID="dashboard-ebitda-info-btn"
+          onPress={() => setShowInfo((v) => !v)}
+          style={styles.labelPress}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="What is EBITDA?"
+          accessibilityHint={EBITDA_TOOLTIP}
+        >
+          <Text style={styles.label} testID="dashboard-ebit-tile-label">EBITDA · This month</Text>
+          <Ionicons name="information-circle-outline" size={13} color={colors.muted} />
+        </Pressable>
         <Pressable
           testID="dashboard-ebit-tile-report-link"
           onPress={() => router.push("/profit-report" as any)}
@@ -106,6 +126,9 @@ export default function EbitTile() {
           <Ionicons name="arrow-forward" size={12} color={colors.brandPrimary} />
         </Pressable>
       </View>
+      {showInfo ? (
+        <Text style={styles.info} testID="dashboard-ebitda-info-text">{EBITDA_TOOLTIP}</Text>
+      ) : null}
 
       {error ? (() => {
         const mapped = mapApiError(error);
@@ -121,27 +144,42 @@ export default function EbitTile() {
             testID="dashboard-ebit-tile-retry"
             onPress={load}
             accessibilityRole="button"
-            accessibilityLabel="Retry loading EBIT">
+            accessibilityLabel="Retry loading EBITDA">
             <Text style={styles.retry}>Retry</Text>
           </Pressable>
         </View>
         );
       })() : !data ? (
         <Text style={styles.loading} testID="dashboard-ebit-tile-loading">
-          Loading current-month EBIT…
+          Loading current-month EBITDA…
         </Text>
       ) : (
         <>
           <View style={styles.valueRow}>
-            <Text
-              testID="dashboard-ebit-tile-value"
-              style={[
-                styles.value,
-                { color: curEbit >= 0 ? colors.onSurface : "#DC2626" },
-              ]}
-            >
-              {fmtUSD(curEbit)}
-            </Text>
+            {legacy ? (
+              <>
+                <Text testID="dashboard-ebit-tile-value"
+                  style={[styles.value, { color: curEbit >= 0 ? colors.onSurface : "#DC2626" }]}>
+                  {fmtUSD(curEbit)}
+                </Text>
+                <View style={styles.legacyChip} testID="dashboard-ebitda-tile-legacy-chip">
+                  <Text style={styles.legacyText}>{EBITDA_LEGACY_LABEL}</Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text testID="dashboard-ebitda-tile-value"
+                  style={[styles.value, { color: curR.value >= 0 ? colors.onSurface : "#DC2626" }]}>
+                  {fmtUSD(curR.value)}
+                </Text>
+                {/* Secondary EBIT chip — always visible (web parity) */}
+                <View style={styles.ebitChip}>
+                  <Text style={styles.ebitChipText} testID="dashboard-ebit-tile-value">
+                    EBIT {fmtUSD(curEbit)}
+                  </Text>
+                </View>
+              </>
+            )}
             {delta != null && (
               <View
                 testID="dashboard-ebit-tile-delta"
@@ -230,6 +268,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
   },
+  labelPress: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },
+  info: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.muted,
+    marginBottom: spacing.sm,
+  },
+  ebitChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  ebitChipText: { fontFamily: font.semibold, fontSize: 11, color: colors.muted },
+  legacyChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: "#FEF3C7",
+  },
+  legacyText: { fontFamily: font.semibold, fontSize: 11, color: "#92400E" },
   linkText: {
     fontFamily: font.semibold,
     fontSize: fontSize.sm,
