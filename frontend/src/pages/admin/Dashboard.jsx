@@ -567,31 +567,33 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Feb-2026 · Dashboard reorg — action-cards row (Today's
-          Routes, AI Alerts, ...) now sits under the Revenue-insights
-          section. Manager+ only. Remounts via ``tenantSettingsVersion``
-          so a tenant timezone change refetches the tz-anchored
-          "today" counts immediately (no page reload). */}
-      {(user?.role === "admin" || user?.role === "super_admin"
-         || user?.role === "manager") ? (
-        <DashboardActionCards key={tenantSettingsVersion} />
-      ) : null}
+      {/* Feb-2026 · P2 Dashboard section reorder — Revenue Forecast
+          + EBITDA topline row promoted directly below the Revenue by
+          Category / Revenue insights section and directly above the
+          KPI grid (which carries the Pool / Landscaping customer +
+          Active Accounts + property-count tiles). Operator spec:
+          section order is revenue-insights → topline → kpi-grid,
+          consecutive siblings.  RevenueForecastTile shares
+          ``revenueRange`` state with the donut tiles above. EBITDA
+          tile is still role-gated to super_admin / admin per the
+          EBITDA-SOFT-ADD ship (892e4c38e). */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"
+              data-testid="dashboard-topline-tiles">
+        <RevenueForecastTile range={revenueRange} />
+        {(user?.role === "super_admin" || user?.role === "admin") && (
+          <div data-testid="dashboard-ebit-tile-slot">
+            <EbitTile />
+          </div>
+        )}
+      </div>
 
-      {error ? (
-        <div
-          className="rounded-xl p-4 text-sm"
-          style={{ backgroundColor: "#FEE2E2", color: colors.error }}
-          data-testid="dashboard-error"
-        >
-          {error}
-        </div>
-      ) : null}
-
-      {/* Feb-2026 · Dashboard batch — KPI grid relocated here, directly
-          above the Revenue Forecast / EBIT topline row, per operator
-          request. Order is Active Jobs → Pending → Active Customers →
-          Inactive Customers. Grid breakpoints match the sibling topline
-          row (2-col on mobile, 4-col on large). */}
+      {/* Feb-2026 · Dashboard batch — KPI grid sits directly below the
+          Revenue Forecast / EBITDA topline row per the P2 section
+          reorder.  The grid carries the Active Jobs / Pending /
+          Active-Inactive Customer tiles followed by the Pool /
+          Landscaping customer tiles and the Active Accounts +
+          property-count tiles.  Grid breakpoints: 2-col on mobile,
+          4-col on large. */}
       {/* KPI grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6"
            data-testid="dashboard-kpi-grid">
@@ -737,20 +739,27 @@ export default function AdminDashboard() {
           KPI grid above). */}
       <ServiceCategoryTileRow />
 
-      {/* Feb-2026 · Revenue Forecast + EBIT topline tiles. Sit below
-          the Mass Messaging card, Global Search Bar, Revenue-insights
-          section, and action-cards row per the Feb-2026 Dashboard
-          reorg. RevenueForecastTile shares ``revenueRange`` state
-          with the donut tiles above. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"
-              data-testid="dashboard-topline-tiles">
-        <RevenueForecastTile range={revenueRange} />
-        {(user?.role === "super_admin" || user?.role === "admin") && (
-          <div data-testid="dashboard-ebit-tile-slot">
-            <EbitTile />
-          </div>
-        )}
-      </div>
+      {/* Feb-2026 · P2 Dashboard section reorder — action-cards row
+          (Today's Routes, AI Alerts, ...) relocated BELOW the Revenue
+          Insights → Topline → KPI grid → Service Category sequence so
+          those sections render as consecutive siblings up top.
+          Manager+ only. Remounts via ``tenantSettingsVersion`` so a
+          tenant timezone change refetches the tz-anchored "today"
+          counts immediately (no page reload). */}
+      {(user?.role === "admin" || user?.role === "super_admin"
+         || user?.role === "manager") ? (
+        <DashboardActionCards key={tenantSettingsVersion} />
+      ) : null}
+
+      {error ? (
+        <div
+          className="rounded-xl p-4 text-sm"
+          style={{ backgroundColor: "#FEE2E2", color: colors.error }}
+          data-testid="dashboard-error"
+        >
+          {error}
+        </div>
+      ) : null}
 
       {/* Phase F3 · Feb-2026 — Soshie Publishing tile. Admin+ (super_admin
           / admin / owner) since moderation queue is admin-gated. */}

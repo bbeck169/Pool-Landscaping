@@ -1,14 +1,22 @@
 /**
  * Feb-2026 · Dashboard batch — KPI tile reorder + Data Integrity hide.
  *
- * Locks the two changes shipped by the Dashboard batch ticket:
+ * Locks the two changes shipped by the Dashboard batch ticket + the
+ * P2 Dashboard section reorder that promoted the Revenue Forecast /
+ * EBITDA topline row directly between the Revenue Insights section
+ * and the KPI grid:
  *
- *   Change 1 — Reorder the four summary tiles so they sit directly
- *     above the Revenue Forecast / EBIT topline row:
- *       Active Jobs → Pending → Active Customers → Inactive Customers.
- *     Order is asserted via DOM position (document ordering) so a
- *     regression that swaps two tiles or re-anchors them below the
- *     Warranties/Routing/Referral tiles would fail.
+ *   Change 1 — The four Jobs-flavoured KPI tiles still render in the
+ *     Active Jobs → Pending → Active Customers → Inactive Customers
+ *     order (asserted via DOM document ordering).
+ *
+ *   Change 1b (P2 section reorder) — The Revenue Forecast / EBITDA
+ *     topline row sits BETWEEN the Revenue Insights section and the
+ *     KPI grid.  The three sections render as consecutive siblings:
+ *       revenue-tiles-section → dashboard-topline-tiles → dashboard-kpi-grid
+ *     DashboardActionCards + the error banner were moved below the
+ *     Service Category row so they can no longer wedge between the
+ *     three locked sections above.
  *
  *   Change 2 — Data Integrity section is HIDDEN (not deleted).  The
  *     component import is still in the file for easy revert, but no
@@ -166,27 +174,37 @@ describe("Admin Dashboard · Feb-2026 KPI reorder + Data Integrity hide", () => 
     }
   });
 
-  it("places the KPI tiles directly above the Revenue Forecast / EBIT topline row", async () => {
+  it("places the Revenue Forecast / EBITDA topline row directly between the Revenue Insights section and the KPI grid", async () => {
     await _renderDashboard();
 
     await waitFor(() => screen.getByTestId("kpi-active-jobs"));
 
-    const kpiGrid = screen.getByTestId("dashboard-kpi-grid");
+    const revenueSection = screen.getByTestId("revenue-tiles-section");
     const toplineRow = screen.getByTestId("dashboard-topline-tiles");
+    const kpiGrid = screen.getByTestId("dashboard-kpi-grid");
 
-    // KPI grid precedes the topline row.
-    const pos = kpiGrid.compareDocumentPosition(toplineRow);
-    expect(pos & 4).toBe(4);
+    // Revenue Insights precedes the topline row in the document.
+    expect(revenueSection.compareDocumentPosition(toplineRow) & 4).toBe(4);
+    // Topline row precedes the KPI grid in the document.
+    expect(toplineRow.compareDocumentPosition(kpiGrid) & 4).toBe(4);
 
-    // And it is a DIRECT sibling (no other dashboard section wedged
-    // between them).  Enforced by walking ``kpiGrid.nextElementSibling``
-    // and finding the topline row via its testid — tolerates a
-    // whitespace text node by stepping past non-element nodes.
-    let next = kpiGrid.nextSibling;
-    while (next && next.nodeType !== 1) next = next.nextSibling;
-    expect(next).not.toBeNull();
-    expect(next.getAttribute("data-testid"))
+    // Direct siblings in BOTH directions — no section wedged between
+    // revenue-insights ↔ topline ↔ kpi-grid.  Walk nextSibling past
+    // non-element nodes (whitespace text) to the first element.
+    const nextElement = (node) => {
+      let n = node.nextSibling;
+      while (n && n.nodeType !== 1) n = n.nextSibling;
+      return n;
+    };
+    const afterRevenue = nextElement(revenueSection);
+    expect(afterRevenue).not.toBeNull();
+    expect(afterRevenue.getAttribute("data-testid"))
       .toBe("dashboard-topline-tiles");
+
+    const afterTopline = nextElement(toplineRow);
+    expect(afterTopline).not.toBeNull();
+    expect(afterTopline.getAttribute("data-testid"))
+      .toBe("dashboard-kpi-grid");
   });
 
   it("renders the KPI tiles AFTER the Revenue Insights section", async () => {
