@@ -1,10 +1,11 @@
 /**
- * Feb-2026 · Dashboard KPI tile swap coverage — Active/Inactive
- * Customers.
+ * Feb-2026 · Dashboard KPI tile cleanup coverage — Inactive
+ * Customers tile + "Active Customers" removal.
  *
  * Locks:
  *   1. "Technicians" copy is GONE from the DOM.
- *   2. "Active Customers" tile present + renders numeric value.
+ *   2. "Active Customers" tile (``kpi-active-customers``) is GONE
+ *      from the DOM — removed in the P2 Dashboard tile cleanup.
  *   3. "Inactive Customers" tile present + renders numeric value.
  *   4. Sum-invariant guard: no leftover "Customers: 150" legacy tile.
  */
@@ -102,12 +103,14 @@ async function _renderDashboard() {
 }
 
 
-describe("Admin Dashboard KPI grid · Feb-2026 tile swap", () => {
+describe("Admin Dashboard KPI grid · Feb-2026 tile cleanup", () => {
   it("does NOT render the legacy 'Technicians' tile copy anywhere in the DOM", async () => {
     await _renderDashboard();
-    // Wait for the KPI grid to hydrate — data-testid appears once
-    // the ``data`` state is populated (skeleton path uses no testid).
-    await waitFor(() => screen.getByTestId("kpi-active-customers"));
+    // Wait for the KPI grid to hydrate — ``kpi-inactive-customers``
+    // appears once ``data`` is populated.  (Previously anchored on
+    // ``kpi-active-customers``; that tile was removed by the P2
+    // tile cleanup so we anchor on its surviving sibling.)
+    await waitFor(() => screen.getByTestId("kpi-inactive-customers"));
     // Exact-match on the tile label — the word "technicians" may
     // legitimately appear in a heading elsewhere on the page in
     // the future; the KPI tile's label was "Technicians".
@@ -116,13 +119,10 @@ describe("Admin Dashboard KPI grid · Feb-2026 tile swap", () => {
     expect(screen.queryByTestId("kpi-technicians")).toBeNull();
   });
 
-  it("renders 'Active Customers' tile with the numeric active_customers_count", async () => {
+  it("does NOT render the 'Active Customers' tile — removed in P2 Dashboard tile cleanup", async () => {
     await _renderDashboard();
-    const tile = await screen.findByTestId("kpi-active-customers");
-    // Label present.
-    expect(tile.textContent).toMatch(/Active Customers/i);
-    // Numeric value present.
-    expect(tile.textContent).toContain("100");
+    await waitFor(() => screen.getByTestId("kpi-inactive-customers"));
+    expect(screen.queryByTestId("kpi-active-customers")).toBeNull();
   });
 
   it("renders 'Inactive Customers' tile with the numeric inactive_customers_count", async () => {
@@ -134,19 +134,13 @@ describe("Admin Dashboard KPI grid · Feb-2026 tile swap", () => {
 
   it("does NOT render a leftover legacy 'Customers: 150' tile (sum-invariant guard)", async () => {
     await _renderDashboard();
-    await waitFor(() => screen.getByTestId("kpi-active-customers"));
+    await waitFor(() => screen.getByTestId("kpi-inactive-customers"));
     // Legacy "Customers" tile removed — must not appear.
     expect(screen.queryByTestId("kpi-customers")).toBeNull();
-    // Exact-match "^Customers$" as a KPI label — guards a paste-back
-    // regression that would ship all THREE tiles (active + inactive
-    // + total) and confuse the user.
-    expect(screen.queryByText(/^Customers$/i)).toBeNull();
-    // The number 150 (total_customers) must NOT appear as a KPI
-    // value on the grid.  It's still in the API response for
+    // The number 150 (total_customers) must NOT appear in the
+    // Inactive Customers tile.  It's still in the API response for
     // legacy consumers, but never surfaced to the DOM.
-    const active = screen.getByTestId("kpi-active-customers");
     const inactive = screen.getByTestId("kpi-inactive-customers");
-    expect(active.textContent).not.toContain("150");
     expect(inactive.textContent).not.toContain("150");
   });
 });

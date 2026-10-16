@@ -1,8 +1,11 @@
 /**
  * Feb-2026 · P2 #6 property pivot — Commit 5 vitest suite.
  *
- * Locks the behaviour of the 4 property-level KPI tiles rendered
- * below the customer-count tiles:
+ * Locks the behaviour of the 4 property-level KPI tiles that now
+ * form the operator-labelled "Customers" row at the bottom of the
+ * KPI grid (data source unchanged — still per-tenant property
+ * counts; the labels were renamed in the P2 Dashboard tile
+ * cleanup):
  *
  *   1. All 4 tiles render with the correct counts from the
  *      /dashboard response.
@@ -11,9 +14,10 @@
  *   3. Pool / Landscaping / Both tiles deep-link to the
  *      Properties list filtered to the matching category.
  *   4. Zero-count tiles still render (do not hide).
- *   5. Existing customer-count tiles (``kpi-active-customers``,
- *      ``kpi-pool-customers``, ``kpi-landscaping-customers``)
- *      remain present — ADD, don't REPLACE.
+ *   5. The customer-count tiles ``kpi-active-customers`` /
+ *      ``kpi-pool-customers`` / ``kpi-landscaping-customers``
+ *      have been REMOVED (operator cleanup) — assert they do NOT
+ *      render.  ``kpi-inactive-customers`` is preserved.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -147,7 +151,7 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     expect(navigateMock).toHaveBeenCalledWith("/properties?is_active=true");
   });
 
-  it("Pool Properties tile deep-links with service_category=pool",
+  it("Pool Properties tile (now labelled 'Pool Customers') deep-links with service_category=pool",
      async () => {
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-pool-properties"));
@@ -156,7 +160,7 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     );
   });
 
-  it("Landscaping Properties tile deep-links with service_category=landscaping",
+  it("Landscaping Properties tile (now labelled 'Landscaping Customers') deep-links with service_category=landscaping",
      async () => {
     await _renderDashboard();
     fireEvent.click(
@@ -167,7 +171,7 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
     );
   });
 
-  it("Both Services Properties tile deep-links with service_category=both",
+  it("Both Services Properties tile (now labelled 'Both Service Customers') deep-links with service_category=both",
      async () => {
     await _renderDashboard();
     fireEvent.click(await screen.findByTestId("kpi-both-properties"));
@@ -194,16 +198,37 @@ describe("Dashboard · Property-count tiles (P2 #6)", () => {
       .toBeInTheDocument();
   });
 
-  it("existing customer-count tiles are preserved (ADD, not REPLACE)",
+  it("renders the renamed Customers labels on the property-count tiles (Pool/Landscaping/Both Service)",
      async () => {
     await _renderDashboard();
-    expect(await screen.findByTestId("kpi-active-customers"))
-      .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-inactive-customers"))
-      .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-pool-customers"))
-      .toBeInTheDocument();
-    expect(await screen.findByTestId("kpi-landscaping-customers"))
+    const pool = await screen.findByTestId("kpi-pool-properties");
+    const land = await screen.findByTestId("kpi-landscaping-properties");
+    const both = await screen.findByTestId("kpi-both-properties");
+    // Labels renamed in the P2 Dashboard tile cleanup — data
+    // source + testids unchanged.
+    expect(pool.textContent).toMatch(/Pool Customers/);
+    expect(land.textContent).toMatch(/Landscaping Customers/);
+    // Note the singular "Service" per operator spec.
+    expect(both.textContent).toMatch(/Both Service Customers/);
+    // Old labels must NOT appear in these tiles.
+    expect(pool.textContent).not.toMatch(/Pool Properties/);
+    expect(land.textContent).not.toMatch(/Landscaping Properties/);
+    expect(both.textContent).not.toMatch(/Both Services Properties/);
+  });
+
+  it("removed customer-count tiles are gone (P2 Dashboard tile cleanup)",
+     async () => {
+    await _renderDashboard();
+    // Anchor on a surviving sibling before asserting absence.
+    await screen.findByTestId("kpi-inactive-customers");
+    expect(screen.queryByTestId("kpi-active-customers"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByTestId("kpi-pool-customers"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByTestId("kpi-landscaping-customers"))
+      .not.toBeInTheDocument();
+    // Inactive Customers is PRESERVED.
+    expect(screen.queryByTestId("kpi-inactive-customers"))
       .toBeInTheDocument();
   });
 });

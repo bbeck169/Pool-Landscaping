@@ -91,15 +91,12 @@ describe("Priority 7 · Dashboard KPI tiles are clickable drill-downs", () => {
     );
   });
 
-  it("Active Customers routes to /customers?status=active (Feb-2026 tile swap)", () => {
-    // Feb-2026 · The bottom row of the KPI grid was swapped from
-    // ``Customers`` (total) + ``Technicians`` to Active Customers +
-    // Inactive Customers.  Both drill down into a filtered customer
-    // list keyed by ``?status=``.  Legacy lock-ins for ``kpi-customers``
-    // and ``kpi-technicians`` are retired below.
-    expect(block).toMatch(
-      /testId="kpi-active-customers"[\s\S]{0,200}navigate\("\/customers\?status=active"\)|navigate\("\/customers\?status=active"\)[\s\S]{0,200}testId="kpi-active-customers"/,
-    );
+  it("Active Customers tile is REMOVED (Feb-2026 P2 Dashboard tile cleanup)", () => {
+    // Previously asserted the Active Customers tile existed with a
+    // deep-link to ``/customers?status=active``.  The P2 tile cleanup
+    // removed this tile from Dashboard.jsx; the lock-in flips to a
+    // "legacy tile gone" guard so a paste-back regression fails.
+    expect(block).not.toMatch(/testId="kpi-active-customers"/);
   });
 
   it("Inactive Customers routes to /customers?status=inactive (Feb-2026 tile swap)", () => {

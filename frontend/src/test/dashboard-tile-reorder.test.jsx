@@ -6,9 +6,11 @@
  * EBITDA topline row directly between the Revenue Insights section
  * and the KPI grid:
  *
- *   Change 1 — The four Jobs-flavoured KPI tiles still render in the
- *     Active Jobs → Pending → Active Customers → Inactive Customers
- *     order (asserted via DOM document ordering).
+ *   Change 1 — The Jobs-flavoured KPI tiles still render in the
+ *     Active Jobs → Pending → Inactive Customers order (asserted
+ *     via DOM document ordering).  Note: the "Active Customers"
+ *     tile was removed in the P2 Dashboard tile cleanup — the
+ *     former 4-tile sequence collapses to 3 here.
  *
  *   Change 1b (P2 section reorder) — The Revenue Forecast / EBITDA
  *     topline row sits BETWEEN the Revenue Insights section and the
@@ -150,7 +152,7 @@ async function _renderDashboard() {
 
 
 describe("Admin Dashboard · Feb-2026 KPI reorder + Data Integrity hide", () => {
-  it("renders the 4 KPI tiles in the exact Active Jobs → Pending → Active Customers → Inactive Customers order", async () => {
+  it("renders the 3 Jobs + customer-status KPI tiles in Active Jobs → Pending → Inactive Customers order", async () => {
     await _renderDashboard();
 
     // Wait for the KPI grid to hydrate.
@@ -159,7 +161,6 @@ describe("Admin Dashboard · Feb-2026 KPI reorder + Data Integrity hide", () => 
     const expected = [
       "kpi-active-jobs",
       "kpi-pending",
-      "kpi-active-customers",
       "kpi-inactive-customers",
     ];
     const nodes = expected.map((id) => screen.getByTestId(id));

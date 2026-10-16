@@ -615,22 +615,13 @@ export default function AdminDashboard() {
               testId="kpi-pending"
               tone="amber"
             />
-            {/* Feb-2026 · Active/Inactive Customers tile swap.
-                Bottom row of the KPI grid replaces the legacy
-                Customers total + Technicians tiles with a pair
-                keyed to the recurring-service-contract signal.
-                See ``routers/dashboard.py`` for the
-                ``active_customers_count`` /
-                ``inactive_customers_count`` fields; sum invariant
-                (active + inactive == total_customers) preserved. */}
-            <KpiCard
-              icon={UserCheck}
-              label="Active Customers"
-              value={data.active_customers_count}
-              onClick={() => navigate("/customers?status=active")}
-              testId="kpi-active-customers"
-              tone="violet"
-            />
+            {/* Feb-2026 · P2 Dashboard tile cleanup — "Active
+                Customers" tile removed by operator request; the
+                100 / 50 split caused confusion against the renamed
+                property-count tiles below (which carry the real
+                "Customers" business label going forward). The
+                Inactive Customers tile stays as the sole customer-
+                status surface. */}
             <KpiCard
               icon={UserX}
               label="Inactive Customers"
@@ -639,63 +630,22 @@ export default function AdminDashboard() {
               testId="kpi-inactive-customers"
               tone="emerald"
             />
-            {/* Feb-2026 - Pool + Landscaping customer tiles.
-                Sit directly below Active / Inactive in the same
-                KPI grid (same card component, same width, same
-                row alignment).  Union semantics (P2 #6, commit
-                615339ab5): a customer with
-                ``service_category == "both"`` is counted on BOTH
-                tiles - matches the ``?service_category=pool``
-                list filter so tile totals equal deep-linked list
-                totals exactly.  Deep-links use the P2 #6 filter
-                verbatim (do NOT invent a new one) + ``?is_active=true``
-                so the operator lands on the active cohort tab
-                (CustomersList.jsx:188 accepts the alias).  */}
-            <KpiCard
-              icon={Waves}
-              label="Pool Customers"
-              value={data.pool_customers_count}
-              onClick={() => navigate(
-                "/customers?is_active=true&service_category=pool",
-              )}
-              testId="kpi-pool-customers"
-              tone="sky"
-            />
-            <KpiCard
-              icon={TreePine}
-              label="Landscaping Customers"
-              value={data.landscaping_customers_count}
-              onClick={() => navigate(
-                "/customers?is_active=true&service_category=landscaping",
-              )}
-              testId="kpi-landscaping-customers"
-              tone="emerald"
-            />
-            {/* Feb-2026 · P2 #6 property pivot — property-level
-                tiles.  Render BELOW the customer-count tiles so
-                operators see customer-count THEN property-count
-                in the KPI grid.  Deep-links point to the Commit-3
-                Properties list page with the matching ``service_category``
-                filter + ``is_active=true`` so the operator lands
-                on the active cohort directly.  "Active Accounts" =
-                count of active properties across the tenant (a
-                customer with 3 active properties contributes 3).
-                These tiles ADD alongside the customer-count tiles
-                above — the customer-count semantics are preserved
-                exactly (ruling #5 from the dispatch, locked). */}
-            <KpiCard
-              icon={Building2}
-              label="Active Accounts"
-              value={data.active_accounts_count}
-              onClick={() => navigate(
-                "/properties?is_active=true",
-              )}
-              testId="kpi-active-accounts"
-              tone="violet"
-            />
+            {/* Feb-2026 · P2 Dashboard tile cleanup — the previous
+                customer-count tiles ``kpi-pool-customers`` and
+                ``kpi-landscaping-customers`` (showing 18 / 15) were
+                removed by operator request; they duplicated the
+                property-pivot tiles below, which now carry the
+                "<Pool|Landscaping|Both Service> Customers" labels
+                (data source unchanged — still property counts). The
+                Active Accounts tile was moved to the END of this
+                row to match the operator-specified visual order:
+                  Pool Customers → Landscaping Customers →
+                  Both Service Customers → Active Accounts
+                Deep-links are preserved verbatim from the previous
+                Pool/Landscaping/Both Services Properties tiles. */}
             <KpiCard
               icon={Home}
-              label="Pool Properties"
+              label="Pool Customers"
               value={data.pool_properties_count}
               onClick={() => navigate(
                 "/properties?is_active=true&service_category=pool",
@@ -705,7 +655,7 @@ export default function AdminDashboard() {
             />
             <KpiCard
               icon={Home}
-              label="Landscaping Properties"
+              label="Landscaping Customers"
               value={data.landscaping_properties_count}
               onClick={() => navigate(
                 "/properties?is_active=true&service_category=landscaping",
@@ -715,13 +665,23 @@ export default function AdminDashboard() {
             />
             <KpiCard
               icon={Home}
-              label="Both Services Properties"
+              label="Both Service Customers"
               value={data.both_properties_count}
               onClick={() => navigate(
                 "/properties?is_active=true&service_category=both",
               )}
               testId="kpi-both-properties"
               tone="amber"
+            />
+            <KpiCard
+              icon={Building2}
+              label="Active Accounts"
+              value={data.active_accounts_count}
+              onClick={() => navigate(
+                "/properties?is_active=true",
+              )}
+              testId="kpi-active-accounts"
+              tone="violet"
             />
           </>
         ) : (
