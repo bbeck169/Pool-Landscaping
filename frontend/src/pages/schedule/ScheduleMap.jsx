@@ -134,10 +134,113 @@ function _fmtTime(job) {
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// ─────────────────────────────────────────────────────────────
+// Feb-2026 · Schedule map tech-label resolvers.
+//
+// Operator-reported bug: legend rows + route pins were rendering
+// truncated UUIDs (``Tech b72852…``). These resolvers map a
+// technician id → human-friendly first-name / initials label and
+// are shared by the legend, the numbered route-stop pin label,
+// and the live-tech GPS pin tooltip so all three surfaces agree.
+//
+// Fallback chain (honest degradation — do NOT fabricate names):
+//   1. tech record has ``first_name``  → use it verbatim.
+//   2. else ``name`` / ``display_name`` → split on whitespace,
+//      take the first token.
+//   3. else ``email``                   → take the local-part
+//      before ``@`` and title-case it.
+//   4. else                             → ``Tech <last-4-of-id>``
+//      (last 4 chars of the id — more useful than a truncated
+//      prefix like ``Tech b72852…``).
+//
+// Exported for direct unit testing in
+// ``test/schedule-map-tech-labels.test.jsx``.
+// ─────────────────────────────────────────────────────────────
+function _titleCaseWord(w) {
+  if (!w) return "";
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+}
+
+/** Resolve the technician record for an id against the
+ *  ``techs`` list, matching on either ``id`` or ``user_id`` so
+ *  both tech-rows and user-based synth rows resolve. */
+export function _findTechById(techId, techs) {
+  if (!techId || !Array.isArray(techs)) return null;
+  return techs.find(
+    (x) => x && ((x.id || x.user_id) === techId || x.user_id === techId),
+  ) || null;
+}
+
+export function resolveTechFirstName(techId, techs) {
+  if (!techId) return "Unassigned";
+  const t = _findTechById(techId, techs);
+  // (1) explicit first_name on the record wins.
+  const fn = t?.first_name && String(t.first_name).trim();
+  if (fn) return fn;
+  // (2) split ``name`` / ``display_name`` on whitespace.
+  for (const candidate of [t?.name, t?.display_name]) {
+    const s = (candidate && String(candidate).trim()) || "";
+    if (s) {
+      const tok = s.split(/\s+/)[0];
+      if (tok) return tok;
+    }
+  }
+  // (3) email local-part, title-cased on the first ``.`` token so
+  //     ``ethan.smith@…`` → ``Ethan``.
+  const email = (t?.email && String(t.email).trim()) || "";
+  if (email && email.includes("@")) {
+    const local = email.split("@")[0] || "";
+    const firstTok = local.split(/[._-]+/)[0] || "";
+    if (firstTok) return _titleCaseWord(firstTok);
+  }
+  // (4) honest fallback — last 4 chars of the id (NOT a truncated
+  //     prefix). Pad short ids so the output is always well-formed.
+  const idStr = String(techId);
+  const tail = idStr.length >= 4 ? idStr.slice(-4) : idStr;
+  return `Tech ${tail}`;
+}
+
+export function resolveTechInitials(techId, techs) {
+  if (!techId) return "";
+  const t = _findTechById(techId, techs);
+  // Prefer explicit first_name + last_name initials.
+  const fn = t?.first_name && String(t.first_name).trim();
+  const ln = t?.last_name && String(t.last_name).trim();
+  if (fn && ln) return (fn[0] + ln[0]).toUpperCase();
+  if (fn) return fn[0].toUpperCase();
+  // Fall back to the first two tokens of ``name`` / ``display_name``.
+  for (const candidate of [t?.name, t?.display_name]) {
+    const s = (candidate && String(candidate).trim()) || "";
+    if (s) {
+      const toks = s.split(/\s+/).filter(Boolean);
+      if (toks.length >= 2) return (toks[0][0] + toks[1][0]).toUpperCase();
+      if (toks.length === 1 && toks[0]) return toks[0][0].toUpperCase();
+    }
+  }
+  // Email local-part first letter.
+  const email = (t?.email && String(t.email).trim()) || "";
+  if (email && email.includes("@")) {
+    const local = email.split("@")[0] || "";
+    if (local) return local[0].toUpperCase();
+  }
+  // Honest fallback — empty string signals "no readable initials";
+  // the caller renders the stop number alone in that case.
+  return "";
+}
+
+
 function _resolveTechName(job, techs) {
+  // InfoWindow caption — single-line full-name slot. Prefers the
+  // tech's rendered display name when available, falls back to
+  // the first-name resolver (which carries the full fallback
+  // chain including the last-4-of-id tail).
   if (!job.technician_id) return "Unassigned";
-  const t = techs.find((x) => (x.id || x.user_id) === job.technician_id);
-  return t?.name || t?.display_name || `Tech ${String(job.technician_id).slice(0, 6)}…`;
+  const t = _findTechById(job.technician_id, techs);
+  const n = (t?.name && String(t.name).trim())
+    || (t?.display_name && String(t.display_name).trim())
+    || "";
+  if (n) return n;
+  return resolveTechFirstName(job.technician_id, techs);
 }
 
 
@@ -283,7 +386,7 @@ export function _buildPerTechSequence(jobs) {
  * fighting Google Maps for DOM ownership.
  */
 function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
-                              perTechSequence }) {
+                              perTechSequence, techs }) {
   const map = useMap();
   const markersRef = useRef({});
   const clustererRef = useRef(null);
@@ -353,8 +456,42 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
         // to the pre-B.5 route_index path for test safety.
         const perTechSeq = perTechSequence && perTechSequence.get(job.id);
         const routeIdx = job?.route_index;
-        const pinLabel = perTechSeq
+        const stopNum = perTechSeq
           || (Number.isFinite(routeIdx) ? routeIdx + 1 : undefined);
+        // Feb-2026 · Pin-label resolver (operator bug fix).
+        //
+        // The stop-number pin disc is tight on space, so when the
+        // technician has resolvable initials we render a compact
+        // ``NN·II`` label (e.g. ``01·EM`` for stop 1 of Ethan M.);
+        // when no name data is available we fall back to just the
+        // zero-padded stop number so the pin stays legible. The
+        // ``title`` on the surrounding button carries the full
+        // "Stop NN — Ethan" hover tooltip in every branch (see
+        // the ``aria-label`` / ``title`` block below).
+        const techInitials = job.technician_id
+          ? resolveTechInitials(job.technician_id, techs)
+          : "";
+        let pinLabel;
+        if (stopNum == null) {
+          pinLabel = undefined;
+        } else {
+          const padded = Number.isFinite(stopNum)
+            ? (stopNum < 10 ? `0${stopNum}` : String(stopNum))
+            : String(stopNum);
+          pinLabel = techInitials
+            ? `${padded}·${techInitials}`
+            : padded;
+        }
+        const techFirstName = job.technician_id
+          ? resolveTechFirstName(job.technician_id, techs)
+          : null;
+        const stopTooltip = stopNum != null
+          ? (techFirstName
+              ? `Stop ${Number.isFinite(stopNum)
+                  && stopNum < 10 ? "0" : ""}${stopNum} — ${techFirstName}`
+              : `Stop ${Number.isFinite(stopNum)
+                  && stopNum < 10 ? "0" : ""}${stopNum}`)
+          : (techFirstName || null);
         // Phase 4 · Feb-2026 — approximate-location signal.
         // ``property_id`` is set on the job but the K58 coord
         // resolver ladder in ``backend/routers/jobs.py`` couldn't
@@ -396,24 +533,36 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(job.id); }}
-              aria-label={
-                isApproximate
+              aria-label={(() => {
+                const base = isApproximate
                   ? `Job pin for ${job.customer_name || "job"} `
                     + "(approximate location — property coords missing)"
-                  : `Job pin for ${job.customer_name || "job"}`
-              }
-              title={
-                isApproximate
-                  ? "Approximate location — property has no geocoded "
-                    + "coords; falling back to the customer's service "
-                    + "address. Fix on the property's edit page."
-                  : undefined
-              }
+                  : `Job pin for ${job.customer_name || "job"}`;
+                return stopTooltip ? `${base} — ${stopTooltip}` : base;
+              })()}
+              title={(() => {
+                // Feb-2026 · tech-label bug fix — the hover
+                // tooltip now carries "Stop NN — <FirstName>" on
+                // every pin that has a resolvable sequence +
+                // tech so the operator can see tech context
+                // without opening the InfoWindow. Approximate-
+                // location pins keep their explanatory tooltip
+                // (approximate location trumps stop label).
+                if (isApproximate) {
+                  return "Approximate location — property has no "
+                    + "geocoded coords; falling back to the "
+                    + "customer's service address. Fix on the "
+                    + "property's edit page.";
+                }
+                return stopTooltip || undefined;
+              })()}
               data-testid={`schedule-map-pin-${job.id}`}
               data-color-mode={colorMode}
               data-approximate={isApproximate ? "true" : "false"}
               data-coord-source={job?.coord_source || "none"}
               data-pin-sequence={pinLabel != null ? String(pinLabel) : ""}
+              data-tech-first-name={techFirstName || ""}
+              data-tech-initials={techInitials || ""}
               style={{
                 background: "transparent",
                 // Phase 4 · Feb-2026 — approximate pins get a
@@ -646,10 +795,12 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
             .sort((a, b) => b[1] - a[1])
             .map(([tid, count]) => {
               const color = (techColorMap.get(tid)) || _UNASSIGNED_COLOR;
-              const t = (techs || []).find(
-                (x) => (x.id || x.user_id) === tid);
-              const name = t?.name || t?.display_name
-                || `Tech ${String(tid).slice(0, 6)}…`;
+              // Feb-2026 · tech-label bug fix — legend row now
+              // renders the technician's first name (via the
+              // shared resolver), NOT the pre-fix truncated
+              // ``Tech b72852…`` UUID prefix. See the resolver's
+              // doc-comment for the full honest-fallback chain.
+              const name = resolveTechFirstName(tid, techs);
               return (
                 <div
                   key={tid}
@@ -731,22 +882,41 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
           colorMode={colorMode}
           onSelect={onSelect}
           perTechSequence={perTechSequence}
+          techs={techs}
         />
         {/* Live-tech markers — outside the clusterer so a tech
             standing on top of a job pin is still individually
             visible. */}
-        {liveEnabled ? livePings.map((p) => (
+        {liveEnabled ? livePings.map((p) => {
+          // Feb-2026 · tech-label bug fix — live-tech pin hover
+          // tooltip now carries the first-name (via the shared
+          // resolver, which prefers ``techs[].first_name``) with
+          // the ping's own ``user_name`` string as a secondary
+          // fallback for techs that aren't in the ``techs`` list
+          // (e.g. a tech who just started a shift in a different
+          // tenant surface). Format: ``<FirstName> · <Age>``.
+          const liveFirst = resolveTechFirstName(p.user_id, techs);
+          // Resolver's honest fallback is ``Tech <tail>`` — if we
+          // land there, prefer the ping's own ``user_name`` since
+          // the live-locations endpoint carries a resolved display
+          // name directly.
+          const liveLabel = liveFirst.startsWith("Tech ")
+            && p.user_name
+            ? String(p.user_name).trim().split(/\s+/)[0] || p.user_name
+            : liveFirst;
+          return (
           <AdvancedMarker
             key={`live-${p.user_id}`}
             position={{ lat: p.lat, lng: p.lon }}
             onClick={() => setActiveLiveTechId(
               activeLiveTechId === p.user_id ? null : p.user_id,
             )}
-            title={`${p.user_name} · ${formatAge(p.age_seconds)}`}
+            title={`${liveLabel} · ${formatAge(p.age_seconds)}`}
           >
             <div
               data-testid={`schedule-map-live-tech-pin-${p.user_id}`}
               data-staleness={p.staleness}
+              data-tech-first-name={liveLabel}
               style={{
                 width: 14, height: 14, borderRadius: "50%",
                 background: colorForStaleness(p.staleness),
@@ -756,7 +926,8 @@ export default function ScheduleMap({ jobs = [], techs = [], techColorMap }) {
               }}
             />
           </AdvancedMarker>
-        )) : null}
+          );
+        }) : null}
         {liveEnabled && activeLiveTechId ? (() => {
           const lp = livePings.find(
             (x) => x.user_id === activeLiveTechId);

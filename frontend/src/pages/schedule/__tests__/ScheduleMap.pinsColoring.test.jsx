@@ -127,13 +127,17 @@ describe("<ScheduleMap /> — numbered pins", () => {
     //
     // ``formatPinLabel`` zero-pads single-digit values so "01" is
     // the expected textContent regardless of which seq slot a
-    // job lands in.
+    // job lands in. Feb-2026 schedule-map tech-labels bug fix —
+    // when the tech record resolves to readable initials the pin
+    // label becomes ``NN·II``; unassigned pins keep the bare
+    // zero-padded stop number. Techs in this fixture: Alex Tech
+    // (AT) + Bella Tech (BT).
     expect(
       screen.getByTestId("schedule-map-pin-job-1-svg-label").textContent,
-    ).toBe("01");
+    ).toBe("01·AT");
     expect(
       screen.getByTestId("schedule-map-pin-job-2-svg-label").textContent,
-    ).toBe("01");
+    ).toBe("01·BT");
     expect(
       screen.getByTestId("schedule-map-pin-job-3-svg-label").textContent,
     ).toBe("01");
@@ -146,12 +150,13 @@ describe("<ScheduleMap /> — numbered pins", () => {
     // within the tech group so every assigned job gets a label.
     // Here, tech-a has job-1 (slotted) + job-4 (unslotted). The
     // hybrid resolver puts job-1 first (slotted wins) and
-    // appends job-4 at sequence 2 → label "02".
+    // appends job-4 at sequence 2 → label "02" (now "02·AT" with
+    // the Feb-2026 tech-initials bug fix on top of the pin).
     render(<ScheduleMap jobs={_mkJobs()} techs={_techs}
                         techColorMap={_techColorMap} />);
     expect(
       screen.getByTestId("schedule-map-pin-job-4-svg-label").textContent,
-    ).toBe("02");
+    ).toBe("02·AT");
   });
 });
 

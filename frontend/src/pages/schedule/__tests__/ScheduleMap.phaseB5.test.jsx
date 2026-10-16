@@ -170,10 +170,20 @@ describe("ScheduleMap · Phase B.5 per-tech sequence numbering", () => {
       <ScheduleMap jobs={jobs} techs={_techs}
                     techColorMap={_techColorMap} />,
     );
+    // Feb-2026 schedule-map tech-labels bug fix — ``data-pin-
+    // sequence`` now reflects the full on-pin label, which is
+    // ``NN·II`` when the tech has readable initials. Fixture
+    // ``_techs`` has Alex Rivera (AR) assigned to both jobs.
     expect(screen.getByTestId("schedule-map-pin-jA")
-      .getAttribute("data-pin-sequence")).toBe("1");
+      .getAttribute("data-pin-sequence")).toBe("01·AR");
     expect(screen.getByTestId("schedule-map-pin-jB")
-      .getAttribute("data-pin-sequence")).toBe("2");
+      .getAttribute("data-pin-sequence")).toBe("02·AR");
+    // Keep a direct lock on the tech-attribution testid plumbing
+    // so a regression in the resolver blows up here too.
+    expect(screen.getByTestId("schedule-map-pin-jA")
+      .getAttribute("data-tech-first-name")).toBe("Alex");
+    expect(screen.getByTestId("schedule-map-pin-jA")
+      .getAttribute("data-tech-initials")).toBe("AR");
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -219,12 +229,20 @@ describe("ScheduleMap · Phase B.5 per-tech sequence numbering", () => {
                     techColorMap={_techColorMap} />,
     );
     expect(screen.getByTestId("schedule-map-tech-legend")).toBeTruthy();
+    // Feb-2026 schedule-map tech-labels bug fix — legend rows
+    // now render FIRST NAME only (``Alex`` not ``Alex Rivera``)
+    // so the pre-fix truncated-UUID string (``Tech b72852…``)
+    // is impossible by construction.
     expect(screen.getByTestId("schedule-map-tech-legend-t1")
-      .textContent).toMatch(/Alex Rivera/);
+      .textContent).toMatch(/Alex/);
+    expect(screen.getByTestId("schedule-map-tech-legend-t1")
+      .textContent).not.toMatch(/Rivera/);
     expect(screen.getByTestId("schedule-map-tech-legend-count-t1")
       .textContent).toMatch(/2 stops/);
     expect(screen.getByTestId("schedule-map-tech-legend-t2")
-      .textContent).toMatch(/Jamie Chen/);
+      .textContent).toMatch(/Jamie/);
+    expect(screen.getByTestId("schedule-map-tech-legend-t2")
+      .textContent).not.toMatch(/Chen/);
     expect(screen.getByTestId("schedule-map-tech-legend-count-t2")
       .textContent).toMatch(/3 stops/);
   });
