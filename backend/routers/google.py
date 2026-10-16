@@ -6,6 +6,7 @@ Exposes:
 - GET  /api/settings/integrations       — masked view of all wired API keys
 """
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -16,6 +17,11 @@ from config import (
     db, logger,
     GOOGLE_API_KEY, EMERGENT_LLM_KEY, RESEND_API_KEY,
     OPENWEB_NINJA_API_KEY,
+)
+from services.google_maps.geocode_trigger import (
+    GeocodeOutcome,
+    GeocodeTrigger,
+    write_geocode_log,
 )
 from utils import now_iso, require_admin, require_admin_or_manager
 from routers.tenants import get_current_tenant
@@ -33,24 +39,83 @@ def _mask(value: str, keep: int = 4) -> str:
     return f"{value[:keep]}…{value[-keep:]}"
 
 
-async def _geocode_one(client: httpx.AsyncClient, address: str) -> Optional[dict]:
+async def _geocode_one(
+    client: httpx.AsyncClient,
+    address: str,
+    *,
+    trigger_reason: "GeocodeTrigger | str | None" = None,
+    tenant_id: Optional[str] = None,
+    entity_type: str = "unknown",
+    entity_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Local Google Geocoding call used by the admin backfill, the
+    tenant-HQ patch, and the route-optimizer lazy-property backfill.
+
+    P0-GEOCODE-LEAK-C2.5 · TD-62 (Feb-2026): fail-safe telemetry
+    injection. We DELIBERATELY did NOT refactor this helper to call
+    the core ``services.google_maps.geocoding.geocode_address`` even
+    though doing so would centralize dedup/caching, because:
+
+      (a) Return-shape drift — this helper returns ``{formatted}``
+          while the core returns ``{formatted_address}``, and the
+          four callers already depend on the current shape.
+      (b) Env-var drift — this helper reads ``GOOGLE_API_KEY``
+          while the core reads ``GOOGLE_MAPS_API_KEY``. Some pods
+          are provisioned with only one; swapping would silently
+          break them.
+      (c) Rate-limit coupling — the admin-backfill caller controls
+          QPS via ``asyncio.sleep(0.12)`` in its own loop; the
+          core helper has no analogue.
+
+    Instead we add a single fail-safe ``write_geocode_log`` call so
+    every invocation lands in ``db.geocode_call_log`` with the
+    correct ``trigger_reason`` for the diagnostics endpoint. The log
+    write never blocks the geocode result — see
+    :func:`services.google_maps.geocode_trigger.write_geocode_log`
+    for the swallowed-exception contract.
+    """
+    _trigger_val = (
+        trigger_reason.value
+        if isinstance(trigger_reason, GeocodeTrigger)
+        else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
+    )
+    _started_at = datetime.now(timezone.utc)
+    result: Optional[dict] = None
+    outcome: str = GeocodeOutcome.ERROR.value
+    err: Optional[str] = None
+
     try:
         r = await client.get(GEOCODE_URL, params={"address": address, "key": GOOGLE_API_KEY})
         if r.status_code != 200:
-            return None
-        j = r.json()
-        if j.get("status") != "OK" or not j.get("results"):
-            return None
-        top = j["results"][0]
-        loc = top.get("geometry", {}).get("location", {})
-        return {
-            "lat": loc.get("lat"), "lng": loc.get("lng"),
-            "formatted": top.get("formatted_address"),
-            "place_id": top.get("place_id"),
-        }
+            err = f"http_{r.status_code}"
+        else:
+            j = r.json()
+            if j.get("status") != "OK" or not j.get("results"):
+                err = f"status_{j.get('status', 'unknown')}"
+            else:
+                top = j["results"][0]
+                loc = top.get("geometry", {}).get("location", {})
+                result = {
+                    "lat": loc.get("lat"), "lng": loc.get("lng"),
+                    "formatted": top.get("formatted_address"),
+                    "place_id": top.get("place_id"),
+                }
+                outcome = GeocodeOutcome.HIT.value
     except Exception as e:
         logger.warning(f"geocode failed for '{address}': {e}")
-        return None
+        err = f"{type(e).__name__}:{str(e)[:200]}"
+
+    await write_geocode_log(
+        db_conn=db, logger=logger,
+        tenant_id=tenant_id, entity_type=entity_type,
+        entity_id=entity_id, address=address or "",
+        trigger_reason=_trigger_val, outcome=outcome,
+        lat=(result or {}).get("lat"),
+        lng=(result or {}).get("lng"),
+        error=err,
+        started_at=_started_at, api_key=GOOGLE_API_KEY,
+    )
+    return result
 
 
 @router.post("/admin/geocode-addresses")
@@ -77,7 +142,13 @@ async def geocode_addresses(admin: dict = Depends(require_admin)):
             if not addr:
                 skipped += 1
                 continue
-            geo = await _geocode_one(client, addr)
+            geo = await _geocode_one(
+                client, addr,
+                trigger_reason=GeocodeTrigger.ADMIN_BACKFILL,
+                tenant_id=c.get("tenant_id"),
+                entity_type="customer",
+                entity_id=c.get("id"),
+            )
             if geo and geo.get("lat"):
                 await db.customers.update_one({"id": c["id"]}, {"$set": {
                     "lat": geo["lat"], "lng": geo["lng"],
@@ -105,7 +176,13 @@ async def geocode_addresses(admin: dict = Depends(require_admin)):
             if not addr:
                 skipped += 1
                 continue
-            geo = await _geocode_one(client, addr)
+            geo = await _geocode_one(
+                client, addr,
+                trigger_reason=GeocodeTrigger.ADMIN_BACKFILL,
+                tenant_id=j.get("tenant_id"),
+                entity_type="job",
+                entity_id=j.get("id"),
+            )
             if geo and geo.get("lat"):
                 await db.jobs.update_one({"id": j["id"]}, {"$set": {
                     "lat": geo["lat"], "lng": geo["lng"],

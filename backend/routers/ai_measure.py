@@ -31,6 +31,7 @@ import re
 import time
 import json
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -153,6 +154,7 @@ GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 async def geocode_address(
     address: str, *, http_client: Optional[httpx.AsyncClient] = None,
+    tenant_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Phase AIM0 · Feb-2026 — resolve an address using the same
     referrer-restricted key the rest of the Google surface uses
@@ -161,9 +163,49 @@ async def geocode_address(
     ``GOOGLE_API_KEY`` (which is billing-disabled in this pod) and
     editing it would ripple across every geocoding caller in the app.
     Same return shape as ``_geocode_one``: ``{lat, lng, formatted,
-    place_id}`` or ``None``."""
+    place_id}`` or ``None``.
+
+    P0-GEOCODE-LEAK-C2.5 · TD-62 (Feb-2026): fail-safe telemetry
+    injection — every invocation writes one row into
+    ``db.geocode_call_log`` with ``trigger_reason=ai_measure_resolve``.
+    We DELIBERATELY did NOT refactor this helper to delegate to the
+    core ``services.google_maps.geocoding.geocode_address`` because
+    ``_resolve_google_key`` falls back from ``GOOGLE_MAPS_API_KEY``
+    to ``GOOGLE_API_KEY`` while the core reads only
+    ``GOOGLE_MAPS_API_KEY`` — refactoring would silently break pods
+    provisioned with only the legacy key. Log write never blocks
+    the geocode result."""
+    from config import db as _db, logger as _logger
+    from services.google_maps.geocode_trigger import (
+        GeocodeOutcome, GeocodeTrigger, write_geocode_log,
+    )
+    _started_at = datetime.now(timezone.utc)
+    _outcome = GeocodeOutcome.ERROR.value
+    _err: Optional[str] = None
+    _result: Optional[Dict[str, Any]] = None
+
     key = _resolve_google_key()
     if not key:
+        _err = "no_api_key"
+        await write_geocode_log(
+            db_conn=_db, logger=_logger,
+            tenant_id=tenant_id, entity_type="ai_measure",
+            entity_id=None, address=address or "",
+            trigger_reason=GeocodeTrigger.AI_MEASURE_RESOLVE.value,
+            outcome=_outcome, error=_err,
+            started_at=_started_at, api_key=key,
+        )
+        return None
+    if not address:
+        _outcome = GeocodeOutcome.NO_ADDR.value
+        await write_geocode_log(
+            db_conn=_db, logger=_logger,
+            tenant_id=tenant_id, entity_type="ai_measure",
+            entity_id=None, address="",
+            trigger_reason=GeocodeTrigger.AI_MEASURE_RESOLVE.value,
+            outcome=_outcome,
+            started_at=_started_at, api_key=key,
+        )
         return None
     close = False
     client = http_client
@@ -173,23 +215,39 @@ async def geocode_address(
     try:
         r = await client.get(GEOCODE_URL, params={"address": address, "key": key})
         if r.status_code != 200:
-            return None
-        j = r.json()
-        if j.get("status") != "OK" or not j.get("results"):
-            return None
-        top = j["results"][0]
-        loc = top.get("geometry", {}).get("location", {})
-        return {
-            "lat": loc.get("lat"), "lng": loc.get("lng"),
-            "formatted": top.get("formatted_address"),
-            "place_id": top.get("place_id"),
-        }
+            _err = f"http_{r.status_code}"
+        else:
+            j = r.json()
+            if j.get("status") != "OK" or not j.get("results"):
+                _err = f"status_{j.get('status', 'unknown')}"
+            else:
+                top = j["results"][0]
+                loc = top.get("geometry", {}).get("location", {})
+                _result = {
+                    "lat": loc.get("lat"), "lng": loc.get("lng"),
+                    "formatted": top.get("formatted_address"),
+                    "place_id": top.get("place_id"),
+                }
+                _outcome = GeocodeOutcome.HIT.value
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[ai-measure] geocode failed for {address!r}: {e}")
-        return None
+        _err = f"{type(e).__name__}:{str(e)[:200]}"
     finally:
         if close:
             await client.aclose()
+
+    await write_geocode_log(
+        db_conn=_db, logger=_logger,
+        tenant_id=tenant_id, entity_type="ai_measure",
+        entity_id=None, address=address or "",
+        trigger_reason=GeocodeTrigger.AI_MEASURE_RESOLVE.value,
+        outcome=_outcome,
+        lat=(_result or {}).get("lat"),
+        lng=(_result or {}).get("lng"),
+        error=_err,
+        started_at=_started_at, api_key=key,
+    )
+    return _result
 
 
 async def fetch_static_map(
@@ -580,9 +638,17 @@ async def ai_measure_preview(
     # 1. Resolve coordinates.
     lat, lng = body.lat, body.lng
     formatted: Optional[str] = None
+    # Resolve tenant_id early so the geocode telemetry row carries
+    # proper per-tenant attribution (P0-GEOCODE-LEAK-C2.5).
+    _tenant_id_for_geo = str(
+        (tenant or {}).get("id") or (tenant or {}).get("_id") or ""
+    ) or None
     if (lat is None or lng is None) and body.address:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            g = await geocode_address(body.address, http_client=client)
+            g = await geocode_address(
+                body.address, http_client=client,
+                tenant_id=_tenant_id_for_geo,
+            )
         if not g:
             raise HTTPException(422, "Address could not be geocoded")
         lat = g.get("lat")

@@ -1773,12 +1773,19 @@ async def patch_tenant_geocode(body: HqGeocodeUpdate,
     # Local import to keep this router free of a hard dep on the
     # Google router module and its config imports.
     from routers.google import _geocode_one
+    from services.google_maps.geocode_trigger import GeocodeTrigger
     import httpx as _httpx
     address = (body.address or "").strip()
     if not address:
         raise HTTPException(400, "address is required")
     async with _httpx.AsyncClient(timeout=15) as c:
-        geo = await _geocode_one(c, address)
+        geo = await _geocode_one(
+            c, address,
+            trigger_reason=GeocodeTrigger.TENANT_HQ_PATCH,
+            tenant_id=tid,
+            entity_type="tenant",
+            entity_id=tid,
+        )
     if not geo or geo.get("lat") is None or geo.get("lng") is None:
         raise HTTPException(422, "Google could not geocode this address")
     patch = {
