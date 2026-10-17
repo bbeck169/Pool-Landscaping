@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request,
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
+from collections import Counter
 import re
 
 from pymongo.errors import DuplicateKeyError
@@ -5343,6 +5344,18 @@ async def avg_job_time_report(q: Optional[str] = None,
 
 SKIPPED_STATUSES = ["skipped", "cancelled", "canceled", "no_show", "missed"]
 
+# TD-63 · Feb-2026 — operator-locked terminal-completed status synonyms.
+# Historically only ``status == "completed"`` entered the counted
+# buckets; the Pool Service Report dropped `closed` / `done` /
+# `finished` / `complete` jobs even though they are completed-
+# equivalents in the rest of the codebase (``lib/jobStatus.js``,
+# Schedule finished-state card styling, timeclock audit).  Treat
+# all five as terminal-completed when deciding which jobs feed
+# the maintenance / repairs / other breakdown.
+_TERMINAL_COMPLETED_STATUSES = frozenset({
+    "completed", "closed", "done", "finished", "complete",
+})
+
 
 def _tech_display_label(resolved_name: Optional[str],
                          raw_tech_id: str,
@@ -6139,37 +6152,90 @@ async def least_profitable_services(
 _POOL_SERVICE_NAME_KNOWN_BUCKETS = (
     "Weekly Pool Cleaning",
     "Maintenance",
+    "Chemical Service",
+    "Equipment Service",
+    "Seasonal Service",
+    "Service Call",
+)
+
+# TD-63 · Feb-2026 — ordered first-match-wins substring matcher.
+# ``_POOL_SERVICE_NAME_KNOWN_BUCKETS`` above lists the surfaced labels
+# (and declaration order used by the ``_compute_service_name_
+# breakdown`` serializer); the matcher list below carries the
+# synonym substrings that get mapped onto each bucket.  Order
+# matters: ``_service_name_bucket_key`` walks the list top-down and
+# returns the FIRST label whose substring hits the normalized
+# service name.  Buckets early in the list beat later ones — put
+# the more specific vocabulary first (e.g. "Weekly Pool Cleaning"
+# before "Maintenance" so "weekly pool" doesn't collide into the
+# generic "pool maintenance" bucket).
+_POOL_SERVICE_NAME_BUCKETS = (
+    ("Weekly Pool Cleaning",
+        ("weekly pool", "pool cleaning", "weekly service",
+          "weekly clean", "routine", "recurring")),
+    ("Maintenance",
+        ("maintenance", "pool maintenance", "monthly maintenance",
+          "monthly deep clean", "deep clean")),
+    ("Chemical Service",
+        ("chemical", "chem check", "chem balance",
+          "water balance", "chlorine")),
+    ("Equipment Service",
+        ("equipment", "pump repair", "filter service",
+          "filter change", "heater", "motor")),
+    ("Seasonal Service",
+        ("opening", "closing", "winterization",
+          "winterize", "seasonal")),
+    ("Service Call",
+        ("service call", "diagnostic", "one off",
+          "one time", "callout")),
+)
+
+# TD-63 · Feb-2026 — Landscape-leak substrings used by the pool-
+# scope safety-net to exclude mis-tagged service_type rows that
+# slipped past the industry gate.  Root fix lives in
+# ``_derive_industry`` (strict_mode); see Phase 1 audit § D.
+_POOL_LANDSCAPE_LEAK_SUBSTRINGS = (
+    "landscape", "landscaping", "backyard",
 )
 
 
 def _normalize_service_name(raw: Any) -> str:
     """Canonicalize a job's service name for bucketing.
 
-    Rules:
+    TD-63 · Feb-2026 upgrade:
       * ``None`` / empty / whitespace-only → ``""``.
       * Collapse internal whitespace to single spaces + strip.
-      * Case normalization is DEFERRED to the bucket matcher so the
-        label we surface back in the response preserves the admin-
-        entered casing (``Weekly Pool Cleaning``, not
-        ``weekly pool cleaning``).
+      * Lower-case the output + fold ``_`` / ``-`` to a space so
+        ``weekly_pool_cleaning`` and ``weekly-pool-cleaning`` match
+        the ``"weekly pool"`` matcher substring.
+
+    The surfaced bucket LABEL (``_service_name_bucket_key`` return)
+    stays in the admin-entered casing — the normalization applied
+    here is matcher-only.
     """
     if not isinstance(raw, str):
         return ""
-    return " ".join(raw.split())
+    s = " ".join(raw.split()).lower()
+    s = s.replace("_", " ").replace("-", " ")
+    return s
 
 
 def _service_name_bucket_key(service_name: str) -> str:
     """Map a normalized service name to its bucket key.
 
-    Case-insensitive membership check against
-    ``_POOL_SERVICE_NAME_KNOWN_BUCKETS``; everything else → ``"Other"``.
+    TD-63 · Feb-2026 — walks the ordered ``_POOL_SERVICE_NAME_
+    BUCKETS`` matcher list and returns the FIRST label whose
+    synonym substring hits ``service_name``.  ``service_name`` is
+    expected to already be normalized (lower-case, folded
+    underscores/dashes) by ``_normalize_service_name``.  Everything
+    unmatched → ``"Other"``.
     """
     if not service_name:
         return "Other"
-    low = service_name.lower()
-    for known in _POOL_SERVICE_NAME_KNOWN_BUCKETS:
-        if known.lower() == low:
-            return known
+    for label, substrings in _POOL_SERVICE_NAME_BUCKETS:
+        for sub in substrings:
+            if sub in service_name:
+                return label
     return "Other"
 
 
@@ -6263,14 +6329,24 @@ async def _compute_service_name_breakdown(
         if tid in soft_deleted_ids:
             tid = None
 
-        service_name = _normalize_service_name(j.get("service_type"))
+        # TD-63 · preserve admin-entered casing for the ``Other``
+        # sub-breakdown.  ``_normalize_service_name`` lowercases +
+        # folds underscore/dash to space for matcher purposes; the
+        # display label (``other_breakdown[service_name]``) uses
+        # the whitespace-collapsed raw string so the FE renders
+        # "Freeform Note" instead of "freeform note".
+        raw = j.get("service_type")
+        service_name_display = (
+            " ".join(raw.split()) if isinstance(raw, str) else ""
+        )
+        service_name = _normalize_service_name(raw)
         bucket_key = _service_name_bucket_key(service_name)
 
         if not tid:
             unassigned_count += 1
-            if bucket_key == "Other" and service_name:
-                other_breakdown_counts[service_name] = (
-                    other_breakdown_counts.get(service_name, 0) + 1
+            if bucket_key == "Other" and service_name_display:
+                other_breakdown_counts[service_name_display] = (
+                    other_breakdown_counts.get(service_name_display, 0) + 1
                 )
             continue
 
@@ -6280,12 +6356,12 @@ async def _compute_service_name_breakdown(
         )
         b["count"] += 1
         b["per_tid"][tid] = b["per_tid"].get(tid, 0) + 1
-        if bucket_key == "Other" and service_name:
-            b["other_breakdown"][service_name] = (
-                b["other_breakdown"].get(service_name, 0) + 1
+        if bucket_key == "Other" and service_name_display:
+            b["other_breakdown"][service_name_display] = (
+                b["other_breakdown"].get(service_name_display, 0) + 1
             )
-            other_breakdown_counts[service_name] = (
-                other_breakdown_counts.get(service_name, 0) + 1
+            other_breakdown_counts[service_name_display] = (
+                other_breakdown_counts.get(service_name_display, 0) + 1
             )
 
     # Serialize deterministically: known buckets first (in declared
@@ -6523,6 +6599,30 @@ async def compute_pool_service(tenant_id: str,
         if _derive_industry(j, tenant_doc, strict_mode=True) == "pool"
     ]
 
+    # TD-63 safety-net · post-filter exclusion for jobs that passed the
+    # industry gate but have a Landscaping-flavored service_type /
+    # service_name. Root fix lives in _derive_industry (strict_mode);
+    # see Phase 1 audit § D for context.
+    def _looks_like_landscape(_j: dict) -> bool:
+        for _fld in ("service_type", "service_name", "job_type", "title"):
+            _val = _j.get(_fld)
+            if isinstance(_val, str) and _val:
+                _norm = _val.lower()
+                for _sub in _POOL_LANDSCAPE_LEAK_SUBSTRINGS:
+                    if _sub in _norm:
+                        return True
+        return False
+    _pre_landscape_leak = len(jobs)
+    jobs = [j for j in jobs if not _looks_like_landscape(j)]
+    _landscape_leak_excluded = _pre_landscape_leak - len(jobs)
+    if _landscape_leak_excluded:
+        logger.warning(
+            "[pool-report] TD-63 safety-net excluded %d Landscaping-"
+            "flavored job(s) that passed the industry gate tenant=%s "
+            "week=%s..%s",
+            _landscape_leak_excluded, tenant_id, week_start, week_end,
+        )
+
     tids = list({j.get("technician_id") for j in jobs if j.get("technician_id")})
     from services.service_report_view import resolve_technicians
     tmap = await resolve_technicians(db, tenant_id, tids)
@@ -6638,6 +6738,22 @@ async def compute_pool_service(tenant_id: str,
     # see how many jobs the report is quietly excluding.  Does NOT
     # feed any legacy counter — exposed only via ``dropped_count``.
     _dropped_period = 0
+    # TD-63 · Feb-2026 — operator-locked observability counters.
+    # ``_total_pool_period`` + ``_skipped_period`` complete the
+    # arithmetic reconciliation (total == completed + dropped +
+    # skipped).  ``_dropped_status_counts`` records per-status
+    # frequency so admins see which non-terminal statuses are
+    # bleeding the report.  ``_bucket_counts_all`` /
+    # ``_bucket_counts_completed`` carry the by-SERVICE-NAME
+    # distribution (all pool jobs vs completed-only) — folds the
+    # Phase 2 structured log line into the main loop so operators
+    # can read the first real-traffic distribution without SSH'ing
+    # into a pod.
+    _total_pool_period = len(jobs)
+    _skipped_period = 0
+    _dropped_status_counts: Counter = Counter()
+    _bucket_counts_all: Counter = Counter()
+    _bucket_counts_completed: Counter = Counter()
     # Fix 2 · Feb-2026 — capture per-job reason + id for the first
     # 10 dropped jobs so the reconciliation banner can show admins
     # exactly WHICH jobs could not be attributed and WHY, without
@@ -6694,8 +6810,17 @@ async def compute_pool_service(tenant_id: str,
         raw_wc = j.get("work_class")
         wc = str(raw_wc).strip().lower() if isinstance(raw_wc, str) else None
         bucket_key = None
-        if status == "completed":
+        # TD-63 · Feb-2026 — observability wire: every pool job that
+        # passes the industry gate feeds the SERVICE NAME counter
+        # (``_bucket_counts_all``) regardless of status.  Completed
+        # subset is tracked separately in ``_bucket_counts_completed``
+        # below so admins can read both axes from one log line.
+        _sv_norm = _normalize_service_name(j.get("service_type"))
+        _sv_bucket = _service_name_bucket_key(_sv_norm)
+        _bucket_counts_all[_sv_bucket] += 1
+        if status in _TERMINAL_COMPLETED_STATUSES:
             _completed_pool_period += 1
+            _bucket_counts_completed[_sv_bucket] += 1
             if wc == "service":
                 bucket_key = "pools_serviced"
             elif wc == "repair":
@@ -6705,6 +6830,7 @@ async def compute_pool_service(tenant_id: str,
                 _unknown_wc_period += 1
         elif status in SKIPPED_STATUSES:
             bucket_key = "skipped"
+            _skipped_period += 1
         else:
             # Feb-2026 · Inclusive-count addition — pool jobs with a
             # non-terminal status (``scheduled``, ``in_progress``,
@@ -6713,6 +6839,7 @@ async def compute_pool_service(tenant_id: str,
             # can distinguish "nothing happened" from "we dropped
             # 7 jobs with abnormal statuses".
             _dropped_period += 1
+            _dropped_status_counts[status or "<empty>"] += 1
             if len(_dropped_sample) < _DROPPED_SAMPLE_CAP:
                 # Fix 2 · Feb-2026 — record the first 10 dropped
                 # jobs with a human-readable reason so admins can
@@ -6736,6 +6863,25 @@ async def compute_pool_service(tenant_id: str,
                                   "repairs_completed": 0,
                                   "other": 0, "skipped": 0})
         a[bucket_key] += 1
+
+    # TD-63 · Feb-2026 — single-line structured observability record
+    # fired on every report render.  Contains the full arithmetic
+    # reconciliation (total == completed + dropped + skipped) + the
+    # BY-STATUS dropped frequency + the BY-SERVICE-NAME distribution
+    # (all pool jobs vs. completed-only).  grep for ``[pool-report]``
+    # in prod logs after a report render to read the real-traffic
+    # taxonomy health without a repro.
+    logger.info(
+        "[pool-report] tenant=%s week=%s..%s total_pool=%d completed=%d "
+        "dropped=%d skipped=%d · by-status_dropped=%s · "
+        "by-bucket_all=%s · by-bucket_completed=%s",
+        tenant_id, week_start, week_end,
+        _total_pool_period, _completed_pool_period,
+        _dropped_period, _skipped_period,
+        dict(_dropped_status_counts),
+        dict(_bucket_counts_all),
+        dict(_bucket_counts_completed),
+    )
 
     # POOL-B · WARN when >10 % of completed pool jobs land in
     # ``other`` — data-integrity signal per SPEC §274-278.

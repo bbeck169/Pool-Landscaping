@@ -182,7 +182,7 @@ describe("Pool Service Report · drill-down phase", () => {
     expect(otherCount.textContent).toBe("21");
   });
 
-  it("TC-A — clicking the Maintenance chip opens the bucket drill-down", async () => {
+  it("TC-A — clicking the Service chip (TD-63 relabel) opens the bucket drill-down", async () => {
     _wire();
     const user = userEvent.setup();
     render(<PoolServiceReport />);

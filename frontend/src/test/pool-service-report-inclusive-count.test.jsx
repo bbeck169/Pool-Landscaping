@@ -109,10 +109,11 @@ describe("PoolServiceReport · inclusive-count fix", () => {
         .toHaveTextContent("6"),
     );
     // Breakdown chips (unchanged — regression guard).
+    // TD-63 · Q3=1 — chip row carries work-class vocabulary now.
     expect(screen.getByTestId("pool-report-total-serviced"))
-      .toHaveTextContent("Maintenance:3");
+      .toHaveTextContent("Service:3");
     expect(screen.getByTestId("pool-report-total-repairs"))
-      .toHaveTextContent("Repairs:2");
+      .toHaveTextContent("Repair:2");
     expect(screen.getByTestId("pool-report-total-other"))
       .toHaveTextContent("Other:1");
   });

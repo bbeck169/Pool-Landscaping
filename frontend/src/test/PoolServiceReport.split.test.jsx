@@ -105,12 +105,13 @@ describe("PoolServiceReport · POOL-B split", () => {
     render(<PoolServiceReport />);
 
     // Summary chips — brief mandate.
+    // TD-63 · Q3=1 — chip row carries work-class vocabulary now.
     await waitFor(() =>
       expect(screen.getByTestId("pool-report-total-serviced"))
-        .toHaveTextContent("Maintenance:3"),
+        .toHaveTextContent("Service:3"),
     );
     expect(screen.getByTestId("pool-report-total-repairs"))
-      .toHaveTextContent("Repairs:2");
+      .toHaveTextContent("Repair:2");
     // Total = 3 + 2 + 1
     expect(screen.getByTestId("pool-report-total-all"))
       .toHaveTextContent("Total:6");
@@ -257,9 +258,10 @@ describe("PoolServiceReport · POOL-B split", () => {
     // No landscape tech row appears in the visible sections.
     expect(screen.queryByText("Landscape Larry")).not.toBeInTheDocument();
     // Total counts reflect the summary, not the by_technician array.
+    // TD-63 · Q3=1 — chip row carries work-class vocabulary now.
     expect(screen.getByTestId("pool-report-total-serviced"))
-      .toHaveTextContent("Maintenance:0");
+      .toHaveTextContent("Service:0");
     expect(screen.getByTestId("pool-report-total-repairs"))
-      .toHaveTextContent("Repairs:0");
+      .toHaveTextContent("Repair:0");
   });
 });

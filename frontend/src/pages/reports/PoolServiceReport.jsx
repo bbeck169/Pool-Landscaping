@@ -561,14 +561,14 @@ export default function PoolServiceReport() {
             </span>
             <span className="grow" />
             <Chip
-              label="Maintenance"
+              label="Service"
               value={totalMaintenance}
               tone="brand"
               testid="pool-report-total-serviced"
               onClick={() => setDrilldown({ variant: "bucket", bucket: "maintenance" })}
             />
             <Chip
-              label="Repairs"
+              label="Repair"
               value={totalRepairs}
               tone="repair"
               testid="pool-report-total-repairs"
@@ -583,6 +583,12 @@ export default function PoolServiceReport() {
                 onClick={() => setDrilldown({ variant: "bucket", bucket: "other" })}
               />
             )}
+            {/* TD-63 · Q3=1 — chip row carries WORK-CLASS vocabulary
+                (Service / Repair / Other).  The BY SERVICE NAME
+                section below intentionally keeps the semantic names
+                (Weekly Pool Cleaning / Maintenance / Chemical / …)
+                because those are a different dimension (service_type
+                taxonomy, not work_class). */}
             {unassignedTotal > 0 && (
               <Chip
                 label="Unassigned"
