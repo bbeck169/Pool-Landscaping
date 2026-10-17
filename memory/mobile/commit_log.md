@@ -1912,3 +1912,11 @@
 - **Files modified**: mobile/app/(app)/service-report/[id].tsx, mobile/src/utils/serviceReportClockOut.ts (new), mobile/__tests__/service-report-clock-out.test.tsx (new)
 - **Tests**: new 7/7. Full Jest 2328 passed / 48 failed / 22 skipped; failing-suite set identical to prior run.
 - **Deps**: none (expo-location already used by time-clock). Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
+
+## Iteration 137 — Schedule finished-state card styling (web e62babc5f parity)
+- **Commit**: the `feat(mobile-schedule)` finished-state commit containing this entry (`git log -1 -- mobile/__tests__/schedule-finished-card-styling.test.tsx`)
+- **Date**: 2026-10-16
+- **Changes**: `src/lib/jobStatus.ts` K50_JOB_STATUS_BG completed/cancelled/skipped → #F3F4F6, + `missed: "#FCA5A5"` (now byte-identical to web map); new `isFinishedJobStatus`, `jobStatusTextColor` (#374151 / null), `K50_FINISHED_FG`; `isCompletedCardStatus` now alias-based (completed/closed/done only — keeps ✓ off cancelled/skipped which now share the bg). `calendar.tsx` JobRow: `finishedFg = jobStatusTextColor(status)` drives svc tag, customer name (new testID `job-card-cust-${id}`), address, BH meta, reader/chevron/pencil icons; pills/border/shadow/layout untouched. Contrast #374151 on #F3F4F6 = 9.37:1 (AAA; web comment's 10.4:1 is vs white).
+- **Files modified**: mobile/src/lib/jobStatus.ts, mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/schedule-finished-card-styling.test.tsx (new), mobile/__tests__/k50-job-status-color.test.ts, mobile/__tests__/schedule-card-phase3-parity.test.tsx, mobile/__tests__/schedule-completed-card-recede.test.ts (+ snapshot: 7 bg values)
+- **Tests**: new 26/26; full Jest 2354 passed / 48 failed / 22 skipped, failing-suite set identical. tsc: 0 errors in touched files / JobRow range (651 codebase baseline).
+- **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.

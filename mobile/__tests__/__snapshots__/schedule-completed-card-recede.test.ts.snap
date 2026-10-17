@@ -8,7 +8,7 @@ exports[`completed card recede · status scope status → treatment table (snaps
     "completed": false,
   },
   "COMPLETED": {
-    "bg": "#ECFDF5",
+    "bg": "#F3F4F6",
     "border": "#6EE7B7",
     "completed": true,
   },
@@ -18,22 +18,22 @@ exports[`completed card recede · status scope status → treatment table (snaps
     "completed": false,
   },
   "canceled": {
-    "bg": "#FECACA",
+    "bg": "#F3F4F6",
     "border": "#2563EB",
     "completed": false,
   },
   "cancelled": {
-    "bg": "#FECACA",
+    "bg": "#F3F4F6",
     "border": "#2563EB",
     "completed": false,
   },
   "closed": {
-    "bg": "#ECFDF5",
+    "bg": "#F3F4F6",
     "border": "#6EE7B7",
     "completed": true,
   },
   "completed": {
-    "bg": "#ECFDF5",
+    "bg": "#F3F4F6",
     "border": "#6EE7B7",
     "completed": true,
   },
@@ -43,7 +43,7 @@ exports[`completed card recede · status scope status → treatment table (snaps
     "completed": false,
   },
   "done": {
-    "bg": "#ECFDF5",
+    "bg": "#F3F4F6",
     "border": "#6EE7B7",
     "completed": true,
   },
@@ -88,7 +88,7 @@ exports[`completed card recede · status scope status → treatment table (snaps
     "completed": false,
   },
   "skipped": {
-    "bg": "#FED7AA",
+    "bg": "#F3F4F6",
     "border": "#2563EB",
     "completed": false,
   },

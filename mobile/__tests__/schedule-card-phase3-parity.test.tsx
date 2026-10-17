@@ -1,7 +1,7 @@
 /**
  * Phase 3 / 3b mobile parity — schedule job card:
  *  F1 NoteBlock + Customer/Pool/Landscape inline notes
- *  F2 completed card — Oct-2026 mobile hotfix: receded soft green (#ECFDF5
+ *  F2 completed card — finished gray #F3F4F6 (web e62babc5f; was Oct-2026 soft green #ECFDF5
  *     bg, #6EE7B7 border, ✓ #065F46, AA-safe #52525B secondary); was bold red
  *     #ff4542 + white fg (web 85fd76f17, web unchanged)
  *  F3 orange Navigate button (order, encoding, disabled, deep-link fallback)
@@ -56,9 +56,9 @@ describe("F1 · NoteBlock", () => {
   });
 });
 
-describe("F2 · completed card (receded soft green — Oct-2026 mobile hotfix)", () => {
-  it("completed (+aliases) → #ECFDF5; others unchanged", () => {
-    expect(jobStatusColor("completed")).toBe("#ECFDF5");
+describe("F2 · completed card (finished-state gray — web e62babc5f parity)", () => {
+  it("completed (+aliases) → #F3F4F6; ✓ only for completed/closed/done", () => {
+    expect(jobStatusColor("completed")).toBe("#F3F4F6");
     expect(isCompletedCardStatus("completed")).toBe(true);
     expect(isCompletedCardStatus("closed")).toBe(true);
     expect(isCompletedCardStatus("done")).toBe(true);
@@ -66,11 +66,11 @@ describe("F2 · completed card (receded soft green — Oct-2026 mobile hotfix)",
       expect(isCompletedCardStatus(s as any)).toBe(false);
     }
     expect([jobStatusColor("scheduled"), jobStatusColor("in_progress"), jobStatusColor("cancelled"), jobStatusColor("skipped")])
-      .toEqual(["#EAF7F0", "#FEF3C7", "#FECACA", "#FED7AA"]);
+      .toEqual(["#EAF7F0", "#FEF3C7", "#F3F4F6", "#F3F4F6"]);
   });
   it("completed treatment tokens derive from the map", () => {
     expect(K50_COMPLETED_BG).toBe(K50_JOB_STATUS_BG.completed);
-    expect([K50_COMPLETED_BG, K50_COMPLETED_MUTED_FG, K50_COMPLETED_ACCENT]).toEqual(["#ECFDF5", "#52525B", "#065F46"]);
+    expect([K50_COMPLETED_BG, K50_COMPLETED_MUTED_FG, K50_COMPLETED_ACCENT]).toEqual(["#F3F4F6", "#52525B", "#065F46"]);
   });
   it("left-border color: completed/closed/done → soft green #6EE7B7, everything else blue", () => {
     for (const st of ["completed", "COMPLETED", "closed", "done"]) expect(getStatusBorderColor(st)).toBe("#6EE7B7");
@@ -80,12 +80,13 @@ describe("F2 · completed card (receded soft green — Oct-2026 mobile hotfix)",
   it("'Closed' status pill stays green (complementary signal, web parity)", () => {
     expect(CAL).toContain('completed:  { bg: "#DCFCE7", fg: "#166534", label: "Closed" },');
   });
-  it("JobRow: secondary text → AA-safe muted on completed; customer name keeps standard color; no white flip", () => {
+  it("JobRow: body text → #374151 on finished cards (incl. customer name); ✓ stays completed-only; no white flip", () => {
     expect(JOB_ROW).toContain("const done = isCompletedCardStatus(job.status);");
-    expect(JOB_ROW).toContain("const fg = done ? { color: K50_COMPLETED_MUTED_FG } : null;");
-    for (const re of [/gStyles\.svcTag, \{ color: svc\.tag \}, fg\]/, /gStyles\.metaText, fg\]/, /reader-outline" size=\{12\} color=\{done \?/, /chevron-forward" size=\{20\} color=\{done \?/])
+    expect(JOB_ROW).toContain("const finishedFg = jobStatusTextColor(job.status);");
+    expect(JOB_ROW).toContain("const fg = finishedFg ? { color: finishedFg } : null;");
+    for (const re of [/gStyles\.svcTag, \{ color: svc\.tag \}, fg\]/, /gStyles\.metaText, fg\]/, /reader-outline" size=\{12\} color=\{finishedFg \|\|/, /chevron-forward" size=\{20\} color=\{finishedFg \|\|/])
       expect(JOB_ROW).toMatch(re);
-    expect(JOB_ROW).toMatch(/gStyles\.cust, \{ flexShrink: 1 \}\]/);
+    expect(JOB_ROW).toMatch(/gStyles\.cust, \{ flexShrink: 1 \}, fg\]/);
     expect(JOB_ROW).not.toMatch(/onRed|K50_ON_BOLD_RED_FG|isBoldRedStatus|#FFFFFF/);
   });
 });

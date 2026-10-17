@@ -15,17 +15,18 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     expect(jobStatusColor("open")).toBe("#EAF7F0");
     expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
-    // Oct-2026 mobile hotfix — completed recedes to soft green emerald-50 (web keeps #ff4542).
-    expect(jobStatusColor("completed")).toBe("#ECFDF5");
-    expect(jobStatusColor("cancelled")).toBe("#FECACA");
-    expect(jobStatusColor("skipped")).toBe("#FED7AA");
+    // Feb-2026 finished-state styling (web e62babc5f) — finished → gray-100.
+    expect(jobStatusColor("completed")).toBe("#F3F4F6");
+    expect(jobStatusColor("cancelled")).toBe("#F3F4F6");
+    expect(jobStatusColor("skipped")).toBe("#F3F4F6");
+    expect(jobStatusColor("missed")).toBe("#FCA5A5");
   });
 
   it("resolves legacy aliases (active / closed / canceled)", () => {
     expect(jobStatusColor("active")).toBe("#FEF3C7");
-    expect(jobStatusColor("closed")).toBe("#ECFDF5");
-    expect(jobStatusColor("done")).toBe("#ECFDF5");
-    expect(jobStatusColor("canceled")).toBe("#FECACA");
+    expect(jobStatusColor("closed")).toBe("#F3F4F6");
+    expect(jobStatusColor("done")).toBe("#F3F4F6");
+    expect(jobStatusColor("canceled")).toBe("#F3F4F6");
   });
 
   it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#EAF7F0)", () => {
@@ -41,7 +42,7 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
 
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
-    expect(jobStatusColor("COMPLETED")).toBe("#ECFDF5");
+    expect(jobStatusColor("COMPLETED")).toBe("#F3F4F6");
   });
 
   it("returns null for statuses outside the K50 map (caller falls back)", () => {
@@ -57,18 +58,24 @@ describe("K50 · Slice B — Mobile Schedule card status background", () => {
     expect(Object.isFrozen(K50_JOB_STATUS_BG)).toBe(true);
   });
 
-  it("mirrors the web helper hex values byte-for-byte — EXCEPT completed", () => {
-    // Parity gate with ``frontend/src/lib/jobStatus.js``. One deliberate
-    // divergence: Oct-2026 mobile hotfix recedes ``completed`` to
-    // soft green #ECFDF5 (web stays coral-red #ff4542). Every other key
-    // must still match web byte-for-byte.
+  it("mirrors the web helper hex values byte-for-byte (web e62babc5f)", () => {
+    // Parity gate with ``frontend/src/lib/jobStatus.js`` — no divergence.
     expect(K50_JOB_STATUS_BG).toEqual({
       open: "#EAF7F0",
       scheduled: "#EAF7F0",
       in_progress: "#FEF3C7",
-      completed: "#ECFDF5",
-      cancelled: "#FECACA",
-      skipped: "#FED7AA",
+      completed: "#F3F4F6",
+      cancelled: "#F3F4F6",
+      skipped: "#F3F4F6",
+      missed: "#FCA5A5",
     });
+    // Read the live web map so a future web edit fails this gate.
+    const fs = require("fs");
+    const path = require("path");
+    const web = fs.readFileSync(path.resolve(__dirname, "../../frontend/src/lib/jobStatus.js"), "utf8");
+    const block = web.slice(web.indexOf("K50_JOB_STATUS_BG = Object.freeze({"), web.indexOf("});", web.indexOf("K50_JOB_STATUS_BG = Object.freeze({")));
+    const webMap: Record<string, string> = {};
+    for (const m of block.matchAll(/^\s*([a-z_]+):\s*"(#[0-9A-Fa-f]{6})"/gm)) webMap[m[1]] = m[2];
+    expect(webMap).toEqual({ ...K50_JOB_STATUS_BG });
   });
 });

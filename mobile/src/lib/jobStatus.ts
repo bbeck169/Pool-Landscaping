@@ -34,27 +34,54 @@ export const K50_JOB_STATUS_BG: Readonly<Record<string, string>> =
     open: "#EAF7F0",
     scheduled: "#EAF7F0",
     in_progress: "#FEF3C7",
-    // Oct-2026 mobile hotfix — completed/closed cards RECEDE: soft green
-    // emerald-50 #ECFDF5 (was bold coral-red #ff4542, web 85fd76f17).
-    // Deliberate MOBILE-ONLY divergence from web (operator request: red
-    // was hard to read + visually dominant). Standard dark text stays.
-    completed: "#ECFDF5",
-    cancelled: "#FECACA",
-    skipped: "#FED7AA",
+    // Feb-2026 · Schedule finished-state card styling — parity with web
+    // e62babc5f (frontend/src/lib/jobStatus.js). All finished states
+    // (completed / closed / cancelled / skipped) → Tailwind gray-100 so
+    // finished cards recede; body text #374151 via jobStatusTextColor
+    // (9.37:1 on #F3F4F6, AAA; web comment's 10.4:1 is vs white). Replaces the Oct-2026 mobile-only soft
+    // green #ECFDF5 + red/orange cancelled/skipped.
+    completed: "#F3F4F6",
+    cancelled: "#F3F4F6",
+    skipped: "#F3F4F6",
+    // NOT finished — actionable, stays prominent (web parity).
+    missed: "#FCA5A5",
   });
 
-/** Receded completed-card treatment (Oct-2026 mobile hotfix).
- *  BG derived from the map so the card + helpers can't drift apart.
- *  On #ECFDF5: primary text #09090B ≈ 19:1, secondary #52525B ≈ 7.3:1
- *  (replaces the old white flip; service-tag hues like #059669 would
- *  sit < 4.5:1 on green), ✓ accent dark green #065F46 ≈ 7.3:1. */
+/** Completed-card accents (✓ icon). BG derived from the map so the
+ *  card + helpers can't drift apart. On #F3F4F6: body #374151 ≈ 9.37:1,
+ *  ✓ accent #065F46 ≈ 6.98:1. `K50_COMPLETED_MUTED_FG` is kept for
+ *  existing importers; finished cards now use `K50_FINISHED_FG`. */
 export const K50_COMPLETED_BG = K50_JOB_STATUS_BG.completed;
 export const K50_COMPLETED_MUTED_FG = "#52525B";
 export const K50_COMPLETED_ACCENT = "#065F46";
+export const K50_FINISHED_FG = "#374151";
 
-/** True for completed / closed / done (anything resolving to the completed bg). */
+/** True for completed / closed / done only (drives the ✓ icon). Alias-based —
+ *  cancelled/skipped share the finished bg but are NOT "completed". */
 export function isCompletedCardStatus(status?: string | null): boolean {
-  return jobStatusColor(status) === K50_COMPLETED_BG;
+  const s = String(status ?? "").toLowerCase().trim();
+  return (_ALIAS[s] || s) === "completed";
+}
+
+/**
+ * Web parity (e62babc5f `isFinishedJobStatus`): true for the terminal /
+ * archive bucket rendered in the recessive grey style — completed
+ * (+ closed / done), cancelled (+ canceled), skipped. Case- and
+ * whitespace-insensitive. Excludes `missed`, `could_not_service`, and
+ * every open / in-progress / on_hold / requested / reopened / pending.
+ */
+export function isFinishedJobStatus(status?: string | null): boolean {
+  const s = String(status ?? "").toLowerCase().trim();
+  if (!s) return false;
+  const alias: Record<string, string> = { closed: "completed", done: "completed", canceled: "cancelled" };
+  const key = alias[s] || s;
+  return key === "completed" || key === "cancelled" || key === "skipped";
+}
+
+/** Web parity (`jobStatusTextColor`): #374151 for finished states, else
+ *  null so the renderer keeps its existing default text color. */
+export function jobStatusTextColor(status?: string | null): string | null {
+  return isFinishedJobStatus(status) ? K50_FINISHED_FG : null;
 }
 
 const _ALIAS: Readonly<Record<string, string>> = Object.freeze({
