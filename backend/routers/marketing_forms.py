@@ -2032,3 +2032,72 @@ async def purge_expired_form_submissions() -> Dict[str, Any]:
     return {"total_purged": total_purged, "per_tenant": per_tenant,
              "ran_at": now_iso()}
 
+
+# ─────────────────────────────────────────────────────────────────
+# TD-55b · Feb-2026 — APScheduler registration for the GDPR purge.
+#
+# Daily cadence at 03:00 UTC (operator-locked).  Mirrors the Lana /
+# MARCO / live-dispatcher pattern — small ``register_*_cron(sched)``
+# helper that attaches a wrapped tick to the shared ``AsyncIOScheduler``
+# instance from ``server.py``.  Guardrails:
+#   * The tick wrapper swallows every exception via
+#     ``logger.exception`` — a bad sweep MUST NOT crash the engine
+#     and take the other registered jobs down with it.
+#   * ``id="td55b.form_submissions_purge"`` + ``replace_existing=True``
+#     keeps hot-reload / supervisor-restart cycles idempotent.
+#   * No-op if ``scheduler is None`` so unit tests that drive the
+#     coroutine directly (``tests/test_forms_td55_gdpr_consent_
+#     retention.py``) don't need an APScheduler.
+# ─────────────────────────────────────────────────────────────────
+async def _td55b_tick() -> None:
+    """APScheduler-dispatched wrapper around
+    :func:`purge_expired_form_submissions`.  Logs start + end and
+    swallows exceptions so the daily sweep is best-effort — a
+    partial / failed run never cascades into the scheduler engine.
+    """
+    import time as _time
+    logger.info("[forms-purge] starting daily sweep (TD-55b)")
+    _t0 = _time.monotonic()
+    try:
+        result = await purge_expired_form_submissions()
+        _dur_ms = int((_time.monotonic() - _t0) * 1000)
+        logger.info(
+            "[forms-purge] completed · purged %s expired "
+            "submissions in %sms",
+            (result or {}).get("total_purged", 0), _dur_ms,
+        )
+    except Exception:  # noqa: BLE001 — see guardrail above
+        _dur_ms = int((_time.monotonic() - _t0) * 1000)
+        logger.exception(
+            "[forms-purge] tick failed after %sms — "
+            "swallowed (TD-55b)",
+            _dur_ms,
+        )
+
+
+def register_forms_purge_cron(scheduler) -> None:
+    """TD-55b · Feb-2026 — attach :func:`_td55b_tick` to the shared
+    APScheduler instance on a 03:00 UTC daily trigger.  No-op if
+    ``scheduler is None`` so unit tests that import the coroutine
+    directly still work.  Idempotent on hot-reload / supervisor-
+    restart via ``replace_existing=True``.
+    """
+    if scheduler is None:
+        return
+    from apscheduler.triggers.cron import CronTrigger
+    try:
+        scheduler.add_job(
+            _td55b_tick,
+            CronTrigger(hour=3, minute=0, timezone="UTC"),
+            id="td55b.form_submissions_purge",
+            replace_existing=True,
+        )
+        logger.info(
+            "[forms-purge] registered daily sweep "
+            "(TD-55b · 03:00 UTC)",
+        )
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(
+            "[forms-purge] scheduler registration failed: %s", _e,
+        )
+

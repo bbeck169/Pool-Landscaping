@@ -3083,6 +3083,20 @@ async def _background_seed():
             from services import automation_engine as _auto
             await _auto.re_index_rules()
             _auto.register_daily_sweeps(scheduler)
+            # TD-55b · Feb-2026 — daily 03:00 UTC form-submissions
+            # GDPR purge.  Prunes ``db.form_submissions`` older than
+            # each tenant's ``form_submission_retention_days``.
+            # Default retention is null (infinite) → tenants that
+            # haven't opted in to a finite window are skipped.
+            try:
+                from routers.marketing_forms import (
+                    register_forms_purge_cron,
+                )
+                register_forms_purge_cron(scheduler)
+            except Exception as _fp_exc:  # pragma: no cover
+                logger.warning(
+                    "[forms-purge] register failed: %s", _fp_exc,
+                )
             # Phase 49 · Feb-2026 — minute-cadence Lana reminder tick.
             try:
                 from services.lana.reminder_cron import register_lana_reminders_cron
