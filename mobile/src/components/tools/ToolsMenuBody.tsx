@@ -43,7 +43,7 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, qu
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
-  const sections = useMemo(() => sectionsForRole(role), [role]);
+  const sections = useMemo(() => sectionsForRole(role, user as any), [role, user]);
   const searchTestID = variant === "sheet" ? "mobile-menu-search" : "tools-search";
   const inSheet = variant === "sheet";
 

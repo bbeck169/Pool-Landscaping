@@ -23,6 +23,11 @@ export type User = {
   avatar?: string;
   technician_id?: string | null;
   customer_id?: string | null;
+  department?: string | null;
+  /** TD-64 · BE-resolved (users.department → technicians.department). */
+  effective_department?: string | null;
+  /** TD-64 · single source of truth for Time Clock visibility. */
+  show_time_clock?: boolean;
 };
 
 type AuthCtx = {
@@ -178,7 +183,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await persistJwtExpiry().catch(() => {});
     await writeThroughMe(res.user).catch(() => {});
     await clearImpersonation();
+    userRef.current = res.user;
     setUser(res.user);
+    // TD-64 · the login payload lacks effective_department / show_time_clock;
+    // pull /auth/me now so Time Clock visibility is BE-authoritative at once.
+    refreshUser();
     return { kind: "success" };
   };
 
@@ -204,7 +213,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await persistJwtExpiry().catch(() => {});
     await writeThroughMe(res.user).catch(() => {});
     await clearImpersonation();
+    userRef.current = res.user;
     setUser(res.user);
+    // TD-64 · the login payload lacks effective_department / show_time_clock;
+    // pull /auth/me now so Time Clock visibility is BE-authoritative at once.
+    refreshUser();
     return { kind: "success" };
   };
 

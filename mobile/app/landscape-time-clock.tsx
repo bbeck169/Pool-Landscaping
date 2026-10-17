@@ -9,7 +9,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
+import { Redirect } from "expo-router";
 import { useAuth } from "@/src/auth";
+import { isPoolTechWithoutTimeClock } from "@/src/lib/timeClockVisibility";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -66,7 +68,19 @@ async function readGeo(): Promise<{ lat: number | null; lng: number | null; accu
   }
 }
 
-export default function LandscapingTimeClockScreen() {
+/**
+ * TD-64 Phase 2b · pool techs (technician without the Time Clock designation)
+ * have NO Time Clock surface — deep links bounce to the schedule (web
+ * LandscapingTimeClock `<Navigate to="/schedule" replace>` parity).
+ * Admins/managers unaffected. Separate wrapper keeps the screen's hooks stable.
+ */
+export default function LandscapingTimeClockRoute() {
+  const { user } = useAuth();
+  if (isPoolTechWithoutTimeClock(user as any)) return <Redirect href="/(app)/schedule/calendar" />;
+  return <LandscapingTimeClockScreen />;
+}
+
+function LandscapingTimeClockScreen() {
   const { user } = useAuth();
   const [today, setToday] = useState<Today | null>(null);
   const [week, setWeek] = useState<Summary | null>(null);

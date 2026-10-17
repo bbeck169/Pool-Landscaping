@@ -1929,3 +1929,11 @@
 - **Files modified**: mobile/app/(app)/_layout.tsx, mobile/src/components/fleet/FleetStatusChip.tsx, mobile/src/components/schedule/OptimizeRouteModal.tsx, mobile/__tests__/fleet-chip-tap-target.test.tsx (new)
 - **Tests**: new 9/9 (6 fail on pre-fix HEAD). Full Jest 2362 passed / 49 failed / 22 skipped — +1 = phase40 5s timeout (flaky, 15/15 isolated); otherwise failing-suite set identical. tsc 651 total (unchanged), 6 `_layout.tsx` tabBarTestID errors pre-existing (shifted lines). eslint 0 errors.
 - **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
+
+## Iteration 139 — TD-64 Phase 2b: Time Clock designation (web b1e97bba4 parity)
+- **Commit**: the `feat(mobile-timeclock): TD-64 Phase 2b` commit containing this entry (`git log -1 -- mobile/src/lib/timeClockVisibility.ts`)
+- **Date**: 2026-10-17
+- **Changes**: new `src/lib/timeClockVisibility.ts`; `auth.tsx` User fields + `/auth/me` refresh after login; gate → technician && shouldShowTimeClock; widget → !admin && shouldShowTimeClock (now also landscape_tech/landscaper); `/time-clock` + `/landscape-time-clock` guarded wrappers → `<Redirect href="/(app)/schedule/calendar">` for pool techs; `sectionsForRole(role, user)` filters Time Clock tiles for pool techs (tools.tsx + ToolsMenuBody pass user). TD-64 → COMPLETE in TECH_DEBT.md.
+- **Not changed (by design)**: Tabs.Screen time-clock/landscape-time-clock already `href: null`; adminNav drawer + operations.tsx tile are admin/manager-only.
+- **Tests**: new 34 (16 + 18). Full Jest 2397 passed / 48 failed / 22 skipped, failing-suite set identical (phase40 flake passed this run). tsc 651 (unchanged), 0 in touched files. eslint 0 errors.
+- **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.

@@ -15,10 +15,11 @@ import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-nati
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import NetInfo from "@react-native-community/netinfo";
 
 import { useAuth } from "@/src/auth";
+import { isPoolTechWithoutTimeClock } from "@/src/lib/timeClockVisibility";
 import { api, getAuthToken } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
@@ -30,7 +31,19 @@ import { formatCustomerName } from "@/src/utils/formatCustomerName";
 const QUEUE_KEY = "workforce_ping_queue_v1";
 const PING_MS = 30_000;
 
-export default function TimeClockScreen() {
+/**
+ * TD-64 Phase 2b · pool techs (technician without the Time Clock designation)
+ * have NO Time Clock surface — deep links bounce to the schedule (web
+ * `<Navigate to="/schedule" replace>` parity). Admins/managers unaffected.
+ * Separate wrapper so the screen's hooks never run conditionally.
+ */
+export default function TimeClockRoute() {
+  const { user } = useAuth();
+  if (isPoolTechWithoutTimeClock(user as any)) return <Redirect href="/(app)/schedule/calendar" />;
+  return <TimeClockScreen />;
+}
+
+function TimeClockScreen() {
   const { user } = useAuth();
   const { showToast } = useToast();
   const router = useRouter();

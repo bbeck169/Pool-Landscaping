@@ -21,7 +21,8 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
-import { isLandscapeTech, useClockInStatus } from "@/src/utils/clockInGate";
+import { useClockInStatus } from "@/src/utils/clockInGate";
+import { shouldShowTimeClock } from "@/src/lib/timeClockVisibility";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 interface Props {
@@ -30,7 +31,9 @@ interface Props {
 
 export default function LandscapeTechClockInGate({ children }: Props) {
   const { user } = useAuth();
-  const gated = isLandscapeTech(user as any);
+  // TD-64 · gate only technicians with the Time Clock designation
+  // (BE `show_time_clock`, fallback LANDSCAPE_DEPTS) — web b1e97bba4 parity.
+  const gated = String((user as any)?.role || "").toLowerCase() === "technician" && shouldShowTimeClock(user as any);
   const { clockedIn, loading, refetch } = useClockInStatus(gated);
 
   const [punching, setPunching] = useState(false);

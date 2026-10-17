@@ -13,6 +13,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { shouldShowTimeClock } from "@/src/lib/timeClockVisibility";
 
 function weekBounds() {
   const d = new Date();
@@ -50,8 +51,9 @@ export default function LandscapingClockWidget() {
   // see it. Pool techs / customers / unassigned techs are also hidden.
   const role = String((user as any)?.role || "").toLowerCase();
   const isAdminLike = role === "admin" || role === "super_admin";
-  const hasLandscapeDept = ["landscaping", "both"].includes(String((user as any)?.department || "").toLowerCase());
-  const isLandscaper = !isAdminLike && hasLandscapeDept;
+  // TD-64 · web b1e97bba4 parity — designation via shouldShowTimeClock
+  // (BE show_time_clock; fallback LANDSCAPE_DEPTS incl. landscape_tech/landscaper).
+  const isLandscaper = !isAdminLike && shouldShowTimeClock(user as any);
   const [today, setToday] = useState<any>(null);
   const [week, setWeek] = useState<any>(null);
   const [busy, setBusy] = useState(false);

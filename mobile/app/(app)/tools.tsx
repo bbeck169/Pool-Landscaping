@@ -18,7 +18,7 @@ export default function ToolsHub() {
   const { user } = useAuth();
   const role = (user?.role as string) || "";
   const isAdmin = role === "admin" || role === "super_admin";
-  const sections = sectionsForRole(role);
+  const sections = sectionsForRole(role, user as any);
   const totalTiles = sections.reduce((a, s) => a + s.tiles.length, 0);
 
   return (

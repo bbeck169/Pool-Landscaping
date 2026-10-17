@@ -11,6 +11,8 @@
  */
 import type { ToolCardTile } from "./ToolCard";
 
+import { shouldShowTimeClock } from "@/src/lib/timeClockVisibility";
+
 export type ToolSection = {
   key: string;
   title: string;
@@ -142,8 +144,18 @@ export const ADMIN_SECTIONS: ToolSection[] = [
  * — the customer portal has its own nav and the global dropdown menu
  * is suppressed for them anyway (see `GlobalMenu.tsx`).
  */
-export function sectionsForRole(role: string | undefined): ToolSection[] {
+export function sectionsForRole(role: string | undefined, user?: Parameters<typeof shouldShowTimeClock>[0]): ToolSection[] {
   if (role === "admin" || role === "super_admin") return ADMIN_SECTIONS;
-  if (role === "technician") return TECH_SECTIONS;
+  if (role === "technician") {
+    // TD-64 Phase 2b (web ToolsHub b1e97bba4 parity) — technicians without the
+    // Time Clock designation (pool techs) get no Time Clock tiles.
+    if (shouldShowTimeClock(user)) return TECH_SECTIONS;
+    return TECH_SECTIONS
+      .map((sec) => ({ ...sec, tiles: sec.tiles.filter((t) => !TIME_CLOCK_TILE_KEYS.has(t.key)) }))
+      .filter((sec) => sec.tiles.length > 0);
+  }
   return [];
 }
+
+/** Tool tiles that are Time Clock surfaces (TD-64). */
+export const TIME_CLOCK_TILE_KEYS = new Set(["time-clock", "landscape-time-clock"]);
