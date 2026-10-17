@@ -1936,19 +1936,56 @@ _public_lock = asyncio.Lock()
 async def _run_lead_geocode(lid: str, tenant_id: str, addr: str,
                               *, trigger_reason: Any = None) -> None:
     try:
-        from services.google_maps.geocoding import geocode_address
-        from services.google_maps.geocode_trigger import GeocodeTrigger as _GT
+        from services.google_maps.geocoding import (
+            geocode_address, should_geocode, hash_address,
+        )
+        from services.google_maps.geocode_trigger import (
+            GeocodeTrigger as _GT,
+            GeocodeOutcome as _GO,
+            write_geocode_log as _wlog,
+        )
         _tr = trigger_reason if trigger_reason is not None else _GT.LEAD_CREATE_PUBLIC
+
+        # P0-GEOCODE-LEAK-C3 · TD-62 — consult the unified guard
+        # against the current lead row (not the pre-write snapshot)
+        # so a lead that was already geocoded by a prior background
+        # pass short-circuits here.
+        _lead_now = await db.leads.find_one(
+            {"id": lid, "tenant_id": tenant_id}, {"_id": 0},
+        ) or {}
+        _ok, _skip = should_geocode(_lead_now, addr, _tr)
+        if not _ok:
+            _tr_val = _tr.value if hasattr(_tr, "value") else str(_tr)
+            _outcome = (
+                _GO.NO_ADDR.value if _skip == "no_addr"
+                else _GO.SKIPPED_UNCHANGED.value if _skip == "skipped_unchanged"
+                else _GO.SKIPPED_CACHED.value
+            )
+            await _wlog(
+                db_conn=db, logger=logger,
+                tenant_id=tenant_id, entity_type="lead",
+                entity_id=lid, address=addr or "",
+                trigger_reason=_tr_val, outcome=_outcome,
+                lat=_lead_now.get("latitude"),
+                lng=_lead_now.get("longitude"),
+            )
+            return
+
         hit = await geocode_address(
             addr, tenant_id=tenant_id,
             trigger_reason=_tr,
             entity_type="lead", entity_id=lid,
         )
-        if hit and hit.get("latitude") and hit.get("longitude"):
+        if hit and hit.get("lat") is not None and hit.get("lng") is not None:
             await db.leads.update_one(
                 {"id": lid, "tenant_id": tenant_id},
-                {"$set": {"latitude": hit["latitude"],
-                           "longitude": hit["longitude"],
+                {"$set": {"latitude": hit["lat"],
+                           "longitude": hit["lng"],
+                           "geocoded_at": now_iso(),
+                           # P0-GEOCODE-LEAK-C3 · persist address
+                           # fingerprint for subsequent should_geocode
+                           # short-circuits (cosmetic lead PATCHes).
+                           "geocode_address_hash": hash_address(addr),
                            "updated_at": now_iso()}},
             )
     except Exception as _e:  # pragma: no cover
@@ -1969,8 +2006,48 @@ def _maybe_backfill_lead_geocode(background_tasks: BackgroundTasks,
     paths are attributable in ``/admin/diagnostics/geocode-usage``.
     Default is :attr:`GeocodeTrigger.LEAD_CREATE_PUBLIC` when
     unspecified.
+
+    P0-GEOCODE-LEAK-C3 · TD-62 — Lead-Sense widget guard.  The
+    public widget resolves the address through Places Autocomplete
+    client-side and submits an ``autocomplete_place_id`` in
+    ``custom_fields``.  When that place_id is present AND we
+    already have lat/lng on the lead, the Google round-trip has
+    already happened client-side — skip the server-side geocode
+    and write a ``skipped_cached`` log row so the diagnostics
+    endpoint sees the widget-resolved short-circuit.
     """
+    # (a) Existing lat/lng short-circuit — unchanged.
     if lead.get("latitude") is not None and lead.get("longitude") is not None:
+        # Lead-Sense widget guard: when the client-side autocomplete
+        # already resolved the address, schedule a telemetry row so
+        # the diagnostics endpoint can attribute the implicit
+        # savings.  The log write is scheduled through the request's
+        # ``background_tasks`` (same lifecycle as the normal geocode
+        # task below) rather than ``asyncio.create_task`` because
+        # this helper is called synchronously from the route handler.
+        _place_id = ((lead.get("custom_fields") or {})
+                       .get("autocomplete_place_id"))
+        if _place_id:
+            try:
+                from services.google_maps.geocode_trigger import (
+                    GeocodeTrigger as _GT,
+                )
+                _tr = (trigger_reason or _GT.LEAD_CREATE_PUBLIC)
+                _addr = (
+                    lead.get("service_address")
+                    or lead.get("address") or ""
+                ).strip()
+                background_tasks.add_task(
+                    _run_lead_widget_log,
+                    lead.get("tenant_id"),
+                    lead.get("id"),
+                    _addr,
+                    _tr,
+                    lead.get("latitude"),
+                    lead.get("longitude"),
+                )
+            except Exception:
+                pass
         return
     addr = (lead.get("service_address") or lead.get("address") or "").strip()
     if not addr:
@@ -1979,6 +2056,37 @@ def _maybe_backfill_lead_geocode(background_tasks: BackgroundTasks,
         _run_lead_geocode, lead["id"], lead["tenant_id"], addr,
         trigger_reason=trigger_reason,
     )
+
+
+async def _run_lead_widget_log(
+    tenant_id: Optional[str], lead_id: Optional[str],
+    address: str, trigger_reason: Any,
+    lat: Optional[float], lng: Optional[float],
+) -> None:
+    """P0-GEOCODE-LEAK-C3 · TD-62 — telemetry-only task scheduled
+    by :func:`_maybe_backfill_lead_geocode` when the Lead-Sense
+    widget supplied an ``autocomplete_place_id``.  Writes one
+    ``skipped_cached`` row to ``db.geocode_call_log`` attributing
+    the implicit widget savings.  Never raises — the log writer is
+    itself fail-safe."""
+    try:
+        from services.google_maps.geocode_trigger import (
+            GeocodeOutcome as _GO,
+            write_geocode_log as _wlog,
+        )
+        _tr_val = trigger_reason.value if hasattr(trigger_reason, "value") \
+            else str(trigger_reason or "")
+        await _wlog(
+            db_conn=db, logger=logger,
+            tenant_id=tenant_id, entity_type="lead",
+            entity_id=lead_id, address=address,
+            trigger_reason=_tr_val,
+            outcome=_GO.SKIPPED_CACHED.value,
+            lat=lat, lng=lng,
+            error="widget_autocomplete_resolved",
+        )
+    except Exception:  # pragma: no cover
+        pass
 
 
 async def _rate_limit_public_leads(ip: str) -> None:

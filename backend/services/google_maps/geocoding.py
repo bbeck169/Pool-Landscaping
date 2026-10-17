@@ -19,10 +19,11 @@ Phase I1.7.e Chunk 3 (Feb-2026) additions:
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
@@ -34,12 +35,107 @@ from services.google_maps.geocode_trigger import (
 )
 
 _API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
-_CACHE_TTL_DAYS = 30
+# P0-GEOCODE-LEAK-C3 · TD-62 (Feb-2026).  Extended the geocode cache
+# TTL from 30 → 180 days.  Google's ToS permits caching ``place_id``
+# + the coordinate pair indefinitely; the 30-day ceiling is only
+# documented against user-visible address *strings*.  Our cache
+# stores the full response for a *normalized address key* → the
+# place_id / lat / lng pair we actually consume stays legal, and
+# the 6× extension drops the long-tail re-geocode spend that the
+# C2 instrumentation surfaced as the primary residual cost driver.
+# If Google re-tightens the ToS, the knob is here.
+_CACHE_TTL_DAYS = 180
 _ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json"
 
 
 def _normalize(addr: str) -> str:
     return re.sub(r"\s+", " ", (addr or "").strip().lower())
+
+
+# P0-GEOCODE-LEAK-C3 · TD-62 (Feb-2026).  Stable 16-char fingerprint
+# used by :func:`should_geocode` to detect "address unchanged since
+# last geocode" without storing the raw address a second time.
+# SHA-1 truncated to 16 hex chars = 64 bits of entropy, which is
+# more than enough to avoid collisions within a single tenant's
+# address space (operator never sees the hash — pure guard).
+def hash_address(addr: str) -> str:
+    """Return a stable 16-char hex digest of the normalized address.
+
+    The hash is paired with the entity's persisted ``latitude`` +
+    ``longitude`` + ``geocode_address_hash`` field so a subsequent
+    PATCH that doesn't actually change the address short-circuits
+    before any Google call. Empty address returns empty string
+    (sentinel — never matches a stored hash).
+    """
+    n = _normalize(addr or "")
+    if not n:
+        return ""
+    return hashlib.sha1(n.encode("utf-8")).hexdigest()[:16]
+
+
+# P0-GEOCODE-LEAK-C3 · TD-62 (Feb-2026).  Unified guard every write
+# path consults BEFORE invoking the Google-paid :func:`geocode_address`
+# or the ``geocode_and_persist_*`` wrappers.  The wrappers already
+# consulted ``geocoded_at`` + the 180-day TTL on their own, but the
+# C2 call-log revealed the real residual cost comes from PATCH
+# paths that re-hit the API even when the address is byte-for-byte
+# unchanged (cosmetic edits — rename, phone update, VIP flag flip,
+# etc.).  This helper is the single source of truth; routers must
+# NOT re-implement the cache / hash logic locally.
+#
+# Return contract:
+#   (True,  None)             — caller may invoke the API
+#   (False, "no_addr")        — empty / whitespace-only address
+#   (False, "skipped_unchanged") — address identical to the hash the
+#                                  entity was last geocoded with
+#   (False, "skipped_cached") — ``geocoded_at`` is within _CACHE_TTL_DAYS
+#
+# ``OPERATOR_FORCE`` ALWAYS bypasses every guard (operator-visible
+# "Re-geocode now" button workflows must never silently skip).
+def should_geocode(
+    entity: Optional[Dict[str, Any]],
+    new_address: Optional[str],
+    trigger_reason: Any,
+) -> Tuple[bool, Optional[str]]:
+    """Unified pre-geocode gate — see module docstring block above.
+
+    Does NOT write telemetry rows (callers do that so the row carries
+    the correct ``entity_type`` / ``entity_id`` / ``outcome`` tag).
+    """
+    _tr_val = (
+        trigger_reason.value
+        if isinstance(trigger_reason, GeocodeTrigger)
+        else str(trigger_reason or "")
+    )
+    # OPERATOR_FORCE bypasses every guard — operator-visible workflow.
+    if _tr_val == GeocodeTrigger.OPERATOR_FORCE.value:
+        return (True, None)
+    if not new_address or not str(new_address).strip():
+        return (False, "no_addr")
+    _ent = entity or {}
+    # (a) address-hash short-circuit — unchanged since last geocode.
+    _lat = (_ent.get("latitude")
+             or _ent.get("service_lat")
+             or _ent.get("site_lat"))
+    _lng = (_ent.get("longitude")
+             or _ent.get("service_lng")
+             or _ent.get("site_lng"))
+    _existing_hash = _ent.get("geocode_address_hash")
+    if _existing_hash and _lat is not None and _lng is not None:
+        if _existing_hash == hash_address(new_address):
+            return (False, "skipped_unchanged")
+    # (b) TTL short-circuit — stale-enough re-geocode allowed.
+    _stamp = _ent.get("geocoded_at")
+    if _stamp:
+        try:
+            _g = datetime.fromisoformat(
+                str(_stamp).replace("Z", "+00:00"),
+            )
+            if datetime.now(timezone.utc) - _g < timedelta(days=_CACHE_TTL_DAYS):
+                return (False, "skipped_cached")
+        except Exception:
+            pass
+    return (True, None)
 
 
 def _flatten_addr(raw: Any) -> str:
@@ -310,31 +406,37 @@ async def geocode_and_persist_customer(
         return False
     _trig = trigger_reason.value if isinstance(trigger_reason, GeocodeTrigger) \
         else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
-    if cust.get("geocoded_at"):
-        try:
-            g = datetime.fromisoformat(cust["geocoded_at"].replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) - g < timedelta(days=_CACHE_TTL_DAYS):
-                await write_geocode_log(
-                    db_conn=db, logger=logger,
-                    tenant_id=tenant_id, entity_type="customer",
-                    entity_id=customer_id,
-                    address=resolve_customer_address(cust),
-                    trigger_reason=_trig,
-                    outcome=GeocodeOutcome.SKIPPED_CACHED.value,
-                    lat=cust.get("latitude") or cust.get("service_lat"),
-                    lng=cust.get("longitude") or cust.get("service_lng"),
-                    api_key=_API_KEY,
-                )
-                return False
-        except Exception:
-            pass
-    # Feb-2026 · Fix — Re-geocode button. The fallback chain now
-    # walks EVERY historical address field (``service_address`` →
-    # ``address`` → ``street_address`` → ``mailing_address`` →
-    # structured composite) so a customer whose only populated
-    # field is the display-renderer's ``address`` still geocodes.
+
+    # Feb-2026 · Fix — Re-geocode button. The fallback chain walks
+    # EVERY historical address field (``service_address`` → ``address``
+    # → ``street_address`` → ``mailing_address`` → structured
+    # composite) so a customer whose only populated field is the
+    # display-renderer's ``address`` still geocodes.
     addr = resolve_customer_address(cust)
-    if not addr.strip():
+
+    # P0-GEOCODE-LEAK-C3 · TD-62 — unified pre-geocode guard.
+    # Replaces the inline 30-day ``geocoded_at`` check with the
+    # :func:`should_geocode` helper so every call site honours
+    # the same cache + hash + OPERATOR_FORCE semantics.
+    _ok, _skip = should_geocode(cust, addr, trigger_reason)
+    if not _ok:
+        await write_geocode_log(
+            db_conn=db, logger=logger,
+            tenant_id=tenant_id, entity_type="customer",
+            entity_id=customer_id,
+            address=addr,
+            trigger_reason=_trig,
+            outcome=(
+                GeocodeOutcome.NO_ADDR.value
+                if _skip == "no_addr"
+                else GeocodeOutcome.SKIPPED_UNCHANGED.value
+                if _skip == "skipped_unchanged"
+                else GeocodeOutcome.SKIPPED_CACHED.value
+            ),
+            lat=cust.get("latitude") or cust.get("service_lat"),
+            lng=cust.get("longitude") or cust.get("service_lng"),
+            api_key=_API_KEY,
+        )
         return False
     hit = await geocode_address(
         addr, tenant_id=tenant_id,
@@ -354,6 +456,10 @@ async def geocode_and_persist_customer(
             "geocode_precision": hit.get("precision"),
             "geocoded_at": datetime.now(timezone.utc).isoformat(),
             "geocode_source": "google",
+            # P0-GEOCODE-LEAK-C3 · persist the address fingerprint so
+            # ``should_geocode`` can short-circuit the next cosmetic
+            # PATCH that doesn't actually change the address.
+            "geocode_address_hash": hash_address(addr),
             "service_location": {"type": "Point",
                                    "coordinates": [hit["lng"], hit["lat"]]},
         }},
@@ -383,13 +489,6 @@ async def geocode_and_persist_job(
     )
     if not job:
         return False
-    if job.get("geocoded_at"):
-        try:
-            g = datetime.fromisoformat(job["geocoded_at"].replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) - g < timedelta(days=_CACHE_TTL_DAYS):
-                return False
-        except Exception:
-            pass
 
     addr = _flatten_addr(job.get("service_address"))
     if not addr:
@@ -428,7 +527,10 @@ async def geocode_and_persist_job(
                     cust.get("service_street"), cust.get("service_city"),
                     cust.get("service_state"), cust.get("service_zip"),
                 ]))).strip()
-    if not addr:
+
+    # P0-GEOCODE-LEAK-C3 · TD-62 — unified pre-geocode guard.
+    _ok, _skip = should_geocode(job, addr, trigger_reason)
+    if not _ok:
         return False
     hit = await geocode_address(
         addr, tenant_id=tenant_id,
@@ -445,6 +547,9 @@ async def geocode_and_persist_job(
             "geocode_precision": hit.get("precision"),
             "geocoded_at": datetime.now(timezone.utc).isoformat(),
             "geocode_source": "google",
+            # P0-GEOCODE-LEAK-C3 · persist address fingerprint for
+            # subsequent should_geocode short-circuits.
+            "geocode_address_hash": hash_address(addr),
         }},
     )
     return True
@@ -483,58 +588,18 @@ async def geocode_and_persist_property(property_id: str,
         return False
     old_lat = prop.get("latitude")
     old_lng = prop.get("longitude")
-    if prop.get("geocoded_at"):
-        try:
-            g = datetime.fromisoformat(prop["geocoded_at"].replace("Z", "+00:00"))
-            if datetime.now(timezone.utc) - g < timedelta(days=_CACHE_TTL_DAYS):
-                logger.info(
-                    "[geocode-property] pid=%s tenant=%s method=cache "
-                    "old=(%s, %s) geocoded_at=%s",
-                    property_id, tenant_id, old_lat, old_lng,
-                    prop.get("geocoded_at"),
-                )
-                # P0-GEOCODE-LEAK-C2: log the wrapper-level cache
-                # short-circuit so the diagnostics endpoint can
-                # compare ``skipped_cached`` vs ``hit`` ratios.
-                _trig = trigger_reason.value if isinstance(trigger_reason, GeocodeTrigger) \
-                    else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
-                try:
-                    _addr_doc = prop.get("address") or {}
-                    _addr_str = " ".join(filter(None, [
-                        _addr_doc.get("line1") or _addr_doc.get("address_line1"),
-                        _addr_doc.get("city"), _addr_doc.get("state"),
-                        _addr_doc.get("postal_code") or _addr_doc.get("zip"),
-                    ])).strip()
-                except Exception:
-                    _addr_str = ""
-                await write_geocode_log(
-                    db_conn=db, logger=logger,
-                    tenant_id=tenant_id, entity_type="property",
-                    entity_id=property_id, address=_addr_str,
-                    trigger_reason=_trig,
-                    outcome=GeocodeOutcome.SKIPPED_CACHED.value,
-                    lat=old_lat, lng=old_lng, api_key=_API_KEY,
-                )
-                return False
-        except Exception:
-            pass
+    _trig = trigger_reason.value if isinstance(trigger_reason, GeocodeTrigger) \
+        else str(trigger_reason or GeocodeTrigger.UNKNOWN.value)
+
     address_doc = prop.get("address") or {}
     # TD-57 · Feb-2026 — accept BOTH address-key schemas. The current
     # ``routers/properties.py::_AddressIn`` validator persists under
     # ``address.line1 / line2 / postal_code`` and actively nullifies
     # the legacy ``address_line1 / address_line2`` keys on every
     # write; pre-P37-migration docs may still carry the legacy
-    # ``address_line1 / zip`` shape in Mongo. Read both, prefer the
-    # current canonical shape (since any live-writer path emits it),
-    # fall back to legacy for un-migrated rows. ``city`` + ``state``
-    # share the same key under both schemas so no fallback is
-    # needed there. Sibling callers ``services/stop_geo.py::
-    # _fmt_property_address`` and the P37 backfill migration both
-    # use the canonical shape; this helper is the only outlier that
-    # read legacy-only, which made the TD-40 fire-and-forget call a
-    # no-op for every property created via the Pydantic-validated
-    # admin endpoint. See TECH_DEBT.md · TD-57 for the full
-    # reclassification story.
+    # ``address_line1 / zip`` shape in Mongo.  Read both, prefer
+    # the current canonical shape (since any live-writer path emits
+    # it), fall back to legacy for un-migrated rows.
     _line1 = address_doc.get("line1") or address_doc.get("address_line1")
     _line2 = address_doc.get("line2") or address_doc.get("address_line2")
     _postal = address_doc.get("postal_code") or address_doc.get("zip")
@@ -543,11 +608,45 @@ async def geocode_and_persist_property(property_id: str,
         address_doc.get("city"), address_doc.get("state"),
         _postal,
     ])).strip()
-    if not addr:
+
+    # P0-GEOCODE-LEAK-C3 · TD-62 — unified pre-geocode guard.
+    # Replaces the inline 30-day cache short-circuit + the
+    # standalone ``no_addr`` branch with :func:`should_geocode`.
+    _ok, _skip = should_geocode(prop, addr, trigger_reason)
+    if not _ok:
+        if _skip == "no_addr":
+            logger.info(
+                "[geocode-property] pid=%s tenant=%s method=no_addr "
+                "old=(%s, %s)",
+                property_id, tenant_id, old_lat, old_lng,
+            )
+            await write_geocode_log(
+                db_conn=db, logger=logger,
+                tenant_id=tenant_id, entity_type="property",
+                entity_id=property_id, address="",
+                trigger_reason=_trig,
+                outcome=GeocodeOutcome.NO_ADDR.value,
+                lat=old_lat, lng=old_lng, api_key=_API_KEY,
+            )
+            return False
+        _outcome = (
+            GeocodeOutcome.SKIPPED_UNCHANGED.value
+            if _skip == "skipped_unchanged"
+            else GeocodeOutcome.SKIPPED_CACHED.value
+        )
         logger.info(
-            "[geocode-property] pid=%s tenant=%s method=no_addr "
-            "old=(%s, %s)",
-            property_id, tenant_id, old_lat, old_lng,
+            "[geocode-property] pid=%s tenant=%s method=%s "
+            "old=(%s, %s) geocoded_at=%s",
+            property_id, tenant_id,
+            "unchanged" if _skip == "skipped_unchanged" else "cache",
+            old_lat, old_lng, prop.get("geocoded_at"),
+        )
+        await write_geocode_log(
+            db_conn=db, logger=logger,
+            tenant_id=tenant_id, entity_type="property",
+            entity_id=property_id, address=addr,
+            trigger_reason=_trig, outcome=_outcome,
+            lat=old_lat, lng=old_lng, api_key=_API_KEY,
         )
         return False
     hit = await geocode_address(
@@ -569,6 +668,10 @@ async def geocode_and_persist_property(property_id: str,
             "geocode_precision": hit.get("precision"),
             "geocoded_at": datetime.now(timezone.utc).isoformat(),
             "geocode_source": "google",
+            # P0-GEOCODE-LEAK-C3 · persist the address fingerprint
+            # so ``should_geocode`` can short-circuit cosmetic
+            # PATCHes that don't actually change the address.
+            "geocode_address_hash": hash_address(addr),
         }},
     )
     logger.info(

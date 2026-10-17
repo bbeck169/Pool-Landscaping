@@ -825,20 +825,80 @@ async def geocode_backfill_all_tenants_boot() -> None:
     """Fire-and-forget on boot. Iterates every tenant so first-load
     of ``/dispatch`` has pins to render. Sleeps 150 ms between calls
     to stay well under Google's per-second cap even when several
-    tenants boot together."""
+    tenants boot together.
+
+    P0-GEOCODE-LEAK-C3 · TD-62 (Feb-2026) — per-tenant
+    ``migration_status`` sentinel. Each K8s pod restart used to
+    re-trigger the full-tenant sweep even though cached
+    ``geocoded_at`` within TTL short-circuits inside the helper —
+    the per-row DB round-trips were the actual spend driver. The
+    sentinel at ``db.migration_status.{key:"geocode_backfill_v2",
+    tenant_id}`` is written AFTER a tenant completes a clean sweep;
+    subsequent boots skip that tenant entirely.
+
+    Env kill-switch ``ENABLE_BOOT_GEOCODE_BACKFILL`` is preserved
+    as belt-and-suspenders (operators can keep it OFF
+    indefinitely; the sentinel only kicks in when the sweep is
+    explicitly enabled). Operator-visible log patterns:
+
+      * ``[phase17] tenant <tid> already backfilled (geocode_
+        backfill_v2 sentinel exists) · skipping`` — per-tenant skip
+      * ``[phase17] geocode boot pass complete for tenant=<slug>``
+        — unchanged
+      * ``[phase17] sentinel written for tenant=<slug>
+        (geocode_backfill_v2)`` — NEW, written on clean sweep
+    """
     from services.google_maps.geocoding import geocode_and_persist_customer
+    _now_iso = datetime.now(timezone.utc).isoformat()
     async for t in db.tenants.find({}, {"_id": 0, "id": 1, "slug": 1}):
+        _tid = t.get("id")
+        if not _tid:
+            continue
+        _sentinel = await db.migration_status.find_one(
+            {"key": "geocode_backfill_v2", "tenant_id": _tid},
+            {"_id": 0, "completed_at": 1},
+        )
+        if _sentinel:
+            logger.info(
+                "[phase17] tenant %s already backfilled "
+                "(geocode_backfill_v2 sentinel exists) · skipping",
+                _tid,
+            )
+            continue
+        _errored = False
         async for c in db.customers.find(
-            {"tenant_id": t["id"],
+            {"tenant_id": _tid,
               "service_address": {"$exists": True, "$ne": ""}},
             {"_id": 0, "id": 1},
         ):
             try:
                 await geocode_and_persist_customer(
-                    c["id"], t["id"],
+                    c["id"], _tid,
                     trigger_reason=_GT.BOOT_SWEEP,
                 )
                 await asyncio.sleep(0.15)
             except Exception:
-                pass
-        logger.info("[phase17] geocode boot pass complete for tenant=%s", t.get("slug"))
+                _errored = True
+        logger.info("[phase17] geocode boot pass complete for tenant=%s",
+                     t.get("slug"))
+        if not _errored:
+            try:
+                await db.migration_status.update_one(
+                    {"key": "geocode_backfill_v2", "tenant_id": _tid},
+                    {"$set": {
+                        "key": "geocode_backfill_v2",
+                        "tenant_id": _tid,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "run_version": "C3",
+                    }},
+                    upsert=True,
+                )
+                logger.info(
+                    "[phase17] sentinel written for tenant=%s "
+                    "(geocode_backfill_v2)", t.get("slug"),
+                )
+            except Exception as _e:
+                logger.warning(
+                    "[phase17] sentinel upsert failed for tenant=%s: %s",
+                    t.get("slug"), _e,
+                )
