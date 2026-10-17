@@ -33,7 +33,9 @@ import { PhoneLink, AddressLink, CustomerLink } from "@/components/customer";
 import OnMyWayButton from "@/components/schedule/OnMyWayButton";
 import ScheduleMap from "@/pages/schedule/ScheduleMap";
 // Phase K50 · Feb-2026 — Schedule job-card status background shading.
-import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor,
+         isFinishedJobStatus,
+         jobStatusTextColor } from "../../lib/jobStatus";
 import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, Route as RouteIcon, RotateCcw, Star, List as ListIcon, Map as MapIconLucide, Users } from "lucide-react";
 // Feb-2026 · Schedule card redesign — customer name + address now
 // open Google Maps directions directly (no dedicated Navigate
@@ -1084,6 +1086,14 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
         const notesFull = combinedNotes(j);
         const _notesPreview = notesFull.length > 100 ? notesFull.slice(0, 100) + "…" : notesFull;
         const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
+        // Feb-2026 · Schedule finished-state card styling (operator
+        // spec).  Finished buckets (``completed`` / ``closed`` /
+        // ``cancelled`` / ``skipped``) render on ``#F3F4F6`` with
+        // dark-grey (``#374151``) body text so the terminal cards
+        // recede visually.  Open / in-progress / missed / on-hold
+        // cards fall through to ``colors.onSurface``.
+        const _isFinished = isFinishedJobStatus(j.status);
+        const _bodyTextColor = jobStatusTextColor(j.status) || colors.onSurface;
         return (
           <div key={j.id || i}
                style={{
@@ -1094,6 +1104,7 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                  backgroundColor: k50JobStatusColor(j.status) || colors.surface,
                }}
                data-k50-bg={k50JobStatusColor(j.status) || colors.surface}
+               data-finished-state={_isFinished ? "true" : "false"}
                data-testid={`schedule-card-${j.id}`}>
             <div className="flex items-start gap-3 p-4 hover:brightness-[0.98] cursor-pointer"
                  onClick={() => onOpen(j.id)}>
@@ -1126,7 +1137,7 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                     {tone.label}
                   </span>
                 </div>
-                <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: colors.onSurface }}
+                <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: _bodyTextColor }}
                      data-testid={`schedule-card-customer-${j.id}`}>
                   {/* Feb-2026 · Schedule card redesign — customer
                       name is now the primary directions trigger.
@@ -1171,7 +1182,7 @@ function ScheduleCardList({ jobs, tz, isTech, isAdminTier = false, onOpen, onClo
                       type="button"
                       onClick={(e) => openDirections(j, e)}
                       className="text-left cursor-pointer hover:underline focus:outline-none focus-visible:underline"
-                      style={{ color: colors.onSurface, background: "transparent", padding: 0, border: 0, font: "inherit" }}
+                      style={{ color: _bodyTextColor, background: "transparent", padding: 0, border: 0, font: "inherit" }}
                       data-testid={`schedule-card-${j.id}-customer-name-directions`}
                       aria-label={`Open directions to ${j.customer_name || "customer"}`}
                     >

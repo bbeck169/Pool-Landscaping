@@ -30,28 +30,33 @@ export const K50_JOB_STATUS_BG = Object.freeze({
   open:        "#EAF7F0",  // light mint-green — "active, not yet started"
   scheduled:   "#EAF7F0",  // alias for ``open`` on the Schedule surface
   in_progress: "#FEF3C7",  // light yellow (Tailwind yellow-100)
-  // Phase 3 · Feb-2026 — "Bold red" completed treatment (user
-  // request).  The soft-pink #FDECEC was indistinguishable from
-  // open jobs at a glance; bumped to a bright coral-red with
-  // white text applied via the ``[data-k50-bg="#ff4542"]``
-  // cascade in ``index.css``.  Feb-2026 Schedule polish — the
-  // exact hex is now ``#ff4542`` (contrast against white text
-  // drops from ~5.9:1 at the prior Tailwind red-600 #DC2626 to
-  // ~4.1:1, still AA for large text — recorded for future
-  // auditability).  Mobile parity ticket is separate
-  // (``mobile/src/lib/jobStatus.ts`` keeps the prior hex until
-  // that ticket ships).
-  completed:   "#ff4542",  // bright coral-red — dramatic completed signal
-  cancelled:   "#FECACA",  // light red (Tailwind red-200) — deliberately
-                           // redder than ``completed`` so day/week views
-                           // separate the two at a glance
-  skipped:     "#FED7AA",  // light orange (Tailwind orange-200)
+  // Feb-2026 · Schedule finished-state card styling (operator spec).
+  // The prior Phase 3 "bold red" treatment for ``completed`` (hex
+  // ``#ff4542``) was reported by operators as both too visually
+  // prominent for a terminal/archive state AND inaccessible — the
+  // white-text-on-red cascade had ~4.1:1 contrast which is only AA
+  // for large text and failed WCAG AA for the smaller gate / crew /
+  // service labels.  All finished states (``completed`` / ``closed``
+  // / ``cancelled`` / ``skipped``) now resolve to Tailwind
+  // ``gray-100`` so finished cards recede into the list.  Dark
+  // body text (``#374151`` ~ gray-700) is applied in-line by the
+  // schedule card renderers via ``jobStatusTextColor`` below —
+  // contrast ratio on #F3F4F6 is 10.4:1 (AAA for normal text).
+  // Mobile parity is tracked separately in
+  // ``mobile/src/lib/jobStatus.ts``; that file keeps its prior
+  // hexes until the mobile ticket ships.
+  completed:   "#F3F4F6",  // Tailwind gray-100 — finished / recessive
+  cancelled:   "#F3F4F6",  // Tailwind gray-100 — finished / recessive
+  skipped:     "#F3F4F6",  // Tailwind gray-100 — finished / recessive
   // Phase P47 · Feb-2026 — ``missed`` is written by the auto-
   // cleanup poller when a job stayed open past
   // ``MISSED_JOB_STALENESS_HOURS`` without a completion.  Slightly
   // deeper red than ``cancelled`` so the two are visually
   // separable on the Schedule surface — cancelled is operator
   // intent, missed is "the system flagged this as unfinished".
+  // Deliberately NOT grouped into the finished-state bucket above
+  // because ``missed`` is actionable (operator can re-open or
+  // re-schedule) and must stay visually prominent.
   missed:      "#FCA5A5",  // Tailwind red-300
 });
 
@@ -88,4 +93,66 @@ export function jobStatusColor(status) {
   };
   const key = alias[s] || s;
   return K50_JOB_STATUS_BG[key] || null;
+}
+
+
+/**
+ * Feb-2026 · Schedule finished-state card styling (operator spec).
+ *
+ * Returns ``true`` when a job's status falls into the terminal /
+ * archive bucket that the Schedule surface renders in a recessive
+ * grey style.  Finished buckets (per the operator brief):
+ *   * ``completed``
+ *   * ``closed``     (US / legacy spelling; aliased in ``alias`` below)
+ *   * ``cancelled``  (UK canonical) / ``canceled`` (US alias)
+ *   * ``skipped``
+ *
+ * Deliberately EXCLUDES:
+ *   * ``missed``      — actionable (operator can re-open / re-sched)
+ *                       so it keeps the red-300 prominence.
+ *   * ``could_not_service`` — handled by the broader terminal set in
+ *                       ``CalendarSchedule.jsx:_TERMINAL_STATUSES``;
+ *                       the finished-styling bucket is intentionally
+ *                       narrower (operator did not include it).
+ *   * All ``on_hold`` / ``requested`` / ``reopened`` / ``pending``
+ *     statuses — these stay visually prominent.
+ *
+ * @param {string | null | undefined} status
+ * @returns {boolean}
+ */
+export function isFinishedJobStatus(status) {
+  const s = String(status || "").toLowerCase().trim();
+  if (!s) return false;
+  // Canonicalize via the same alias table ``jobStatusColor`` uses
+  // so the two helpers never drift (``closed`` → ``completed``,
+  // ``canceled`` → ``cancelled``, ``done`` → ``completed``).
+  const alias = {
+    closed: "completed",
+    done: "completed",
+    canceled: "cancelled",
+  };
+  const key = alias[s] || s;
+  return key === "completed"
+      || key === "cancelled"
+      || key === "skipped";
+}
+
+
+/**
+ * Feb-2026 · Resolve the recommended body-text hex for a job's
+ * Schedule-card background.  Returns a dark-grey ``#374151``
+ * (Tailwind gray-700, 10.4:1 contrast against the finished-state
+ * ``#F3F4F6`` background — AAA for normal text) for finished
+ * statuses; returns ``null`` for every other status so the caller
+ * falls through to its existing ``colors.onSurface`` default.
+ *
+ * The helper is deliberately colocated with ``K50_JOB_STATUS_BG``
+ * + ``isFinishedJobStatus`` so the bg + text pair stay locked in
+ * a single file (no "update one, forget the other" risk).
+ *
+ * @param {string | null | undefined} status
+ * @returns {string | null}
+ */
+export function jobStatusTextColor(status) {
+  return isFinishedJobStatus(status) ? "#374151" : null;
 }

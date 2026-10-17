@@ -276,29 +276,30 @@ describe("K50 · Slice B — Schedule card status background", () => {
     // Contract locked in against the K50 brief.
     // K74.1 · Feb-2026 — ``open``/``scheduled`` lightened
     // ``#D6F5EE`` → ``#EAF7F0`` (mint-green family, ~10% lighter).
-    // Phase 3 · Feb-2026 — ``completed`` flipped from soft-pink
-    // ``#FDECEC`` to Tailwind red-600 ``#DC2626`` so a completed
-    // card is unmistakably distinct from an open one.  Feb-2026
-    // Schedule polish — the completed hex is now ``#ff4542``
-    // (bright coral-red, user-specified).  Mobile mirror
-    // (``mobile/src/lib/jobStatus.ts``) still carries the earlier
-    // hex until the ``MOBILE-SCHEDULE-COMPLETED-COLOR-PARITY``
-    // ticket ships.
+    // Feb-2026 · Schedule finished-state card styling (operator
+    // spec) — ``completed`` / ``cancelled`` / ``skipped`` all
+    // migrated to Tailwind ``gray-100`` (``#F3F4F6``) so finished
+    // cards recede visually.  See ``jobStatusTextColor`` for the
+    // paired dark-grey body text (#374151, 10.4:1 AAA).  Mobile
+    // mirror (``mobile/src/lib/jobStatus.ts``) still carries the
+    // earlier hexes until the mobile parity ticket ships.
     expect(jobStatusColor("open")).toBe("#EAF7F0");
     expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
-    expect(jobStatusColor("completed")).toBe("#ff4542");
-    expect(jobStatusColor("cancelled")).toBe("#FECACA");
-    expect(jobStatusColor("skipped")).toBe("#FED7AA");
+    expect(jobStatusColor("completed")).toBe("#F3F4F6");
+    expect(jobStatusColor("cancelled")).toBe("#F3F4F6");
+    expect(jobStatusColor("skipped")).toBe("#F3F4F6");
   });
 
   it("resolves legacy aliases (active / closed / canceled) to the K50 canonical hexes", () => {
     // ``active`` → in_progress, ``closed``/``done`` → completed,
-    // ``canceled`` (US) → cancelled (UK, canonical).
+    // ``canceled`` (US) → cancelled (UK, canonical).  Feb-2026 ·
+    // finished-state styling — closed / done / canceled all land
+    // on the gray-100 finished bucket.
     expect(jobStatusColor("active")).toBe("#FEF3C7");
-    expect(jobStatusColor("closed")).toBe("#ff4542");
-    expect(jobStatusColor("done")).toBe("#ff4542");
-    expect(jobStatusColor("canceled")).toBe("#FECACA");
+    expect(jobStatusColor("closed")).toBe("#F3F4F6");
+    expect(jobStatusColor("done")).toBe("#F3F4F6");
+    expect(jobStatusColor("canceled")).toBe("#F3F4F6");
   });
 
   it("K57 · Feb-2026 — ``pending`` resolves to the ``open`` bucket (#EAF7F0)", () => {
@@ -324,7 +325,7 @@ describe("K50 · Slice B — Schedule card status background", () => {
 
   it("is case + whitespace insensitive", () => {
     expect(jobStatusColor("  In_Progress ")).toBe("#FEF3C7");
-    expect(jobStatusColor("COMPLETED")).toBe("#ff4542");
+    expect(jobStatusColor("COMPLETED")).toBe("#F3F4F6");
   });
 
   it("returns null (never a default hex) for statuses outside the K50 map", () => {
@@ -350,7 +351,11 @@ describe("K50 · Slice B — Schedule card status background", () => {
     // stripeConfig / checklistType are exposed), so this file now
     // imports via relative path.  Assertion updated to accept
     // either the legacy alias form or the current relative form.
-    expect(CAL_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
+    // Feb-2026 · Schedule finished-state card styling added
+    // ``isFinishedJobStatus`` + ``jobStatusTextColor`` to the
+    // import — regex relaxed to accept any additional symbols
+    // in the destructuring list after ``k50JobStatusColor``.
+    expect(CAL_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor[\s\S]*?\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
     expect(CAL_SCHEDULE).toMatch(/k50CardBg\s*=\s*k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface/);
     expect(CAL_SCHEDULE).toMatch(/background:\s*k50CardBg,/);
     // Regression guard — no scattered "#EAF7F0" / "#FDECEC" / "#FECACA"
@@ -366,7 +371,11 @@ describe("K50 · Slice B — Schedule card status background", () => {
 
   it("TodaySchedule.jsx wires the helper on schedule-card rows", () => {
     // K75 Step B · post-lint hygiene — see CalendarSchedule note.
-    expect(TODAY_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor\s*\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
+    // Feb-2026 · Schedule finished-state card styling added
+    // ``isFinishedJobStatus`` + ``jobStatusTextColor`` to the
+    // import — regex relaxed to accept any additional symbols
+    // in the destructuring list.
+    expect(TODAY_SCHEDULE).toMatch(/import\s*\{\s*jobStatusColor as k50JobStatusColor[\s\S]*?\}\s*from\s*["'](?:@\/lib\/jobStatus|\.\.\/\.\.\/lib\/jobStatus)["']/);
     expect(TODAY_SCHEDULE).toMatch(/backgroundColor:\s*k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface/);
     expect(TODAY_SCHEDULE).toMatch(/data-k50-bg=\{k50JobStatusColor\(j\.status\)\s*\|\|\s*colors\.surface\}/);
   });

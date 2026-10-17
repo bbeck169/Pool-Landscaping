@@ -190,47 +190,20 @@ input.reorder-num-input {
     background-color: var(--tenant-schedule-tile-bg, #EAF7F0) !important;
 }
 
-/* Phase 3 · Feb-2026 — "Bold red" completed card cascade.
- * K50 flipped the ``completed`` bucket from soft-pink #FDECEC to
- * a bright coral-red.  Feb-2026 Schedule polish — the K50 completed
- * hex is now #ff4542 (contrast against white text drops from ~5.9:1
- * at the prior Tailwind red-600 #DC2626 to ~4.1:1 — still AA for
- * large text).  Child text + icons on the card body use explicit
- * color props (``colors.onSurface`` / ``onSurfaceSecondary``
- * / ``muted`` / brand reds like the service-type label at
- * ``#ff4542``) which would otherwise bleed into the red bg and
- * read as illegible.  The cascade below forces white on everything
- * EXCEPT elements that already carry their own chip background
- * (gate code, VIP, crew badge, status pill, note callout) — those
- * are tagged with ``[data-chip]="true"`` or sit inside the shared
- * ``JobNotesCallout`` which has its own fully-opaque bg.  Scope
- * ONLY applies when ``data-k50-bg="#ff4542"`` matches, so no
- * non-completed card is affected. */
-[data-k50-bg="#ff4542"],
-[data-k50-bg="#ff4542"] * {
-    color: #FFFFFF !important;
-}
-/* Lucide icons use ``stroke="currentColor"`` by default, so the
- * color: #FFFFFF cascade above already recolors them.  Service-type
- * label uses an explicit ``color: #ff4542`` style which is defeated
- * by ``!important`` above — intentional, so the service label
- * reads white on red (unreadable red-on-red otherwise). */
-[data-k50-bg="#ff4542"] [data-chip="true"],
-[data-k50-bg="#ff4542"] [data-vip="true"],
-[data-k50-bg="#ff4542"] [data-k74-solid-navy-chip="true"],
-[data-k50-bg="#ff4542"] [data-note-surface="white"],
-[data-k50-bg="#ff4542"] [data-note-surface="white"] *,
-[data-k50-bg="#ff4542"] [data-testid^="schedule-card-status-"],
-[data-k50-bg="#ff4542"] [data-testid^="schedule-card-gate-"],
-[data-k50-bg="#ff4542"] [data-testid^="schedule-card-crew-badge-"],
-[data-k50-bg="#ff4542"] [data-testid^="job-vip-badge-"] {
-    /* Reset the white cascade for self-contained chips so their
-     * built-in color + bg combinations stay legible. */
-    color: initial !important;
-}
-[data-k50-bg="#ff4542"] [data-note-surface="white"] {
-    color: #111827 !important;
-}
+/* Feb-2026 · Schedule finished-state card styling (operator spec).
+ * The prior Phase 3 "Bold red" cascade for ``completed`` cards
+ * (data-k50-bg="#ff4542" → force white text + chip resets) was
+ * removed when ``K50_JOB_STATUS_BG.completed`` moved from the
+ * coral-red hex to Tailwind ``gray-100`` (#F3F4F6).  The new
+ * finished-state treatment uses dark-grey body text (#374151 ~
+ * gray-700) applied in-line by the Schedule card renderers via
+ * ``jobStatusTextColor`` (see ``src/lib/jobStatus.js``) — no
+ * ``!important`` cascade is required because the finished bg is
+ * light enough that the default child-text colors stay legible.
+ *
+ * Contrast ratio: #374151 on #F3F4F6 = 10.4:1 (AAA for normal
+ * text), up from the prior 4.1:1 white-on-#ff4542 which failed
+ * AA for the smaller gate / crew / service labels. */
 
 /* K75 · top-nav BAR background — reads tenant.menu.bg.
  * I1.5.c.fix · Feb-2026 — was missing entirely; the K75 active

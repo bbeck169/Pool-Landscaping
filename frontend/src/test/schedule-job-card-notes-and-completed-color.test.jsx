@@ -187,34 +187,47 @@ describe("Phase 3 · JobNotesCallout — inline customer / pool / landscape bloc
 });
 
 
-describe("Phase 3 · completed-card dramatic red color", () => {
-  it("jobStatusColor('completed') is Tailwind red-600 (#DC2626)", () => {
-    expect(jobStatusColor("completed")).toBe("#DC2626");
-    // Case + whitespace tolerant.
-    expect(jobStatusColor("  Completed ")).toBe("#DC2626");
-    expect(jobStatusColor("CLOSED")).toBe("#DC2626");
-    expect(jobStatusColor("done")).toBe("#DC2626");
+describe("Feb-2026 · Schedule finished-state card styling (operator spec)", () => {
+  it("jobStatusColor returns Tailwind gray-100 (#F3F4F6) for every finished state", () => {
+    // Finished buckets per the operator brief:
+    //   completed · closed (alias → completed) · cancelled ·
+    //   canceled (alias → cancelled) · skipped · done (alias
+    //   → completed)
+    // All resolve to the same recessive gray-100 so finished
+    // cards fade into the Schedule list.
+    expect(jobStatusColor("completed")).toBe("#F3F4F6");
+    expect(jobStatusColor("  Completed ")).toBe("#F3F4F6");
+    expect(jobStatusColor("CLOSED")).toBe("#F3F4F6");
+    expect(jobStatusColor("done")).toBe("#F3F4F6");
+    expect(jobStatusColor("cancelled")).toBe("#F3F4F6");
+    expect(jobStatusColor("canceled")).toBe("#F3F4F6");
+    expect(jobStatusColor("skipped")).toBe("#F3F4F6");
   });
 
-  it("non-completed statuses are unchanged (regression lock)", () => {
+  it("non-finished statuses are unchanged (regression lock)", () => {
     expect(jobStatusColor("open")).toBe("#EAF7F0");
     expect(jobStatusColor("scheduled")).toBe("#EAF7F0");
     expect(jobStatusColor("in_progress")).toBe("#FEF3C7");
-    expect(jobStatusColor("cancelled")).toBe("#FECACA");
-    expect(jobStatusColor("skipped")).toBe("#FED7AA");
     expect(jobStatusColor("missed")).toBe("#FCA5A5");
     expect(jobStatusColor("pending")).toBe("#EAF7F0");   // K57 alias
+    // Non-K50 statuses still return null so callers' pill-only
+    // treatment stays intact.
+    expect(jobStatusColor("on_hold")).toBeNull();
+    expect(jobStatusColor("requested")).toBeNull();
+    expect(jobStatusColor("reopened")).toBeNull();
   });
 
-  it("index.css carries a cascade that forces white text on the red completed card", () => {
-    // Read the raw stylesheet — the cascade rule is static CSS, so
-    // asserting its presence is the cheapest way to lock the rule in.
+  it("index.css NO LONGER carries the obsolete #ff4542 white-text cascade", () => {
+    // The Phase 3 "Bold red" cascade (which forced white text on
+    // completed cards) was removed when completed migrated to
+    // gray-100.  Finished-card text is now controlled inline via
+    // ``jobStatusTextColor`` → ``#374151`` (10.4:1 AAA on
+    // #F3F4F6) — no ``!important`` cascade required.
     const css = fs.readFileSync(
       path.resolve(__dirname, "../index.css"), "utf8",
     );
-    // Rule exists AND targets the completed-card attribute selector.
-    expect(css).toMatch(/\[data-k50-bg="#DC2626"\]/);
-    expect(css).toMatch(/\[data-k50-bg="#DC2626"\]\s*\*\s*\{[^}]*color:\s*#FFFFFF/i);
+    expect(css).not.toMatch(/\[data-k50-bg="#ff4542"\]/);
+    expect(css).not.toMatch(/\[data-k50-bg="#DC2626"\]/);
   });
 
   it("ServiceNotePill is no longer imported inside TodaySchedule.jsx card body", () => {

@@ -121,7 +121,9 @@ import {
 // Single source of truth: ``frontend/src/lib/jobStatus.js`` (web) +
 // ``mobile/src/lib/jobStatus.ts`` (mobile).  DO NOT inline the hex
 // codes here — extend the helper map if a new status is added.
-import { jobStatusColor as k50JobStatusColor } from "../../lib/jobStatus";
+import { jobStatusColor as k50JobStatusColor,
+         isFinishedJobStatus,
+         jobStatusTextColor } from "../../lib/jobStatus";
 // Phase P12 · Feb-2026 — Optimize Route error dialog uses the shared
 // shadcn ``Dialog`` primitive so the modal inherits the app's a11y +
 // focus-trap behavior. Do NOT bespoke this — matches the pattern
@@ -2923,6 +2925,17 @@ export function GridPanel({
             // for ``on_hold`` / ``requested`` / ``reopened`` remains
             // unchanged (those retain their pill treatment).
             const k50CardBg = k50JobStatusColor(j.status) || colors.surface;
+            // Feb-2026 · Schedule finished-state card styling
+            // (operator spec).  Finished buckets (``completed`` /
+            // ``closed`` / ``cancelled`` / ``skipped``) render on a
+            // ``#F3F4F6`` background with dark-grey (#374151) body
+            // text so the terminal cards recede visually.  Open /
+            // in-progress / missed / on-hold cards keep their
+            // existing styling via the ``jobStatusTextColor`` null
+            // return → fall through to ``colors.onSurface``.
+            const _isFinished = isFinishedJobStatus(j.status);
+            const _finishedTextColor = jobStatusTextColor(j.status);
+            const _bodyTextColor = _finishedTextColor || colors.onSurface;
             // Feb-2026 · Schedule multi-select · per-card delete checkbox.
             const isSelectedForDelete = !!(selectedJobIds && selectedJobIds.has(j.id));
             return (
@@ -2938,6 +2951,7 @@ export function GridPanel({
                 data-testid={`grid-job-${j.id}`}
                 data-status-color={statusBorderColor}
                 data-k50-bg={k50CardBg}
+                data-finished-state={_isFinished ? "true" : "false"}
                 onClick={() => onOpenJob(j.id)}
                 role="button"
               >
@@ -2980,7 +2994,7 @@ export function GridPanel({
                        style={{ color: svc.tag }}>
                     {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
                   </div>
-                  <div className="text-sm font-bold flex items-center gap-1.5" style={{ color: colors.onSurface }}>
+                  <div className="text-sm font-bold flex items-center gap-1.5" style={{ color: _bodyTextColor }}>
                     {/* Feb-2026 · Schedule polish — the per-card
                         <TechAvatar> that used to render the
                         tech's initials (e.g. "MR") between the
@@ -3026,7 +3040,7 @@ export function GridPanel({
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
-                          color: colors.onSurface,
+                          color: _bodyTextColor,
                           background: "transparent",
                           padding: 0,
                           border: 0,
