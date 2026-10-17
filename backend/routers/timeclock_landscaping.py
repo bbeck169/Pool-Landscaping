@@ -24,10 +24,10 @@ Rules:
   the punch but flag `geo_denied: true`.
 """
 from datetime import datetime, timezone, date, timedelta
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
-from config import db
+from config import db, logger
 from utils import now_iso, new_id, get_current_user
 
 router = APIRouter(prefix="/timeclock", tags=["timeclock"])
@@ -46,42 +46,113 @@ class PunchIn(BaseModel):
     job_id: Optional[str] = None
 
 
-def _require_landscaping(user: dict) -> None:
+def _dept_matches_landscape(dept_val: Any) -> bool:
+    """Normalize + membership-check against ``_LANDSCAPE_DEPTS``.
+    Shared so the dual-source read below stays symmetric."""
+    s = (dept_val or "")
+    if not isinstance(s, str):
+        return False
+    return s.strip().lower() in _LANDSCAPE_DEPTS
+
+
+async def _resolve_tech_department(user: dict) -> Optional[str]:
+    """Feb-2026 landscaping-tech clock-in regression fix.
+
+    The admin team-roster UI (``routers/team.py::create_team_user``
+    + the sibling edit route) writes ``department`` to the
+    ``db.users`` row.  But a sibling admin flow — the
+    ``POST /api/technicians/{id}/attributes`` + legacy mobile
+    tech-onboarding writes — stores the department on the
+    ``db.technicians`` row.  Preview-DB evidence (`47/50` users
+    with ``department=None`` while a few ``db.technicians`` rows
+    carry a canonical ``"landscaping"`` value) confirms the two
+    collections aren't guaranteed to stay in sync.  This helper
+    reads from both sources and returns the first non-empty
+    value so a legitimate landscaping tech whose ``db.users.
+    department`` was never populated can still clock in.
+
+    Order of precedence — ``db.users`` wins when populated so
+    super_admin edits via the roster UI take effect immediately
+    without a cross-collection sync.
+    """
+    u_dept = (user.get("department") or "").strip()
+    if u_dept:
+        return u_dept
+    tid = user.get("technician_id")
+    if not tid:
+        return None
+    try:
+        tech = await db.technicians.find_one(
+            {"id": tid, "tenant_id": user.get("tenant_id")},
+            {"_id": 0, "department": 1},
+        )
+    except Exception:
+        return None
+    return ((tech or {}).get("department") or "").strip() or None
+
+
+async def _require_landscaping(user: dict) -> None:
     """Phase 45.3 / 56.3.B follow-up — gate for the Landscape Time Clock.
 
     Allowed callers:
       • admin / super_admin  (any department, including "both")
       • technicians with ``department`` in ``_LANDSCAPE_DEPTS``
         (``landscaping``, ``landscape_tech``, ``landscaper``, ``both``)
+        resolved against EITHER ``db.users.department`` OR, when
+        that is null/empty, ``db.technicians.department`` — see
+        :func:`_resolve_tech_department` for the dual-source
+        rationale.
 
     Pool techs, customers, and unassigned techs → 403.
 
-    Feb-2026 · Phase 4 follow-up — this tech-allow tuple is sourced
-    from the module-level ``_LANDSCAPE_DEPTS`` constant (defined
-    below) so it stays in lock-step with the admin-summary user
-    filter at ``admin_summary``'s MongoDB query. Previously this
-    guard only accepted ``("landscaping", "both")`` which 403'd
-    cross-trained techs whose ``users.department`` was
-    ``"landscape_tech"`` or ``"landscaper"`` even though the mobile
-    client's ``LANDSCAPE_DEPTS`` set (and this file's
-    ``admin_summary`` aggregation at ~L272/L308) already treated
-    those values as landscape-authorized. The forward reference to
-    ``_LANDSCAPE_DEPTS`` is intentional — Python resolves module
-    names at call time, not def time, and keeping the constant at
-    its original location preserves the admin-summary section's
-    local-definition convention.
+    Feb-2026 landscape-tech clock-in regression fix — this guard
+    was previously a sync function reading ``user.get("department")``
+    only.  Promoting to async + the dual-source fallback closed the
+    denormalization gap that silently 403'd legitimate landscaping
+    techs whose ``db.users.department`` field was never populated
+    by the admin roster UI.  On final 403 we emit a structured
+    log line (user_id + resolved department + fallback source) so
+    operators can audit any remaining mis-categorized techs
+    without diffing collections by hand.
     """
     role = (user.get("role") or "").lower()
-    dept = (user.get("department") or "").lower()
     if role in ("admin", "super_admin"):
         return
-    if dept in _LANDSCAPE_DEPTS:
+    resolved_dept = await _resolve_tech_department(user)
+    if _dept_matches_landscape(resolved_dept):
         return
+    # Telemetry — operator's debug directive #1 ("paste the exact
+    # error from server logs"); surfaces which users are being
+    # 403'd + which source (if any) carried a department value.
+    logger.info(
+        "[timeclock-landscaping] 403 not_landscaping · "
+        "user_id=%s role=%s users.department=%r "
+        "technicians.department=%r resolved=%r",
+        user.get("id"), role,
+        user.get("department"),
+        # Second read is best-effort and would re-hit Mongo — guard
+        # it the same way _resolve_tech_department does.
+        (await (
+            db.technicians.find_one(
+                {"id": user.get("technician_id"),
+                 "tenant_id": user.get("tenant_id")},
+                {"_id": 0, "department": 1},
+            )
+            if user.get("technician_id") else _noop_tech_find()
+        ) or {}).get("department"),
+        resolved_dept,
+    )
     raise HTTPException(
         status_code=403,
         detail={"code": "not_landscaping",
                 "msg": "Time Clock is available for landscape-authorized users only."},
     )
+
+
+async def _noop_tech_find() -> dict:
+    """Shim so the telemetry f-string stays symmetric when the
+    user has no ``technician_id``; keeps the log one-liner."""
+    return {}
 
 
 def _day_key(dt: datetime) -> str:
@@ -90,7 +161,7 @@ def _day_key(dt: datetime) -> str:
 
 @router.post("/punch")
 async def punch(body: PunchIn, user: dict = Depends(get_current_user)):
-    _require_landscaping(user)
+    await _require_landscaping(user)
     tenant_id = user["tenant_id"]
     user_id = user["id"]
     ts = datetime.now(timezone.utc)
@@ -162,7 +233,7 @@ def _sum_shifts(punches: list) -> int:
 @router.get("/mine-summary")
 async def summary(start: str = Query(...), end: str = Query(...),
                    user: dict = Depends(get_current_user)):
-    _require_landscaping(user)
+    await _require_landscaping(user)
     rows = await db.timeclock_punches.find({
         "tenant_id": user["tenant_id"],
         "user_id": user["id"],
@@ -181,7 +252,7 @@ async def summary(start: str = Query(...), end: str = Query(...),
 
 @router.get("/mine-today")
 async def today(user: dict = Depends(get_current_user)):
-    _require_landscaping(user)
+    await _require_landscaping(user)
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     # Feb-2026 · Day-boundary rollover — mirrors the ``/mine-status``
@@ -236,7 +307,7 @@ async def mine_status(user: dict = Depends(get_current_user)):
     boundary; the OPEN entry is the source of truth).  We therefore
     scan the last 2 days and use the LATEST punch's type to decide.
     ``in`` → clocked in, ``out`` → clocked out, no punches → false."""
-    _require_landscaping(user)
+    await _require_landscaping(user)
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     # Look back to yesterday's midnight so a rollover shift that
@@ -264,7 +335,7 @@ async def mine_status(user: dict = Depends(get_current_user)):
 async def my_jobs_today(user: dict = Depends(get_current_user)):
     """List today's scheduled jobs for this landscape tech so the
     clock-in widget can attach a job to the shift."""
-    _require_landscaping(user)
+    await _require_landscaping(user)
     today = date.today().isoformat()
     # Match either `technician_id == user.id` (rare) or the user's
     # `technician_id` field (canonical after Phase 15D).
