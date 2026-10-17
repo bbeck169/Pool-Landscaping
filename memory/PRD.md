@@ -91,6 +91,14 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   delete 200; defs admin 23 / mike 8 / landscaper 8. Expo-web as mike: Library (24 card nodes) → Fill CPO log → title
   edit offline → "Offline — will sync" + `template_drafts:*` / `template_drafts_pending_sync:*` written → reconnect →
   queue empty, "Saved HH:MM:SS". Smoke draft deleted. No external repo cloned.
+- **Re-verified 2026-10-17 at 9786cd876 (no code changes):** 53 commits since f0f5bbe14, none touch templates
+  web/BE/mobile code; TD-64 `sectionsForRole` filter keeps the tech Templates tile (drops Time Clock tiles only).
+  Jest 45/45. API: defs admin 23 / mike 8 / landscaper 8; mike create → PATCH 200 → finalize 200 → PATCH 409 →
+  `/pdf` 200 `application/pdf` `%PDF-` → duplicate draft → delete 200. Expo-web as mike: Library 8 Fill cards → Fill
+  CPO log → online title edit "Saved" → `set_offline` → edit → "Offline — will sync", `template_drafts:*` +
+  `template_drafts_pending_sync:*` written, Finalize blocked ("You have unsynced changes…") → reconnect → queue
+  flushed in 13.1 s, server title = offline edit → Finalize confirm → finalized banner, inputs read-only → PDF
+  downloaded → My Templates (Finalized group, download/duplicate/delete row actions) → delete. No external repo cloned.
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
 - Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.

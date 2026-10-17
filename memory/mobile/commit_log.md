@@ -1937,3 +1937,11 @@
 - **Not changed (by design)**: Tabs.Screen time-clock/landscape-time-clock already `href: null`; adminNav drawer + operations.tsx tile are admin/manager-only.
 - **Tests**: new 34 (16 + 18). Full Jest 2397 passed / 48 failed / 22 skipped, failing-suite set identical (phase40 flake passed this run). tsc 651 (unchanged), 0 in touched files. eslint 0 errors.
 - **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
+
+## Iteration 140 — Templates Library Phase 3 (Mobile) re-verification (docs only)
+- **Commit**: the `docs(templates)` re-verify commit containing this entry (`git log -1 -- memory/mobile/commit_log.md`)
+- **Date**: 2026-10-17
+- **Finding**: Phase 3 already shipped in 77affb86c (API client, screens, components, offline layer, nav entries, PRD §5). No templates web/BE/mobile commits since f0f5bbe14 (last re-verify); TD-64 tools filter leaves the Templates tile intact.
+- **Verified**: Jest templates-* 45/45; live API contract (defs 23/8/8, create/PATCH/finalize/409/pdf/duplicate/delete); Expo-web E2E as mike incl. offline edit → queue → Finalize blocked → reconnect flush 13.1 s → finalize → PDF → My Templates delete.
+- **Files modified**: memory/PRD.md, memory/mobile/commit_log.md (no source changes)
+- **Deps**: none. Cron lockout: skip-worktree, cleared before `git commit --only`.
