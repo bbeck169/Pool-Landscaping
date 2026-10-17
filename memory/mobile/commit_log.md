@@ -1955,3 +1955,13 @@
 - **Residuals flagged, not touched**: (1) `.env.example` still documents `RNMAPBOX_MAPS_DOWNLOAD_TOKEN=sk.REPLACE_ME` (build-time token for the removed @rnmapbox plugin — no reader). (2) Tracked `mobile/.metro-cache` transform output still embeds a stale pre-K29 manifest `extra.mapboxToken:"$EXPO_PUBLIC_MAPBOX_TOKEN"` (literal placeholder, no reader).
 - **Files modified**: memory/mobile/commit_log.md (tracked); mobile/.env, mobile/.env.example (untracked, on disk)
 - **Deps**: none. Cron lockout: skip-worktree on commit_log.md, cleared before `git commit --only`. TD-61 chain unchanged at 7.
+
+## Iteration 142 — TD-65 Phase 2a: iOS comma-locale decimal on the 3 missed chemistry surfaces
+- **Commit**: the `fix(mobile-chemistry) · TD-65` commit containing this entry (`git log -1 -- mobile/__tests__/ios-decimal-chem-added.test.tsx`)
+- **Date**: 2026-10-17
+- **Changes**: M6 `ChemicalDropdownStack` + M7 `ChemicalPickerSheet` onChangeText `t.replace(/[^0-9.]/g|/[^0-9]/g, "")` → `sanitizeDecimalInput(t, draft)` then integer rows strip "." ("0,5" was "05" = 10× dose; now "0.5"). M8 `MaintenanceLog` PSI / salt_ppm raw `setPsi` / `setSaltPpm` → `(t) => setX((prev) => sanitizeDecimalInput(t, prev))`. keyboardType / testIDs untouched; shared `decimalInput.ts` + `DecimalInput.tsx` untouched.
+- **Deviation from brief diff**: chemical rows pass `prev = draft` (= `draftsRef[slug] ?? seed`, the displayed value) instead of `draftsRef[slug] ?? ""` — with `?? ""` a rejected keystroke on a saved row blanked the input and the next blur's `commit("")` spliced the logged chemical out of chemicals_added. Locked by test.
+- **Behaviour notes**: US "7.6" identical on all 3 surfaces; integer "7,6"/"7.6" → "76" (as before). Junk chars / a 2nd "." are now a no-op (keep previous) instead of being stripped/accepted.
+- **Files modified**: mobile/src/components/checklist/ChemicalDropdownStack.tsx, mobile/src/components/checklist/ChemicalPickerSheet.tsx, mobile/src/components/job/MaintenanceLog.tsx, mobile/__tests__/ios-decimal-chem-added.test.tsx (new)
+- **Tests**: new 17/17 (8 fail on pre-fix HEAD — all comma + 2nd-dot cases); ios-decimal-chem-input + td59-pool-volume-decimal + chem3-adapter + chemistry-ui-trim + checklist-decimal-input + ChemDecimalInput all pass. tsc 651 (identical error set), 0 in touched files. eslint 0 new (pre-existing `queued` unused warning in MaintenanceLog:68).
+- **Deps**: none. Cron lockout: skip-worktree on the 3 sources + commit_log, `.git/info/exclude` for the new test; cleared before `git commit --only`.

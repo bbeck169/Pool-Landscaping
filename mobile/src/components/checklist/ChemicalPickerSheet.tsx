@@ -24,6 +24,7 @@ import {
   type ChemCatalogEntry,
 } from "@/src/config/chemicalsCatalog";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 type ChemAdded = {
   slug?: string; chemical?: string; name?: string;
@@ -133,10 +134,14 @@ export default function ChemicalPickerSheet({
                   value={draft}
                   onChangeText={(t) => {
                     // Digits + optional decimal for decimal units; digits
-                    // only for integer units.
+                    // only for integer units. TD-65 — iOS comma-locale
+                    // decimal-pad ("0,25" → "0.25"); prev = displayed
+                    // value (draft ?? seed) so a rejected keystroke never
+                    // blanks a saved quantity.
+                    const sanitized = sanitizeDecimalInput(t, draft);
                     const clean = entry.unit_kind === "integer"
-                      ? t.replace(/[^0-9]/g, "")
-                      : t.replace(/[^0-9.]/g, "");
+                      ? sanitized.replace(/\./g, "") // integers never carry a dot post-sanitize
+                      : sanitized;
                     draftsRef.current[entry.slug] = clean;
                     forceRerender((n) => n + 1);
                   }}

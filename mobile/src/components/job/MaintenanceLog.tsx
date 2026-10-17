@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { styles as jobStyles } from "./styles";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 
 const CONDITIONS: Record<string, string[]> = {
@@ -122,7 +123,7 @@ export default function MaintenanceLog({
               <AppTextInput
                 style={ml.psiInput}
                 value={psi}
-                onChangeText={setPsi}
+                onChangeText={(t) => setPsi((prev) => sanitizeDecimalInput(t, prev))}
                 keyboardType="decimal-pad"
                 placeholder="—"
                 placeholderTextColor={colors.muted}
@@ -138,7 +139,7 @@ export default function MaintenanceLog({
               <AppTextInput
                 style={ml.psiInput}
                 value={saltPpm}
-                onChangeText={setSaltPpm}
+                onChangeText={(t) => setSaltPpm((prev) => sanitizeDecimalInput(t, prev))}
                 keyboardType="decimal-pad"
                 placeholder="—"
                 placeholderTextColor={colors.muted}

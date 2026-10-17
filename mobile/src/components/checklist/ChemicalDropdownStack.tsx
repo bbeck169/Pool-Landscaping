@@ -17,6 +17,7 @@ import {
 } from "@/src/config/chemicalsCatalog";
 import { CHEMICAL_ALLOWLIST } from "@/src/lib/waterBodies";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { sanitizeDecimalInput } from "@/src/utils/decimalInput";
 
 // Legacy CHEM_TYPES export retained for callers that still import the
 // symbol (there are none in-tree today, but keeps the module surface
@@ -136,9 +137,13 @@ export default function ChemicalDropdownStack({
               placeholderTextColor={colors.muted}
               editable={!locked}
               onChangeText={(t) => {
+                // TD-65 — iOS comma-locale decimal-pad ("0,5" → "0.5").
+                // prev = the displayed value (draft ?? seed) so a rejected
+                // keystroke never blanks a saved quantity.
+                const sanitized = sanitizeDecimalInput(t, draft);
                 const clean = entry.unit_kind === "integer"
-                  ? t.replace(/[^0-9]/g, "")
-                  : t.replace(/[^0-9.]/g, "");
+                  ? sanitized.replace(/\./g, "") // integers never carry a dot post-sanitize
+                  : sanitized;
                 draftsRef.current[entry.slug] = clean;
                 force((n) => n + 1);
               }}
