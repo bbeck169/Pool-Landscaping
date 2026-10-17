@@ -16,7 +16,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Modal, Pressable, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import DraggableFlatList, { ScaleDecorator, type RenderItemParams } from "react-native-draggable-flatlist";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets, initialWindowMetrics } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
 import { colors, font, fontSize, radius, spacing } from "@/src/theme";
@@ -41,6 +41,10 @@ export default function OptimizeRouteModal({ visible, jobs, date, technicianId, 
   onClose: () => void; onSaved?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // The (app) shell hands tab screens top:0 (it owns the inset above the
+  // fleet chip). A <Modal> is a new full-screen window, so fall back to
+  // the device's real top inset to keep the title clear of the status bar.
+  const modalTop = Math.max(insets.top, initialWindowMetrics?.insets.top ?? 0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opt, setOpt] = useState<Opt | null>(null);
@@ -131,7 +135,7 @@ export default function OptimizeRouteModal({ visible, jobs, date, technicianId, 
   const banner = droppedBannerText(opt?.dropped.length || 0);
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet">
-      <View style={[s.root, { paddingTop: insets.top + spacing.sm, paddingBottom: insets.bottom + spacing.sm }]} testID="optimize-route-modal">
+      <View style={[s.root, { paddingTop: modalTop + spacing.sm, paddingBottom: insets.bottom + spacing.sm }]} testID="optimize-route-modal">
         <View style={s.top}>
           <Text style={s.title}>Optimize Route</Text>
           <Pressable onPress={onClose} hitSlop={10} testID="optimize-route-close"><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>

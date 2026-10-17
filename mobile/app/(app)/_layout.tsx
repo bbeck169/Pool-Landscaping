@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, TouchableOpacity, StyleSheet, Platform } from "react-native";
+import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth";
 import { colors, font } from "@/src/theme";
@@ -35,6 +36,14 @@ export default function AppLayout() {
     }
   }, [user]);
 
+  // Fleet chip tap-target fix (Option A) — when the fleet chip row renders
+  // it sits at the very top of the shell, so the shell owns the top
+  // safe-area inset ONCE (wrapper below) and hands top:0 to SyncBanner and
+  // every tab screen (Header / useSafeAreaInsets consumers) so the gap is
+  // not double-applied. GlobalMenu + AI dock stay outside → real insets.
+  const insets = useSafeAreaInsets();
+  const childInsets = useMemo(() => ({ ...insets, top: 0 }), [insets]);
+
   if (loading) return null;
   if (!user) return <Redirect href="/login" />;
 
@@ -47,16 +56,23 @@ export default function AppLayout() {
   // Customers use a dedicated portal (single dashboard with section cards), not the staff tab bar.
   if (isCustomer) return <Redirect href="/portal/home" />;
 
+  const showFleetRow = isTech || isAdmin;
+
   return (
     <LandscapeTechClockInGate>
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <SyncBanner />
-      {/* FLEET-B · Fleet status chip — shows fleet tracking state for techs */}
-      {(isTech || isAdmin) && (
-        <View style={{ flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 12, paddingTop: 4 }}>
-          <FleetStatusChip />
-        </View>
-      )}
+      <SafeAreaInsetsContext.Provider value={showFleetRow ? childInsets : insets}>
+      <View style={showFleetRow ? { paddingTop: insets.top } : null} testID="app-shell-top-inset">
+        <SyncBanner />
+        {/* FLEET-B · Fleet status chip — shows fleet tracking state for techs.
+            Chip gap = insets.top (wrapper) + 4 → below the Android
+            edge-to-edge status bar instead of under it. */}
+        {showFleetRow && (
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 12, paddingTop: 4 }} testID="fleet-chip-row">
+            <FleetStatusChip />
+          </View>
+        )}
+      </View>
       <View style={{ flex: 1 }}>
     <Tabs
       screenOptions={{
@@ -254,6 +270,7 @@ export default function AppLayout() {
       <Tabs.Screen name="settings/offline-diagnostics" options={{ title: "Offline Diagnostics", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="analytics-outline" size={size} color={color} /> }} />
     </Tabs>
       </View>
+      </SafeAreaInsetsContext.Provider>
       {/* Phase 43 · Global dropdown menu — trigger renders absolute-
           positioned so no per-screen header changes are needed. Sheet
           reuses the Phase 42 body via `<ToolsMenuBody variant="sheet" />`. */}

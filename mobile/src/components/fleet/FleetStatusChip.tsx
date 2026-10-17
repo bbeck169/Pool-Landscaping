@@ -94,7 +94,7 @@ export default function FleetStatusChip() {
         testID="fleet-status-chip"
         style={[s.chip, { backgroundColor: cfg.bg }]}
         onPress={() => setModalVisible(true)}
-        hitSlop={8}
+        hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}
       >
         <View style={[s.dot, { backgroundColor: cfg.dotColor }]} />
         <Text style={[s.label, { color: cfg.fg }]} numberOfLines={1}>

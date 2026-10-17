@@ -1920,3 +1920,12 @@
 - **Files modified**: mobile/src/lib/jobStatus.ts, mobile/app/(app)/schedule/calendar.tsx, mobile/__tests__/schedule-finished-card-styling.test.tsx (new), mobile/__tests__/k50-job-status-color.test.ts, mobile/__tests__/schedule-card-phase3-parity.test.tsx, mobile/__tests__/schedule-completed-card-recede.test.ts (+ snapshot: 7 bg values)
 - **Tests**: new 26/26; full Jest 2354 passed / 48 failed / 22 skipped, failing-suite set identical. tsc: 0 errors in touched files / JobRow range (651 codebase baseline).
 - **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
+
+## Iteration 138 — Fleet chip tap-target fix (Option A)
+- **Commit**: the `fix(mobile-fleet-chip)` commit containing this entry (`git log -1 -- mobile/__tests__/fleet-chip-tap-target.test.tsx`)
+- **Date**: 2026-10-17
+- **Finding**: the top inset WAS already applied downstream — shared `Header` (widgets.tsx:120 `insets.top + spacing.sm`), 27 `useSafeAreaInsets` consumers, and `SyncBanner` (`insets.top + 6`) — all below/beside the chip row. A bare `paddingTop: insets.top + 4` on the chip row would double the gap on every tab.
+- **Changes**: `(app)/_layout.tsx` — when the fleet row renders (tech/admin/super_admin) a wrapper View (`app-shell-top-inset`) around SyncBanner + chip row takes `paddingTop: insets.top`; chip row keeps 4 → chip gap = insets.top + 4; subtree (SyncBanner + Tabs) gets `SafeAreaInsetsContext` with top:0 so Header/screens don't re-add it (Header lands at the same y as before). GlobalMenu + AI dock outside the override (real insets). Other roles: provider passes real insets, wrapper style null → unchanged. `FleetStatusChip` hitSlop 8 → {12,12,16,16}. `OptimizeRouteModal` (full-screen Modal inside a tab) top = max(context top, initialWindowMetrics top) so it still clears the status bar.
+- **Files modified**: mobile/app/(app)/_layout.tsx, mobile/src/components/fleet/FleetStatusChip.tsx, mobile/src/components/schedule/OptimizeRouteModal.tsx, mobile/__tests__/fleet-chip-tap-target.test.tsx (new)
+- **Tests**: new 9/9 (6 fail on pre-fix HEAD). Full Jest 2362 passed / 49 failed / 22 skipped — +1 = phase40 5s timeout (flaky, 15/15 isolated); otherwise failing-suite set identical. tsc 651 total (unchanged), 6 `_layout.tsx` tabBarTestID errors pre-existing (shifted lines). eslint 0 errors.
+- **Deps**: none. Cron lockout: skip-worktree + .git/info/exclude, cleared before `git commit --only`.
