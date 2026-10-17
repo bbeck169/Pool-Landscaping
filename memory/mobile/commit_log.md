@@ -1945,3 +1945,13 @@
 - **Verified**: Jest templates-* 45/45; live API contract (defs 23/8/8, create/PATCH/finalize/409/pdf/duplicate/delete); Expo-web E2E as mike incl. offline edit → queue → Finalize blocked → reconnect flush 13.1 s → finalize → PDF → My Templates delete.
 - **Files modified**: memory/PRD.md, memory/mobile/commit_log.md (no source changes)
 - **Deps**: none. Cron lockout: skip-worktree, cleared before `git commit --only`.
+
+## Iteration 141 — K46-residual env cleanup: dead EXPO_PUBLIC_MAPBOX_TOKEN removed (Q3=B, TD-62)
+- **Commit**: the `chore(mobile-env)` K46-residual commit containing this entry (`git log -1 -- memory/mobile/commit_log.md`)
+- **Date**: 2026-10-17
+- **Changes**: `mobile/.env` — removed the Phase 38b Mapbox comment block (4 lines) + `EXPO_PUBLIC_MAPBOX_TOKEN=pk.eyJ…`; `mobile/.env.example` — removed the "Mapbox — Public access token" comment block + `EXPO_PUBLIC_MAPBOX_TOKEN=pk.REPLACE_ME` + trailing blank. All other entries byte-identical (diff = deletions only). Mobile restarted (env change); web bundle OK (2734 modules).
+- **Not in this commit (untracked)**: both env files are out of the index since platform commit 06fc2e247 (`.env` gitignored via `*.env`, holds live keys — never commit; `.env.example` untracked, not re-added). The edit is on disk only.
+- **Audit**: zero live readers of EXPO_PUBLIC_MAPBOX_TOKEN / MAPBOX_ACCESS_TOKEN / mapboxToken / hasMapboxToken / extra.MAPBOX_* in src/, app/, components/, lib/, utils/, constants/, app.config.js, package.json, eas.json, jest.setup.js. Remaining hits are K46/historical doc-comments (kept: LiveTechPinsMap*, DailyRouteMap*, mapsKey.tsx, nativeNav.ts, _layout.tsx, app.config.js) + K46 absence-guard tests (k46-google-maps-only, mapsKey — 19/19 pass). `app.config.js` resolved `extra` = `{eas:{projectId}}` — no Mapbox entry (already removed in K46); no app.json exists.
+- **Residuals flagged, not touched**: (1) `.env.example` still documents `RNMAPBOX_MAPS_DOWNLOAD_TOKEN=sk.REPLACE_ME` (build-time token for the removed @rnmapbox plugin — no reader). (2) Tracked `mobile/.metro-cache` transform output still embeds a stale pre-K29 manifest `extra.mapboxToken:"$EXPO_PUBLIC_MAPBOX_TOKEN"` (literal placeholder, no reader).
+- **Files modified**: memory/mobile/commit_log.md (tracked); mobile/.env, mobile/.env.example (untracked, on disk)
+- **Deps**: none. Cron lockout: skip-worktree on commit_log.md, cleared before `git commit --only`. TD-61 chain unchanged at 7.
