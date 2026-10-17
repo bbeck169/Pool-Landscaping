@@ -46,7 +46,7 @@ import { ChevronDown, MenuIcon, LogOut, Plus as PlusIcon } from "lucide-react";
 // pref still lives in ``localStorage.lang`` (Phase D3) and can be
 // changed from a settings surface — the top-bar globe is gone.
 import { ADMIN_NAV_V2, filterNavByIndustries } from "@/nav/adminNav";
-import { topNavForRole } from "@/nav/topNavRegistry";
+import { topNavForUser } from "@/nav/topNavRegistry";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useIndustries } from "@/hooks/useIndustries";
 import { useAuth } from "@/auth";
@@ -614,7 +614,13 @@ export default function AdminTopBar() {
   // K76 · Feb-2026 — fixed items ONLY populate for the technician
   // role now. Admin/manager/super_admin render category dropdowns
   // via ``visible`` instead.
-  const fixedItems = topNavForRole(_role);
+  // TD-64 · Feb-2026 — switched from ``topNavForRole(role)`` to
+  // ``topNavForUser(user)`` so pool techs no longer see the
+  // Time Clock entry on the top strip.
+  const fixedItems = topNavForUser({
+    ..._auth?.user,
+    role: _role,
+  });
 
   // K76.1 · Feb-2026 — mobile-web breakpoint collapse regression fix.
   // The prior JS ``resize``-listener approach was unreliable in some

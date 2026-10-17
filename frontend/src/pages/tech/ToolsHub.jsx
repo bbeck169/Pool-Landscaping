@@ -16,6 +16,7 @@ import {
   ClipboardList, Trophy, IdCard, DollarSign, TrendingUp,
   UserCircle, MapPin, Settings, Layers,
 } from "lucide-react";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 const TECH_SECTIONS = [
   {
     key: "daily",
@@ -120,7 +121,16 @@ export default function ToolsHub() {
   const isTech = role === "technician";
   const isAdmin = role === "admin" || role === "super_admin";
 
-  const sections = isAdmin ? ADMIN_SECTIONS : TECH_SECTIONS;
+  const sections = useMemo(() => {
+    const base = isAdmin ? ADMIN_SECTIONS : TECH_SECTIONS;
+    // TD-64 · Feb-2026 — strip the Time Clock tile for pool techs
+    // (admins always see every tool regardless of designation).
+    if (isAdmin || shouldShowTimeClock(user)) return base;
+    return base.map((s) => ({
+      ...s,
+      tiles: s.tiles.filter((t) => t.key !== "time-clock"),
+    }));
+  }, [isAdmin, user]);
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
     if (!q) return sections;

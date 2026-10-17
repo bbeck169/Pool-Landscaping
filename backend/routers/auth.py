@@ -1031,6 +1031,29 @@ async def me(user: dict = Depends(get_current_user)):
             # the frontend detector chain.
             tenant_default_locale = None
     payload["tenant_default_locale"] = tenant_default_locale
+
+    # TD-64 · Feb-2026 — Time Clock designation gate.  Expose the
+    # BE-resolved department (dual-source read: ``users.department``
+    # wins when populated, falls back to ``technicians.department``
+    # for pre-denorm users) and a boolean the FE/mobile use as the
+    # single source of truth for hiding the entire Time Clock
+    # surface from pool techs.  Role-check-only admins see admin
+    # Time Clock surfaces separately; this field is tech-focused.
+    try:
+        from routers.timeclock_landscaping import (
+            _resolve_tech_department, _LANDSCAPE_DEPTS,
+        )
+        effective_department = await _resolve_tech_department(user)
+    except Exception:                                           # noqa: BLE001
+        # Never let the department resolver take down /auth/me.
+        effective_department = user.get("department")
+        _LANDSCAPE_DEPTS = (
+            "landscaping", "landscape_tech", "landscaper", "both",
+        )
+    payload["effective_department"] = effective_department
+    _norm_dept = (effective_department or "").strip().lower()
+    payload["show_time_clock"] = _norm_dept in _LANDSCAPE_DEPTS
+
     return payload
 
 

@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 
 function weekBounds() {
   const d = new Date();
@@ -56,19 +57,16 @@ async function readGeo() {
 
 export default function LandscapingClockWidget() {
   const { user } = useAuth();
-  // Feb-2026 follow-up — widget visibility rules (was Phase 56.3):
-  //   • Admin / super_admin — HIDDEN. They don't punch a clock; the bar
-  //     is pure noise on the admin dashboard. (Previously force-shown so
-  //     admins could supervise / punch in on-site — reversed per product
-  //     ask.)
-  //   • Landscape tech / manager (department "landscaping" or "both") —
-  //     visible.
-  //   • Everyone else (pool tech w/o landscape dept, customer,
-  //     unassigned tech) — hidden.
+  // TD-64 · Feb-2026 — single-source-of-truth visibility via the
+  // shared helper.  The helper reads BE-authoritative
+  // ``show_time_clock`` when present, else resolves
+  // ``effective_department`` / ``department`` against
+  // ``LANDSCAPE_DEPTS``.  Admins / super_admins never clock in on
+  // this widget so they are explicitly short-circuited (admin
+  // supervision happens on ``/landscape/time-clock`` instead).
   const role = (user?.role || "").toLowerCase();
   const isAdminLike = role === "admin" || role === "super_admin";
-  const hasLandscapeDept = ["landscaping", "both"].includes((user?.department || "").toLowerCase());
-  const isLandscaper = !isAdminLike && hasLandscapeDept;
+  const isLandscaper = !isAdminLike && shouldShowTimeClock(user);
   const [today, setToday] = useState(null);
   const [week, setWeek] = useState(null);
   const [busy, setBusy] = useState(false);

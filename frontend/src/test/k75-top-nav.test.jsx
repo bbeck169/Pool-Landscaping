@@ -35,9 +35,22 @@ import path from "node:path";
 
 
 let _role = "admin";
+// TD-64 · Feb-2026 — the K76 technician tests need a landscape
+// designation on the mocked user so ``topNavForUser`` doesn't strip
+// the Time Clock entry.  The dedicated TD-64 gate test above
+// locks the pool-tech-hides-time-clock contract separately.
+let _deptForTechTests = "landscaping";
 vi.mock("@/auth", () => ({
   useAuth: () => ({
-    user: { id: "u", role: _role, email: "u@x.com", name: "User" },
+    user: {
+      id: "u",
+      role: _role,
+      email: "u@x.com",
+      name: "User",
+      // Only pass a department when the test is driving the tech
+      // surface so admin-side assertions stay role-only.
+      department: _role === "technician" ? _deptForTechTests : undefined,
+    },
     logout: vi.fn(),
     loading: false,
   }),
@@ -229,6 +242,21 @@ describe("K76 · AdminTopBar · technician surface (fixed strip)", () => {
       "tools", "training", "profile",
     ]) {
       expect(screen.getByTestId(`top-nav-${key}`)).toBeTruthy();
+    }
+  });
+
+  it("TD-64 · pool tech does NOT see the Time Clock entry on the top strip", () => {
+    _deptForTechTests = "pool";
+    try {
+      mount("technician");
+      // Every other item is still present...
+      for (const key of ["schedule", "d2d", "tools", "training", "profile"]) {
+        expect(screen.getByTestId(`top-nav-${key}`)).toBeTruthy();
+      }
+      // ...but the Time Clock entry is gone for pool techs.
+      expect(screen.queryByTestId("top-nav-time-clock")).toBeNull();
+    } finally {
+      _deptForTechTests = "landscaping";
     }
   });
 

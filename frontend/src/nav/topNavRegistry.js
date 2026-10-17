@@ -41,6 +41,11 @@ import {
   BarChart3,
   Settings as SettingsIcon,
 } from "lucide-react";
+// TD-64 · Feb-2026 — static import for the department-aware filter.
+// ``timeClockVisibility.js`` has no sibling imports so there's no
+// cycle risk; keeping this at the top preserves tree-shaking +
+// avoids a runtime ``require`` under the webpack ESM build.
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 
 
 /**
@@ -93,4 +98,21 @@ export const TECH_TOP_NAV = [
 export function topNavForRole(role) {
   if (role === "technician") return TECH_TOP_NAV;
   return [];
+}
+
+
+/**
+ * TD-64 · Feb-2026 — department-aware top-nav resolver.
+ *
+ * Mirrors ``topNavForRole`` but prunes the ``Time Clock`` entry
+ * when the current user is a pool technician (``shouldShowTimeClock``
+ * returns false).  Call this instead of ``topNavForRole`` whenever
+ * you have the full user doc available (not just the role).
+ */
+export function topNavForUser(user) {
+  const role = String(user?.role || "").toLowerCase();
+  const base = topNavForRole(role);
+  if (role !== "technician") return base;
+  if (shouldShowTimeClock(user)) return base;
+  return base.filter((it) => it.key !== "time-clock");
 }

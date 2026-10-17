@@ -7,10 +7,12 @@
  * screen also shows a friendly message when the API rejects the user.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { Clock, MapPin, MapPinOff, LogIn, LogOut, RefreshCw } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 import AdminPunchEditsPanel from "@/components/timeclock/AdminPunchEditsPanel";
 import {
   buildShiftRows, fmtHoursMinutes,
@@ -80,6 +82,7 @@ export default function LandscapingTimeClock() {
   const _isAdminViewer = _ADMIN_ROLES.has(
     String(_viewer?.role || "").toLowerCase(),
   );
+  const _role = String(_viewer?.role || "").toLowerCase();
   const [adminRange, setAdminRange] = useState(() => weekBounds(0));
   const [adminSummary, setAdminSummary] = useState(null);
   const [adminBusy, setAdminBusy] = useState(false);
@@ -176,6 +179,25 @@ export default function LandscapingTimeClock() {
   };
 
   const isBlocked = /Time Clock is available for landscaping/i.test(error || "");
+
+  // TD-64 · Feb-2026 — pool techs must not see this page.  Admins
+  // / super_admins / managers / owners keep access (they drive the
+  // team-aggregation table).  Everyone else is bounced to the
+  // schedule — same semantics as ``TechTimeClockPage``.  Placed
+  // AFTER every hook so the component honors the Rules of Hooks.
+  if (
+    !_isAdminViewer
+    && _role === "technician"
+    && !shouldShowTimeClock(_viewer)
+  ) {
+    return (
+      <Navigate
+        to="/schedule"
+        replace
+        data-testid="landscape-time-clock-pool-redirect"
+      />
+    );
+  }
 
   return (
     <div className="p-4 md:p-8 max-w-3xl mx-auto" data-testid="landscape-time-clock">

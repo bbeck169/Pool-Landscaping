@@ -4,9 +4,12 @@
  * and see their own timesheet.
  */
 import React, { useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, gradients } from "@/theme";
 import { Send, CheckCircle2, LogIn, RefreshCw } from 'lucide-react';
+import { useAuth } from "@/auth";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 
 const Card = ({ children, className = "", testId }) => (
   <div className={`rounded-2xl ${className}`}
@@ -99,6 +102,7 @@ export function TechHuddlePage() {
 
 /* ───── Tech Time Clock Page ────────────────────────────── */
 export function TechTimeClockPage() {
+  const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);
   const load = async () => {
@@ -108,6 +112,18 @@ export function TechTimeClockPage() {
   };
   useEffect(() => { load(); }, []);
   const openShift = rows.find((r) => !r.clock_out_at);
+
+  // TD-64 · Feb-2026 — pool techs must not see the Time Clock
+  // screen even via direct URL navigation.  Admins keep access
+  // (role gate elsewhere; this field is tech-focused).  The
+  // shared helper short-circuits to false for pool techs; we
+  // redirect them to the schedule rather than render a blank
+  // page.
+  const role = String(user?.role || "").toLowerCase();
+  const isAdminLike = role === "admin" || role === "super_admin";
+  if (!isAdminLike && role === "technician" && !shouldShowTimeClock(user)) {
+    return <Navigate to="/schedule" replace data-testid="tech-time-clock-pool-redirect" />;
+  }
 
   return (
     <Section

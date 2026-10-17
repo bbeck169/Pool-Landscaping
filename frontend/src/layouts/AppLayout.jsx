@@ -32,6 +32,7 @@ import QuickPinsRail from "@/components/nav/QuickPinsRail";
 // pending admin-upload UI.
 import BrandLogo from "@/components/branding/BrandLogo";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
+import { shouldShowTimeClock } from "@/lib/timeClockVisibility";
 // DTP-1 · Feb-2026 — Portal dark-theme scope wrapper.
 import PortalThemeShell from "@/components/portal/PortalThemeShell";
 import AIDock from "@/components/AIDock/AIDock";
@@ -399,7 +400,15 @@ function AppLayout() {
         return it;
       }).filter((it) => !it.superOnly || isSuper);
     if (r === "admin" || r === "super_admin") return filterSuper(ADMIN_NAV);
-    if (r === "technician") return TECH_NAV;
+    if (r === "technician") {
+      // TD-64 · Feb-2026 — hide the ``Time Clock`` sidebar entry
+      // for pool techs. Shared helper reads BE-authoritative
+      // ``show_time_clock`` when present. Preserves all other
+      // tech nav entries.
+      return shouldShowTimeClock(user)
+        ? TECH_NAV
+        : TECH_NAV.filter((it) => it.to !== "/tech/time-clock");
+    }
     return CUSTOMER_NAV;
   })();
   const roleLabel = (effectiveRole || user.role).charAt(0).toUpperCase() + (effectiveRole || user.role).slice(1);

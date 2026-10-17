@@ -84,8 +84,15 @@ const _stripEntries = (nav, remove) => nav.map((section) => ({
   entries: section.entries.filter((e) => !remove.includes(e.to)),
 }));
 
+// TD-64 · Feb-2026 — Time Clock-stripped variant used for pool techs
+// who must not see any Time Clock surface anywhere. Mirrors the
+// shared ``shouldShowTimeClock`` helper's visibility contract on
+// the hamburger menu.  Entry path matches ``TECH_NAV`` L30.
+const TECH_NAV_NO_TIME_CLOCK = _stripEntries(TECH_NAV, ["/time-clock"]);
+
 // Pool techs — keep chem calculators, pool checklist, hide landscape stuff.
-export const TECH_POOL_NAV = _stripEntries(TECH_NAV, [
+// TD-64 · Feb-2026 — also strips the Time Clock entry per operator spec.
+export const TECH_POOL_NAV = _stripEntries(TECH_NAV_NO_TIME_CLOCK, [
   // (landscape-only entries would be listed here — currently none in TECH_NAV)
 ]).concat();
 
