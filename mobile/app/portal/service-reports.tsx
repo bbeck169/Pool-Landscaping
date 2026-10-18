@@ -13,6 +13,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { EmptyState, StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import PortalPageShell, { PORTAL_PAGE_BG, portalShellCard } from "@/src/components/portal/PortalPageShell";
+import { resolveServiceType } from "@/src/lib/portalServiceType";
 
 function formatDateHeader(dateKey: string): string {
   try {
@@ -22,12 +23,8 @@ function formatDateHeader(dateKey: string): string {
   } catch { return dateKey; }
 }
 
-function reportKind(row: any): "pool" | "landscape" | "generic" {
-  const raw = (row?.template || row?.service_type || row?.job?.service_type || "").toString().toLowerCase();
-  if (raw.includes("landscap") || raw.includes("mow") || raw.includes("lawn")) return "landscape";
-  if (raw.includes("pool") || raw.includes("chem")) return "pool";
-  return "generic";
-}
+// TD-69 — shared landscape-priority resolver (web b86ecb289).
+const reportKind = resolveServiceType;
 
 const KIND_META = {
   pool: { label: "Pool service", bg: "#E0F2FE", fg: "#0369A1", icon: "water-outline" as const },

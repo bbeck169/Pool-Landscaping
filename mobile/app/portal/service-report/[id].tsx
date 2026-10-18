@@ -21,22 +21,14 @@ import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 import { ClickableAddress } from "@/src/components/interactive";
 import { portalJobPhotoRaw, resolvePortalMediaUri, usePortalAuthToken } from "@/src/lib/portalMediaUri";
 import PortalPageShell, { PORTAL_PAGE_BG } from "@/src/components/portal/PortalPageShell";
+import { resolveServiceType } from "@/src/lib/portalServiceType";
 
 /* ── helpers ──────────────────────────────── */
 
 // Phase K22 — fmtDate replaced by formatCompletedAt from @/src/lib/dateTimeFormat.
 
-function reportKind(sr: any): "pool" | "landscape" | "generic" {
-  const raw = (
-    sr?.template || sr?.service_type || sr?.job?.service_type || ""
-  )
-    .toString()
-    .toLowerCase();
-  if (raw.includes("landscap") || raw.includes("mow") || raw.includes("lawn"))
-    return "landscape";
-  if (raw.includes("pool") || raw.includes("chem")) return "pool";
-  return "generic";
-}
+// TD-69 — shared landscape-priority resolver (web b86ecb289).
+const reportKind = resolveServiceType;
 
 const KIND_META = {
   pool: { label: "Pool service", bg: "#E0F2FE", fg: "#0369A1", icon: "water-outline" as const },
@@ -216,7 +208,8 @@ export default function PortalServiceReportDetail() {
 
         {/* Water chemistry readings */}
         {/* Phase v · Multi-body display when water_bodies[] present */}
-        {Array.isArray(sr.water_bodies) && sr.water_bodies.length > 1 ? (
+        {/* TD-69 — chemistry (incl. multi-body) only for pool reports. */}
+        {kind === "pool" && Array.isArray(sr.water_bodies) && sr.water_bodies.length > 1 ? (
           <Section icon="layers-outline" title={`Water Bodies (${sr.water_bodies.length})`} testID="portal-water-bodies-section">
             {sr.water_bodies.map((wb: any, wbi: number) => {
               const tint = BODY_TYPE_TINTS[wb.type] || BODY_TYPE_TINTS.pool;

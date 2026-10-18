@@ -1988,3 +1988,12 @@
 - **TD-75**: no-op — mobile SR list never had the search input or the "Click any visit below…" copy (guarded in test).
 - **Files modified**: mobile/src/components/portal/PortalPageShell.tsx (new), mobile/app/portal/service-reports.tsx, mobile/app/portal/service-report/[id].tsx, mobile/app/portal/review-submit.tsx, mobile/__tests__/portal-theme-bundle-td68.test.tsx (new)
 - **Tests**: new 7/7; td76 suite 13/13; tsc 651 (0 in touched); eslint 0 new.
+
+## Iteration 146 — m-td69 · portal service-type resolver + chemistry gating (web b86ecb289) + TD-74 no-op
+- **Commit**: the `m-td69` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/lib/portalServiceType.ts` (port of web `resolveServiceType` — scans template/service_type/service_line/service_category + job.*; landscape priority; pool fallback incl. spa/water; generic). Both inline first-truthy `reportKind()`s (SR list + SR detail) now alias the shared resolver. SR detail multi-water-body block (`water_bodies.length > 1`) now gated on `kind === "pool"` (was ungated → landscape SR could render chemistry). Single-body readings / chemicals / algae were already pool-gated.
+- **Not added (scope)**: web's `work_class === "repair"` chemistry suppression (not in the TD list).
+- **TD-74**: no-op — mobile home hero never had the NEXT VISIT overlay (source-guard test).
+- **Files modified**: mobile/src/lib/portalServiceType.ts (new), mobile/app/portal/service-reports.tsx, mobile/app/portal/service-report/[id].tsx, mobile/__tests__/portal-service-type-td69.test.tsx (new)
+- **Tests**: new 17/17; td68 7/7; td76 13/13; tsc 651 (0 in touched); eslint 0 new. Preview data: 0 of 15 SRs change classification (no visible regression).
