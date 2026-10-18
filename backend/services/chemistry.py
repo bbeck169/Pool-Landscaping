@@ -112,7 +112,28 @@ def classify_reading(
     if value is None or value == "":
         return None
     try:
-        v = float(value)
+        # TD-65 · Feb-2026 — BE defense-in-depth comma-locale fallback.
+        # The FE sanitize layer (``sanitizeDecimalInput`` on mobile +
+        # ``inputMode="decimal"`` on web) already converts the iOS /
+        # EU-locale decimal comma to a dot before the reading hits
+        # the API, so this path is a belt-and-suspenders guard.  Still
+        # worth having: any 3rd-party integration (CSV import, webhook,
+        # legacy fat client, water-test POST from a 3rd-party kit) that
+        # posts ``"7,6"`` instead of ``"7.6"`` would previously be
+        # silently classified as ``None`` because ``float("7,6")``
+        # throws.  Here we normalize once at the parse boundary.
+        #   * Values that already parse (floats, int, "7.6") take the
+        #     fast path — the comma-replacement never runs for them.
+        #   * Comma-only strings (``"7,6"``) get normalized to a dot.
+        #   * Strings with BOTH comma and dot (``"1,000.5"`` — thousands
+        #     separator) are left alone so ``float()`` still rejects the
+        #     ambiguous shape rather than silently miscounting magnitude.
+        #   * Double-dot / junk inputs continue to fail cleanly to
+        #     ``None`` via the ``except (TypeError, ValueError)`` guard.
+        s = str(value).strip()
+        if "," in s and "." not in s:
+            s = s.replace(",", ".")
+        v = float(s)
     except (TypeError, ValueError):
         return None
 

@@ -80,7 +80,21 @@ def _normalize(readings: dict) -> dict:
         if not key:
             continue
         try:
-            out[key] = float(v)
+            # TD-65 · Feb-2026 — mirror the comma-locale fallback used
+            # in ``services/chemistry.py::classify_reading``.  Keep the
+            # two code paths in sync — if one widens its tolerance, so
+            # must the other, otherwise the band classification + the
+            # dosing recommender will disagree about which readings
+            # survived parsing.  Fast path for floats / ints / dot
+            # strings; comma-only strings get normalized; junk still
+            # fails to the ``except`` and is skipped.
+            if isinstance(v, str):
+                s = v.strip()
+                if "," in s and "." not in s:
+                    s = s.replace(",", ".")
+                out[key] = float(s)
+            else:
+                out[key] = float(v)
         except (TypeError, ValueError):
             continue
     return out
