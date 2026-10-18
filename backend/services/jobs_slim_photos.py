@@ -201,9 +201,10 @@ def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dic
 
 
 # ─────────────────────────────────────────────────────────────────
-# JOB-PHOTOS-FIX · Feb-2026 — inject a resolved ``url`` field on
-# every ``photos[]`` element returned by the single-job detail
-# endpoint (``GET /api/jobs/{jid}``) and the photo-upload response
+# JOB-PHOTOS-FIX · Feb-2026 — inject canonical ``thumb_url`` +
+# ``full_url`` + legacy ``url`` on every ``photos[]`` element
+# returned by the single-job detail endpoint
+# (``GET /api/jobs/{jid}``) and the photo-upload response
 # (``POST /api/jobs/{jid}/photos``).
 #
 # Historically the FE grid in ``pages/jobs/JobDetail.jsx`` read
@@ -219,22 +220,45 @@ def strip_s3_metadata_from_photos(doc: Optional[Dict[str, Any]]) -> Optional[Dic
 # existing streaming route ``/api/public/job-photo/{jid}/{pid}``
 # — which already owns the S3-first / base64-fallback cascade
 # (see ``public_job_photo`` in ``routers/jobs.py``).  Idempotent:
-# if the serializer upstream already populated ``url`` we leave
-# it alone so there's no silent override.
+# if the serializer upstream already populated ``full_url`` /
+# ``thumb_url`` / ``url`` we leave each field alone independently
+# so there's no silent override.
+#
+# TD-76 Ph2f · Feb-2026 — widened to emit the canonical
+# ``{thumb_url, full_url}`` shape adopted by every other TD-76
+# Phase B surface (Workstream list, Worklog list, SR admin
+# detail, portal SR + jobs + estimate).  Legacy ``url`` alias is
+# retained for mobile parity until the mobile dispatch sweeps it.
 # ─────────────────────────────────────────────────────────────────
 def inject_photo_url_on_doc(doc: Optional[Dict[str, Any]],
                              jid: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Stamp a resolved ``url`` on every photo in ``doc["photos"]``.
+    """Stamp canonical ``thumb_url`` + ``full_url`` + legacy ``url``
+    on every photo in ``doc["photos"]``.
 
-    * ``url`` points at ``/api/public/job-photo/{jid}/{photo_id}``
+    * ``full_url`` points at ``/api/public/job-photo/{jid}/{photo_id}``
       — the streaming endpoint that transparently handles both
       S3-backed and base64-backed photos.
+    * ``thumb_url`` points at the ``/thumb`` variant of the same
+      route (``slim_photos_on_rows`` already uses this URL shape
+      for list surfaces).
+    * ``url`` is kept as a legacy alias (equal to ``full_url``) for
+      mobile parity and FE defensive fallback chains — matches the
+      canonical shape every TD-76 Phase B site emits.
     * Skips entries without an ``id`` (defensive — those cannot
       be resolved by the proxy anyway).
-    * Idempotent: pre-existing ``url`` fields are preserved.
+    * Idempotent: pre-existing ``thumb_url`` / ``full_url`` / ``url``
+      fields are each preserved independently so operator-stamped
+      absolute URLs don't get silently overridden.
     * ``None`` doc or missing ``jid`` → no-op.
 
     Mutates + returns ``doc`` for ergonomic chaining.
+
+    TD-76 Ph2f · Feb-2026 — widened from legacy single-``url`` stamp
+    to the canonical ``thumb_url``/``full_url`` shape so the admin
+    ``JobDetail.jsx`` lightbox + tile grid can consume
+    ``p.thumb_url`` / ``p.full_url`` directly without any
+    frontend path composition.  Legacy ``url`` kept until the
+    mobile parity dispatch for TD-76 Phase B removes it.
     """
     if not doc or not jid:
         return doc
@@ -247,9 +271,14 @@ def inject_photo_url_on_doc(doc: Optional[Dict[str, Any]],
         pid = p.get("id")
         if not pid:
             continue
-        if p.get("url"):
-            continue
-        p["url"] = f"/api/public/job-photo/{jid}/{pid}"
+        full = f"/api/public/job-photo/{jid}/{pid}"
+        thumb = f"/api/public/job-photo/{jid}/{pid}/thumb"
+        if not p.get("full_url"):
+            p["full_url"] = full
+        if not p.get("thumb_url"):
+            p["thumb_url"] = thumb
+        if not p.get("url"):
+            p["url"] = full
     return doc
 
 
