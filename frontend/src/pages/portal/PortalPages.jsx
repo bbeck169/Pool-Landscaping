@@ -21,6 +21,19 @@ import { api } from "@/api";
 // shadows in the four already-migrated exports have been dropped
 // below now that the module-level import IS the dark palette.
 import { portalColors as colors, money, gradients } from "@/theme";
+// TD-71 · Feb-2026 — customer-portal invoice-row display helpers:
+// (a) ``resolvePortalInvoiceTitle`` rewrites imported invoices'
+//     ``Import #<n>`` placeholder titles to a customer-friendly
+//     fallback chain (``service_description`` → first line item →
+//     ``notes`` truncated to 80 → ``"Invoice"``). Non-imported
+//     titles pass through untouched.
+// (b) ``formatInvoiceCreatedDate`` surfaces an additive ``Created
+//     MM/DD/YYYY`` line below the title — the pre-TD-71 "No due
+//     date" row left customers with no temporal context at all.
+import {
+  resolvePortalInvoiceTitle,
+  formatInvoiceCreatedDate,
+} from "@/lib/portalInvoiceTitle";
 // DTP-1 · Feb-2026 — Shared portal lightbox for PortalServiceDetail
 // (pilot). Other exports in this file keep their light ``colors``
 // binding untouched.
@@ -227,13 +240,31 @@ export function PortalInvoices() {
        <ul className="space-y-2">
          {rows.map((r) => {
            const balance = Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0));
+           // TD-71 · Feb-2026 — customer-friendly title (rewrites
+           // ``Import #<n>`` on imported invoices only, else
+           // passthrough) + additive ``Created MM/DD/YYYY`` line
+           // below the title. The pre-TD-71 "No due date" row
+           // stays as the SECOND line (unchanged).
+           const _displayTitle = resolvePortalInvoiceTitle(r);
+           const _createdLine = formatInvoiceCreatedDate(r);
            return (
              <li key={r.id} onClick={() => navigate(`/portal/invoices/${r.id}`)}
                className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
                data-testid={`port-inv-${r.id}`}>
                <div className="flex-1 min-w-0">
-                 <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{r.title}</div>
+                 <div
+                   className="text-sm font-semibold"
+                   style={{ color: colors.onSurface }}
+                   data-testid={`port-inv-title-${r.id}`}
+                 >{_displayTitle}</div>
+                 {_createdLine ? (
+                   <div
+                     className="text-xs"
+                     style={{ color: colors.muted }}
+                     data-testid={`port-inv-created-${r.id}`}
+                   >{_createdLine}</div>
+                 ) : null}
                  <div className="text-xs" style={{ color: colors.muted }}>{r.due_date ? `Due ${r.due_date}` : "No due date"}</div>
                </div>
                <div className="text-right">
