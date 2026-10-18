@@ -2015,3 +2015,10 @@
 - **Hygiene**: cleared stale skip-worktree (profile.tsx, commit_log.md) + `.git/info/exclude` entries left from the prior cycle.
 - **Files modified**: mobile/app/portal/profile.tsx, mobile/__tests__/portal-profile-save-td73.test.tsx (new)
 - **Tests**: new 3/3; phase11b + no-typed-confirm green; tsc 651 (0 in touched); eslint clean.
+
+## Iteration 149 — m-k6-lib · single canonical mobile K6 role set
+- **Commit**: the `m-k6-lib` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/lib/k6Unlock.ts` (`K6_UNLOCK_ROLES` — same 7 roles as the previous inline copy; `canEditCompletedJob(role, job)` = web `canEditCompleted`). `app/job/[id]/checklist.tsx` drops its inline set and calls the lib — gate expression + `effectiveLocked` unchanged. `__tests__/job-k6-unlock.test.tsx` repointed from regex-parsing checklist source to the lib (+ guards: role set unchanged, no inline duplicate).
+- **Files modified**: mobile/src/lib/k6Unlock.ts (new), mobile/app/job/[id]/checklist.tsx, mobile/__tests__/job-k6-unlock.test.tsx
+- **Tests**: 10 checklist-touching suites — 9 pass; `k61-checklist-contract` 2 failures identical on HEAD (pre-existing). tsc 651 (checklist's 8 errors identical on HEAD); eslint 9 warnings identical on HEAD.

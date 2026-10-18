@@ -1,19 +1,32 @@
 /**
  * CLOSED-JOB-EDIT-UNLOCK mobile (1b68cec61) — K6 edit unlock on completed jobs.
- * Evaluates the role set + gate expression lifted verbatim from checklist.tsx.
+ * m-k6-lib — the role set + gate now live in src/lib/k6Unlock.ts (single
+ * canonical mobile copy); checklist.tsx consumes it.
  */
 import * as fs from "fs";
 import * as path from "path";
 
+import { K6_UNLOCK_ROLES, canEditCompletedJob } from "@/src/lib/k6Unlock";
+
 const SRC = fs.readFileSync(path.resolve(__dirname, "../app/job/[id]/checklist.tsx"), "utf-8");
-const roles = JSON.parse(SRC.match(/K6_UNLOCK_ROLES = new Set\((\[[\s\S]*?\])\)/)![1].replace(/,\s*\]/, "]"));
-const K6 = new Set<string>(roles);
 const gate = (role: string, locked: boolean, status: string) => {
-  const canEditCompleted = !locked ? false : K6.has(role || "") && status === "completed";
+  const canEditCompleted = !locked ? false : canEditCompletedJob(role, { status });
   return { canEditCompleted, effectiveLocked: locked && !canEditCompleted };
 };
 
 describe("K6 edit unlock", () => {
+  it("role set matches the pre-extraction inline set (behaviour unchanged)", () => {
+    expect([...K6_UNLOCK_ROLES].sort()).toEqual(
+      ["admin", "employee", "manager", "owner", "super_admin", "tech", "technician"],
+    );
+  });
+
+  it("checklist consumes the lib — no inline duplicate set", () => {
+    expect(SRC).toContain('from "@/src/lib/k6Unlock"');
+    expect(SRC).toContain("const canEditCompleted = !locked ? false : canEditCompletedJob(role, job);");
+    expect(SRC).not.toMatch(/K6_UNLOCK_ROLES = new Set/);
+  });
+
   it("technician on a submitted+completed job → canEditCompleted, editable", () => {
     expect(gate("technician", true, "completed")).toEqual({ canEditCompleted: true, effectiveLocked: false });
     expect(gate("admin", true, "completed").effectiveLocked).toBe(false);

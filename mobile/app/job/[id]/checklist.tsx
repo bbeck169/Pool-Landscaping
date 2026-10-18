@@ -55,6 +55,7 @@ import { deriveIndustryForJob } from "@/src/lib/deriveIndustry";
 import WaterBodyManager from "@/src/components/checklist/WaterBodyManager";
 import { WaterBody, makeEmptyBody, missingRequiredReadings } from "@/src/lib/waterBodies";
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
+import { canEditCompletedJob } from "@/src/lib/k6Unlock";
 import { retryWithBackoff } from "@/src/services/retryWithBackoff";
 import ChecklistSavePill, { type SavePillState } from "@/src/components/sync/ChecklistSavePill";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
@@ -892,14 +893,9 @@ export default function JobChecklistScreen() {
   }
 
   const locked = !!report.submitted_at;
-  // K6 edit unlock · CLOSED-JOB-EDIT-UNLOCK — admins/managers/techs/owners
-  // can still edit completed jobs (no 24h window). Mirrors web K6_UNLOCK_ROLES.
-  const K6_UNLOCK_ROLES = new Set([
-    "super_admin", "admin", "manager", "tech", "technician", "owner", "employee",
-  ]);
-  const canEditCompleted = !locked ? false : (
-    K6_UNLOCK_ROLES.has(role || "") && (job?.status === "completed")
-  );
+  // K6 edit unlock · CLOSED-JOB-EDIT-UNLOCK — K6 roles can still edit
+  // completed jobs (no 24h window). Canonical set: src/lib/k6Unlock.ts.
+  const canEditCompleted = !locked ? false : canEditCompletedJob(role, job);
   const effectiveLocked = locked && !canEditCompleted;
   const clientType: ChecklistType = getChecklistType(job);
   const backendKind: string = report.template || "generic";
