@@ -81,6 +81,17 @@ const P49_TESTIDS_ADDED = [
   // Both testids are additive — zero collisions with the P49 baseline.
   "portal-service-report-superseded-banner",
   "portal-service-report-superseded-original-at",
+  // TD-68 · Feb-2026 — Portal theme bundle wraps the LIST / DETAIL
+  // returns in the shared ``PortalPageShell`` white-card chrome
+  // (parity with /portal/home). The loading-skeleton branch is
+  // now its own addressable testid so the three return branches
+  // (loading / error / loaded) each surface a stable DOM anchor
+  // without colliding on ``portal-service-report-detail`` which
+  // the ``portal-service-report-detail.test.jsx`` suite expects
+  // to see ONLY on the loaded branch (``renders the error card
+  // without a hooks-order crash`` + ``renders the loaded detail
+  // card without a hooks-order crash`` tests pin this contract).
+  "portal-service-report-loading",
 ];
 
 describe("Phase P49 · Portal service-report visual restyle", () => {

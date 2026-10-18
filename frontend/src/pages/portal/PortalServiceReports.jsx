@@ -37,6 +37,15 @@ import { portalColors as colors } from "@/theme";
 // appends ``?auth=<token>`` safely (handles existing query strings,
 // idempotent on repeat calls); the BE handler now accepts the
 // query-param fallback mirroring ``routers/files.py``.
+//
+// TD-68 · Feb-2026 — the ``PortalPageShell`` white-card chrome
+// (imported below at the Phase 18b block, line ~89) now wraps
+// every return branch of both the LIST (``PortalServiceReports``)
+// and DETAIL (``PortalServiceReportDetail``) exports so content
+// renders inside the pixel-matched Phase 3d-portal white
+// dashboard card on the deep-navy page bg. Pre-TD-68 the detail
+// view rendered on a lightened navy ``bg-slate-50`` wrapper with
+// no white chrome break — the operator reported it as "all navy".
 import { withAuthToken } from "@/lib/urlToken";
 // DTP-2 · Feb-2026 — shared portal Lightbox wired to both photo
 // grids (jobPhotos + visitor photos) below.
@@ -200,8 +209,8 @@ export function PortalServiceReports() {
   }, [qDebounced, serviceType, fromDate, toDate]);
 
   return (
+    <PortalPageShell>
     <div
-      className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
       data-testid="portal-service-reports"
       data-tour-id="service-reports-list"
     >
@@ -320,7 +329,6 @@ export function PortalServiceReports() {
                       const iconTone =
                         kind === "landscape" ? colors.success : colors.brand;
                       return (
-                        <PortalPageShell>
                         <li
                           key={r.id}
                           onClick={() => navigate(`/portal/service-reports/${r.id}`)}
@@ -419,7 +427,6 @@ export function PortalServiceReports() {
                 </div>
                           <StatusPill status="completed" />
                         </li>
-                        </PortalPageShell>
                       );
                     })}
                   </ul>
@@ -465,6 +472,7 @@ export function PortalServiceReports() {
         </button>
       </div>
     </div>
+    </PortalPageShell>
   );
 }
 
@@ -526,34 +534,38 @@ export function PortalServiceReportDetail() {
 
   if (err) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <button
-          onClick={() => navigate("/portal/service-reports")}
-          className="flex items-center gap-1 text-sm font-semibold mb-4"
-          style={{ color: colors.muted }}
-          data-testid="portal-service-report-back"
-        >
-          <ArrowLeft size={14} /> Service reports
-        </button>
-        <div
-          className="rounded-2xl p-6"
-          style={{
-            backgroundColor: "#FEE2E2",
-            border: "1px solid #FCA5A5",
-            color: "#991B1B",
-          }}
-          data-testid="portal-service-report-error"
-        >
-          {err}
+      <PortalPageShell>
+        <div>
+          <button
+            onClick={() => navigate("/portal/service-reports")}
+            className="flex items-center gap-1 text-sm font-semibold mb-4"
+            style={{ color: colors.muted }}
+            data-testid="portal-service-report-back"
+          >
+            <ArrowLeft size={14} /> Service reports
+          </button>
+          <div
+            className="rounded-2xl p-6"
+            style={{
+              backgroundColor: "#FEE2E2",
+              border: "1px solid #FCA5A5",
+              color: "#991B1B",
+            }}
+            data-testid="portal-service-report-error"
+          >
+            {err}
+          </div>
         </div>
-      </div>
+      </PortalPageShell>
     );
   }
   if (!sr) {
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <Skeleton style={{ height: 240 }} />
-      </div>
+      <PortalPageShell>
+        <div data-testid="portal-service-report-loading">
+          <Skeleton style={{ height: 240 }} />
+        </div>
+      </PortalPageShell>
     );
   }
 
@@ -645,10 +657,8 @@ export function PortalServiceReportDetail() {
       className="bg-slate-50 min-h-screen"
       data-testid="portal-service-report-detail-root"
     >
-    <div
-      className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
-      data-testid="portal-service-report-detail"
-    >
+    <PortalPageShell>
+    <div data-testid="portal-service-report-detail">
       <button
         onClick={() => navigate("/portal/service-reports")}
         className="flex items-center gap-1 text-sm font-semibold mb-4"
@@ -1395,6 +1405,7 @@ export function PortalServiceReportDetail() {
         </Section>
       ) : null}
     </div>
+    </PortalPageShell>
     </div>
     </TemplateFieldProvider>
   );
@@ -1453,7 +1464,6 @@ const CHEM_BAND_STYLES = {
 function ChemChip({ band, testid }) {
   const style = CHEM_BAND_STYLES[band] || CHEM_BAND_STYLES.average;
   return (
-    <PortalPageShell>
     <span
       className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium shrink-0 ${style.className}`}
       data-testid={testid}
@@ -1462,6 +1472,5 @@ function ChemChip({ band, testid }) {
     >
       {style.label}
     </span>
-    </PortalPageShell>
   );
 }

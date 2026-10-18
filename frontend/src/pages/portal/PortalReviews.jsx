@@ -109,7 +109,7 @@ export default function PortalReviews() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-reviews-page">
+    <PortalPageShell testid="portal-reviews-page">
       {!token ? (
         <button
           onClick={() => navigate("/portal/home")}
@@ -344,7 +344,7 @@ export default function PortalReviews() {
       ) : null}
       </>
       ) : null}
-    </div>
+    </PortalPageShell>
   );
 }
 
@@ -391,7 +391,6 @@ function ReviewThankYou({ result, onReset }) {
   }
 
   return (
-    <PortalPageShell>
     <div
       className="rounded-2xl p-6 text-center"
       style={{
@@ -448,6 +447,5 @@ function ReviewThankYou({ result, onReset }) {
         </button>
       </div>
     </div>
-    </PortalPageShell>
   );
 }
