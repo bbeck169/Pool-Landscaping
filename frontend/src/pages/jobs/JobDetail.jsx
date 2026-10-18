@@ -1105,7 +1105,13 @@ export default function JobDetail() {
                 data-testid={`jd-photo-${i}`}
               >
                 <img
-                  src={p.url || p.data || p.data_url || p}
+                  // TD-76 Ph2f · Feb-2026 — consume canonical
+                  // ``thumb_url`` emitted by
+                  // ``services/jobs_slim_photos::inject_photo_url_on_doc``.
+                  // Legacy ``url`` / ``data`` / ``data_url`` kept as
+                  // defensive fallbacks for legacy rows or future
+                  // base64-inline shapes.
+                  src={p.thumb_url || p.url || p.data || p.data_url || p}
                   alt=""
                   className="w-full h-full object-cover"
                 />
@@ -1146,7 +1152,11 @@ export default function JobDetail() {
                 title={p.created_at || p.label || ""}
               >
                 <img
-                  src={p.url}
+                  // TD-76 Ph2f · Feb-2026 — additive defensive
+                  // consume of canonical ``thumb_url`` emitted by
+                  // ``_wsl_media_items`` (migrated in TD-76 Ph2b).
+                  // Legacy ``url`` retained as fallback.
+                  src={p.thumb_url || p.url}
                   alt={p.label || ""}
                   className="w-full h-full object-cover"
                 />
@@ -1249,7 +1259,13 @@ export default function JobDetail() {
             <XIcon size={28} />
           </button>
           <img
+            // TD-76 Ph2f · Feb-2026 — consume canonical
+            // ``full_url`` emitted by
+            // ``services/jobs_slim_photos::inject_photo_url_on_doc``.
+            // Legacy ``url`` / ``data`` / ``data_url`` kept as
+            // defensive fallbacks for legacy rows.
             src={
+              (job.photos[lightbox] || {}).full_url ||
               (job.photos[lightbox] || {}).url ||
               (job.photos[lightbox] || {}).data ||
               (job.photos[lightbox] || {}).data_url ||
@@ -1283,7 +1299,14 @@ export default function JobDetail() {
             <XIcon size={28} />
           </button>
           <img
-            src={(detail.service_report_photos[srLightbox] || {}).url}
+            // TD-76 Ph2f · Feb-2026 — additive defensive consume
+            // of canonical ``full_url`` emitted by
+            // ``_wsl_media_items`` (migrated in TD-76 Ph2b). Legacy
+            // ``url`` retained as fallback.
+            src={
+              (detail.service_report_photos[srLightbox] || {}).full_url ||
+              (detail.service_report_photos[srLightbox] || {}).url
+            }
             alt=""
             className="max-h-[85vh] max-w-full rounded-lg"
             onClick={(e) => e.stopPropagation()}

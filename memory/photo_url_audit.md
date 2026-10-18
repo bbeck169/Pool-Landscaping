@@ -151,3 +151,20 @@ Based on the evidence, **Option A is the minimum fix that actually resolves the 
 2. If B or C: confirm the helper split — do you want me to (i) change `withAuthToken` in place to stamp `?auth=` (small blast radius; all current call-sites are either TD-67 handlers or public endpoints that ignore the param), or (ii) add a sibling `withImgSrcAuth` and migrate call-sites one at a time?
 3. Confirm I should fold the Portal Photos grouped-layout UI into the chosen fix (yes/no).
 4. Any objection to the Option-A single-line swap in `customer_media.py` (SR branch → `/api/public/job-photo/` instead of `/api/public/service/`)?
+
+---
+
+## 9 · §1 migration close-out log (Feb-2026, Phase B rollup)
+
+- **F10 — `JobDetail.jsx` admin lightbox + tiles** → MIGRATED in `td76-ph2f-fe` (Feb-2026). Consumes canonical `thumb_url` / `full_url` emitted by `services/jobs_slim_photos::inject_photo_url_on_doc` (widened in `td76-ph2f-be`). Also widens the SR grid consume site (originally referenced F10 line pair) to add defensive `p.thumb_url || p.url` / `p.full_url || p.url` fallback on top of the Phase B BE canonical shape. Legacy `url` / `data` / `data_url` fallbacks retained for defense in depth.
+- **F1 / F2 (`PortalPhotos.jsx`)** → MIGRATED in TD-76 Phase A (`cbdf71ca0`, `6aa0d2f2d`); consume canonical shape.
+- **F3 / F5 (`PortalServiceReports.jsx` job-photos + lightbox branches)** → MIGRATED in TD-76f (`876162cd4`); emission now stamps `?auth=` on the BE side, removing the `withAuthToken` drift.
+- **F6 / F7 (`WorkstreamPage.jsx`)** → MIGRATED in TD-76 Ph2c (`cbce6f3d1`); consume canonical shape.
+- **F9 (`ServiceLogPage.jsx`)** → MIGRATED in TD-76 Ph2c (`cbce6f3d1`); consume canonical shape.
+- **F4 (`PortalServiceReports.jsx` visit-photos grid)** → Already consumes a fallback chain that includes `thumb_url`; no change needed post Phase B.
+- **F8 (`WorkstreamPage.jsx` lightbox video)** → Video pathway, not photo URL; not covered by TD-76 scope.
+
+**§1 reconciliation status (post Phase B + Ph2f):** every photo-URL render site enumerated in §1 Frontend-render-sites table has been migrated to consume canonical `thumb_url` / `full_url` with defensive legacy `url` fallback. Residual `withAuthToken` imports on the admin tree are now dead weight pending a future dedicated cleanup cycle; they do not affect correctness. Audit is **FULLY RECONCILED** for the frontend render surfaces listed in §1.
+
+Mobile parity for Phase B legacy-`url` removal remains OUT of scope (Expo specialist dispatch).
+
