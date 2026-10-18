@@ -261,15 +261,20 @@ export default function PortalHome() {
             Visit tile keep their visual weight. Opens the quick-edit
             modal (first_name / last_name / phone / email); users
             needing more fields follow the "Edit full profile →"
-            link inside the modal to ``/portal/profile``. */}
+            link inside the modal to ``/portal/profile``.
+            TD-73 · Feb-2026 — operator-ruled match the ``Call Now``
+            green (`#16A34A` from `pages/portal/CallNowButton.jsx`)
+            so the two CTAs on the hero band read as the same
+            affordance family. Keep the pill rounded-full shape
+            (hero corner slot — smaller than the chunky Call Now
+            rectangle) but adopt the same bg + bold white text +
+            brightness-95 hover state. */}
         <button
           type="button"
           onClick={() => setProfileOpen(true)}
-          className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium backdrop-blur"
+          className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-md hover:brightness-95 active:brightness-90"
           style={{
-            background: "rgba(255,255,255,0.15)",
-            color: "#FFFFFF",
-            border: "1px solid rgba(255,255,255,0.25)",
+            background: "#16A34A",
           }}
           data-testid="portal-hero-edit-profile-btn"
           aria-label="Edit profile"

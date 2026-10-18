@@ -291,9 +291,19 @@ export default function PortalEditProfileModal({
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 rounded-md text-sm font-semibold"
-                style={{ background: "#1B1F5C", color: "#FFFFFF",
-                         opacity: busy ? 0.7 : 1 }}
+                className="px-4 py-1.5 rounded-md text-sm font-semibold text-white hover:brightness-95 active:brightness-90"
+                style={{
+                  /* TD-73 · Feb-2026 — operator-ruled green parity
+                     with the ``Call Now`` CTA
+                     (``#16A34A`` from CallNowButton.jsx) so Save
+                     and the hero Edit-profile pill read as the
+                     same affordance family. Pre-TD-73 this was
+                     the portal-navy fill which produced a dark-
+                     blue Save beside a muted-white Cancel — the
+                     operator-reported low-contrast cluster. */
+                  background: "#16A34A",
+                  opacity: busy ? 0.7 : 1,
+                }}
                 data-testid="portal-edit-profile-save-btn"
                 disabled={busy}
               >
