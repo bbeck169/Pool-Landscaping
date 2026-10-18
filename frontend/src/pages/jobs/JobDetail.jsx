@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon, Plus } from "lucide-react";
+import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon, Plus, Info } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { colors, money } from "@/theme";
 import { formatCustomerName } from "@/utils/formatCustomerName";
@@ -560,6 +560,32 @@ export default function JobDetail() {
           ) : null
         }
       />
+
+      {/* TD-78b · Feb-2026 — "Closed job — edits logged" banner.
+          Non-dismissible notice shown ONLY when (a) the job is in
+          a completed state AND (b) the viewer has K6 unlock (i.e.,
+          they can actually edit).  Hidden for customers (they're
+          already read-only via other gates) and for non-K6 roles.
+          Pairs with the ``job-edit-history-toggle`` section below
+          so techs/admins know their edits land in the audit trail
+          they can inspect. */}
+      {canEditCompleted ? (
+        <div
+          className="mb-4 rounded-xl px-4 py-3 flex items-center gap-3"
+          style={{
+            backgroundColor: colors.surfaceSecondary || colors.surface,
+            border: `1px solid ${colors.border}`,
+            color: colors.onSurface,
+          }}
+          data-testid="jd-closed-job-edits-logged-banner"
+        >
+          <Info size={16} style={{ color: colors.brand }} aria-hidden />
+          <div className="text-sm">
+            <span className="font-semibold">Closed job</span>
+            <span style={{ color: colors.muted }}> — edits are logged to the audit history on this job.</span>
+          </div>
+        </div>
+      ) : null}
 
       {/* Header */}
       <div
