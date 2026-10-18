@@ -3442,6 +3442,19 @@ def _build_customer_job_photos(
             continue
         _rel = f"/api/customers/me/jobs/{job.get('id')}/photos/{_pid}"
         _full = f"{base_url}{_rel}" if base_url else _rel
+        # TD-76 Phase B · OMIT guard — if the photo row has neither
+        # a resolvable server-side streaming URL nor an inline
+        # ``thumb`` data-URI, drop it rather than emit a dead
+        # ``<img src>``. In this branch ``_full`` is always a
+        # non-empty streaming URL (we built it ourselves), so the
+        # OMIT branch effectively never fires here — but we gate it
+        # anyway for consistency with the shared helper's contract
+        # and so a future refactor swapping the URL builder cannot
+        # silently emit dead rows.
+        if not _full:
+            _probe_thumb = p.get("thumb") or ""
+            if not _probe_thumb:
+                continue
         # TD-76f · Feb-2026 — stamp ``?auth=<token>`` onto the
         # resolved URL for the portal_sr_detail context so the
         # ``<img src>`` request satisfies the TD-67 query-param

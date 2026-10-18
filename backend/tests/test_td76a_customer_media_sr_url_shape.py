@@ -318,11 +318,14 @@ class TestResolvePhotoUrls:
         )
         assert urls["full_url"] == "/api/customers/me/jobs/j1/photos/p1"
 
-    def test_unknown_context_returns_empty_url(self):
+    def test_unknown_context_returns_none_post_phase_b(self):
+        # TD-76 Phase B · Feb-2026 — unknown contexts now fall
+        # into the OMIT guard rather than emitting an empty-URL
+        # shape, which was itself effectively a dead row.
         urls = resolve_photo_urls(
             {"id": "p1"}, context="unknown",
         )
-        assert urls == {"thumb_url": "", "full_url": ""}
+        assert urls is None
 
     def test_thumb_and_full_are_identical_in_phase_a(self):
         # Phase A rule: ``thumb_url == full_url`` on every context.
@@ -387,3 +390,86 @@ async def test_estimate_photo_emits_canonical_fields_plus_legacy_url():
     assert item["thumb_url"] == "https://cdn/e.jpg"
     assert item["full_url"] == "https://cdn/e.jpg"
     assert item["url"] == "https://cdn/e.jpg"
+
+
+# ───────────────────────────────────────────────────────────────────
+# TD-76 Phase B · OMIT behavior — dead rows filtered at emission.
+# ───────────────────────────────────────────────────────────────────
+class TestResolvePhotoUrlsOmit:
+    """OMIT branch — resolve_photo_urls returns None when the row
+    has no resolvable byte source (operator-approved UX default)."""
+
+    def test_portal_jobs_no_url_no_storage_path_no_thumb_returns_none(self):
+        """The exact shape operator asked to filter at emission —
+        preview DB has 12/13 rows in this state per TD-76-aux."""
+        assert resolve_photo_urls(
+            {"id": "p1"}, context="portal_jobs",
+        ) is None
+
+    def test_portal_jobs_with_url_passes_through(self):
+        urls = resolve_photo_urls(
+            {"id": "p1", "url": "https://cdn/x.jpg"},
+            context="portal_jobs",
+        )
+        assert urls is not None
+        assert urls["full_url"] == "https://cdn/x.jpg"
+
+    def test_portal_jobs_with_storage_path_passes_through(self):
+        urls = resolve_photo_urls(
+            {"id": "p1", "storage_path": "t/x/f.jpg"},
+            context="portal_jobs",
+        )
+        assert urls is not None
+
+    def test_portal_jobs_inline_thumb_alone_survives_the_omit_filter(self):
+        """Inline data-URI thumb is a renderable byte source even
+        without a URL — must NOT be omitted."""
+        urls = resolve_photo_urls(
+            {"id": "p1", "thumb": "data:image/jpeg;base64,/9j/"},
+            context="portal_jobs",
+        )
+        assert urls is not None
+        # Empty URL but kept — FE will fall back to the ``thumb``
+        # data-URI through its own ``thumb_url || thumb || url``
+        # chain.  Here ``full_url`` is "" and that's correct.
+        assert urls["full_url"] == ""
+
+    def test_portal_estimate_omit_mirrors_portal_jobs(self):
+        assert resolve_photo_urls(
+            {"id": "p1"}, context="portal_estimate",
+        ) is None
+
+    def test_portal_sr_with_job_id_is_never_omitted_even_without_storage_path(self):
+        """SR branch resolves via the resilient job-photo cascade,
+        so even a Phase-27-less row still has a byte source
+        (``routers/jobs.py`` falls back to base64 / SR photo)."""
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr", job_id="j1",
+        )
+        assert urls is not None
+        assert urls["full_url"] == "/api/public/job-photo/j1/p1"
+
+
+@pytest.mark.anyio
+async def test_portal_photos_omits_jobs_rows_with_no_byte_source():
+    """End-to-end OMIT check through ``get_customer_media``:
+    operator's preview-DB symptom shape (jobs.photos[].url empty,
+    no storage_path, no thumb) must disappear from the list."""
+    j = _job("j1")
+    j["photos"] = [
+        {"id": "dead-1", "mime": "image/jpeg",
+          "visibility": "customer", "uploaded_at": "2026-02-01T10:00:00Z"},
+        {"id": "live-1", "mime": "image/jpeg",
+          "visibility": "customer", "uploaded_at": "2026-02-01T10:00:00Z",
+          "url": "https://cdn/x.jpg"},
+        {"id": "dead-2", "mime": "image/jpeg",
+          "visibility": "customer", "uploaded_at": "2026-02-01T10:00:00Z",
+          "url": "", "storage_path": "", "thumb": ""},
+    ]
+    db = _DB(jobs=[j], estimates=[], service_reports=[])
+    bag = await get_customer_media(db, "t1", "c1", kind="photo")
+    media_ids = [i["media_id"] for i in bag["items"]]
+    assert media_ids == ["live-1"]
+    # ``total`` reflects FILTERED count — operator-flagged
+    # count-change surface.
+    assert bag["total"] == 1

@@ -82,8 +82,19 @@ def resolve_photo_urls(
     public_uuid: Optional[str] = None,
     file_id: Optional[str] = None,
     base_url: str = "",
-) -> Dict[str, str]:
+) -> Optional[Dict[str, str]]:
     """Return ``{thumb_url, full_url}`` for a photo subdoc.
+
+    TD-76 Phase B · Feb-2026 — **OMIT behavior**: returns ``None``
+    when the photo row has NO resolvable byte source (e.g.,
+    ``portal_jobs`` / ``portal_estimate`` branches whose ``url`` +
+    ``storage_path`` are both empty, and no inline ``thumb``
+    data-URI exists either).  Call-sites MUST filter out ``None``
+    results before serializing.  Operator-approved UX ruling
+    (reviewing the TD-76-aux diagnostic: 12 of 13 preview
+    ``jobs.photos[]`` subdocs have no byte source) — surface
+    zero broken ``<img>`` tiles rather than placeholder
+    "unavailable" tiles.
 
     Resolution rules per context (TD-76 Option C canonical shape):
 
@@ -94,8 +105,9 @@ def resolve_photo_urls(
         occurs in prod).
       * ``portal_jobs`` + ``portal_estimate`` — defensive raw
         passthrough. These branches still carry free-form URLs
-        (B1/B2 in the audit). Phase B schema normalization will
-        tighten this; Phase A preserves the shape as-is.
+        (B1/B2 in the audit). Phase B OMIT filter runs on these
+        branches: no ``url`` AND no ``storage_path`` AND no
+        ``thumb`` → ``None``.
       * ``portal_file`` — ``/api/files/<file_id>/download``.
       * ``portal_sr_detail`` — authenticated-customer streaming
         URL ``/api/customers/me/jobs/<jid>/photos/<pid>`` with
@@ -114,6 +126,15 @@ def resolve_photo_urls(
         full = (isinstance(photo_doc, dict)
                  and (photo_doc.get("url")
                       or photo_doc.get("storage_path"))) or ""
+        # TD-76 Phase B · OMIT branch — this family of rows is the
+        # free-form passthrough. If no HTTP-ish shape AND no inline
+        # thumb exists either, the row has no renderable byte source
+        # and must be omitted so the FE never emits a broken tile.
+        if not full:
+            _thumb = (isinstance(photo_doc, dict)
+                       and photo_doc.get("thumb")) or ""
+            if not _thumb:
+                return None
     elif context == "portal_file":
         full = f"/api/files/{file_id}/download" if file_id else ""
     elif context == "portal_sr_detail":
@@ -123,6 +144,15 @@ def resolve_photo_urls(
             full = ""
     else:
         full = ""
+    # TD-76 Phase B · final OMIT guard — any context that falls
+    # through with an empty ``full`` and no inline thumb cannot be
+    # rendered. Returning ``None`` lets the call-site drop the row
+    # before serializing.
+    if not full:
+        _thumb = (isinstance(photo_doc, dict)
+                   and photo_doc.get("thumb")) or ""
+        if not _thumb:
+            return None
     return {"thumb_url": full, "full_url": full}
 
 
@@ -282,6 +312,12 @@ async def get_customer_media(
             mime = _coerce_mime_item(p, "image/jpeg")
             if not _kind_matches(mime, kind):
                 continue
+            # TD-76 Phase B · OMIT guard — route through the shared
+            # resolver so dead rows (no url + no storage_path + no
+            # inline thumb) are filtered before serialization.
+            _urls_j = resolve_photo_urls(p, context="portal_jobs")
+            if _urls_j is None:
+                continue
             items.append({
                 "source": "job",
                 "kind": "photo",
@@ -289,9 +325,9 @@ async def get_customer_media(
                 "job_title": job_title_by_id.get(j.get("id")),
                 "media_id": p.get("id"),
                 # TD-76c · canonical fields + legacy ``url`` alias.
-                "thumb_url": p.get("url") or p.get("storage_path") or "",
-                "full_url": p.get("url") or p.get("storage_path") or "",
-                "url": p.get("url") or p.get("storage_path") or "",
+                "thumb_url": _urls_j["thumb_url"],
+                "full_url": _urls_j["full_url"],
+                "url": _urls_j["full_url"],
                 "mime": mime,
                 "size_bytes": p.get("size_bytes") or 0,
                 "caption": p.get("caption") or "",
@@ -337,6 +373,12 @@ async def get_customer_media(
             mime = _coerce_mime_item(p, "image/jpeg")
             if not _kind_matches(mime, kind):
                 continue
+            # TD-76 Phase B · OMIT guard — same filter as the
+            # jobs branch; dead passthrough rows are dropped before
+            # serialization.
+            _urls_e = resolve_photo_urls(p, context="portal_estimate")
+            if _urls_e is None:
+                continue
             items.append({
                 "source": "estimate",
                 "kind": "photo",
@@ -346,9 +388,9 @@ async def get_customer_media(
                                     or "Estimate"),
                 "media_id": p.get("id"),
                 # TD-76c · canonical fields + legacy ``url`` alias.
-                "thumb_url": p.get("url") or p.get("storage_path") or "",
-                "full_url": p.get("url") or p.get("storage_path") or "",
-                "url": p.get("url") or p.get("storage_path") or "",
+                "thumb_url": _urls_e["thumb_url"],
+                "full_url": _urls_e["full_url"],
+                "url": _urls_e["full_url"],
                 "mime": mime,
                 "uploaded_at": p.get("uploaded_at"),
             })
@@ -410,6 +452,11 @@ async def get_customer_media(
                 p, context="portal_sr",
                 job_id=_rjid, public_uuid=pub,
             )
+            # TD-76 Phase B · OMIT guard — skip rows with no
+            # resolvable byte source so FE never gets a broken
+            # ``<img>`` tile.
+            if _urls is None:
+                continue
             items.append({
                 "source": "service_report",
                 "kind": "photo",
