@@ -42,3 +42,19 @@
 
 For local curl testing use `super@aquaterra.com` for the migration endpoint;
 `admin@aquaterra.com` works for the mute PATCH.
+
+## Feb-2026 · TD-67 · Portal media verification seed
+- **Portal customer with media** · `preview-portal0161@preview.local` · `password123`
+  - `customer_id = 8910bfde-3ba0-4b18-b54f-6ac5657af13d`
+  - `tenant_id   = affdfbfa-88b9-4baa-ae45-2ef78531b6e4`
+  - 7 photos surface on `GET /api/portal/photos` (BE emits `{photos, total}` — FE now reads `.photos`).
+  - 15 service reports available on `GET /api/customers/me/service-reports` (several with embedded photos/videos).
+  - Known SR with 1 visitor photo + 1 job photo:
+    `GET /api/customers/me/service-reports/e5f54d08-2d19-40e1-aa1f-c81ee91d9d8e`
+  - Known job-attached photo URL (requires `?auth=<token>` or `Authorization: Bearer`):
+    `/api/customers/me/jobs/08af77d0-38d7-4307-81b2-f121a758547d/photos/d85a0599-7689-48c0-900c-160169534592`
+
+- **Second-customer isolation guard (different cid, same tenant)** · `customer@aquaterra.com` · `password123`
+  - `customer_id = 1c6c0072-8f51-4325-ba18-1c50d5ecab63`
+  - Use to verify cross-customer 403 on the stream endpoint:
+    `curl "$API/api/customers/me/jobs/<0161-jid>/photos/<0161-pid>?auth=<customer@aquaterra-token>"` → **403 not_your_job**

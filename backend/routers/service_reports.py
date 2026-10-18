@@ -3444,26 +3444,74 @@ def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
 async def stream_customer_job_photo(
     jid: str,
     photo_id: str,
-    user: dict = Depends(get_current_user),
-    tenant: dict = Depends(get_current_tenant),
+    request: Request,
+    auth: Optional[str] = Query(
+        None,
+        description="Bearer-token fallback for <img src> use "
+                    "(headers can't be attached to image/video src).",
+    ),
 ):
     """Stream a single ``job.photos[]`` entry to the owning customer.
 
-    Auth: customer session (or ``?auth=<bearer>`` fallback handled by
-    ``get_current_user`` uniformly across the codebase for ``<img>``
-    compatibility). Returns:
+    Auth: standard ``Authorization: Bearer <token>`` header OR
+    ``?auth=<token>`` query param (same contract as
+    ``routers/files.py`` download endpoints — required so the portal
+    can render these as ``<img src>`` from
+    ``PortalServiceReportDetail``, where headers cannot be attached).
+    Returns:
       * 200 — photo found + customer owns the job (streams from S3
         when ``s3_key`` is set, else decodes the embedded base64).
-      * 403 — session valid but the customer doesn't own the job.
+      * 401 — missing / invalid credentials, or non-customer role.
+      * 403 — session valid but the customer doesn't own the job,
+              or no tenant on the user.
       * 404 — photo id not found on this job.
       * 410 — photo soft-deleted.
       * 502 — S3 read failure.
       * 503 — storage not configured (embedded fallback also empty).
+
+    TD-67 · Feb-2026 — pre-TD-67 the handler used
+    ``user: dict = Depends(get_current_user)`` AND
+    ``tenant: dict = Depends(get_current_tenant)``, both of which
+    reject ``<img src>`` loads because browsers can't send the
+    Authorization header on image requests. The portal detail page
+    therefore rendered broken thumbnails for every job-attached
+    photo. Both ``Depends`` are now resolved manually inside the
+    body so the ``?auth=`` query-param fallback can run before any
+    header-only auth check. Mirrors
+    ``routers/files.py::_resolve_bearer_or_query_auth`` + its
+    ``user.get('tenant_id')`` direct-read pattern.
     """
+    # Resolve auth from Bearer header OR ``?auth=`` query param.
+    # Mirrors ``routers/files.py::_resolve_bearer_or_query_auth`` —
+    # intentionally duplicated here (not imported from a sibling
+    # router module) so the two surfaces stay independently testable.
+    # Cross-ref logged under TD-F7-2 in /app/memory/TECH_DEBT.md.
+    from fastapi.security import HTTPAuthorizationCredentials
+    header = request.headers.get("authorization") \
+        or request.headers.get("Authorization")
+    token = None
+    if header and header.lower().startswith("bearer "):
+        token = header.split(" ", 1)[1].strip()
+    if not token and auth:
+        token = auth.strip()
+    if not token:
+        raise HTTPException(401, "not_authenticated")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    user = await get_current_user(creds)
+
+    # Tenant resolution — read directly off the user doc (same
+    # pattern as ``routers/files.py``). Avoids re-entering
+    # ``get_current_tenant`` which itself ``Depends(get_current_user)``
+    # from a header-only auth source and would 401 the request
+    # before the ``?auth=`` body resolution runs.
+    tenant_id = user.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(403, "tenant_required")
+
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(401, "customer_only")
     job = await db.jobs.find_one(
-        {"id": jid, "tenant_id": tenant["id"]},
+        {"id": jid, "tenant_id": tenant_id},
         {"_id": 0, "id": 1, "customer_id": 1, "photos": 1},
     )
     if not job:

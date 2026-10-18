@@ -58,7 +58,18 @@ export default function PortalPhotosPage() {
     try {
       const res = await api.get(`/portal/photos?limit=${PAGE}&offset=${nextOffset}`);
       setTotal(res.total || 0);
-      setItems((prev) => (nextOffset === 0 ? (res.items || []) : [...(prev || []), ...(res.items || [])]));
+      // TD-67 · Feb-2026 — BE emits ``photos`` (see
+      // ``routers/portal_photos.py`` and the DATA-PARITY-C3 wrapper
+      // around ``services/customer_media.get_customer_media``). The
+      // pre-TD-67 code read ``res.items`` which never existed on
+      // this payload — ``items === undefined`` collapsed to ``[]``
+      // and every portal customer saw "No photos yet" even when
+      // their service history had media attached. The
+      // ``res.items`` branch is retained as a secondary fallback
+      // only so a future BE refactor to the common ``items`` wire
+      // shape doesn't silently blank the page again.
+      const nextRows = res.photos || res.items || [];
+      setItems((prev) => (nextOffset === 0 ? nextRows : [...(prev || []), ...nextRows]));
     } catch (e) {
       setErr(e?.message || "Failed to load photos.");
       setItems([]);
@@ -127,35 +138,50 @@ export default function PortalPhotosPage() {
             className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
             data-testid="portal-photos-grid"
           >
-            {items.map((p) => (
-              <button
-                key={p.file_id}
-                onClick={() => setLightboxIdx((items || []).findIndex((x) => x.file_id === p.file_id))}
-                className="rounded-xl overflow-hidden transition hover:brightness-95"
-                style={{ background: colors.surfaceSecondary,
-                          border: `1px solid ${colors.border}` }}
-                data-testid={`portal-photo-${p.file_id}`}
-              >
-                <img
-                  src={authedImgUrl(p.url)}
-                  alt={p.filename || "Service photo"}
-                  loading="lazy"
-                  className="w-full h-40 object-cover"
-                />
-                <div className="p-2 text-left">
-                  <div className="text-xs font-semibold truncate"
-                        style={{ color: colors.onSurface }}
-                        title={p.job_title || ""}>
-                    {p.job_title || "Portal upload"}
+            {items.map((p, i) => {
+              // TD-67 · Feb-2026 — BE emits ``url, thumb, caption,
+              // job_id, job_title, service_type, submitted_at,
+              // report_id, source, mime`` (see
+              // ``routers/portal_photos.py``). It does NOT emit
+              // ``file_id``, which the pre-TD-67 render tried to
+              // use as the React key — every tile keyed on
+              // ``undefined``, producing a duplicate-key warning
+              // + unstable ``portal-photo-undefined`` testids. We
+              // compose a stable key from the identifiers the BE
+              // DOES emit (``source|report_id|job_id|i``) so the
+              // DOM diff stays stable across loads AND the testid
+              // is uniquely addressable per tile.
+              const _key = `${p.source || "src"}|${p.report_id || p.job_id || "x"}|${i}`;
+              return (
+                <button
+                  key={_key}
+                  onClick={() => setLightboxIdx(i)}
+                  className="rounded-xl overflow-hidden transition hover:brightness-95"
+                  style={{ background: colors.surfaceSecondary,
+                            border: `1px solid ${colors.border}` }}
+                  data-testid={`portal-photo-${i}`}
+                >
+                  <img
+                    src={authedImgUrl(p.url)}
+                    alt={p.caption || p.job_title || "Service photo"}
+                    loading="lazy"
+                    className="w-full h-40 object-cover"
+                  />
+                  <div className="p-2 text-left">
+                    <div className="text-xs font-semibold truncate"
+                          style={{ color: colors.onSurface }}
+                          title={p.job_title || ""}>
+                      {p.job_title || "Portal upload"}
+                    </div>
+                    <div className="text-xs" style={{ color: colors.muted }}>
+                      {p.submitted_at || p.uploaded_at
+                        ? new Date(p.submitted_at || p.uploaded_at).toLocaleDateString()
+                        : ""}
+                    </div>
                   </div>
-                  <div className="text-xs" style={{ color: colors.muted }}>
-                    {p.uploaded_at
-                      ? new Date(p.uploaded_at).toLocaleDateString()
-                      : ""}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
 
           {items.length < total ? (
@@ -178,11 +204,11 @@ export default function PortalPhotosPage() {
         items={(items || []).map((p) => ({
           url:   authedImgUrl(p.url),
           kind:  "image",
-          title: p.job_title || p.filename || "Photo",
-          subtitle: (p.uploaded_at
-                      ? new Date(p.uploaded_at).toLocaleString()
+          title: p.job_title || p.caption || "Photo",
+          subtitle: ((p.submitted_at || p.uploaded_at)
+                      ? new Date(p.submitted_at || p.uploaded_at).toLocaleString()
                       : "")
-                   + (p.purpose ? ` · ${p.purpose.replace(/_/g, " ")}` : ""),
+                   + (p.caption ? ` · ${p.caption}` : ""),
         }))}
         initialIndex={lightboxIdx == null ? 0 : lightboxIdx}
         open={lightboxIdx !== null}

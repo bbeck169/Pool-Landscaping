@@ -50,7 +50,15 @@ export default function PortalVideosPage() {
     try {
       const res = await api.get(`/portal/videos?limit=${PAGE}&offset=${nextOffset}`);
       setTotal(res.total || 0);
-      setItems((prev) => (nextOffset === 0 ? (res.items || []) : [...(prev || []), ...(res.items || [])]));
+      // TD-67 · Feb-2026 — BE emits ``videos`` (see
+      // ``routers/portal_videos.py``). Pre-TD-67 the FE read
+      // ``res.items`` which never existed on this payload — items
+      // was always undefined, every portal customer saw "No videos
+      // yet" regardless of actual history. ``items`` kept as a
+      // defensive secondary fallback for a future wire-shape
+      // convergence.
+      const nextRows = res.videos || res.items || [];
+      setItems((prev) => (nextOffset === 0 ? nextRows : [...(prev || []), ...nextRows]));
     } catch (e) {
       setErr(e?.message || "Failed to load videos.");
       setItems([]);
@@ -69,7 +77,7 @@ export default function PortalVideosPage() {
   const lightboxItems = (items || []).map((v) => ({
     url:   resolveUrl(v.url),
     kind:  "video",
-    title: v.job_title || v.filename || "Video",
+    title: v.entity_title || v.job_title || v.caption || "Video",
     subtitle: v.uploaded_at
       ? new Date(v.uploaded_at).toLocaleString()
         + (v.duration_seconds ? ` · ${fmtDuration(v.duration_seconds)}` : "")
@@ -129,14 +137,23 @@ export default function PortalVideosPage() {
           >
             {items.map((v, i) => {
               const poster = v.poster_url ? resolveUrl(v.poster_url) : "";
+              // TD-67 · Feb-2026 — BE emits ``kind, entity_id,
+              // entity_title, video_id, storage_path, url, mime,
+              // size_bytes, duration_seconds, caption, uploaded_at,
+              // source`` (see ``routers/portal_videos.py``). It
+              // does NOT emit ``file_id`` — pre-TD-67 the FE used
+              // it as the React key, producing undefined keys +
+              // duplicate testids. Compose a stable key from the
+              // identifiers the BE DOES emit.
+              const _key = `${v.source || "src"}|${v.video_id || v.entity_id || "x"}|${i}`;
               return (
                 <button
-                  key={v.file_id}
+                  key={_key}
                   onClick={() => setSelectedIdx(i)}
                   className="rounded-xl overflow-hidden transition hover:brightness-95"
                   style={{ background: colors.surfaceSecondary,
                             border: `1px solid ${colors.border}` }}
-                  data-testid={`portal-video-${v.file_id}`}
+                  data-testid={`portal-video-${i}`}
                 >
                   <div
                     className="relative w-full h-40 flex items-center justify-center"
@@ -161,8 +178,8 @@ export default function PortalVideosPage() {
                   <div className="p-2 text-left">
                     <div className="text-xs font-semibold truncate"
                           style={{ color: colors.onSurface }}
-                          title={v.job_title || ""}>
-                      {v.job_title || "Service report"}
+                          title={v.entity_title || v.job_title || ""}>
+                      {v.entity_title || v.job_title || "Service report"}
                     </div>
                     <div className="text-xs" style={{ color: colors.muted }}>
                       {v.uploaded_at

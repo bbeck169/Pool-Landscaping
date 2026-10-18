@@ -26,8 +26,18 @@ import {
   MapPin,
   Image as ImageIcon,
 } from "lucide-react";
-import { api } from "@/api";
+import { api, TOKEN_KEY } from "@/api";
 import { portalColors as colors } from "@/theme";
+// TD-67 · Feb-2026 — token-aware URL concat helper (shared with
+// Workstream). The ``jobPhotos[].url`` on this detail view points
+// at the authenticated ``/api/customers/me/jobs/{jid}/photos/{pid}``
+// streaming route which — pre-TD-67 — required a Bearer header
+// that ``<img src>`` cannot send, so every job-attached thumbnail
+// rendered as a broken-image placeholder on prod. ``withAuthToken``
+// appends ``?auth=<token>`` safely (handles existing query strings,
+// idempotent on repeat calls); the BE handler now accepts the
+// query-param fallback mirroring ``routers/files.py``.
+import { withAuthToken } from "@/lib/urlToken";
 // DTP-2 · Feb-2026 — shared portal Lightbox wired to both photo
 // grids (jobPhotos + visitor photos) below.
 import Lightbox from "@/components/portal/Lightbox";
@@ -1229,8 +1239,29 @@ export function PortalServiceReportDetail() {
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
             {jobPhotos.map((p, i) => {
-              const src = p.thumb || p.preview || "";
-              if (!src) return null;
+              // TD-67 · Feb-2026 — BE serializer at
+              // services/service_reports.py::_build_customer_job_photos
+              // emits ``{id, caption, created_at, uploader_role,
+              // url, [thumb]}`` — ``thumb`` is OMITTED when no
+              // pre-generated data-URI exists (nearly always, only
+              // mobile uploads currently generate thumbs). Pre-
+              // TD-67 the FE fell back to ``p.preview`` which the
+              // BE has NEVER emitted on this surface — so every
+              // thumb-less job photo rendered as a broken image.
+              // Correct fallback is ``p.url`` which hits the
+              // customer-session streaming route; we route it
+              // through ``withAuthToken`` so the ``?auth=<token>``
+              // param lands and ``<img src>`` loads (headers
+              // cannot be attached from image requests).
+              const _raw = p.thumb || p.url || "";
+              if (!_raw) return null;
+              const _tok = (typeof window !== "undefined" && window.localStorage)
+                ? (window.localStorage.getItem(TOKEN_KEY) || "")
+                : "";
+              // Only token-stamp absolute/relative HTTP(S) URLs —
+              // data-URI thumbs ship as inline bytes and must NOT
+              // have ``?auth=`` appended.
+              const src = _raw.startsWith("data:") ? _raw : withAuthToken(_raw, _tok);
               return (
                 <button
                   type="button"
@@ -1296,8 +1327,16 @@ export function PortalServiceReportDetail() {
         items={[
           ...jobPhotos
             .map((p, i) => {
-              const src = p.thumb || p.preview || "";
-              if (!src) return null;
+              // TD-67 · Feb-2026 — mirror the grid-render fallback
+              // chain (``p.thumb || p.url``) + token-stamp the
+              // non-data-URI branch so the lightbox opens the
+              // identical URL the grid tile displays.
+              const _raw = p.thumb || p.url || "";
+              if (!_raw) return null;
+              const _tok = (typeof window !== "undefined" && window.localStorage)
+                ? (window.localStorage.getItem(TOKEN_KEY) || "")
+                : "";
+              const src = _raw.startsWith("data:") ? _raw : withAuthToken(_raw, _tok);
               return { url: src, kind: "image", title: p.caption || `Job photo ${i + 1}` };
             })
             .filter(Boolean),
