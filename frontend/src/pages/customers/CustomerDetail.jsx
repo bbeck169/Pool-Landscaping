@@ -26,6 +26,8 @@ import CustomerTagsCard from "@/components/customers/CustomerTagsCard";
 import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
+// TD-79 · Feb-2026 — Overview-tab invoice list section.
+import CustomerInvoiceList from "@/components/customers/CustomerInvoiceList";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 import NotesHistoryList from "@/components/customers/NotesHistoryList";
 // Phase P52 · Feb-2026 — Chemistry / Chem History consolidation.
@@ -2253,6 +2255,13 @@ export default function CustomerDetail() {
               >
                 {customer.name}
               </div>
+              {/* TD-79 · Feb-2026 — Invoice list section between the
+                  tab-nav red divider and the Payment Method Tiles,
+                  per operator placement spec. Caps at 10 most-recent
+                  rows (newest first); when the customer has >10 we
+                  render a "View all" link to the main InvoicesList
+                  prefiltered by ``?customer_id=``. */}
+              <CustomerInvoiceList customerId={customer.id} />
               {/* Phase I5 · Feb-2026 — Payment Method Tiles between
                   the customer name heading and the Contact panel,
                   per the human's mockup with the red underline. */}
