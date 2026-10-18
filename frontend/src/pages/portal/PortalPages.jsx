@@ -20,7 +20,7 @@ import { api } from "@/api";
 // export shadow line. The pilot-era ``const colors = portalColors``
 // shadows in the four already-migrated exports have been dropped
 // below now that the module-level import IS the dark palette.
-import { portalColors as colors, money, gradients } from "@/theme";
+import { portalColors as colors, money } from "@/theme";
 // TD-71 · Feb-2026 — customer-portal invoice-row display helpers:
 // (a) ``resolvePortalInvoiceTitle`` rewrites imported invoices'
 //     ``Import #<n>`` placeholder titles to a customer-friendly
@@ -223,18 +223,16 @@ export function PortalInvoices() {
   useEffect(() => {
     api.get("/quotes?doc_type=invoice").then(setRows).catch(() => setRows([]));
   }, []);
-  const total = (rows || []).reduce(
-    (s, r) => s + Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0)),
-    0
-  );
+  // TD-77 · Feb-2026 — "Total outstanding" green-gradient tile
+  // removed per operator directive.  The pre-TD-77 ``total``
+  // reduce + hero tile has been deleted.  Per-row balance stays
+  // (computed inline in the ``.map`` below) so individual
+  // invoice rows keep showing their due amounts; only the
+  // aggregate header tile is gone.
   return (
     <PortalPageShell>
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
       <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
-      <div className="rounded-2xl p-5 mb-4" style={{ background: gradients.navyToGreen.css, color: "#fff" }}>
-        <div className="text-sm opacity-85">Total outstanding</div>
-        <div className="text-3xl font-bold mt-1" data-testid="port-outstanding">{money(total)}</div>
-      </div>
       {rows === null ? <Skeleton style={{ height: 220 }} /> :
        rows.length === 0 ? <EmptyState icon={FileText} title="No invoices yet" /> :
        <ul className="space-y-2">
