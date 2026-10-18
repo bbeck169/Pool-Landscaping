@@ -103,7 +103,8 @@ describe("Portal-Contrast · `.portal-input` CSS variant", () => {
 // ────────────────────────────────────────────────────────────────
 const PAGES = {
   "pages/portal/PortalServiceReports.jsx": [
-    "sr-list-search",
+    // TD-75 · Feb-2026 — ``sr-list-search`` removed from this page
+    // per operator directive. Service-type + date filters remain.
     "sr-list-filter-service-type",
     "sr-list-filter-from",
     "sr-list-filter-to",
@@ -163,9 +164,11 @@ describe("Portal-Contrast · migrated controls shed dark-navy inline bg literals
 //    `<select>` so a silent class drop is noisy.
 // ────────────────────────────────────────────────────────────────
 describe("Portal-Contrast · representative className snapshot per element shape", () => {
-  it("representative <input> (sr-list-search) className contains portal-input first", () => {
+  it("representative <input> (sr-list-filter-service-type) className contains portal-input first", () => {
     const SRC = read("pages/portal/PortalServiceReports.jsx");
-    const slice = elementSlice(SRC, "sr-list-search");
+    // TD-75 · Feb-2026 — representative anchor swapped from the
+    // removed ``sr-list-search`` to the retained Service-Type input.
+    const slice = elementSlice(SRC, "sr-list-filter-service-type");
     expect(slice).not.toBeNull();
     const m = slice.match(/className=["']([^"']+)["']/);
     expect(m).not.toBeNull();

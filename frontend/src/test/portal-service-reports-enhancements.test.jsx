@@ -8,8 +8,9 @@
  *   2. Empty ``items`` → EmptyState (no rows, no pagination).
  *   3. Total > page_size → pagination bar with prev/next + page
  *      indicator ("Page 1 of N (T total)").
- *   4. Search input debounces + fires the fetch with ``?q=`` query
- *      param.
+ *   4. TD-75 · Feb-2026 — the free-text search input was removed
+ *      per operator directive; its debounce coverage lives in
+ *      ``portal-service-reports-td75.test.jsx`` as a negative lock.
  *   5. Detail view renders "Job Photos" section when ``job_photos``
  *      is non-empty, hides it otherwise.
  */
@@ -109,26 +110,6 @@ describe("PortalServiceReports · list enhancements", () => {
     // Prev disabled on page 1.
     expect(screen.getByTestId("sr-list-pagination-prev").disabled).toBe(true);
     expect(screen.getByTestId("sr-list-pagination-next").disabled).toBe(false);
-  });
-
-  it("search input debounces + hits API with ?q= param", async () => {
-    getSpy.mockResolvedValue({
-      items: [], page: 1, page_size: 20, total: 0, total_pages: 0,
-    });
-    render(<PortalServiceReports />);
-    await waitFor(() => expect(getSpy).toHaveBeenCalled());
-    getSpy.mockClear();
-    const box = screen.getByTestId("sr-list-search");
-    fireEvent.change(box, { target: { value: "chlorine" } });
-    // Waits past the 300ms debounce for the follow-up fetch to fire.
-    await waitFor(
-      () => {
-        expect(getSpy).toHaveBeenCalled();
-        const path = getSpy.mock.calls[getSpy.mock.calls.length - 1][0];
-        expect(path).toMatch(/q=chlorine/);
-      },
-      { timeout: 2000 },
-    );
   });
 
   it("legacy bare-array response is still handled (backwards-compat guard)", async () => {

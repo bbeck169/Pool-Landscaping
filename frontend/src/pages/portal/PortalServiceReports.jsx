@@ -164,24 +164,17 @@ export function PortalServiceReports() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [totalPages, setTotalPages] = useState(0);
-  // Feb-2026 · Customer service-reports enhancements — search +
-  // filters (service_type + date range) + URL-sync so the filters
-  // survive a refresh / share. Debounced 300ms on the search box.
-  const [q, setQ] = useState("");
-  const [qDebounced, setQDebounced] = useState("");
+  // Feb-2026 · Customer service-reports filters (service_type + date
+  // range) + URL-sync so the filters survive a refresh / share.
+  // TD-75 · Feb-2026 — the free-text search input was removed per
+  // operator directive; status/date/service-type filters remain.
   const [serviceType, setServiceType] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-  React.useEffect(() => {
-    const t = setTimeout(() => setQDebounced(q), 300);
-    return () => clearTimeout(t);
-  }, [q]);
-
   useEffect(() => {
     // URL params keep filters shareable.
     const sp = new URLSearchParams();
-    if (qDebounced) sp.set("q", qDebounced);
     if (serviceType) sp.set("service_type", serviceType);
     if (fromDate) sp.set("from", fromDate);
     if (toDate) sp.set("to", toDate);
@@ -208,13 +201,13 @@ export function PortalServiceReports() {
         setErr(e?.message || "Failed to load service reports.");
         setRows([]);
       });
-  }, [qDebounced, serviceType, fromDate, toDate, page, pageSize]);
+  }, [serviceType, fromDate, toDate, page, pageSize]);
 
   // Reset to page 1 whenever a filter changes so the user doesn't
   // land on a stale page-N with an empty result set.
   useEffect(() => {
     setPage(1);
-  }, [qDebounced, serviceType, fromDate, toDate]);
+  }, [serviceType, fromDate, toDate]);
 
   return (
     <PortalPageShell>
@@ -227,19 +220,13 @@ export function PortalServiceReports() {
         subtitle="Every visit we complete comes with a report — chemistry, work performed, photos, and any notes from your tech."
       />
 
-      {/* Feb-2026 · Enhancements — search + filters bar. Stacks
-          vertically at < sm, grid at ≥ sm. All filters URL-synced
-          via the effect above so the page is shareable. */}
-      <div className="mb-4 flex flex-col sm:grid sm:grid-cols-4 gap-2"
+      {/* Feb-2026 · Enhancements — filters bar. Stacks vertically at
+          < sm, grid at ≥ sm. All filters URL-synced via the effect
+          above so the page is shareable.
+          TD-75 · Feb-2026 — free-text search input removed per operator
+          directive; service-type + date-range filters remain. */}
+      <div className="mb-4 flex flex-col sm:grid sm:grid-cols-2 gap-2"
             data-testid="sr-list-filters">
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search notes, name, address…"
-          className="portal-input rounded-lg px-3 py-2 text-sm sm:col-span-2"
-          data-testid="sr-list-search"
-        />
         <input
           type="text"
           value={serviceType}
@@ -315,9 +302,12 @@ export function PortalServiceReports() {
             <div data-testid="portal-service-reports-grouped">
               {/* Task PP · Feb 2026 — subtle instructional hint. Only
                    surfaces when at least one visit row exists (the
-                   grouped block is only rendered in that case). */}
-              <p className="text-sm italic mb-4"
-                  style={{ color: colors.muted }}
+                   grouped block is only rendered in that case).
+                   TD-75 · Feb-2026 — color darkened from colors.muted to
+                   text-gray-700 (#374151) per operator directive for
+                   legibility across both the white hero chrome and any
+                   legacy dark-card variant. */}
+              <p className="text-sm italic mb-4 text-gray-700"
                   data-testid="service-reports-click-hint">
                 Click any visit below to open its full details, photos, and chemicals.
               </p>

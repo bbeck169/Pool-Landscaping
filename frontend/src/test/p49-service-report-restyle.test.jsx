@@ -67,7 +67,9 @@ const P49_TESTIDS_BEFORE = [
   "sr-list-pagination",
   "sr-list-pagination-next",
   "sr-list-pagination-prev",
-  "sr-list-search",
+  // TD-75 · Feb-2026 — ``sr-list-search`` removed per operator
+  // directive (free-text search input deleted from the filters
+  // bar; status/date/service-type filters retained).
 ];
 
 const P49_TESTIDS_ADDED = [
