@@ -2006,3 +2006,12 @@
 - **Preview data**: no `Import #<n>` titles exist for portal accounts → title rewrite proven via Jest fixtures only; Created line visible on all 10 preview invoices.
 - **Files modified**: mobile/src/lib/portalInvoiceTitle.ts (new), mobile/app/portal/invoices.tsx, mobile/app/portal/estimates.tsx, mobile/__tests__/portal-invoice-title-td71.test.tsx (new)
 - **Tests**: new 13/13; tsc 651 (0 in touched); eslint clean.
+
+## Iteration 148 — m-audit + m-td73 · portal Profile Save = Call Now green (web 73ac7cc3f)
+- **Commits**: m-audit 3d3a3df1c (both parity audit docs); m-td73 = the commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: `app/portal/profile.tsx` Save `PrimaryButton` → `variant="success"` (#16A34A, live rgb(22,163,74)). Mobile has no Edit-profile modal — the full-page editor is the parallel; its inputs already match the web retheme on bg/border (#FFFFFF / #E4E4E7).
+- **Decision (operator default a)**: input text stays navy #000080 — `AppTextInput` Phase T1 sitewide theme always wins; web modal #0F172A would require changing the sitewide primitive. Test asserts #000080 + documents why.
+- **Hygiene**: cleared stale skip-worktree (profile.tsx, commit_log.md) + `.git/info/exclude` entries left from the prior cycle.
+- **Files modified**: mobile/app/portal/profile.tsx, mobile/__tests__/portal-profile-save-td73.test.tsx (new)
+- **Tests**: new 3/3; phase11b + no-typed-confirm green; tsc 651 (0 in touched); eslint clean.

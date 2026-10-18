@@ -133,7 +133,8 @@ export default function PortalProfile() {
 
         {saved ? <Text style={styles.saved} testID="portal-profile-saved">✓ Profile saved</Text> : null}
         <View style={{ height: spacing.md }} />
-        <PrimaryButton title="Save Changes" icon="checkmark" onPress={save} loading={saving} testID="portal-profile-save" />
+        {/* TD-73 (web 73ac7cc3f) — Save = Call Now green #16A34A (`success`). */}
+        <PrimaryButton title="Save Changes" icon="checkmark" onPress={save} loading={saving} variant="success" testID="portal-profile-save" />
 
         <Pressable style={styles.logout} onPress={logout} testID="portal-logout">
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
