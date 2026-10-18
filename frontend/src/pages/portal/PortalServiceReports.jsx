@@ -1252,24 +1252,23 @@ export function PortalServiceReportDetail() {
               // emits ``{id, caption, created_at, uploader_role,
               // url, [thumb]}`` — ``thumb`` is OMITTED when no
               // pre-generated data-URI exists (nearly always, only
-              // mobile uploads currently generate thumbs). Pre-
-              // TD-67 the FE fell back to ``p.preview`` which the
-              // BE has NEVER emitted on this surface — so every
-              // thumb-less job photo rendered as a broken image.
-              // Correct fallback is ``p.url`` which hits the
-              // customer-session streaming route; we route it
-              // through ``withAuthToken`` so the ``?auth=<token>``
-              // param lands and ``<img src>`` loads (headers
-              // cannot be attached from image requests).
-              const _raw = p.thumb || p.url || "";
+              // TD-67 / TD-76d · Feb-2026 — the BE emission layer
+              // (``_build_customer_job_photos`` in
+              // ``routers/service_reports.py``) now resolves the
+              // canonical ``thumb_url`` + ``full_url`` server-side.
+              // FE consumes them directly — no path composition, no
+              // ``withAuthToken`` on this surface (the TD-67
+              // streaming endpoint still enforces Bearer / ``?auth=``
+              // auth, but the FE no longer builds that URL).
+              // Legacy ``p.thumb`` (data-URI) + ``p.url`` kept as
+              // defensive fallback until Phase B removes them from
+              // BE emission.
+              const _raw = p.thumb_url || p.thumb || p.full_url || p.url || "";
               if (!_raw) return null;
-              const _tok = (typeof window !== "undefined" && window.localStorage)
-                ? (window.localStorage.getItem(TOKEN_KEY) || "")
-                : "";
-              // Only token-stamp absolute/relative HTTP(S) URLs —
-              // data-URI thumbs ship as inline bytes and must NOT
-              // have ``?auth=`` appended.
-              const src = _raw.startsWith("data:") ? _raw : withAuthToken(_raw, _tok);
+              // Data-URI thumbs ship as inline bytes — never stamp
+              // a token on them.  Non-data-URI URLs are already
+              // fully-resolved by the BE emission layer.
+              const src = _raw;
               return (
                 <button
                   type="button"
@@ -1335,17 +1334,13 @@ export function PortalServiceReportDetail() {
         items={[
           ...jobPhotos
             .map((p, i) => {
-              // TD-67 · Feb-2026 — mirror the grid-render fallback
-              // chain (``p.thumb || p.url``) + token-stamp the
-              // non-data-URI branch so the lightbox opens the
-              // identical URL the grid tile displays.
-              const _raw = p.thumb || p.url || "";
+              // TD-76d · consume canonical ``full_url`` directly
+              // (BE emits an absolute, auth-ready URL for the
+              // authenticated streaming route). Legacy ``p.thumb``
+              // (data-URI) + ``p.url`` kept as defensive fallback.
+              const _raw = p.thumb_url || p.thumb || p.full_url || p.url || "";
               if (!_raw) return null;
-              const _tok = (typeof window !== "undefined" && window.localStorage)
-                ? (window.localStorage.getItem(TOKEN_KEY) || "")
-                : "";
-              const src = _raw.startsWith("data:") ? _raw : withAuthToken(_raw, _tok);
-              return { url: src, kind: "image", title: p.caption || `Job photo ${i + 1}` };
+              return { url: _raw, kind: "image", title: p.caption || `Job photo ${i + 1}` };
             })
             .filter(Boolean),
           ...photos

@@ -41,10 +41,13 @@ describe("TD-67 · Portal media field-contract regression lock", () => {
     expect(VIDEOS_SRC).not.toMatch(/const\s+nextRows\s*=\s*res\.items\s*\|\|\s*\[\]\s*;/);
   });
 
-  it("PortalServiceReportDetail jobPhotos fallback reads `p.url`, not `p.preview`", () => {
+  it("PortalServiceReportDetail jobPhotos fallback reads canonical fields (TD-76d) with `p.url` fallback — never `p.preview`", () => {
+    // TD-76d · Feb-2026 — chain is now
+    // ``p.thumb_url || p.thumb || p.full_url || p.url``.
     // Both the grid-render loop AND the lightbox items loop use
-    // the ``p.thumb || p.url`` chain — ``p.preview`` was the bug.
-    const chain = /p\.thumb\s*\|\|\s*p\.url\s*\|\|\s*""/g;
+    // the identical chain. Negative lock on the pre-TD-67 bug
+    // (``p.thumb || p.preview``) preserved.
+    const chain = /p\.thumb_url\s*\|\|\s*p\.thumb\s*\|\|\s*p\.full_url\s*\|\|\s*p\.url\s*\|\|\s*""/g;
     const matches = SR_SRC.match(chain) || [];
     // Two sites — grid tile + lightbox items.
     expect(matches.length).toBeGreaterThanOrEqual(2);
@@ -55,23 +58,22 @@ describe("TD-67 · Portal media field-contract regression lock", () => {
     expect(SR_SRC).not.toMatch(/p\.thumb\s*\|\|\s*p\.preview/);
   });
 
-  it("PortalServiceReportDetail routes jobPhotos through withAuthToken for <img src>", () => {
-    // Pre-TD-67 the ``<img src>`` tag was the raw URL — the BE
-    // handler required a Bearer header which browsers can't attach
-    // to image requests. The ``withAuthToken`` helper appends
-    // ``?auth=<token>`` and the BE now accepts the query-param
-    // fallback (see routers/service_reports.py
-    // stream_customer_job_photo).
-    expect(SR_SRC).toMatch(/import\s+\{\s*withAuthToken\s*\}\s+from\s+["']@\/lib\/urlToken["']/);
-    expect(SR_SRC).toMatch(/withAuthToken\(_raw,\s*_tok\)/);
+  it("PortalServiceReportDetail consumes BE-resolved canonical URLs (TD-76d)", () => {
+    // TD-67 originally wrapped the <img src> with withAuthToken so
+    // ``?auth=<token>`` landed. TD-76d supersedes that: the BE
+    // emission layer (``_build_customer_job_photos`` in
+    // ``routers/service_reports.py``) now resolves the canonical
+    // ``thumb_url`` + ``full_url`` server-side, so the FE consumes
+    // them directly — no path composition, no token stamping on
+    // this surface.
+    expect(SR_SRC).toMatch(/const _raw = p\.thumb_url \|\| p\.thumb \|\| p\.full_url \|\| p\.url \|\| ""/);
+    expect(SR_SRC).not.toMatch(/withAuthToken\(_raw,\s*_tok\)/);
   });
 
-  it("PortalPhotosPage uses index-based React keys (BE emits no file_id)", () => {
-    // Composite key fallback — matches on {source}|{report_id|job_id}|{i}.
-    expect(PHOTOS_SRC).toMatch(/\$\{p\.source\s*\|\|\s*"src"\}\|\$\{p\.report_id\s*\|\|\s*p\.job_id\s*\|\|\s*"x"\}\|\$\{i\}/);
-    // Testid uses the loop index — never ``portal-photo-undefined``.
-    expect(PHOTOS_SRC).toMatch(/data-testid=\{`portal-photo-\$\{i\}`\}/);
-  });
+  // TD-76e grouped-tree React key shape is covered by the
+  // dedicated ``portal-photos-td76-canonical.test.jsx`` suite —
+  // the pre-TD-67 index-based-key assertion was retired when the
+  // flat grid was replaced by the date/visit tree.
 
   it("PortalVideosPage uses index-based React keys (BE emits no file_id)", () => {
     expect(VIDEOS_SRC).toMatch(/\$\{v\.source\s*\|\|\s*"src"\}\|\$\{v\.video_id\s*\|\|\s*v\.entity_id\s*\|\|\s*"x"\}\|\$\{i\}/);

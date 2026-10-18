@@ -221,7 +221,12 @@ export default function PortalPhotos() {
                                     border: `1px solid ${colors.border}`,
                                   }}
                                   data-testid={`portal-photo-${g.day}-${v.visitKey}-${pi}`}>
-                            <img src={p.thumb || p.url}
+                            {/* TD-76d · consume BE-resolved
+                                ``thumb_url`` directly. Legacy
+                                ``thumb`` / ``url`` kept as the
+                                defensive fallback until Phase B
+                                removes them from BE emission. */}
+                            <img src={p.thumb_url || p.thumb || p.url}
                                   alt={p.caption || "Service photo"}
                                   className="w-full h-full object-cover"
                                   loading="lazy" />
@@ -248,7 +253,9 @@ export default function PortalPhotos() {
           are now inherited from the shared component. */}
       <Lightbox
         items={orderedPhotos.map((photo) => ({
-          url: photo.url || photo.thumb,
+          // TD-76d · prefer BE-resolved ``full_url`` with
+          // ``thumb_url`` and legacy fields as defensive fallback.
+          url: photo.full_url || photo.url || photo.thumb_url || photo.thumb,
           kind: "image",
           title: photo.caption || photo.job_title || "",
         }))}
