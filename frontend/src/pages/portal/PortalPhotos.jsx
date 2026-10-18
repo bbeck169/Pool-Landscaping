@@ -5,6 +5,15 @@
  * (``@/components/portal/Lightbox``) so the zoom viewer inherits the
  * portal-dark palette, ESC + arrow keys, focus-trap, and title/counter
  * chrome. The pre-DTP-2 inline zoom overlay has been retired.
+ *
+ * TD-76c · Feb-2026 — grouped layout: date header + divider → service
+ * sub-header → photos row (one row per visit). Groups sorted newest
+ * date first; within a date, visits tiebreak by ``submitted_at`` ASC
+ * (earliest visit of the day appears first) with ``job_id`` as the
+ * final deterministic tiebreak. Thumbnails route through the TD-76a
+ * canonical URL (``/api/public/job-photo/<jid>/<pid>``) emitted by
+ * ``services/customer_media.get_customer_media`` — no client-side URL
+ * composition.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Camera, ImageOff } from 'lucide-react';
@@ -18,6 +27,64 @@ const FILTERS = [
   { key: "Weekly Pool Service", label: "Pool" },
   { key: "Monthly Landscaping", label: "Landscape" },
 ];
+
+// TD-76c · Feb-2026 — grouping helper.  Exported so the vitest can
+// pin the deterministic tiebreak contract without re-rendering.
+//
+// Return shape:
+//   [
+//     { day: "2026-10-14", header: "Tuesday, Oct 14, 2026", visits: [
+//       { visitKey: "job-id-or-?", jobTitle: "Weekly Pool Cleaning",
+//         photos: [...] },
+//       ...
+//     ] },
+//     ...
+//   ]
+//
+// Sort rules:
+//   * Date groups: newest first (``day.localeCompare`` DESC — ISO
+//     dates sort lexicographically so this is the correct direction).
+//   * Visits within a day: ``submitted_at`` ASC (earliest visit of
+//     the day appears first), ``job_id`` lex ASC as the final
+//     deterministic tiebreak.
+//   * Photos within a visit: insertion order preserved from BE.
+export function groupPhotosByDateAndVisit(photos) {
+  const byDay = new Map();
+  for (const p of photos || []) {
+    const stamp = p.submitted_at || p.uploaded_at || p.created_at || "";
+    const day = stamp.slice(0, 10) || "Unknown date";
+    const visitKey = p.job_id || p.report_id || "no-visit";
+    if (!byDay.has(day)) byDay.set(day, new Map());
+    const dayMap = byDay.get(day);
+    if (!dayMap.has(visitKey)) {
+      dayMap.set(visitKey, {
+        visitKey,
+        jobTitle: p.job_title || p.service_type || "Service visit",
+        firstStamp: stamp,
+        photos: [],
+      });
+    }
+    const v = dayMap.get(visitKey);
+    if (!v.firstStamp || (stamp && stamp < v.firstStamp)) v.firstStamp = stamp;
+    v.photos.push(p);
+  }
+  const dayKeys = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
+  const fmtHeader = (d) => {
+    if (d === "Unknown date") return d;
+    try {
+      return new Date(d + "T00:00:00").toLocaleDateString(undefined,
+        { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+    } catch { return d; }
+  };
+  return dayKeys.map((day) => {
+    const visits = Array.from(byDay.get(day).values()).sort((a, b) => {
+      const t = (a.firstStamp || "").localeCompare(b.firstStamp || "");
+      if (t !== 0) return t;
+      return (a.visitKey || "").localeCompare(b.visitKey || "");
+    });
+    return { day, header: fmtHeader(day), visits };
+  });
+}
 
 export default function PortalPhotos() {
   const [data, setData] = useState({ photos: [], total: 0 });
@@ -33,19 +100,22 @@ export default function PortalPhotos() {
       .catch(() => { setData({ photos: [], total: 0 }); setLoading(false); });
   }, [filter]);
 
-  // Flat ordered list (matches the day-grouped render order below).
+  // Grouped structure drives both the render AND the flat ordered
+  // list the lightbox consumes — iterate in the SAME order so a
+  // click resolves to the right lightbox index.
+  const groups = useMemo(
+    () => groupPhotosByDateAndVisit(data.photos),
+    [data],
+  );
   const orderedPhotos = useMemo(() => {
-    const byDate = new Map();
-    for (const p of data.photos) {
-      const day = (p.submitted_at || p.uploaded_at || p.created_at || "").slice(0, 10) || "Unknown date";
-      if (!byDate.has(day)) byDate.set(day, []);
-      byDate.get(day).push(p);
-    }
-    const dayKeys = Array.from(byDate.keys()).sort((a, b) => b.localeCompare(a));
     const flat = [];
-    for (const d of dayKeys) for (const p of byDate.get(d)) flat.push({ day: d, photo: p });
+    for (const g of groups) {
+      for (const v of g.visits) {
+        for (const p of v.photos) flat.push(p);
+      }
+    }
     return flat;
-  }, [data]);
+  }, [groups]);
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6" data-testid="portal-photos-page">
@@ -93,63 +163,79 @@ export default function PortalPhotos() {
         </div>
       ) : (
         (() => {
-          // Phase 34 · Feb 2026 — group photos by date, newest first,
-          // with a section header + horizontal divider between groups.
-          // Groups key on the submitted_at YYYY-MM-DD; items keep their
-          // existing intra-group order.
-          const byDate = new Map();
-          for (const p of data.photos) {
-            const day = (p.submitted_at || p.uploaded_at || p.created_at || "").slice(0, 10) || "Unknown date";
-            if (!byDate.has(day)) byDate.set(day, []);
-            byDate.get(day).push(p);
-          }
-          const dayKeys = Array.from(byDate.keys()).sort((a, b) => b.localeCompare(a));
-          const fmtHeader = (d) => {
-            if (d === "Unknown date") return d;
-            try {
-              return new Date(d + "T00:00:00").toLocaleDateString(undefined,
-                { weekday: "long", month: "short", day: "numeric", year: "numeric" });
-            } catch { return d; }
-          };
-          // Global-index lookup so a click resolves to the correct
-          // slot in the flat ``orderedPhotos`` list feeding <Lightbox>.
-          const indexFor = (day, i) => {
+          // TD-76c · Feb-2026 — resolve the flat-index for a click
+          // handler.  Walk groups → visits → photos in the SAME
+          // order used by ``orderedPhotos`` above.
+          const indexFor = (gi, vi, pi) => {
             let acc = 0;
-            for (const d of dayKeys) {
-              if (d === day) return acc + i;
-              acc += byDate.get(d).length;
+            for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+              for (let vIdx = 0; vIdx < groups[gIdx].visits.length; vIdx++) {
+                for (let pIdx = 0;
+                      pIdx < groups[gIdx].visits[vIdx].photos.length;
+                      pIdx++) {
+                  if (gIdx === gi && vIdx === vi && pIdx === pi) return acc;
+                  acc += 1;
+                }
+              }
             }
             return acc;
           };
           return (
             <div data-testid="portal-photos-grouped">
-              {dayKeys.map((day, gi) => (
-                <div key={day} data-testid={`portal-photos-date-group-${day}`}
-                     className={gi > 0 ? "pt-6 mt-6" : ""}
-                     style={gi > 0 ? { borderTop: `1px solid ${colors.border}` } : {}}>
-                  <h2 className="text-sm font-bold mb-3"
+              {groups.map((g, gi) => (
+                <div key={g.day}
+                      data-testid={`portal-photos-date-group-${g.day}`}
+                      className={gi > 0 ? "pt-6 mt-6" : ""}
+                      style={gi > 0 ? { borderTop: `1px solid ${colors.border}` } : {}}>
+                  <h2 className="text-lg font-bold mb-1"
                       style={{ color: colors.onSurface }}
-                      data-testid={`portal-photos-date-header-${day}`}>
-                    {fmtHeader(day)}
+                      data-testid={`portal-photos-date-header-${g.day}`}>
+                    {g.header}
                   </h2>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
-                       data-testid="portal-photos-grid">
-                    {byDate.get(day).map((p, i) => (
-                      <button key={`${day}:${i}`} onClick={() => setZoomIdx(indexFor(day, i))}
-                              className="group relative overflow-hidden rounded-xl aspect-square hover:scale-[1.02] transition"
-                              style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                              data-testid={`portal-photo-${day}-${i}`}>
-                        <img src={p.thumb || p.url} alt={p.caption || "Service photo"}
-                             className="w-full h-full object-cover" loading="lazy" />
-                        <div className="absolute bottom-0 left-0 right-0 p-2 text-left opacity-0 group-hover:opacity-100 transition"
-                             style={{ background: "linear-gradient(0deg, rgba(0,0,0,.75), transparent)" }}>
-                          <div className="text-[10px] text-white font-semibold truncate">
-                            {p.job_title}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                  {/* Divider under the date header — matches operator
+                      spec (horizontal rule). */}
+                  <div className="mb-4"
+                        style={{ borderBottom: `1px solid ${colors.border}` }}
+                        data-testid={`portal-photos-date-divider-${g.day}`} />
+                  {g.visits.map((v, vi) => (
+                    <div key={`${g.day}:${v.visitKey}`}
+                          className="mb-5"
+                          data-testid={`portal-photos-visit-${g.day}-${v.visitKey}`}>
+                      <h3 className="text-sm font-semibold mb-2"
+                          style={{ color: colors.onSurfaceSecondary || colors.muted }}
+                          data-testid={`portal-photos-visit-header-${g.day}-${v.visitKey}`}>
+                        {v.jobTitle}
+                      </h3>
+                      {/* Photos row — horizontal flex row that wraps
+                          cleanly on narrow widths.  Fixed-width tiles
+                          so the row reads as a row even when wrapped. */}
+                      <div className="flex flex-wrap gap-3"
+                            data-testid={`portal-photos-row-${g.day}-${v.visitKey}`}>
+                        {v.photos.map((p, pi) => (
+                          <button key={`${g.day}:${v.visitKey}:${pi}`}
+                                  onClick={() => setZoomIdx(indexFor(gi, vi, pi))}
+                                  className="group relative overflow-hidden rounded-xl hover:scale-[1.02] transition"
+                                  style={{
+                                    width: 120, height: 120,
+                                    backgroundColor: colors.surface,
+                                    border: `1px solid ${colors.border}`,
+                                  }}
+                                  data-testid={`portal-photo-${g.day}-${v.visitKey}-${pi}`}>
+                            <img src={p.thumb || p.url}
+                                  alt={p.caption || "Service photo"}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy" />
+                            <div className="absolute bottom-0 left-0 right-0 p-2 text-left opacity-0 group-hover:opacity-100 transition"
+                                  style={{ background: "linear-gradient(0deg, rgba(0,0,0,.75), transparent)" }}>
+                              <div className="text-[10px] text-white font-semibold truncate">
+                                {p.caption || ""}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -161,7 +247,7 @@ export default function PortalPhotos() {
           previous inline zoom overlay. ESC + arrow keys + focus-trap
           are now inherited from the shared component. */}
       <Lightbox
-        items={orderedPhotos.map(({ photo }) => ({
+        items={orderedPhotos.map((photo) => ({
           url: photo.url || photo.thumb,
           kind: "image",
           title: photo.caption || photo.job_title || "",
