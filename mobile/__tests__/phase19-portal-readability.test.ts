@@ -16,13 +16,21 @@
  * It is exempt from the light-root rule and instead locked as
  * dark-CONSISTENT (no light-theme text tokens left in its styles,
  * i.e. no dark-on-dark).
+ *
+ * TD-68 (web c782fd23a, mobile b0f6dc3da) — design-correctness update:
+ * SR list, SR detail and review-submit now intentionally render on the
+ * navy #03002e page with content in the shared white PortalPageShell
+ * card (dark text tokens on white). They are locked positively below;
+ * every other portal screen keeps the light-root rule.
  */
 import * as fs from "fs";
 import * as path from "path";
 import { colors } from "@/src/theme";
+import { PORTAL_PAGE_BG, portalShellCard } from "@/src/components/portal/PortalPageShell";
 
 const PORTAL_DIR = path.join(__dirname, "..", "app", "portal");
 const DARK_HOME = path.join(PORTAL_DIR, "home.tsx");
+const TD68_SHELL = ["service-reports.tsx", "service-report/[id].tsx", "review-submit.tsx"].map((f) => path.join(PORTAL_DIR, f));
 
 function portalScreens(dir = PORTAL_DIR, out: string[] = []): string[] {
   for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -39,19 +47,19 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-describe("Phase 19 · mobile portal readability (shell not needed)", () => {
+describe("Phase 19 · mobile portal readability (+ TD-68 shell lock)", () => {
   it("light theme tokens back every portal page + dark body text", () => {
     expect(luminance(colors.surfaceSecondary)).toBeGreaterThan(0.85);
     expect(luminance(colors.surface)).toBeGreaterThan(0.85);
     expect(luminance(colors.onSurface)).toBeLessThan(0.15);
   });
 
-  it("every portal screen root uses a light surface token (no navy page bg)", () => {
+  it("every non-shell portal screen root uses a light surface token", () => {
     const files = portalScreens();
     expect(files.length).toBeGreaterThan(15);
     const offenders: string[] = [];
     for (const f of files) {
-      if (f === DARK_HOME) continue; // Phase 25 — intentionally dark
+      if (f === DARK_HOME || TD68_SHELL.includes(f)) continue; // Phase 25 / TD-68 — locked below
       const src = fs.readFileSync(f, "utf8");
       const m = src.match(/\n\s+root:\s*\{[^}]*backgroundColor:\s*([^,}\n]+)/);
       if (!m) continue; // screen without a root style (re-export / redirect)
@@ -61,9 +69,20 @@ describe("Phase 19 · mobile portal readability (shell not needed)", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no PortalPageShell was introduced on mobile", () => {
-    const hits = portalScreens().filter((f) => fs.readFileSync(f, "utf8").includes("PortalPageShell"));
-    expect(hits).toEqual([]);
+  it("TD-68 · PortalPageShell = white card on the navy #03002e page; dark text on the card", () => {
+    expect(PORTAL_PAGE_BG).toBe("#03002e");
+    expect(portalShellCard.backgroundColor).toBe("#FFFFFF");
+    expect(luminance(portalShellCard.backgroundColor as string)).toBeGreaterThan(0.85);
+    expect(luminance(colors.onSurface)).toBeLessThan(0.15);
+  });
+
+  it("TD-68 · SR list, SR detail, review-submit use PortalPageShell on a navy root", () => {
+    for (const f of TD68_SHELL) {
+      const src = fs.readFileSync(f, "utf8");
+      expect(src).toContain('from "@/src/components/portal/PortalPageShell"');
+      expect(src).toMatch(/\n\s+root:\s*\{[^}]*backgroundColor:\s*PORTAL_PAGE_BG/);
+      expect(src).toMatch(/<PortalPageShell\b|portalShellCard/);
+    }
   });
 
   it("Phase 25 · portal home is dark-consistent: navy root, light text, no light text tokens", () => {

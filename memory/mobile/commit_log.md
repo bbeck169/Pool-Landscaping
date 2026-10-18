@@ -2038,3 +2038,10 @@
 - **Changes**: `src/lib/k6Unlock.ts` += `"dispatcher"` (8 roles = BE `services/edit_window.py` + web JobDetail). Single canonical mobile copy → checklist editor + job detail (Edit + banner) move together.
 - **Tests**: `job-k6-unlock` role-set guard now 8 roles + dispatcher gate; `closed-job-edits-banner-td78b` += dispatcher closed job → Edit enabled ("Edit") + banner; dispatcher in-progress → no banner. 23/23. Dispatcher case FAILS on the pre-change 7-role lib (verified). No dispatcher user in preview DB (not seeded) → live screenshot as admin (banner + Edit, no redbox); dispatcher proven via Jest render.
 - **Files modified**: mobile/src/lib/k6Unlock.ts, mobile/__tests__/job-k6-unlock.test.tsx, mobile/__tests__/closed-job-edits-banner-td78b.test.tsx
+
+## Iteration 152 — m-td68-test-update · phase19 portal readability test → TD-68 design
+- **Commit**: the `m-td68-test-update` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: `__tests__/phase19-portal-readability.test.ts` — design-correctness update (not a scope reduction). Replaced "no navy page bg" + "no PortalPageShell" (contradicted shipped TD-68 b0f6dc3da) with positive TD-68 locks: shell = white #FFFFFF card on navy #03002e, dark text token on the card; SR list / SR detail / review-submit import PortalPageShell + navy root. Light-root rule kept for all other portal screens; light-token + Phase 25 home dark-consistency tests preserved. `memory/TECH_DEBT.md` += TD-78b checklist banner full-render test gap.
+- **Tests**: phase19 5/5; full suite 42 failed suites / 48 failed tests (back to pre-work baseline from 43/50). tsc 0 in file; eslint clean.
+- **Files modified**: mobile/__tests__/phase19-portal-readability.test.ts, memory/TECH_DEBT.md, memory/mobile/commit_log.md
