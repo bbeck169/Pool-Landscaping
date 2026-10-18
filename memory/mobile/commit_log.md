@@ -1997,3 +1997,12 @@
 - **TD-74**: no-op — mobile home hero never had the NEXT VISIT overlay (source-guard test).
 - **Files modified**: mobile/src/lib/portalServiceType.ts (new), mobile/app/portal/service-reports.tsx, mobile/app/portal/service-report/[id].tsx, mobile/__tests__/portal-service-type-td69.test.tsx (new)
 - **Tests**: new 17/17; td68 7/7; td76 13/13; tsc 651 (0 in touched); eslint 0 new. Preview data: 0 of 15 SRs change classification (no visible regression).
+
+## Iteration 147 — m-td71-td72b · portal invoice/estimate titles + Created line (web 5baf91f86 + 106153aa2) + TD-77 no-op
+- **Commit**: the `m-td71-td72b` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/lib/portalInvoiceTitle.ts` (port of web `isImportedPlaceholderTitle` / `resolvePortalInvoiceTitle` 4-branch chain / `formatInvoiceCreatedDate`). `portal/invoices.tsx`: resolved title + `Created MM/DD/YYYY` line under it (testIDs `portal-invoice-title-*` / `portal-invoice-created-*`). `portal/estimates.tsx`: resolved title (`portal-estimate-title-*`).
+- **TD-77**: no-op — mobile invoices never had the "Total outstanding" tile (asserted in test).
+- **Preview data**: no `Import #<n>` titles exist for portal accounts → title rewrite proven via Jest fixtures only; Created line visible on all 10 preview invoices.
+- **Files modified**: mobile/src/lib/portalInvoiceTitle.ts (new), mobile/app/portal/invoices.tsx, mobile/app/portal/estimates.tsx, mobile/__tests__/portal-invoice-title-td71.test.tsx (new)
+- **Tests**: new 13/13; tsc 651 (0 in touched); eslint clean.

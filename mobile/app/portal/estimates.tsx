@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { resolvePortalInvoiceTitle } from "@/src/lib/portalInvoiceTitle";
 
 export default function PortalEstimates() {
   const router = useRouter();
@@ -61,7 +62,10 @@ export default function PortalEstimates() {
                   </View>
                   <StatusChip status={item.status} />
                 </View>
-                <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+                {/* TD-72b — same resolver as invoices (no `Import #<n>`) */}
+                <Text style={styles.title} numberOfLines={1} testID={`portal-estimate-title-${item.id}`}>
+                  {resolvePortalInvoiceTitle(item)}
+                </Text>
                 <Text style={styles.total}>{money(item.total)}</Text>
               </Pressable>
               {isPending(item) ? (

@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Loading, EmptyState, StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { formatInvoiceCreatedDate, resolvePortalInvoiceTitle } from "@/src/lib/portalInvoiceTitle";
 
 export default function PortalInvoices() {
   const router = useRouter();
@@ -48,7 +49,15 @@ export default function PortalInvoices() {
                 </View>
                 <StatusChip status={item.payment_status === "paid" ? "paid" : "unpaid"} />
               </View>
-              <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+              {/* TD-71 — resolved title (no `Import #<n>`) + Created line */}
+              <Text style={styles.title} numberOfLines={1} testID={`portal-invoice-title-${item.id}`}>
+                {resolvePortalInvoiceTitle(item)}
+              </Text>
+              {formatInvoiceCreatedDate(item) ? (
+                <Text style={styles.created} testID={`portal-invoice-created-${item.id}`}>
+                  {formatInvoiceCreatedDate(item)}
+                </Text>
+              ) : null}
               <View style={styles.footer}>
                 <Text style={styles.total}>{money(item.total)}</Text>
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
@@ -68,6 +77,7 @@ const styles = StyleSheet.create({
   typeBadge: { flexDirection: "row", alignItems: "center", gap: 5 },
   typeText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.brand },
   title: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
+  created: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   footer: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: spacing.sm },
   total: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
 });
