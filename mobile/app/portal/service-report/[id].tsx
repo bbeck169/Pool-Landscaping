@@ -20,6 +20,7 @@ import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 import { ClickableAddress } from "@/src/components/interactive";
 import { portalJobPhotoRaw, resolvePortalMediaUri, usePortalAuthToken } from "@/src/lib/portalMediaUri";
+import PortalPageShell, { PORTAL_PAGE_BG } from "@/src/components/portal/PortalPageShell";
 
 /* ── helpers ──────────────────────────────── */
 
@@ -163,6 +164,8 @@ export default function PortalServiceReportDetail() {
           <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />
         }
       >
+        {/* TD-68 — web PortalPageShell: white card on navy page */}
+        <PortalPageShell>
         {/* Header Card */}
         <View style={s.headerCard}>
           <View style={s.headerRow}>
@@ -393,6 +396,7 @@ export default function PortalServiceReportDetail() {
             </View>
           </Section>
         ) : null}
+        </PortalPageShell>
       </ScrollView>
     </View>
   );
@@ -401,7 +405,7 @@ export default function PortalServiceReportDetail() {
 /* ── styles ───────────────────────────────── */
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
 
   /* Header card */
   headerCard: {

@@ -1979,3 +1979,12 @@
 - **Preview caveat**: `job_photos` URLs are absolute on `APP_PUBLIC_URL` (prod `app.plofv.com`) → tile can't load in preview (prod token mismatch); prod OK. Possible web regression flagged: web TD-76d renders those URLs without `?auth=`.
 - **Files modified**: mobile/src/lib/portalMediaUri.ts (new), mobile/app/portal/photos.tsx, mobile/app/portal/service-report/[id].tsx, mobile/__tests__/portal-media-uri-td76.test.tsx (new)
 - **Tests**: new 13/13; tsc 651 (0 in touched); eslint 0 new (2 pre-existing warnings in SR detail).
+
+## Iteration 145 — m-td68-theme · portal theme bundle (web c782fd23a "td68"; dispatch label TD-70) + TD-75 no-op
+- **Commit**: the `m-td68-theme` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/components/portal/PortalPageShell.tsx` (port of web PortalPageShell — white #FFF card, radius 24, #E5E7EB border, p20, soft shadow; `PORTAL_PAGE_BG` #03002e = portal home chassis). SR list: navy root, SectionList content container = shell card, skeleton + empty state wrapped in shell. SR detail: navy root, content wrapped in `<PortalPageShell>`. `portal/review-submit.tsx` (portal Reviews parallel): navy root, scroll states' content = card, standalone states (error/expired/already/private-feedback) = `stateCard`; loading spinner white for contrast on navy.
+- **Deviation (incidental bug, needed to verify)**: SR list read only a bare array, but BE now returns paginated `{items, page, page_size, total, total_pages}` → list was ALWAYS empty for every customer. Now accepts both shapes exactly like web (`Array.isArray(d) ? d : d.items`). Shows page 1 (BE default page size); no pagination UI added.
+- **TD-75**: no-op — mobile SR list never had the search input or the "Click any visit below…" copy (guarded in test).
+- **Files modified**: mobile/src/components/portal/PortalPageShell.tsx (new), mobile/app/portal/service-reports.tsx, mobile/app/portal/service-report/[id].tsx, mobile/app/portal/review-submit.tsx, mobile/__tests__/portal-theme-bundle-td68.test.tsx (new)
+- **Tests**: new 7/7; td76 suite 13/13; tsc 651 (0 in touched); eslint 0 new.

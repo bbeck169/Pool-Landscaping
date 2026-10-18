@@ -12,6 +12,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { EmptyState, StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import PortalPageShell, { PORTAL_PAGE_BG, portalShellCard } from "@/src/components/portal/PortalPageShell";
 
 function formatDateHeader(dateKey: string): string {
   try {
@@ -76,7 +77,9 @@ export default function PortalServiceReports() {
     try {
       setErr("");
       const data = await api.get("/customers/me/service-reports");
-      setRows(Array.isArray(data) ? data : []);
+      // BE now paginates ({items, page, page_size, total, total_pages});
+      // accept both shapes exactly like web PortalServiceReports.jsx.
+      setRows(Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []);
     } catch (e: any) {
       setErr(e?.message || "Failed to load service reports.");
       setRows([]);
@@ -130,21 +133,23 @@ export default function PortalServiceReports() {
       ) : null}
 
       {rows === null ? (
-        <SkeletonRows />
+        <PortalPageShell style={s.shellBox}><SkeletonRows /></PortalPageShell>
       ) : rows.length === 0 ? (
-        <EmptyState
-          icon="clipboard-outline"
-          title="No service reports yet"
-          subtitle="Your first report will appear here after your next scheduled visit."
-          testID="portal-service-reports-empty"
-        />
+        <PortalPageShell style={s.shellBox}>
+          <EmptyState
+            icon="clipboard-outline"
+            title="No service reports yet"
+            subtitle="Your first report will appear here after your next scheduled visit."
+            testID="portal-service-reports-empty"
+          />
+        </PortalPageShell>
       ) : (
         <SectionList
           testID="portal-service-reports-grouped"
           sections={sections}
           keyExtractor={(item) => item.id}
           stickySectionHeadersEnabled={false}
-          contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
+          contentContainerStyle={s.shellList}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />
           }
@@ -164,7 +169,10 @@ export default function PortalServiceReports() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  // TD-68 — web PortalPageShell: white card on the navy portal page.
+  root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
+  shellList: { ...portalShellCard, margin: spacing.lg, paddingBottom: spacing["2xl"] },
+  shellBox: { margin: spacing.lg },
   dateHeader: {
     fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface,
     marginTop: spacing.lg, marginBottom: spacing.sm,

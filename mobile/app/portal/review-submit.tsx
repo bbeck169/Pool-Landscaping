@@ -22,6 +22,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
+import { PORTAL_PAGE_BG, portalShellCard } from "@/src/components/portal/PortalPageShell";
 
 type RequestData = {
   company_name?: string;
@@ -90,7 +91,7 @@ export default function ReviewSubmitScreen() {
   if (loading) {
     return (
       <View style={s.root} testID="review-submit-loading">
-        <ActivityIndicator size="large" color={colors.brand} style={{ marginTop: 100 }} />
+        <ActivityIndicator size="large" color="#FFFFFF" style={{ marginTop: 100 }} />
       </View>
     );
   }
@@ -98,7 +99,7 @@ export default function ReviewSubmitScreen() {
   if (error && !result) {
     return (
       <View style={s.root} testID="review-submit-error">
-        <View style={s.center}>
+        <View style={[s.center, s.stateCard]}>
           <Ionicons name="alert-circle-outline" size={48} color={colors.error} />
           <Text style={s.errorTitle}>{error}</Text>
         </View>
@@ -109,7 +110,7 @@ export default function ReviewSubmitScreen() {
   if (reqData?.expired) {
     return (
       <View style={s.root} testID="review-submit-expired">
-        <View style={s.center}>
+        <View style={[s.center, s.stateCard]}>
           <Ionicons name="time-outline" size={48} color={colors.muted} />
           <Text style={s.errorTitle}>This review link has expired.</Text>
         </View>
@@ -120,7 +121,7 @@ export default function ReviewSubmitScreen() {
   if (reqData?.already_submitted) {
     return (
       <View style={s.root} testID="review-submit-already">
-        <View style={s.center}>
+        <View style={[s.center, s.stateCard]}>
           <Ionicons name="checkmark-circle" size={48} color={colors.success} />
           <Text style={s.doneTitle}>Already submitted</Text>
           <Text style={s.doneSub}>You already left a {reqData.star_rating_submitted}-star review. Thank you!</Text>
@@ -190,7 +191,7 @@ export default function ReviewSubmitScreen() {
     // private_feedback (1-3 stars)
     return (
       <View style={s.root} testID="review-submit-private-feedback">
-        <View style={s.center}>
+        <View style={[s.center, s.stateCard]}>
           <Ionicons name="chatbubble-ellipses-outline" size={48} color={colors.brand} />
           <Text style={s.doneTitle}>Thank you for your feedback</Text>
           <Text style={s.doneSub}>
@@ -270,8 +271,10 @@ export default function ReviewSubmitScreen() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surface },
-  content: { padding: spacing.xl, paddingBottom: spacing["3xl"] },
+  // TD-68 — web PortalPageShell: white card on the navy portal page.
+  root: { flex: 1, backgroundColor: PORTAL_PAGE_BG },
+  content: { ...portalShellCard, margin: spacing.lg, padding: spacing.xl, paddingBottom: spacing["3xl"] },
+  stateCard: { ...portalShellCard, margin: spacing.lg, paddingBottom: spacing.xl },
   center: { alignItems: "center", paddingTop: 60, paddingBottom: spacing.xl },
   heading: { fontFamily: font.bold, fontSize: 22, color: colors.onSurface, textAlign: "center", marginTop: 40 },
   companyName: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.muted, textAlign: "center", marginTop: spacing.xs },
