@@ -62,6 +62,55 @@ _SORT_OPTIONS = {
 }
 
 
+# ── TD-66 · Feb-2026 ───────────────────────────────────────────────
+# Workstream `/jobs` list crashes with HTTP 500 when a property row
+# in Mongo has an ``address`` stored as a plain string (historical
+# import drift) instead of the canonical ``{line1, city, state,
+# postal_code}`` dict.  The pre-TD-66 code did ``addr = prop.get(
+# "address") or {}`` and then ``addr.get("line1")`` — which raises
+# ``AttributeError: 'str' object has no attribute 'get'`` for the
+# string-shape rows and poisons the entire paginated response.
+#
+# This helper is the single resolver for the property-address label
+# the Workstream list surfaces.  Operator-visible warning log line
+# so the ops team can grep for the exact ``property_id`` + raw
+# string value and schedule a one-off data-repair pass (TD-66
+# operator Q3=C — "log and recover gracefully, never crash").
+#
+# Operator grep (verified):
+#   grep "non-dict address" /var/log/supervisor/backend.*.log
+def _prop_address_label(prop: Optional[Dict[str, Any]], pid: Optional[str]) -> Optional[str]:
+    """Build the `property_address` string surfaced on `/api/workstream/jobs`.
+
+    Resilient to historical shape drift on ``db.properties.address``:
+
+    * ``dict`` (canonical) → join ``line1 · city · state · postal_code``.
+    * ``str``              → log the TD-66 warning and surface the raw
+                              string as-is (so the Workstream row still
+                              shows something human-readable).
+    * ``None`` / missing / unexpected scalar → return ``None`` silently.
+    """
+    addr = (prop or {}).get("address")
+    if isinstance(addr, dict):
+        label = ", ".join(
+            [x for x in (addr.get("line1"), addr.get("city"),
+                         addr.get("state"), addr.get("postal_code")) if x]
+        )
+        return label or None
+    if isinstance(addr, str):
+        # Only log when the string is non-empty — a blank string is
+        # equivalent to "no address" and shouldn't spam the log.
+        stripped = addr.strip()
+        if stripped:
+            logger.warning(
+                "[workstream] property %s non-dict address %s · value=%r · TD-66",
+                pid, type(addr).__name__, addr,
+            )
+            return stripped
+        return None
+    return None
+
+
 class WorkstreamEventIn(BaseModel):
     """Wire body for POST /api/workstream/events.
 
@@ -582,11 +631,7 @@ async def list_workstream_jobs(
         tech_active = (tinfo or {}).get("active", True) if tinfo else True
         prop = pmap.get(pid) if pid else None
 
-        addr = (prop or {}).get("address") or {}
-        prop_addr = ", ".join(
-            [x for x in (addr.get("line1"), addr.get("city"),
-                          addr.get("state"), addr.get("postal_code")) if x]
-        ) or None
+        prop_addr = _prop_address_label(prop, pid)
 
         line_items = d.get("line_items") or []
         row: Dict[str, Any] = {
