@@ -307,6 +307,26 @@ async def get_customer_media(
             mime = _coerce_mime_item(p, "image/jpeg")
             if not _kind_matches(mime, kind):
                 continue
+            # TD-76a · Feb-2026 — Route SR photos through
+            # ``/api/public/job-photo/<jid>/<pid>`` (``routers/jobs.py``)
+            # when a ``job_id`` is available.  That handler owns the
+            # full s3_key → base64 → SR-fallback cascade (Task L+P),
+            # so legacy / mirrored / Phase-27 photos all resolve
+            # through one resilient path.  The previous
+            # ``/api/public/service/<public_uuid>/photo/<pid>`` shape
+            # (``routers/service_report_media.py``) hard-404s on any
+            # subdoc missing ``storage_path`` (prod symptom:
+            # "Storage path missing") — that handler stays for the
+            # genuine SR share-link flow but is no longer the portal
+            # consumer path.  ``public_uuid`` fallback preserved for
+            # the rare case where ``job_id`` is absent.
+            _rjid = r.get("job_id")
+            if _rjid:
+                _url = f"/api/public/job-photo/{_rjid}/{p.get('id')}"
+            elif pub:
+                _url = f"/api/public/service/{pub}/photo/{p.get('id')}"
+            else:
+                _url = p.get("url") or ""
             items.append({
                 "source": "service_report",
                 "kind": "photo",
@@ -314,8 +334,7 @@ async def get_customer_media(
                 "job_title": job_title_by_id.get(r.get("job_id")),
                 "report_id": r.get("id"),
                 "media_id": p.get("id"),
-                "url": (f"/api/public/service/{pub}/photo/{p.get('id')}"
-                         if pub else p.get("url") or ""),
+                "url": _url,
                 "mime": mime,
                 "caption": p.get("caption") or "",
                 "uploaded_at": p.get("uploaded_at") or r.get("submitted_at"),
