@@ -297,6 +297,12 @@ def _serialize_service_report_media(photos: List[dict],
         out.append({
             "id": pid,
             "kind": "image",
+            # TD-76 Phase B · canonical fields. SR photos come from
+            # the Phase-27 upload path with a pre-computed ``url``
+            # — treat it as the resolved thumb+full URL. Legacy
+            # ``url`` kept as alias for mobile parity.
+            "thumb_url": stored_url,
+            "full_url": stored_url,
             "url": stored_url,
             "label": p.get("label"),
             "created_at": p.get("created_at") or p.get("uploaded_at"),
@@ -340,6 +346,12 @@ def _serialize_job_embedded_media(job: dict) -> List[Dict[str, Any]]:
         out.append({
             "id": pid,
             "kind": "image",
+            # TD-76 Phase B · canonical fields. ``_photo_thumb``
+            # routes through ``/api/public/job-photo/`` which has
+            # the resilient cascade — zero dead rows possible here.
+            # Legacy ``url`` kept as alias for mobile parity.
+            "thumb_url": _photo_thumb(jid, pid),
+            "full_url": _photo_thumb(jid, pid),
             "url": _photo_thumb(jid, pid),
             "label": p.get("label"),
             "created_at": p.get("created_at"),

@@ -451,6 +451,16 @@ def _media_summary(job: Dict[str, Any], *,
             thumb_url = _photo_thumb(jid, pid)
         p_thumbs.append({
             "id": pid,
+            # TD-76 Phase B · canonical fields on admin surfaces.
+            # Admin Workstream list already routes through
+            # ``/api/public/job-photo/`` which has the resilient
+            # cascade and never produces dead rows, so no OMIT
+            # branch is needed here — pure additive migration.
+            # Legacy ``url`` field preserved as alias for mobile
+            # parity (Phase B legacy-field removal is a separate
+            # deferred dispatch).
+            "thumb_url": thumb_url,
+            "full_url": thumb_url,
             "url": thumb_url,
             "label": p.get("label") or p.get("caption"),
         })
