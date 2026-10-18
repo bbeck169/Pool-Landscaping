@@ -1,5 +1,8 @@
 /**
  * Phase 33 · Portal Photos — grouped by date.
+ * TD-67 / TD-76 Phase A — canonical thumb_url / full_url (legacy url
+ * fallback), backend-absolutized + `?auth=` on authed routes, and the
+ * web date → visit grouping.
  */
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -14,6 +17,10 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import {
+  groupPhotosByDateAndVisit, portalPhotoFullRaw, portalPhotoThumbRaw,
+  resolvePortalMediaUri, usePortalAuthToken,
+} from "@/src/lib/portalMediaUri";
 
 const FILTERS = [
   { key: "", label: "All" },
@@ -26,6 +33,7 @@ const GRID_COL = 3;
 const TILE = (SCREEN.width - spacing.lg * 2 - spacing.sm * (GRID_COL - 1)) / GRID_COL;
 
 function formatDateHeader(dateKey: string): string {
+  if (dateKey === "Unknown date") return dateKey;
   try {
     const d = new Date(dateKey + "T12:00:00Z");
     if (Number.isNaN(d.getTime())) return dateKey;
@@ -33,27 +41,18 @@ function formatDateHeader(dateKey: string): string {
   } catch { return dateKey; }
 }
 
-function groupByDate(photos: any[]): { title: string; dateKey: string; data: any[][] }[] {
-  const map = new Map<string, any[]>();
-  for (const p of photos) {
-    const key = (p.submitted_at || p.created_at || "").slice(0, 10);
-    if (!key) continue;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(p);
-  }
-  const sorted = Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  return sorted.map(([dateKey, items]) => {
-    items.sort((a: any, b: any) => (b.submitted_at || "").localeCompare(a.submitted_at || ""));
-    // Chunk into rows of GRID_COL for SectionList grid rendering
-    const rows: any[][] = [];
-    for (let i = 0; i < items.length; i += GRID_COL) {
-      rows.push(items.slice(i, i + GRID_COL));
-    }
-    return { title: formatDateHeader(dateKey), dateKey, data: rows };
-  });
+// TD-76 Phase A — web-parity grouping: date header → divider → visit
+// sub-header → photos row. Photos with no resolvable URI are skipped
+// (RN would render a blank tile; web renders a broken <img>).
+function buildSections(photos: any[], token: string) {
+  const usable = photos.filter((p) => resolvePortalMediaUri(portalPhotoThumbRaw(p), token));
+  return groupPhotosByDateAndVisit(usable).map((g) => ({
+    title: formatDateHeader(g.day), dateKey: g.day, data: g.visits,
+  }));
 }
 
 export default function PortalPhotos() {
+  const token = usePortalAuthToken();
   const [photos, setPhotos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,7 +69,7 @@ export default function PortalPhotos() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const sections = useMemo(() => groupByDate(photos), [photos]);
+  const sections = useMemo(() => buildSections(photos, token), [photos, token]);
 
   return (
     <View style={styles.root}>
@@ -88,35 +87,44 @@ export default function PortalPhotos() {
         <SectionList
           testID="portal-photos-grouped"
           sections={sections}
-          keyExtractor={(row, i) => `row-${i}`}
+          keyExtractor={(visit) => visit.visitKey}
           stickySectionHeadersEnabled={false}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />
           }
           renderSectionHeader={({ section }) => (
-            <Text
-              style={styles.dateHeader}
-              testID={`portal-photos-date-header-${section.dateKey}`}
-            >
-              {section.title}
-            </Text>
+            <View>
+              <Text
+                style={styles.dateHeader}
+                testID={`portal-photos-date-header-${section.dateKey}`}
+              >
+                {section.title}
+              </Text>
+              <View style={styles.dateDivider} testID={`portal-photos-date-divider-${section.dateKey}`} />
+            </View>
           )}
-          renderItem={({ item: row }) => (
-            <View style={styles.gridRow}>
-              {row.map((photo: any, idx: number) => (
-                <Pressable
-                  key={photo.id || idx}
-                  onPress={() => setZoom(photo)}
-                  style={styles.tile}
-                  testID={`portal-photos-item-${photo.id || idx}`}
-                >
-                  <Image source={{ uri: photo.thumb || photo.url }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
-                </Pressable>
-              ))}
-              {row.length < GRID_COL && Array.from({ length: GRID_COL - row.length }).map((_, i) => (
-                <View key={`pad-${i}`} style={styles.tilePad} />
-              ))}
+          renderItem={({ item: visit, section }) => (
+            <View style={styles.visit} testID={`portal-photos-visit-${section.dateKey}-${visit.visitKey}`}>
+              <Text style={styles.visitHeader} testID={`portal-photos-visit-header-${section.dateKey}-${visit.visitKey}`}>
+                {visit.jobTitle}
+              </Text>
+              <View style={styles.gridRow}>
+                {visit.photos.map((photo: any, idx: number) => (
+                  <Pressable
+                    key={photo.id || idx}
+                    onPress={() => setZoom(photo)}
+                    style={styles.tile}
+                    testID={`portal-photos-item-${photo.id || `${section.dateKey}-${visit.visitKey}-${idx}`}`}
+                  >
+                    <Image
+                      source={{ uri: resolvePortalMediaUri(portalPhotoThumbRaw(photo), token) }}
+                      style={{ width: "100%", height: "100%" }}
+                      contentFit="cover"
+                    />
+                  </Pressable>
+                ))}
+              </View>
             </View>
           )}
           ListEmptyComponent={() => (
@@ -134,7 +142,12 @@ export default function PortalPhotos() {
             <Ionicons name="close" size={26} color="#fff" />
           </Pressable>
           {zoom ? (
-            <Image source={{ uri: zoom.url }} style={{ width: SCREEN.width, height: SCREEN.height * 0.7 }} contentFit="contain" />
+            <Image
+              source={{ uri: resolvePortalMediaUri(portalPhotoFullRaw(zoom), token) }}
+              style={{ width: SCREEN.width, height: SCREEN.height * 0.7 }}
+              contentFit="contain"
+              testID="portal-photo-zoom-image"
+            />
           ) : null}
           <View style={styles.viewerMeta}>
             <Text style={styles.viewerTitle}>{zoom?.job_title || "Service Photo"}</Text>
@@ -156,12 +169,17 @@ const styles = StyleSheet.create({
     fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface,
     marginTop: spacing.lg, marginBottom: spacing.sm,
   },
-  gridRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm },
+  dateDivider: { height: 1, backgroundColor: colors.border, marginBottom: spacing.md },
+  visit: { marginBottom: spacing.md },
+  visitHeader: {
+    fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurfaceSecondary,
+    marginBottom: spacing.sm,
+  },
+  gridRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   tile: {
     width: TILE, height: TILE, borderRadius: radius.md, overflow: "hidden",
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
-  tilePad: { width: TILE, height: TILE },
   empty: { paddingVertical: 60, alignItems: "center" },
   emptyText: { color: colors.muted, marginTop: spacing.md, textAlign: "center", fontFamily: font.regular, fontSize: fontSize.base, paddingHorizontal: spacing.xl },
   viewer: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", justifyContent: "center", alignItems: "center" },

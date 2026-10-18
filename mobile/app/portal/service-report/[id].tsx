@@ -19,6 +19,7 @@ import { BODY_TYPE_LABELS, BODY_TYPE_TINTS, READING_LABELS } from "@/src/lib/wat
 import { expandChemistryLabel } from "@/src/lib/expandChemistryLabel";
 import { formatCompletedAt } from "@/src/lib/dateTimeFormat";
 import { ClickableAddress } from "@/src/components/interactive";
+import { portalJobPhotoRaw, resolvePortalMediaUri, usePortalAuthToken } from "@/src/lib/portalMediaUri";
 
 /* ── helpers ──────────────────────────────── */
 
@@ -100,6 +101,7 @@ export default function PortalServiceReportDetail() {
   const [sr, setSr] = useState<any>(null);
   const [err, setErr] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const token = usePortalAuthToken();
 
   const load = useCallback(async () => {
     try {
@@ -148,6 +150,7 @@ export default function PortalServiceReportDetail() {
     : [];
   const checklistItems = Array.isArray(sr.checklist_items) ? sr.checklist_items : [];
   const photos = Array.isArray(sr.photos) ? sr.photos : [];
+  const jobPhotos = Array.isArray(sr.job_photos) ? sr.job_photos : [];
   const algae = algaeLine(sr);
 
   return (
@@ -343,15 +346,40 @@ export default function PortalServiceReportDetail() {
           </Section>
         ) : null}
 
+        {/* TD-67 / TD-76 Phase A — tech-attached job photos (web
+            "Job Photos" section). Canonical thumb_url / full_url
+            from BE; `?auth=` stamped for the customer streaming route. */}
+        {jobPhotos.length > 0 ? (
+          <Section icon="camera-outline" title="Job Photos" testID="portal-service-report-job-photos">
+            <View style={s.photoGrid}>
+              {jobPhotos.map((p: any, i: number) => {
+                const src = resolvePortalMediaUri(portalJobPhotoRaw(p), token);
+                if (!src) return null;
+                return (
+                  <Image
+                    key={p.id || i}
+                    source={{ uri: src }}
+                    style={s.photo}
+                    testID={`portal-service-report-job-photo-${i}`}
+                  />
+                );
+              })}
+            </View>
+          </Section>
+        ) : null}
+
         {/* Visit photos */}
         {photos.length > 0 ? (
           <Section icon="images-outline" title="Visit Photos" testID="portal-service-report-photos">
             <View style={s.photoGrid}>
               {photos.map((p: any, i: number) => {
-                const src =
+                const raw =
                   typeof p === "string"
                     ? p
                     : p.url || p.data_url || p.data || p.thumb_url || "";
+                // TD-67 — BE emits relative /api/public/... paths here;
+                // RN <Image> needs an absolute URI.
+                const src = resolvePortalMediaUri(raw, token);
                 if (!src) return null;
                 return (
                   <Image

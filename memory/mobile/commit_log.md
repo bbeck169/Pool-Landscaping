@@ -1965,3 +1965,17 @@
 - **Files modified**: mobile/src/components/checklist/ChemicalDropdownStack.tsx, mobile/src/components/checklist/ChemicalPickerSheet.tsx, mobile/src/components/job/MaintenanceLog.tsx, mobile/__tests__/ios-decimal-chem-added.test.tsx (new)
 - **Tests**: new 17/17 (8 fail on pre-fix HEAD — all comma + 2nd-dot cases); ios-decimal-chem-input + td59-pool-volume-decimal + chem3-adapter + chemistry-ui-trim + checklist-decimal-input + ChemDecimalInput all pass. tsc 651 (identical error set), 0 in touched files. eslint 0 new (pre-existing `queued` unused warning in MaintenanceLog:68).
 - **Deps**: none. Cron lockout: skip-worktree on the 3 sources + commit_log, `.git/info/exclude` for the new test; cleared before `git commit --only`.
+
+## Iteration 143 — Build unbreak: strip conflict markers from rogue 50c318244 (TD-61 #8)
+- **Commit**: 63a2705d5
+- **Date**: 2026-10-18
+- **Finding**: rogue cron commit 50c318244 ("## Commit 2 — Receipt") captured a half-applied `git stash pop` — `<<<<<<< Updated upstream / ======= / >>>>>>> Stashed changes` in `app/(app)/schedule/calendar.tsx` + `src/lib/jobStatus.ts` (+55 lines, 0 deletions). Metro bundle returned HTTP 500 SyntaxError → whole app redboxed; tsc reported 70 (parse-abort) instead of 651.
+- **Fix**: both files restored to `50c318244^` — proven byte-identical to the "Updated upstream" side (= shipped finished-state styling 9a6db4bc1); no commits touched them after 50c318244. Commit = exactly 55 deletions. Bundle HTTP 200; tsc back to 651.
+
+## Iteration 144 — m-td67-td76 · portal photo rendering parity
+- **Commit**: the `m-td67-td76` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/lib/portalMediaUri.ts` (withAuthToken port — idempotent/fragment-safe `?auth=`; resolvePortalMediaUri — data: passthrough, relative → backend origin via existing `absolutizeUrl`, `?auth=` only on `/api/customers/me/` + `/api/files/`; canonical field chains; `usePortalAuthToken`; `groupPhotosByDateAndVisit` port). `portal/photos.tsx`: thumb `thumb_url→thumb→url`, lightbox `full_url→url→thumb_url→thumb`, web date→divider→visit grouping (days DESC, visits submitted_at ASC + job_id ASC, "Unknown date" bucket), rows with no URI skipped. `portal/service-report/[id].tsx`: visit photos absolutized (BE emits relative `/api/public/...`) + NEW Job Photos grid from `sr.job_photos` with `?auth=`.
+- **Preview caveat**: `job_photos` URLs are absolute on `APP_PUBLIC_URL` (prod `app.plofv.com`) → tile can't load in preview (prod token mismatch); prod OK. Possible web regression flagged: web TD-76d renders those URLs without `?auth=`.
+- **Files modified**: mobile/src/lib/portalMediaUri.ts (new), mobile/app/portal/photos.tsx, mobile/app/portal/service-report/[id].tsx, mobile/__tests__/portal-media-uri-td76.test.tsx (new)
+- **Tests**: new 13/13; tsc 651 (0 in touched); eslint 0 new (2 pre-existing warnings in SR detail).
