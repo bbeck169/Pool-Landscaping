@@ -1,9 +1,22 @@
 /**
  * TD-66 · Feb-2026 — token-aware URL concatenation helper.
+ * TD-76b · Feb-2026 — scheme change: query-param key is now
+ * ``?auth=<token>`` (not ``?token=<token>``) to match the TD-67
+ * contract in ``backend/routers/service_reports.py::
+ * stream_customer_job_photo`` and ``backend/routers/files.py::
+ * _resolve_bearer_or_query_auth``. Pre-TD-76b the helper stamped
+ * ``?token=`` which the authenticated handlers ignored, so
+ * ``<img src>`` loads against ``/api/customers/me/jobs/.../photos/
+ * ...`` and ``/api/files/.../download`` silently 401'd on every
+ * portal surface that depends on the query-param fallback (headers
+ * can't be attached to image/video src). Call-sites against public
+ * endpoints (``/api/public/job-photo/...`` and
+ * ``/api/media/videos/...``) ignore the param either way, so the
+ * rename is backward-compatible for those paths.
  *
- * Problem: multiple ``<img>`` / ``<video>`` sites across the Work
- * Stream + Service Log pages built authenticated media URLs with a
- * naïve concatenation:
+ * Problem (original TD-66 motivation): multiple ``<img>`` /
+ * ``<video>`` sites across the Work Stream + Service Log pages
+ * built authenticated media URLs with a naïve concatenation:
  *
  *   src={url + (token ? "?token=" + token : "")}
  *
@@ -18,7 +31,7 @@
  *
  * Fix: a single helper that:
  *   1. Prefers ``URL`` + ``URLSearchParams`` (idempotent — a second
- *      call replaces the previous ``token`` value, never appends).
+ *      call replaces the previous ``auth`` value, never appends).
  *   2. Falls back to a separator-aware string splice for pre-``?``
  *      paths (``URL`` constructor rejects pure relative-no-base
  *      inputs in test envs that lack ``window.location``).
@@ -41,7 +54,7 @@ export function withAuthToken(url, token) {
         ? window.location.origin
         : "http://localhost";
     const u = new URL(url, base);
-    u.searchParams.set("token", token);
+    u.searchParams.set("auth", token);
     // Re-stringify.  If the input was relative, strip the synthetic
     // base so we return the same shape we received.
     const absolute = u.toString();
@@ -58,15 +71,15 @@ export function withAuthToken(url, token) {
     const fragment = hashIdx >= 0 ? url.slice(hashIdx) : "";
     const base = hashIdx >= 0 ? url.slice(0, hashIdx) : url;
     const sep = base.includes("?") ? "&" : "?";
-    // Idempotent guard — if ``token=`` already exists, replace it.
-    if (/[?&]token=/.test(base)) {
+    // Idempotent guard — if ``auth=`` already exists, replace it.
+    if (/[?&]auth=/.test(base)) {
       const replaced = base.replace(
-        /([?&])token=[^&]*/,
-        `$1token=${encodeURIComponent(token)}`,
+        /([?&])auth=[^&]*/,
+        `$1auth=${encodeURIComponent(token)}`,
       );
       return `${replaced}${fragment}`;
     }
-    return `${base}${sep}token=${encodeURIComponent(token)}${fragment}`;
+    return `${base}${sep}auth=${encodeURIComponent(token)}${fragment}`;
   }
 }
 
