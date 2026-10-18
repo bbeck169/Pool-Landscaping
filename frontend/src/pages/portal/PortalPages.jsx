@@ -398,18 +398,30 @@ export function PortalEstimates() {
       {rows === null ? <Skeleton style={{ height: 180 }} /> :
        rows.length === 0 ? <EmptyState icon={FileText} title="No estimates yet" /> :
        <ul className="space-y-2">
-         {rows.map((r) => (
-           <li key={r.id} onClick={() => navigate(`/portal/estimates/${r.id}`)}
-             className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
-             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-             data-testid={`port-est-${r.id}`}>
-             <div className="flex-1 min-w-0">
-               <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{r.title}</div>
-               <div className="text-xs" style={{ color: colors.muted }}>{money(r.total)}</div>
-             </div>
-             <StatusPill status={r.decision || r.status} />
-           </li>
-         ))}
+         {rows.map((r) => {
+           // TD-72b · Feb-2026 — reuse the TD-71 title resolver so
+           // imported estimates (``Import #<n>`` placeholder leaked
+           // from the admin importer) surface the human-friendly
+           // 4-branch fallback label instead of the raw import
+           // number. Non-imported estimate titles pass through.
+           const _displayTitle = resolvePortalInvoiceTitle(r);
+           return (
+             <li key={r.id} onClick={() => navigate(`/portal/estimates/${r.id}`)}
+               className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
+               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+               data-testid={`port-est-${r.id}`}>
+               <div className="flex-1 min-w-0">
+                 <div
+                   className="text-sm font-semibold"
+                   style={{ color: colors.onSurface }}
+                   data-testid={`port-est-title-${r.id}`}
+                 >{_displayTitle}</div>
+                 <div className="text-xs" style={{ color: colors.muted }}>{money(r.total)}</div>
+               </div>
+               <StatusPill status={r.decision || r.status} />
+             </li>
+           );
+         })}
        </ul>}
     </div>
       </PortalPageShell>

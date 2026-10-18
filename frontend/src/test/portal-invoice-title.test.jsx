@@ -197,3 +197,55 @@ describe("TD-71 · PortalPages.jsx wires through the shared helpers", () => {
     expect(PP_SRC).toMatch(/data-testid=\{`port-inv-created-\$\{r\.id\}`\}/);
   });
 });
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 5 · TD-72b · PortalEstimates reuses the same title resolver.
+// ═══════════════════════════════════════════════════════════════════
+describe("TD-72b · PortalEstimates reuses resolvePortalInvoiceTitle", () => {
+  it("Estimates list row reads title via resolvePortalInvoiceTitle(r)", () => {
+    // Positive — the LIST row title now flows through the shared
+    // helper (same abstraction as /portal/invoices). Scope the
+    // match to the PortalEstimates block by anchoring on the
+    // ``navigate(`/portal/estimates/${r.id}`)`` click handler.
+    expect(PP_SRC).toMatch(
+      /_displayTitle\s*=\s*resolvePortalInvoiceTitle\(r\)[\s\S]{0,500}?navigate\(`\/portal\/estimates\/\$\{r\.id\}`\)/,
+    );
+    expect(PP_SRC).toMatch(/data-testid=\{`port-est-title-\$\{r\.id\}`\}/);
+  });
+
+  it("Pre-TD-72b bare `{r.title}` render inside the port-est list row is gone", () => {
+    // Negative lock — the one remaining ``{r.title}`` render in
+    // the file is OUTSIDE the port-est row (it's in the related
+    // detail / preview surfaces which are out of scope).
+    const estRowMatch = PP_SRC.match(
+      /data-testid=\{`port-est-\$\{r\.id\}`\}[\s\S]{0,500}?<\/li>/,
+    );
+    expect(estRowMatch).not.toBeNull();
+    expect(estRowMatch[0]).not.toMatch(/>\s*\{r\.title\}\s*</);
+    expect(estRowMatch[0]).toMatch(/>\s*\{_displayTitle\}\s*</);
+  });
+
+  it("Resolver branches apply equally to estimate records (unit smoke)", () => {
+    // Estimates have the same ``title`` / ``line_items`` / ``notes``
+    // / ``created_at`` schema shape as invoices (both live in
+    // ``db.quotes`` with different ``doc_type``). The shared
+    // helper is schema-agnostic.
+    expect(resolvePortalInvoiceTitle({
+      title: "Import #42",
+      line_items: [{ description: "Pool renovation quote" }],
+    })).toBe("Pool renovation quote");
+    expect(resolvePortalInvoiceTitle({
+      title: "Import #42",
+      notes: "Scope — rebuild tile line",
+    })).toBe("Scope — rebuild tile line");
+    expect(resolvePortalInvoiceTitle({
+      title: "Import #42",
+      created_at: "2025-07-04T00:00:00Z",
+    })).toBe("Invoice");  // FE helper's fallback literal (not the BE "Service — MM/DD/YYYY" fallback — see TD-72)
+    // Non-imported estimate title passes through unchanged.
+    expect(resolvePortalInvoiceTitle({
+      title: "Spa refresh · Q2 2026",
+    })).toBe("Spa refresh · Q2 2026");
+  });
+});
