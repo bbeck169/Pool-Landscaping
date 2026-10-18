@@ -131,7 +131,13 @@ function MediaStrip({ jid, media }) {
         >
           {t.kind === "photo" ? (
             <img
-              src={`${BACKEND}${_thumbSrc(t.url)}`}
+              // TD-76-ph2c · Feb-2026 — consume canonical ``thumb_url``
+              // when BE emits it (TD-76-ph2b landed the canonical
+              // fields on ``_media_summary.photo_thumbs``). Legacy
+              // ``url`` kept as defensive fallback until Phase B
+              // legacy-field removal lands in a mobile-coordinated
+              // dispatch.
+              src={`${BACKEND}${_thumbSrc(t.thumb_url || t.url)}`}
               alt=""
               className="w-full h-full object-cover"
               loading="lazy"
@@ -183,7 +189,8 @@ function MediaStrip({ jid, media }) {
           </button>
           {preview.kind === "photo" ? (
             <img
-              src={`${BACKEND}${preview.url}`}
+              // TD-76-ph2c · consume canonical ``full_url`` directly.
+              src={`${BACKEND}${preview.full_url || preview.url}`}
               alt=""
               className="max-h-[85vh] max-w-full rounded-lg"
               onClick={(e) => e.stopPropagation()}

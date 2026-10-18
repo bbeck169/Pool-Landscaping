@@ -150,7 +150,16 @@ function MediaCarousel({ items = [] }) {
     );
   }
 
-  const url = cur?.url ? (cur.url.startsWith("http") ? cur.url : `${BACKEND}${cur.url}`) : "";
+  // TD-76-ph2c · Feb-2026 — consume BE canonical ``thumb_url`` /
+  // ``full_url`` (TD-76-ph2b emits these on ``_media_items``
+  // alongside the legacy ``url`` for mobile parity). The image
+  // carousel points at the thumb variant; the lightbox below
+  // uses the full variant. Legacy ``url`` kept as defensive
+  // fallback until Phase B legacy-field removal.
+  const _resolved = cur?.full_url || cur?.url || "";
+  const url = _resolved ? (_resolved.startsWith("http") ? _resolved : `${BACKEND}${_resolved}`) : "";
+  const _resolvedThumb = cur?.thumb_url || cur?.url || "";
+  const thumbUrl = _resolvedThumb ? (_resolvedThumb.startsWith("http") ? _resolvedThumb : `${BACKEND}${_resolvedThumb}`) : "";
   const isVideo = cur?.kind === "video";
 
   return (
@@ -197,7 +206,7 @@ function MediaCarousel({ items = [] }) {
             }}
           >
             <img
-              src={withAuthToken(url, token)}
+              src={withAuthToken(thumbUrl, token)}
               alt=""
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
               data-testid="service-log-media-image"
