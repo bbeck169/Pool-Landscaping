@@ -285,29 +285,20 @@ export default function PortalHome() {
         <div className="relative">
           <p className="text-white/85 text-sm">Welcome back</p>
           <h1 className="text-3xl md:text-4xl font-bold mt-1">Hi, {first} 👋</h1>
-          {data ? (
-            data.next_visit ? (
-              <div className="mt-4 bg-white/15 backdrop-blur rounded-xl p-4">
-                <div className="text-xs uppercase tracking-widest opacity-80">Next visit</div>
-                <div className="text-lg font-bold mt-0.5">{data.next_visit.title}</div>
-                <div className="text-sm opacity-90 mt-1 flex items-center gap-1.5">
-                  {data.next_visit.technician_name ? (
-                    <TechAvatar user={{ name: data.next_visit.technician_name }} size="xs" testid="portal-tech-avatar-next" />
-                  ) : null}
-                  <span>
-                    {data.next_visit.scheduled_date
-                      ? new Date(data.next_visit.scheduled_date).toDateString()
-                      : "TBD"}{" "}
-                    · {data.next_visit.technician_name || "Unassigned"}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <p className="text-white/85 mt-3 text-sm">No upcoming visits scheduled.</p>
-            )
-          ) : (
-            <Skeleton style={{ height: 60, backgroundColor: "rgba(255,255,255,0.2)", marginTop: 12 }} />
-          )}
+          {/* TD-74 · Feb-2026 — pre-TD-74 this slot rendered an
+              inline "NEXT VISIT" overlay card (title + tech
+              avatar + date + "No upcoming visits scheduled"
+              fallback). Removed per operator directive — the
+              Smart Portal Tiles row below ("NEXT POOL SERVICE"
+              + Landscape + Filter Cleaning) already surfaces the
+              same info with richer per-service eligibility
+              gating, so the hero overlay was redundant AND
+              overlapped the "Edit profile" pill at narrow
+              widths. The hero image card now reads as a clean
+              welcome band. ``data`` is still fetched (its
+              ``data.customer.first_name`` powers the greeting
+              above and the Edit Profile modal below) so no data
+              fetch is dropped — only the UI slot. */}
         </div>
       </div>
 
