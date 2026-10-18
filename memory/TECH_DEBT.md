@@ -384,3 +384,18 @@ Phase 1 scope creep.
 
 
 - **TD-78b · checklist banner full-render test gap (mobile, Oct-2026).** `app/job/[id]/checklist.tsx` banner is proven only by a source-level check of the visibility condition + placement (`closed-job-edits-banner-td78b.test.tsx`) + unit tests of `canEditCompletedJob`; a full RTL render stalled in the screen's bootstrap/loading path (stuck on `checklist-loading`) during the catch-up cycle. Follow-up for a future mobile test-infra pass (likely needs navigation mock + async state settle) — not a code bug.
+
+
+- **TD-66 Phase 2 · CLOSED as done (Feb-2026 · operator-approved default-close).** The Phase 1 address-shape guard in `backend/routers/workstream.py::_prop_address_label` (shipped `d06ba7276`) is sufficient. Zero prod occurrences of the preview-tenant string-shape symptom have been reported since the Phase 1 ship. The Phase 2 scope — a one-time DB migration to backfill all legacy string `address` rows to canonical dict shape AND/OR an operator-side log-scrape runbook to catch the WARNING log line (`[workstream] property <pid> non-dict address <type> · value=<repr> · TD-66`) and route one-off repairs to the import-cleanup backlog — remains **available if a real occurrence is reported**, but is not scheduled. Rationale for the default-close: the Phase 1 guard converts the fatal 500 into a benign WARNING log + graceful degradation (row still renders with the trimmed raw string as the label), so there is no user-visible symptom to chase; the data-repair migration is pure cleanup with no behavioral upside until drift is observed in the wild.  **Priority:** CLOSED.
+
+- **ChunkLoadError global retry wrapper · DEFERRED (N) (Feb-2026 · operator-approved).** Operator ruling: root cause of `ChunkLoadError` events is infra/deployment chunk-mismatch (service worker cache serving stale `main.<hash>.js` references after a deploy swaps the hash set), not FE code. A defensive FE wrapper that catches the error + prompts a reload would mask the real failure and encourage ignoring the underlying cache-busting gap. Recommended infra-side fix path if the issue recurs enough to warrant action:
+  1. Versioned chunk filenames + a build-id manifest (CRA emits content-hashed chunks by default — verify the hash map is NOT being overridden anywhere).
+  2. Service-worker `self.skipWaiting()` + `clients.claim()` on activation so a new deploy evicts the old chunk map immediately rather than waiting for the browser's natural SW lifecycle.
+  3. Cache-Control `must-revalidate` on `index.html` + long-TTL `immutable` on hashed chunk assets so the entry doc re-fetches on every nav but the chunks stay cheap.
+  Status: **DEFERRED (N)** per operator. **Priority:** P3 — infra, not FE.
+
+- **TD-61 rogue cron tracking · policy update (Feb-2026).** Operator filing a support ticket for the rogue platform auto-commit mechanism is their action, not blocking agent work. **Standing rule unchanged:**
+  1. Always use `git commit --only -- <paths>` on every atomic commit. Never `-a`.
+  2. Leave rogue commits as-is — do NOT revert.
+  3. Session-hygiene precheck `git status --short | wc -l == 0` is advisory, not blocking (parallel sessions can leave artifacts); `--only --` protects agent-authored commits regardless of tree dirt.
+  **Policy update (this entry):** stop incrementing the "pending ticket" counter in agent receipts — the ticket is on the operator's side. Each individual incident is still logged inline under its sequence number (#1 .. #11 as of Feb-2026) in this `## Rogue platform auto-commits` section, but the agent is no longer carrying the "N strikes pending ticket" running tally forward in session summaries. **Priority:** POLICY — track-only.
