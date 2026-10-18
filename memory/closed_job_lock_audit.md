@@ -268,3 +268,23 @@ Total potential new work: **under 100 lines** if operator approves all four.
 5. **Rename TD-78 to reflect the gap-fill scope?** Or close as "already shipped" and move on?
 
 Standing by.  No code changes to the feature surface until you reply.
+
+---
+
+## 7 · Operator decisions (Feb-2026)
+
+Operator reviewed this audit and accepted the K6-already-shipped finding. Decisions:
+
+1. **Audit accurate — accepted.** No additional closed-job lock sites found.
+2. **td78b (banner) — SHIPPED** as `c1cb22dcc`. Non-dismissible "Closed job — edits are logged to the audit history on this job." banner on `JobDetail.jsx`, gated by `canEditCompleted` (K6 role + completed status + non-customer).
+3. **td78c (`dispatcher` in K6) — SHIPPED.** Added to both `services/edit_window.py::K6_UNLOCK_ROLES` and `pages/jobs/JobDetail.jsx::K6_UNLOCK_ROLES`. Operator-ruled: dispatchers legitimately edit completed jobs on behalf of the field. `operator` NOT added (audit-confirmed as a non-seeded role string).
+4. **td78d (`request_ip`) — SKIPPED** per operator decision. Mild privacy signal; parked for a future privacy pass if operator asks.
+5. **TD-78 scope collapsed** to the two gap-fills above. All other operator-spec'd items were either already-shipped under K6 (`/edits` endpoint, `db.job_edits` collection, audit field shape, batch-via-single-row, portal 403, pytest matrix) or classified as pointless cosmetic churn and NOT re-proposed. For future agents: do NOT re-propose any of the following — all explicitly rejected after this audit:
+   - Rename `/jobs/{jid}/edits` → `/jobs/{jid}/edit-audit` (pointless churn, breaks mobile until specialist mirrors).
+   - Rename `db.job_edits` → `db.job_edit_audit` (schema migration with zero behavioral gain).
+   - Rename audit field names (`edited_by` → `user_id`, `edited_by_role` → `user_role`, `edited_by_name` → `user_name_cached`, `edited_at` → `timestamp`) — pointless churn across BE + FE + mobile + 20+ tests.
+   - Add `batch_id` grouping — the current single-row-with-`changes`-dict shape already achieves the operator intent of "don't explode into N rows".
+   - Rebuild Edit History as a dedicated tab (currently an inline expandable section) — stylistic preference, not a feature gap.
+6. **Mobile parity** — deferred to Expo specialist dispatch after web ships (will mirror `td78b` banner + `td78c` dispatcher role).
+
+**Status:** TD-78 CLOSED after `c1cb22dcc` (td78b) + the td78c commit ships.

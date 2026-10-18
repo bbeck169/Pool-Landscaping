@@ -46,6 +46,12 @@ K6_UNLOCK_ROLES = frozenset({
     # pytest in lockstep — change this set ONCE and every gate
     # moves together.
     "employee",
+    # TD-78c · Feb-2026 — "dispatcher" added per operator
+    # directive. Dispatchers legitimately edit completed jobs
+    # (correcting tech notes, re-attaching missed photos,
+    # fixing chemistry typos on behalf of the field). Mirrored
+    # on the FE in ``pages/jobs/JobDetail.jsx::K6_UNLOCK_ROLES``.
+    "dispatcher",
 })
 
 

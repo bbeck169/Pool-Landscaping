@@ -23,14 +23,18 @@ const SRC = fs.readFileSync(
 
 
 describe("JobDetail · K6 completed-job unlock contract", () => {
-  it("declares the K6_UNLOCK_ROLES set with the exact seven roles "
-     + "(six staff + employee forward-compat)", () => {
+  it("declares the K6_UNLOCK_ROLES set with the exact EIGHT roles "
+     + "(six staff + employee forward-compat + dispatcher · TD-78c)", () => {
     // Set literal — order-insensitive.
     expect(SRC).toMatch(/const\s+K6_UNLOCK_ROLES\s*=\s*new\s+Set\(/);
     for (const role of ["super_admin", "admin", "manager",
                                      "tech", "technician", "owner",
                                      // CLOSED-JOB-EDIT-UNLOCK · Feb-2026
-                                     "employee"]) {
+                                     "employee",
+                                     // TD-78c · Feb-2026 — dispatchers
+                                     // legitimately edit completed jobs
+                                     // on behalf of the field.
+                                     "dispatcher"]) {
       expect(SRC).toMatch(
         new RegExp(`"${role}"`),
       );

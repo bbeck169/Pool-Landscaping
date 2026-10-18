@@ -257,6 +257,12 @@ export default function JobDetail() {
     // ROLES`` on the backend — change ONE place and every gate
     // moves together.
     "employee",
+    // TD-78c · Feb-2026 — "dispatcher" added per operator
+    // directive. Dispatchers legitimately edit completed jobs
+    // (correcting tech notes, re-attaching missed photos,
+    // fixing chemistry typos on behalf of the field). Mirrored
+    // on the BE in ``services/edit_window.py::K6_UNLOCK_ROLES``.
+    "dispatcher",
   ]);
   const canEditCompleted =
     !isCustomer
