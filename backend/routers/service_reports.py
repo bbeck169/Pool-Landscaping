@@ -3353,8 +3353,24 @@ async def get_my_service_report(
     # ABSOLUTE URL pointing at the customer-session streaming route
     # below — customers hit the portal from mobile clients that
     # can't resolve relative URLs against the API host.
-    sr["job_photos"] = _build_customer_job_photos(job,
-                                                    _resolve_photo_url_base(request))
+    # TD-76f · Feb-2026 — Browsers cannot attach a Bearer header
+    # to ``<img src>`` requests. The TD-67 streaming handler at
+    # ``stream_customer_job_photo`` accepts a ``?auth=<token>``
+    # query-param fallback for exactly this scenario, so we stamp
+    # it onto the resolved URL at emission time (Option-C ethos —
+    # BE emits the fully-usable URL; FE just reads it). Pre-TD-76f
+    # ``withAuthToken`` stamped it client-side, but TD-76d removed
+    # the FE wrapper on the premise that the BE emission layer owns
+    # the full URL resolution. This re-closes that gap.
+    _auth_hdr = (request.headers.get("Authorization", "") or "")
+    _bearer_tok = (_auth_hdr[7:].strip()
+                    if _auth_hdr.lower().startswith("bearer ")
+                    else "")
+    sr["job_photos"] = _build_customer_job_photos(
+        job,
+        _resolve_photo_url_base(request),
+        bearer_token=_bearer_tok,
+    )
     # Feb-2026 · P1 hotfix — populate ``tech_name`` (never persisted on
     # the report doc; see the list-endpoint comment above). Falls back
     # to ``effective_tid(job)`` when the report's ``tech_id`` doesn't
@@ -3393,7 +3409,12 @@ def _resolve_photo_url_base(request: Request) -> str:
         return ""
 
 
-def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
+def _build_customer_job_photos(
+    job: dict,
+    base_url: str = "",
+    *,
+    bearer_token: str = "",
+) -> list:
     """Return the customer-safe display shape for ``job.photos``.
 
     * Filters soft-deleted entries.
@@ -3421,6 +3442,21 @@ def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
             continue
         _rel = f"/api/customers/me/jobs/{job.get('id')}/photos/{_pid}"
         _full = f"{base_url}{_rel}" if base_url else _rel
+        # TD-76f · Feb-2026 — stamp ``?auth=<token>`` onto the
+        # resolved URL for the portal_sr_detail context so the
+        # ``<img src>`` request satisfies the TD-67 query-param
+        # fallback. Pre-TD-76f the FE wrapped the raw URL via
+        # ``withAuthToken`` (``lib/urlToken.js``), but TD-76d
+        # retired that wrapper on the premise that the canonical
+        # emission layer owns the full URL. ``bearer_token`` is
+        # extracted from the request's Authorization header by the
+        # caller.
+        if bearer_token:
+            import urllib.parse as _up
+            _sep = "&" if "?" in _full else "?"
+            _full_auth = f"{_full}{_sep}auth={_up.quote(bearer_token, safe='')}"
+        else:
+            _full_auth = _full
         entry: dict = {
             "id":            _pid,
             "caption":       p.get("caption") or p.get("label") or "",
@@ -3431,9 +3467,13 @@ def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
             # are what the FE reads directly in Phase A. Legacy ``url``
             # kept as an additive alias (mobile parity — Phase B
             # removes after a dedicated mobile dispatch).
-            "thumb_url":     _full,
-            "full_url":      _full,
-            "url":           _full,
+            # TD-76f · Feb-2026 — these URLs now carry the ``?auth=``
+            # query param so ``<img src>`` loads satisfy the TD-67
+            # streaming handler without needing a Bearer header
+            # (browsers cannot attach headers to image requests).
+            "thumb_url":     _full_auth,
+            "full_url":      _full_auth,
+            "url":           _full_auth,
         }
         _thumb = p.get("thumb") or ""
         if _thumb:
