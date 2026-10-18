@@ -43,8 +43,23 @@
 
 .invoice-stamp {
   position: absolute;
-  top: 20px;
-  right: 24px;
+  /* TD-70 · Feb-2026 — pre-TD-70 anchored top-right which planted
+     the circular stamp directly on top of the top-right header
+     block (invoice number, date, credit available, outstanding
+     balance) and made the four header fields unreadable on every
+     paid invoice. Operator moved the stamp to top-center of the
+     invoice body — vertically aligned with the logo / "Invoice"
+     title band, horizontally centered between the two header
+     columns. ``left: 50%`` + the ``translate(-50%, 0)`` prefix on
+     the per-variant ``transform`` applies the centering. The
+     ``.invoice-stamp--paid`` circle is TRANSPARENT in the middle
+     (only the red grunge border + the two text spans paint over
+     content) so a center-landed stamp can overlap the "Invoice"
+     title text without obscuring either — the title reads through
+     the empty center while the stamp still reads as a prominent
+     watermark. */
+  top: 10px;
+  left: 50%;
   pointer-events: none;
   z-index: 5;
   color: #c0272d;
@@ -64,7 +79,9 @@
   border: 5px solid #c0272d;
   border-radius: 2px;
   text-align: center;
-  transform: rotate(-12deg);
+  /* TD-70 · translate(-50%, 0) centers against ``left: 50%`` on
+     ``.invoice-stamp``; rotate preserves the pre-TD-70 character. */
+  transform: translate(-50%, 0) rotate(-10deg);
   box-shadow: inset 0 0 0 2px #c0272d;
 }
 .invoice-stamp--past-due .invoice-stamp__title {
@@ -82,8 +99,13 @@
 
 /* ── PAID — circular stamp with inner rectangular ring ────────── */
 .invoice-stamp--paid {
-  width: 160px;
-  height: 160px;
+  /* TD-70 · Feb-2026 — slightly reduced from 160×160 → 140×140 so
+     the circle clears both header columns at narrow tablet widths
+     once centered.  Transparent middle (``::before`` ring + text
+     spans only) means the "Invoice" title shows through the empty
+     interior; the stamp still reads as a prominent watermark. */
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
   border: 5px solid #c0272d;
   box-shadow: inset 0 0 0 2px #c0272d;
@@ -91,7 +113,9 @@
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  transform: rotate(10deg);
+  /* TD-70 · translate(-50%, 0) centers against ``left: 50%`` on
+     ``.invoice-stamp``; rotate preserves the pre-TD-70 character. */
+  transform: translate(-50%, 0) rotate(8deg);
   text-align: center;
 }
 .invoice-stamp--paid::before {
@@ -125,29 +149,37 @@
 /* ── Mobile scale-down ───────────────────────────────────────── */
 @media (max-width: 480px) {
   .invoice-stamp {
-    top: 8px;
-    right: 8px;
+    /* TD-70 · stay top-center on mobile; smaller top offset so
+       the stamp doesn't push below the collapsed single-column
+       header on narrow phones. ``left: 50%`` is inherited from
+       the base ``.invoice-stamp`` block above — the per-variant
+       ``translate(-50%, 0)`` prefix handles the centering. */
+    top: 4px;
     letter-spacing: 0.06em;
   }
   .invoice-stamp--past-due {
     padding: 6px 12px;
     border-width: 4px;
+    /* TD-70 · preserve centering + rotation at mobile breakpoints. */
+    transform: translate(-50%, 0) rotate(-10deg);
   }
   .invoice-stamp--past-due .invoice-stamp__title { font-size: 20px; }
   .invoice-stamp--past-due .invoice-stamp__sub { font-size: 9px; }
   .invoice-stamp--paid {
-    width: 110px;
-    height: 110px;
+    width: 96px;
+    height: 96px;
     border-width: 4px;
+    /* TD-70 · preserve centering + rotation at mobile breakpoints. */
+    transform: translate(-50%, 0) rotate(8deg);
   }
   .invoice-stamp--paid::before {
-    top: 14px;
-    right: 12px;
-    bottom: 14px;
-    left: 12px;
+    top: 12px;
+    right: 10px;
+    bottom: 12px;
+    left: 10px;
   }
-  .invoice-stamp--paid .invoice-stamp__title { font-size: 22px; }
-  .invoice-stamp--paid .invoice-stamp__sub { font-size: 11px; }
+  .invoice-stamp--paid .invoice-stamp__title { font-size: 20px; }
+  .invoice-stamp--paid .invoice-stamp__sub { font-size: 10px; }
 }
 
 /* ── Print fidelity ──────────────────────────────────────────── */

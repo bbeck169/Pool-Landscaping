@@ -202,12 +202,47 @@ describe("invoice-status-stamp.css shape", () => {
   });
 
   it("rotation applied to each stamp variant", () => {
-    // PAST DUE ~ -12deg, PAID ~ +10deg per spec.
+    // PAST DUE ~ -10/-12deg, PAID ~ +8/+10deg per spec. TD-70 ·
+    // Feb-2026 — the ``transform`` now carries a
+    // ``translate(-50%, 0)`` prefix (top-center placement — see
+    // the "TD-70 · stamp is top-center on the invoice body" test
+    // below) in front of the rotation. Regex tolerates both the
+    // pre-TD-70 bare-rotate shape and the TD-70+ translate-then-
+    // rotate shape so a future refactor can collapse back to a
+    // simpler transform without breaking the lock.
     expect(STAMP_CSS).toMatch(
-      /\.invoice-stamp--past-due[\s\S]*?transform\s*:\s*rotate\(-?\d+deg\)/,
+      /\.invoice-stamp--past-due[\s\S]*?transform\s*:\s*(?:translate\([^)]+\)\s+)?rotate\(-?\d+deg\)/,
     );
     expect(STAMP_CSS).toMatch(
-      /\.invoice-stamp--paid[\s\S]*?transform\s*:\s*rotate\(-?\d+deg\)/,
+      /\.invoice-stamp--paid[\s\S]*?transform\s*:\s*(?:translate\([^)]+\)\s+)?rotate\(-?\d+deg\)/,
+    );
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // TD-70 · Feb-2026 — stamp is top-center on the invoice body
+  // (operator-ruled move from the pre-TD-70 top-right anchor
+  // which overlapped the invoice #, date, credit available, and
+  // outstanding balance fields on the top-right header block,
+  // making them unreadable on every paid invoice).
+  // ═══════════════════════════════════════════════════════════════
+  it("TD-70 · stamp is top-center (left: 50% + translate(-50%, 0))", () => {
+    // Base ``.invoice-stamp`` anchors horizontally via left: 50%.
+    expect(STAMP_CSS).toMatch(
+      /\.invoice-stamp\b[\s\S]*?left\s*:\s*50%/,
+    );
+    // Each variant's transform carries the ``translate(-50%, 0)``
+    // centering prefix (combined with the per-variant rotate).
+    expect(STAMP_CSS).toMatch(
+      /\.invoice-stamp--paid[\s\S]*?transform\s*:\s*translate\(-50%,\s*0\)\s+rotate\(/,
+    );
+    expect(STAMP_CSS).toMatch(
+      /\.invoice-stamp--past-due[\s\S]*?transform\s*:\s*translate\(-50%,\s*0\)\s+rotate\(/,
+    );
+    // Negative lock — the pre-TD-70 ``right: 24px`` / ``right: 8px``
+    // anchor is gone from the base block + the mobile block (both
+    // overlapped the top-right header fields).
+    expect(STAMP_CSS).not.toMatch(
+      /\.invoice-stamp\s*\{[\s\S]*?right\s*:\s*2\d+px[\s\S]*?\}/,
     );
   });
 
