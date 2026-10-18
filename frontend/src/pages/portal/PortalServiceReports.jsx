@@ -85,6 +85,19 @@ import { BODY_TYPE_LABELS, BODY_TYPE_TINTS } from "@/lib/waterBodies";
 // export(s) in this file so content renders inside the Phase
 // 3d-portal white dashboard card on the deep-navy page bg.
 import PortalPageShell from "@/components/portal/PortalPageShell";
+// TD-69 · Feb-2026 — shared service-type resolver (lands at
+// ``@/lib/portalServiceType.js``). Pre-TD-69 the inline
+// ``reportKind()`` resolver below used an OR-chain that stopped
+// at the first truthy field — landscape SRs with a stray
+// pool-ish string in ``template`` or ``service_type`` rendered
+// a "Pool service" badge instead of the correct "Landscape
+// service" even when ``job.service_type`` was the authoritative
+// "Landscaping". The shared helper scans every candidate field
+// AND prefers landscape over pool when both signals coexist, so
+// the operator-reported Frances LaPrairie + Amy Hinojosa
+// mislabel symptom can't recur regardless of which field is
+// populated.
+import { resolveServiceType } from "@/lib/portalServiceType";
 
 import {
   PageHeader,
@@ -112,20 +125,15 @@ function fmtDate(iso) {
 }
 
 function reportKind(row) {
-  // Prefer the report's own template if present (detail view carries it).
-  // Otherwise derive from job.service_type on the list row.
-  const raw = (
-    row?.template ||
-    row?.service_type ||
-    row?.job?.service_type ||
-    ""
-  )
-    .toString()
-    .toLowerCase();
-  if (raw.includes("landscap") || raw.includes("mow") || raw.includes("lawn"))
-    return "landscape";
-  if (raw.includes("pool") || raw.includes("chem")) return "pool";
-  return "generic";
+  // TD-69 · Feb-2026 — thin shim over the shared
+  // ``resolveServiceType`` helper so every call-site in this
+  // file keeps its existing contract (``"pool" | "landscape" |
+  // "generic"``) while the resolution logic lives in a single
+  // tested module shared with (future) Workstream. The helper
+  // scans every candidate service-type field with landscape-
+  // priority ordering — guards against the operator-reported
+  // mislabel symptom (Frances LaPrairie + Amy Hinojosa).
+  return resolveServiceType(row);
 }
 
 function KindChip({ kind }) {
