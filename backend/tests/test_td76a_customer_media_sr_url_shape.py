@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import pytest
 
-from services.customer_media import get_customer_media
+from services.customer_media import (
+    get_customer_media, resolve_photo_urls,
+)
 
 
 @pytest.fixture(scope="module")
@@ -242,3 +244,146 @@ async def test_multiple_srs_each_resolve_against_their_own_job_id():
         "/api/public/job-photo/j1/p1b",
         "/api/public/job-photo/j2/p2",
     ]
+
+
+# ───────────────────────────────────────────────────────────────────
+# TD-76c · Option C — canonical ``resolve_photo_urls`` helper +
+# emission layer coverage.
+# ───────────────────────────────────────────────────────────────────
+class TestResolvePhotoUrls:
+    """Unit tests for the shared resolver. Context × auth matrix."""
+
+    def test_portal_sr_with_job_id_wins_over_public_uuid(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr",
+            job_id="j1", public_uuid="pub-xyz",
+        )
+        assert urls == {
+            "thumb_url": "/api/public/job-photo/j1/p1",
+            "full_url": "/api/public/job-photo/j1/p1",
+        }
+
+    def test_portal_sr_without_job_id_falls_back_to_public_uuid(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr",
+            job_id=None, public_uuid="pub-xyz",
+        )
+        assert urls["full_url"] == "/api/public/service/pub-xyz/photo/p1"
+
+    def test_portal_sr_without_either_falls_back_to_raw_url(self):
+        urls = resolve_photo_urls(
+            {"id": "p1", "url": "https://cdn/x.jpg"},
+            context="portal_sr",
+        )
+        assert urls["full_url"] == "https://cdn/x.jpg"
+
+    def test_portal_jobs_passes_url_or_storage_path_through(self):
+        urls = resolve_photo_urls(
+            {"id": "p1", "url": "https://cdn/j.jpg"},
+            context="portal_jobs",
+        )
+        assert urls["full_url"] == "https://cdn/j.jpg"
+        # storage_path fallback.
+        urls2 = resolve_photo_urls(
+            {"id": "p1", "storage_path": "t/x/f.jpg"},
+            context="portal_jobs",
+        )
+        assert urls2["full_url"] == "t/x/f.jpg"
+
+    def test_portal_estimate_passes_url_through(self):
+        urls = resolve_photo_urls(
+            {"id": "p1", "url": "https://cdn/e.jpg"},
+            context="portal_estimate",
+        )
+        assert urls["full_url"] == "https://cdn/e.jpg"
+
+    def test_portal_file_builds_files_download_url(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_file", file_id="f-xyz",
+        )
+        assert urls["full_url"] == "/api/files/f-xyz/download"
+
+    def test_portal_sr_detail_builds_authenticated_streaming_url(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr_detail",
+            job_id="j1", base_url="https://api.example",
+        )
+        assert urls["full_url"] == (
+            "https://api.example/api/customers/me/jobs/j1/photos/p1"
+        )
+
+    def test_portal_sr_detail_relative_when_base_url_empty(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr_detail", job_id="j1",
+        )
+        assert urls["full_url"] == "/api/customers/me/jobs/j1/photos/p1"
+
+    def test_unknown_context_returns_empty_url(self):
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="unknown",
+        )
+        assert urls == {"thumb_url": "", "full_url": ""}
+
+    def test_thumb_and_full_are_identical_in_phase_a(self):
+        # Phase A rule: ``thumb_url == full_url`` on every context.
+        # Phase B may introduce distinct thumb variants.
+        urls = resolve_photo_urls(
+            {"id": "p1"}, context="portal_sr", job_id="j1",
+        )
+        assert urls["thumb_url"] == urls["full_url"]
+
+
+# ───────────────────────────────────────────────────────────────────
+# TD-76c · ``get_customer_media`` emits ``thumb_url`` / ``full_url``
+# alongside legacy ``url``.
+# ───────────────────────────────────────────────────────────────────
+@pytest.mark.anyio
+async def test_sr_photo_emits_canonical_fields_plus_legacy_url_alias():
+    db = _DB(
+        jobs=[_job("j1")], estimates=[],
+        service_reports=[_sr("j1", photos=[_sr_photo("p1")])],
+    )
+    bag = await get_customer_media(db, "t1", "c1", kind="photo")
+    item = bag["items"][0]
+    # Canonical fields present.
+    assert item["thumb_url"] == "/api/public/job-photo/j1/p1"
+    assert item["full_url"] == "/api/public/job-photo/j1/p1"
+    # Legacy alias retained for mobile parity.
+    assert item["url"] == "/api/public/job-photo/j1/p1"
+
+
+@pytest.mark.anyio
+async def test_jobs_photo_emits_canonical_fields_plus_legacy_url():
+    j = _job("j1")
+    j["photos"] = [{
+        "id": "p1", "mime": "image/jpeg", "url": "https://cdn/x.jpg",
+        "visibility": "customer", "uploaded_at": "2026-02-01T10:00:00Z",
+    }]
+    db = _DB(jobs=[j], estimates=[], service_reports=[])
+    bag = await get_customer_media(db, "t1", "c1", kind="photo")
+    item = bag["items"][0]
+    assert item["thumb_url"] == "https://cdn/x.jpg"
+    assert item["full_url"] == "https://cdn/x.jpg"
+    assert item["url"] == "https://cdn/x.jpg"
+
+
+@pytest.mark.anyio
+async def test_estimate_photo_emits_canonical_fields_plus_legacy_url():
+    e = {
+        "id": "e1", "tenant_id": "t1", "customer_id": "c1",
+        "title": "Pool build", "service_type": "pool_build",
+        "hidden_from_portal": False, "is_deleted": False,
+        "photos": [{
+            "id": "p1", "mime": "image/jpeg",
+            "url": "https://cdn/e.jpg",
+            "visibility": "customer",
+            "uploaded_at": "2026-02-01T10:00:00Z",
+        }],
+        "videos": [],
+    }
+    db = _DB(jobs=[_job("j1")], estimates=[e], service_reports=[])
+    bag = await get_customer_media(db, "t1", "c1", kind="photo")
+    item = next(i for i in bag["items"] if i["source"] == "estimate")
+    assert item["thumb_url"] == "https://cdn/e.jpg"
+    assert item["full_url"] == "https://cdn/e.jpg"
+    assert item["url"] == "https://cdn/e.jpg"

@@ -48,8 +48,12 @@ async def portal_photos(
         items = [i for i in items if i.get("job_id") == job_id]
     photos_shape = [
         {
+            # TD-76c · canonical fields FE reads directly.
+            "thumb_url":    i.get("thumb_url") or i.get("url"),
+            "full_url":     i.get("full_url") or i.get("url"),
+            # Legacy aliases — mobile parity (Phase B removes).
             "url":          i.get("url"),
-            "thumb":        i.get("url"),
+            "thumb":        i.get("thumb_url") or i.get("url"),
             "caption":      i.get("caption") or "",
             "job_id":       i.get("job_id"),
             "job_title":    i.get("job_title"),

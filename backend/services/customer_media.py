@@ -50,6 +50,82 @@ logger = logging.getLogger("services.customer_media")
 MediaKind = Literal["photo", "video", "all"]
 
 
+# ───────────────────────────────────────────────────────────────────
+# TD-76 Option C · Feb-2026 — canonical photo-URL resolver.
+#
+# Every list endpoint that emits a photo item SHOULD route through
+# ``resolve_photo_urls`` so the FE never composes paths by hand.
+# Returns ``{thumb_url, full_url}`` — identical values for now (the
+# serving endpoints don't have a thumb variant for SR/jobs photos
+# other than ``/api/public/job-photo/<jid>/<pid>/thumb``, which is
+# a hint we may wire into Phase B when we migrate admin surfaces).
+#
+# Legacy ``url`` field is kept as an additive alias on every emitted
+# item for mobile parity (deprecated — Phase B removes it after a
+# mobile parity dispatch).
+#
+# Context taxonomy:
+#   * ``portal_sr``        — service_reports.photos[] on
+#                            ``GET /api/portal/photos`` (TD-76a swap).
+#   * ``portal_jobs``      — jobs.photos[] passthrough.
+#   * ``portal_estimate``  — estimates.photos[] passthrough.
+#   * ``portal_file``      — files collection, uses
+#                            ``/api/files/<id>/download``.
+#   * ``portal_sr_detail`` — job_photos array on
+#                            ``/api/customers/me/service-reports/<id>``.
+# ───────────────────────────────────────────────────────────────────
+def resolve_photo_urls(
+    photo_doc: Dict[str, Any],
+    *,
+    context: str,
+    job_id: Optional[str] = None,
+    public_uuid: Optional[str] = None,
+    file_id: Optional[str] = None,
+    base_url: str = "",
+) -> Dict[str, str]:
+    """Return ``{thumb_url, full_url}`` for a photo subdoc.
+
+    Resolution rules per context (TD-76 Option C canonical shape):
+
+      * ``portal_sr`` — route to ``/api/public/job-photo/<jid>/<pid>``
+        (the resilient cascade in ``routers/jobs.py``). Falls back
+        to ``/api/public/service/<public_uuid>/photo/<pid>`` only
+        when ``job_id`` is absent (defensive — effectively never
+        occurs in prod).
+      * ``portal_jobs`` + ``portal_estimate`` — defensive raw
+        passthrough. These branches still carry free-form URLs
+        (B1/B2 in the audit). Phase B schema normalization will
+        tighten this; Phase A preserves the shape as-is.
+      * ``portal_file`` — ``/api/files/<file_id>/download``.
+      * ``portal_sr_detail`` — authenticated-customer streaming
+        URL ``/api/customers/me/jobs/<jid>/photos/<pid>`` with
+        the ``base_url`` prefix for absolute addressing.
+    """
+    pid = photo_doc.get("id") if isinstance(photo_doc, dict) else ""
+    if context == "portal_sr":
+        if job_id and pid:
+            full = f"/api/public/job-photo/{job_id}/{pid}"
+        elif public_uuid and pid:
+            full = f"/api/public/service/{public_uuid}/photo/{pid}"
+        else:
+            full = (isinstance(photo_doc, dict)
+                     and photo_doc.get("url")) or ""
+    elif context in ("portal_jobs", "portal_estimate"):
+        full = (isinstance(photo_doc, dict)
+                 and (photo_doc.get("url")
+                      or photo_doc.get("storage_path"))) or ""
+    elif context == "portal_file":
+        full = f"/api/files/{file_id}/download" if file_id else ""
+    elif context == "portal_sr_detail":
+        if job_id and pid:
+            full = f"{base_url}/api/customers/me/jobs/{job_id}/photos/{pid}"
+        else:
+            full = ""
+    else:
+        full = ""
+    return {"thumb_url": full, "full_url": full}
+
+
 def _is_image(mime: Optional[str]) -> bool:
     return bool(mime) and str(mime).lower().startswith("image/")
 
@@ -212,6 +288,9 @@ async def get_customer_media(
                 "job_id": j.get("id"),
                 "job_title": job_title_by_id.get(j.get("id")),
                 "media_id": p.get("id"),
+                # TD-76c · canonical fields + legacy ``url`` alias.
+                "thumb_url": p.get("url") or p.get("storage_path") or "",
+                "full_url": p.get("url") or p.get("storage_path") or "",
                 "url": p.get("url") or p.get("storage_path") or "",
                 "mime": mime,
                 "size_bytes": p.get("size_bytes") or 0,
@@ -266,6 +345,9 @@ async def get_customer_media(
                                     or e.get("service_type")
                                     or "Estimate"),
                 "media_id": p.get("id"),
+                # TD-76c · canonical fields + legacy ``url`` alias.
+                "thumb_url": p.get("url") or p.get("storage_path") or "",
+                "full_url": p.get("url") or p.get("storage_path") or "",
                 "url": p.get("url") or p.get("storage_path") or "",
                 "mime": mime,
                 "uploaded_at": p.get("uploaded_at"),
@@ -320,13 +402,14 @@ async def get_customer_media(
             # genuine SR share-link flow but is no longer the portal
             # consumer path.  ``public_uuid`` fallback preserved for
             # the rare case where ``job_id`` is absent.
+            # TD-76c · Feb-2026 — URL emission routed through the
+            # canonical ``resolve_photo_urls`` helper. Legacy ``url``
+            # kept as alias for mobile parity (Phase B removes it).
             _rjid = r.get("job_id")
-            if _rjid:
-                _url = f"/api/public/job-photo/{_rjid}/{p.get('id')}"
-            elif pub:
-                _url = f"/api/public/service/{pub}/photo/{p.get('id')}"
-            else:
-                _url = p.get("url") or ""
+            _urls = resolve_photo_urls(
+                p, context="portal_sr",
+                job_id=_rjid, public_uuid=pub,
+            )
             items.append({
                 "source": "service_report",
                 "kind": "photo",
@@ -334,7 +417,12 @@ async def get_customer_media(
                 "job_title": job_title_by_id.get(r.get("job_id")),
                 "report_id": r.get("id"),
                 "media_id": p.get("id"),
-                "url": _url,
+                # Canonical TD-76c fields (every FE call-site reads
+                # these in Phase A).
+                "thumb_url": _urls["thumb_url"],
+                "full_url": _urls["full_url"],
+                # Legacy alias — Phase B removes after mobile parity.
+                "url": _urls["full_url"],
                 "mime": mime,
                 "caption": p.get("caption") or "",
                 "uploaded_at": p.get("uploaded_at") or r.get("submitted_at"),
@@ -374,6 +462,9 @@ async def get_customer_media(
                            if f.get("linked_entity_type") == "job"
                            else None),
             "media_id": f.get("id"),
+            # TD-76c · canonical fields + legacy ``url`` alias.
+            "thumb_url": f"/api/files/{f.get('id')}/download",
+            "full_url": f"/api/files/{f.get('id')}/download",
             "url": f"/api/files/{f.get('id')}/download",
             "mime": mime,
             "size_bytes": f.get("size") or 0,

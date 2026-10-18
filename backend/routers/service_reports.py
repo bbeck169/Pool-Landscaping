@@ -3420,22 +3420,30 @@ def _build_customer_job_photos(job: dict, base_url: str = "") -> list:
         if not _pid:
             continue
         _rel = f"/api/customers/me/jobs/{job.get('id')}/photos/{_pid}"
+        _full = f"{base_url}{_rel}" if base_url else _rel
         entry: dict = {
             "id":            _pid,
             "caption":       p.get("caption") or p.get("label") or "",
             "created_at":    (p.get("uploaded_at") or p.get("created_at")
                                 or p.get("taken_at")),
             "uploader_role": p.get("uploader_role") or "technician",
-            # Token-scoped streaming URL — customer session enforces
-            # ownership. Absolute when ``base_url`` is set so mobile
-            # clients + shared magic-links resolve correctly.
-            "url":           f"{base_url}{_rel}" if base_url else _rel,
+            # TD-76c · canonical FE fields. ``full_url`` + ``thumb_url``
+            # are what the FE reads directly in Phase A. Legacy ``url``
+            # kept as an additive alias (mobile parity — Phase B
+            # removes after a dedicated mobile dispatch).
+            "thumb_url":     _full,
+            "full_url":      _full,
+            "url":           _full,
         }
         _thumb = p.get("thumb") or ""
         if _thumb:
             # Embedded thumbnail (data-URI) — no auth handshake for the
-            # ``<img>`` tag. Omitted entirely when absent.
+            # ``<img>`` tag. Omitted entirely when absent. When present,
+            # we prefer it as the ``thumb_url`` so the browser renders
+            # inline bytes instead of streaming — but ``full_url`` stays
+            # on the authenticated streaming route for the lightbox.
             entry["thumb"] = _thumb
+            entry["thumb_url"] = _thumb
         out.append(entry)
     return out
 
