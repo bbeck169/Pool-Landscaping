@@ -37,6 +37,7 @@ const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const BLUE = "#2563EB";
 
 import { formatCompletedAt } from "../../lib/dateTimeFormat";
+import { withAuthToken } from "../../lib/urlToken";
 
 // Phase K16 · Feb-2026 — thin alias so existing call sites keep
 // their ``formatDateTime(x)`` signature.  Canonical implementation
@@ -170,7 +171,7 @@ function MediaCarousel({ items = [] }) {
         {isVideo ? (
           <video
             key={cur?.id}
-            src={url + (token ? `?token=${encodeURIComponent(token)}` : "")}
+            src={withAuthToken(url, token)}
             controls
             autoPlay
             muted
@@ -196,7 +197,7 @@ function MediaCarousel({ items = [] }) {
             }}
           >
             <img
-              src={url + (token ? `?token=${encodeURIComponent(token)}` : "")}
+              src={withAuthToken(url, token)}
               alt=""
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
               data-testid="service-log-media-image"
@@ -348,7 +349,7 @@ function ImageLightbox({ items, index, token, onIndexChange, onClose }) {
   const url = cur.url
     ? (cur.url.startsWith("http") ? cur.url : `${BACKEND}${cur.url}`)
     : "";
-  const src = url + (token ? `?token=${encodeURIComponent(token)}` : "");
+  const src = withAuthToken(url, token);
 
   return (
     <div

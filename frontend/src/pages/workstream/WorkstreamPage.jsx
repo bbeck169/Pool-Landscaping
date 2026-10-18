@@ -48,6 +48,8 @@ const _STATUS_OPTIONS = ["", "pending", "in_progress", "completed", "cancelled"]
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
+import { withAuthToken } from "../../lib/urlToken";
+
 function relTime(iso) {
   if (!iso) return "";
   const then = new Date(iso).getTime();
@@ -192,7 +194,7 @@ function MediaStrip({ jid, media }) {
               autoPlay
               className="max-h-[85vh] max-w-full rounded-lg"
               onClick={(e) => e.stopPropagation()}
-              src={`${BACKEND}${preview.url}${token ? `?token=${encodeURIComponent(token)}` : ""}`}
+              src={withAuthToken(`${BACKEND}${preview.url}`, token)}
             />
           )}
         </div>
