@@ -2022,3 +2022,12 @@
 - **Changes**: new `src/lib/k6Unlock.ts` (`K6_UNLOCK_ROLES` — same 7 roles as the previous inline copy; `canEditCompletedJob(role, job)` = web `canEditCompleted`). `app/job/[id]/checklist.tsx` drops its inline set and calls the lib — gate expression + `effectiveLocked` unchanged. `__tests__/job-k6-unlock.test.tsx` repointed from regex-parsing checklist source to the lib (+ guards: role set unchanged, no inline duplicate).
 - **Files modified**: mobile/src/lib/k6Unlock.ts (new), mobile/app/job/[id]/checklist.tsx, mobile/__tests__/job-k6-unlock.test.tsx
 - **Tests**: 10 checklist-touching suites — 9 pass; `k61-checklist-contract` 2 failures identical on HEAD (pre-existing). tsc 651 (checklist's 8 errors identical on HEAD); eslint 9 warnings identical on HEAD.
+
+## Iteration 150 — m-td78b · "Closed job — edits logged" banner (web c1cb22dcc) + K6 Edit on mobile job detail
+- **Commit**: the `m-td78b` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: new `src/components/job/ClosedJobEditsBanner.tsx` — non-dismissible, web copy verbatim ("Closed job" bold + " — edits are logged to the audit history on this job."), surfaceSecondary bg / border / brand info icon (web palette). Rendered on `app/job/[id].tsx` (top of body) when `canEditCompleted = !isCustomer && canEditCompletedJob(role, job)`, and on `app/job/[id]/checklist.tsx` (above hero) when `canEditCompletedJob(role, job)` — web rule: completed AND K6 role.
+- **Scope adjustment (operator-default, audit)**: mobile job detail had NO K6 — its Edit affordance used only the 24h window. Now `canEditNow = inEditWindow || canEditCompleted` (web K6 parity; BE `role_bypasses_edit_window`). Label keeps "Edit (Xh left)" inside 24h, "Edit" past it.
+- **Live**: admin on completed demo job (>24h) → banner + "Edit" on job detail; banner on checklist.
+- **Tests**: new `closed-job-edits-banner-td78b.test.tsx` 8/8 — real job-detail renders for K6+completed (>24h & <24h), K6+in-progress, customer+completed, unknown-role+completed; checklist covered by source-wiring guard (a full checklist render harness stalled in its bootstrap path — deferred). job-k6-unlock + EditWindow green. tsc 651 (job detail 4 / checklist 8 pre-existing); eslint 18 warnings = HEAD.
+- **Files modified**: mobile/src/components/job/ClosedJobEditsBanner.tsx (new), mobile/app/job/[id].tsx, mobile/app/job/[id]/checklist.tsx, mobile/__tests__/closed-job-edits-banner-td78b.test.tsx (new)

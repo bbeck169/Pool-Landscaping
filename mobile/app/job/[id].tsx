@@ -41,6 +41,8 @@ import Row from "@/src/components/job/Row";
 import JobTimerCard from "@/src/components/job/JobTimerCard";
 // Feb-2026 · Slice 6 — 24h post-completion edit window (mobile).
 import { isWithinEditWindow, hoursSinceCompletion, EDIT_WINDOW_HOURS } from "@/src/lib/editWindow";
+import { canEditCompletedJob } from "@/src/lib/k6Unlock";
+import ClosedJobEditsBanner from "@/src/components/job/ClosedJobEditsBanner";
 import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 import CouldNotServiceButton from "@/src/components/schedule/CouldNotServiceButton";
 import LineItemsSection from "@/src/components/jobs/LineItemsSection";
@@ -210,8 +212,13 @@ export default function JobDetail() {
   const isCustomer = user?.role === "customer";
   const isTech = user?.role === "technician";
   const canManage = isAdmin || isTech;
-  const canEditNow = !isCustomer && isWithinEditWindow(job);
-  const editHoursLeft = canEditNow
+  // TD-78b · K6 (web JobDetail parity) — K6 roles keep the Edit
+  // affordance on completed jobs past the 24h window (BE
+  // `role_bypasses_edit_window`); the banner tells them edits are logged.
+  const canEditCompleted = !isCustomer && canEditCompletedJob(user?.role, job);
+  const inEditWindow = !isCustomer && isWithinEditWindow(job);
+  const canEditNow = inEditWindow || canEditCompleted;
+  const editHoursLeft = inEditWindow
     ? Math.max(0, EDIT_WINDOW_HOURS - (hoursSinceCompletion(job) || 0))
     : null;
 
@@ -482,6 +489,8 @@ export default function JobDetail() {
         </View>
 
         <View style={styles.body}>
+          {/* TD-78b — "Closed job — edits logged" (completed + K6 role). */}
+          {canEditCompleted ? <ClosedJobEditsBanner /> : null}
           {/* A5 · Smart Brief — tech intelligence pane at top of job detail */}
           <SmartBriefCard jobId={id as string} testID="smart-brief" />
           {/* Phase 1 Offline Read — "showing cached copy" banner */}
@@ -788,7 +797,9 @@ export default function JobDetail() {
                   testID="job-edit-button-label"
                 >
                   {online
-                    ? `Edit (${(editHoursLeft ?? 0).toFixed(1)}h left)`
+                    ? editHoursLeft != null
+                      ? `Edit (${editHoursLeft.toFixed(1)}h left)`
+                      : "Edit"
                     : "Online required to edit"}
                 </Text>
               </Pressable>
