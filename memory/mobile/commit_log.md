@@ -2031,3 +2031,10 @@
 - **Live**: admin on completed demo job (>24h) → banner + "Edit" on job detail; banner on checklist.
 - **Tests**: new `closed-job-edits-banner-td78b.test.tsx` 8/8 — real job-detail renders for K6+completed (>24h & <24h), K6+in-progress, customer+completed, unknown-role+completed; checklist covered by source-wiring guard (a full checklist render harness stalled in its bootstrap path — deferred). job-k6-unlock + EditWindow green. tsc 651 (job detail 4 / checklist 8 pre-existing); eslint 18 warnings = HEAD.
 - **Files modified**: mobile/src/components/job/ClosedJobEditsBanner.tsx (new), mobile/app/job/[id].tsx, mobile/app/job/[id]/checklist.tsx, mobile/__tests__/closed-job-edits-banner-td78b.test.tsx (new)
+
+## Iteration 151 — m-td78c · dispatcher in mobile K6 set (web/BE 1f3a1d5e1)
+- **Commit**: the `m-td78c` commit containing this entry
+- **Date**: 2026-10-18
+- **Changes**: `src/lib/k6Unlock.ts` += `"dispatcher"` (8 roles = BE `services/edit_window.py` + web JobDetail). Single canonical mobile copy → checklist editor + job detail (Edit + banner) move together.
+- **Tests**: `job-k6-unlock` role-set guard now 8 roles + dispatcher gate; `closed-job-edits-banner-td78b` += dispatcher closed job → Edit enabled ("Edit") + banner; dispatcher in-progress → no banner. 23/23. Dispatcher case FAILS on the pre-change 7-role lib (verified). No dispatcher user in preview DB (not seeded) → live screenshot as admin (banner + Edit, no redbox); dispatcher proven via Jest render.
+- **Files modified**: mobile/src/lib/k6Unlock.ts, mobile/__tests__/job-k6-unlock.test.tsx, mobile/__tests__/closed-job-edits-banner-td78b.test.tsx

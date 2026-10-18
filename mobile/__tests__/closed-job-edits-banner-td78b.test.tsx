@@ -134,6 +134,19 @@ describe("Job detail screen", () => {
     expect(q.queryByTestId("job-closed-edits-logged-banner")).toBeNull();
     expect(q.queryByTestId("job-edit-open")).toBeNull();
   });
+
+  it("TD-78c · dispatcher on a closed job → edit controls enabled + banner visible", async () => {
+    const q = await renderJD("dispatcher", job("completed", 72));
+    expect(q.getByTestId("job-closed-edits-logged-banner")).toBeTruthy();
+    const edit = q.getByTestId("job-edit-open");
+    expect(edit.props.accessibilityState?.disabled ?? edit.props.disabled ?? false).toBeFalsy();
+    expect(q.getByTestId("job-edit-button-label").props.children).toBe("Edit");
+  });
+
+  it("TD-78c · dispatcher on an in-progress job → banner hidden", async () => {
+    const q = await renderJD("dispatcher", job("active", null));
+    expect(q.queryByTestId("job-closed-edits-logged-banner")).toBeNull();
+  });
 });
 
 describe("Checklist screen wiring (same web rule)", () => {

@@ -15,10 +15,11 @@ const gate = (role: string, locked: boolean, status: string) => {
 };
 
 describe("K6 edit unlock", () => {
-  it("role set matches the pre-extraction inline set (behaviour unchanged)", () => {
+  it("role set = BE/web K6_UNLOCK_ROLES (8 roles incl. dispatcher · TD-78c)", () => {
     expect([...K6_UNLOCK_ROLES].sort()).toEqual(
-      ["admin", "employee", "manager", "owner", "super_admin", "tech", "technician"],
+      ["admin", "dispatcher", "employee", "manager", "owner", "super_admin", "tech", "technician"],
     );
+    expect(gate("dispatcher", true, "completed")).toEqual({ canEditCompleted: true, effectiveLocked: false });
   });
 
   it("checklist consumes the lib — no inline duplicate set", () => {

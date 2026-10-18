@@ -11,6 +11,8 @@ export const K6_UNLOCK_ROLES: ReadonlySet<string> = new Set([
   "super_admin", "admin", "manager", "tech", "technician", "owner",
   // Forward-compat — no seeded user carries "employee" today.
   "employee",
+  // TD-78c (web/BE 1f3a1d5e1) — dispatchers can edit closed jobs.
+  "dispatcher",
 ]);
 
 /** Web `canEditCompleted`: K6 role AND job status === "completed".
