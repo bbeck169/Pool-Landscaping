@@ -318,10 +318,10 @@ describe("Case 5 · OpsHub::Crews toggle uses functional setForm", () => {
 
 
 // ══════════════════════════════════════════════════════════════════
-//  Case 6  —  Backend defense: ops.py PATCH tech_ids type guard
+//  Case 6  —  Backend defense: ops.py tech_ids type + tenant guard
 // ══════════════════════════════════════════════════════════════════
 
-describe("Case 6 · backend PATCH tech_ids defense (source-level)", () => {
+describe("Case 6 · backend tech_ids defense (source-level)", () => {
   const SRC = fs.readFileSync(
     path.resolve(__dirname, "../../../backend/routers/ops.py"),
     "utf8",
@@ -337,8 +337,13 @@ describe("Case 6 · backend PATCH tech_ids defense (source-level)", () => {
       /tech_ids entries must be non-empty strings/);
   });
 
-  it("rejects cross-tenant member ids", () => {
-    expect(SRC).toMatch(
-      /tech_ids references members not in this tenant/);
+  it("rejects out-of-tenant / orphan member ids with the TD-86 categorised payload", () => {
+    // TD-86 · Feb-2026 — the guard now returns a structured 400
+    // payload distinguishing ``foreign_tenant`` ids from ``orphan``
+    // ids. Lock the key tokens so a regression that reverts to the
+    // old plain-string message fails here first.
+    expect(SRC).toMatch(/crew tech_ids validation failed/);
+    expect(SRC).toMatch(/"reason":\s*"foreign_tenant"/);
+    expect(SRC).toMatch(/"reason":\s*"orphan"/);
   });
 });

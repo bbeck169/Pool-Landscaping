@@ -45,6 +45,109 @@ def _crew_member_added_at_map(
     return {tid: ts for tid in (tech_ids or []) if tid}
 
 
+async def _normalise_crew_tech_ids(raw_ids) -> List[str]:
+    """TD-86 · Feb-2026 — type coerce + dedupe helper.
+
+    Raises ``HTTPException(400)`` on non-list input and on non-string
+    entries.  Preserves insertion order while dropping duplicates.
+    """
+    if raw_ids is None:
+        return []
+    if not isinstance(raw_ids, list):
+        raise HTTPException(
+            400, "tech_ids must be an array of user ids",
+        )
+    normalised: List[str] = []
+    seen: set = set()
+    for x in raw_ids:
+        if not isinstance(x, str) or not x:
+            raise HTTPException(
+                400, "tech_ids entries must be non-empty strings",
+            )
+        if x in seen:
+            continue
+        seen.add(x)
+        normalised.append(x)
+    return normalised
+
+
+async def _resolve_tenant_members(
+    tenant_id: str, ids: List[str],
+) -> dict:
+    """TD-86 · Feb-2026 — shared crew-member tenant predicate.
+
+    Resolves ``ids`` against ``users`` + ``technicians`` scoped to
+    ``tenant_id``, then categorises every ``missing`` id by probing
+    the two collections WITHOUT a tenant filter so the caller can
+    distinguish "exists in another tenant" (``foreign_tenant``)
+    from "doesn't exist anywhere" (``orphan``).
+
+    Returns::
+
+        {
+            "resolved":  set[str],   # ids present in this tenant
+            "missing":   list[str],  # ids not in this tenant
+            "errors":    list[dict], # categorised 400 payload entries
+        }
+
+    Each ``errors`` entry has shape::
+
+        {"tech_id": "<id>",
+         "reason":  "foreign_tenant" | "orphan",
+         "tenant_id": "<other_tenant>"  # foreign_tenant only
+        }
+
+    Used by both ``create_crew`` (POST) and ``update_crew`` (PATCH)
+    so the two save paths share one source of truth for the guard.
+    """
+    if not ids:
+        return {"resolved": set(), "missing": [], "errors": []}
+
+    resolved: set = set()
+    async for u in db.users.find(
+        {"tenant_id": tenant_id, "id": {"$in": ids}},
+        {"_id": 0, "id": 1},
+    ):
+        resolved.add(u["id"])
+    if len(resolved) < len(ids):
+        async for t in db.technicians.find(
+            {"tenant_id": tenant_id, "id": {"$in": ids}},
+            {"_id": 0, "id": 1},
+        ):
+            resolved.add(t["id"])
+
+    missing = [x for x in ids if x not in resolved]
+    if not missing:
+        return {"resolved": resolved, "missing": [], "errors": []}
+
+    # Categorise each missing id — probe users + technicians across
+    # ALL tenants so we can tell foreign_tenant from orphan.
+    foreign_map: dict = {}
+    async for u in db.users.find(
+        {"id": {"$in": missing}}, {"_id": 0, "id": 1, "tenant_id": 1},
+    ):
+        if u.get("id") and u.get("tenant_id") and u["tenant_id"] != tenant_id:
+            foreign_map[u["id"]] = u["tenant_id"]
+    async for t in db.technicians.find(
+        {"id": {"$in": [x for x in missing if x not in foreign_map]}},
+        {"_id": 0, "id": 1, "tenant_id": 1},
+    ):
+        if t.get("id") and t.get("tenant_id") and t["tenant_id"] != tenant_id:
+            foreign_map.setdefault(t["id"], t["tenant_id"])
+
+    errors: List[dict] = []
+    for mid in missing:
+        if mid in foreign_map:
+            errors.append({
+                "tech_id": mid,
+                "reason": "foreign_tenant",
+                "tenant_id": foreign_map[mid],
+            })
+        else:
+            errors.append({"tech_id": mid, "reason": "orphan"})
+    return {"resolved": resolved, "missing": missing, "errors": errors}
+
+
 @router.get("/crews")
 async def list_crews(user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant)):
@@ -103,6 +206,24 @@ async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
     # GET → the user sees "crews not saving". Mirror the tenant-
     # scoping already applied to /technicians and /jobs.
     doc = body.dict()
+    # TD-86 · Feb-2026 — mirror the PATCH tenant guard so new crews
+    # can never land with foreign-tenant / orphan tech_ids. The prior
+    # implementation accepted whatever the FE sent, which is the
+    # mechanism by which the preview DB accumulated orphan ids on
+    # existing crew docs (see /app/memory/td86_crew_tenant_audit.md).
+    normalised = await _normalise_crew_tech_ids(doc.get("tech_ids"))
+    if normalised:
+        probe = await _resolve_tenant_members(tenant["id"], normalised)
+        if probe["errors"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "detail": "crew tech_ids validation failed",
+                    "field": "tech_ids",
+                    "errors": probe["errors"],
+                },
+            )
+    doc["tech_ids"] = normalised
     _now = now_iso()
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": _now})
     # CREW-SCHEDULE-FANOUT · Feb-2026 — stamp a ``member_added_at``
@@ -152,50 +273,24 @@ async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
     # so a future caller sending a non-array ``tech_ids`` field OR a
     # tech_id that belongs to a different tenant fails loudly instead
     # of silently truncating the saved roster.
+    #
+    # TD-86 · Feb-2026 — swapped the inline predicate for the shared
+    # ``_resolve_tenant_members`` helper (also used by POST) and
+    # enriched the 400 payload with a categorised ``errors`` array
+    # that distinguishes foreign-tenant ids from fully orphan ids.
+    # See /app/memory/td86_crew_tenant_audit.md for the shape spec.
     if "tech_ids" in body:
-        raw_ids = body.get("tech_ids")
-        if raw_ids is None:
-            raw_ids = []
-        if not isinstance(raw_ids, list):
-            raise HTTPException(
-                400, "tech_ids must be an array of user ids",
-            )
-        # Normalise + de-dupe while preserving order.
-        normalised: List[str] = []
-        seen: set = set()
-        for x in raw_ids:
-            if not isinstance(x, str) or not x:
-                raise HTTPException(
-                    400, "tech_ids entries must be non-empty strings",
-                )
-            if x in seen:
-                continue
-            seen.add(x)
-            normalised.append(x)
-        # Tenant isolation — every incoming id must resolve to a
-        # user OR technician in the caller's tenant.  Prevents a
-        # stale foreign id from landing on a crew when a user is
-        # migrated between tenants.
+        normalised = await _normalise_crew_tech_ids(body.get("tech_ids"))
         if normalised:
-            tid = tenant["id"]
-            resolved = set()
-            async for u in db.users.find(
-                {"tenant_id": tid, "id": {"$in": normalised}},
-                {"_id": 0, "id": 1},
-            ):
-                resolved.add(u["id"])
-            if len(resolved) < len(normalised):
-                async for t in db.technicians.find(
-                    {"tenant_id": tid, "id": {"$in": normalised}},
-                    {"_id": 0, "id": 1},
-                ):
-                    resolved.add(t["id"])
-            missing = [x for x in normalised if x not in resolved]
-            if missing:
+            probe = await _resolve_tenant_members(tenant["id"], normalised)
+            if probe["errors"]:
                 raise HTTPException(
-                    400,
-                    "tech_ids references members not in this tenant: "
-                    f"{missing}",
+                    status_code=400,
+                    detail={
+                        "detail": "crew tech_ids validation failed",
+                        "field": "tech_ids",
+                        "errors": probe["errors"],
+                    },
                 )
         body["tech_ids"] = normalised
     body["updated_at"] = now_iso()
