@@ -127,17 +127,20 @@ describe("<ScheduleMap /> — numbered pins", () => {
     //
     // ``formatPinLabel`` zero-pads single-digit values so "01" is
     // the expected textContent regardless of which seq slot a
-    // job lands in. Feb-2026 schedule-map tech-labels bug fix —
-    // when the tech record resolves to readable initials the pin
-    // label becomes ``NN·II``; unassigned pins keep the bare
-    // zero-padded stop number. Techs in this fixture: Alex Tech
-    // (AT) + Bella Tech (BT).
+    // job lands in.
+    //
+    // TD-87 · Feb-2026 — the on-pin visible label is now the
+    // pure zero-padded stop number (no ``·II`` tech-initials
+    // suffix). The tech is still identifiable via pin colour +
+    // tooltip; the ``data-tech-initials`` attribute remains
+    // available for downstream consumers.  Pre-TD-87 the three
+    // asserts were ``01·AT``, ``01·BT``, and ``01``.
     expect(
       screen.getByTestId("schedule-map-pin-job-1-svg-label").textContent,
-    ).toBe("01·AT");
+    ).toBe("01");
     expect(
       screen.getByTestId("schedule-map-pin-job-2-svg-label").textContent,
-    ).toBe("01·BT");
+    ).toBe("01");
     expect(
       screen.getByTestId("schedule-map-pin-job-3-svg-label").textContent,
     ).toBe("01");
@@ -150,13 +153,15 @@ describe("<ScheduleMap /> — numbered pins", () => {
     // within the tech group so every assigned job gets a label.
     // Here, tech-a has job-1 (slotted) + job-4 (unslotted). The
     // hybrid resolver puts job-1 first (slotted wins) and
-    // appends job-4 at sequence 2 → label "02" (now "02·AT" with
-    // the Feb-2026 tech-initials bug fix on top of the pin).
+    // appends job-4 at sequence 2 → label "02".
+    //
+    // TD-87 · Feb-2026 — pure zero-padded stop number
+    // (pre-TD-87 this was ``02·AT``).
     render(<ScheduleMap jobs={_mkJobs()} techs={_techs}
                         techColorMap={_techColorMap} />);
     expect(
       screen.getByTestId("schedule-map-pin-job-4-svg-label").textContent,
-    ).toBe("02·AT");
+    ).toBe("02");
   });
 });
 

@@ -170,14 +170,17 @@ describe("ScheduleMap · Phase B.5 per-tech sequence numbering", () => {
       <ScheduleMap jobs={jobs} techs={_techs}
                     techColorMap={_techColorMap} />,
     );
-    // Feb-2026 schedule-map tech-labels bug fix — ``data-pin-
-    // sequence`` now reflects the full on-pin label, which is
-    // ``NN·II`` when the tech has readable initials. Fixture
-    // ``_techs`` has Alex Rivera (AR) assigned to both jobs.
+    // TD-87 · Feb-2026 schedule-map pin label change — the on-pin
+    // visible label (and ``data-pin-sequence``, which mirrors it)
+    // is now the pure zero-padded stop number. The tech is still
+    // identifiable via pin colour, the ``data-tech-initials``
+    // attribute (preserved for the legend row + tests below),
+    // and the hover tooltip (``Stop NN — Alex``).  Pre-TD-87
+    // these two assertions were ``01·AR`` and ``02·AR``.
     expect(screen.getByTestId("schedule-map-pin-jA")
-      .getAttribute("data-pin-sequence")).toBe("01·AR");
+      .getAttribute("data-pin-sequence")).toBe("01");
     expect(screen.getByTestId("schedule-map-pin-jB")
-      .getAttribute("data-pin-sequence")).toBe("02·AR");
+      .getAttribute("data-pin-sequence")).toBe("02");
     // Keep a direct lock on the tech-attribution testid plumbing
     // so a regression in the resolver blows up here too.
     expect(screen.getByTestId("schedule-map-pin-jA")

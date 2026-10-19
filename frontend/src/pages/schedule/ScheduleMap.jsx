@@ -460,14 +460,18 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
           || (Number.isFinite(routeIdx) ? routeIdx + 1 : undefined);
         // Feb-2026 · Pin-label resolver (operator bug fix).
         //
-        // The stop-number pin disc is tight on space, so when the
-        // technician has resolvable initials we render a compact
-        // ``NN·II`` label (e.g. ``01·EM`` for stop 1 of Ethan M.);
-        // when no name data is available we fall back to just the
-        // zero-padded stop number so the pin stays legible. The
-        // ``title`` on the surrounding button carries the full
-        // "Stop NN — Ethan" hover tooltip in every branch (see
-        // the ``aria-label`` / ``title`` block below).
+        // The stop-number pin disc is tight on space; the pin
+        // COLOUR already identifies the technician (legend +
+        // stroke pairing), so the historical ``NN·II`` suffix
+        // (e.g. ``01·EM``) was redundant.
+        //
+        // TD-87 · Feb-2026 — label is now the pure zero-padded
+        // stop number (e.g. ``01``, ``04``, ``13``).  The hover
+        // tooltip + aria-label (``Stop NN — Ethan``) still
+        // carries the tech first name for accessibility; the
+        // ``data-tech-initials`` attribute is retained for
+        // downstream consumers (tests + the legend row).  Only
+        // the on-pin visible label is affected.
         const techInitials = job.technician_id
           ? resolveTechInitials(job.technician_id, techs)
           : "";
@@ -478,9 +482,7 @@ function _ClusteredMarkers({ pins, techColorMap, colorMode, onSelect,
           const padded = Number.isFinite(stopNum)
             ? (stopNum < 10 ? `0${stopNum}` : String(stopNum))
             : String(stopNum);
-          pinLabel = techInitials
-            ? `${padded}·${techInitials}`
-            : padded;
+          pinLabel = padded;
         }
         const techFirstName = job.technician_id
           ? resolveTechFirstName(job.technician_id, techs)
