@@ -23,6 +23,16 @@ from routers.tenants import get_current_tenant
 # Feb-2026 · Phase F1 — crew-aware tech authorization helper.
 from services.authz import is_tech_authorized_on_job
 from services.chemistry import classify_reading, classify_readings
+# TD-88 · Feb-2026 — canonical photo URL emission on SR responses.
+# Reuses the TD-76 Ph2f shared helper so SR GET / PATCH / submit
+# responses stamp ``thumb_url`` + ``full_url`` + legacy ``url`` on
+# every ``photos[]`` subdoc, matching the shape every other TD-76
+# Phase B surface emits.  BE SR fallback at
+# ``routers/jobs.py::_find_sr_photo_by_job_and_id`` resolves the
+# emitted URL for both ``jobs.photos`` and ``service_reports.photos``
+# id spaces (see TD-89 bookmark in TECH_DEBT.md for the semantic
+# cleanup).  "Don't let two helpers drift" — single shared helper.
+from services.jobs_slim_photos import inject_photo_url_on_doc
 from services.water_bodies import (
     BODY_TYPE_LABELS,
     WaterBodyValidationError,
@@ -499,6 +509,15 @@ async def get_service_report(jid: str,
         _body_readings = _body0.get("readings") or []
         if not _top_readings and _body_readings:
             existing["chemical_readings"] = list(_body_readings)
+    # TD-88 · Feb-2026 — stamp canonical ``thumb_url`` / ``full_url`` /
+    # legacy ``url`` on every ``photos[]`` subdoc so the FE
+    # ``PhotoUploader`` consumes the resolved URL fields directly
+    # instead of composing raw ``/api/public/job-photo/{jid}/{pid}``
+    # paths against the id space (which drifts between
+    # ``jobs.photos`` and ``service_reports.photos`` across read vs
+    # write paths — see TD-89).  Idempotent: pre-existing fields are
+    # preserved per the helper's contract.
+    inject_photo_url_on_doc(existing, jid)
     return existing
 
 
@@ -724,6 +743,12 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
         await store_response(key, "PATCH /jobs/{jid}/service-report",
                               tenant["id"], resp,
                               body.dict(exclude_unset=True))
+    # TD-88 · Feb-2026 — canonical photo URL stamp on PATCH response
+    # (same contract as the GET endpoint above).  Ensures the FE
+    # autosave reconciliation (``setReport(patched)``) carries
+    # resolved URL fields through so the lightbox renders without
+    # waiting for a page reload.
+    inject_photo_url_on_doc(resp, jid)
     return resp
 
 
@@ -825,6 +850,10 @@ async def submit_service_report(
             await store_response(idem_key,
                                   "POST /jobs/{jid}/service-report/submit",
                                   tenant["id"], rep, idem_body)
+        # TD-88 · Feb-2026 — stamp canonical photo URLs on the
+        # idempotent-replay response so the FE never sees a
+        # pre-canonical shape even on resubmit cycles.
+        inject_photo_url_on_doc(rep, jid)
         return rep  # idempotent
     # Feb-2026 · Chemistry required-readings gate.  Pool jobs MUST
     # have the Required Four (Free Cl, Alkalinity, pH, CYA — see
@@ -1921,6 +1950,10 @@ async def submit_service_report(
         await store_response(idem_key,
                               "POST /jobs/{jid}/service-report/submit",
                               tenant["id"], out, idem_body)
+    # TD-88 · Feb-2026 — stamp canonical photo URLs on the final
+    # submit response so admin/portal lightbox surfaces see resolved
+    # URL fields on close-job + reload.
+    inject_photo_url_on_doc(out, jid)
     return out
 
 
