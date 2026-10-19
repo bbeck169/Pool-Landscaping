@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { writeCache, readCache } from "@/src/services/readCache";
@@ -36,6 +36,10 @@ export default function Invoices() {
   const { showToast } = useToast();
   const [data, setData] = useState<any>({ summary: null, invoices: [] });
   const [filter, setFilter] = useState("all");
+  const params = useLocalSearchParams<{ customer_id?: string }>();
+  const [custFilter, setCustFilter] = useState<string | null>(
+    params.customer_id ? String(params.customer_id) : null,
+  );
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [payFor, setPayFor] = useState<any>(null);
@@ -64,7 +68,10 @@ export default function Invoices() {
   // Any other value maps to a boolean field on the invoice row
   // (``pending``, ``paid``, ``overdue`` …).
   const invoices = (data.invoices || []).filter((i: any) =>
-    filter === "all" || filter === "outstanding" ? true : i[filter],
+    (filter === "all" || filter === "outstanding" ? true : i[filter]) &&
+    // TD-79 — `/invoices?customer_id=<cid>` (customer Overview "View all").
+    // `/invoices/overview` has no customer param, so filter client-side.
+    (!custFilter || i.customer_id === custFilter),
   );
   const visibleIds = invoices.map((i: any) => i.id);
   const bulk = useBulkSelect(visibleIds);
@@ -230,6 +237,26 @@ export default function Invoices() {
       ) : null}
 
       <FilterRow options={FILTERS} value={filter} onChange={setFilter} testID="invoices-filter" />
+
+      {custFilter ? (
+        <View style={styles.custChip} testID="invoices-customer-filter-chip">
+          <Ionicons name="person-outline" size={14} color={colors.brand} />
+          <Text style={styles.custChipText} numberOfLines={1}>
+            {(() => {
+              const first = (data.invoices || []).find((i: any) => i.customer_id === custFilter);
+              return first ? `Customer: ${formatCustomerName(first)}` : "Customer filter";
+            })()}
+          </Text>
+          <Pressable
+            onPress={() => setCustFilter(null)}
+            hitSlop={12}
+            accessibilityLabel="Clear customer filter"
+            testID="invoices-customer-filter-clear"
+          >
+            <Ionicons name="close-circle" size={18} color={colors.muted} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {s && s.failed && s.failed.count > 0 ? (
         <Pressable style={styles.failBanner} onPress={() => setFilter("charge_failed")} testID="invoices-fail-banner">
@@ -410,6 +437,12 @@ const styles = StyleSheet.create({
   inputLabel: { fontFamily: font.semibold, fontSize: 11, letterSpacing: 0.8, color: colors.onSurfaceSecondary, marginBottom: spacing.xs },
   input: { backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 48, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
   hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 6, lineHeight: 18 },
+  custChip: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, alignSelf: "flex-start",
+    marginHorizontal: spacing.lg, marginTop: spacing.sm, paddingHorizontal: spacing.md, minHeight: 36,
+    borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  custChipText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface, maxWidth: 240 },
   failBanner: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.error, marginHorizontal: spacing.lg, marginTop: spacing.sm, paddingHorizontal: spacing.md, height: 44, borderRadius: radius.md },
   failBannerText: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
   failStrip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FEE2E2", borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 8, marginTop: spacing.md },

@@ -2045,3 +2045,11 @@
 - **Changes**: `__tests__/phase19-portal-readability.test.ts` — design-correctness update (not a scope reduction). Replaced "no navy page bg" + "no PortalPageShell" (contradicted shipped TD-68 b0f6dc3da) with positive TD-68 locks: shell = white #FFFFFF card on navy #03002e, dark text token on the card; SR list / SR detail / review-submit import PortalPageShell + navy root. Light-root rule kept for all other portal screens; light-token + Phase 25 home dark-consistency tests preserved. `memory/TECH_DEBT.md` += TD-78b checklist banner full-render test gap.
 - **Tests**: phase19 5/5; full suite 42 failed suites / 48 failed tests (back to pre-work baseline from 43/50). tsc 0 in file; eslint clean.
 - **Files modified**: mobile/__tests__/phase19-portal-readability.test.ts, memory/TECH_DEBT.md, memory/mobile/commit_log.md
+
+## Iteration 153 — m-invoices-filter · mobile invoice list `?customer_id=` (TD-79 prerequisite)
+- **Commit**: the `m-invoices-filter` commit containing this entry
+- **Date**: 2026-10-19
+- **Changes**: `app/invoices.tsx` reads `useLocalSearchParams().customer_id`; `/invoices/overview` has no customer param (BE untouched) → client-side filter on `customer_id`, ANDed with the status FilterRow. Clearable chip "Customer: <name>" (`invoices-customer-filter-chip` / `-clear`).
+- **Caveat**: `/invoices/overview` is the AR overview (live: customer with 4 invoices shows 2), so "View all" lands on that customer's AR invoices, not every status like web InvoicesList.
+- **Tests**: new `invoices-customer-filter.test.tsx` 2/2. `bulk-charge-ach-mobile` + `k40-default-filters` failures identical on HEAD (pre-existing). tsc 651 (1 shifted pre-existing `fontSize.xs`); eslint clean.
+- **Files modified**: mobile/app/invoices.tsx, mobile/__tests__/invoices-customer-filter.test.tsx (new)
