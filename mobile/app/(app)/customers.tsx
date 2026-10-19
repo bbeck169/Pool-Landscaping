@@ -64,6 +64,15 @@ export default function Customers() {
   // lands the operator on the Active cohort. Web parity: same
   // behaviour landed simultaneously in CustomersList.jsx.
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all" | "waitlist">("active");
+  // Dashboard parity · web CustomersList reads `?tab=` || `?status=`
+  // (Inactive Customers KPI tile). Default stays "active" when absent;
+  // the param is cleared after applying so a repeat tile tap re-applies.
+  const statusParam = (routeParams as any)?.tab || (routeParams as any)?.status;
+  useEffect(() => {
+    if (!["active", "inactive", "all", "waitlist"].includes(String(statusParam))) return;
+    setStatusFilter(statusParam as any);
+    router.setParams({ tab: undefined, status: undefined } as any);
+  }, [statusParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // P43c corrected — Portal status tri-state ("" = any, "activated" = Signed in, "not_activated" = Never signed in).
   const [portalFilter, setPortalFilter] = useState<"" | "activated" | "not_activated">("");

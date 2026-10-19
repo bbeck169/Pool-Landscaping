@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter, Redirect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter, Redirect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { api } from "@/src/api";
@@ -31,6 +31,15 @@ export default function Jobs() {
   const online = useOnline();
   const [jobs, setJobs] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
+  // Dashboard parity · web JobsList seeds its status from `?status=`
+  // (Active Jobs / Pending KPI tiles). Tabs stay mounted, so apply the
+  // param on every change and clear it so a repeat tile tap re-applies.
+  const { status: statusParam } = useLocalSearchParams<{ status?: string }>();
+  useEffect(() => {
+    if (!statusParam || !FILTERS.some((f) => f.key === statusParam)) return;
+    setFilter(statusParam);
+    router.setParams({ status: undefined } as any);
+  }, [statusParam]); // eslint-disable-line react-hooks/exhaustive-deps
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
