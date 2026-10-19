@@ -73,7 +73,7 @@ import AppTextInput from "@/src/components/ui/AppTextInput";
 import { AddressLink } from "@/src/components/customer";
 
 export default function CustomerDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab: tabParam } = useLocalSearchParams<{ id: string; tab?: string }>();
   const { showToast } = useToast();
   const { user, startImpersonation } = useAuth();
   const router = useRouter();
@@ -201,6 +201,18 @@ export default function CustomerDetail() {
       load();
     }, [load])
   );
+
+  // Dashboard parity · web `/customers/<id>?tab=properties` (Properties
+  // list row tap). Mobile profile is one scroll stack → jump to that
+  // section once, after the profile has rendered.
+  const tabJumped = React.useRef(false);
+  React.useEffect(() => {
+    if (tabJumped.current || loading || !c || !tabParam || tabParam === "overview") return;
+    if (!QUICK_ACTIONS.some((a) => a.k === tabParam)) return;
+    tabJumped.current = true;
+    setActiveQa(tabParam);
+    setTimeout(() => jumpTo(tabParam), 350);
+  }, [loading, c, tabParam, jumpTo]);
 
   const createLogin = async () => {
     const pw = loginPw;

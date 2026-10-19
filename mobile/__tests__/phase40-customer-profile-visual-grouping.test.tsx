@@ -16,6 +16,7 @@ import { render, waitFor, act, within, fireEvent } from "@testing-library/react-
 
 const mockApiGet = jest.fn();
 let mockRole = "admin";
+let mockRouteParams: any = { id: "cust-1" };
 jest.mock("@/src/api", () => {
   class ApiError extends Error {
     status: number; detail: string;
@@ -32,7 +33,7 @@ jest.mock("@/src/auth", () => ({
 }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
-  useLocalSearchParams: () => ({ id: "cust-1" }),
+  useLocalSearchParams: () => mockRouteParams,
   usePathname: () => "/",
   useSegments: () => [],
   useFocusEffect: (cb: any) => require("react").useEffect(() => { cb(); }, []),
@@ -158,7 +159,7 @@ function ids(node: any, out: string[] = []): string[] {
 const qaKeys = (r: any) => ids(r.toJSON()).filter((i) => /^cd-quick-action-[a-z_]+$/.test(i) && i !== "cd-quick-action-grid").map((i) => i.replace("cd-quick-action-", ""));
 const iconColor = (r: any, k: string) => within(r.getByTestId(`cd-quick-action-${k}`)).getByTestId(`icon-${ICONS[k]}`).props.accessibilityHint;
 
-beforeEach(() => { jest.clearAllMocks(); mockRole = "admin"; });
+beforeEach(() => { jest.clearAllMocks(); mockRole = "admin"; mockRouteParams = { id: "cust-1" }; });
 
 describe("Phase 40 · tokens", () => {
   it("mirror web Phase 38 hex values", () => {
@@ -239,6 +240,22 @@ describe("Phase 40 · navigation tile grid", () => {
       await act(async () => { await new Promise((res) => setTimeout(res, 160)); });
       expect([k, sv.scrollTo.mock.calls.length, sv.scrollTo.mock.calls[0]?.[0]]).toEqual([k, 1, { y: y - 12, animated: true }]);
     }
+  });
+  it("dashboard parity · ?tab=properties (Properties list row tap) jumps to the Properties section once + marks its tile", async () => {
+    mockRouteParams = { id: "cust-1", tab: "properties" };
+    const r = await mount();
+    const sv: any = r.UNSAFE_getByType(ScrollView).instance;
+    fireEvent(r.getByTestId("cd-anchor-properties"), "layout", { nativeEvent: { layout: { x: 0, y: 2100, width: 300, height: 100 } } });
+    await act(async () => { await new Promise((res) => setTimeout(res, 600)); });
+    expect(sv.scrollTo.mock.calls).toEqual([[{ y: 2100 - 12, animated: true }]]);
+    expect(r.getByTestId("cd-quick-action-properties").props.accessibilityState).toMatchObject({ selected: true });
+  });
+  it("no / unknown ?tab → no auto-scroll", async () => {
+    mockRouteParams = { id: "cust-1", tab: "bogus" };
+    const r = await mount();
+    const sv: any = r.UNSAFE_getByType(ScrollView).instance;
+    await act(async () => { await new Promise((res) => setTimeout(res, 600)); });
+    expect(sv.scrollTo).not.toHaveBeenCalled();
   });
   it("anchors wrap the right sections", async () => {
     const r = await mount();
