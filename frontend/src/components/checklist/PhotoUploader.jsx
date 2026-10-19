@@ -10,9 +10,14 @@
  * JobDetail upload contract on web + mobile).
  *
  * Feb-2026 · Thumbnails + upload guardrails
- *   * List thumbnails render via ``/api/public/job-photo/{jid}/{pid}/thumb``
- *     with ``loading="lazy"`` so the full base64 blob never lands
- *     in the DOM.
+ *   * List thumbnails render via BE-emitted canonical URL fields
+ *     (``p.thumb_url`` / ``p.url``) stamped by
+ *     ``services/jobs_slim_photos::inject_photo_url_on_doc`` on
+ *     every SR response (TD-88 · Feb-2026).  Pre-TD-88 the FE
+ *     composed the thumbnail URL by hand against ``p.id``, which
+ *     was fragile under the SR GET-vs-PATCH id-space drift
+ *     (see TD-89 bookmark in ``memory/TECH_DEBT.md``).  Fallback
+ *     ladder: ``p.thumb_url || p.url || p.data || p.data_url``.
  *   * Client-side canvas compression fires via ``compressImageIfNeeded``.
  *     Post-compression, we assert the encoded size is under
  *     ``MAX_UPLOAD_BYTES`` (5 MB) so uploads that STILL can't get
@@ -138,13 +143,19 @@ export default function PhotoUploader({
 
       <div className="grid grid-cols-4 gap-2">
         {photos.map((p) => {
-          // Feb-2026 · Thumbnails ship — prefer the public thumb
-          // route over the embedded base64 blob so list-view DOM
-          // stays tiny. Falls back to the base64 payload only when
-          // the caller didn't hand us a jobId (rare).
-          const thumbSrc = jobId
-            ? `/api/public/job-photo/${jobId}/${p.id}/thumb`
-            : (p.data || p.url);
+          // TD-88 · Feb-2026 — consume canonical URL fields emitted by
+          // the BE (``inject_photo_url_on_doc`` on the SR GET / PATCH /
+          // submit response, TD-76 Ph2f-style ladder).  Drops the raw
+          // ``/api/public/job-photo/${jobId}/${p.id}/thumb`` path
+          // composition that was fragile under the read-vs-write
+          // id-space drift between ``jobs.photos`` + ``service_reports.photos``
+          // (see TD-89 bookmark).  Fallback chain mirrors every other
+          // TD-76 Phase B surface:
+          //   1. ``thumb_url``   — BE-emitted thumbnail route.
+          //   2. ``url``         — legacy canonical alias / full route.
+          //   3. ``data``        — base64 inline (upload-response fresh).
+          //   4. ``data_url``    — alt field name for base64 inline.
+          const thumbSrc = p.thumb_url || p.url || p.data || p.data_url;
           return (
             <div key={p.id} className="relative aspect-square rounded-lg overflow-hidden"
                  style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
