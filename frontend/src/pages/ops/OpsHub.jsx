@@ -554,6 +554,42 @@ function Workstream() {
 function Crews() {
   const [rows, refresh] = useList("/crews");
   const [techs] = useList("/technicians");
+  // TD-86 · Feb-2026 — crew member picker tenant-scope + orphan
+  // prune defense. The BE already scopes ``/api/technicians`` to
+  // the caller's tenant; this fetches the resolved tenant id so
+  // the picker render can defensively drop any cross-tenant row
+  // that slips through (super_admin override case). The
+  // ``openEdit`` form seed also uses the current ``techs`` set to
+  // prune orphan / cross-tenant ids from ``c.tech_ids`` so a
+  // crew with legacy drift can be saved without surfacing the
+  // misleading 400. See
+  // /app/memory/td86_crew_tenant_audit.md for the audit.
+  const [currentTenantId, setCurrentTenantId] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/tenants/current")
+      .then((t) => { if (!cancelled) setCurrentTenantId(t?.id || null); })
+      .catch(() => { if (!cancelled) setCurrentTenantId(null); });
+    return () => { cancelled = true; };
+  }, []);
+  // TD-86 · belt-and-braces picker filter — drops any tech row
+  // whose ``tenant_id`` isn't the current tenant.  No-op in the
+  // common case (BE is correctly scoped); only triggers if a
+  // super_admin cross-tenant override leaks a foreign row.
+  const scopedTechs = useMemo(() => {
+    const list = Array.isArray(techs) ? techs : [];
+    if (!currentTenantId) return list;
+    return list.filter(
+      (t) => !t.tenant_id || t.tenant_id === currentTenantId,
+    );
+  }, [techs, currentTenantId]);
+  // TD-86 · set of valid tech ids for the current tenant — used
+  // to prune ``form.tech_ids`` on ``openEdit`` seed so orphan /
+  // foreign-tenant ids never reach the save payload.
+  const validTechIds = useMemo(
+    () => new Set(scopedTechs.map((t) => t.id)),
+    [scopedTechs],
+  );
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   // Feb-2026 · Live-Tech-Map Phase 2 — default the new-crew form to
@@ -563,9 +599,32 @@ function Crews() {
   // blue-500 is a safe, on-palette default that matches the
   // tech-side default hue.
   const [form, setForm] = useState({ name: "", color: "#3B82F6", tech_ids: [] });
+  // TD-86 · # of ids dropped during the last ``openEdit`` seed —
+  // drives the inline warning banner inside the Edit modal.
+  const [prunedCount, setPrunedCount] = useState(0);
   const [toast, setToast] = useState(null);
-  const openNew = () => { setEditing(null); setForm({ name: "", color: "#3B82F6", tech_ids: [] }); setOpen(true); };
-  const openEdit = (c) => { setEditing(c); setForm({ name: c.name, color: c.color || "#3B82F6", tech_ids: c.tech_ids || [] }); setOpen(true); };
+  const openNew = () => {
+    setEditing(null);
+    setForm({ name: "", color: "#3B82F6", tech_ids: [] });
+    setPrunedCount(0);
+    setOpen(true);
+  };
+  const openEdit = (c) => {
+    setEditing(c);
+    const incoming = Array.isArray(c.tech_ids) ? c.tech_ids : [];
+    // TD-86 · prune orphan / cross-tenant ids so the operator can
+    // save the crew after cleanup without hitting the BE guard's
+    // categorised 400.  Only ids that resolve against the current
+    // tenant's tech list land in the form state.
+    const pruned = incoming.filter((x) => validTechIds.has(x));
+    setForm({
+      name: c.name,
+      color: c.color || "#3B82F6",
+      tech_ids: pruned,
+    });
+    setPrunedCount(incoming.length - pruned.length);
+    setOpen(true);
+  };
   const save = async () => {
     // Feb-2026 · Crew-save P0 fix. The prior implementation did TWO
     // things: (1) ``api.put('/crews/…')`` inside a try/except that
@@ -642,8 +701,30 @@ function Crews() {
           </div>
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>MEMBERS</div>
+            {/* TD-86 · Feb-2026 — inline banner surfaced when
+                 orphan / cross-tenant ids were pruned on
+                 ``openEdit`` seed.  Tells the operator why some
+                 members disappeared and instructs them to click
+                 Save to persist the pruned roster. Only renders
+                 while editing an existing crew that had drift —
+                 new-crew flow never shows it. */}
+            {prunedCount > 0 ? (
+              <div
+                className="text-xs rounded-lg px-3 py-2 mb-2"
+                style={{
+                  backgroundColor: colors.warning100 || "#FEF3C7",
+                  color: colors.warning800 || "#92400E",
+                  border: `1px solid ${colors.warning300 || "#FCD34D"}`,
+                }}
+                data-testid="crew-pruned-banner"
+              >
+                {prunedCount} member{prunedCount === 1 ? "" : "s"} removed
+                because they are no longer available in this tenant.
+                Click Save to apply.
+              </div>
+            ) : null}
             <div className="flex flex-wrap gap-2">
-              {(techs || []).map((t) => {
+              {scopedTechs.map((t) => {
                 const on = form.tech_ids.includes(t.id);
                 return (
                   <button key={t.id} onClick={() => setForm((prev) => {
