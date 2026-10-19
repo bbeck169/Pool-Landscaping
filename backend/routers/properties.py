@@ -392,23 +392,60 @@ async def list_properties(
     A ``customer.is_muted == True`` row does NOT disqualify its
     properties — mute is a comms-suppression signal, not an
     account-deactivation signal.
+
+    TD-80 · Feb-2026 — pass-1 now resolves the active-customer id
+    set and bakes it into the Mongo filter via ``$in``, matching
+    the dashboard aggregator's shape bit-exact (see
+    ``services/properties_active_predicate``).  Prior to TD-80
+    this handler used a two-pass pattern that silently truncated
+    at the over-fetch cap when the property-level prelim exceeded
+    ``limit * 4``, which was the root cause of the Active
+    Accounts tile deep-link under-reporting rows (audit at
+    ``/app/memory/td80_active_accounts_audit.md``).
     """
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     # Property-level active + soft-delete filter.
     if is_active == "true":
-        q["active"] = {"$ne": False}
-        q["$or"] = [
-            {"deleted_at": {"$exists": False}},
-            {"deleted_at": None},
-        ]
+        # TD-80 · bake the shared predicate directly into the Mongo
+        # filter so there is NO post-fetch Python gate and NO
+        # truncation risk at any over-fetch cap.
+        from services.properties_active_predicate import (
+            active_customer_ids,
+            active_property_match_base,
+        )
+        active_cust_ids = await active_customer_ids(
+            db=db, tenant_id=tenant["id"],
+        )
+        if not active_cust_ids:
+            # Short-circuit: no active customers → zero active
+            # properties by definition. Matches the aggregator's
+            # empty-tenant branch.
+            return {"items": [], "limit": limit, "offset": offset,
+                     "returned": 0}
+        # Intersect with the optional ``customer_id`` scope — a
+        # caller filtering by a specific customer who is NOT in the
+        # active set must get an empty response (preserves the
+        # pre-TD-80 contract where the parent-customer gate was
+        # applied regardless).
+        if customer_id:
+            if customer_id in active_cust_ids:
+                active_cust_ids = [customer_id]
+            else:
+                return {"items": [], "limit": limit, "offset": offset,
+                         "returned": 0}
+        base = active_property_match_base(tenant["id"])
+        q = {**base, "customer_id": {"$in": active_cust_ids}}
     elif is_active == "false":
         q["active"] = False
+        if customer_id:
+            q["customer_id"] = customer_id
+    else:
+        if customer_id:
+            q["customer_id"] = customer_id
     # Property-level category filter.
     cat_key = (service_category or "").strip().lower()
     if cat_key in _PROPERTY_CATEGORY_UNION:
         q["service_category"] = _PROPERTY_CATEGORY_UNION[cat_key]
-    if customer_id:
-        q["customer_id"] = customer_id
     if search:
         esc = search.strip()
         if esc:
@@ -426,34 +463,15 @@ async def list_properties(
                                              "$options": "i"}},
                       ]}]
             )
-    # First pass — pull candidate property rows (over-fetch when
-    # ``is_active=true`` so parent-customer filtering doesn't
-    # under-return; cap at 4x limit to keep worst-case response
-    # bounded on degenerate inputs).
-    prelim = await db.properties.find(q, {"_id": 0}).to_list(
-        limit * 4 if is_active == "true" else limit + offset,
+    # TD-80 · Feb-2026 — single-pass fetch with offset/limit applied
+    # at the Mongo layer. No post-fetch Python gating required
+    # because the parent-customer predicate is already in ``q`` via
+    # the ``$in`` on ``customer_id``.
+    rows = await (
+        db.properties.find(q, {"_id": 0})
+          .skip(offset)
+          .to_list(limit)
     )
-    rows: List[Dict[str, Any]] = prelim
-    # Second pass — parent-customer gating when ``is_active=true``.
-    if is_active == "true" and rows:
-        cust_ids = list({r.get("customer_id") for r in rows
-                           if r.get("customer_id")})
-        if cust_ids:
-            cust_cursor = db.customers.find(
-                {"id": {"$in": cust_ids}, "tenant_id": tenant["id"],
-                 "$and": [
-                     {"$or": [{"is_active": True},
-                               {"is_active": None},
-                               {"is_active": {"$exists": False}}]},
-                     {"$or": [{"deleted_at": {"$exists": False}},
-                               {"deleted_at": None}]},
-                 ]},
-                {"_id": 0, "id": 1},
-            )
-            allowed = {c["id"] async for c in cust_cursor}
-            rows = [r for r in rows
-                    if r.get("customer_id") in allowed]
-    rows = rows[offset:offset + limit]
     return {"items": rows, "limit": limit, "offset": offset,
              "returned": len(rows)}
 
