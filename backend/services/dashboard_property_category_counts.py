@@ -5,6 +5,14 @@ to drive the new Active Accounts + Pool / Landscaping / Both
 property tiles rendered BELOW the existing customer-count tiles
 (``cb8cd1a6a`` + ``70f4afc44``, intentionally preserved).
 
+TD-80 · Feb-2026 — the "active property" + "active customer"
+predicates are now sourced from
+``services/properties_active_predicate`` so this module and
+``routers/properties.list_properties`` share a single source of
+truth.  See the audit at
+``/app/memory/td80_active_accounts_audit.md`` for the full
+root-cause explanation.
+
 "Active property" definition (ruling #3 from the Feb-2026
 dispatch, locked):
 
@@ -46,57 +54,18 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
+
+from services.properties_active_predicate import (
+    active_customer_ids,
+    active_property_match_base,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
 _PERF_WARN_MS = 100
-
-
-def _active_property_match_base(tenant_id: str) -> Dict[str, Any]:
-    """Property-level active filter — the half of the gate that
-    doesn't depend on the parent customer. ``active != False`` +
-    ``deleted_at`` not set.
-    """
-    return {
-        "tenant_id": tenant_id,
-        "$and": [
-            {"$or": [
-                {"active": True},
-                {"active": None},
-                {"active": {"$exists": False}},
-            ]},
-            {"$or": [
-                {"deleted_at": {"$exists": False}},
-                {"deleted_at": None},
-            ]},
-        ],
-    }
-
-
-async def _active_customer_ids(*, db, tenant_id: str) -> List[str]:
-    """Return the list of ``customer.id`` values whose row is still
-    active per ruling #3 (``is_active != False`` + no soft-delete).
-
-    Used as a ``$in`` filter on properties so the four counts share
-    the same parent-customer gate.
-    """
-    cursor = db.customers.find(
-        {
-            "tenant_id": tenant_id,
-            "$and": [
-                {"$or": [{"is_active": True},
-                          {"is_active": None},
-                          {"is_active": {"$exists": False}}]},
-                {"$or": [{"deleted_at": {"$exists": False}},
-                          {"deleted_at": None}]},
-            ],
-        },
-        {"_id": 0, "id": 1},
-    )
-    return [c["id"] async for c in cursor if c.get("id")]
 
 
 async def compute_property_counts(
@@ -118,7 +87,7 @@ async def compute_property_counts(
     t0 = time.perf_counter()
 
     # Parent-customer gate — resolve once per request.
-    active_cust_ids = await _active_customer_ids(
+    active_cust_ids = await active_customer_ids(
         db=db, tenant_id=tenant_id,
     )
     if not active_cust_ids:
@@ -133,7 +102,7 @@ async def compute_property_counts(
             "both_properties_count": 0,
         }
 
-    base = _active_property_match_base(tenant_id)
+    base = active_property_match_base(tenant_id)
     base["customer_id"] = {"$in": active_cust_ids}
 
     active_accounts = await db.properties.count_documents(base)
