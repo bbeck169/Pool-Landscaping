@@ -124,7 +124,7 @@ describe("Phase 39B · mount + section order", () => {
     await waitFor(() => r.getByTestId("dashboard-action-cards"));
     await waitFor(() => r.getByTestId("crew-productivity-tile-table"));
     const o = ids(r.toJSON());
-    const seq = ["mass-messaging-card", "revenue-tiles-section", "dashboard-action-cards", "dashboard-kpi-grid", "dashboard-topline-tiles",
+    const seq = ["mass-messaging-card", "revenue-tiles-section", "dashboard-topline-tiles", "dashboard-kpi-grid", "dashboard-action-cards",
       "soshie-publishing-tile", "stub-weather", "new-requests-banner", "bulk-ops-audit-tile", "crew-productivity-tile",
       "routing-cost-tile", "warranties-expiring-tile", "tile-referral-revenue", "revenue-chart"];
     const idx = seq.map((id) => { const i = o.indexOf(id); expect([id, i >= 0]).toEqual([id, true]); return i; });

@@ -164,7 +164,7 @@ describe("Dashboard · Active/Inactive Customers tiles (Ship 1)", () => {
     const tree = render(<Dashboard />);
 
     await waitFor(() => {
-      expect(tree.getByTestId("kpi-active-customers")).toBeTruthy();
+      expect(tree.getByTestId("kpi-inactive-customers")).toBeTruthy();
     });
 
     expect(tree.queryByTestId("kpi-technicians")).toBeNull();
@@ -174,9 +174,20 @@ describe("Dashboard · Active/Inactive Customers tiles (Ship 1)", () => {
     const tree = render(<Dashboard />);
 
     await waitFor(() => {
-      expect(tree.getByTestId("kpi-active-customers")).toBeTruthy();
+      expect(tree.getByTestId("kpi-inactive-customers")).toBeTruthy();
     });
 
     expect(tree.queryByTestId("kpi-customers")).toBeNull();
+  });
+
+  // Dashboard parity · web P2 tile cleanup removed "Active Customers";
+  // Inactive Customers stays as the sole customer-status tile.
+  it('"Active Customers" tile is gone (web parity); Inactive Customers shows 50', async () => {
+    const tree = render(<Dashboard />);
+    await waitFor(() => expect(tree.getByTestId("kpi-inactive-customers")).toBeTruthy());
+    expect(tree.queryByTestId("kpi-active-customers")).toBeNull();
+    const text = textOf(tree.getByTestId("kpi-inactive-customers"));
+    expect(text).toContain("50");
+    expect(text).toContain("Inactive Customers");
   });
 });

@@ -117,8 +117,8 @@ describe("Phase 39A · section order + removals", () => {
   it("renders web order top → bottom, mobile-only extras last", async () => {
     const r = await mount();
     const o = ids(r.toJSON());
-    const seq = ["revenue-tiles-section", "revenue-by-category-tile", "income-by-service-category-tile", "dashboard-kpi-grid",
-      "dashboard-topline-tiles", "revenue-forecast-tile", "dashboard-ebit-tile-slot", "stub-weather", "new-requests-banner",
+    const seq = ["revenue-tiles-section", "revenue-by-category-tile", "income-by-service-category-tile",
+      "dashboard-topline-tiles", "revenue-forecast-tile", "dashboard-ebit-tile-slot", "dashboard-kpi-grid", "stub-weather", "new-requests-banner",
       "tile-referral-revenue", "revenue-chart", "payments-widget", "revenue-by-service", "see-all-jobs",
       "dashboard-mobile-extras", "stub-budget-health", "maintenance-digest"];
     const pos = seq.map((id) => [id, o.indexOf(id)] as const);
@@ -153,15 +153,33 @@ describe("Phase 39A · section order + removals", () => {
     expect(calls("/admin/dashboard/")).toEqual([]);
   });
 
-  it("KPI taps carry web's status filters", async () => {
+  it("KPI grid = web's 7 tiles in web order; taps carry web's deep-links (admin jobs → /admin/jobs)", async () => {
     const r = await mount();
+    const KEYS = ["kpi-active-jobs", "kpi-pending", "kpi-inactive-customers", "kpi-active-accounts",
+      "kpi-pool-properties", "kpi-landscaping-properties", "kpi-both-properties"];
+    const o = ids(r.toJSON()).filter((id) => KEYS.includes(id));
+    expect(o.filter((v, i, a) => a.indexOf(v) === i)).toEqual(KEYS);
+    expect(r.queryByTestId("kpi-active-customers")).toBeNull(); // removed on web (P2 cleanup)
+    KEYS.forEach((k) => fireEvent.press(r.getByTestId(k)));
+    expect(mockPush.mock.calls.map((c) => c[0])).toEqual([
+      { pathname: "/admin/jobs", params: { status: "active" } }, { pathname: "/admin/jobs", params: { status: "pending" } },
+      { pathname: "/(app)/customers", params: { status: "inactive" } },
+      { pathname: "/properties", params: { is_active: "true" } },
+      { pathname: "/properties", params: { is_active: "true", service_category: "pool" } },
+      { pathname: "/properties", params: { is_active: "true", service_category: "landscaping" } },
+      { pathname: "/properties", params: { is_active: "true", service_category: "both" } },
+    ]);
+  });
+
+  it("manager: job tiles keep /(app)/jobs (web /admin/jobs is AdminOnly)", async () => {
+    mockRole = "manager";
+    const r = render(<Dashboard />);
+    await waitFor(() => r.getByTestId("dashboard-kpi-grid"));
+    await act(async () => {});
     fireEvent.press(r.getByTestId("kpi-active-jobs"));
     fireEvent.press(r.getByTestId("kpi-pending"));
-    fireEvent.press(r.getByTestId("kpi-active-customers"));
-    fireEvent.press(r.getByTestId("kpi-inactive-customers"));
     expect(mockPush.mock.calls.map((c) => c[0])).toEqual([
       { pathname: "/(app)/jobs", params: { status: "active" } }, { pathname: "/(app)/jobs", params: { status: "pending" } },
-      { pathname: "/(app)/customers", params: { status: "active" } }, { pathname: "/(app)/customers", params: { status: "inactive" } },
     ]);
   });
 });

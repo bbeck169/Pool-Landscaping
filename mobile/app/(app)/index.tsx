@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, Alert, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
@@ -33,9 +33,33 @@ import WarrantiesExpiringTile from "@/src/components/dashboard/WarrantiesExpirin
 import TeamCpoReadinessWidget from "@/src/components/dashboard/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/src/components/dashboard/RecommendationsQueueWidget";
 
+// Dashboard parity · web Dashboard.jsx KPI grid (order, labels, data-testids,
+// deep-links). `href(isAdmin)` — web's /admin/jobs is AdminOnly.
+export const DASHBOARD_KPIS: { testId: string; label: string; icon: any; field: string; href: (isAdmin: boolean) => any }[] = [
+  { testId: "kpi-active-jobs", label: "Active Jobs", icon: "briefcase", field: "active_jobs",
+    href: (a) => ({ pathname: a ? "/admin/jobs" : "/(app)/jobs", params: { status: "active" } }) },
+  { testId: "kpi-pending", label: "Pending", icon: "hourglass-outline", field: "pending_jobs",
+    href: (a) => ({ pathname: a ? "/admin/jobs" : "/(app)/jobs", params: { status: "pending" } }) },
+  { testId: "kpi-inactive-customers", label: "Inactive Customers", icon: "person-remove-outline", field: "inactive_customers_count",
+    href: () => ({ pathname: "/(app)/customers", params: { status: "inactive" } }) },
+  { testId: "kpi-active-accounts", label: "Active Accounts", icon: "business-outline", field: "active_accounts_count",
+    href: () => ({ pathname: "/properties", params: { is_active: "true" } }) },
+  { testId: "kpi-pool-properties", label: "Pool Customers", icon: "home-outline", field: "pool_properties_count",
+    href: () => ({ pathname: "/properties", params: { is_active: "true", service_category: "pool" } }) },
+  { testId: "kpi-landscaping-properties", label: "Landscaping Customers", icon: "home-outline", field: "landscaping_properties_count",
+    href: () => ({ pathname: "/properties", params: { is_active: "true", service_category: "landscaping" } }) },
+  { testId: "kpi-both-properties", label: "Both Service Customers", icon: "home-outline", field: "both_properties_count",
+    href: () => ({ pathname: "/properties", params: { is_active: "true", service_category: "both" } }) },
+];
+
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
+  // Web `grid-cols-2 lg:grid-cols-4` → exact tile width (gap = spacing.md,
+  // scroll padding = spacing.lg) so an odd last tile keeps column width.
+  const { width: winW } = useWindowDimensions();
+  const kpiCols = winW >= 1024 ? 4 : 2;
+  const kpiWidth = Math.floor((winW - spacing.lg * 2 - spacing.md * (kpiCols - 1)) / kpiCols);
   const [refreshing, setRefreshing] = useState(false);
   // Phase 39A · shared Revenue Insights range (web ``revenueRange``) —
   // drives both donuts + the Revenue Forecast headline.
@@ -141,18 +165,8 @@ export default function Dashboard() {
           </View>
         ) : null}
 
-        {/* Phase 39B · Action Cards (manager+). */}
-        {isManagerPlus ? <DashboardActionCards /> : null}
-
-        {/* KPI grid — taps carry web's status filters. */}
-        <View style={[styles.grid, { marginBottom: spacing.lg }]} testID="dashboard-kpi-grid">
-          <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs ?? 0} onPress={() => router.push({ pathname: "/(app)/jobs", params: { status: "active" } } as any)} />
-          <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs ?? 0} onPress={() => router.push({ pathname: "/(app)/jobs", params: { status: "pending" } } as any)} />
-          <Kpi icon="checkmark-circle" label="Active Customers" value={data.active_customers_count ?? 0} onPress={() => router.push({ pathname: "/(app)/customers", params: { status: "active" } } as any)} />
-          <Kpi icon="close-circle" label="Inactive Customers" value={data.inactive_customers_count ?? 0} onPress={() => router.push({ pathname: "/(app)/customers", params: { status: "inactive" } } as any)} />
-        </View>
-
-        {/* Topline — Revenue Forecast (headline follows the shared range) + EBIT. */}
+        {/* Dashboard parity · web P2 section order: revenue insights →
+            topline (Revenue Forecast + EBITDA) → KPI grid → action cards. */}
         <View testID="dashboard-topline-tiles">
           {isRevenueAdmin ? <RevenueForecastTile range={revenueRange} /> : null}
 
@@ -165,6 +179,22 @@ export default function Dashboard() {
           </View>
         ) : null}
         </View>
+
+        {/* KPI grid — web Dashboard.jsx 7 tiles, labels, testids + deep-links
+            (row 1: Active Jobs / Pending / Inactive Customers / Active
+            Accounts; row 2: Pool / Landscaping / Both Service Customers).
+            "Active Customers" was removed on web (P2 cleanup). Admin job
+            taps land on /admin/jobs (web JobsList); other roles keep the
+            /(app)/jobs list, which honours ?status=. */}
+        <View style={[styles.grid, { marginBottom: spacing.lg }]} testID="dashboard-kpi-grid">
+          {DASHBOARD_KPIS.map((k) => (
+            <Kpi key={k.testId} icon={k.icon} label={k.label} testId={k.testId} width={kpiWidth}
+              value={data[k.field] ?? 0} onPress={() => router.push(k.href(isRevenueAdmin) as any)} />
+          ))}
+        </View>
+
+        {/* Phase 39B · Action Cards (manager+). */}
+        {isManagerPlus ? <DashboardActionCards /> : null}
 
         {/* Phase 39B · Soshie Publishing (super_admin / admin / owner). */}
         {isAdminPlus ? <SoshiePublishingTile /> : null}
@@ -659,8 +689,8 @@ function RevenueChart({ series, outstanding }: { series: { label: string; value:
   );
 }
 
-function Kpi({ icon, label, value, onPress }: { icon: any; label: string; value: number; onPress: () => void }) {  return (
-    <Pressable style={styles.kpi} onPress={onPress} testID={`kpi-${label.toLowerCase().replace(/\s/g, "-")}`}>
+function Kpi({ icon, label, value, onPress, testId, width }: { icon: any; label: string; value: number; onPress: () => void; testId: string; width: number }) {  return (
+    <Pressable style={({ pressed }) => [styles.kpi, { width }, pressed && { opacity: 0.85 }]} onPress={onPress} testID={testId}>
       <View style={styles.kpiIcon}>
         <Ionicons name={icon} size={20} color={colors.brand} />
       </View>
@@ -738,8 +768,7 @@ const styles = StyleSheet.create({
             color: "rgba(255,255,255,0.85)", marginTop: 2 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   kpi: {
-    width: "47.5%",
-    flexGrow: 1,
+    flexGrow: 0,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
