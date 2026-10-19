@@ -122,16 +122,18 @@ export default function PropertiesList() {
   return (
     <View style={styles.root} testID="properties-list-page">
       <Header title="Properties" subtitle="All serviceable properties across your accounts" back />
-      <View style={styles.filterbar} testID="properties-list-filterbar">
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={16} color={colors.muted} />
-          <AppTextInput testID="properties-list-search" style={styles.searchInput} value={search}
-            onChangeText={setSearch} placeholder="Search label, address, city…" placeholderTextColor={colors.muted}
-            autoCapitalize="none" returnKeyType="search" />
+      <View style={styles.filters}>
+        <View style={styles.filterbar} testID="properties-list-filterbar">
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={16} color={colors.muted} />
+            <AppTextInput testID="properties-list-search" style={styles.searchInput} value={search}
+              onChangeText={setSearch} placeholder="Search label, address, city…" placeholderTextColor={colors.muted}
+              autoCapitalize="none" returnKeyType="search" />
+          </View>
         </View>
+        <FilterRow options={PROPERTY_ACTIVE_OPTIONS} value={activeFilter} onChange={setActiveFilter} testID="properties-list-active-filter" />
+        <FilterRow options={PROPERTY_CATEGORY_OPTIONS} value={categoryFilter} onChange={setCategoryFilter} testID="properties-list-category-filter" />
       </View>
-      <FilterRow options={PROPERTY_ACTIVE_OPTIONS} value={activeFilter} onChange={setActiveFilter} testID="properties-list-active-filter" />
-      <FilterRow options={PROPERTY_CATEGORY_OPTIONS} value={categoryFilter} onChange={setCategoryFilter} testID="properties-list-category-filter" />
       {loading ? (
         <Loading testID="properties-list-loading" />
       ) : error ? (
@@ -168,6 +170,7 @@ export default function PropertiesList() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  filters: { flexShrink: 0, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   filterbar: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   searchBox: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm, height: 48,
