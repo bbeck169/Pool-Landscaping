@@ -2053,3 +2053,11 @@
 - **Caveat**: `/invoices/overview` is the AR overview (live: customer with 4 invoices shows 2), so "View all" lands on that customer's AR invoices, not every status like web InvoicesList.
 - **Tests**: new `invoices-customer-filter.test.tsx` 2/2. `bulk-charge-ach-mobile` + `k40-default-filters` failures identical on HEAD (pre-existing). tsc 651 (1 shifted pre-existing `fontSize.xs`); eslint clean.
 - **Files modified**: mobile/app/invoices.tsx, mobile/__tests__/invoices-customer-filter.test.tsx (new)
+
+## Iteration 154 — m-td79 · customer profile Overview · invoice list (last 10 + View all) (web db3ef6d2f)
+- **Commit**: the `m-td79` commit containing this entry
+- **Date**: 2026-10-19
+- **Changes**: new `src/components/customers/CustomerInvoiceList.tsx` — `GET /quotes?doc_type=invoice&customer_id=<cid>&limit=10&offset=0` (`{rows,total_count}` + bare-array fallback), created_at DESC / id DESC sort, cap 10; row = title (shared `resolvePortalInvoiceTitle`) + `<number> · Due <date>` + amount + status badge (statusMeta; overdue red; underscores humanised); tap → `/quote/<id>`; "View all" only when total_count > 10 → `/invoices?customer_id=<cid>`; spinner / "No invoices yet." / inline error pill. Mounted admin-only in `app/customer/[id].tsx` Overview after the contact block, before the payment-method card (web anchor).
+- **Live**: 148-invoice customer → "(148)", 10 rows, View all → filtered list + chip; 3-invoice customer → 3 rows, no View all; 0-invoice customer → empty state.
+- **Tests**: new `customer-overview-invoice-list-td79.test.tsx` 9/9. Customer-detail-touching suites 13/15 — `route-entry-classifier` + `customer-delete-409-toast` identical on HEAD. tsc 651 (customer/[id] 5 pre-existing); eslint clean (customer/[id] 6 warnings = HEAD).
+- **Files modified**: mobile/src/components/customers/CustomerInvoiceList.tsx (new), mobile/app/customer/[id].tsx, mobile/__tests__/customer-overview-invoice-list-td79.test.tsx (new), memory/mobile_td79_audit.md (new)

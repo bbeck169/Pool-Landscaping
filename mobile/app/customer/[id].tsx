@@ -24,6 +24,7 @@ import SendServiceRecordsLinkModal from "@/src/components/customers/SendServiceR
 import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
 import CustomerIdentityCard from "@/src/components/customers/CustomerIdentityCard";
 import PaymentMethodTiles from "@/src/components/customers/PaymentMethodTiles";
+import CustomerInvoiceList from "@/src/components/customers/CustomerInvoiceList";
 import CommunicationTimeline from "@/src/components/customers/CommunicationTimeline";
 import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 // Feb-2026 · P29b — Mobile parity for the web mute picker.
@@ -587,6 +588,17 @@ export default function CustomerDetail() {
             <MultiContact mobiles={c.mobiles} emails={c.emails} />
           </LightPanel>
         )}
+
+        {/* TD-79 (web db3ef6d2f) — last 10 invoices + "View all". Mirrors
+            web placement: below the identity/contact block, above the
+            payment-method controls. */}
+        {isAdmin ? (
+          <View style={{ marginTop: spacing.md }} testID="customer-overview-invoices-slot">
+            <LightPanel>
+              <CustomerInvoiceList customerId={id as string} />
+            </LightPanel>
+          </View>
+        ) : null}
 
 
         {isAdmin ? (
