@@ -1312,6 +1312,25 @@ async def list_customers(
     count_only: bool = False,
     include_deleted: bool = Query(False, description="Feb-2026 · P25 super_admin only — include soft-deleted customers"),
     include_merged: bool = Query(False, description="Feb-2026 · Customer Merge — include records whose ``merged_into`` is set. Default false — merged rows are hidden so admins don't see stale duplicates."),
+    # TD-83 · Feb-2026 — CSV id-whitelist filter.
+    #   ``?ids_in=cid1,cid2,...`` → the response is intersected with
+    #   the supplied id set. Composes as AND with every other filter
+    #   (tenant scope, soft-delete, merge gates, search, data-quality
+    #   predicates, …).  Used by the Properties list page (PropertiesListPage.jsx)
+    #   to hydrate per-row customer names in a single round-trip
+    #   instead of one lookup per row.  Empty / all-whitespace values
+    #   are dropped; if the resulting whitelist is empty the response
+    #   is an empty list (matches the ``$in: []`` match-none semantics
+    #   so callers never see a stale full-tenant list by accident).
+    ids_in: Optional[str] = Query(
+        None,
+        description=(
+            "TD-83 · Feb-2026 — CSV list of customer ``id`` values. "
+            "When present the response is intersected with the "
+            "supplied id set. Blank entries are ignored; passing "
+            "``ids_in=`` with no ids returns an empty list."
+        ),
+    ),
     page: Optional[int] = Query(None, description="Feb-2026 · P35 — 1-indexed page number. Presence of this OR page_size flips the response into a paginated envelope."),
     page_size: Optional[int] = Query(None, description="Feb-2026 · P35 — page size (1..500). Presence of this OR page flips the response into a paginated envelope."),
     # 2026-02 · P0 Stage 3 Step B — reject the ``size`` alias
@@ -1419,6 +1438,39 @@ async def list_customers(
     # ``include_deleted=true`` are rejected rather than silently
     # ignored, so the UI catches accidental use.
     q: dict = {"tenant_id": tenant["id"]}
+    # TD-83 · Feb-2026 — ``ids_in`` CSV whitelist filter.  Parsed +
+    # deduped here BEFORE the soft-delete / merge gates so an empty
+    # whitelist short-circuits the response (an id list the caller
+    # supplied explicitly is more authoritative than any other
+    # filter — if they ask for zero ids, they get zero rows).  Empty
+    # whitespace entries are dropped; a param that is syntactically
+    # present but materially empty (e.g. ``ids_in=`` or ``ids_in=,,``)
+    # evaluates to an empty whitelist → immediate empty response.
+    if ids_in is not None:
+        whitelist = [
+            x.strip() for x in ids_in.split(",") if x and x.strip()
+        ]
+        # Preserve order while deduping.
+        seen = set()
+        deduped: List[str] = []
+        for x in whitelist:
+            if x in seen:
+                continue
+            seen.add(x)
+            deduped.append(x)
+        if not deduped:
+            # Short-circuit: caller supplied the param with zero
+            # non-blank ids → match-none semantics (no accidental
+            # full-tenant list).
+            if count_only:
+                return {"count": 0}
+            if page is not None or page_size is not None:
+                return {
+                    "items": [], "total": 0, "page": 1,
+                    "page_size": page_size or 50, "total_pages": 0,
+                }
+            return []
+        q["id"] = {"$in": deduped}
     role_lc = (user.get("role") or "").lower()
     is_admin_tier = role_lc in ("admin", "super_admin", "owner")
     if include_deleted and not is_admin_tier:
