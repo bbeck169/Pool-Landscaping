@@ -11,6 +11,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import Svg, { Circle, G } from "react-native-svg";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
@@ -63,9 +64,9 @@ function Ring({ items, total, selected }: { items: DonutItem[]; total: number; s
   );
 }
 
-type Props = { items: DonutItem[]; total: number; prefix: string };
+type Props = { items: DonutItem[]; total: number; prefix: string; onDrill?: (item: DonutItem) => void };
 
-export default function DonutChart({ items, total, prefix }: Props) {
+export default function DonutChart({ items, total, prefix, onDrill }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const sel = items.find((i) => i.key === selected) || null;
   return (
@@ -87,6 +88,13 @@ export default function DonutChart({ items, total, prefix }: Props) {
               <View style={[s.swatch, { backgroundColor: it.color }]} />
               <Text style={s.rowLabel} numberOfLines={1}>{it.label}</Text>
               <Text style={s.rowValue}>{`${money(it.amount)} · ${pct(it.amount, total)}`}</Text>
+              {onDrill ? (
+                <Pressable onPress={() => onDrill(it)} hitSlop={8} style={s.drill}
+                  testID={`${prefix}-legend-drill-${it.label.replace(/\s+/g, "-")}`}
+                  accessibilityRole="button" accessibilityLabel={`View ${it.label} line items`}>
+                  <Ionicons name="chevron-forward" size={16} color={colors.brand} />
+                </Pressable>
+              ) : null}
             </Pressable>
           );
         })}
@@ -108,4 +116,5 @@ const s = StyleSheet.create({
   swatch: { width: 12, height: 12, borderRadius: 3 },
   rowLabel: { flex: 1, fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface },
   rowValue: { fontFamily: font.medium, fontSize: fontSize.xs, color: colors.onSurface },
+  drill: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.brandTertiary },
 });

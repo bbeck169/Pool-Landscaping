@@ -3,13 +3,16 @@
  * ``RevenueByCategoryTile.jsx``. GET /admin/dashboard/revenue-by-category
  * ?start&end, refetched when the shared range changes. Same copy, states
  * and testIDs as web; ``displayCategoryLabel`` keeps web's "never render a
- * UUID as a label" contract. (Web's legend drill-down modal has no mobile
- * port yet — legend tap highlights the segment instead.)
+ * UUID as a label" contract. Dashboard parity · legend drill button (›)
+ * opens the read-only `IncomeDrillDownSheet` (web DashboardDrillDownModal
+ * variant="income-by-category", category = display label like web);
+ * tapping the row itself still highlights the segment.
  */
-import React from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import DonutChart, { useRangedFetch } from "@/src/components/dashboard/DonutChart";
+import IncomeDrillDownSheet from "@/src/components/dashboard/IncomeDrillDownSheet";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -21,6 +24,7 @@ export function displayCategoryLabel(item: any): string {
 
 export default function RevenueByCategoryTile({ range }: { range?: { start: string; end: string } | null }) {
   const { data, err } = useRangedFetch("/admin/dashboard/revenue-by-category", range);
+  const [drillCategory, setDrillCategory] = useState<string | null>(null);
   const items = (data?.items || []).map((it: any, i: number) => {
     const label = displayCategoryLabel(it);
     return { key: String(it.category_id || it.category || label || i), label, amount: Number(it.amount || 0), color: it.color || colors.brand, count: it.count };
@@ -42,8 +46,9 @@ export default function RevenueByCategoryTile({ range }: { range?: { start: stri
       ) : items.length === 0 ? (
         <Text style={tile.empty} testID="revenue-cat-empty">No invoiced revenue in this range yet.</Text>
       ) : (
-        <DonutChart items={items} total={Number(data.total || 0)} prefix="revenue-cat" />
+        <DonutChart items={items} total={Number(data.total || 0)} prefix="revenue-cat" onDrill={(it) => setDrillCategory(it.label)} />
       )}
+      <IncomeDrillDownSheet category={drillCategory} range={range} onClose={() => setDrillCategory(null)} />
     </View>
   );
 }
