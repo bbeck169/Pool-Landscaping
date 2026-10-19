@@ -448,7 +448,7 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
     - `Uncategorized line-items` banner (`/reports/uncategorized-count`)
     - `Data Integrity` tile (super_admin)
   - **Priority:** on request only.
-- **TD-85 · Dirty working tree in the Expo pod blocks the `wc -l == 0` precheck.**
+- **TD-85 · Dirty working tree in the Expo pod blocks the `wc -l == 0` precheck.** **CLOSED (td85 · Feb-2026).**
   - The pod always carries about 1,900 changed or untracked paths: backend `.pyc` caches, generated Expo files (`mobile/.expo/types/router.d.ts`), test artifacts (`mobile/artifacts/offline-mode-verification.txt` is rewritten by Jest), and `*.env.example`.
-  - So the TD-61 session-hygiene check can never pass. What actually protects commits is the `--only --` discipline, which is enforced; the `wc -l == 0` guideline is effectively a no-op here.
-  - Future candidates: a narrower precheck (e.g. only `/app/mobile/` minus generated paths), or a one-shot cleanup script that drops the known noise before each cycle. **Priority:** P3 — process.
+  - So the TD-61 session-hygiene check could never pass. What actually protects commits is the `--only --` discipline, which is enforced; the `wc -l == 0` guideline was effectively a no-op here.
+  - **Resolution:** shipped `scripts/td85_session_hygiene_precheck.sh` (narrower precheck that excludes known noise paths and reports a "material drift" count) and `memory/td85_session_hygiene_policy.md` (policy doc replacing the old literal `wc -l == 0` guideline). The `--only --` discipline remains the load-bearing guard; the precheck is now a usable defensive sanity check on top. **Priority:** closed.
