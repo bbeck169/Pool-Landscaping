@@ -2,7 +2,46 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { api, TOKEN_KEY } from "@/api";
 
 const USER_KEY = "user";
+// TD-92 · Feb-2026 — sessionStorage key written synchronously by
+// ``src/index.js`` when a portal tab lands on
+// ``/portal/*?impersonation_token=…``.  Pattern parity with every
+// other K13 consumer (``api.js:149-165`` for the Bearer header,
+// ``layouts/AppLayout.jsx:363`` for the banner JWT decode,
+// ``components/portal/PaymentMethodPromptModal.jsx:23`` + sibling
+// Banner).  This file is the last K13-aware consumer to be
+// taught about the key.
+const PORTAL_TOKEN_KEY = "portal_token";
 const AuthCtx = createContext(null);
+
+/** TD-92 · Feb-2026 — portal-tab-aware token resolver.
+ *  On ``/portal/*`` routes, prefer the per-tab
+ *  ``sessionStorage[PORTAL_TOKEN_KEY]`` so a browser with NO
+ *  device-local admin login (fresh browser, incognito, mobile
+ *  in-app browser) still hydrates as a signed-in customer when
+ *  the pre-mount K13 bootstrap in ``src/index.js`` has pinned
+ *  an impersonation token.  Admin + non-portal routes continue
+ *  to read ``localStorage[TOKEN_KEY]`` byte-identical.
+ *
+ *  Mirrors the preference order used by ``api.js::authHeaders``
+ *  — if a caller is on ``/portal/*`` and both storage layers
+ *  carry a token, the per-tab sessionStorage token wins
+ *  (that's the K13 decoupling that keeps the admin's own
+ *  session in another tab from being touched).
+ */
+function _readCachedToken() {
+  if (typeof window === "undefined") return "";
+  try {
+    const path = (window.location && window.location.pathname) || "";
+    if (path.startsWith("/portal")) {
+      const sess = window.sessionStorage
+        && window.sessionStorage.getItem(PORTAL_TOKEN_KEY);
+      if (sess) return sess;
+    }
+    return window.localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
 
 /** Feb-2026 · Fix 2 — bootstrap race helper.
  *  Read the cached user object out of localStorage synchronously so
@@ -11,11 +50,18 @@ const AuthCtx = createContext(null);
  *  auth-guarded route could flash to /login before storage was read.
  *  Playwright's ``page.evaluate(localStorage.setItem…)`` before
  *  ``page.goto`` now works end-to-end.
+ *
+ *  TD-92 · Feb-2026 — token lookup is now portal-tab-aware (see
+ *  ``_readCachedToken``).  The cached ``user`` payload still lives
+ *  in ``localStorage`` because ``src/index.js:60`` K13 seed writes
+ *  the decoded customer identity there synchronously pre-mount —
+ *  so both ingredients (token + user) are satisfiable on the first
+ *  render even when the device has zero prior admin login.
  */
 function _readCachedUserSync() {
   if (typeof window === "undefined") return null;
   try {
-    const token = window.localStorage.getItem(TOKEN_KEY);
+    const token = _readCachedToken();
     const stored = window.localStorage.getItem(USER_KEY);
     if (!token || !stored) return null;
     return JSON.parse(stored);
@@ -35,7 +81,18 @@ export function AuthProvider({ children }) {
     // If we bootstrapped from cache, background-refresh /auth/me so
     // stale role/tenant changes get picked up. Same behavior as
     // before, just decoupled from the initial-mount race.
-    const token = localStorage.getItem(TOKEN_KEY);
+    //
+    // TD-92 · Feb-2026 — token lookup now honors the portal-tab
+    // ``sessionStorage.portal_token`` on ``/portal/*`` routes
+    // (see ``_readCachedToken``).  Previously this effect
+    // early-returned on ``!localStorage.token`` and ``/auth/me``
+    // never fired when the device had no admin login — so the
+    // auth context stayed ``user=null`` even though the K13
+    // bootstrap had pinned a valid impersonation token on the
+    // same tab.  The symptom was 100% redirect to
+    // ``/portal/login`` for every mobile ``View as customer``
+    // deep-link.
+    const token = _readCachedToken();
     if (!token) return;
     (async () => {
       try {
