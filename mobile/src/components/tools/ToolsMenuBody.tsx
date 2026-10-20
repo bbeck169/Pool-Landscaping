@@ -32,6 +32,12 @@ import { CategoryChips } from "./CategoryChips";
 import { ToolCard, type ToolCardTile } from "./ToolCard";
 import { sectionsForRole } from "./sections";
 import { useToolsPreferences } from "@/src/hooks/useToolsPreferences";
+import { useGlobalSearch, canGlobalSearch, type SearchHit } from "@/src/hooks/useGlobalSearch";
+import { routeForSearchHit, type SearchKind } from "@/src/lib/globalSearchRoutes";
+import GlobalSearchResults from "@/src/components/search/GlobalSearchResults";
+
+// TD-90 · global-search placeholder for dashboard roles (both surfaces).
+export const GLOBAL_SEARCH_PLACEHOLDER = "Search customers, jobs, invoices, quotes…";
 
 type Props = {
   variant?: "tab" | "sheet";
@@ -99,9 +105,23 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, qu
   const showPins = !query && (!inSheet || pins.length > 0);
   const showRecents = !query && (!inSheet || recents.length > 0);
 
+  // TD-90 · global search (menu sheet AND Tools tab share this body).
+  // Techs / non-dashboard roles stay tools-only (G1) — no fetch.
+  const globalCapable = canGlobalSearch(role);
+  const gs = useGlobalSearch(query, role);
+  const openHit = (kind: SearchKind, hit: SearchHit) => {
+    const route = routeForSearchHit(kind, hit.id);
+    if (!route) return;
+    // Not routed through openTile → search hits never pollute recents.
+    if (onNavigate) onNavigate({ key: `search-${kind}-${hit.id}`, route, label: hit.primary, desc: hit.secondary || "", icon: "search-outline" } as any);
+    else router.push(route as any);
+  };
+
   return (
     <View style={styles.wrap}>
-      <SearchBar onQueryChange={setQuery} testID={searchTestID} />
+      <SearchBar onQueryChange={setQuery} testID={searchTestID}
+        placeholder={globalCapable ? GLOBAL_SEARCH_PLACEHOLDER : undefined}
+        debounceMs={globalCapable ? 0 : undefined} />
       {/* Queue Item 6 · Feb-2026 — Dashboard shortcut. Rendered
           directly under the search input on every drawer/tab so
           a Home affordance always sits at the top of the mobile
@@ -158,7 +178,7 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, qu
         <CategoryChips chips={chipData} selected={chip} onSelect={setChip} />
 
         <View style={styles.sectionsWrap}>
-          {!anyResults ? (
+          {!anyResults && !gs.active ? (
             <View style={styles.empty} testID="tools-empty">
               <Ionicons name="search-outline" size={28} color={colors.muted} />
               <Text style={styles.emptyText}>
@@ -191,6 +211,10 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, qu
               </View>
             ))
           )}
+          {gs.active ? (
+            <GlobalSearchResults query={query} buckets={gs.buckets} loading={gs.loading} error={gs.error}
+              total={gs.total} hasToolMatches={anyResults} onOpen={openHit} />
+          ) : null}
         </View>
       </ScrollView>
     </View>
