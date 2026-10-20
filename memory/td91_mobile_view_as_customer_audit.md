@@ -86,3 +86,18 @@
 - Live check (admin, preview): tap → the portal opens as that customer; Access History shows `impersonation_started`.
 - Receipt + commit log as a docs commit.
 - **Decisions to confirm:** G1 (a/b/c) · G2 (admin + super_admin only?) · G3 (accept the backend-URL origin, or add `EXPO_PUBLIC_WEB_URL`).
+
+## 7. Ship receipt (2026-10-20)
+- **Commit:** `037bcb1f0` m-td91 (single atomic). Files: `PortalAccessPanel.tsx` (+51), `app/customer/[id].tsx` (relabel, 3 lines), `__tests__/td91-view-as-customer.test.tsx` (15 tests), `mobile/.env.example` (first commit; `EXPO_PUBLIC_WEB_URL=` added), `memory/TECH_DEBT.md`, `memory/mobile/commit_log.md`.
+- **Audit correction:** §3 said mobile had no web-URL env var. In fact `EXPO_PUBLIC_WEB_URL` was already read inline in `WebOnlyPage.tsx:24`, `ComingSoonPage.tsx:28` and `app/portal/profile.tsx:148`. The new code reuses that inline idiom (`process.env.EXPO_PUBLIC_WEB_URL || <fallback>`) with the backend URL as the fallback. No new helper.
+- **Gate:** admin + super_admin, mirroring web `canImpersonate`; owner, manager and tech get no button at all.
+- **Verification:** Jest full suite 42 / 48 = baseline (2562 passed). tsc 651. eslint clean.
+- **Live (Expo web preview, admin, customer `8910bfde…`):**
+  - The Portal Access row reads Re-send invite · Send reset link · Reset password · **View as customer** · Revoke access; the header reads **Switch to customer view**. Screenshot taken.
+  - Tap → `POST /admin/impersonate/8910bfde…` 200 → a new tab on the web host. The portal bootstrap ran (`sessionStorage.portal_token` set, `localStorage.user` = customer with `is_impersonated: true`), and "Admin viewed as customer" appears in Recent Portal Activity.
+  - Admin session unchanged afterwards (dashboard reloads as admin).
+  - Header "Switch to customer view" → mobile `/portal/home` with the "Viewing as … · Exit to Admin" banner (in-app swap unchanged).
+- **⚠ End result blocked by a web-side bug (TD-92):** the tab lands on **`/portal/login`**, not `/portal/home`, although the token is valid (`GET /api/auth/me` with it → 200).
+  - Cause: web `frontend/src/auth.jsx` `_readCachedUserSync` (L16-23) only restores a user when localStorage `TOKEN_KEY` exists, but the impersonation bootstrap (`index.js`) stores the token in sessionStorage only.
+  - So the portal is seen as logged out in any browser without a web admin login, which is exactly the device-browser case. Web's own button only works because the admin's web token is in the same browser's localStorage.
+  - It can't be fixed from mobile (frontend is out of scope).

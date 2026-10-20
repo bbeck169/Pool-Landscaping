@@ -462,3 +462,8 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - **New button:** `PortalAccessPanel.tsx` `portal-view-as-customer-btn`. It calls `POST /admin/impersonate/{id}`, then opens `${EXPO_PUBLIC_WEB_URL || EXPO_PUBLIC_BACKEND_URL}/portal/home?impersonation_token=…` in the in-app browser (`Linking.openURL` fallback). The admin's mobile session is untouched.
   - **Gate:** admin + super_admin, mirroring web `canImpersonate` (`CustomerDetail.jsx:2962`). The backend `require_admin` also allows owner; if the backend or web role set changes, update the mobile gate in `PortalAccessPanel.tsx` too.
   - **Accepted exposure:** the 30-min token travels in the URL (same as web).
+- **TD-92** · Web portal ignores the impersonation token in a fresh browser.
+  - `/portal/home?impersonation_token=…` bounces to `/portal/login` unless the browser already holds a web admin token.
+  - Cause: `frontend/src/auth.jsx` `_readCachedUserSync` requires localStorage `TOKEN_KEY`, while `index.js` stores the impersonation token in sessionStorage `portal_token` only.
+  - Blocks the end result of TD-91 (mobile "View as customer" in the device browser). The token itself is valid (`/auth/me` 200).
+  - Fix belongs to the web pod: e.g. `_readCachedUserSync` / `AuthProvider` should accept sessionStorage `portal_token` on `/portal*` routes. **Priority:** P1 — web, needed for TD-91 E2E.
