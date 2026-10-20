@@ -2069,3 +2069,10 @@
 - **Files modified**: mobile/src/lib/pickImages.ts (new), mobile/src/components/checklist/{PhotoUploader,ServiceReportMediaUploader}.tsx, mobile/app/job/[id].tsx, mobile/app/job/[id]/checkin.tsx, mobile/__tests__/td88e-{pick-images-multi,multiselect-surfaces}.test.*
 - **Web files referenced**: none (web pod handoff, td88b/td88c)
 - **Known**: web preview can't complete uploads (RN FormData + photoWorker web stub, already the case before this ship); device repro pending
+
+## Iteration 157 — TD-90 mobile global search
+- **Commits**: `25553ebe6` (audit) · `e460024b6` (hook) · `acdd4197e` (UI)
+- **Date**: 2026-10-20
+- **Changes**: the menu sheet and the Tools tab now search customers, jobs, invoices, quotes and leads via `GET /api/search` (web parity), with tool matches first. Techs stay tools-only.
+- **Files modified**: mobile/src/hooks/useGlobalSearch.ts, mobile/src/lib/globalSearchRoutes.ts, mobile/src/components/search/*, mobile/src/components/tools/ToolsMenuBody.tsx, mobile/__tests__/td90-*
+- **Web files referenced**: frontend/src/hooks/useGlobalSearchResults.js, frontend/src/components/GlobalSearchBar.jsx

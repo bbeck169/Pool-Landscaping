@@ -103,3 +103,26 @@
 
 - **Verify:** Jest baseline stays at 42 suites / 48 tests; tsc 651; eslint. Live preview as admin: type "pool" → grouped results; tap each kind → right screen; tech → tools only, no `/search` call.
 - **Decisions to confirm:** G2 (a/b/c) · G4 (include Leads?) · D4 — also upgrade the Tools-tab bar, or menu sheet only (recommended: sheet only).
+
+## 9. Ship receipt (2026-10-20)
+- **Decisions applied:**
+  - G2 = (a) web parity — `secondary` shown as returned by the backend.
+  - G4 = include Leads.
+  - D4 = BOTH bars (menu sheet + Tools tab, via the shared `ToolsMenuBody`).
+  - G1 = techs and non-dashboard roles stay tools-only, with no fetch.
+  - G3 / G5 = as is.
+- **Commits:**
+  - `e460024b6` m-td90-search-hook: `src/hooks/useGlobalSearch.ts`, `src/lib/globalSearchRoutes.ts`, `__tests__/td90-global-search-hook.test.ts` (8 tests).
+  - `acdd4197e` m-td90-search-ui: `src/components/search/{GlobalSearchRow,GlobalSearchResults}.tsx`, `src/components/tools/ToolsMenuBody.tsx` (+26 lines), `__tests__/td90-global-search-ui.test.tsx` (10 tests).
+- **Behaviour:**
+  - Dashboard roles (admin, super_admin, owner, manager) see the placeholder "Search customers, jobs, invoices, quotes…" on both bars. Typing 2+ characters makes one `GET /search?q=…&limit=5` after 300 ms (the bar's own debounce is 0 on global surfaces, so the total wait matches web).
+  - Matching tools render first, then Customers · Jobs · Invoices · Quotes · Leads; empty groups are hidden. Copy: "Searching…" / `No results for "<q>"`. On error the last results stay, plus a muted line.
+  - Taps: customer → `/customer/:id`, job → `/job/:id`, invoice and quote → `/quote/:id`, lead → `/leads/:id`. In the sheet, taps go through `onNavigate` (close, then push); search hits are never added to recents.
+- **Verification:**
+  - Jest: full suite 42 failed suites / 48 failed tests = baseline (2547 passed, +18 new). tsc 651 = baseline. eslint clean.
+- **Live preview (Expo web):**
+  - **Admin, menu sheet:** "t" → no `/search` call; "test" → exactly 1 call; groups customers · jobs · invoices · quotes.
+  - **Admin, taps (sheet closed each time):** customer → `/customer/ai-desc-cust`; job → `/job/1dce28fd…`; invoice → `/quote/6e64b146…`; quote → `/quote/03c47b9f…`; lead ("le") → `/leads/1f1eefb2…`. The lead URL gets a duplicate `?id=` appended by expo-router on web; harmless.
+  - **Admin, Tools tab:** "pool" → the `tools-section-adm-operations` section (Pool Calculators) first, then jobs · invoices · quotes.
+  - **Tech (mike):** placeholder "Search tools…", "pool" → 0 `/search` calls, tools section only.
+  - Screenshots were captured for the sheet, the tab and the tech view.
