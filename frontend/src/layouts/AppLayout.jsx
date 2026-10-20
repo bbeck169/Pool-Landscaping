@@ -351,6 +351,29 @@ function AppLayout() {
   // ``/auth/me`` fetch already sees the impersonation token).  No
   // per-route bootstrap is needed here.
 
+  // TD-92 · Feb-2026 — capture whether the device has a local
+  // admin session at mount.  Used to scope the "Return to admin"
+  // affordance to admin-same-tab flows: if the admin was never
+  // signed in on this device (the mobile ``View as customer``
+  // browser-handoff case), rendering a button that writes an
+  // admin JWT into ``localStorage`` on revert is semantically
+  // wrong AND silently grants the device a persistent admin
+  // session the user never explicitly authenticated into.
+  // The ``End session`` fallback below clears the per-tab
+  // sessionStorage.portal_token and bounces to ``/portal/login``
+  // instead — no admin token is ever written.
+  //
+  // Captured once at mount (via ``useRef``) so a mid-session
+  // rehydrate (``/auth/me`` 401 → localStorage clear → re-mount)
+  // doesn't flip the affordance mid-flow.  Follows the
+  // ``_readCachedUserSync`` precedent of being a point-in-time
+  // snapshot of the storage layer.
+  const _hadLocalAdminTokenAtMount = React.useRef(
+    typeof window !== "undefined"
+      ? Boolean(window.localStorage.getItem("token"))
+      : false,
+  );
+
   // Detect impersonation: the JWT carries an `act` claim (RFC 8693) when admin
   // acts as a customer. We decode the payload client-side (no verification —
   // display only; the backend re-verifies every request).
@@ -385,6 +408,31 @@ function AppLayout() {
     } catch (e) {
       alert(e.message);
     }
+  };
+
+  // TD-92 · Feb-2026 — mobile-browser session end path.  Only
+  // reachable when ``_hadLocalAdminTokenAtMount.current === false``
+  // (device has no admin session to return to).  Clears the
+  // per-tab sessionStorage.portal_token + any portal-scoped
+  // localStorage cache seeded by ``src/index.js:60`` K13 bootstrap
+  // and routes to ``/portal/login``.  Does NOT call
+  // ``/auth/revert-impersonation`` — there is no admin session on
+  // this device to restore, and skipping the call avoids depositing
+  // an admin access_token into the device's localStorage.
+  //
+  // Known telemetry gap: ``impersonation_ended`` audit event does
+  // NOT fire on this path.  Tracked as ``TD-92-fn`` in
+  // ``memory/TECH_DEBT.md`` — low priority follow-up.
+  const endPortalSession = () => {
+    try {
+      window.sessionStorage.removeItem("portal_token");
+    } catch { /* sessionStorage may be unavailable */ }
+    try {
+      localStorage.removeItem("user");
+      localStorage.removeItem("tenant_slug");
+      localStorage.removeItem("tenant_name");
+    } catch { /* localStorage may be unavailable */ }
+    window.location.href = "/portal/login";
   };
   const { previewRole, setPreviewRole, isPreviewing, effectiveRole } = usePermissions();
   const nav = (() => {
@@ -446,14 +494,34 @@ function AppLayout() {
           data-testid="impersonation-banner"
         >
           <span>👤 Viewing as <strong>{user?.name || user?.email}</strong> · Admin session paused</span>
-          <button
-            onClick={revertImpersonation}
-            className="text-xs font-bold px-3 py-1 rounded-md"
-            style={{ backgroundColor: "#B45309", color: "#fff" }}
-            data-testid="revert-impersonation"
-          >
-            Return to admin
-          </button>
+          {/* TD-92 · Feb-2026 — affordance is scoped to the device
+              that actually has a local admin session to return to.
+              Admin-same-tab flows render the existing "Return to
+              admin" button byte-identical.  Mobile-browser-no-admin
+              flows render "End session" instead, which clears the
+              per-tab sessionStorage.portal_token and routes to
+              ``/portal/login`` without ever depositing an admin
+              access_token into the device's localStorage.  Known
+              telemetry gap tracked as ``TD-92-fn`` in TECH_DEBT.md. */}
+          {_hadLocalAdminTokenAtMount.current ? (
+            <button
+              onClick={revertImpersonation}
+              className="text-xs font-bold px-3 py-1 rounded-md"
+              style={{ backgroundColor: "#B45309", color: "#fff" }}
+              data-testid="revert-impersonation"
+            >
+              Return to admin
+            </button>
+          ) : (
+            <button
+              onClick={endPortalSession}
+              className="text-xs font-bold px-3 py-1 rounded-md"
+              style={{ backgroundColor: "#B45309", color: "#fff" }}
+              data-testid="end-portal-session"
+            >
+              End session
+            </button>
+          )}
         </div>
       ) : null}
       {isPreviewing ? (
