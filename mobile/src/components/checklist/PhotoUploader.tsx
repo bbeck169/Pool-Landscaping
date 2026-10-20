@@ -19,6 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { capturePhoto, getPhotosForEntity } from "@/src/services/sync/photoWorker";
 import { useOnline } from "@/src/offline";
+import { pickImagesMulti } from "@/src/lib/pickImages";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 export type ChecklistPhoto = {
@@ -50,16 +51,25 @@ export default function PhotoUploader({
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed"); return; }
     // Phase P21 — URI-only, no {base64: true}.
-    const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, allowsEditing: true });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    const rawUri = result.assets[0].uri;
+    // TD-88e — library is multi-select (cap = remaining); camera stays single-shot.
+    let uris: string[];
+    if (fromCamera) {
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7, allowsEditing: true });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      uris = [result.assets[0].uri];
+    } else {
+      const assets = await pickImagesMulti({ remainingCap: remaining, quality: 0.7 });
+      if (!assets) return;
+      uris = assets.map((a) => a.uri);
+    }
     setBusy(true);
+    let failed = 0;
     try {
-      // Route through durable SQLite photoWorker pipeline.
-      await capturePhoto(rawUri, "job", jobId);
-      // Show optimistic pending thumbnail by refreshing from photoWorker.
+      // Route each asset through the durable SQLite photoWorker pipeline.
+      for (const rawUri of uris) {
+        try { await capturePhoto(rawUri, "job", jobId); } catch { failed += 1; }
+      }
+      // Show optimistic pending thumbnails by refreshing from photoWorker.
       const pending = await getPhotosForEntity(jobId);
       const optimistic = pending.map((p) => ({
         id: p.id,
@@ -67,6 +77,7 @@ export default function PhotoUploader({
         label: "Pending upload",
       }));
       onPhotosChange([...(photos || []).filter((p) => !p.id.startsWith("pending-")), ...optimistic]);
+      if (failed) Alert.alert("Upload failed", failed === uris.length ? "Try again." : `${failed} of ${uris.length} photos failed. Try again.`);
     } catch (e: any) {
       Alert.alert("Upload failed", e?.message || "Try again.");
     } finally { setBusy(false); }

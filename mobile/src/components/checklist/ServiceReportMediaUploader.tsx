@@ -30,6 +30,7 @@ import {
   SRMedia, OfflineError,
 } from "@/src/api/serviceReportMedia";
 import VideoPlayerModal from "@/src/components/media/VideoPlayerModal";
+import { pickImagesMulti } from "@/src/lib/pickImages";
 
 const W = Dimensions.get("window").width;
 const TILE_W = (W - spacing.lg * 2 - spacing.sm * 2) / 3;
@@ -67,34 +68,48 @@ export default function ServiceReportMediaUploader({
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { Alert.alert("Permission needed"); return; }
 
-    const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.7, mediaTypes: ["images"] })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ["images"] });
-    if (result.canceled || !result.assets?.[0]) return;
-
-    const asset = result.assets[0];
-    const mime = asset.mimeType || "image/jpeg";
-    if (!PHOTO_MIMES.has(mime)) {
-      setErr(`Unsupported format: ${mime}. Use JPG, PNG, WebP, or HEIC.`);
-      return;
+    // TD-88e — library is multi-select (cap = PHOTO_CAP - photoCount);
+    // camera stays single-shot. Each asset runs the same MIME check →
+    // upload path; the list is accumulated locally so every upload lands.
+    let assets: ImagePicker.ImagePickerAsset[];
+    if (fromCamera) {
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7, mediaTypes: ["images"] });
+      if (result.canceled || !result.assets?.[0]) return;
+      assets = [result.assets[0]];
+    } else {
+      const picked = await pickImagesMulti({ remainingCap: PHOTO_CAP - photoCount, quality: 0.7, mediaTypes: ["images"] });
+      if (!picked) return;
+      assets = picked;
     }
 
+    let acc = [...photos];
     setBusy(true); setProgress(0);
     try {
-      const resp = await uploadServiceReportMedia({
-        reportId,
-        fileUri: asset.uri,
-        fileName: asset.fileName || "photo.jpg",
-        mimeType: mime,
-        fileSize: asset.fileSize || 0,
-        kind: "photo",
-        onProgress: setProgress,
-      });
-      const newMedia: SRMedia = { url: resp.url || resp.media?.url, kind: "photo" };
-      onPhotosChange([...photos, newMedia]);
-    } catch (e: any) {
-      if (e instanceof OfflineError) Alert.alert("Offline", e.message);
-      else setErr(e.message || "Photo upload failed.");
+      for (const asset of assets) {
+        const mime = asset.mimeType || "image/jpeg";
+        if (!PHOTO_MIMES.has(mime)) {
+          setErr(`Unsupported format: ${mime}. Use JPG, PNG, WebP, or HEIC.`);
+          continue;
+        }
+        try {
+          const resp = await uploadServiceReportMedia({
+            reportId,
+            fileUri: asset.uri,
+            fileName: asset.fileName || "photo.jpg",
+            mimeType: mime,
+            fileSize: asset.fileSize || 0,
+            kind: "photo",
+            onProgress: setProgress,
+          });
+          const newMedia: SRMedia = { url: resp.url || resp.media?.url, kind: "photo" };
+          acc = [...acc, newMedia];
+          onPhotosChange(acc);
+        } catch (e: any) {
+          if (e instanceof OfflineError) { Alert.alert("Offline", e.message); break; }
+          setErr(e.message || "Photo upload failed.");
+        }
+        setProgress(0);
+      }
     } finally { setBusy(false); setProgress(0); }
   };
 

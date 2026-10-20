@@ -23,6 +23,7 @@ import { api } from "@/src/api";
 import { useToast } from "@/src/components/ToastProvider";
 import { geolocate, GeolocateResult } from "@/src/utils/geolocate";
 import { uploadFile, FileRecord } from "@/src/api/files";
+import { pickImagesMulti } from "@/src/lib/pickImages";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 
@@ -86,45 +87,53 @@ export default function CheckinComposer() {
         showToast("Permission required to add photos");
         return;
       }
-      const opts: ImagePicker.ImagePickerOptions = { quality: 0.7, allowsEditing: false };
-      const result = source === "camera"
-        ? await ImagePicker.launchCameraAsync(opts)
-        : await ImagePicker.launchImageLibraryAsync(opts);
-      if (result.canceled || !result.assets?.[0]) return;
+      // TD-88e — library is multi-select (cap = MAX_PHOTOS - photos.length);
+      // camera stays single-shot.
+      let uris: string[];
+      if (source === "camera") {
+        const opts: ImagePicker.ImagePickerOptions = { quality: 0.7, allowsEditing: false };
+        const result = await ImagePicker.launchCameraAsync(opts);
+        if (result.canceled || !result.assets?.[0]) return;
+        uris = [result.assets[0].uri];
+      } else {
+        const assets = await pickImagesMulti({ remainingCap: MAX_PHOTOS - photos.length, quality: 0.7 });
+        if (!assets) return;
+        uris = assets.map((a) => a.uri);
+      }
 
-      const asset = result.assets[0];
-      const localUri = asset.uri;
-      const slot: PhotoSlot = {
+      const base = photos.length; // index of the first new slot
+      const slots: PhotoSlot[] = uris.map((localUri) => ({
         localUri,
         fileId: null,
         uploading: true,
         progress: 0,
         error: null,
-      };
+      }));
+      setPhotos((prev) => [...prev, ...slots]);
 
-      setPhotos((prev) => [...prev, slot]);
-      const idx = photos.length; // index of the new slot
-
-      // Upload via /api/files/upload with purpose='public_checkin'
-      try {
-        const rec: FileRecord = await uploadFile({
-          uri: localUri,
-          name: `checkin_${Date.now()}.jpg`,
-          type: "image/jpeg",
-          purpose: "public_checkin",
-          onProgress: (pct) => {
-            setPhotos((prev) => prev.map((p, i) =>
-              i === idx ? { ...p, progress: pct } : p
-            ));
-          },
-        });
-        setPhotos((prev) => prev.map((p, i) =>
-          i === idx ? { ...p, fileId: rec.id, uploading: false, progress: 100 } : p
-        ));
-      } catch (e: any) {
-        setPhotos((prev) => prev.map((p, i) =>
-          i === idx ? { ...p, uploading: false, error: e?.message || "Upload failed" } : p
-        ));
+      // Upload each via /api/files/upload with purpose='public_checkin'
+      for (let i = 0; i < uris.length; i++) {
+        const idx = base + i;
+        try {
+          const rec: FileRecord = await uploadFile({
+            uri: uris[i],
+            name: `checkin_${Date.now()}_${i}.jpg`,
+            type: "image/jpeg",
+            purpose: "public_checkin",
+            onProgress: (pct) => {
+              setPhotos((prev) => prev.map((p, j) =>
+                j === idx ? { ...p, progress: pct } : p
+              ));
+            },
+          });
+          setPhotos((prev) => prev.map((p, j) =>
+            j === idx ? { ...p, fileId: rec.id, uploading: false, progress: 100 } : p
+          ));
+        } catch (e: any) {
+          setPhotos((prev) => prev.map((p, j) =>
+            j === idx ? { ...p, uploading: false, error: e?.message || "Upload failed" } : p
+          ));
+        }
       }
     } catch {
       // swallow — user can retry

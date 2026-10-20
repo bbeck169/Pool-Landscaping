@@ -12,6 +12,7 @@ import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
 import { capturePhoto, getPhotosForEntity, flushPhotos, subscribePhotos, type PendingPhoto as SyncPendingPhoto } from "@/src/services/sync/photoWorker";
+import { pickImagesMulti } from "@/src/lib/pickImages";
 import { enqueueJobArrive } from "@/src/services/sync/jobArrive";
 import { offlineWrite } from "@/src/services/offlineWrite";
 import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
@@ -296,19 +297,27 @@ export default function JobDetail() {
         return;
       }
       // Phase P21 — no {base64: true}; use URI-only path to avoid OOM.
-      const opts: ImagePicker.ImagePickerOptions = { quality: 0.7, allowsEditing: true };
-      const result =
-        source === "camera"
-          ? await ImagePicker.launchCameraAsync(opts)
-          : await ImagePicker.launchImageLibraryAsync(opts);
-      if (result.canceled || !result.assets?.[0]?.uri) return;
-      const rawUri = result.assets[0].uri;
+      // TD-88e — library is multi-select (cap = MAX_PHOTOS - photoCount);
+      // camera stays single-shot with crop.
+      let uris: string[];
+      if (source === "camera") {
+        const opts: ImagePicker.ImagePickerOptions = { quality: 0.7, allowsEditing: true };
+        const result = await ImagePicker.launchCameraAsync(opts);
+        if (result.canceled || !result.assets?.[0]?.uri) return;
+        uris = [result.assets[0].uri];
+      } else {
+        const assets = await pickImagesMulti({ remainingCap: MAX_PHOTOS - photoCount, quality: 0.7 });
+        if (!assets) return;
+        uris = assets.map((a) => a.uri);
+      }
       setPhotoSheet(false);
       setUploading(true);
-      // Route through the durable SQLite photoWorker pipeline.
+      // Route each asset through the durable SQLite photoWorker pipeline.
       // It downscales, stages to filesystem, inserts into SQLite,
       // and flushes upload when online — no base64 in JS memory.
-      await capturePhoto(rawUri, "job", id as string);
+      for (const rawUri of uris) {
+        try { await capturePhoto(rawUri, "job", id as string); } catch { /* user can retry */ }
+      }
       setPendingPhotos(await getPhotosForEntity(id as string));
     } catch (e) {
       // swallow — user can retry
