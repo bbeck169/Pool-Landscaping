@@ -455,3 +455,10 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
 - **TD-89 · SR GET/PATCH response hydrates from `jobs.photos[]` rather than `service_reports.photos[]`.**
   - `GET /jobs/{jid}/service-report` overwrites `existing["photos"] = job.get("photos") or []` so the response carries `jobs.photos` ids. `PATCH /jobs/{jid}/service-report` + `POST /jobs/{jid}/service-report/submit` return the raw `service_reports.find_one(...)` doc so the response carries `service_reports.photos` ids. The two id-spaces work today because `routers/jobs.py::_find_sr_photo_by_job_and_id` has an SR fallback branch on both the full-size and derivative public read endpoints, and TD-88 stamped canonical URLs via the shared `inject_photo_url_on_doc` helper so the FE never sees the drift. A future SR-scoped canonical refactor would decouple the two id-spaces cleanly (dedicated `/api/public/service/{public_uuid}/photo/{pid}` + `/thumb` route, SR GET stops hydrating from `jobs.photos[]`, new sibling helper keyed on the SR streaming route). Bookmarked here, not dispatched. **Priority:** P3 — future cycle.
 
+
+## Mobile TD-90 / TD-91 notes (Oct-2026)
+- **TD-90-fn** · lead route picks up duplicate ?id= on web preview; harmless, future tiny fix if ever confusing.
+- **TD-91** · mobile Portal Access "View as customer" shipped; header retains "Switch to customer view" for in-app swap. Details:
+  - **New button:** `PortalAccessPanel.tsx` `portal-view-as-customer-btn`. It calls `POST /admin/impersonate/{id}`, then opens `${EXPO_PUBLIC_WEB_URL || EXPO_PUBLIC_BACKEND_URL}/portal/home?impersonation_token=…` in the in-app browser (`Linking.openURL` fallback). The admin's mobile session is untouched.
+  - **Gate:** admin + super_admin, mirroring web `canImpersonate` (`CustomerDetail.jsx:2962`). The backend `require_admin` also allows owner; if the backend or web role set changes, update the mobile gate in `PortalAccessPanel.tsx` too.
+  - **Accepted exposure:** the 30-min token travels in the URL (same as web).

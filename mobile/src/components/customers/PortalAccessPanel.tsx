@@ -23,8 +23,10 @@ import {
   Alert,
   Modal,
   Platform,
+  Linking,
   KeyboardAvoidingView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
 import * as Clipboard from "expo-clipboard";
 
 import { api } from "@/src/api";
@@ -244,6 +246,45 @@ export default function PortalAccessPanel({
     }
   };
 
+  /** TD-91 · web `cd-impersonate` parity — open the customer portal in
+   *  the in-app browser AS this customer. Only the URL carries the 30-min
+   *  customer token; the admin's own mobile session is never touched
+   *  (contrast: header "Switch to customer view" = in-app session swap).
+   *  BE logs `impersonation_started`. Web origin = EXPO_PUBLIC_WEB_URL,
+   *  else the API host (same inline idiom as WebOnlyPage / ComingSoonPage). */
+  const viewAsCustomer = async () => {
+    setBusy("view-as");
+    try {
+      let token = "";
+      try {
+        const r: any = await api.post(`/admin/impersonate/${customerId}`, {});
+        token = r?.access_token || "";
+      } catch (e) {
+        const m = mapApiError(e);
+        if (m.kind === "forbidden") {
+          console.warn("[portal] view-as-customer forbidden", m.status);
+          showToast("Access denied — only admins can view the portal as a customer.", "error");
+        } else if (m.kind === "offline") {
+          showToast("Couldn't reach the server — check your connection and try again.", "error");
+        } else {
+          showToast(m.message, "error");
+        }
+        return;
+      }
+      if (!token) { showToast("Couldn't start the customer session — please try again.", "error"); return; }
+      const webBase = (process.env.EXPO_PUBLIC_WEB_URL || process.env.EXPO_PUBLIC_BACKEND_URL || "")
+        .replace(/\/+$/, "").replace(/\/api$/, "");
+      const url = `${webBase}/portal/home?impersonation_token=${encodeURIComponent(token)}`;
+      try {
+        await WebBrowser.openBrowserAsync(url);
+      } catch {
+        try { await Linking.openURL(url); } catch { showToast("Couldn't open the browser — please try again.", "error"); }
+      }
+    } finally {
+      setBusy("");
+    }
+  };
+
   /** Revoke portal access. */
   const revokeAccess = () => {
     Alert.alert(
@@ -364,6 +405,16 @@ export default function PortalAccessPanel({
               disabled={!!busy}
               onPress={() => setResetModalOpen(true)}
             />
+            {userRole === "admin" || userRole === "super_admin" ? (
+              <ActionButton
+                testID="portal-view-as-customer-btn"
+                icon="eye-outline"
+                label="View as customer"
+                busy={busy === "view-as"}
+                disabled={!!busy || !active}
+                onPress={viewAsCustomer}
+              />
+            ) : null}
             <ActionButton
               testID="portal-revoke-btn"
               icon="ban-outline"

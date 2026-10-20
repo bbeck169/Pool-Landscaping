@@ -488,7 +488,7 @@ export default function CustomerDetail() {
           {isAdmin && c.has_login ? (
             <Pressable style={[s2.actionBtn, s2.actionBtnSteel]} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
               <Ionicons name="eye-outline" size={16} color="#fff" />
-              <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "View as customer"}</Text>
+              <Text style={[styles.impersonateText, s2.actionBtnText]}>{impersonating ? "Switching…" : "Switch to customer view"}</Text>
             </Pressable>
           ) : null}
           {/* Phase 40b · web ``cd-issue-credit-btn`` → scroll to the Credits
@@ -1031,12 +1031,12 @@ export default function CustomerDetail() {
       </ScrollView>
       </View>
 
-      <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="View as customer" testID="impersonate-confirm-sheet">
+      <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="Switch to customer view" testID="impersonate-confirm-sheet">
         <Text style={styles.sheetHint}>
           You&apos;ll be switched into {c.name}&apos;s portal to see exactly what they see (services, invoices, documents). An orange banner will let you return to admin anytime. Payments and card changes are disabled while viewing.
         </Text>
         <View style={{ height: spacing.md }} />
-        <PrimaryButton title="View as customer" icon="eye-outline" onPress={doImpersonate} loading={impersonating} testID="impersonate-confirm-button" />
+        <PrimaryButton title="Switch to customer view" icon="eye-outline" onPress={doImpersonate} loading={impersonating} testID="impersonate-confirm-button" />
       </Sheet>
 
       <Sheet visible={loginSheet} onClose={() => setLoginSheet(false)} title="Create Customer Login" testID="create-login-sheet">

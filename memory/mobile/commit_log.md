@@ -2076,3 +2076,13 @@
 - **Changes**: the menu sheet and the Tools tab now search customers, jobs, invoices, quotes and leads via `GET /api/search` (web parity), with tool matches first. Techs stay tools-only.
 - **Files modified**: mobile/src/hooks/useGlobalSearch.ts, mobile/src/lib/globalSearchRoutes.ts, mobile/src/components/search/*, mobile/src/components/tools/ToolsMenuBody.tsx, mobile/__tests__/td90-*
 - **Web files referenced**: frontend/src/hooks/useGlobalSearchResults.js, frontend/src/components/GlobalSearchBar.jsx
+
+## Iteration 158 — TD-91 Portal Access "View as customer" (in-app browser)
+- **Commit**: `m-td91` (single atomic; hash in the TD-91 receipt)
+- **Date**: 2026-10-20
+- **Changes**:
+  - New Portal Access button `portal-view-as-customer-btn` → `POST /admin/impersonate/{id}` → `WebBrowser.openBrowserAsync(<web origin>/portal/home?impersonation_token=…)`; admin + super_admin only.
+  - Header in-app swap relabelled "Switch to customer view" (button + confirm sheet).
+  - `EXPO_PUBLIC_WEB_URL` documented in `mobile/.env.example` (first commit of the file).
+- **Files modified**: mobile/src/components/customers/PortalAccessPanel.tsx, mobile/app/customer/[id].tsx, mobile/__tests__/td91-view-as-customer.test.tsx (new), mobile/.env.example (new to git), memory/TECH_DEBT.md
+- **Web files referenced**: frontend/src/pages/customers/CustomerDetail.jsx (`impersonate`, L3017), frontend/src/index.js (portal token bootstrap)
