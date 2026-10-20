@@ -52,3 +52,33 @@ No surface lacks a cap, so the default hard cap of 10 isn't needed anywhere.
 - **Camera paths:** untouched, as instructed.
 - **Video (`ServiceReportMediaUploader.tsx:120`):** skipped, as instructed. Opting in later means switching it to `pickImagesMulti({ remainingCap: VIDEO_CAP - videoCount, mediaTypes: ["videos"], quality: 1 })` plus a loop.
 - **Existing tests to extend:** `tech-checkin-mobile.test.ts` (checkin), `m3-internal-media-relabel` / `f2a-job-photos` (job detail / uploader). The helper gets a new unit suite.
+
+## 6. Ship receipt (2026-10-20)
+- **Decision:** the operator's reply was "Assume default and continue", so per the TD-61 auto-ack addendum the posted defaults apply:
+  - `analyzeWater` stays single-pick (option A).
+  - The helper returns `null` on denial; callers keep their own permission UX.
+  - No new "max reached" copy.
+  - `service-report/[id].tsx:154` stays excluded.
+- **Commits:**
+  - `4f80f138f` m-td88e-helper: `src/lib/pickImages.ts` + `__tests__/td88e-pick-images-multi.test.ts` (7 tests)
+  - `305335a67` m-td88e-migrate: 4 sites + `__tests__/td88e-multiselect-surfaces.test.tsx` (9 tests)
+- **Migrated:** `PhotoUploader.tsx` (L55), `ServiceReportMediaUploader.tsx` photo (L72), `app/job/[id].tsx` (L303), `app/job/[id]/checkin.tsx` (L92). Library picks go through `pickImagesMulti`, with `remainingCap = cap - count`, a per-asset loop through the existing pipeline, and `allowsEditing` dropped.
+- **Unchanged:**
+  - Camera paths: single-shot.
+  - `PoolChecklistForm.tsx:302` `analyzeWater`: single photo by design.
+  - SR video (`ServiceReportMediaUploader.tsx` ~L135): opting in is a 1-line switch to `pickImagesMulti({ remainingCap: VIDEO_CAP - videoCount, mediaTypes: ["videos"], quality: 1 })` plus a loop.
+- **Per-surface behaviour notes:**
+  - SR media: the list is accumulated locally, so every upload lands. Unsupported MIME types are skipped with the existing error, and `OfflineError` stops the batch.
+  - Check-in: slot index = `base + i`, which fixes the stale-closure risk.
+  - PhotoUploader: per-asset failures are counted and reported once.
+- **Verification:**
+  - Jest: full suite 42 failed suites / 48 failed tests = baseline (2529 passed, +16 new).
+  - tsc: 651 = baseline.
+  - eslint: clean (one pre-existing unused-var warning in PhotoUploader).
+- **Live preview (Expo web, admin, job `ebb84565…` "LL-timer" checklist):**
+  - The Library tap opens a file chooser with `multiple = true`, and picking 3 files gives 3 pipeline runs: 3× `POST /service-reports/{id}/media`.
+  - **No end-to-end upload on web — an existing web-only limitation, not caused by this ship.**
+    - `serviceReportMedia.ts` and `files.ts` append the React Native `{uri,name,type}` FormData object, which a browser serialises as a string. The backend answers 422 "Expected UploadFile, received str", and single-pick at HEAD fails the same way.
+    - `PhotoUploader` and job detail go through photoWorker, whose SQLite layer is a no-op stub on web (`db.web.ts`).
+  - So "3 photos appear", "at cap" and "cancel" were checked by Jest render tests, plus the live picker-level check above. **Device reproduction (iOS simulator / Android) is still the operator's step;** no simulator is available in this pod.
+- **Possible follow-up:** make the mobile upload clients web-capable (fetch the uri → Blob → `form.append("file", blob, name)` when `Platform.OS === "web"`). Needs a TD number.

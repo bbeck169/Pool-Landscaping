@@ -2061,3 +2061,11 @@
 - **Live**: 148-invoice customer → "(148)", 10 rows, View all → filtered list + chip; 3-invoice customer → 3 rows, no View all; 0-invoice customer → empty state.
 - **Tests**: new `customer-overview-invoice-list-td79.test.tsx` 9/9. Customer-detail-touching suites 13/15 — `route-entry-classifier` + `customer-delete-409-toast` identical on HEAD. tsc 651 (customer/[id] 5 pre-existing); eslint clean (customer/[id] 6 warnings = HEAD).
 - **Files modified**: mobile/src/components/customers/CustomerInvoiceList.tsx (new), mobile/app/customer/[id].tsx, mobile/__tests__/customer-overview-invoice-list-td79.test.tsx (new), memory/mobile_td79_audit.md (new)
+
+## Iteration 156 — TD-88e mobile library multi-select
+- **Commits**: `24b84c3c6` (audit) · `4f80f138f` (helper) · `305335a67` (migrate)
+- **Date**: 2026-10-20
+- **Changes**: new `src/lib/pickImagesMulti`. Library picks are now multi-select with a dynamic `remainingCap` in PhotoUploader, SR media photos, job detail and check-in. Camera, `analyzeWater` and SR video stay single-pick.
+- **Files modified**: mobile/src/lib/pickImages.ts (new), mobile/src/components/checklist/{PhotoUploader,ServiceReportMediaUploader}.tsx, mobile/app/job/[id].tsx, mobile/app/job/[id]/checkin.tsx, mobile/__tests__/td88e-{pick-images-multi,multiselect-surfaces}.test.*
+- **Web files referenced**: none (web pod handoff, td88b/td88c)
+- **Known**: web preview can't complete uploads (RN FormData + photoWorker web stub, already the case before this ship); device repro pending
