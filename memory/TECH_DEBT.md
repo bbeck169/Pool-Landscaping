@@ -543,6 +543,64 @@ Operator spec §3 asked for `triggered_by:"quote_accept"`; shipped shape uses `e
 - **Priority:** P3 (candidate, not scheduled).
 
 
+## TD-98/99 · Combined communication timeline — SCOPE-REALITY DELTA (Feb-2026 close-out)
+
+Audit doc: `memory/td98_99_combined_communication_timeline_audit.md`.
+
+**Closed with scope-reality rationale.** Phase-1 audit (ship `td98-99-audit`) found that the original "merge two timelines into one shared component" framing did not match repo reality. In practice there are **three** divergent implementations in `main`, built across separate waves, consuming three distinct backend endpoints with substantially different source coverage. Full merge would either downgrade customer-side (losing the 6-source Phase B richness) or over-engineer lead-side (which doesn't own invoices/jobs). The one genuine shared primitive — `CommunicationDetailModal` — was already extracted and consumed by all three.
+
+### Canonical state (locked)
+
+- **Customer-side canonical surface**: `components/customers/CustomerFullTimeline.jsx` (Phase B super-timeline, 485 LOC) mounted at `CustomerDetail.jsx:2617` + `PortalMessages`. Consumes `GET /customers/{cid}/timeline`. 6 sources for admin/super_admin (email + SMS + invoice + estimate + call_logs + internal notes); 4 sources for manager; 403 for below.
+- **Lead-side canonical surface**: inline `CommTimelineItem` in `pages/leads/LeadDetail.jsx:807-866` + mount at lines 614-658. Consumes `GET /leads/{lid}/communications`. 3 sources (`lead_communications` + `sms_inbound` matched-to-lead + `leads.timeline[].status_change`).
+- **Genuine shared primitive**: `components/communications/CommunicationDetailModal.jsx` opens the shared Dialog via `GET /communications-detail/{id}`. **Post-reap consumer: lead-side only** (`pages/leads/LeadDetail.jsx` via inline `CommTimelineItem`). `CustomerFullTimeline` implements its own row-click behavior without the shared modal. The audit's claim that all three timelines consumed the modal was an overclaim corrected during the reap ship — the modal was consumed by lead-side + the (now reaped) Wave A, not by `CustomerFullTimeline`. The shared BE endpoint `/communications-detail/{id}` remains available for any future surface.
+- **Dead-code reap shipped under `td98b-fe`**: orphan Wave A `components/customers/CommunicationTimeline.jsx` + its 2 vitest files + the dead import at `CustomerDetail.jsx:50`. Backend endpoint retained — see TD-98-be-cleanup below.
+
+### Design-evolution deviation from original TD-98/99 spec
+
+The original ask included "default 5 entries, View all to expand, Show less to collapse" at the list level. Shipped reality uses **filter chips + cursor-paginated "Load more"** on `CustomerFullTimeline` (Phase B) and **cursor-paginated "Load more"** on lead-side. The 5-entry hard-cap conflicts with the filter-chips UX premise and would downgrade a working surface. Deviation documented; raise **TD-98-5entry (P3 candidate)** below if the operator wants to revisit the hard-cap paradigm.
+
+**Priority:** closed (scope-reality-delta close-out).
+
+
+## TD-98-fn-bodyparity (candidate) · Row-level body expand on lead-side timeline
+
+- **Current state:** Lead-side `CommTimelineItem` hard-truncates SMS/email body at 400 chars with no expand toggle (`LeadDetail.jsx:842-843`). Admin must click "View details" to see the full body in the shared `CommunicationDetailModal`. The reaped Wave A pattern had a 220-char threshold + inline `show more`/`show less` toggle; `CustomerFullTimeline` relies on server-side `summary`/`detail` fields.
+- **Why deferred:** Nice-to-have polish, not core. Operator explicitly skipped Option C in the TD-98/99 close-out ship to keep the sequence narrow.
+- **When to ship:** Standalone P3. ~15-30 LOC — add `show more`/`show less` toggle to lead inline `CommTimelineItem` mirroring the reaped Wave A pattern at a 400-char threshold.
+- **Priority:** P3 (candidate, not scheduled).
+
+
+## TD-98-5entry (candidate) · 5-entry list-level collapse paradigm
+
+- **Current state:** Both canonical timelines use cursor-paginated "Load more" from the first page with 50-row page size, not a 5-entry list-level collapse. The Phase B super-timeline additionally uses filter chips. Mixing 5-entry hard-cap with chips would create UI tension.
+- **Why deferred:** Operator decision in TD-98/99 close-out explicitly dropped the 5-entry ask in favor of the shipped "Load more" paradigm. Design-evolution; raised here only so operators who recall the original spec have a documented decision trail.
+- **When to ship:** Only if operator reports the current paradigm as insufficient after real-world usage.
+- **Priority:** P3 (candidate, not scheduled).
+
+
+## TD-98/99-xref (candidate) · Cross-visibility: lead comms on converted customer timeline
+
+- **Current state:** Lead `lead_communications` rows carry `lead_id`, not `customer_id`. The TD-96 reparent flips `recipient_type/recipient_id` on `quotes` but does NOT re-FK `lead_communications` to the new customer (TD-96 §6 touch-map: lead-tied comms stay lead-scoped at write time). Lead-side timeline (post-conversion) still surfaces them via the retained archived lead doc; customer-side `CustomerFullTimeline` does NOT. Represents a visibility gap in the "all interaction history in one place" promise.
+- **Target shape:** `_lead_communications_to_items` aggregator in `routers/communication_timeline.py` mirroring the pattern of the 6 existing `_*_to_items` helpers. Join key: `converted_from_lead_id` → fetch all `lead.id` values for `converted_customer_id == <cid>` → `$in` on `lead_communications.lead_id`. Polymorphic READ, retains lead-scoped WRITE per TD-96 §6.
+- **Tests:** Fixture a lead → auto-convert via TD-97 flow → assert lead-era comms surface on customer timeline in correctly interleaved order with post-conversion comms.
+- **Scope estimate:** ~100 LOC BE + ~15 FE (new kind pill) + pytest + vitest.
+- **Priority bump trigger:** P1 only if operator reports it as a visible gap in CRM usage.
+- **Priority:** P2 (candidate, not scheduled).
+
+
+## TD-98-be-cleanup (candidate) · Retire `/customers/{cid}/communication-timeline` endpoint
+
+- **Current state:** The FE orphan `CommunicationTimeline.jsx` was reaped under `td98b-fe`. The backend endpoint `GET /customers/{cid}/communication-timeline` in `routers/communication_timeline.py:258` is retained because mobile currently consumes it directly per `memory/mobile/iteration_55.md:46` (`src/components/customers/CommunicationTimeline.tsx` admin + portal variants mounted on `app/customer/[id].tsx` + `app/portal/messages.tsx`).
+- **Why deferred:** `/app/mobile/` edits are banned this phase. Deleting the endpoint without migrating mobile first would break the mobile customer-detail + portal-messages timeline mounts.
+- **When to ship:** Standalone P2 after `e1_expo_frontend_dev` migrates mobile to consume `GET /customers/{cid}/timeline` (super-timeline) instead. Once mobile is migrated:
+  1. Delete the endpoint handler + its helpers (`_dispatch_to_item`, `_audit_to_item`, `_strip_admin_fields`, `_preview`) if not referenced elsewhere.
+  2. Delete the FE orphan import that `test/communication-timeline-portal-placement.test.jsx` would have otherwise exercised against (already migrated to `CustomerFullTimeline` in this ship).
+  3. Any pytest files locking the endpoint contract.
+- **Dependency:** `e1_expo_frontend_dev` mobile migration first.
+- **Priority:** P2 (candidate, not scheduled).
+
+
 ## Mobile TD-90 / TD-91 notes (Oct-2026)
 - **TD-90-fn** · lead route picks up duplicate ?id= on web preview; harmless, future tiny fix if ever confusing.
 - **TD-91** · mobile Portal Access "View as customer" shipped; header retains "Switch to customer view" for in-app swap. Details:
