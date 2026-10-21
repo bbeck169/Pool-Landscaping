@@ -460,6 +460,52 @@ Source: `memory/mobile_dashboard_parity_audit.md` (`92f064b38`). The operator ke
   - `GET /jobs/{jid}/service-report` overwrites `existing["photos"] = job.get("photos") or []` so the response carries `jobs.photos` ids. `PATCH /jobs/{jid}/service-report` + `POST /jobs/{jid}/service-report/submit` return the raw `service_reports.find_one(...)` doc so the response carries `service_reports.photos` ids. The two id-spaces work today because `routers/jobs.py::_find_sr_photo_by_job_and_id` has an SR fallback branch on both the full-size and derivative public read endpoints, and TD-88 stamped canonical URLs via the shared `inject_photo_url_on_doc` helper so the FE never sees the drift. A future SR-scoped canonical refactor would decouple the two id-spaces cleanly (dedicated `/api/public/service/{public_uuid}/photo/{pid}` + `/thumb` route, SR GET stops hydrating from `jobs.photos[]`, new sibling helper keyed on the SR streaming route). Bookmarked here, not dispatched. **Priority:** P3 — future cycle.
 
 
+## TD-96 · Lead profile expansion — PRE-SHIPPED (Feb-2026 reconciliation)
+
+Audit doc: `memory/td96_lead_profile_expansion_audit.md`.
+
+**Closed as pre-shipped.** Repo reconnaissance during the TD-96 Phase-1 audit (ships `td96-audit`, `td96a-doc`, `td96b-be`) confirmed every primitive asked for by the operator — SMS + Email + Create Quote buttons, count badge, Linked-Quotes mini-list, communication timeline, close-won reparent + provenance stamp — was already live in `main` across prior commits:
+
+- `cea1a4890` · Phase-2 Quote-to-Lead Recipient backend (polymorphic `recipient_type/recipient_id`).
+- `8a5bef09f` · lead-detail `Create Quote` button + reparent on close-won.
+- `3f153049b` · P2 #4 backend audit + auto-convert-on-accept hook (**surfaces TD-97 as likely pre-shipped too** — pending TD-97 Phase-1 reconciliation audit).
+- `c51e63180` · `GET /leads/{lid}/quotes` + LeadDetail mini-list + QuoteInvoiceDetail click-through.
+- Phase L3 compose modal + inline communication timeline shipped alongside.
+
+### Decision record — Option b-variant (NOT lean `lead_id` FK)
+
+The TD-96 audit brief leaned Option a (lean `lead_id` nullable FK on quote). What shipped is **polymorphic `recipient_type ∈ {customer, lead}` + `recipient_id`**, with:
+- Convert-to-customer **full reparent** (`recipient_type → "customer"`, `recipient_id → <cid>`, stamp `converted_from_lead_id = <lid>` for provenance).
+- Linked-quotes `$or` on `(recipient_type="lead" + recipient_id=lid)` OR `converted_from_lead_id=lid` keeps lead-side visibility post-conversion.
+- Compound index `(tenant_id, recipient_type, recipient_id)` via `quotes_recipient_index_v1`.
+
+Option a is not pursued — migrating indexed data back to a lean FK is strictly more work than the semantic cleanup benefit. The polymorphic shape also back-propagates cleanly to invoice docs via `invoice_builder`.
+
+### Downstream touch-map (verified by TD-96 audit)
+
+Lead-recipient docs are strictly `doc_type="quote"` scope. Invoice-facing surfaces filter by `doc_type == "invoice"` and therefore exclude lead-recipient docs via natural scoping — not via an explicit `recipient_type` filter. The reparent runs before convert-to-invoice, so no invoice doc ever carries `recipient_type="lead"` in practice. Regression guard shipped as `backend/tests/test_td96_lead_recipient_exclusion.py` (ship `td96b-be`).
+
+**Priority:** closed (pre-shipped).
+
+
+## TD-100 (candidate) · Shared SMS/Email compose modal across lead + customer surfaces
+
+- **Current state:** Two distinct compose modals live side-by-side:
+  - Lead side: `frontend/src/pages/leads/LeadComposeModal.jsx` (Phase L3, Feb-2026) — SMS GSM-7 counter, consent-override checkbox, email subject+body.
+  - Customer side: Feb-2026 "Customer Detail Additions — Send Email/SMS modal" block in `pages/customers/CustomerDetail.jsx:2714+` — same feature set, independently implemented.
+- **Why deferred:** Flagged during TD-96 Phase-1 audit (Q3 of the 15-question matrix). The two modals have converged feature sets; dedupe is a pure refactor. Folding into TD-98/99 (shared timeline) would widen that ship's scope — operator explicitly scoped TD-100 as a dedicated candidate instead.
+- **When to ship:** When the next natural feature touch lands on either compose modal (e.g. attachment support, template picker, scheduled send), extract to a shared `components/compose/EntityComposeModal.jsx` (or similar) parameterized on `entityKind ∈ {customer, lead}`.
+- **Priority:** P2 (candidate, not scheduled).
+
+
+## TD-96-mobile (candidate) · Mobile parity for the 3 lead-detail action buttons
+
+- **Current state:** Web `LeadDetail.jsx` ships `lead-detail-send-sms` (manager+), `lead-detail-send-email` (manager+), and `lead-create-quote` (admin only) buttons. Mobile `/app/mobile/` has no equivalent lead-detail action cluster.
+- **Why deferred:** `/app/mobile/` edits are explicitly banned during the TD-6x/TD-7x/TD-8x/TD-9x audit sprint pattern. Audit does not inspect or modify mobile this phase.
+- **When to ship:** Next mobile parity cycle (groups with TD-81 / TD-82 / TD-84 style parity audits). Backend endpoints are shared (`POST /leads/{lid}/send-sms`, `POST /leads/{lid}/send-email`, `POST /quotes` with `recipient_type=lead`), so the mobile effort is UI-only.
+- **Priority:** P2 (candidate, not scheduled).
+
+
 ## Mobile TD-90 / TD-91 notes (Oct-2026)
 - **TD-90-fn** · lead route picks up duplicate ?id= on web preview; harmless, future tiny fix if ever confusing.
 - **TD-91** · mobile Portal Access "View as customer" shipped; header retains "Switch to customer view" for in-app swap. Details:
