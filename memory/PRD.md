@@ -99,6 +99,14 @@ Mobile parity for the web Templates Library (backend `/api/templates/*` + web un
   `template_drafts_pending_sync:*` written, Finalize blocked ("You have unsynced changes…") → reconnect → queue
   flushed in 13.1 s, server title = offline edit → Finalize confirm → finalized banner, inputs read-only → PDF
   downloaded → My Templates (Finalized group, download/duplicate/delete row actions) → delete. No external repo cloned.
+- **Re-verified 2026-10-21 at a34885fca (no code changes):** no templates web/BE/mobile commits since 77affb86c.
+  Jest 45/45. API: defs admin 23 / mike 8 / landscaper 8 (`{count, rows}` shape); mike create → PATCH 200 → finalize
+  200 → PATCH 409 → `/pdf` 200 `application/pdf` `%PDF-` → duplicate draft → delete 200. Expo-web as mike: Library 8
+  Fill cards → Fill CPO log → "Saved" → `set_offline` → edit → "Offline — will sync", `template_drafts:*` +
+  `template_drafts_pending_sync:*` written, Finalize blocked → reconnect → queue flushed in 2.0 s, server title =
+  offline edit → Finalize confirm → finalized banner, title read-only → `E2E offline edit.pdf` downloaded → My
+  Templates Finalized group with PDF/duplicate/delete row actions. Smoke instance deleted. No external repo cloned.
+
 
 ## 6. Marco Wake-Word — Phase 8M (Mobile arm-on-click) · shipped 2026-10-09
 - Commit 52fc01fe0 (web parity 143c1f10f). Listener no longer auto-starts; header mic button (`marco-mic-toggle-btn`) arms/disarms.

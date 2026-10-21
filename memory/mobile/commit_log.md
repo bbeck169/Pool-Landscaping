@@ -2086,3 +2086,10 @@
   - `EXPO_PUBLIC_WEB_URL` documented in `mobile/.env.example` (first commit of the file).
 - **Files modified**: mobile/src/components/customers/PortalAccessPanel.tsx, mobile/app/customer/[id].tsx, mobile/__tests__/td91-view-as-customer.test.tsx (new), mobile/.env.example (new to git), memory/TECH_DEBT.md
 - **Web files referenced**: frontend/src/pages/customers/CustomerDetail.jsx (`impersonate`, L3017), frontend/src/index.js (portal token bootstrap)
+
+## Iteration 159 — Templates Library Phase 3 (mobile) re-verification
+- **Commit**: see `git log -- memory/PRD.md` (doc-only; feature commit remains `77affb86c`)
+- **Date**: 2026-10-21
+- **Changes**: no code changes. Re-ran the Phase 3 checks at a34885fca: Jest 45/45, API lifecycle as all 3 roles, Expo-web offline → reconnect → finalize → PDF E2E. PRD §5 has a new re-verified line.
+- **Files modified**: memory/PRD.md, memory/mobile/commit_log.md
+- **Web files referenced**: none (no templates web/BE commits since 77affb86c)
