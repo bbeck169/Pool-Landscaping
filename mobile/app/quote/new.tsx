@@ -57,6 +57,14 @@ export default function QuoteForm() {
         if (hit) setRecipient((prev) => prev ? { ...prev, name: hit.name || "" } : prev);
       }).catch(() => {});
     }
+    // TD-96-mobile D3 — hydrate lead name (web QuoteInvoiceNew parity) so the
+    // picker shows the lead's name instead of its raw id.
+    if (_initialRecipient?.type === "lead" && _initialRecipient.id && !_initialRecipient.name) {
+      const lid = _initialRecipient.id;
+      api.get(`/leads/${encodeURIComponent(lid)}`).then((l: any) => {
+        if (l?.name) setRecipient((prev) => (prev && prev.type === "lead" && prev.id === lid ? { ...prev, name: l.name } : prev));
+      }).catch(() => {});
+    }
     api.get("/income-categories").then((r) => {
       const cats = r.categories || [];
       if (cats.length) {

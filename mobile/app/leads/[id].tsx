@@ -19,8 +19,9 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import { useToast } from "@/src/components/ToastProvider";
 import AppTextInput from "@/src/components/ui/AppTextInput";
 import { PhoneLink, AddressLink } from "@/src/components/customer";
-import { isAdminPlus } from "@/src/components/RoleGate";
+import { isAdminPlus, isStrictAdmin } from "@/src/components/RoleGate";
 import LeadComposeSheet, { type LeadComposeChannel } from "@/src/components/leads/LeadComposeSheet";
+import LeadLinkedQuotesPanel from "@/src/components/leads/LeadLinkedQuotesPanel";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   // Phase 34 · Task CC: 5 canonical snake_case statuses
@@ -96,6 +97,9 @@ export default function LeadDetailScreen() {
   // TD-96-mobile — manager+ send (BE lead_communications roles; owner is
   // already blocked by GET /leads/{id}, so no owner special-case).
   const canCompose = isAdminPlus(user);
+  // Create Quote + linked panel: admin/super_admin (BE POST /quotes require_admin;
+  // GET /leads/{id}/quotes excludes owner). Managers never see these.
+  const canQuote = isStrictAdmin(user);
   const [composeChannel, setComposeChannel] = useState<LeadComposeChannel | null>(null);
 
   const [lead, setLead] = useState<any>(null);
@@ -274,6 +278,22 @@ export default function LeadDetailScreen() {
               <ActionBtn icon="chatbubble-ellipses-outline" label="Send SMS" color={colors.brand} onPress={() => lead.phone && setComposeChannel("sms")} disabled={!lead.phone} testID="lead-detail-send-sms" />
               <ActionBtn icon="mail-outline" label="Send Email" color={colors.brand} onPress={() => lead.email && setComposeChannel("email")} disabled={!lead.email} testID="lead-detail-send-email" />
             </View>
+            {canQuote && (
+              <TouchableOpacity
+                style={[st.quoteBtn, busy && { opacity: 0.5 }]}
+                disabled={busy}
+                onPress={() => router.push(`/quote/new?recipient_type=lead&recipient_id=${encodeURIComponent(String(id))}` as any)}
+                testID="lead-create-quote"
+              >
+                <Ionicons name="document-text-outline" size={16} color="#fff" />
+                <Text style={st.quoteBtnText}>Create Quote</Text>
+                {lead.quotes_count ? (
+                  <View style={st.quoteCount} testID="lead-create-quote-count">
+                    <Text style={st.quoteCountText}>{String(lead.quotes_count)}</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -295,6 +315,9 @@ export default function LeadDetailScreen() {
             </View>
           </View>
         )}
+
+        {/* TD-96-mobile — linked quotes (admin). Always fetched; see TD-96-g2 note in the component. */}
+        {canQuote && <LeadLinkedQuotesPanel leadId={String(id)} refreshKey={lead} />}
 
         {/* Notes */}
         <View style={st.card}>
@@ -411,6 +434,10 @@ const st = StyleSheet.create({
   actionBtn: { alignItems: "center", width: 88, gap: 4, paddingVertical: 8 },
   actionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   actionLabel: { fontFamily: font.semibold, fontSize: 10, textAlign: "center" },
+  quoteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44, marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: "#4F46E5" },
+  quoteBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  quoteCount: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.25)", alignItems: "center", justifyContent: "center" },
+  quoteCountText: { fontFamily: font.semibold, fontSize: 11, color: "#fff" },
   noteInput: { backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, minHeight: 60, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, textAlignVertical: "top" },
   noteBtn: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-end", marginTop: spacing.sm, backgroundColor: colors.brand, paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.md },
   noteBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
