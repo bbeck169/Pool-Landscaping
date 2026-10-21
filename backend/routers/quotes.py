@@ -35,6 +35,15 @@ _LIST_QUOTES_PAYMENT_STATUS_VALUES = frozenset(
     ["unpaid", "partial", "paid", "all"]
 )
 
+# TD-93 · Feb-2026 — ``date_field`` whitelist for
+# ``GET /quotes?doc_type=invoice`` date-range filter.  Canonical
+# "invoice date" in this codebase = ``created_at`` (the TD-72 BE
+# migration also treats it as the source of truth).  ``due_date``
+# is the second allowed value for the operator "By [Invoice date |
+# Due date]" toggle.  Any other value → HTTP 400 with
+# ``error_code=invalid_date_field``.
+_LIST_QUOTES_DATE_FIELD_VALUES = frozenset(["created_at", "due_date"])
+
 
 def compute_totals(line_items: List[dict], tax_rate: float):
     subtotal = sum(li["quantity"] * li["unit_price"] for li in line_items)
@@ -313,7 +322,27 @@ async def list_quotes(user: dict = Depends(get_current_user),
                       # due_date, doc_type, deleted_at, every other
                       # scalar.  Full doc remains available via
                       # ``GET /quotes/{quote_id}``.
-                      slim: bool = Query(False)):
+                      slim: bool = Query(False),
+                      # TD-93 · Feb-2026 — invoice date-range filter.
+                      # ``date_from`` + ``date_to`` are ISO
+                      # ``YYYY-MM-DD`` date-only strings.  ``date_field``
+                      # is a whitelist enum selecting which document
+                      # field the range filter applies against
+                      # (``created_at`` → "invoice date" per the
+                      # canonical convention in this codebase, or
+                      # ``due_date`` → "due date").  Any other
+                      # ``date_field`` value returns HTTP 400 with a
+                      # stable ``error_code`` matching the existing
+                      # ``invalid_payment_status`` / ``invalid_view``
+                      # posture.  Both bounds inclusive — matches the
+                      # BE date-range convention established by
+                      # ``routers/chemical_applications.py`` + sibling
+                      # ``routers/attendance.py``.  Open-ended range
+                      # (only one bound set) is accepted and behaves
+                      # as the half-interval.
+                      date_from: Optional[str] = Query(None),
+                      date_to: Optional[str] = Query(None),
+                      date_field: Optional[str] = Query(None)):
     # TD-21 · Direct-call tests (e.g. test_fin_parity_b_list_quotes_*) invoke
     # this handler without FastAPI's dependency resolution, so the ``Query(None)``
     # default FieldInfo arrives as the raw ``view`` arg instead of ``None``.
@@ -322,6 +351,17 @@ async def list_quotes(user: dict = Depends(get_current_user),
     # any non-str (incl. the FieldInfo sentinel) back to None.
     if not isinstance(view, str):
         view = None
+    # TD-93 · Feb-2026 — Same TD-21 coercion for the date-range
+    # params so direct-call tests that bypass FastAPI's dependency
+    # resolution don't trip on the raw ``Query(None)`` FieldInfo
+    # sentinel.  See TD-21 ("direct-call tests leave Query defaults
+    # as raw FieldInfo") in ``TECH_DEBT.md``.
+    if not isinstance(date_from, str):
+        date_from = None
+    if not isinstance(date_to, str):
+        date_to = None
+    if not isinstance(date_field, str):
+        date_field = None
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     # FIN-PARITY-B · payment_status validation — accept the four
@@ -487,6 +527,46 @@ async def list_quotes(user: dict = Depends(get_current_user),
             q["customer_id"] = {"$in": list(active_ids) or ["__no_matches__"]}
         else:
             q["customer_id"] = {"$nin": list(active_ids)}
+    # TD-93 · Feb-2026 — date-range filter on either ``created_at``
+    # (canonical "invoice date") or ``due_date``.  Both bounds
+    # inclusive, matching ``routers/chemical_applications.py`` +
+    # ``routers/attendance.py``.  ``created_at`` is an ISO datetime
+    # so we expand the day-only bounds to ``T00:00:00`` /
+    # ``T23:59:59.999999`` at ``+00:00`` for the semantic
+    # "whole-day inclusive" bound users expect.  ``due_date`` is a
+    # bare ``YYYY-MM-DD`` string so the raw bounds compare correctly
+    # under lex-order.  Open-ended range (only one bound set) is
+    # accepted.
+    if date_from or date_to or date_field:
+        _df = (date_field or "created_at").strip()
+        if _df not in _LIST_QUOTES_DATE_FIELD_VALUES:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "invalid_date_field",
+                    "message": (
+                        "date_field must be one of "
+                        f"{sorted(_LIST_QUOTES_DATE_FIELD_VALUES)!r}, "
+                        f"got {date_field!r}"
+                    ),
+                    "accepted_values": sorted(
+                        _LIST_QUOTES_DATE_FIELD_VALUES
+                    ),
+                },
+            )
+        _rng: Dict[str, str] = {}
+        if date_from:
+            _rng["$gte"] = (
+                f"{date_from}T00:00:00+00:00" if _df == "created_at"
+                else date_from
+            )
+        if date_to:
+            _rng["$lte"] = (
+                f"{date_to}T23:59:59.999999+00:00" if _df == "created_at"
+                else date_to
+            )
+        if _rng:
+            q["$and"] = q.get("$and", []) + [{_df: _rng}]
     # ── P1 PERF-HOTFIX · Feb-2026 · opt-in slim projection ─────────
     # Default projection is the historical ``{_id: 0}`` (full doc).
     # When ``slim=1`` is passed, we drop the four heaviest fields
