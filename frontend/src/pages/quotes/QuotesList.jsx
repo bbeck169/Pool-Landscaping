@@ -70,6 +70,29 @@ export default function QuotesList() {
     setParams(s, { replace: true });
   };
 
+  // TD-96-g1 · Feb-2026 — lead-scoped filter (URL-persisted). The
+  // "View all" link on the LeadDetail Linked-Quotes panel navigates
+  // to ``/quotes?lead=<lid>``; the ``lead`` querystring key is
+  // forwarded to the BE as ``lead_id`` so ``list_quotes`` applies
+  // the ``$or`` filter that mirrors ``GET /leads/{lid}/quotes`` +
+  // ``linked_quotes_count``. Only admin/manager roles see the badge
+  // (customer-portal callers are already BE-scoped to themselves).
+  const leadFilter = params.get("lead") || null;
+  const clearLeadFilter = () => {
+    const s = new URLSearchParams(params);
+    s.delete("lead");
+    setParams(s, { replace: true });
+  };
+  const [leadInfo, setLeadInfo] = useState(null);
+  useEffect(() => {
+    if (!leadFilter) { setLeadInfo(null); return; }
+    let cancelled = false;
+    api.get(`/leads/${leadFilter}`)
+      .then((row) => { if (!cancelled) setLeadInfo(row || null); })
+      .catch(() => { if (!cancelled) setLeadInfo(null); });
+    return () => { cancelled = true; };
+  }, [leadFilter]);
+
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
     if (v) s.set("status", v);
@@ -121,14 +144,17 @@ export default function QuotesList() {
   // Phase 3 B2 · Feb-2026 — Fetch wired to lifecycle view + customer
   // scope. Factored into a callback so Decline/Reopen handlers can
   // trigger a refresh without duplicating the querystring assembly.
+  // TD-96-g1 · Feb-2026 — ``lead_id`` forwarded when ``?lead=<lid>``
+  // is on the URL (set by the LeadDetail "View all" link).
   const fetchRows = useCallback(() => {
     const qs = new URLSearchParams({ doc_type: "quote", view });
     if (customerFilter) qs.set("customer_id", customerFilter);
+    if (leadFilter) qs.set("lead_id", leadFilter);
     return api
       .get(`/quotes?${qs.toString()}`)
       .then((r) => setRows(r || []))
       .catch(() => setRows([]));
-  }, [customerFilter, view]);
+  }, [customerFilter, leadFilter, view]);
 
   useEffect(() => {
     fetchRows();
@@ -413,6 +439,47 @@ export default function QuotesList() {
           testId="quotes-filter-customer"
         />
       </div>
+
+      {/* TD-96-g1 · Feb-2026 — Lead-scoped filter badge. Shown only
+          when the URL carries ``?lead=<lid>`` (set by LeadDetail
+          "View all" link). Dismiss removes the ``lead`` key and
+          refetches the full list. Lead name resolved via a cheap
+          single-shot ``/leads/{lid}`` fetch; falls back to a
+          truncated id if the fetch fails (e.g., 404 after a lead
+          merge). */}
+      {leadFilter ? (
+        <div className="mb-3 flex items-center gap-2 flex-wrap"
+             data-testid="quotes-filter-lead-bar">
+          <div className="text-xs font-semibold" style={{ color: colors.muted }}>
+            Lead
+          </div>
+          <span
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full"
+            style={{
+              backgroundColor: "#DBEAFE",
+              color: "#1E40AF",
+              border: "1px solid #93C5FD",
+            }}
+            data-testid="quotes-filter-lead-badge"
+          >
+            {leadInfo?.name || `Lead ${String(leadFilter).slice(0, 8)}`}
+          </span>
+          <button
+            type="button"
+            onClick={clearLeadFilter}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full"
+            style={{
+              backgroundColor: "#F3F4F6",
+              color: "#374151",
+              border: "1px solid #D1D5DB",
+            }}
+            data-testid="quotes-filter-lead-clear"
+            aria-label="Clear lead filter"
+          >
+            Clear <X size={11} />
+          </button>
+        </div>
+      ) : null}
 
       <div
         className="rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center"
