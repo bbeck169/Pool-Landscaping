@@ -177,4 +177,66 @@ describe("TD-96-g2 · LeadDetail Linked-Quotes · linked_quotes_count gate", () 
     expect(panel).toBeTruthy();
     expect(screen.getByTestId("lead-linked-quote-row-q-legacy")).toBeTruthy();
   });
+
+  it("TD-96-g2-web-fallback · mobile-canonical: panel renders when linked_quotes_count absent AND quotes_count=0 (reparented quotes still fetched)", async () => {
+    // Regression case for the exact bug TD-96-g2-web-fallback fixes:
+    // under the pre-alignment code, the fallback to ``quotes_count`` would
+    // see 0 and skip the GET entirely, hiding reparented quotes
+    // (``converted_from_lead_id`` provenance). Mobile ships the conservative
+    // fetch-when-missing gate (``LeadLinkedQuotesPanel.tsx:43`` knownEmpty)
+    // — this test locks the web alignment byte-for-byte with mobile.
+    _authMock.user = { role: "admin" };
+    const quotesFetch = vi.fn();
+    getMock.mockImplementation((url) => {
+      if (url.includes("/communications")) {
+        return Promise.resolve({ items: [], next_cursor: null, has_more: false });
+      }
+      if (url.includes("/quotes?")) {
+        quotesFetch(url);
+        return Promise.resolve({
+          total: 2, limit: 10,
+          items: [
+            { id: "q-rep-fallback-1", title: "Reparented quote (fallback)",
+              status: "accepted", total: 300.0, reparented: true },
+            { id: "q-rep-fallback-2", title: "Reparented add-on (fallback)",
+              status: "sent", total: 700.0, reparented: true },
+          ],
+        });
+      }
+      // No linked_quotes_count key — AND quotes_count=0.
+      // Pre-alignment: this would hide the panel. Post-alignment: fetches.
+      return Promise.resolve({ ...BASE_LEAD, quotes_count: 0 });
+    });
+    _mount();
+    await waitFor(() =>
+      expect(screen.queryByTestId("lead-detail-page")).toBeTruthy());
+    const panel = await screen.findByTestId("lead-linked-quotes-panel");
+    expect(panel).toBeTruthy();
+    expect(quotesFetch).toHaveBeenCalled();
+    expect(screen.getByTestId("lead-linked-quote-row-q-rep-fallback-1")).toBeTruthy();
+    expect(screen.getByTestId("lead-linked-quote-row-q-rep-fallback-2")).toBeTruthy();
+  });
+
+  it("TD-96-g2-web-fallback · explicit null for linked_quotes_count also fetches (mobile-canonical typeof gate)", async () => {
+    // Locks the ``typeof === 'number'`` check — ``null`` must not be
+    // treated as 0 (which would hide the panel). Matches mobile
+    // ``LeadLinkedQuotesPanel.tsx:43`` ``typeof linkedQuotesCount === "number"``.
+    _authMock.user = { role: "admin" };
+    _wire({
+      lead: { ...BASE_LEAD, quotes_count: 0, linked_quotes_count: null },
+      quotes: {
+        total: 1, limit: 10,
+        items: [
+          { id: "q-null-case", title: "Null-case quote", status: "accepted",
+            total: 150.0, reparented: true },
+        ],
+      },
+    });
+    _mount();
+    await waitFor(() =>
+      expect(screen.queryByTestId("lead-detail-page")).toBeTruthy());
+    const panel = await screen.findByTestId("lead-linked-quotes-panel");
+    expect(panel).toBeTruthy();
+    expect(screen.getByTestId("lead-linked-quote-row-q-null-case")).toBeTruthy();
+  });
 });

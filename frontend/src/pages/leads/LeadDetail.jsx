@@ -279,22 +279,28 @@ export default function LeadDetail() {
   // something to show (avoids an empty network call for brand-new leads).
   // TD-96-g2 · Feb-2026 — gate on ``linked_quotes_count`` (post-conversion
   // ``$or`` count) so the panel stays visible after close-won reparent
-  // flips ``recipient_type`` → "customer". Falls back to the legacy
-  // ``quotes_count`` for the deploy window where the detail response
-  // may not yet carry the new field.
+  // flips ``recipient_type`` → "customer".
+  //
+  // TD-96-g2-web-fallback · Oct-2026 — mobile-canonical fallback:
+  // when ``linked_quotes_count`` is absent (mid-deploy window / stale
+  // cache) fetch unconditionally. The previous ``quotes_count`` fallback
+  // was known-broken (it ignores reparented quotes with
+  // ``converted_from_lead_id`` provenance — the exact TD-96-g2 regression).
+  // Matches mobile ``LeadLinkedQuotesPanel.tsx:43`` ``knownEmpty`` gate
+  // (``c59366785``) byte-for-byte: skip the GET only when the field is
+  // explicitly a number ≤ 0; absent / null / undefined → fetch.
   useEffect(() => {
     if (!lead?.id) return;
-    const count = (lead.linked_quotes_count != null
-      ? lead.linked_quotes_count
-      : lead.quotes_count);
-    if (!(count > 0)) {
+    const linked = lead.linked_quotes_count;
+    const knownEmpty = typeof linked === "number" && !(linked > 0);
+    if (knownEmpty) {
       setLinkedQuotes(null);
       return;
     }
     api.get(`/leads/${lead.id}/quotes?limit=10`).then((res) => {
       setLinkedQuotes(res || { items: [], total: 0, limit: 10 });
     }).catch(() => { setLinkedQuotes(null); });
-  }, [lead?.id, lead?.quotes_count, lead?.linked_quotes_count]);
+  }, [lead?.id, lead?.linked_quotes_count]);
 
   const setStatus = async (status) => {
     setBusy(true);
